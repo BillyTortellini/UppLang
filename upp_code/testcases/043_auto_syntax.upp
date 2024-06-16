@@ -17,7 +17,7 @@ Color::enum
 	BLUE
 
 main::()
-	context array_to_slice=.AUTO
+	context set_option(.ARRAY_TO_SLICE,.AUTO)
 	//
 		The following Operations also have shorthand notations so
 		that the type is not necessary anymore

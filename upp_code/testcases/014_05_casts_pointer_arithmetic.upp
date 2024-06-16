@@ -3,7 +3,7 @@
 main::()
 	// Since we don't have pointer-arithmetic in Upp,
 	// we need to cast pointers to u64 values, and cast them back
-	context auto_dereference=true
+	context set_option(.AUTO_DEREFERENCE,true)
 	
 	values:[3]int=.[1,2,3]
 	ip:*int=*values[0]

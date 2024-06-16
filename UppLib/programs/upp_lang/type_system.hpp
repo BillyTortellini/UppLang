@@ -225,9 +225,50 @@ enum class Upp_Operator
     NEGATE,
     NOT,
     ARRAY_ACCESS,
+    CAST,
     
     MAX_ENUM_VALUE
 };
+
+const int CONTEXT_OPTION_CAST_MODE_START = 1;
+const int CONTEXT_OPTION_CAST_MODE_END = 23; // Inclusive
+const int CONTEXT_OPTION_BOOL_START = 24;
+const int CONTEXT_OPTION_BOOL_END = 26;
+const int CONTEXT_OPTION_CAST_MODE_COUNT = CONTEXT_OPTION_CAST_MODE_END - CONTEXT_OPTION_CAST_MODE_START;
+const int CONTEXT_OPTION_BOOL_COUNT = CONTEXT_OPTION_BOOL_END - CONTEXT_OPTION_BOOL_START;
+
+enum class Context_Option
+{
+    INTEGER_SIZE_UPCAST = 1,
+    INTEGER_SIZE_DOWNCAST,
+    INTEGER_SIGNED_TO_UNSIGNED,
+    INTEGER_UNSIGNED_TO_SIGNED,
+    FLOAT_SIZE_UPCAST,
+    FLOAT_SIZE_DOWNCAST,
+    INT_TO_FLOAT,
+    FLOAT_TO_INT,
+    POINTER_TO_POINTER,
+    VOID_POINTER_TO_POINTER,
+    POINTER_TO_VOID_POINTER,
+    POINTER_TO_U64,
+    U64_TO_POINTER,
+    FUNCTION_POINTER_TO_VOID,
+    VOID_TO_FUNCTION_POINTER,
+    POINTER_TO_BOOL,
+    FUNCTION_POINTER_TO_BOOL,
+    VOID_POINTER_TO_BOOL,
+    TO_ANY,
+    FROM_ANY,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+    ARRAY_TO_SLICE,
+
+    AUTO_DEREFERENCE,
+    AUTO_ADDRESS_OF,
+
+    MAX_ENUM_VALUE
+};
+
 
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive
@@ -338,6 +379,7 @@ struct Predefined_Types
     Datatype_Struct* any_type;
     Datatype_Enum* cast_mode;
     Datatype_Enum* upp_operator;
+    Datatype_Enum* context_option;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_assert;
@@ -355,8 +397,8 @@ struct Predefined_Types
     Datatype_Function* type_read_bool;
     Datatype_Function* type_random_i32;
 
-    Datatype_Function* type_add_custom_cast;
-    Datatype_Function* type_add_operator_overload;
+    Datatype_Function* type_set_option;
+    Datatype_Function* type_add_overload;
 };
 
 // TYPE SYSTEM
@@ -403,6 +445,7 @@ void type_system_finish_array(Datatype_Array* array);
 bool types_are_equal(Datatype* a, Datatype* b);
 bool datatype_is_unknown(Datatype* a);
 bool type_size_is_unfinished(Datatype* a);
+Datatype* datatype_get_pointed_to_type(Datatype* type, int* pointer_level_out);
 Optional<Enum_Item> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Optional<Struct_Member> type_signature_find_member_by_id(Datatype* type, String* id);  // Valid for both structs, unions and slices
 

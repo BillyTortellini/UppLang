@@ -2,5 +2,5 @@
 main::()
 	// Requires cast mode auto
 	i:=15
-	context integer_size_upcast=.IMPLICIT
+	context set_option(.INTEGER_SIZE_UPCAST,.IMPLICIT)
 	y:i64=i

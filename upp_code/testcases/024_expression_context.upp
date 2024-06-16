@@ -16,8 +16,8 @@
 	
 	This is done by tracking the context of the Expression
 
-context auto_dereference=true
-context auto_address_of=true
+context set_option(.AUTO_DEREFERENCE,true)
+context set_option(.AUTO_ADDRESS_OF,true)
 
 Sum::struct
 	a:int

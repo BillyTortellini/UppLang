@@ -1,0 +1,5 @@
+
+context set_option(.ARRAY_TO_SLICE,.AUTO)
+
+main::()
+	

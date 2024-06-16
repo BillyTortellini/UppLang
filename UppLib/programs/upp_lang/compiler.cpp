@@ -224,37 +224,38 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.cast_mode_explicit = add_id("EXPLICIT");
             ids.cast_mode_none =     add_id("NONE");
 
-            ids.context_settings[(int)AST::Context_Setting::ARRAY_TO_SLICE] = add_id("array_to_slice");
-            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIZE_UPCAST] = add_id("integer_size_upcast");
-            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIZE_DOWNCAST] = add_id("integer_size_downcast");
-            ids.context_settings[(int)AST::Context_Setting::INTEGER_SIGNED_TO_UNSIGNED] = add_id("integer_signed_to_unsigned");
-            ids.context_settings[(int)AST::Context_Setting::INTEGER_UNSIGNED_TO_SIGNED] = add_id("integer_unsigned_to_signed");
-            ids.context_settings[(int)AST::Context_Setting::FLOAT_SIZE_UPCAST] = add_id("float_size_upcast");
-            ids.context_settings[(int)AST::Context_Setting::FLOAT_SIZE_DOWNCAST] = add_id("float_size_downcast");
-            ids.context_settings[(int)AST::Context_Setting::INT_TO_FLOAT] = add_id("int_to_float");
-            ids.context_settings[(int)AST::Context_Setting::FLOAT_TO_INT] = add_id("float_to_int");
-            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_POINTER] = add_id("pointer_to_pointer");
-            ids.context_settings[(int)AST::Context_Setting::VOID_POINTER_TO_POINTER] = add_id("void_pointer_to_pointer");
-            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_VOID_POINTER] = add_id("pointer_to_void_pointer");
-            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_U64] = add_id("pointer_to_u64");
-            ids.context_settings[(int)AST::Context_Setting::U64_TO_POINTER] = add_id("u64_to_pointer");
-            ids.context_settings[(int)AST::Context_Setting::FUNCTION_POINTER_TO_VOID] = add_id("function_pointer_to_void");
-            ids.context_settings[(int)AST::Context_Setting::VOID_TO_FUNCTION_POINTER] = add_id("void_to_function_pointer");
-            ids.context_settings[(int)AST::Context_Setting::POINTER_TO_BOOL] = add_id("pointer_to_bool");
-            ids.context_settings[(int)AST::Context_Setting::FUNCTION_POINTER_TO_BOOL] = add_id("function_pointer_to_bool");
-            ids.context_settings[(int)AST::Context_Setting::VOID_POINTER_TO_BOOL] = add_id("void_pointer_to_bool");
-            ids.context_settings[(int)AST::Context_Setting::TO_ANY] = add_id("to_any");
-            ids.context_settings[(int)AST::Context_Setting::FROM_ANY] = add_id("from_any");
-            ids.context_settings[(int)AST::Context_Setting::ENUM_TO_INT] = add_id("enum_to_int");
-            ids.context_settings[(int)AST::Context_Setting::INT_TO_ENUM] = add_id("int_to_enum");
-            ids.context_settings[(int)AST::Context_Setting::ARRAY_TO_SLICE] = add_id("array_to_slice");
-            ids.context_settings[(int)AST::Context_Setting::AUTO_ADDRESS_OF] = add_id("auto_address_of");
-            ids.context_settings[(int)AST::Context_Setting::AUTO_DEREFERENCE] = add_id("auto_dereference");
-            
-            ids.add_custom_cast = add_id("add_custom_cast");
             ids.id_import = add_id("import");
-            ids.add_operator_overload = add_id("add_operator_overload");
+            ids.set_option = add_id("set_option");
+            ids.add_overload = add_id("add_overload");
             ids.upp_operator = add_id("Upp_Operator");
+            ids.context_option = add_id("Context_Option");
+
+            ids.context_option_enum_values[(int)Context_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+            ids.context_option_enum_values[(int)Context_Option::INTEGER_SIZE_UPCAST] = add_id("INTEGER_SIZE_UPCAST");
+            ids.context_option_enum_values[(int)Context_Option::INTEGER_SIZE_DOWNCAST] = add_id("INTEGER_SIZE_DOWNCAST");
+            ids.context_option_enum_values[(int)Context_Option::INTEGER_SIGNED_TO_UNSIGNED] = add_id("INTEGER_SIGNED_TO_UNSIGNED");
+            ids.context_option_enum_values[(int)Context_Option::INTEGER_UNSIGNED_TO_SIGNED] = add_id("INTEGER_UNSIGNED_TO_SIGNED");
+            ids.context_option_enum_values[(int)Context_Option::FLOAT_SIZE_UPCAST] = add_id("FLOAT_SIZE_UPCAST");
+            ids.context_option_enum_values[(int)Context_Option::FLOAT_SIZE_DOWNCAST] = add_id("FLOAT_SIZE_DOWNCAST");
+            ids.context_option_enum_values[(int)Context_Option::INT_TO_FLOAT] = add_id("INT_TO_FLOAT");
+            ids.context_option_enum_values[(int)Context_Option::FLOAT_TO_INT] = add_id("FLOAT_TO_INT");
+            ids.context_option_enum_values[(int)Context_Option::POINTER_TO_POINTER] = add_id("POINTER_TO_POINTER");
+            ids.context_option_enum_values[(int)Context_Option::VOID_POINTER_TO_POINTER] = add_id("VOID_POINTER_TO_POINTER");
+            ids.context_option_enum_values[(int)Context_Option::POINTER_TO_VOID_POINTER] = add_id("POINTER_TO_VOID_POINTER");
+            ids.context_option_enum_values[(int)Context_Option::POINTER_TO_U64] = add_id("POINTER_TO_U64");
+            ids.context_option_enum_values[(int)Context_Option::U64_TO_POINTER] = add_id("U64_TO_POINTER");
+            ids.context_option_enum_values[(int)Context_Option::FUNCTION_POINTER_TO_VOID] = add_id("FUNCTION_POINTER_TO_VOID");
+            ids.context_option_enum_values[(int)Context_Option::VOID_TO_FUNCTION_POINTER] = add_id("VOID_TO_FUNCTION_POINTER");
+            ids.context_option_enum_values[(int)Context_Option::POINTER_TO_BOOL] = add_id("POINTER_TO_BOOL");
+            ids.context_option_enum_values[(int)Context_Option::FUNCTION_POINTER_TO_BOOL] = add_id("FUNCTION_POINTER_TO_BOOL");
+            ids.context_option_enum_values[(int)Context_Option::VOID_POINTER_TO_BOOL] = add_id("VOID_POINTER_TO_BOOL");
+            ids.context_option_enum_values[(int)Context_Option::TO_ANY] = add_id("TO_ANY");
+            ids.context_option_enum_values[(int)Context_Option::FROM_ANY] = add_id("FROM_ANY");
+            ids.context_option_enum_values[(int)Context_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
+            ids.context_option_enum_values[(int)Context_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
+            ids.context_option_enum_values[(int)Context_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+            ids.context_option_enum_values[(int)Context_Option::AUTO_ADDRESS_OF] = add_id("AUTO_ADDRESS_OF");
+            ids.context_option_enum_values[(int)Context_Option::AUTO_DEREFERENCE] = add_id("AUTO_DEREFERENCE");
             
             ids.upp_operator_enum_values[0] = add_id(" _ INVALID _ ");
             ids.upp_operator_enum_values[(int)Upp_Operator::ADDITION] = add_id("ADDITION");
@@ -273,6 +274,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_enum_values[(int)Upp_Operator::NOT] = add_id("NOT");
             ids.upp_operator_enum_values[(int)Upp_Operator::NEGATE] = add_id("NEGATE");
             ids.upp_operator_enum_values[(int)Upp_Operator::ARRAY_ACCESS] = add_id("ARRAY_ACCESS");
+            ids.upp_operator_enum_values[(int)Upp_Operator::CAST] = add_id("CAST");
 
             ids.upp_operator_corresponding_tokens[0] = add_id(" _ INVALID _ ");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ADDITION] = add_id("+");
@@ -291,6 +293,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::NOT] = add_id("!");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::NEGATE] = add_id("-");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ARRAY_ACCESS] = add_id("[]");
+            ids.upp_operator_corresponding_tokens[(int)Upp_Operator::CAST] = add_id("cast");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore

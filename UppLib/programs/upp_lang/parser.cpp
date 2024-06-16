@@ -763,42 +763,22 @@ namespace Parser
                 log_error_range_offset("Expected identifier after context keyword", 0);
             }
 
-            // Check if it's custom cast
-            if ((id == ids.add_custom_cast || id == ids.add_operator_overload) && test_parenthesis('('))
-            {
-                result->type = Context_Change_Type::CONTEXT_FUNCTION_CALL;
-                result->options.call.arguments = dynamic_array_create_empty<Argument*>(1);
-                if (id == ids.add_custom_cast) {
-                    result->options.call.function = Context_Function::ADD_CUSTOM_CAST;
-                }
-                else {
-                    result->options.call.function = Context_Function::ADD_OPERATOR_OVERLOAD;
-                }
-                parse_parenthesis_comma_seperated(&result->base, &result->options.call.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
-                PARSE_SUCCESS(result);
+            if (id == ids.add_overload) {
+                result->type = Context_Change_Type::ADD_OVERLOAD;
             }
-
-            result->type = Context_Change_Type::SETTING_CHANGE;
-            result->options.change.is_invalid = true;
-            result->options.change.setting = Context_Setting::VOID_TO_FUNCTION_POINTER; // Just something to have invalid initialized
-            for (int i = 0; i < (int)Context_Setting::MAX_ENUM_VALUE; i++) {
-                Context_Setting setting = (Context_Setting)i;
-                if (AST::context_setting_to_string(setting) == id) {
-                    result->options.change.is_invalid = false;
-                    result->options.change.setting = setting;
-                    break;
-                }
-            }
-
-            if (test_operator(Operator::ASSIGN)) {
-                advance_token();
-                result->options.change.expression = parse_expression_or_error_expr(upcast(result));
+            else if (id == ids.set_option) {
+                result->type = Context_Change_Type::SET_OPTION;
             }
             else {
-                result->options.change.expression = allocate_base<Expression>(upcast(result), Node_Type::EXPRESSION);
-                result->options.change.expression->type = Expression_Type::ERROR_EXPR;
-                node_finalize_range(upcast(result->options.change.expression)); 
+                CHECKPOINT_EXIT;
             }
+
+            if (!test_parenthesis('(')) {
+                CHECKPOINT_EXIT;
+            }
+
+            result->options.arguments = dynamic_array_create_empty<Argument*>(1);
+            parse_parenthesis_comma_seperated(&result->base, &result->options.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 

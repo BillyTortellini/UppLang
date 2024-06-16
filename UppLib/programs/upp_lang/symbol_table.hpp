@@ -90,11 +90,9 @@ struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
     Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
-    Cast_Mode cast_mode_settings[AST::CONTEXT_SETTING_CAST_MODE_COUNT];
-    bool boolean_settings[AST::CONTEXT_SETTING_BOOLEAN_COUNT];
-    Hashtable<Datatype_Pair, Custom_Cast> custom_casts;
+    Cast_Mode cast_mode_settings[CONTEXT_OPTION_CAST_MODE_COUNT];
+    bool boolean_settings[CONTEXT_OPTION_BOOL_COUNT];
     Hashtable<Operator_Overload_Key, Operator_Overload> operator_overloads;
-    Dynamic_Array<Custom_Cast_Polymorphic> custom_casts_polymorphic;
 };
 
 

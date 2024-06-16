@@ -122,52 +122,11 @@ namespace AST
         String* file_name;
     };
 
-    const int CONTEXT_SETTING_CAST_MODE_COUNT = 23;
-    const int CONTEXT_SETTING_BOOLEAN_COUNT = 2;
-
-    enum class Context_Setting
-    {
-        INTEGER_SIZE_UPCAST = 0,
-        INTEGER_SIZE_DOWNCAST,
-        INTEGER_SIGNED_TO_UNSIGNED,
-        INTEGER_UNSIGNED_TO_SIGNED,
-        FLOAT_SIZE_UPCAST,
-        FLOAT_SIZE_DOWNCAST,
-        INT_TO_FLOAT,
-        FLOAT_TO_INT,
-        POINTER_TO_POINTER,
-        VOID_POINTER_TO_POINTER,
-        POINTER_TO_VOID_POINTER,
-        POINTER_TO_U64,
-        U64_TO_POINTER,
-        FUNCTION_POINTER_TO_VOID,
-        VOID_TO_FUNCTION_POINTER,
-        POINTER_TO_BOOL,
-        FUNCTION_POINTER_TO_BOOL,
-        VOID_POINTER_TO_BOOL,
-        TO_ANY,
-        FROM_ANY,
-        ENUM_TO_INT,
-        INT_TO_ENUM,
-        ARRAY_TO_SLICE,
-
-        AUTO_DEREFERENCE,
-        AUTO_ADDRESS_OF,
-
-        MAX_ENUM_VALUE
-    };
-
-    enum class Context_Function
-    {
-        ADD_CUSTOM_CAST,
-        ADD_OPERATOR_OVERLOAD
-    };
-
     enum class Context_Change_Type
     {
-        SETTING_CHANGE,
+        SET_OPTION,
+        ADD_OVERLOAD,
         IMPORT_CONTEXT,
-        CONTEXT_FUNCTION_CALL,
     };
 
     struct Argument;
@@ -176,16 +135,8 @@ namespace AST
         Node base;
         Context_Change_Type type;
         union {
-            struct {
-                Context_Setting setting;
-                bool is_invalid;
-                Expression* expression;
-            } change;
             Path_Lookup* context_import_path;
-            struct {
-                Context_Function function;
-                Dynamic_Array<Argument*> arguments;
-            } call;
+            Dynamic_Array<Argument*> arguments;
         } options;
     };
 
@@ -470,7 +421,5 @@ namespace AST
     AST::Node* upcast(T* node) {
         return &node->base;
     }
-
-    String* context_setting_to_string(Context_Setting setting);
 }
 

@@ -544,6 +544,7 @@ struct Context_Change_Info
             bool has_commutative_version;
             Operator_Overload_Key commutative_key;
         } operator_overload;
+        Context_Option option;
     } options;
 };
 

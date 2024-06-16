@@ -10,8 +10,8 @@ main::()
 		The difference is that Any also stores the type of the given value.
 		This type serves the same purpose as the tag of tagged unions.
 	
-	context to_any=.AUTO
-	context array_to_slice=.AUTO
+	context set_option(.TO_ANY,.AUTO)
+	context set_option(.ARRAY_TO_SLICE,.AUTO)
 	
 	val_int:int=5
 	val_bool:bool=false
@@ -87,7 +87,8 @@ mini_calc::(ops:[]Any)->struct
 	success:bool
 	value:int
 
-	context from_any=.IMPLICIT
+	context set_option(.FROM_ANY,.IMPLICIT)
+	
 	i:=0
 	result:=0
 	status:enum

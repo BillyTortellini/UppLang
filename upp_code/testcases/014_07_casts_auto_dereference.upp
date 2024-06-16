@@ -14,7 +14,7 @@ main::()
 	i:=15
 	ip:=*i
 	
-	context auto_dereference=true
+	context set_option(.AUTO_DEREFERENCE,true)
 	a:=double(ip)
 	b:=double(i)
 	assert(a==b)

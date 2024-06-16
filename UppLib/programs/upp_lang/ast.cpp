@@ -18,10 +18,10 @@ namespace AST
             break;
         case Node_Type::CONTEXT_CHANGE: {
             auto change = (Context_Change*)node;
-            if (change->type != Context_Change_Type::CONTEXT_FUNCTION_CALL) {
+            if (change->type != Context_Change_Type::IMPORT_CONTEXT) {
                 break;
             }
-            dynamic_array_destroy(&change->options.call.arguments);
+            dynamic_array_destroy(&change->options.arguments);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -191,12 +191,12 @@ namespace AST
             auto context = (Context_Change*)node;
             switch (context->type)
             {
-            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
-                FILL_ARRAY(context->options.call.arguments);
+            case Context_Change_Type::ADD_OVERLOAD: {
+                FILL_ARRAY(context->options.arguments);
                 break;
             }
-            case Context_Change_Type::SETTING_CHANGE: {
-                FILL(context->options.change.expression);
+            case Context_Change_Type::SET_OPTION: {
+                FILL_ARRAY(context->options.arguments);
                 break;
             }
             case Context_Change_Type::IMPORT_CONTEXT: {
@@ -451,12 +451,12 @@ namespace AST
             auto context = (Context_Change*)node;
             switch (context->type)
             {
-            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
-                FILL_ARRAY(context->options.call.arguments);
+            case Context_Change_Type::ADD_OVERLOAD: {
+                FILL_ARRAY(context->options.arguments);
                 break;
             }
-            case Context_Change_Type::SETTING_CHANGE: {
-                FILL(context->options.change.expression);
+            case Context_Change_Type::SET_OPTION: {
+                FILL_ARRAY(context->options.arguments);
                 break;
             }
             case Context_Change_Type::IMPORT_CONTEXT: {
@@ -750,12 +750,12 @@ namespace AST
             auto context = (Context_Change*)base;
             switch (context->type)
             {
-            case Context_Change_Type::CONTEXT_FUNCTION_CALL: {
-                string_append_formated(str, "CUSTOM_CAST");
+            case Context_Change_Type::ADD_OVERLOAD: {
+                string_append_formated(str, "ADD_OVERLOAD");
                 break;
             }
-            case Context_Change_Type::SETTING_CHANGE: {
-                string_append_formated(str, "CONTEXT_CHANGE %s", context_setting_to_string(context->options.change.setting)->characters);
+            case Context_Change_Type::SET_OPTION: {
+                string_append_formated(str, "SET_OPTION");
                 break;
             }
             case Context_Change_Type::IMPORT_CONTEXT: {
@@ -1064,9 +1064,5 @@ namespace AST
         result.start = node_position_make_block_start(index);
         result.end = node_position_make_block_end(index);
         return result;
-    }
-
-    String* context_setting_to_string(Context_Setting setting) {
-        return compiler.predefined_ids.context_settings[(int)setting];
     }
 }

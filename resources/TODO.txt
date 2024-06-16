@@ -1,18 +1,27 @@
 
-I can probably remove the add_custom_cast and replace it with:
-    add_operator_overload("cast", function, auto-operator...)
-Rework cast overloads to use the same things (e.g. function instanciation does the same)
+To make pointers truly interchangable with values,
+we add the new pointer-assignment syntax.
+
+Questions:
+    * How do pointer-pointers work
+    * Wat does this do?
 
 TODO:
-    * Rework cast overloads to use the same things
-    * Command to instanciate polymorphic functions
-    * Context cast-settings should also use function-call syntax, e.g. context change_cast_setting(.INTEGER_SIZE_UPCAST, .AUTO)
-    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
-    * Create operators +=, -=, *=, /=, %= 
-    * Polymorphic custom casts could use Struct-Template if possible for performance
     * New pointer assignment syntax a: *int =* i, ip :=* something
+        --> Probabaly set auto-address of and auto-dereference default to true
+    * Create operators +=, -=, *=, /=, %= 
+    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
+
+    * Dot-Calls
+    * Custom-Member accesses
+    * Iterators
+    * Command to instanciate polymorphic functions
 
 DONE:
+    * Context cast-settings should also use function-call syntax, e.g. context change_cast_setting(.INTEGER_SIZE_UPCAST, .AUTO)
+    * Rework cast overloads to use the same things
+    * Make all testcases work again!
+    * Context better editor compatability, e.g. context auto-complete
     * Polymorphic overloads for []
     * Reworked polymorphic instanciation (Simpler + still works)
     
@@ -41,119 +50,6 @@ DONE:
 
 
 
-Ok, just to sum some things up abut polymorphism:
- * I need some simpler way of analysis for:
-    -> Custom Casts (cast optional)
-    -> Array-Access
-    -> Dot-Calls (array.add(15))
-    -> Custom Member access (vec4.x)
-    -> Instanciation, e.g. instanciate foo(T=int, comptime=15)
-        --> Will probably need it's own function anyway, as the analysis order isn't clear here
-
-In theory if I could just reuse the main logic of instanciation to do this,
-except for instanciation, as not all arguments are required...
-
-Let's give me some more time to read the implementation, maybe I can make it simpler?
-
-
-
-
-Do I need polymorphic operator overloads?
-When do I need those, I want one example plz
-
-Polymorphic operator overloads:
-
-add :: (a: Vec($T, $C), b: Vec(T, C)) -> Vec(T, C)
-
-
-// Notes:
-Polymorphic Function, first argument must not have dependencies
-    * First argument needs to be struct-template instance or pointer to it
-    * 2nd argument has 3 options:
-        - Not polymorphic, normal type, e.g. int or float
-        - Is also a struct-template instance --> Not quite sure if this is actually correct, this is probably always an error-type
-        - Or it depends on the firs type --> Which means something?
-
-Question:
-    - How is this stored/queried? e.g. Should it be
-        * hashtable<Struct_Base, Overloads>
-        * hashtable<Datatype-Pair
-
-Different cases:
-    add :: (a: Vec($T), b: Vec(T)) -> Vec(T)
-               Instance-Template, Error, Error
-    add :: (a: Vec($T), b: Foo($F)) -> Vec($T)
-               Instance-Template, Instance-Template -> Something
-    add :: (a: Vec($T), b: float)
-
-
-
-Question:
-Should my vector be written as:
-    Vector :: struct(T:TH, C: int)
-        values: [C]T
-or
-    Arithmetic_Type :: struct(T: Type_Handle)
-        add: (a: T, b: T) -> T
-        sub: (a: T, b: T) -> T
-        mult: (a: T, b: T) -> T
-        div: (a: T, b: T) -> T
-        
-    Vector :: struct(A: Arithmetic_Type($T), C: int)
-        values: [C]T
-
-    vector_binop :: (a: Vector($T), b: Vector(T), $binop: (a: T, b: T)->T) -> Vector(T)
-        result: Vector(T)
-        for i := 0; i < a.size; i+=1
-            result[i] = binop(a[i], b[i])
-        return result
-        
-// To be fair I only need vec4, vec3, vec2, vec1 + mat4, mat3, mat2
-    + Maybe int or bool vectors at some point
-
-    Hashtable :: (T:Type_Handle, hash_fn: (value: T)->u64, equals_fn:(a: T, b: T)->bool)
-    a: Hashtable(int, int_hash, int_equals)
-    a: Hashtable(Int_Hashable)
-    Dynamic_Array :: struct
-        buffer: []T
-        size: int
-        allocator: *Allocator
-
-Allocator:
-    new_fn: (allocator: *Allocator, size: int, alignment: int) -> void_pointer
-    delete_fn: (allocator: *Allocator, data: void_pointer, size: int)
-    alloc_data: Any
-            
-
-
-
-context add_operator_overload("+", add)
-    
-
-
-
-
-Syntax:
-    context integer_size_upcast = .IMPLICIT
-
-Semantic Analysis:
-    * Context is bound to symbol table? --> Root symbol table sets the default options
-    * Symbol tables have a pointer (which is either owning or non-owning) to the operator_context
-        --> Changing the context in a symbol table should be ezy
-    * When doing casts first the operators are looked up
-    
-
-TODO:
-    1. add operator as keyword
-    2. Parse the thing correctly
-        * Modules now may also hold operators
-    3. Semantic analyser needs to hold operator-context (Probably in current symbol table), which is also inherited
-        * Before normal analysis of functions/structs/whatever can happen, the operators need to be resolved
-
-When do I analyse the operators in Modules?
-    1. Analyse modules (Find/add all symbols)
-    2. Handle imports
-
 
 
 
@@ -168,11 +64,11 @@ Operations that should depend on the context:
     operator cast auto_address_of = false
  * Importing operators from other scopes (Probably just goes through things and set's them again) 
     operator import Dynamic_Array~Operations
-
  * Operator Overloading
     - Binary operations +, -, *, /, %, ==, <, <=
     - Unary operations (Probably only - for math operations)
     - Array access [] (For datastructures)
+
  * dot-calls
  * Custom member accesses (e.g. set a setter/getter function for some new name...) --> Mostly for a: vec4 = ...; a.x, a.y, a.z
  * Iterators

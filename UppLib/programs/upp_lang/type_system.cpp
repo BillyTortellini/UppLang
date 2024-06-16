@@ -1326,6 +1326,12 @@ void type_system_add_predefined_types(Type_System* system)
             add_enum_member(types->upp_operator, ids.upp_operator_enum_values[i], i);
         }
         type_system_finish_enum(types->upp_operator);
+
+        types->context_option = type_system_make_enum_empty(ids.context_option);
+        for (int i = 1; i < (int)Context_Option::MAX_ENUM_VALUE; i++) {
+            add_enum_member(types->context_option, ids.context_option_enum_values[i], i);
+        }
+        type_system_finish_enum(types->context_option);
     }
 
 
@@ -1501,14 +1507,15 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_read_bool = type_system_make_function({});
         types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
 
-        types->type_add_custom_cast = type_system_make_function({
-                make_param(upcast(types->any_type), "cast_function"), 
-                make_param(upcast(types->cast_mode), "cast_mode") 
+        types->type_set_option = type_system_make_function({
+                make_param(upcast(types->context_option), "option"), 
+                make_param(upcast(types->cast_mode), "cast_mode") // Type doesn't really matter here
             } 
         );
-        types->type_add_operator_overload = type_system_make_function({
+        types->type_add_overload = type_system_make_function({
                 make_param(upcast(types->upp_operator), "operator"), 
                 make_param(upcast(types->any_type), "function"),
+                make_param(upcast(types->cast_mode), "cast_mode", true),
                 make_param(upcast(types->bool_type), "commutative", true)
             }
         );
@@ -1588,4 +1595,15 @@ bool datatype_is_unknown(Datatype* a) {
 
 bool type_size_is_unfinished(Datatype* a) {
     return !a->memory_info.available;
+}
+
+Datatype* datatype_get_pointed_to_type(Datatype* type, int* pointer_level_out)
+{
+    *pointer_level_out = 0;
+    while (type->type == Datatype_Type::POINTER) {
+        type = downcast<Datatype_Pointer>(type)->points_to_type;
+        *pointer_level_out += 1;
+    }
+
+    return type;
 }

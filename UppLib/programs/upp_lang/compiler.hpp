@@ -57,11 +57,13 @@ struct Predefined_IDs
     String* tag;
 
     // Context members 
-    String* context_settings[(int)AST::Context_Setting::MAX_ENUM_VALUE];
     String* id_import;
-    String* add_custom_cast;
+    String* add_overload;
+    String* set_option;
 
-    String* add_operator_overload;
+    String* context_option;
+    String* context_option_enum_values[(int)Context_Option::MAX_ENUM_VALUE];
+
     String* upp_operator;
     String* upp_operator_enum_values[(int)Upp_Operator::MAX_ENUM_VALUE];
     String* upp_operator_corresponding_tokens[(int)Upp_Operator::MAX_ENUM_VALUE]; // E.g. +, -, *, /

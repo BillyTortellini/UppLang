@@ -884,17 +884,25 @@ void code_completion_find_suggestions()
             }
         }
     }
-    else if (node->type == AST::Node_Type::CONTEXT_CHANGE) {
-        if (editor.space_before_cursor && cursor_token_index.token == 0) {
-            fill_context_options = true;
-        }
-        else if (cursor_token_index.token == 1 && !editor.space_before_cursor) {
-            fill_context_options = true;
+
+    if (!fill_from_symbol_table && !fill_context_options)
+    {
+        auto& tokens = index_value_text(editor.cursor.line_index)->tokens;
+        if (tokens.size != 0 && tokens[0].type == Token_Type::KEYWORD && tokens[0].options.keyword == Keyword::CONTEXT)
+        { 
+            if (editor.space_before_cursor && cursor_token_index.token == 0) {
+                fill_context_options = true;
+            }
+            else if (cursor_token_index.token == 1 && !editor.space_before_cursor) {
+                fill_context_options = true;
+            }
         }
     }
-    else {
+
+    if (!fill_from_symbol_table && !fill_context_options) {
         fill_from_symbol_table = true;
     }
+
 
     // Early exit if nothing has been typed (And we aren't on member access or similar)
     if (partially_typed.size == 0 && fill_from_symbol_table && specific_table == 0 && !fill_context_options) {
@@ -917,12 +925,9 @@ void code_completion_find_suggestions()
     else if (fill_context_options)
     {
         auto& ids = compiler.predefined_ids;
-        for (int i = 0; i < (int)AST::Context_Setting::MAX_ENUM_VALUE; i++) {
-            code_completion_add_and_rank(*ids.context_settings[i], partially_typed);
-        }
-        code_completion_add_and_rank(*ids.add_custom_cast, partially_typed);
+        code_completion_add_and_rank(*ids.add_overload, partially_typed);
         code_completion_add_and_rank(*ids.id_import, partially_typed);
-        code_completion_add_and_rank(*ids.add_operator_overload, partially_typed);
+        code_completion_add_and_rank(*ids.set_option, partially_typed);
     }
 
     if (suggestions.size == 0) return;
