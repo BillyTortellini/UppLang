@@ -16,9 +16,6 @@
 	
 	This is done by tracking the context of the Expression
 
-context set_option(.AUTO_DEREFERENCE,true)
-context set_option(.AUTO_ADDRESS_OF,true)
-
 Sum::struct
 	a:int
 	b:int
@@ -64,8 +61,8 @@ main::()
 		
 		sum_p:=*sum
 		sum_pp:=*sum_p
-		sum_ppp:=*sum_pp
-		sum_pppp:=*sum_ppp
+		sum_ppp:=**sum_pp
+		sum_pppp:=**sum_ppp
 		
 		res:int
 		assert(calc_sum1(sum)==12)
@@ -86,9 +83,9 @@ main::()
 		a:*float=*val1
 		b:*float=*val1
 		
-		assert(a*==b)
+		assert(a==*b)
 		b=*val2
-		assert(a*!=b)
+		assert(a!=*b)
 		
 		
 		i:i32=128

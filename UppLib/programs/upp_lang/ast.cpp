@@ -726,6 +726,9 @@ namespace AST
             break;
         }
         case Node_Type::DEFINITION: {
+            if (downcast<Definition>(base)->is_pointer_definition) {
+                string_append_formated(str, "POINTER-");
+            }
             string_append_formated(str, "DEFINITION");
             break;
         }
@@ -848,7 +851,13 @@ namespace AST
             {
             case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
             case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
-            case Statement_Type::ASSIGNMENT: string_append_formated(str, "ASSIGNMENT"); break;
+            case Statement_Type::ASSIGNMENT: {
+                if (stat->options.assignment.is_pointer_assign) {
+                    string_append_formated(str, "POINTER-");
+                }
+                string_append_formated(str, "ASSIGNMENT"); 
+                break;
+            }
             case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
             case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
             case Statement_Type::IMPORT: string_append_formated(str, "IMPORT"); break;

@@ -50,6 +50,7 @@ void polymorphic_base_info_destroy(Polymorphic_Base_Info* info);
 bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count = 0);
 Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table);
 void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context);
+bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level);
 
 
 
@@ -836,6 +837,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     // Create workload for global variables/comptime definitions
     auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
     definition_workload->symbol = symbol;
+    definition_workload->is_pointer_definition = definition->is_pointer_definition;
     definition_workload->is_comptime = definition->is_comptime;
     definition_workload->type_node = 0;
     if (is_global_variable && definition->types.size != 0) {
@@ -1493,14 +1495,13 @@ Expression_Context expression_context_make_auto_dereference() {
     return context;
 }
 
-Expression_Context expression_context_make_specific_type(Datatype* signature, bool is_assignment = false, Cast_Mode cast_mode = Cast_Mode::AUTO) {
+Expression_Context expression_context_make_specific_type(Datatype* signature, Cast_Mode cast_mode = Cast_Mode::AUTO) {
     if (datatype_is_unknown(signature)) {
         return expression_context_make_unknown(true);
     }
     Expression_Context context;
     context.type = Expression_Context_Type::SPECIFIC_TYPE_EXPECTED;
     context.expected_type.type = signature;
-    context.expected_type.is_assignment_context = is_assignment;
     context.expected_type.cast_mode = cast_mode;
     return context;
 }
@@ -3396,15 +3397,41 @@ void analysis_workload_entry(void* userdata)
         {
             Expression_Context context = expression_context_make_unknown();
             Datatype* type = 0;
-            if (definition->type_node != 0) {
+            if (definition->type_node != 0) 
+            {
                 type = semantic_analyser_analyse_expression_type(definition->type_node);
+                bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
+                if (definition->is_pointer_definition && !is_pointer) {
+                    log_semantic_error("Pointer definition reqires pointer type", definition->type_node);
+                    type = types.error_type;
+                }
+                else if (!definition->is_pointer_definition && is_pointer && definition->value_node != 0) {
+                    log_semantic_error("Pointer type definition requires a pointer assignment =*", definition->type_node);
+                }
             }
             if (definition->value_node != 0) {
                 if (type != 0) {
                     semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_specific_type(type));
                 }
                 else {
-                    type = semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_unknown());
+                    type = semantic_analyser_analyse_expression_value(
+                        definition->value_node, definition->is_pointer_definition ? expression_context_make_unknown() : expression_context_make_auto_dereference()
+                    );
+                    bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
+                    // Force address of if it's a pointer definition
+                    if (definition->is_pointer_definition && is_pointer) 
+                    {
+                        if (try_updating_expression_pointer_level(definition->value_node, type, 0, 1)) {
+                            type = upcast(type_system_make_pointer(type));
+                        }
+                        else {
+                            log_semantic_error("Expression must be a pointer/convertable to pointer in pointer definitions!", definition->value_node);
+                            type = types.error_type;
+                        }
+                    }
+                    else if (!definition->is_pointer_definition && is_pointer) {
+                        log_semantic_error("Pointer value requires pointer assignment, e.g. =* or :=*", definition->value_node);
+                    }
                 }
             }
 
@@ -5586,7 +5613,7 @@ Instanciation_Result instanciate_polymorphic_callable(
     semantic_analyser.current_workload->current_expression = new_info; \
     SCOPE_EXIT(semantic_analyser.current_workload->current_expression = _backup_info);
 
-bool try_updating_expression_pointer_level(AST::Expression * expr, Datatype * deref_type, int given_pointer_level, int expected_pointer_level)
+bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level)
 {
     auto context = semantic_analyser.current_workload->current_symbol_table->operator_context;
     bool auto_deref = operator_context_get_boolean_option(context, Context_Option::AUTO_DEREFERENCE);
@@ -6177,12 +6204,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         Expression_Context operand_context;
         if (cast->to_type.available) {
             auto destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
-            operand_context = expression_context_make_specific_type(destination_type, false, Cast_Mode::EXPLICIT);
+            operand_context = expression_context_make_specific_type(destination_type, Cast_Mode::EXPLICIT);
         }
         else
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                operand_context = expression_context_make_specific_type(context.expected_type.type, false, Cast_Mode::IMPLICIT);
+                operand_context = expression_context_make_specific_type(context.expected_type.type, Cast_Mode::IMPLICIT);
             }
             else {
                 log_semantic_error("No context is available for auto cast", expr);
@@ -7338,7 +7365,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 }
 
 Expression_Cast_Info semantic_analyser_check_if_cast_possible(
-    AST::Expression* expression, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode, bool auto_operations_valid = true)
+    AST::Expression* expression, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -7472,16 +7499,16 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
     }
 
     // Check auto_address_of (Afterwards no cast is valid anymore)
-    const bool auto_address_of = auto_operations_valid && operator_context_get_boolean_option(operator_context, Context_Option::AUTO_ADDRESS_OF);
+    const bool auto_address_of = operator_context_get_boolean_option(operator_context, Context_Option::AUTO_ADDRESS_OF);
     if (destination_type->type == Datatype_Type::POINTER && auto_address_of) {
-        if (types_are_equal(downcast<Datatype_Pointer>(destination_type)->points_to_type, source_type)) {
+        if (types_are_equal(downcast<Datatype_Pointer>(destination_type)->points_to_type, source_type) && expression_has_memory_address(expression)) {
             result.take_address_of = true;
             result.cast_type = Cast_Type::NO_CAST;
             return result;
         }
     }
 
-    const bool auto_dereference = auto_operations_valid && operator_context_get_boolean_option(operator_context, Context_Option::AUTO_DEREFERENCE);
+    const bool auto_dereference = operator_context_get_boolean_option(operator_context, Context_Option::AUTO_DEREFERENCE);
     if (source_type->type == Datatype_Type::POINTER && !auto_dereference) {
         return result;
     }
@@ -7882,9 +7909,8 @@ Expression_Cast_Info expression_context_apply(
         return result;
     }
     case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED: {
-        result = semantic_analyser_check_if_cast_possible(expression,
-            initial_type, context.expected_type.type, context.expected_type.cast_mode,
-            !(context.expected_type.is_assignment_context && context.expected_type.type->type == Datatype_Type::POINTER)
+        result = semantic_analyser_check_if_cast_possible(
+            expression, initial_type, context.expected_type.type, context.expected_type.cast_mode 
         );
 
         // Check for errors
@@ -8108,7 +8134,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
             context->cast_mode_settings[i - CONTEXT_OPTION_CAST_MODE_START] = Cast_Mode::EXPLICIT;
         }
         for (int i = CONTEXT_OPTION_BOOL_START; i <= CONTEXT_OPTION_BOOL_END; i++) {
-            context->boolean_settings[i - CONTEXT_OPTION_BOOL_START] = false;
+            context->boolean_settings[i - CONTEXT_OPTION_BOOL_START] = true;
         }
     }
     else
@@ -9027,84 +9053,57 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::ASSIGNMENT:
     {
         auto& assignment_node = statement->options.assignment;
-        info->specifics.is_struct_split = false;
+        info->specifics.is_struct_split = false; // Note: Struct split has been removed currently
 
-        if (assignment_node.right_side.size == 1) // Could be Broadcast
+        // Analyse left side
+        Datatype* left_side_type = 0;
+        bool left_side_all_same_type = true;
+        for (int i = 0; i < assignment_node.left_side.size; i++)
         {
-            // Analyse left side
-            Datatype* left_side_type = 0;
-            bool left_side_all_same_type = true;
-            for (int i = 0; i < assignment_node.left_side.size; i++)
-            {
-                auto left = assignment_node.left_side[i];
-                auto left_type = semantic_analyser_analyse_expression_value(left, expression_context_make_unknown());
-                if (!expression_has_memory_address(left)) {
-                    log_semantic_error("Cannot assign to a temporary value", upcast(left));
-                }
-                if (left_side_type == 0) {
-                    left_side_type = left_type;
-                }
-                else if (left_side_type != left_type) {
-                    left_side_all_same_type = false;
-                }
+            auto left = assignment_node.left_side[i];
+            auto left_type = semantic_analyser_analyse_expression_value(
+                left, assignment_node.is_pointer_assign ? expression_context_make_unknown() : expression_context_make_auto_dereference()
+            );
+            if (!expression_has_memory_address(left)) {
+                log_semantic_error("Cannot assign to a temporary value", upcast(left));
+            }
+            bool is_pointer = left_type->type == Datatype_Type::POINTER || left_type->type == Datatype_Type::VOID_POINTER;
+            if (assignment_node.is_pointer_assign && !is_pointer && !datatype_is_unknown(left_type)) {
+                log_semantic_error("Pointer assignment requires left-side to be a pointer!", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
             }
 
-            // Analyse right side
-            if (assignment_node.left_side.size > 1)
-            {
-                // Broadcast or Struct-Split
-                Datatype* right_type = semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_unknown());
-                if (right_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(right_type)->struct_type == AST::Structure_Type::STRUCT)
-                {
-                    info->specifics.is_struct_split = true;
-                    // Found struct split, check if all members have correct type
-                    auto& members = downcast<Datatype_Struct>(right_type)->members;
-                    if (members.size < assignment_node.left_side.size) {
-                        log_semantic_error("Struct-Split not working, not enough members to fill all left side values", upcast(assignment_node.right_side[0]));
-                    }
-                    else if (members.size > assignment_node.left_side.size) {
-                        log_semantic_error("More struct members then left side values!", upcast(assignment_node.right_side[0]));
-                    }
+            if (left_side_type == 0) {
+                left_side_type = left_type;
+            }
+            else if (!types_are_equal(left_side_type, left_type)) {
+                left_side_all_same_type = false;
+            }
+        }
 
-                    // Check all types
-                    for (int i = 0; i < assignment_node.left_side.size && i < members.size; i++) {
-                        auto left_info = get_info(assignment_node.left_side[i]);
-                        if (left_info->result_type != Expression_Result_Type::VALUE) {
-                            continue; // This will have thrown an error earlier
-                        }
-                        auto left_type = expression_info_get_type(left_info, false);
-                        auto member_type = members[i].type;
-                        if (member_type != left_type) {
-                            log_semantic_error("Struct split not working, types don't match", upcast(assignment_node.left_side[i]));
-                            log_error_info_expected_type(left_type);
-                            log_error_info_given_type(member_type);
-                        }
-                    }
-                }
-            }
-            else {
-                // Normal value assignment
-                semantic_analyser_analyse_expression_value(assignment_node.right_side[0], expression_context_make_specific_type(left_side_type, true));
-            }
+        if (assignment_node.right_side.size == 1 && left_side_all_same_type) {
+            // Broadcast
+            Datatype* right_type = semantic_analyser_analyse_expression_value(
+                assignment_node.right_side[0], expression_context_make_specific_type(left_side_type)
+            );
         }
         else
         {
-            for (int i = 0; i < assignment_node.left_side.size; i++) {
-                auto left_node = assignment_node.left_side[i];
-                auto left_type = semantic_analyser_analyse_expression_value(left_node, expression_context_make_unknown());
-                if (!expression_has_memory_address(left_node)) {
-                    log_semantic_error("Cannot assign to a temporary value", upcast(left_node));
-                }
-
-                if (i < assignment_node.right_side.size) {
-                    semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_specific_type(left_type, true));
-                }
+            if (assignment_node.left_side.size != assignment_node.right_side.size) {
+                log_semantic_error("Left side and right side of assignment have different count", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
             }
 
-            // Analyse missed right values
-            for (int i = assignment_node.left_side.size; i < assignment_node.right_side.size; i++) {
-                semantic_analyser_analyse_expression_value(assignment_node.right_side[i], expression_context_make_unknown());
-                log_semantic_error("Not enough values on left side", upcast(assignment_node.right_side[i]));
+            // Analyse right side
+            for (int i = 0; i < assignment_node.right_side.size; i++) {
+                auto right_node = assignment_node.right_side[i];
+                Expression_Context context;
+                if (i < assignment_node.left_side.size) {
+                    auto left_node = assignment_node.left_side[i];
+                    context = expression_context_make_specific_type(expression_info_get_type(get_info(left_node), false));
+                }
+                else {
+                    context = expression_context_make_unknown(true);
+                }
+                semantic_analyser_analyse_expression_value(right_node, context);
             }
         }
 
@@ -9120,138 +9119,110 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& types = definition->types;
         auto& symbol_nodes = definition->symbols;
         auto& values = definition->values;
-        info->specifics.is_struct_split = false;
+        auto& predefined_types = compiler.type_system.predefined_types;
+        info->specifics.is_struct_split = false; // Note: removed currently
 
         // Check if this was already handled at block start
         if (definition->is_comptime) {
             EXIT(Control_Flow::SEQUENTIAL);
         }
 
-        // Log errors if there are more symbols then values/types
-        for (int i = 0; i < symbol_nodes.size; i++) {
-            bool error = false;
-            if (i >= types.size && types.size > 2) {
-                log_semantic_error("No type exists for symbol", upcast(symbol_nodes[i]));
-                error = true;
-            }
-            if (i >= values.size && values.size > 2) {
-                log_semantic_error("No value exists for symbol", upcast(symbol_nodes[i]));
-                error = true;
-            }
-            if (error) {
-                auto symbol = get_info(symbol_nodes[i])->symbol;
-                symbol->type = Symbol_Type::VARIABLE;
-                symbol->options.variable_type = type_system.predefined_types.error_type;
-            }
-        }
-
-        // Analyse all types
-        bool types_exist = types.size != 0;
-        for (int i = 0; i < types.size; i++)
+        for (int i = 0; i < symbol_nodes.size; i++)
         {
-            auto type_expr = types[i];
-            auto type = semantic_analyser_analyse_expression_type(type_expr);
-            if (definition->types.size == 1) { // Broadcast type to all symbols
-                for (int j = 0; j < symbol_nodes.size; j++) {
-                    auto symbol = get_info(symbol_nodes[j])->symbol;
-                    symbol->type = Symbol_Type::VARIABLE;
-                    symbol->options.variable_type = type;
+            // Get type of variable
+            Datatype* type = predefined_types.error_type;
+            if (i < types.size) 
+            {
+                type = semantic_analyser_analyse_expression_type(types[i]);
+                bool type_is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
+                if (definition->is_pointer_definition && !type_is_pointer) {
+                    log_semantic_error("Pointer definition requires pointer-type", types[i]);
+                    type = predefined_types.error_type;
+                }
+                else if (type_is_pointer && !definition->is_pointer_definition && !values.size == 0) {
+                    log_semantic_error("Pointer type definition requires a pointer assignment =*", types[i]);
                 }
             }
-            else if (i < symbol_nodes.size) { // One-to-One type to symbol 
-                auto symbol = get_info(symbol_nodes[i])->symbol;
-                symbol->type = Symbol_Type::VARIABLE;
-                symbol->options.variable_type = type;
+            else if (types.size == 1) {
+                auto info = get_info(types[0]);
+                if (info->result_type == Expression_Result_Type::TYPE) {
+                    type = info->options.type;
+                }
+                else {
+                    type = predefined_types.error_type;
+                }
+            }
+            else if (types.size == 0) {
+                type = predefined_types.error_type;
             }
             else {
-                log_semantic_error("No symbol/variable defined for this type (To many types!)", upcast(type_expr));
+                type = predefined_types.error_type;
+                log_semantic_error("No type-expression exists for symbol", upcast(symbol_nodes[i]));
             }
-        }
 
-        // Analyse values
-        for (int i = 0; i < values.size; i++)
-        {
-            auto& value_expr = values[i];
-            if (values.size == 1 && symbol_nodes.size > 1)
+            // Analyse value
+            if (i < values.size) 
             {
-                // Broadcast/Struct-split
-                auto value_type = semantic_analyser_analyse_expression_value(definition->values[0], expression_context_make_unknown());
-                bool is_split = value_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(value_type)->struct_type == AST::Structure_Type::STRUCT;
-                info->specifics.is_struct_split = is_split;
-
-                // On split, report error for excess/missing symbols
-                if (is_split) {
-                    auto& members = downcast<Datatype_Struct>(value_type)->members;
-                    for (int j = members.size; j < symbol_nodes.size; j++) {
-                        log_semantic_error("Struct does not have enough values to fill this variable", upcast(symbol_nodes[j]));
-                    }
-                    if (symbol_nodes.size < members.size) {
-                        log_semantic_error("More symbols are required for struct broadcast, all members need to have a symbol", upcast(value_expr));
-                    }
-                }
-
-                // Check if all defined types match
-                for (int j = 0; j < symbol_nodes.size; j++)
-                {
-                    auto symbol = get_info(symbol_nodes[j])->symbol;
-                    assert(symbol->type == Symbol_Type::VARIABLE || symbol->type == Symbol_Type::VARIABLE_UNDEFINED, "");
-
-                    // Get expected type
-                    Datatype* given_type;
-                    if (is_split) {
-                        auto& members = downcast<Datatype_Struct>(value_type)->members;
-                        if (j < members.size) {
-                            given_type = members[j].type;
-                        }
-                        else {
-                            log_semantic_error("Too many symbols/struct does not have this many members", value_expr);
-                            symbol->type = Symbol_Type::VARIABLE;
-                            symbol->options.variable_type = type_system.predefined_types.error_type;
-                            continue;
-                        }
+                Expression_Context context;
+                if (datatype_is_unknown(type)) {
+                    if (definition->is_pointer_definition) {
+                        context = expression_context_make_unknown();
                     }
                     else {
-                        given_type = value_type;
-                    }
-
-                    // Check if definition type and expected type matches
-                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED || (symbol->type == Symbol_Type::VARIABLE && datatype_is_unknown(symbol->options.variable_type))) {
-                        symbol->type = Symbol_Type::VARIABLE;
-                        symbol->options.variable_type = given_type;
-                    }
-                    else if (symbol->options.variable_type != given_type) {
-                        log_semantic_error("Value type does not match defined type!", value_expr);
-                        log_error_info_given_type(given_type);
-                        log_error_info_expected_type(symbol->options.variable_type);
-                    }
-                }
-            }
-            else
-            {
-                // Assign each value to the given symbol
-                Expression_Context context = expression_context_make_unknown();
-                if (i < symbol_nodes.size) {
-                    auto symbol = get_info(symbol_nodes[i])->symbol;
-                    if (symbol->type == Symbol_Type::VARIABLE && !datatype_is_unknown(symbol->options.variable_type)) {
-                        context = expression_context_make_specific_type(symbol->options.variable_type);
+                        context = expression_context_make_auto_dereference();
                     }
                 }
                 else {
-                    log_semantic_error("Too many expressions. No variable symbol is given for this expression", value_expr);
+                    context = expression_context_make_specific_type(type);
                 }
 
-                // Analyse value
-                auto value_type = semantic_analyser_analyse_expression_value(value_expr, context);
+                type = semantic_analyser_analyse_expression_value(values[i], context);
+                bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
 
-                // Set variable type if it wasn't already set
-                if (i < symbol_nodes.size) {
-                    auto symbol = get_info(symbol_nodes[i])->symbol;
-                    if (symbol->type == Symbol_Type::VARIABLE_UNDEFINED) {
-                        symbol->type = Symbol_Type::VARIABLE;
-                        symbol->options.variable_type = value_type;
+                // Force address of if it's a pointer definition
+                if (definition->is_pointer_definition && !is_pointer && types.size == 0 && !datatype_is_unknown(type)) {
+                    if (try_updating_expression_pointer_level(values[i], type, 0, 1)) {
+                        type = upcast(type_system_make_pointer(type));
+                    }
+                    else {
+                        log_semantic_error("Expression must be a pointer/convertable to pointer in pointer definitions!", values[i]);
+                        type = predefined_types.error_type;
                     }
                 }
+                else if (!definition->is_pointer_definition && is_pointer) {
+                    log_semantic_error("Pointer value requires pointer assignment, e.g. =* or :=*", values[i]);
+                }
             }
+            else if (values.size == 1) {
+                auto broadcast_value_type = expression_info_get_type(get_info(values[0]), false);
+                if (!types_are_equal(broadcast_value_type, type) && !datatype_is_unknown(type) && !datatype_is_unknown(broadcast_value_type)) {
+                    log_semantic_error("Type does not match right-side type", upcast(symbol_nodes[i]));
+                    type = predefined_types.error_type;
+                }
+                else {
+                    type = broadcast_value_type;
+                }
+            }
+            else if (values.size != 0) {
+                log_semantic_error("No value on right side exists for symbol", upcast(symbol_nodes[i]));
+            }
+
+            auto symbol = get_info(symbol_nodes[i])->symbol;
+            symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
+            symbol->options.variable_type = type;
+        }
+
+        // Set symbols to defined
+        for (int i = 0; i < symbol_nodes.size; i++) {
+            get_info(symbol_nodes[i])->symbol->type = Symbol_Type::VARIABLE;
+        }
+
+        // Analyse overflowing types/values
+        for (int i = symbol_nodes.size; i < types.size; i++) {
+            log_semantic_error("No symbol on left side exists for this type", upcast(types[i]));
+        }
+        for (int i = symbol_nodes.size; i < values.size; i++) {
+            log_semantic_error("No symbol on left side exists for this type", upcast(values[i]));
         }
 
         EXIT(Control_Flow::SEQUENTIAL);

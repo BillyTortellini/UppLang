@@ -3,14 +3,12 @@
 main::()
 	// Since we don't have pointer-arithmetic in Upp,
 	// we need to cast pointers to u64 values, and cast them back
-	context set_option(.AUTO_DEREFERENCE,true)
-	
 	values:[3]int=.[1,2,3]
 	ip:*int=*values[0]
 	address:u64=cast{u64}ip
 	address=address+cast{u64}cast{u32}type_info(int).size
 	
-	ip=cast{*int}address
+	ip=*cast{*int}address
 	&ip=5
 	
 	assert(values[0]==1)

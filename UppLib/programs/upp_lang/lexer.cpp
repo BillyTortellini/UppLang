@@ -39,8 +39,8 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::GREATER_EQUAL: return operator_info_make(">=", Operator_Type::BINOP, true, true);
     case Operator::EQUALS: return operator_info_make("==", Operator_Type::BINOP, true, true);
     case Operator::NOT_EQUALS: return operator_info_make("!=", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_EQUALS: return operator_info_make("*==", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_NOT_EQUALS: return operator_info_make("*!=", Operator_Type::BINOP, true, true);
+    case Operator::POINTER_EQUALS: return operator_info_make("==*", Operator_Type::BINOP, true, true);
+    case Operator::POINTER_NOT_EQUALS: return operator_info_make("!=*", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_COMPTIME: return operator_info_make("::", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER: return operator_info_make(":=", Operator_Type::BINOP, true, true);
     case Operator::AND: return operator_info_make("&&", Operator_Type::BOTH, true, true); // Could also be double dereference &&int_pointer_pointer
@@ -52,6 +52,8 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::ASSIGN_SUB: return operator_info_make("-=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_DIV: return operator_info_make("/=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_MULT: return operator_info_make("*=", Operator_Type::BINOP, true, true);
+    case Operator::ASSIGN_POINTER: return operator_info_make("=*", Operator_Type::BINOP, true, true);
+    case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
     default: panic("");
     }
 

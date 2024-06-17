@@ -5,7 +5,7 @@ Node::struct($T:Type_Handle)
 
 make_node::()->Node($T)
 	result:Node(T)
-	result.next=cast{*Node(T)}null
+	result.next=*null
 	return result
 	
 main::()

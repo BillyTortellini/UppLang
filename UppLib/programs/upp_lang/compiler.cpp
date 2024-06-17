@@ -722,7 +722,6 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("014_05_casts_pointer_arithmetic.upp", true),
         test_case_make("014_06_casts_auto_address_of.upp", true),
         test_case_make("014_07_casts_auto_dereference.upp", true),
-        test_case_make("014_08_casts_address_of_ambiguity_error.upp", false),
         test_case_make("014_09_casts_auto_operations_and_casts.upp", true),
         test_case_make("014_10_casts_auto_operations_and_casts_error.upp", false),
         test_case_make("014_11_casts_more_context_options.upp", true),

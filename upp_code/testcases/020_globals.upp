@@ -8,7 +8,7 @@ init_fn::()->int
 
 //
 	In Theory the global initialization order is determined by the way
-	in which they reference each other, but it may currently be the case
+	in which they reference each other,but it may currently be the case
 	that this does not work correctly
 global_x:int
 global_y:i32=5
@@ -32,6 +32,6 @@ main::()
 	ptr:*int=*global_x
 	&ptr=30
 	assert(global_x==30)
-	global_pointer=ptr
+	global_pointer=*ptr
 	&global_pointer=15
 	assert(&ptr==15)

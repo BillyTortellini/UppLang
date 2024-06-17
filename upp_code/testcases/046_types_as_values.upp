@@ -14,7 +14,7 @@ main::()
 	
 	// Types can be compared to one another with != and ==, but they cannot be casted
 	assert(x==int)
-	assert(y==*int)
+	assert(y==(*int))
 	assert(z==[5]bool)
 	assert(x!=y)
 	assert(y!=z)

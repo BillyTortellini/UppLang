@@ -180,6 +180,7 @@ namespace AST
     {
         Node base;
         bool is_comptime; // :: instead of :=
+        bool is_pointer_definition; // :=* or a: *int =*
         Dynamic_Array<Definition_Symbol*> symbols;
         Dynamic_Array<Expression*> types;
         Dynamic_Array<Expression*> values;
@@ -358,6 +359,7 @@ namespace AST
             struct {
                 Dynamic_Array<Expression*> left_side;
                 Dynamic_Array<Expression*> right_side;
+                bool is_pointer_assign;
             } assignment;
             Code_Block* defer_block;
             struct {

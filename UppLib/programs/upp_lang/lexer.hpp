@@ -32,13 +32,15 @@ enum class Operator
     NOT_EQUALS,
     POINTER_EQUALS,
     POINTER_NOT_EQUALS,
-    DEFINE_COMPTIME,
-    DEFINE_INFER,
+    DEFINE_COMPTIME, // ::
+    DEFINE_INFER, // :=
+    DEFINE_INFER_POINTER, // :=*
     AND,
     OR,
     ARROW,
     DOLLAR,
     ASSIGN,
+    ASSIGN_POINTER, // =*
     ASSIGN_ADD,
     ASSIGN_SUB,
     ASSIGN_MULT,

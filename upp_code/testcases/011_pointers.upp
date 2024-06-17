@@ -1,40 +1,33 @@
 main::()
 	//
-		Pointers in Upp are similar to C Pointers,with some differences in Syntax.
-		When declaring a pointer type,the*is before the type:
-		C:int*x;
-		Upp:x:*int;
+		Pointer type-syntax:
+		Make pointer type: *[Datatype]
+		Address-Of: *[value]
+		Dereference: &[pointer_value]
 		
-		The same is true for arrays
-		C:int x[5]
-		Upp:x:[5]int
+		Per default pointers get automatically dereferenced, so pointers
+		can be used interchangably with normal values.
+		Also, if it's clear from context the address-of operator is applied
+		when a pointer type is required
 		
-		Combinations are also possible,which cannot be done in C since array syntax is after ID
-		C:int*x[5];// Array of 5 int*
-		Upp:x:[5]*[3]*int;// Array 5 of Pointer to Array 3 of int pointer
+		This is possible because all Pointer-Operations have a different syntax
+		than their value counterparts. These are:
+		 * Array access: Doesn't work on pointers, use slices
+		 * Pointer comparison/arithmetic: New syntax ==* and !=*
+		 * Pointer definition/assignment: New syntax :=* and =*
 		
-		The unary Address-Of and Dereference operators(&,*)are also present,but they are swapped compared to C
-		Upp:x:*int=*i
-		&x=5;
-		C:int*x=&i;
-		*x=5;
+		These makes them more comparable to C++ references,
+		except that they can still be null and that you can change the pointer
+		after initialization
 	
 	a:int=15
 	ap:*int=*a
 	app:**int=*ap
 	appp:***int=*app
-	assert(&(&(&appp))==15)
 	
-	//
-		This is made possible because all C-Operations on pointers are removed.These are:
-		1.Casting between integers and pointers(int*x=(int*)15)
-		2.Array access on pointers(int*x=&i;int elem=x[2];)
-		3.Pointer arithmetic(+,-)
-		4.Pointer comparisons(==,!=,<,>,<=,>=)
-		
-		To still offer the same functionality,there are new operators which replace the previously mentioned:
-		-New pointer comparison syntax(*==,*!=)
-		-Pointer arithmetic is done only with integer values
+	// The pointers can be used like normal values
+	x:int=a+app+appp
+	assert(x==45)
 	
 	i:=5
 	j:=5
@@ -43,7 +36,7 @@ main::()
 	// Value comparison
 	assert(i==j)
 	// Value comparison with pointers
-	assert(&ip==&jp)
+	assert(ip==jp)
 	// Pointer comparison
-	assert(!(ip*==jp))
-	assert(ip*!=jp)
+	assert(!(ip==*jp))
+	assert(ip!=*jp)

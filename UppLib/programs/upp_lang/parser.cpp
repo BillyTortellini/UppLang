@@ -791,6 +791,7 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
+            result->is_pointer_definition = false;
             result->symbols = dynamic_array_create_empty<Definition_Symbol*>(1);
             result->types = dynamic_array_create_empty<AST::Expression*>(1);
             result->values = dynamic_array_create_empty<AST::Expression*>(1);
@@ -800,7 +801,8 @@ namespace Parser
                 return token.type == Token_Type::OPERATOR &&
                     (token.options.op == Operator::COLON ||
                      token.options.op == Operator::DEFINE_COMPTIME ||
-                     token.options.op == Operator::DEFINE_INFER);
+                     token.options.op == Operator::DEFINE_INFER ||
+                     token.options.op == Operator::DEFINE_INFER_POINTER);
             };
             parse_comma_seperated_items(upcast(result), &result->symbols, parse_definition_symbol, found_definition_operator);
 
@@ -824,6 +826,11 @@ namespace Parser
                     result->is_comptime = true;
                     advance_token();
                 }
+                else if (test_operator(Operator::ASSIGN_POINTER)) {
+                    result->is_comptime = false;
+                    result->is_pointer_definition = true;
+                    advance_token();
+                }
                 else {
                     PARSE_SUCCESS(result);
                 }
@@ -835,6 +842,11 @@ namespace Parser
             else if (test_operator(Operator::DEFINE_INFER)) {
                 advance_token();
                 result->is_comptime = false;
+            }
+            else if (test_operator(Operator::DEFINE_INFER_POINTER)) {
+                advance_token();
+                result->is_comptime = false;
+                result->is_pointer_definition = true;
             }
             else {
                 CHECKPOINT_EXIT;
@@ -942,16 +954,21 @@ namespace Parser
                         result->type = Statement_Type::ASSIGNMENT;
                         result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
                         result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                        result->options.assignment.is_pointer_assign = false;
                         dynamic_array_push_back(&result->options.assignment.left_side, expr);
                         advance_token();
                         
                         // Parse remaining left_side expressions
-                        auto is_assign = [](Token& token) -> bool {return token.type == Token_Type::OPERATOR && token.options.op == Operator::ASSIGN; };
+                        auto is_assign = [](Token& token) -> bool 
+                        {return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER); };
                         parse_comma_seperated_items(upcast(result), &result->options.assignment.left_side, parse_expression_or_error_expr, is_assign);
 
                         // Check if assignment found, otherwise error
-                        if (!test_operator(Operator::ASSIGN)) {
+                        if (!test_operator(Operator::ASSIGN) && !test_operator(Operator::ASSIGN_POINTER)) {
                             CHECKPOINT_EXIT;
+                        }
+                        if (test_operator(Operator::ASSIGN_POINTER)) {
+                            result->options.assignment.is_pointer_assign = true;
                         }
                         advance_token();
 
@@ -959,11 +976,12 @@ namespace Parser
                         parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
                         PARSE_SUCCESS(result);
                     }
-                    else if (test_operator(Operator::ASSIGN)) 
+                    else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER)) 
                     {
                         result->type = Statement_Type::ASSIGNMENT;
                         result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
                         result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                        result->options.assignment.is_pointer_assign = test_operator(Operator::ASSIGN_POINTER);
                         dynamic_array_push_back(&result->options.assignment.left_side, expr);
                         advance_token();
 

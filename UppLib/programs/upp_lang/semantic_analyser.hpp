@@ -221,6 +221,7 @@ struct Workload_Definition
     Workload_Base base;
     Symbol* symbol;
     bool is_comptime;
+    bool is_pointer_definition;
     AST::Expression* value_node;
     AST::Expression* type_node;
 };
@@ -418,7 +419,6 @@ struct Expression_Context
     bool unknown_due_to_error; // If true the context is unknown because an error occured, otherwise there is no info
     struct {
         Datatype* type;
-        bool is_assignment_context;
         Cast_Mode cast_mode;
     } expected_type;
 };
