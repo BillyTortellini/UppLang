@@ -29,6 +29,7 @@ struct Text_Renderer;
 struct Window;
 struct GUI_Size;
 struct GUI_Drawable;
+struct Render_Pass;
 
 enum class GUI_Stack_Direction {
     LEFT_TO_RIGHT,
@@ -50,7 +51,7 @@ typedef void (*gui_userdata_destroy_fn)(void* userdata);
 
 void gui_initialize(Text_Renderer* text_renderer, Window* window);
 void gui_destroy();
-void gui_update_and_render(); // Generates 
+void gui_update_and_render(Render_Pass* render_pass); // Note: Requires alpha blended pipeline state!
 
 struct GUI_Handle
 {
@@ -163,7 +164,7 @@ String* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
 
 // PREDEFINED OBJECTS
 GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
-void gui_push_scroll_bar(GUI_Handle parent_handle);
+GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y);
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
 bool gui_push_button(GUI_Handle parent_handle, String text);
 void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);

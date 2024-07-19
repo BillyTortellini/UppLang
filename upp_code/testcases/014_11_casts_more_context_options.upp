@@ -25,7 +25,7 @@ main::()
 	
 	// For example, pointers can be converted to bool for simple null checks
 		context set_option(.POINTER_TO_BOOL,.AUTO)
-		ip:*int=*null
+		ip:*int=null
 		assert(ip==*null)
 		assert(!cast{bool}ip)
 		

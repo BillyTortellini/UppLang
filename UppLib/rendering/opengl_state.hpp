@@ -2,6 +2,7 @@
 
 #include "opengl_function_pointers.hpp"
 #include "../datastructures/array.hpp"
+#include "../datastructures/String.hpp"
 #include "../math/umath.hpp"
 
 struct Texture;
@@ -153,7 +154,7 @@ enum class Blend_Operand
     ZERO = GL_ZERO,
     SOURCE_COLOR = GL_SRC_COLOR,
     ONE_MINUS_SOURCE_COLOR = GL_ONE_MINUS_SRC_ALPHA,
-    DESTINTAION_COLOR = GL_DST_COLOR,
+    DESTINATION_COLOR = GL_DST_COLOR,
     ONE_MINUS_DESTINATION_COLOR = GL_ONE_MINUS_DST_COLOR,
     SOURCE_ALPHA = GL_SRC_ALPHA,
     ONE_MINUS_SOURCE_ALPHA = GL_ONE_MINUS_SRC_ALPHA,
@@ -254,6 +255,7 @@ struct Pipeline_State
     Polygon_Filling_Mode polygon_filling_mode;
 };
 Pipeline_State pipeline_state_make_default();
+Pipeline_State pipeline_state_make_alpha_blending(Depth_Test_Type depth_test_type = Depth_Test_Type::IGNORE_DEPTH);
 void pipeline_state_set_unconditional(Pipeline_State* state);
 void pipeline_state_switch(Pipeline_State current_state, Pipeline_State new_state);
 
@@ -273,11 +275,13 @@ enum class Shader_Datatype
     TEXTURE_2D_BINDING
 };
 
+String shader_datatype_as_string(Shader_Datatype type);
+
 struct Shader_Datatype_Info
 {
     GLenum uniformType; // Type reported by glGetUniform
     GLenum vertexAttribType; // Type for vertex-attribute setup (glVertexAttribPointer)
-    const char* name; // Plain text name, as a variable type in glsl
+    const char* name; // Plain text base_name, as a variable type in glsl
     u32 byte_size; // Size in bytes
 };
 

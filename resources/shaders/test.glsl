@@ -1,42 +1,16 @@
 #version 430 core
+
 #ifdef VERTEX
 
-in vec4 a_posSize; //@PosSize2D
-in vec2 a_thicknessRadius; //@BorderThicknessEdgeRadius
+in vec2 a_pos; //@Position2D
+in vec4 a_line_start_end; //@Line_Start_End
+in float a_line_width; //@Line_Width
 in vec4 a_color; //@Color4
-in vec4 a_borderColor; //@BorderColor
 
-out vec4 g_posSize;
-out vec2 g_thicknessRadius;
-out vec4 g_color;
-out vec4 g_borderColor;
-
-void main()
-{
-    g_posSize = a_posSize;
-    g_color = a_color;
-    g_borderColor = a_borderColor;
-    g_thicknessRadius = a_thicknessRadius;
-}
-
-#endif 
-
-
-
-#ifdef GEOMETRY
-
-layout (points) in;
-in vec4 g_posSize[];
-in vec4 g_color[];
-in vec4 g_borderColor[];
-in vec2 g_thicknessRadius[];
-
-layout (triangle_strip, max_vertices = 4) out;
-flat out vec4 f_color;
-flat out vec4 f_borderColor;
-flat out vec2 f_thicknessRadius;
-flat out vec2 f_size;
-out vec2 f_rectPos;
+out vec2 v_pos; // In pixel coordinates
+out vec4 v_line_start_end;
+out vec4 v_color;
+out float v_line_width;
 
 layout (std140, binding = 0) uniform Render_Information
 {
@@ -48,79 +22,60 @@ layout (std140, binding = 0) uniform Render_Information
 
 void main()
 {
-    vec2 screen_size = vec2(u_render_info.backbuffer_width, u_render_info.backbuffer_height);
-    vec2 pos = g_posSize[0].xy / screen_size * 2.0 - 1.0;
-    vec2 size = g_posSize[0].zw / screen_size * 2.0;
-
-    f_borderColor = g_borderColor[0];
-    f_thicknessRadius = g_thicknessRadius[0];
-    f_color = g_color[0];
-    f_size = g_posSize[0].zw;
-
-    gl_Position = vec4(pos.x + size.x, pos.y, 0.0, 1.0);
-    f_rectPos = vec2(1.0, 0.0) * g_posSize[0].zw;
-    EmitVertex();
-
-    gl_Position = vec4(pos.x + size.x, pos.y + size.y, 0.0, 1.0);
-    f_rectPos = vec2(1.0, 1.0) * g_posSize[0].zw;
-    EmitVertex();
-
+    vec2 window_size = vec2(u_render_info.backbuffer_width, u_render_info.backbuffer_height);
+    vec2 pos = a_pos / window_size * 2.0f - 1.0f;
     gl_Position = vec4(pos.x, pos.y, 0.0, 1.0);
-    f_rectPos = vec2(0.0, 0.0) * g_posSize[0].zw;
-    EmitVertex();
 
-    gl_Position = vec4(pos.x, pos.y + size.y, 0.0, 1.0);
-    f_rectPos = vec2(0.0, 1.0) * g_posSize[0].zw;
-    EmitVertex();
+    v_pos = a_pos;
+    v_line_start_end = a_line_start_end;
+    v_line_width = a_line_width;
+    v_color = a_color;
 }
-
 
 #endif
 
-
-
 #ifdef FRAGMENT
 
-flat in vec4 f_color;
-flat in vec2 f_size;
-flat in vec4 f_borderColor;
-flat in vec2 f_thicknessRadius;
-in vec2 f_rectPos;
+in vec2 v_pos;
+in vec4 v_line_start_end;
+in vec4 v_color;
+in float v_line_width;
 
 out vec4 o_color;
 
 void main()
 {
-    // Calcuate distance from border
-    vec2 dist_to_mid = abs(f_rectPos - f_size / 2.0);
+    // Get line sdf
+    // vec4 red = vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    // vec4 green = vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    // vec4 blue = vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    // vec4 white = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    // o_color = white;
+    // return;
 
-    float thickness = f_thicknessRadius.x;
-    float radius = f_thicknessRadius.y;
-    thickness = 16.0;
-    radius = 15.0;
+    float sdf = 0.0f;
+    {
+        // SDF of line segment
+        vec2 p = v_pos;
+        vec2 a = vec2(v_line_start_end.x, v_line_start_end.y);
+        vec2 b = vec2(v_line_start_end.z, v_line_start_end.w);
 
-    float border_alpha; // How much percent we are on a border
-    float outside_alpha; // How much we are outside of the rectangle (Rounded borders)
-
-    // Check for rounded corners
-    vec2 center = f_size / 2.0 - vec2(radius);
-    if (dist_to_mid.x > center.x && dist_to_mid.y > center.y) {
-        float dist = radius - distance(center, dist_to_mid);
-        border_alpha = smoothstep(thickness - 0.5, thickness + 0.5, dist);
-        outside_alpha = smoothstep(0.5, -0.5, dist);
+        vec2 ab = b - a;
+        float t = dot(p - a, ab) / max(0.00001, ab.x * ab.x + ab.y * ab.y);
+        t = min(1.0f, max(0.0f, t));
+        sdf = length(p - (a + ab * t)) - v_line_width;
+        //sdf = length(p - a) - u_width;
     }
-    else {
-        vec2 dist2 = f_size / 2.0 - dist_to_mid;
-        float dist = min(dist2.x, dist2.y);
-        border_alpha = step(thickness, dist - 0.5);
-        outside_alpha = 0.0;
-    }
-    
-    // Calculate final color based on mix between color, border-color and outside
-    vec4 border = vec4(1.0, 0.0, 0.0, 1.0);
-    vec4 bg = vec4(0.0);
-    o_color = mix(border, f_color, border_alpha);
-    o_color = mix(o_color, bg, outside_alpha);
+
+    float radius = 1.0f;
+    float scalar;
+    scalar = smoothstep(-radius, radius, -sdf);
+    //scalar = -sdf / 10.0f;
+    // scalar = v_line_size.w / 20.0f;
+    //scalar = 1.0f - abs(sdf * 0.1f);
+    // o_color = vec4(v_color.x * scalar, v_color.y * scalar, v_color.z * scalar, 1.0f); // Constant color
+    o_color = vec4(v_color.x, v_color.y, v_color.z, scalar); // Alpha blending
+    // o_color = v_color; // Alpha blending
 }
 
 #endif

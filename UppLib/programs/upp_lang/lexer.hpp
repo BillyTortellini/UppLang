@@ -34,7 +34,6 @@ enum class Operator
     POINTER_NOT_EQUALS,
     DEFINE_COMPTIME, // ::
     DEFINE_INFER, // :=
-    DEFINE_INFER_POINTER, // :=*
     AND,
     OR,
     ARROW,
@@ -111,9 +110,9 @@ struct Literal_Value
     Literal_Type type;
     union {
         String* string;
-        int int_val;
+        i64 int_val;
+        f64 float_val;
         bool boolean;
-        float float_val;
         void* null_ptr;
     } options;
 };

@@ -726,9 +726,6 @@ namespace AST
             break;
         }
         case Node_Type::DEFINITION: {
-            if (downcast<Definition>(base)->is_pointer_definition) {
-                string_append_formated(str, "POINTER-");
-            }
             string_append_formated(str, "DEFINITION");
             break;
         }

@@ -837,7 +837,6 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     // Create workload for global variables/comptime definitions
     auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
     definition_workload->symbol = symbol;
-    definition_workload->is_pointer_definition = definition->is_pointer_definition;
     definition_workload->is_comptime = definition->is_comptime;
     definition_workload->type_node = 0;
     if (is_global_variable && definition->types.size != 0) {
@@ -3397,41 +3396,15 @@ void analysis_workload_entry(void* userdata)
         {
             Expression_Context context = expression_context_make_unknown();
             Datatype* type = 0;
-            if (definition->type_node != 0) 
-            {
+            if (definition->type_node != 0) {
                 type = semantic_analyser_analyse_expression_type(definition->type_node);
-                bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
-                if (definition->is_pointer_definition && !is_pointer) {
-                    log_semantic_error("Pointer definition reqires pointer type", definition->type_node);
-                    type = types.error_type;
-                }
-                else if (!definition->is_pointer_definition && is_pointer && definition->value_node != 0) {
-                    log_semantic_error("Pointer type definition requires a pointer assignment =*", definition->type_node);
-                }
             }
             if (definition->value_node != 0) {
                 if (type != 0) {
                     semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_specific_type(type));
                 }
                 else {
-                    type = semantic_analyser_analyse_expression_value(
-                        definition->value_node, definition->is_pointer_definition ? expression_context_make_unknown() : expression_context_make_auto_dereference()
-                    );
-                    bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
-                    // Force address of if it's a pointer definition
-                    if (definition->is_pointer_definition && is_pointer) 
-                    {
-                        if (try_updating_expression_pointer_level(definition->value_node, type, 0, 1)) {
-                            type = upcast(type_system_make_pointer(type));
-                        }
-                        else {
-                            log_semantic_error("Expression must be a pointer/convertable to pointer in pointer definitions!", definition->value_node);
-                            type = types.error_type;
-                        }
-                    }
-                    else if (!definition->is_pointer_definition && is_pointer) {
-                        log_semantic_error("Pointer value requires pointer assignment, e.g. =* or :=*", definition->value_node);
-                    }
+                    type = semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_unknown());
                 }
             }
 
@@ -3719,7 +3692,7 @@ void analysis_workload_entry(void* userdata)
                     log_semantic_error("Struct contains itself, this can only work with references", upcast(struct_node.members[i]), Parser::Section::IDENTIFIER);
                 }
             }
-            // Check if name is already in use
+            // Check if base_name is already in use
             bool name_available = true;
             for (int j = 0; j < members.size && name_available; j++) {
                 auto& other = members[j];
@@ -4062,7 +4035,7 @@ Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Conte
 }
 
 bool operator_context_get_boolean_option(Operator_Context* context, Context_Option option) {
-    assert((int)option >= CONTEXT_OPTION_BOOL_START && (int)option < CONTEXT_OPTION_BOOL_END, "");
+    assert((int)option >= CONTEXT_OPTION_BOOL_START && (int)option <= CONTEXT_OPTION_BOOL_END, "");
     return context->boolean_settings[(int)option - CONTEXT_OPTION_BOOL_START];
 }
 
@@ -4295,7 +4268,7 @@ struct Callable
     } options;
 
     int parameter_count;
-    int only_named_arguments_after_index; // This is used for implicit template arguments, which should only be specified by name
+    int only_named_arguments_after_index; // This is used for implicit template arguments, which should only be specified by base_name
 };
 
 struct Overload_Candidate
@@ -4562,7 +4535,7 @@ bool arguments_match_to_parameters(
     int non_default_value_match_count = 0;
     for (int i = unnamed_argument_count; i < arguments.size; i++)
     {
-        // Find parameter with same name
+        // Find parameter with same base_name
         auto& argument = arguments[i];
         assert(arguments[i]->name.available, "");
         auto id = arguments[i]->name.value;
@@ -4571,7 +4544,7 @@ bool arguments_match_to_parameters(
         {
             Function_Parameter param = callable_get_parameter_info(callable, j);
 
-            // Check if name matches
+            // Check if base_name matches
             if (!param.name.available) {
                 continue;
             }
@@ -5666,7 +5639,10 @@ bool expression_is_auto_expression(AST::Expression * expression)
         type == AST::Expression_Type::ARRAY_INITIALIZER ||
         type == AST::Expression_Type::STRUCT_INITIALIZER ||
         (type == AST::Expression_Type::CAST && !expression->options.cast.to_type.available) ||
-        (type == AST::Expression_Type::LITERAL_READ && expression->options.literal_read.type == Literal_Type::NULL_VAL);
+        (type == AST::Expression_Type::LITERAL_READ && 
+            (expression->options.literal_read.type == Literal_Type::NULL_VAL || 
+             expression->options.literal_read.type == Literal_Type::INTEGER  ||
+             expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
 
 
@@ -6225,38 +6201,164 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         auto& read = expr->options.literal_read;
         void* value_ptr;
         Datatype* literal_type;
-        void* null_pointer = 0;
-        Upp_String string_buffer;
 
-        // Missing: float, nullptr
+        // Variables which can hold the specified values
+        void* value_nullptr = 0;
+        Upp_String value_string;
+        u8 value_u8;
+        u16 value_u16;
+        u32 value_u32;
+        u64 value_u64;
+        i8  value_i8;
+        i16 value_i16;
+        i32 value_i32;
+        i32 value_i64;
+        f32 value_f32;
+
         switch (read.type)
         {
         case Literal_Type::BOOLEAN:
             literal_type = upcast(types.bool_type);
             value_ptr = &read.options.boolean;
             break;
-        case Literal_Type::FLOAT_VAL:
-            literal_type = upcast(types.f32_type);
-            value_ptr = &read.options.float_val;
+        case Literal_Type::FLOAT_VAL: 
+        {
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(context.expected_type.type, upcast(types.f64_type)))
+            {
+                literal_type = upcast(types.f64_type);
+                value_ptr = &read.options.float_val;
+            }
+            else
+            {
+                literal_type = upcast(types.f32_type);
+                value_f32 = (float)read.options.float_val;
+                value_ptr = &value_f32;
+            }
             break;
-        case Literal_Type::INTEGER:
-            literal_type = upcast(types.i32_type);
-            value_ptr = &read.options.int_val;
+        }
+        case Literal_Type::INTEGER: 
+        {
+            bool check_for_auto_conversion = false;
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+                if (context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::AUTO) {
+                    if (downcast<Datatype_Primitive>(context.expected_type.type)->primitive_type == Primitive_Type::INTEGER) {
+                        check_for_auto_conversion = true;
+                    }
+                }
+            }
+
+            if (check_for_auto_conversion)
+            {
+                bool is_signed = downcast<Datatype_Primitive>(context.expected_type.type)->is_signed;
+                int size = context.expected_type.type->memory_info.value.size;
+
+                bool size_is_valid = true;
+                if (is_signed)
+                {
+                    i64 value = read.options.int_val;
+                    switch (size)
+                    {
+                    case 1: {
+                        literal_type = upcast(types.i8_type);
+                        value_i8 = (i8)value;
+                        value_ptr = &value_i8;
+                        size_is_valid = value <= INT8_MAX && value >= INT8_MIN;
+                        break;
+                    }
+                    case 2: {
+                        literal_type = upcast(types.i16_type);
+                        value_i16 = (i16)value;
+                        value_ptr = &value_i16;
+                        size_is_valid = value <= INT16_MAX && value >= INT16_MIN;
+                        break;
+                    }
+                    case 4: {
+                        literal_type = upcast(types.i32_type);
+                        value_i32 = (i32)value;
+                        value_ptr = &value_i32;
+                        size_is_valid = value <= INT32_MAX && value >= INT32_MIN;
+                        break;
+                    }
+                    case 8: {
+                        literal_type = upcast(types.i64_type);
+                        value_i64 = (i64)value;
+                        value_ptr = &value_i64;
+                        size_is_valid = true; // Cannot check size as i64 is the max value of the lexer
+                        break;
+                    }
+                    default: panic("");
+                    }
+                }
+                else
+                {
+                    if (read.options.int_val < 0) {
+                        log_semantic_error("Using a negative literal in an unsigned context requires a cast", expr);
+                        EXIT_ERROR(context.expected_type.type);
+                    }
+
+                    u64 value = (u64) read.options.int_val; 
+                    switch (size)
+                    {
+                    case 1: {
+                        literal_type = upcast(types.u8_type);
+                        value_u8 = (u8)value;
+                        value_ptr = &value_u8;
+                        size_is_valid = value <= UINT8_MAX;
+                        break;
+                    }
+                    case 2: {
+                        literal_type = upcast(types.u16_type);
+                        value_u16 = (u16)value;
+                        value_ptr = &value_u16;
+                        size_is_valid = value <= UINT16_MAX;
+                        break;
+                    }
+                    case 4: {
+                        literal_type = upcast(types.u32_type);
+                        value_u32 = (u32)value;
+                        value_ptr = &value_u32;
+                        size_is_valid = value <= UINT32_MAX;
+                        break;
+                    }
+                    case 8: {
+                        literal_type = upcast(types.u64_type);
+                        value_u64 = (u64)value;
+                        value_ptr = &value_u64;
+                        size_is_valid = value <= UINT64_MAX;
+                        break;
+                    }
+                    default: panic("");
+                    }
+                }
+
+                if (!size_is_valid)
+                {
+                    log_semantic_error("Literal value is outside the range of expected type. To still use this value a cast is required", expr);
+                    EXIT_ERROR(context.expected_type.type);
+                }
+            }
+            else
+            {
+                literal_type = upcast(types.i32_type);
+                value_i32 = (i32)read.options.int_val;
+                value_ptr = &value_i32;
+            }
             break;
+        }
         case Literal_Type::STRING: {
             String* string = read.options.string;
-            string_buffer.character_buffer.data = string->characters;
-            string_buffer.character_buffer.size = string->capacity;
-            string_buffer.size = string->size;
+            value_string.character_buffer.data = string->characters;
+            value_string.character_buffer.size = string->capacity;
+            value_string.size = string->size;
 
             literal_type = upcast(types.string_type);
-            value_ptr = &string_buffer;
+            value_ptr = &value_string;
             break;
         }
         case Literal_Type::NULL_VAL:
         {
             literal_type = types.void_pointer_type;
-            value_ptr = &null_pointer;
+            value_ptr = &value_nullptr;
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
             {
                 if (context.expected_type.type->type == Datatype_Type::POINTER ||
@@ -6653,11 +6755,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
         if (!type_is_valid)
         {
-            Operator_Overload_Key key;
-            key.left_type = array_type;
-            key.right_type = types.error_type;
-            key.op = Upp_Operator::ARRAY_ACCESS;
-
+            Overload_Key key = overload_key_make(Upp_Operator::ARRAY_ACCESS, array_type, types.error_type);
             Operator_Overload* overload = hashtable_find_element(&operator_context->operator_overloads, key);
             if (overload != 0)
             {
@@ -6678,10 +6776,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             auto struct_type = downcast<Datatype_Struct>(array_type);
             if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
             {
-                Operator_Overload_Key key;
-                key.left_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-                key.op = Upp_Operator::ARRAY_ACCESS;
-                key.right_type = types.error_type;
+                Overload_Key key = overload_key_make(
+                    Upp_Operator::ARRAY_ACCESS, 
+                    upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type), 
+                    types.error_type
+                );
 
                 Operator_Overload* overload = hashtable_find_element(&operator_context->operator_overloads, key);
                 if (overload != 0 && try_updating_expression_pointer_level(access_node.array_expr, array_type, array_pointer_level, expected_pointer_level))
@@ -6749,7 +6848,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 return optional_make_failure<Polymorphic_Value>();
             }
 
-            // Try to find structure parameter with this name
+            // Try to find structure parameter with this base_name
             int value_access_index = -1;
             for (int i = 0; i < polymorphic->parameters.size; i++) {
                 auto& parameter = polymorphic->parameters[i];
@@ -6996,7 +7095,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         case AST::Unop::NOT:
         {
             bool is_negate = unary_node.type == AST::Unop::NEGATE;
-            auto operand_type = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown());
+
+            // Check for literals (Float and int should adjust to correct size with negate)
+            Expression_Context operand_context;
+            if (is_negate && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && 
+                context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::AUTO) 
+            {
+                auto primitive = downcast<Datatype_Primitive>(context.expected_type.type);
+                if (primitive->primitive_type == Primitive_Type::INTEGER || primitive->primitive_type == Primitive_Type::FLOAT) {
+                    operand_context = context;
+                }
+            }
+            else {
+                operand_context = expression_context_make_unknown();
+            }
+
+            auto operand_type = semantic_analyser_analyse_expression_value(unary_node.expr, operand_context);
             if (datatype_is_unknown(operand_type)) {
                 EXIT_ERROR(types.error_type);
             }
@@ -7019,6 +7133,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                         type_is_valid = true;
                         result_type = operand_type;
                     }
+                    else {
+                        log_semantic_error("Negate only works on signed primitive values", expr, Parser::Section::FIRST_TOKEN);
+                        EXIT_ERROR(types.error_type);
+                    }
                 }
             }
             else {
@@ -7031,10 +7149,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             // If type is not valid check for overloads
             if (!type_is_valid)
             {
-                Operator_Overload_Key key;
-                key.left_type = operand_type;
-                key.op = is_negate ? Upp_Operator::NEGATE : Upp_Operator::NOT;
-                key.right_type = types.error_type; // Note: Currently this is the way to make a key for unary operators
+                // Note: Currently this is the way to make a key for unary operators
+                Overload_Key key = overload_key_make(is_negate ? Upp_Operator::NEGATE : Upp_Operator::NOT, operand_type, types.error_type);
 
                 auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
                 Operator_Overload* overload = hashtable_find_element(&operator_context->operator_overloads, key);
@@ -7152,16 +7268,17 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             bool left_requires_context = expression_is_auto_expression(binop_node.left);
             bool right_requires_context = expression_is_auto_expression(binop_node.right);
 
+            Expression_Context default_context = is_pointer_comparison ? expression_context_make_unknown() : expression_context_make_auto_dereference();
             if ((left_requires_context && right_requires_context) || (!left_requires_context && !right_requires_context)) {
-                left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_unknown());
-                right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_unknown());
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, default_context);
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, default_context);
             }
             else if (left_requires_context && !right_requires_context) {
-                right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_unknown());
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, default_context);
                 left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type));
             }
             else if (!left_requires_context && right_requires_context) {
-                left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_unknown());
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, default_context);
                 right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
             }
 
@@ -7290,28 +7407,26 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
         if (!types_are_valid)
         {
-            Operator_Overload_Key key;
-            key.left_type = left_type;
-            key.right_type = right_type;
-            key.op = (Upp_Operator)-1; // Initialize as invalid
+            Upp_Operator op;
             switch (binop_node.type)
             {
-            case AST::Binop::ADDITION: key.op = Upp_Operator::ADDITION; break;
-            case AST::Binop::SUBTRACTION: key.op = Upp_Operator::SUBTRACTION; break;
-            case AST::Binop::MULTIPLICATION: key.op = Upp_Operator::MULTIPLICATION; break;
-            case AST::Binop::DIVISION: key.op = Upp_Operator::DIVISION; break;
-            case AST::Binop::MODULO: key.op = Upp_Operator::MODULO; break;
-            case AST::Binop::EQUAL: key.op = Upp_Operator::EQUAL; break;
-            case AST::Binop::NOT_EQUAL: key.op = Upp_Operator::EQUAL; break;
-            case AST::Binop::LESS: key.op = Upp_Operator::LESS_THAN; break;
-            case AST::Binop::LESS_OR_EQUAL: key.op = Upp_Operator::LESS_EQUAL; break;
-            case AST::Binop::GREATER: key.op = Upp_Operator::GREATER_THAN; break;
-            case AST::Binop::GREATER_OR_EQUAL: key.op = Upp_Operator::GREATER_EQUAL; break;
-            case AST::Binop::AND: key.op = Upp_Operator::AND; break;
-            case AST::Binop::OR: key.op = Upp_Operator::OR; break;
-            default: break;
+            case AST::Binop::ADDITION: op = Upp_Operator::ADDITION; break;
+            case AST::Binop::SUBTRACTION: op = Upp_Operator::SUBTRACTION; break;
+            case AST::Binop::MULTIPLICATION: op = Upp_Operator::MULTIPLICATION; break;
+            case AST::Binop::DIVISION: op = Upp_Operator::DIVISION; break;
+            case AST::Binop::MODULO: op = Upp_Operator::MODULO; break;
+            case AST::Binop::EQUAL: op = Upp_Operator::EQUAL; break;
+            case AST::Binop::NOT_EQUAL: op = Upp_Operator::EQUAL; break;
+            case AST::Binop::LESS: op = Upp_Operator::LESS_THAN; break;
+            case AST::Binop::LESS_OR_EQUAL: op = Upp_Operator::LESS_EQUAL; break;
+            case AST::Binop::GREATER: op = Upp_Operator::GREATER_THAN; break;
+            case AST::Binop::GREATER_OR_EQUAL: op = Upp_Operator::GREATER_EQUAL; break;
+            case AST::Binop::AND: op = Upp_Operator::AND; break;
+            case AST::Binop::OR: op = Upp_Operator::OR; break;
+            default: panic("");
             }
 
+            Overload_Key key = overload_key_make(op, left_type, right_type);
             auto overload = hashtable_find_element(&operator_context->operator_overloads, key);
             if (overload != nullptr)
             {
@@ -7687,30 +7802,29 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
                 if (src_primitive->primitive_type == Primitive_Type::INTEGER && dst_primitive->primitive_type == Primitive_Type::INTEGER)
                 {
                     cast_type = Cast_Type::INTEGERS;
-                    if (src_primitive->is_signed == dst_primitive->is_signed)
+                    Cast_Mode signed_mode = Cast_Mode::AUTO;
+                    if (src_primitive->is_signed != dst_primitive->is_signed) {
+                        if (src_primitive->is_signed) {
+                            signed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIGNED_TO_UNSIGNED);
+                        }
+                        else {
+                            signed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_UNSIGNED_TO_SIGNED);
+                        }
+                    }
+
+                    Cast_Mode size_mode = Cast_Mode::AUTO;
+                    if (dst_size != src_size)
                     {
                         if (dst_size > src_size) {
-                            allowed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIZE_UPCAST);
+                            size_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIZE_UPCAST);
                         }
                         else {
-                            allowed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIZE_DOWNCAST);
+                            size_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIZE_DOWNCAST);
                         }
                     }
-                    else {
-                        // Signed to unsigned
-                        if (dst_size == src_size) {
-                            if (src_primitive->is_signed) {
-                                allowed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_SIGNED_TO_UNSIGNED);
-                            }
-                            else {
-                                allowed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INTEGER_UNSIGNED_TO_SIGNED);
-                            }
-                        }
-                        else {
-                            // Currently we don't allow both a signed cast (Between signed and unsigned) and a size cast in one, e.g. u8 -> i32, i64 -> u16
-                            allowed_mode = Cast_Mode::NONE;
-                        }
-                    }
+
+                    // For integer cast to work, both size and signed must be castable
+                    allowed_mode = (Cast_Mode)math_maximum((int)size_mode, (int)signed_mode);
                 }
                 else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::INTEGER)
                 {
@@ -7738,6 +7852,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             }
             else if (destination_type->type == Datatype_Type::ENUM)
             {
+                // TODO: Int to enum casting should check if int can hold max/min enum value
                 if (src_primitive->primitive_type == Primitive_Type::INTEGER) {
                     cast_type = Cast_Type::INT_TO_ENUM;
                     allowed_mode = operator_context_get_cast_mode_option(operator_context, Context_Option::INT_TO_ENUM);
@@ -7782,11 +7897,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
 
     // Check overloads
     {
-        Operator_Overload_Key key;
-        key.left_type = source_type;
-        key.right_type = destination_type;
-        key.op = Upp_Operator::CAST;
-
+        Overload_Key key = overload_key_make(Upp_Operator::CAST, source_type, destination_type);
         Operator_Overload* overload = hashtable_find_element(&operator_context->operator_overloads, key);
 
         // Search for polymorphic overloads
@@ -7802,7 +7913,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
                 if (overload == 0)
                 {
                     // Check overload with polymorphic result type
-                    key.right_type = types.error_type;
+                    key.options.right_type = types.error_type;
                     overload = hashtable_find_element(&operator_context->operator_overloads, key);
                 }
             }
@@ -8106,16 +8217,29 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
 }
 
 
-u64 operator_overload_key_hash(Operator_Overload_Key* key) {
+u64 operator_overload_key_hash(Overload_Key* key) 
+{
     u64 hash = hash_pointer(key->left_type);
-    hash = hash_combine(hash, hash_pointer(key->right_type));
     int op_as_int = (int)key->op;
     hash = hash_combine(hash, hash_i32(&op_as_int));
+    hash = hash_combine(hash, key->key_is_type);
+    if (key->key_is_type) {
+        hash = hash_combine(hash, hash_pointer(key->options.right_type));
+    }
+    else {
+        hash = hash_combine(hash, hash_pointer(key->options.id));
+    }
     return hash;
 }
 
-bool operator_overload_key_equals(Operator_Overload_Key* a, Operator_Overload_Key* b) {
-    return types_are_equal(a->left_type, b->left_type) && types_are_equal(a->right_type, b->right_type) && a->op == b->op;
+bool operator_overload_key_equals(Overload_Key* a, Overload_Key* b) {
+    if (a->key_is_type != b->key_is_type || a->op != b->op || !types_are_equal(a->left_type, b->left_type)) {
+        return false;
+    }
+    if (a->key_is_type) {
+        return types_are_equal(a->options.right_type, b->options.right_type);
+    }
+    return a->options.id == b->options.id;
 }
 
 // OPERATOR CONTEXT
@@ -8129,7 +8253,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     auto parent_context = symbol_table->operator_context;
     if (parent_context == 0)
     {
-        context->operator_overloads = hashtable_create_empty<Operator_Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
+        context->operator_overloads = hashtable_create_empty<Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
         for (int i = CONTEXT_OPTION_CAST_MODE_START; i <= CONTEXT_OPTION_CAST_MODE_END; i++) {
             context->cast_mode_settings[i - CONTEXT_OPTION_CAST_MODE_START] = Cast_Mode::EXPLICIT;
         }
@@ -8141,7 +8265,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     {
         // Copy settings from parent context
         *context = *parent_context; // Shallow copy first, then fill the new hashtable
-        context->operator_overloads = hashtable_create_empty<Operator_Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
+        context->operator_overloads = hashtable_create_empty<Overload_Key, Operator_Overload>(1, operator_overload_key_hash, operator_overload_key_equals);
         {
             auto iter = hashtable_iterator_create(&parent_context->operator_overloads);
             while (hashtable_iterator_has_next(&iter)) {
@@ -8398,6 +8522,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             AST::Expression* function_argument_node = nullptr;
             AST::Expression* commutative_argument_node = nullptr; // May stay null
             AST::Expression* cast_mode_argument_node = nullptr; // May stay null
+            AST::Expression* name_argument_node = nullptr; // May stay null
             {
                 Datatype* context_option_ptr = upcast(types.upp_operator);
                 Array<Datatype*> first_parameter;
@@ -8434,6 +8559,9 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     else if (arg_info->parameter_index == 3) {
                         commutative_argument_node = arguments[j]->value;
                     }
+                    else if (arg_info->parameter_index == 4) {
+                        name_argument_node = arguments[j]->value;
+                    }
                     else {
                         panic("");
                     }
@@ -8446,6 +8574,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             int expected_argument_count = 2;
             bool commutative_available = true;
             bool polymorphic_valid = false;
+            bool name_available = false;
             {
                 if (operator_argument_node->type == AST::Expression_Type::LITERAL_READ &&
                     operator_argument_node->options.literal_read.type == Literal_Type::STRING)
@@ -8500,6 +8629,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                         commutative_available = false;
                         polymorphic_valid = true;
                         break;
+                    case Upp_Operator::DOT_CALL:
+                        commutative_available = false;
+                        polymorphic_valid = true;
+                        name_available = true;
+                        break;
                     default: break;
                     }
                 }
@@ -8516,6 +8650,29 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 }
                 else {
                     errors_occured = true;
+                }
+
+                if (!commutative_available) {
+                    log_semantic_error("Commutative not available for this Operator", commutative_argument_node);
+                    errors_occured = true;
+                }
+            }
+
+            // Analyse base_name
+            String* name = 0;
+            if (name_argument_node != nullptr)
+            {
+                if (!name_available) {
+                    log_semantic_error("Name argument is only available for dot-calls", name_argument_node);
+                    errors_occured = true;
+                }
+
+                if (!(name_argument_node->type == AST::Expression_Type::LITERAL_READ && name_argument_node->options.literal_read.type == Literal_Type::STRING)) {
+                    log_semantic_error("Name argument must currently be string literal", name_argument_node);
+                    errors_occured = true;
+                }
+                else {
+                    name = name_argument_node->options.literal_read.options.string;
                 }
             }
 
@@ -8540,10 +8697,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             // Analyse function
             Expression_Info* expr_info = semantic_analyser_analyse_expression_any(function_argument_node, expression_context_make_unknown());
 
-            Operator_Overload_Key key;
+            Overload_Key key;
             key.op = overloaded_operator;
             key.left_type = types.error_type;
-            key.right_type = types.error_type;
+            key.key_is_type = true;
+            key.options.right_type = types.error_type;
             Operator_Overload overload;
             overload.is_polymorphic = false;
             overload.switch_left_and_right = false;
@@ -8558,26 +8716,48 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 // Check if signature is valid
                 auto signature = function->signature;
-                if (signature->parameters.size != expected_argument_count) {
-                    log_semantic_error("Function does not have the required number of arguments for overload", function_argument_node);
-                    errors_occured = true;
+                if (overloaded_operator == Upp_Operator::DOT_CALL) 
+                {
+                    key.key_is_type = false;
+                    if (signature->parameters.size == 0) {
+                        log_semantic_error("Dot call overload requires a function with at least one argument", function_argument_node);
+                        errors_occured = true;
+                    }
+                    if (name != 0) {
+                        key.options.id = name;
+                    }
+                    else 
+                    {
+                        if (function->symbol == 0) {
+                            log_semantic_error("Dot-Call with an unnamed function requires the name argument", function_argument_node);
+                            errors_occured = true;
+                        }
+                        else {
+                            key.options.id = function->symbol->id;
+                        }
+                    }
                 }
                 else
                 {
-                    overload.is_polymorphic = false;
-                    overload.options.function = function;
-                    key.left_type = datatype_get_pointed_to_type(signature->parameters[0].type, &overload.left_pointer_level);
-                    if (expected_argument_count == 2) {
-                        key.right_type = datatype_get_pointed_to_type(signature->parameters[1].type, &overload.right_pointer_level);
+                    if (signature->parameters.size != expected_argument_count) {
+                        log_semantic_error("Function does not have the required number of arguments for overload", function_argument_node);
+                        errors_occured = true;
                     }
-                }
+                    else
+                    {
+                        key.left_type = datatype_get_pointed_to_type(signature->parameters[0].type, &overload.left_pointer_level);
+                        if (expected_argument_count == 2) {
+                            key.options.right_type = datatype_get_pointed_to_type(signature->parameters[1].type, &overload.right_pointer_level);
+                        }
+                    }
 
-                if (!signature->return_type.available) {
-                    log_semantic_error("Function must have return type for overload", function_argument_node);
-                    errors_occured = true;
-                }
-                else if (overloaded_operator == Upp_Operator::CAST) {
-                    key.right_type = signature->return_type.value;
+                    if (!signature->return_type.available) {
+                        log_semantic_error("Function must have return type for overload", function_argument_node);
+                        errors_occured = true;
+                    }
+                    else if (overloaded_operator == Upp_Operator::CAST) {
+                        key.options.right_type = signature->return_type.value;
+                    }
                 }
             }
             else if (expr_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
@@ -8595,37 +8775,58 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 assert(function_progress->header_workload->base.is_finished, "");
 
                 // Check that polymorphic base signature is valid for overload
-                // Check return type
-                if (poly_base.return_type_index == -1) {
-                    log_semantic_error("Function must have return type for overload", function_argument_node);
-                    errors_occured = true;
-                }
-                else if (overloaded_operator == Upp_Operator::CAST)
+                if (overloaded_operator == Upp_Operator::DOT_CALL)
                 {
-                    // If the type is known, we use it as index to second type in casts...
-                    auto return_param = poly_base.parameters[poly_base.return_type_index];
-                    if (return_param.depends_on.size == 0 && !return_param.infos.type->contains_type_template) {
-                        key.right_type = return_param.infos.type;
+                    if (poly_base.parameter_nodes.size == 0) {
+                        log_semantic_error("Dot call overload requires a function with at least one argument", function_argument_node);
+                        errors_occured = true;
                     }
-                }
-
-                // Check that no comptime arguments exist
-                for (int j = 0; j < poly_base.parameter_nodes.size; j++) {
-                    auto& param = poly_base.parameters[j];
-                    if (param.is_comptime) {
-                        log_semantic_error("For overload the function parameter must not be comptime", function_argument_node);
-                        break;
+                    key.key_is_type = false;
+                    key.options.id = function_progress->function->symbol->id; // Should never be null for polymorphic
+                    if (name != 0) {
+                        key.options.id = name;
                     }
-                }
-
-                // Check parameters
-                if (poly_base.parameter_nodes.size != expected_argument_count) {
-                    log_semantic_error("The polymorphic function does not have the required argument count", function_argument_node);
-                    errors_occured = true;
                 }
                 else
                 {
-                    // Check first parameter
+                    if (poly_base.return_type_index == -1) {
+                        log_semantic_error("Function must have return type for overload", function_argument_node);
+                        errors_occured = true;
+                    }
+                    else if (overloaded_operator == Upp_Operator::CAST)
+                    {
+                        // If the type is known, we use it as index to second type in casts...
+                        auto return_param = poly_base.parameters[poly_base.return_type_index];
+                        if (return_param.depends_on.size == 0 && !return_param.infos.type->contains_type_template) {
+                            key.options.right_type = return_param.infos.type;
+                        }
+                    }
+
+                    // Check that no comptime arguments exist
+                    for (int j = 0; j < poly_base.parameter_nodes.size; j++) {
+                        auto& param = poly_base.parameters[j];
+                        if (param.is_comptime) {
+                            log_semantic_error("For overload the function parameter must not be comptime", function_argument_node);
+                            break;
+                        }
+                    }
+
+                    // Check argument-count and second argument
+                    if (poly_base.parameter_nodes.size != expected_argument_count) {
+                        log_semantic_error("The polymorphic function does not have the required argument count", function_argument_node);
+                        errors_occured = true;
+                    }
+                    else if (expected_argument_count == 2) {
+                        auto second_param = poly_base.parameters[1];
+                        if (second_param.depends_on.size == 0 && !second_param.infos.type->contains_type_template) {
+                            key.options.right_type = datatype_get_pointed_to_type(second_param.infos.type, &overload.right_pointer_level);
+                        }
+                    }
+                }
+
+                // Check first parameter
+                if (!errors_occured)
+                {
                     auto& param = poly_base.parameters[0];
                     if (param.depends_on.size != 0) {
                         log_semantic_error("For polymorphic overload the first parameter must not depend on other parameters!", function_argument_node);
@@ -8643,13 +8844,9 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                         }
                     }
 
-                    // Check second parameter
-                    if (expected_argument_count == 2)
-                    {
-                        auto second_param = poly_base.parameters[1];
-                        if (second_param.depends_on.size == 0 && !second_param.infos.type->contains_type_template) {
-                            key.right_type = datatype_get_pointed_to_type(second_param.infos.type, &overload.right_pointer_level);
-                        }
+                    if (param.is_comptime) {
+                        log_semantic_error("For polymorphic overload the first parameter must not be comptime", function_argument_node);
+                        errors_occured = true;
                     }
                 }
             }
@@ -8663,7 +8860,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             }
 
             if (overloaded_operator == Upp_Operator::ARRAY_ACCESS) {
-                key.right_type = types.error_type; // Second parameter is index, which shouldn't be used for access
+                key.options.right_type = types.error_type; // Second parameter is index, which shouldn't be used for access
             }
 
             // Try to insert into operator context
@@ -8678,18 +8875,18 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 else {
                     log_semantic_error("Overload already exists for given types", function_argument_node);
                     log_error_info_given_type(key.left_type);
-                    if (!expected_argument_count) {
-                        log_error_info_given_type(key.right_type);
+                    if (key.key_is_type && !datatype_is_unknown(key.options.right_type)) {
+                        log_error_info_given_type(key.options.right_type);
                     }
                 }
             }
 
             // Insert commutative version if requested
-            if (is_commutative && !types_are_equal(key.left_type, key.right_type) && commutative_available)
+            if (is_commutative && commutative_available && key.key_is_type && !types_are_equal(key.left_type, key.options.right_type))
             {
-                Operator_Overload_Key other_key;
-                other_key.left_type = key.right_type;
-                other_key.right_type = key.left_type;
+                Overload_Key other_key;
+                other_key.left_type = key.options.right_type;
+                other_key.options.right_type = key.left_type;
                 other_key.op = key.op;
 
                 Operator_Overload other_overload = overload;
@@ -8705,7 +8902,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 else {
                     log_semantic_error("Overload already exists for given types (Commutative version)", function_argument_node);
                     log_error_info_given_type(other_key.left_type);
-                    log_error_info_given_type(other_key.right_type);
+                    log_error_info_given_type(other_key.options.right_type);
                 }
             }
 
@@ -9131,17 +9328,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         {
             // Get type of variable
             Datatype* type = predefined_types.error_type;
-            if (i < types.size) 
-            {
+            if (i < types.size) {
                 type = semantic_analyser_analyse_expression_type(types[i]);
-                bool type_is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
-                if (definition->is_pointer_definition && !type_is_pointer) {
-                    log_semantic_error("Pointer definition requires pointer-type", types[i]);
-                    type = predefined_types.error_type;
-                }
-                else if (type_is_pointer && !definition->is_pointer_definition && !values.size == 0) {
-                    log_semantic_error("Pointer type definition requires a pointer assignment =*", types[i]);
-                }
             }
             else if (types.size == 1) {
                 auto info = get_info(types[0]);
@@ -9165,33 +9353,12 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 Expression_Context context;
                 if (datatype_is_unknown(type)) {
-                    if (definition->is_pointer_definition) {
-                        context = expression_context_make_unknown();
-                    }
-                    else {
-                        context = expression_context_make_auto_dereference();
-                    }
+                    context = expression_context_make_unknown();
                 }
                 else {
                     context = expression_context_make_specific_type(type);
                 }
-
                 type = semantic_analyser_analyse_expression_value(values[i], context);
-                bool is_pointer = type->type == Datatype_Type::POINTER || type->type == Datatype_Type::VOID_POINTER;
-
-                // Force address of if it's a pointer definition
-                if (definition->is_pointer_definition && !is_pointer && types.size == 0 && !datatype_is_unknown(type)) {
-                    if (try_updating_expression_pointer_level(values[i], type, 0, 1)) {
-                        type = upcast(type_system_make_pointer(type));
-                    }
-                    else {
-                        log_semantic_error("Expression must be a pointer/convertable to pointer in pointer definitions!", values[i]);
-                        type = predefined_types.error_type;
-                    }
-                }
-                else if (!definition->is_pointer_definition && is_pointer) {
-                    log_semantic_error("Pointer value requires pointer assignment, e.g. =* or :=*", values[i]);
-                }
             }
             else if (values.size == 1) {
                 auto broadcast_value_type = expression_info_get_type(get_info(values[0]), false);
@@ -9517,7 +9684,7 @@ void semantic_analyser_reset()
         symbols.hardcoded_assert = define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
 
         // NOTE: Error symbol is required so that unresolved symbol-reads can point to something,
-        //       but it shouldn't be possible to reference the error symbol by name, so the 
+        //       but it shouldn't be possible to reference the error symbol by base_name, so the 
         //       current little 'hack' is to use the identifier 0_ERROR and because it starts with a 0, it
         //       can never be used as a symbol read. Other approaches would be to have a custom symbol-table for the error symbol
         //       that isn't connected to anything.

@@ -114,7 +114,7 @@ struct Extern_Sources
     Dynamic_Array<String*> source_files_to_compile;
     Dynamic_Array<String*> lib_files;
     Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashtable<Datatype*, String*> extern_type_signatures; // Extern types to name id, e.g. HWND should not create its own structure, but use name HWND as type
+    Hashtable<Datatype*, String*> extern_type_signatures; // Extern types to base_name id, e.g. HWND should not create its own structure, but use base_name HWND as type
 };
 
 Extern_Sources extern_sources_create();

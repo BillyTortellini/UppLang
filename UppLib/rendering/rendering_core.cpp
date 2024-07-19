@@ -32,11 +32,11 @@ void rendering_core_initialize(int backbuffer_width, int backbuffer_height, floa
     result.render_information.backbuffer_width = backbuffer_width;
     result.render_information.backbuffer_height = backbuffer_height;
 
-    result.window_size_listeners = dynamic_array_create_empty<Window_Size_Listener>(1);
+    result.render_event_listeners = dynamic_array_create_empty<Render_Event_Listener>(1);
     result.vertex_attributes = dynamic_array_create_empty<Vertex_Attribute_Base*>(1);
     result.vertex_descriptions = dynamic_array_create_empty<Vertex_Description*>(1);
     result.meshes = hashtable_create_empty<String, Mesh*>(4, hash_string, string_equals);
-    result.shaders = hashtable_create_empty<String, Shader*>(4, hash_string, string_equals);
+    result.shaders = hashtable_create_empty<String, Hotreload_Shader>(4, hash_string, string_equals);
     result.render_passes = hashtable_create_empty<String, Render_Pass*>(4, hash_string, string_equals);
     result.framebuffers = hashtable_create_empty<String, Framebuffer*>(4, hash_string, string_equals);
 
@@ -150,7 +150,7 @@ void rendering_core_destroy()
     gpu_buffer_destroy(&core.ubo_render_information);
     file_listener_destroy(core.file_listener);
     opengl_state_destroy(&core.opengl_state);
-    dynamic_array_destroy(&core.window_size_listeners);
+    dynamic_array_destroy(&core.render_event_listeners);
 
     for (int i = 0; i < core.vertex_descriptions.size; i++) {
         auto desc = core.vertex_descriptions[i];
@@ -186,19 +186,10 @@ void rendering_core_destroy()
     {
         auto it = hashtable_iterator_create(&core.shaders);
         while (hashtable_iterator_has_next(&it)) {
-            Shader* shader = *(it.value);
-            if (shader->program_id != 0) {
-                glDeleteProgram(shader->program_id);
-                shader->program_id = 0;
-            }
-            for (int i = 0; i < shader->allocated_strings.size; i++) {
-                string_destroy(&shader->allocated_strings[i]);
-            }
-            dynamic_array_destroy(&shader->allocated_strings);
-            dynamic_array_destroy(&shader->uniform_infos);
-            dynamic_array_destroy(&shader->input_layout);
+            Hotreload_Shader* shader = it.value;
+            shader_destroy(shader->shader);
+            file_listener_remove_file(core.file_listener, shader->watched_file);
             hashtable_iterator_next(&it);
-            delete shader;
         }
         hashtable_destroy(&core.shaders);
     }
@@ -225,26 +216,28 @@ void rendering_core_destroy()
     }
 }
 
-void rendering_core_add_window_size_listener(window_size_changed_callback callback, void* userdata)
+void rendering_core_add_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata)
 {
     auto core = &rendering_core;
-    Window_Size_Listener listener;
+    Render_Event_Listener listener;
     listener.callback = callback;
     listener.userdata = userdata;
-    dynamic_array_push_back(&core->window_size_listeners, listener);
+    listener.event = event;
+    dynamic_array_push_back(&core->render_event_listeners, listener);
 }
 
-void rendering_core_remove_window_size_listener(void* userdata)
+void rendering_core_remove_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata)
 {
     auto core = &rendering_core;
     int found = -1;
-    for (int i = 0; i < core->window_size_listeners.size; i++) {
-        if (core->window_size_listeners[i].userdata == userdata) {
+    for (int i = 0; i < core->render_event_listeners.size; i++) {
+        auto& listener = core->render_event_listeners[i];
+        if (listener.userdata == userdata && listener.callback == callback && listener.event == event) {
             found = i;
         }
     }
     if (found == -1) panic("Should not happen i guess");
-    dynamic_array_swap_remove(&core->window_size_listeners, found);
+    dynamic_array_swap_remove(&core->render_event_listeners, found);
 }
 
 void renderpass_queue_if_no_dependencies(Render_Pass* pass, Dynamic_Array<Render_Pass*>* execution_order)
@@ -292,7 +285,7 @@ void render_mesh_with_shader_if_compatible(Shader* shader, Mesh* mesh, Mesh_Topo
     opengl_state_bind_vao(mesh->vao);
 
     // Draw
-    if (mesh->drawing_has_index_buffer) {
+    if (mesh->has_index_buffer) {
         glDrawElements((GLenum)topology, element_count, GL_UNSIGNED_INT, (GLvoid*)(i64)(element_start * sizeof(GLuint)));
     }
     else {
@@ -310,13 +303,23 @@ void rendering_core_prepare_frame(float current_time, int backbuffer_width, int 
     // Update file listeners and window size changed listeners
     {
         file_listener_check_if_files_changed(core.file_listener);
-        if ((backbuffer_width != info.backbuffer_width || backbuffer_height != info.backbuffer_height) &&
-            (backbuffer_width != 0 && backbuffer_height != 0))
-        {
-            info.backbuffer_width = backbuffer_width;
+
+
+        bool window_size_changed = 
+            (backbuffer_width != info.backbuffer_width || backbuffer_height != info.backbuffer_height) &&
+            (backbuffer_width != 0 && backbuffer_height != 0);
+        if (window_size_changed) {
             info.backbuffer_height = backbuffer_height;
-            for (int i = 0; i < core.window_size_listeners.size; i++) {
-                auto& listener = core.window_size_listeners[i];
+            info.backbuffer_width = backbuffer_width;
+        }
+
+        // Update Event listeners
+        for (int i = 0; i < core.render_event_listeners.size; i++) {
+            auto& listener = core.render_event_listeners[i];
+            if (listener.event == Render_Event::WINDOW_SIZE_CHANGED && window_size_changed) {
+                listener.callback(listener.userdata);
+            }
+            else if (listener.event == Render_Event::FRAME_START) {
                 listener.callback(listener.userdata);
             }
         }
@@ -329,11 +332,10 @@ void rendering_core_prepare_frame(float current_time, int backbuffer_width, int 
         {
             auto mesh = *it.value;
             mesh->queried_this_frame = false; // Reset
-            mesh->dirty = false;
             if (mesh->reset_every_frame) {
-                mesh->drawing_has_index_buffer = false;
-                mesh->draw_count = 0;
+                mesh->dirty = true;
                 mesh->vertex_count = 0;
+                mesh->index_count = 0;
                 for (int i = 0; i < mesh->buffers.size; i++) {
                     auto& buffer = mesh->buffers[i];
                     buffer.element_count = 0;
@@ -374,20 +376,12 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
             }
             mesh->dirty = false;
 
-            mesh->drawing_has_index_buffer = false;
-            mesh->draw_count = 0;
             for (int i = 0; i < mesh->buffers.size; i++)
             {
                 auto& buffer = mesh->buffers[i];
                 auto attribute = mesh->description->attributes[i];
-
-                if (attribute == core.predefined.index) {
-                    mesh->drawing_has_index_buffer = true;
-                    mesh->draw_count = buffer.element_count;
-                }
-                else if (!mesh->drawing_has_index_buffer) {
-                    assert(!(i != 0 && mesh->draw_count != buffer.element_count), "All vertex attributes must have the same size when drawing!");
-                    mesh->draw_count = buffer.element_count;
+                if (attribute != rendering_core.predefined.index) {
+                    assert(buffer.element_count == mesh->vertex_count, "Mesh contains attributes with different sizes!\n");
                 }
                 gpu_buffer_update(&buffer.gpu_buffer, dynamic_array_as_bytes(&buffer.attribute_data));
             }
@@ -417,6 +411,10 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
             auto& pass = execution_queue[i];
             dynamic_array_reset(&pass->dependents);
             pass->dependency_count = 0;
+
+            if (pass->commands.size == 0) {
+                continue;
+            }
 
             // Set opengl state
             rendering_core_update_pipeline_state(pass->pipeline_state);
@@ -452,14 +450,14 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
                             }
                         }
                         if (info == 0) {
-                            logg("Couldn't find uniform: %s in shader %s\n", uniform.value.name, uniform.shader->filename);
+                            logg("Couldn't find uniform: %s in shader\n", uniform.value.name);
                             continue; // Next command
                         }
                     }
 
                     // Test uniform type
                     if (info->type != uniform.value.datatype || info->array_size != 1) {
-                        logg("Uniform type does not match for uniform: %s in shader %s\n", uniform.value.name, uniform.shader->filename);
+                        logg("Uniform type does not match for uniform: %s in shader\n", uniform.value.name);
                         continue;
                     }
 
@@ -485,7 +483,12 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
                 }
                 else if (command.type == Render_Pass_Command_Type::DRAW_CALL) {
                     auto& call = command.draw_call;
-                    render_mesh_with_shader_if_compatible(call.shader, call.mesh, call.topology, call.mesh->draw_count, 0);
+                    if (call.mesh->has_index_buffer) {
+                        render_mesh_with_shader_if_compatible(call.shader, call.mesh, call.topology, call.mesh->index_count, 0);
+                    }
+                    else {
+                        render_mesh_with_shader_if_compatible(call.shader, call.mesh, call.topology, call.mesh->vertex_count, 0);
+                    }
                 }
                 else if (command.type == Render_Pass_Command_Type::DRAW_CALL_COUNT) {
                     auto& call = command.draw_call_count;
@@ -628,6 +631,8 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
     mesh->reset_every_frame = reset_every_frame;
     mesh->dirty = false;
     mesh->vertex_count = 0;
+    mesh->has_index_buffer = false;
+    mesh->index_count = 0;
 
     // Generate buffers
     mesh->buffers = array_create_empty<Attribute_Buffer>(description->attributes.size);
@@ -637,6 +642,9 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
         auto attribute = description->attributes[i];
         bool is_index = attribute == core.predefined.index;
 
+        if (is_index) {
+            mesh->has_index_buffer = true;
+        }
         buffer.element_count = 0;
         buffer.gpu_buffer = gpu_buffer_create_empty(
             1,
@@ -691,237 +699,80 @@ void mesh_push_indices(Mesh* mesh, std::initializer_list<uint32> indices, bool a
 }
 
 
-void shader_file_changed_callback(void* userdata, const char* filename)
+
+// SHADERS
+Shader* shader_create_empty()
 {
-    Shader* shader = (Shader*)userdata;
-    logg("Compiling shader: %s\n", filename);
+    Shader* shader = new Shader;
+    shader->compiled = false;
+    shader->program_id = 0;
+    shader->input_layout = dynamic_array_create_empty<Shader_Input_Info>(1);
+    shader->uniform_infos = dynamic_array_create_empty<Uniform_Info>(1);
+    shader->allocated_strings = dynamic_array_create_empty<String>(1);
+    return shader;
+}
 
-    auto shader_code_opt = file_io_load_text_file(filename);
-    SCOPE_EXIT(file_io_unload_text_file(&shader_code_opt));
-    if (!shader_code_opt.available) {
-        panic("File listener file wasnt able to read!");
+void shader_reset(Shader* shader)
+{
+    if (shader->program_id != 0) {
+        glDeleteProgram(shader->program_id);
     }
+    shader->program_id = 0;
+    shader->compiled = false;
+    dynamic_array_reset(&shader->uniform_infos);
+    dynamic_array_reset(&shader->input_layout);
+    for (int i = 0; i < shader->allocated_strings.size; i++) {
+        string_destroy(&shader->allocated_strings[i]);
+    }
+    dynamic_array_reset(&shader->allocated_strings);
+}
 
-    // Reset shader
-    {
-        if (shader->program_id != 0) {
-            glDeleteProgram(shader->program_id);
-        }
+void shader_destroy(Shader* shader)
+{
+    shader_reset(shader);
+    dynamic_array_destroy(&shader->uniform_infos);
+    dynamic_array_destroy(&shader->input_layout);
+    dynamic_array_destroy(&shader->allocated_strings);
+    delete shader;
+}
+
+void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_code)
+{
+    assert(!shader->compiled, "Reset must be called before recompiling");
+    if (shader->program_id == 0) {
         shader->program_id = glCreateProgram();
-        if (shader->program_id == 0) {
-            panic("Shouldn_t happen!\n");
-        }
-
-        dynamic_array_reset(&shader->uniform_infos);
-        dynamic_array_reset(&shader->input_layout);
-        for (int i = 0; i < shader->allocated_strings.size; i++) {
-            string_destroy(&shader->allocated_strings[i]);
-        }
-        dynamic_array_reset(&shader->allocated_strings);
+        assert(shader->program_id != 0, "");
     }
 
-    // Recompile and add shader-stages to the program
+    GLenum gl_stage;
+    switch (stage)
     {
-        int possible_shader_defines_count = 6;
-        String possible_shader_defines[] = {
-            string_create_static("VERTEX"),
-            string_create_static("FRAGMENT"),
-            string_create_static("GEOMETRY"),
-            string_create_static("COMPUTE"),
-            string_create_static("TESSELATION_CONTROL"),
-            string_create_static("TESSELATION_EVALUATION"),
-        };
-        GLenum possible_shader_define_types[] = {
-            GL_VERTEX_SHADER,
-            GL_FRAGMENT_SHADER,
-            GL_GEOMETRY_SHADER,
-            GL_COMPUTE_SHADER,
-            GL_TESS_CONTROL_SHADER,
-            GL_TESS_EVALUATION_SHADER,
-        };
-        // Note: This array corresponds to the Shader_Datatypes enum!
-        const int type_count = 9;
-        String type_names[] = {
-            string_create_static("float"),
-            string_create_static("uint"),
-            string_create_static("vec2"),
-            string_create_static("vec3"),
-            string_create_static("vec4"),
-            string_create_static("mat2"),
-            string_create_static("mat3"),
-            string_create_static("mat4"),
-            string_create_static("sampler2D"),
-        };
-
-        auto createAndAttachShader = [](GLenum shadertype, GLuint program_id, String& shadercode) {
-            GLint shader_id = glCreateShader(shadertype);
-            const char* sources[] = { "#version 430 core\n\n", shadercode.characters };
-            glShaderSource(shader_id, 2, sources, 0);
-            logg("compiling shader: \n\n%s\n\n", shadercode.characters);
-            glCompileShader(shader_id);
-            opengl_utils_check_shader_compilation_status(shader_id);
-            glAttachShader(program_id, shader_id);
-            glDeleteShader(shader_id); // Will only be deleted after the program is deleted
-            string_clear(&shadercode);
-        };
-
-        // Split input into lines
-        String buffer = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&buffer));
-        Array<String> lines = string_split(shader_code_opt.value, '\n');
-        SCOPE_EXIT(string_split_destroy(lines));
-        GLenum shaderType = GL_INVALID_ENUM;
-        int slot_index = 0;
-        bool inside_code = false; // Code only starts after #define
-        for (int i = 0; i < lines.size; i++)
-        {
-            auto line = lines[i];
-
-            // Do pattern matching
-            // Shader type defines
-            String escape_sequence = string_create_static("//@");
-            String ifdef = string_create_static("#ifdef");
-            String endif = string_create_static("#endif");
-            if (string_compare_substring(&line, 0, &ifdef))
-            {
-                // Split line into words
-                Array<String> words = string_split(line, ' ');
-                SCOPE_EXIT(string_split_destroy(words));
-                if (words.size != 2) {
-                    logg("Shader error, couldn't parse #ifdef!\n");
-                    continue; // Next line
-                }
-                String stage_name = words[1];
-                if (stage_name.size > 0 && stage_name.characters[words[1].size - 1] == '\r') {
-                    stage_name.size -= 1;
-                }
-
-                bool worked = false;
-                for (int j = 0; j < possible_shader_defines_count; j++)
-                {
-                    if (!string_equals(&stage_name, &possible_shader_defines[j])) {
-                        continue;
-                    }
-                    shaderType = possible_shader_define_types[j];
-                    worked = true;
-                    break;
-                }
-                if (!worked) {
-                    logg("Could not comprehend ifdef\n");
-                }
-                else {
-                    inside_code = true;
-                }
-                continue; // GOTO next line
-            }
-
-            if (string_compare_substring(&line, 0, &endif)) {
-                createAndAttachShader(shaderType, shader->program_id, buffer);
-                string_reset(&buffer);
-                inside_code = false;
-            }
-
-            // Skip none code lines
-            if (!inside_code) {
-                continue;
-            }
-
-            // Input layout
-            if (shaderType == GL_VERTEX_SHADER &&
-                string_compare_substring(&line, 0, &string_create_static("in")) ||
-                string_compare_substring(&line, 0, &string_create_static("inout")))
-            {
-                Shader_Input_Info input_info;
-
-                // Split line into words
-                Array<String> words = string_split(line, ' ');
-                SCOPE_EXIT(string_split_destroy(words));
-                if (words.size < 3) {
-                    logg("Shader error, couldn't parse in/inout attribute!\n");
-                    continue; // Next line
-                }
-
-                // Variable name
-                {
-                    String var_name = words[2];
-                    if (var_name.size == 0) {
-                        panic("Shouldnt happen with split...");
-                    }
-                    if (var_name.size >= 1 && var_name.characters[var_name.size - 1] == ';') {
-                        var_name.size -= 1;
-                    }
-                    if (var_name.size == 0) {
-                        logg("Shader error, expected variable name!\n");
-                        continue;
-                    }
-                    input_info.variable_name = string_copy(var_name);
-                    dynamic_array_push_back(&shader->allocated_strings, input_info.variable_name);
-                }
-
-                // Parse type + set location
-                Shader_Datatype datatype;
-                {
-                    String type = words[1];
-                    int type_index = -1;
-                    for (int j = 0; j < type_count; j++) {
-                        if (string_equals(&type_names[j], &type)) {
-                            type_index = j;
-                            break;
-                        }
-                    }
-                    if (type_index == -1) {
-                        logg("Shader error, couldn't parse input type!\n");
-                        continue;
-                    }
-                    datatype = (Shader_Datatype)type_index;
-                }
-
-                // Parse attribute name
-                {
-                    String suffix = words[words.size - 1];
-                    if (suffix.size < escape_sequence.size + 1) {
-                        logg("Expected valid suffix for inout qualifier");
-                        continue;
-                    }
-                    if (!string_compare_substring(&suffix, 0, &escape_sequence)) {
-                        logg("Expected valid suffix");
-                        continue;
-                    }
-                    if (suffix.size > 0 && suffix.characters[suffix.size - 1] == '\r') {
-                        suffix.size -= 1;
-                    }
-                    if (suffix.size <= 0) {
-                        logg("Expected valid suffix");
-                        continue;
-                    }
-                    String attribute_name = string_create_substring(&suffix, escape_sequence.size, suffix.size);
-                    dynamic_array_push_back(&shader->allocated_strings, attribute_name);
-                    input_info.attribute = vertex_attribute_make_base(datatype, attribute_name.characters);
-                    input_info.location = input_info.attribute->binding_location;
-                }
-
-                // Store Vertex attribute
-                dynamic_array_push_back(&shader->input_layout, input_info);
-                string_append_formated(&buffer, "layout (location = %d) ", input_info.attribute->binding_location);
-            }
-
-            // Add line to buffer if its not a special line
-            string_append_string(&buffer, &line);
-            string_append(&buffer, "\n");
-        }
-
-        // Add the final shader_stage to the program
-        if (inside_code) {
-            logg("Last endif is missing in shader!\n");
-            createAndAttachShader(shaderType, shader->program_id, buffer);
-        }
+    case Shader_Stage::VERTEX: gl_stage = GL_VERTEX_SHADER; break;
+    case Shader_Stage::GEOMETRY: gl_stage = GL_GEOMETRY_SHADER; break;
+    case Shader_Stage::FRAGMENT: gl_stage = GL_FRAGMENT_SHADER; break;
+    default: panic("");
     }
 
-    // Link program
+    GLint shader_id = glCreateShader(gl_stage);
+    const char* sources[] = { source_code.characters };
+    const GLint lengths[] = { source_code.size };
+    glShaderSource(shader_id, 1, sources, lengths);
+    logg("compiling shader: \n\n%s\n\n", source_code.characters);
+    glCompileShader(shader_id);
+    opengl_utils_check_shader_compilation_status(shader_id);
+    glAttachShader(shader->program_id, shader_id);
+    glDeleteShader(shader_id); // Will only be deleted after the program is deleted
+}
+
+bool shader_compile(Shader* shader)
+{
+    assert(!shader->compiled, "Reset must be called before recompiling a shader!");
+
+    // Compile program
     if (!opengl_utils_link_program_and_check_errors(shader->program_id)) {
         glDeleteProgram(shader->program_id);
         shader->program_id = 0;
-        return;
+        return false;
     }
 
     // Recheck attribute information (Lookout for unused attributes)
@@ -942,6 +793,7 @@ void shader_file_changed_callback(void* userdata, const char* filename)
     {
         GLint uniform_count;
         glGetProgramiv(shader->program_id, GL_ACTIVE_UNIFORMS, &uniform_count);
+        dynamic_array_reset(&shader->uniform_infos);
         dynamic_array_reserve(&shader->uniform_infos, uniform_count);
 
         int longest_uniform_name_length;
@@ -983,6 +835,212 @@ void shader_file_changed_callback(void* userdata, const char* filename)
             dynamic_array_push_back(&shader->uniform_infos, info);
         }
     }
+
+    shader->compiled = true;
+    return true;
+}
+
+void hotreload_shader(void* userdata, const char* filename)
+{
+    Shader* shader = (Shader*)userdata;
+    logg("Compiling shader: %s\n", filename);
+
+    auto shader_code_opt = file_io_load_text_file(filename);
+    SCOPE_EXIT(file_io_unload_text_file(&shader_code_opt));
+    if (!shader_code_opt.available) {
+        panic("File listener file wasnt able to read!");
+    }
+
+    shader_reset(shader);
+
+    // Recompile and add shader-stages to the program
+    {
+        int possible_shader_defines_count = 6;
+        String possible_shader_defines[] = {
+            string_create_static("VERTEX"),
+            string_create_static("FRAGMENT"),
+            string_create_static("GEOMETRY"),
+            //string_create_static("COMPUTE"),
+            //string_create_static("TESSELATION_CONTROL"),
+            //string_create_static("TESSELATION_EVALUATION"),
+        };
+        Shader_Stage possible_shader_define_types[] = {
+            Shader_Stage::VERTEX,
+            Shader_Stage::FRAGMENT,
+            Shader_Stage::GEOMETRY
+            // GL_COMPUTE_SHADER,
+            // GL_TESS_CONTROL_SHADER,
+            // GL_TESS_EVALUATION_SHADER,
+        };
+        // Note: This array corresponds to the Shader_Datatypes enum!
+        const int type_count = 9;
+        String type_names[] = {
+            string_create_static("float"),
+            string_create_static("uint"),
+            string_create_static("vec2"),
+            string_create_static("vec3"),
+            string_create_static("vec4"),
+            string_create_static("mat2"),
+            string_create_static("mat3"),
+            string_create_static("mat4"),
+            string_create_static("sampler2D"),
+        };
+
+        // Split input into lines
+        String buffer = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&buffer));
+        string_append_formated(&buffer, "#version 430 core\n\n");
+        Array<String> lines = string_split(shader_code_opt.value, '\n');
+        SCOPE_EXIT(string_split_destroy(lines));
+        Shader_Stage shader_stage = Shader_Stage::SHADER_STAGE_COUNT;
+        int slot_index = 0;
+        bool inside_code = false; // Code only starts after #define
+        for (int i = 0; i < lines.size; i++)
+        {
+            auto line = lines[i];
+
+            // Do pattern matching
+            // Shader type defines
+            String escape_sequence = string_create_static("//@");
+            String ifdef = string_create_static("#ifdef");
+            String endif = string_create_static("#endif");
+            if (string_compare_substring(&line, 0, &ifdef))
+            {
+                // Split line into words
+                Array<String> words = string_split(line, ' ');
+                SCOPE_EXIT(string_split_destroy(words));
+                if (words.size != 2) {
+                    logg("Shader error, couldn't parse #ifdef!\n");
+                    continue; // Next line
+                }
+                String stage_name = words[1];
+                if (stage_name.size > 0 && stage_name.characters[words[1].size - 1] == '\r') {
+                    stage_name.size -= 1;
+                }
+
+                bool worked = false;
+                for (int j = 0; j < possible_shader_defines_count; j++)
+                {
+                    if (!string_equals(&stage_name, &possible_shader_defines[j])) {
+                        continue;
+                    }
+                    shader_stage = possible_shader_define_types[j];
+                    worked = true;
+                    break;
+                }
+                if (!worked) {
+                    logg("Could not comprehend ifdef\n");
+                }
+                else {
+                    inside_code = true;
+                }
+                continue; // GOTO next line
+            }
+
+            if (string_compare_substring(&line, 0, &endif)) {
+                shader_add_shader_stage(shader, shader_stage, buffer);
+                string_reset(&buffer);
+                string_append_formated(&buffer, "#version 430 core\n\n");
+                inside_code = false;
+            }
+
+            // Skip none code lines
+            if (!inside_code) {
+                continue;
+            }
+
+            // Input layout
+            if (shader_stage == Shader_Stage::VERTEX &&
+                string_compare_substring(&line, 0, &string_create_static("in")) ||
+                string_compare_substring(&line, 0, &string_create_static("inout")))
+            {
+                Shader_Input_Info input_info;
+
+                // Split line into words
+                Array<String> words = string_split(line, ' ');
+                SCOPE_EXIT(string_split_destroy(words));
+                if (words.size < 3) {
+                    logg("Shader error, couldn't parse in/inout attribute!\n");
+                    continue; // Next line
+                }
+
+                // Variable base_name
+                {
+                    String var_name = words[2];
+                    if (var_name.size == 0) {
+                        panic("Shouldnt happen with split...");
+                    }
+                    if (var_name.size >= 1 && var_name.characters[var_name.size - 1] == ';') {
+                        var_name.size -= 1;
+                    }
+                    if (var_name.size == 0) {
+                        logg("Shader error, expected variable name!\n");
+                        continue;
+                    }
+                    input_info.variable_name = string_copy(var_name);
+                    dynamic_array_push_back(&shader->allocated_strings, input_info.variable_name);
+                }
+
+                // Parse type + set location
+                Shader_Datatype datatype;
+                {
+                    String type = words[1];
+                    int type_index = -1;
+                    for (int j = 0; j < type_count; j++) {
+                        if (string_equals(&type_names[j], &type)) {
+                            type_index = j;
+                            break;
+                        }
+                    }
+                    if (type_index == -1) {
+                        logg("Shader error, couldn't parse input type!\n");
+                        continue;
+                    }
+                    datatype = (Shader_Datatype)type_index;
+                }
+
+                // Parse attribute base_name
+                {
+                    String suffix = words[words.size - 1];
+                    if (suffix.size < escape_sequence.size + 1) {
+                        logg("Expected valid suffix for inout qualifier");
+                        continue;
+                    }
+                    if (!string_compare_substring(&suffix, 0, &escape_sequence)) {
+                        logg("Expected valid suffix");
+                        continue;
+                    }
+                    if (suffix.size > 0 && suffix.characters[suffix.size - 1] == '\r') {
+                        suffix.size -= 1;
+                    }
+                    if (suffix.size <= 0) {
+                        logg("Expected valid suffix");
+                        continue;
+                    }
+                    String attribute_name = string_create_substring(&suffix, escape_sequence.size, suffix.size);
+                    dynamic_array_push_back(&shader->allocated_strings, attribute_name);
+                    input_info.attribute = vertex_attribute_make_base(datatype, attribute_name.characters);
+                    input_info.location = input_info.attribute->binding_location;
+                }
+
+                // Store Vertex attribute
+                dynamic_array_push_back(&shader->input_layout, input_info);
+                string_append_formated(&buffer, "layout (location = %d) ", input_info.attribute->binding_location);
+            }
+
+            // Add line to buffer if its not a special line
+            string_append_string(&buffer, &line);
+            string_append(&buffer, "\n");
+        }
+
+        // Add the final shader_stage to the program
+        if (inside_code) {
+            logg("Last endif is missing in shader!\n");
+            shader_add_shader_stage(shader, shader_stage, buffer);
+        }
+    }
+
+    shader_compile(shader);
 }
 
 Shader* rendering_core_query_shader(const char* filename)
@@ -990,33 +1048,29 @@ Shader* rendering_core_query_shader(const char* filename)
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.shaders, string_create_static(filename));
     if (found != 0) {
-        auto shader = *found;
-        if (shader->filename != filename) {
+        auto& hotreload = *found;
+        if (hotreload.filename != filename) {
             panic("Found shader with the same name but different filename!\n");
         }
-        return shader;
+        return hotreload.shader;
     }
 
-    Shader* shader = new Shader;
-    hashtable_insert_element(&core.shaders, string_create_static(filename), shader);
-    shader->filename = filename;
-    shader->program_id = 0;
-    shader->input_layout = dynamic_array_create_empty<Shader_Input_Info>(1);
-    shader->uniform_infos = dynamic_array_create_empty<Uniform_Info>(1);
-    shader->allocated_strings = dynamic_array_create_empty<String>(1);
+    Hotreload_Shader hotreload;
+    hotreload.filename = filename;
+    hotreload.shader = shader_create_empty();
 
     // Register to file-listener (Hot-reloading)
     String full_path = string_create("resources/shaders/");
     SCOPE_EXIT(string_destroy(&full_path));
     string_append(&full_path, filename);
-    if (file_listener_add_file(core.file_listener, full_path.characters, shader_file_changed_callback, shader) == 0) {
-        panic("Shader file does not exist!");
-    }
+    hotreload.watched_file = file_listener_add_file(core.file_listener, full_path.characters, hotreload_shader, hotreload.shader);
+    assert(hotreload.watched_file != 0, "");
+    hashtable_insert_element(&core.shaders, string_create_static(filename), hotreload);
 
     // Compile shader
-    shader_file_changed_callback(shader, full_path.characters);
+    hotreload_shader(hotreload.shader, full_path.characters);
 
-    return shader;
+    return hotreload.shader;
 }
 
 template<> Shader_Datatype shader_datatype_of<Texture*>() { return Shader_Datatype::TEXTURE_2D_BINDING; };
@@ -1030,23 +1084,23 @@ template<> Shader_Datatype shader_datatype_of<mat3>() { return Shader_Datatype::
 template<> Shader_Datatype shader_datatype_of<mat4>() { return Shader_Datatype::MAT4; };
 
 
+
 template<typename T>
 Uniform_Value uniform_make_base(const char* name, T data) {
     Uniform_Value val;
     val.datatype = shader_datatype_of<T>();
     val.name = name;
-    memcpy(&val.buffer[0], &data, sizeof(T));
     return val;
 }
 
-Uniform_Value uniform_make(const char* name, float val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, vec2 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, vec3 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, vec4 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, mat2 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, mat3 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, mat4 val) { return uniform_make_base(name, val); }
-Uniform_Value uniform_make(const char* name, int val) { return uniform_make_base(name, val); }
+Uniform_Value uniform_make(const char* name, float val) { auto result = uniform_make_base(name, val); result.data_float = val; return result; }
+Uniform_Value uniform_make(const char* name, vec2 val) { auto result = uniform_make_base(name, val); result.data_vec2 = val; return result; }
+Uniform_Value uniform_make(const char* name, vec3 val) { auto result = uniform_make_base(name, val); result.data_vec3 = val; return result; }
+Uniform_Value uniform_make(const char* name, vec4 val) { auto result = uniform_make_base(name, val); result.data_vec4 = val; return result; }
+Uniform_Value uniform_make(const char* name, mat2 val) { auto result = uniform_make_base(name, val); result.data_mat2 = val; return result; }
+Uniform_Value uniform_make(const char* name, mat3 val) { auto result = uniform_make_base(name, val); result.data_mat3 = val; return result; }
+Uniform_Value uniform_make(const char* name, mat4 val) { auto result = uniform_make_base(name, val); result.data_mat4 = val; return result; }
+Uniform_Value uniform_make(const char* name, int val) { auto result = uniform_make_base(name, val); result.data_i32 = val; return result; }
 
 Uniform_Value uniform_make(const char* name, Texture* data, Sampling_Mode sampling_mode) {
     Uniform_Value val;
@@ -1157,6 +1211,12 @@ void render_pass_draw(Render_Pass* pass, Shader* shader, Mesh* mesh, Mesh_Topolo
 
 void render_pass_add_dependency(Render_Pass* pass, Render_Pass* depends_on)
 {
+    for (int i = 0; i < depends_on->dependents.size; i++) {
+        if (depends_on->dependents[i] == pass) {
+            return;
+        }
+    }
+
     pass->dependency_count += 1;
     dynamic_array_push_back(&depends_on->dependents, pass);
 }

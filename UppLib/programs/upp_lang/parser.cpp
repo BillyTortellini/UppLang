@@ -791,7 +791,6 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
-            result->is_pointer_definition = false;
             result->symbols = dynamic_array_create_empty<Definition_Symbol*>(1);
             result->types = dynamic_array_create_empty<AST::Expression*>(1);
             result->values = dynamic_array_create_empty<AST::Expression*>(1);
@@ -801,8 +800,7 @@ namespace Parser
                 return token.type == Token_Type::OPERATOR &&
                     (token.options.op == Operator::COLON ||
                      token.options.op == Operator::DEFINE_COMPTIME ||
-                     token.options.op == Operator::DEFINE_INFER ||
-                     token.options.op == Operator::DEFINE_INFER_POINTER);
+                     token.options.op == Operator::DEFINE_INFER);
             };
             parse_comma_seperated_items(upcast(result), &result->symbols, parse_definition_symbol, found_definition_operator);
 
@@ -826,11 +824,6 @@ namespace Parser
                     result->is_comptime = true;
                     advance_token();
                 }
-                else if (test_operator(Operator::ASSIGN_POINTER)) {
-                    result->is_comptime = false;
-                    result->is_pointer_definition = true;
-                    advance_token();
-                }
                 else {
                     PARSE_SUCCESS(result);
                 }
@@ -842,11 +835,6 @@ namespace Parser
             else if (test_operator(Operator::DEFINE_INFER)) {
                 advance_token();
                 result->is_comptime = false;
-            }
-            else if (test_operator(Operator::DEFINE_INFER_POINTER)) {
-                advance_token();
-                result->is_comptime = false;
-                result->is_pointer_definition = true;
             }
             else {
                 CHECKPOINT_EXIT;
@@ -1332,7 +1320,7 @@ namespace Parser
             advance_token();
         }
         else if (related_expression != 0 && related_expression->type == Expression_Type::PATH_LOOKUP && related_expression->options.path_lookup->parts.size == 1) {
-            // This is an experimental feature: give the block the name of the condition if possible,
+            // This is an experimental feature: give the block the base_name of the condition if possible,
             // e.g. switch color
             //      case .RED
             //          break color

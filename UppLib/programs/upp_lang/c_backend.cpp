@@ -32,7 +32,7 @@ C_Compiler c_compiler_create()
         if (file_content.available)
         {
             String string = file_content.value;
-            // Each line_index contains a name, and is separated by \n
+            // Each line_index contains a base_name, and is separated by \n
             int i = 0;
             bool parsing_name = true;
             while (i < string.size)
@@ -51,7 +51,7 @@ C_Compiler c_compiler_create()
                 else {
                     if (c == '\r') continue;
                     if (c == '\n') {
-                        //printf("Var name: %s = %s\n", env_var.characters, var_value.characters);
+                        //printf("Var base_name: %s = %s\n", env_var.characters, var_value.characters);
                         SetEnvironmentVariableA(env_var.characters, var_value.characters);
                         string_reset(&env_var);
                         string_reset(&var_value);
@@ -259,7 +259,7 @@ void c_generator_output_type_reference(C_Generator* generator, String* output, D
 
 void c_generator_register_type_name(C_Generator* generator, Datatype* type)
 {
-    // Check if type name was already registered
+    // Check if type base_name was already registered
     if (hashtable_find_element(&generator->translation_type_to_name, type) != 0) {
         return;
     }

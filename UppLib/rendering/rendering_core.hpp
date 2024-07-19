@@ -10,6 +10,7 @@
 #include "opengl_state.hpp"
 
 struct File_Listener;
+struct Watched_File;
 struct Texture;
 struct Framebuffer;
 
@@ -32,13 +33,35 @@ struct Shader_Input_Info
     int location;
 };
 
+enum class Shader_Stage
+{
+    VERTEX = 0,
+    GEOMETRY = 1,
+    FRAGMENT = 2,
+
+    SHADER_STAGE_COUNT = 3
+};
+
 struct Shader
 {
     GLuint program_id;
-    const char* filename;
+    bool compiled;
     Dynamic_Array<Shader_Input_Info> input_layout;
     Dynamic_Array<Uniform_Info> uniform_infos;
     Dynamic_Array<String> allocated_strings;
+};
+
+Shader* shader_create_empty();
+void shader_destroy(Shader* shader);
+void shader_reset(Shader* shader);
+void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_code);
+bool shader_compile(Shader* shader);
+
+struct Hotreload_Shader
+{
+    Shader* shader;
+    Watched_File* watched_file;
+    const char* filename;
 };
 
 
@@ -82,12 +105,14 @@ struct Mesh
     Array<Attribute_Buffer> buffers;
     GLuint vao;
 
-    int vertex_count; // Element count of largest attached buffer, neede when pushing indices
     bool reset_every_frame;
     bool queried_this_frame;
     bool dirty; // If CPU and GPU data are synchronized
-    bool drawing_has_index_buffer;
-    int draw_count;
+
+    // Attribute infos
+    int vertex_count; // The vertex count of the attribute buffer with the highest pushed elements
+    bool has_index_buffer;
+    int index_count;
 };
 
 template<typename T>
@@ -107,6 +132,30 @@ Array<T> mesh_get_attribute_data(Mesh* mesh, Vertex_Attribute<T>* attribute)
 }
 
 template<typename T>
+Array<T> mesh_get_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int start_index, int size) 
+{
+    int index = -1;
+    for (int i = 0; i < mesh->description->attributes.size; i++) {
+        if (mesh->description->attributes[i] == static_cast<Vertex_Attribute_Base*>(attribute)) {
+            index = i;
+            break;
+        }
+    }
+    if (index == -1) {
+        panic("Mesh did not contain attribute : %s\n", attribute->name.characters);
+    }
+    
+    mesh->dirty = true;
+    auto& buffer = mesh->buffers[index];
+
+    Array<T> result;
+    result.size = size;
+    result.data = (T*) &buffer.attribute_data.data[start_index * sizeof(T)];
+    return result;
+}
+
+
+template<typename T>
 Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) 
 {
     int index = -1;
@@ -124,7 +173,10 @@ Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, i
 
     auto& buffer = mesh->buffers[index];
     buffer.element_count += size;
-    if (mesh->description->attributes[index] != rendering_core.predefined.index) {
+    if (mesh->description->attributes[index] == rendering_core.predefined.index) {
+        mesh->index_count = buffer.element_count;
+    }
+    else {
         mesh->vertex_count = math_maximum(mesh->vertex_count, buffer.element_count);
     }
 
@@ -166,7 +218,6 @@ public:
     const char* name;
     union
     {
-        byte buffer[sizeof(mat4)]; // Has to be the size of the largest member!
         i32 data_i32;
         u32 data_u32;
         struct {
@@ -281,10 +332,18 @@ struct Render_Information
     float current_time_in_seconds;
 };
 
-typedef void(*window_size_changed_callback)(void* userdata);
-struct Window_Size_Listener
+
+enum class Render_Event
 {
-    window_size_changed_callback callback;
+    FRAME_START,
+    WINDOW_SIZE_CHANGED
+};
+
+typedef void(*render_event_callback_fn)(void* userdata);
+struct Render_Event_Listener
+{
+    Render_Event event;
+    render_event_callback_fn callback;
     void* userdata;
 };
 
@@ -296,12 +355,12 @@ struct Rendering_Core
     Render_Information render_information;
     GPU_Buffer ubo_render_information; // Binding 0
     GPU_Buffer ubo_camera_data;        // Binding 1
-    Dynamic_Array<Window_Size_Listener> window_size_listeners;
+    Dynamic_Array<Render_Event_Listener> render_event_listeners;
 
     Dynamic_Array<Vertex_Attribute_Base*> vertex_attributes;
     Dynamic_Array<Vertex_Description*> vertex_descriptions;
     Hashtable<String, Mesh*> meshes;
-    Hashtable<String, Shader*> shaders;
+    Hashtable<String, Hotreload_Shader> shaders;
     Hashtable<String, Render_Pass*> render_passes;
     Hashtable<String, Framebuffer*> framebuffers;
 
@@ -319,8 +378,8 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
 void rendering_core_update_pipeline_state(Pipeline_State new_state);
 void rendering_core_clear_bound_framebuffer(Framebuffer_Clear_Type clear_type);
 
-void rendering_core_add_window_size_listener(window_size_changed_callback callback, void* userdata);
-void rendering_core_remove_window_size_listener(void* userdata);
+void rendering_core_add_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata);
+void rendering_core_remove_render_event_listener(Render_Event event, render_event_callback_fn callback, void* userdata);
 
 Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, bool reset_every_frame);
 Shader* rendering_core_query_shader(const char* filename);

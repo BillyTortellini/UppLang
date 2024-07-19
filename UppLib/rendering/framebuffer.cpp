@@ -13,7 +13,7 @@ Framebuffer* framebuffer_create(Texture_Type type, Depth_Type depth_type, bool f
     result->attachments = dynamic_array_create_empty<Texture*>(1);
     result->resize_with_window = fullscreen;
     if (fullscreen) {
-        rendering_core_add_window_size_listener(&framebuffer_window_resize_callback, result);
+        rendering_core_add_render_event_listener(Render_Event::WINDOW_SIZE_CHANGED, &framebuffer_window_resize_callback, result);
     }
 
     glGenFramebuffers(1, &result->framebuffer_id);
@@ -83,7 +83,7 @@ void framebuffer_destroy(Framebuffer* framebuffer)
     }
     dynamic_array_destroy(&framebuffer->attachments);
     if (framebuffer->resize_with_window) {
-        rendering_core_remove_window_size_listener(framebuffer);
+        rendering_core_remove_render_event_listener(Render_Event::WINDOW_SIZE_CHANGED, &framebuffer_window_resize_callback, framebuffer);
     }
     glDeleteFramebuffers(1, &framebuffer->framebuffer_id);
     delete framebuffer;

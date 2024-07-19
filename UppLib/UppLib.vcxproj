@@ -34,6 +34,7 @@
     <ClInclude Include="math\spherical.hpp" />
     <ClInclude Include="math\umath.hpp" />
     <ClInclude Include="math\vectors.hpp" />
+    <ClInclude Include="programs\bachelor_thesis\bachelor.hpp" />
     <ClInclude Include="programs\c_importer\c_importer.hpp" />
     <ClInclude Include="programs\c_importer\c_lexer.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
@@ -102,6 +103,7 @@
     <ClCompile Include="math\scalars.cpp" />
     <ClCompile Include="math\spherical.cpp" />
     <ClCompile Include="math\vectors.cpp" />
+    <ClCompile Include="programs\bachelor_thesis\bachelor.cpp" />
     <ClCompile Include="programs\c_importer\c_importer.cpp" />
     <ClCompile Include="programs\c_importer\c_lexer.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />

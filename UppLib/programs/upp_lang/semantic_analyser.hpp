@@ -221,7 +221,6 @@ struct Workload_Definition
     Workload_Base base;
     Symbol* symbol;
     bool is_comptime;
-    bool is_pointer_definition;
     AST::Expression* value_node;
     AST::Expression* type_node;
 };
@@ -472,6 +471,7 @@ enum class Expression_Result_Type
     TYPE,
     CONSTANT,
     FUNCTION,
+    DOT_CALL,
     HARDCODED_FUNCTION,
     POLYMORPHIC_FUNCTION,
     POLYMORPHIC_STRUCT,
@@ -492,6 +492,14 @@ struct Expression_Info
             Polymorphic_Function_Base* base;
             ModTree_Function* instance_fn;
         } polymorphic_function;
+        struct {
+            AST::Expression* first_argument;
+            bool is_polymorphic;
+            union {
+                ModTree_Function* function;
+                Polymorphic_Function_Base* base;
+            } options;
+        } dot_call;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
@@ -537,12 +545,11 @@ struct Context_Change_Info
     bool is_valid_for_import;
     bool is_polymorphic_custom_cast;
     union {
-        Datatype_Pair custom_cast_pair;
         int polymorphic_cast_index;
         struct {
-            Operator_Overload_Key key;
+            Overload_Key key;
             bool has_commutative_version;
-            Operator_Overload_Key commutative_key;
+            Overload_Key commutative_key;
         } operator_overload;
         Context_Option option;
     } options;

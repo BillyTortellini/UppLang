@@ -2,10 +2,8 @@
 
 layout (std140, binding = 0) uniform Render_Information
 {
-    float viewport_width;
-    float viewport_height;
-    float window_width;
-    float window_height;
+    float backbuffer_width;
+    float backbuffer_height;
     float monitor_dpi;
     float current_time_in_seconds;
 } u_render_info;

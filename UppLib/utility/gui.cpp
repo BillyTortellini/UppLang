@@ -1007,7 +1007,7 @@ bool check_overlap_dependency(Dynamic_Array<GUI_Node>& nodes, Array<GUI_Dependen
     return true;
 }
 
-void gui_update_and_render()
+void gui_update_and_render(Render_Pass* render_pass)
 {
     auto& core = rendering_core;
     auto& pre = core.predefined;
@@ -1227,15 +1227,6 @@ void gui_update_and_render()
         );
         auto rectangle_shader = rendering_core_query_shader("gui_rect.glsl");
 
-        auto render_state_2D = pipeline_state_make_default();
-        render_state_2D.blending_state.blending_enabled = true;
-        render_state_2D.blending_state.source = Blend_Operand::SOURCE_ALPHA;
-        render_state_2D.blending_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
-        render_state_2D.blending_state.equation = Blend_Equation::ADDITION;
-        render_state_2D.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-        Render_Pass* pass_2D = rendering_core_query_renderpass("2D pass", render_state_2D, 0);
-        render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
-
         static int skip_batches = 0;
         if (input->key_pressed[(int)Key_Code::O] && gui.focused_node == 0) {
             skip_batches += 1;
@@ -1293,11 +1284,11 @@ void gui_update_and_render()
             int after_rectangle_count = rectangle_mesh->vertex_count;
             if (after_rectangle_count > before_rectangle_count) {
                 render_pass_draw_count(
-                    pass_2D, rectangle_shader, rectangle_mesh, Mesh_Topology::POINTS, {},
+                    render_pass, rectangle_shader, rectangle_mesh, Mesh_Topology::POINTS, {},
                     before_rectangle_count, after_rectangle_count - before_rectangle_count
                 );
             }
-            text_renderer_draw(gui.text_renderer, pass_2D);
+            text_renderer_draw(gui.text_renderer, render_pass);
         }
     }
 

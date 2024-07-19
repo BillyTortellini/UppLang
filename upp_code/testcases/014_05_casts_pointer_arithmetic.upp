@@ -4,7 +4,7 @@ main::()
 	// Since we don't have pointer-arithmetic in Upp,
 	// we need to cast pointers to u64 values, and cast them back
 	values:[3]int=.[1,2,3]
-	ip:*int=*values[0]
+	ip:=*values[0]
 	address:u64=cast{u64}ip
 	address=address+cast{u64}cast{u32}type_info(int).size
 	

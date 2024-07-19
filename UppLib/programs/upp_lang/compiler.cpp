@@ -275,6 +275,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_enum_values[(int)Upp_Operator::NEGATE] = add_id("NEGATE");
             ids.upp_operator_enum_values[(int)Upp_Operator::ARRAY_ACCESS] = add_id("ARRAY_ACCESS");
             ids.upp_operator_enum_values[(int)Upp_Operator::CAST] = add_id("CAST");
+            ids.upp_operator_enum_values[(int)Upp_Operator::DOT_CALL] = add_id("DOT_CALL");
 
             ids.upp_operator_corresponding_tokens[0] = add_id(" _ INVALID _ ");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ADDITION] = add_id("+");
@@ -294,6 +295,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::NEGATE] = add_id("-");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::ARRAY_ACCESS] = add_id("[]");
             ids.upp_operator_corresponding_tokens[(int)Upp_Operator::CAST] = add_id("cast");
+            ids.upp_operator_corresponding_tokens[(int)Upp_Operator::DOT_CALL] = add_id(".");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore

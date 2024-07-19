@@ -1,29 +1,29 @@
 main::()
 	//
 		Pointer type-syntax:
-		Make pointer type: *[Datatype]
-		Address-Of: *[value]
-		Dereference: &[pointer_value]
+		Make pointer type:*[Datatype]
+		Address-Of:*[value]
+		Dereference:&[pointer_value]
 		
-		Per default pointers get automatically dereferenced, so pointers
+		Per default pointers get automatically dereferenced,so pointers
 		can be used interchangably with normal values.
-		Also, if it's clear from context the address-of operator is applied
+		Also,if it's clear from context the address-of operator is applied
 		when a pointer type is required
 		
 		This is possible because all Pointer-Operations have a different syntax
-		than their value counterparts. These are:
-		 * Array access: Doesn't work on pointers, use slices
-		 * Pointer comparison/arithmetic: New syntax ==* and !=*
-		 * Pointer definition/assignment: New syntax :=* and =*
+		than their value counterparts.These are:
+		*Array access:Doesn't work on pointers,use slices
+		*Pointer comparison/arithmetic:New syntax==*and!=*
+		*Pointer definition/assignment:New syntax:=*and=*
 		
-		These makes them more comparable to C++ references,
+		These makes them more comparable to C++references,
 		except that they can still be null and that you can change the pointer
 		after initialization
 	
 	a:int=15
-	ap:*int=*a
-	app:**int=*ap
-	appp:***int=*app
+	ap:=*a
+	app:=*ap
+	appp:=*app
 	
 	// The pointers can be used like normal values
 	x:int=a+app+appp

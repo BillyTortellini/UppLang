@@ -6,7 +6,7 @@ main::()
 	// are always applied first, and never after the cast
 	
 	i:int=15
-	ip:*int=*i
+	ip:=*i
 	
 	context set_option(.AUTO_DEREFERENCE,true)
 	num64:i64=cast{i64}ip

@@ -86,7 +86,7 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENT,          // Expression with optional name
+        ARGUMENT,          // Expression with optional base_name
         PARAMETER,         // Name/Type compination with optional default value + comptime
         SYMBOL_LOOKUP,     // A single identifier lookup
         PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
@@ -180,7 +180,6 @@ namespace AST
     {
         Node base;
         bool is_comptime; // :: instead of :=
-        bool is_pointer_definition; // :=* or a: *int =*
         Dynamic_Array<Definition_Symbol*> symbols;
         Dynamic_Array<Expression*> types;
         Dynamic_Array<Expression*> values;

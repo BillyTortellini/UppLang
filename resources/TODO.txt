@@ -1,14 +1,55 @@
 
-TODO:
-    * Create operators +=, -=, *=, /=, %= 
-    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
+Bachelor Thesis:
+ * Deduplicate edges
+ * Options to see difference between frames
+ * Options to do graph manipulation
+ * Implement simple algorithm in gui 
+    - Spawn random points (Number)
+    - Create random crossing free path (Random next vertex + backtracking if not possible)
+    - Create random compatible path
 
-    * Dot-Calls
-    * Custom-Member accesses
-    * Iterators
-    * Command to instanciate polymorphic functions
 
 DONE:
+ * 2D Camera
+ * Draw Lines (Rectangles)
+ * Draw Points (Vertices)
+ * Adding points and lines with mouse clicks
+ * Snap lines to points
+ * Save and load (+ Window position) (And load last saved on startup...)
+
+Generator:
+ * Uniforms should have distinct locations, because names will suck
+ * Variable interpolation
+
+
+
+
+Doot Callz, lol
+Add overload to dot?
+
+take_damage :: (player: *Player, value: int)
+    player.hit_points -= value
+    if player.hit_points < 0
+        player.alive = false
+
+player := Player.{"Frank", 15, true}
+player.take_damage(12)
+
+context add_overload(".", take_damage)
+Problem: Here we have an overload with a type + name, e.g. take damage
+What we need:
+    * A function (take_damage) taking one argument
+
+TODO:
+    * Dot-Calls
+    * Custom-Member accesses --> Aren't those dot calls?
+
+    * Create operators +=, -=, *=, /=, %= 
+    * Command to instanciate polymorphic functions
+    * Iterators
+
+DONE:
+    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
     * Fix testcases with new Syntax =*, :=*, ==*
     * New pointer assignment syntax a: *int =* i, ip :=* something
     * Context cast-settings should also use function-call syntax, e.g. context change_cast_setting(.INTEGER_SIZE_UPCAST, .AUTO)

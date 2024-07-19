@@ -172,7 +172,7 @@ bool file_io_write_file(const char* filepath, Array<byte> data)
 static char buffer[256];
 Optional<String> file_io_open_file_selection_dialog()
 {
-    // open a file name
+    // open a file base_name
     OPENFILENAME ofn;
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);

@@ -1,4 +1,6 @@
 #include "hash_functions.hpp"
+#include <bitset>
+#include <bit>
 
 u64 mix(u64 h) {
     (h) ^= (h) >> 23;
@@ -80,6 +82,15 @@ u64 hash_pointer(void* ptr) {
 u64 hash_combine(u64 a, u64 b) {
     u64 array[2] = { a, b };
     return hash_memory(array_create_static_as_bytes(array, 2));
+}
+
+u64 hash_combine(u64 a, bool value) {
+    u64 result = a;
+    if (value) {
+        result = result << 1;
+        result = result | (a & 1);
+    }
+    return result;
 }
 
 bool equals_i32(i32* a, i32* b) { return *a == *b; }

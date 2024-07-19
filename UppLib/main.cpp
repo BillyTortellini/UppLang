@@ -3,11 +3,13 @@
 #include "programs/upp_lang/compiler_misc.hpp"
 #include "win32/process.hpp"
 #include "programs/render_rework/render_rework.hpp"
+#include "programs/bachelor_thesis/bachelor.hpp"
 
 int main(int argc, char** argv)
 {
-    // render_rework();
-    upp_lang_main();
+    //render_rework();
+    bachelor_thesis();
+    // upp_lang_main();
     //proc_city_main();
     return 0;
 }

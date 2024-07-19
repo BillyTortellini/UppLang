@@ -53,7 +53,6 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::ASSIGN_DIV: return operator_info_make("/=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_MULT: return operator_info_make("*=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_POINTER: return operator_info_make("=*", Operator_Type::BINOP, true, true);
-    case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
     default: panic("");
     }
 
@@ -352,8 +351,8 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
             // We require char_is_valid_identifier because token stringify would put a space between 5a, which cannot be deleted
             bool is_valid_number = true;
             bool is_float_val = false;
-            int int_val = 0;
-            float float_val = 0;
+            i64 int_val = 0;
+            double float_val = 0;
             // Pre comma digits
             while (index < text.size)
             {
@@ -375,8 +374,8 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
                 index += 1;
                 // After comma digits
                 is_float_val = true;
-                float_val = (float)int_val;
-                float multiplier = 0.1f;
+                float_val = (double)int_val;
+                double multiplier = 0.1;
                 while (index < text.size)
                 {
                     if (char_is_valid_identifier(text[index]) && !char_is_digit(text[index])) {
@@ -384,7 +383,7 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
                     }
                     else if (char_is_digit(text[index])) {
                         float_val = float_val + multiplier * (text[index] - '0');
-                        multiplier *= 0.1f;
+                        multiplier *= 0.1;
                     }
                     else {
                         break;

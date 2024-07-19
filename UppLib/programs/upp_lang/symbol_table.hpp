@@ -42,15 +42,6 @@ enum class Cast_Mode
     NONE
 };
 
-struct Datatype_Pair
-{
-    Datatype* from;
-    Datatype* to;
-};
-
-bool datatype_pair_equals(Datatype_Pair* a, Datatype_Pair* b);
-u64 datatype_pair_hash(Datatype_Pair* pair);
-
 struct Custom_Cast
 {
     ModTree_Function* function;
@@ -64,14 +55,21 @@ struct Custom_Cast_Polymorphic
     Cast_Mode cast_mode;
 };
 
-struct Operator_Overload_Key
+struct Overload_Key
 {
     // Note: Left and right types are always stored as the base types of pointers + pointer level
     //       This makes it easier to check if operators already exist and if it's possible to cast
     Datatype* left_type;
-    Datatype* right_type;
+    bool key_is_type;
+    union {
+        Datatype* right_type;
+        String* id; // For dot-calls
+    } options;
     Upp_Operator op;
 };
+
+Overload_Key overload_key_make(Upp_Operator op, Datatype* left_type, Datatype* right_type);
+Overload_Key overload_key_make_call(Datatype* left_type, String* id);
 
 struct Operator_Overload
 {
@@ -92,7 +90,7 @@ struct Operator_Context
     Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
     Cast_Mode cast_mode_settings[CONTEXT_OPTION_CAST_MODE_COUNT];
     bool boolean_settings[CONTEXT_OPTION_BOOL_COUNT];
-    Hashtable<Operator_Overload_Key, Operator_Overload> operator_overloads;
+    Hashtable<Overload_Key, Operator_Overload> operator_overloads;
 };
 
 

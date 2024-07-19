@@ -64,8 +64,6 @@ void ring_buffer_set_value(Ring_Buffer& buffer, double value) {
     buffer.next_free = (buffer.next_free + 1) % 120;
 }
 
-
-
 void render_rework()
 {
     Window* window = window_create("Test", 0);
@@ -154,7 +152,9 @@ void render_rework()
             now = timer_current_time_in_seconds(&timer);
 
             gui_push_example_gui();
-            gui_update_and_render();
+            auto gui_pass = rendering_core_query_renderpass("GUI_Pass", pipeline_state_make_alpha_blending(), nullptr);
+            render_pass_add_dependency(gui_pass, rendering_core.predefined.main_pass);
+            gui_update_and_render(gui_pass);
 
             renderer_2D_reset(renderer_2D);
             text_renderer_reset(text_renderer);

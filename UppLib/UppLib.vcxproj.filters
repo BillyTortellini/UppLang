@@ -109,6 +109,12 @@
     <Filter Include="Source Files\Programs\Render_Rework">
       <UniqueIdentifier>{f14dca25-db34-4144-8c59-2147dd97c431}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Bachelor_Thesis">
+      <UniqueIdentifier>{44811558-22ed-4351-8df9-9cb0ecd662a2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Bachelor_Thesis">
+      <UniqueIdentifier>{045d66cc-4411-4663-b45a-44fc6a765cab}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -318,6 +324,9 @@
     <ClInclude Include="programs\upp_lang\constant_pool.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
+    <ClInclude Include="programs\bachelor_thesis\bachelor.hpp">
+      <Filter>Header Files\Programs\Bachelor_Thesis</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -511,6 +520,9 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\constant_pool.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\bachelor_thesis\bachelor.cpp">
+      <Filter>Source Files\Programs\Bachelor_Thesis</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

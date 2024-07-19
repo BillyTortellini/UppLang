@@ -22,7 +22,7 @@ Camera_3D* camera_3D_create(float fov_x, float near_distance, float far_distance
     result->view_direction = vec3(0, 0, -1);
     result->up = vec3(0, 1, 0);
     camera_3D_update_projection_window_size(result);
-    rendering_core_add_window_size_listener(&camera_3D_update_projection_window_size, result);
+    rendering_core_add_render_event_listener(Render_Event::WINDOW_SIZE_CHANGED, camera_3D_update_projection_window_size, result);
 
     camera_3D_update_matrices(result);
     return result;
@@ -30,7 +30,7 @@ Camera_3D* camera_3D_create(float fov_x, float near_distance, float far_distance
 
 void camera_3D_destroy(Camera_3D* camera)
 {
-    rendering_core_remove_window_size_listener(camera);
+    rendering_core_remove_render_event_listener(Render_Event::WINDOW_SIZE_CHANGED, camera_3D_update_projection_window_size, camera);
     delete camera;
 }
 

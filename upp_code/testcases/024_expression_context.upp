@@ -41,8 +41,8 @@ main::()
 		res:int=a+b
 		assert(res==12)
 		
-		ap:*int=*a
-		bp:*int=*b
+		ap:*int=a
+		bp:*int=b
 		assert(ap!=bp)
 		
 		res=ap+b
@@ -61,8 +61,8 @@ main::()
 		
 		sum_p:=*sum
 		sum_pp:=*sum_p
-		sum_ppp:=**sum_pp
-		sum_pppp:=**sum_ppp
+		sum_ppp:=*sum_pp
+		sum_pppp:=*sum_ppp
 		
 		res:int
 		assert(calc_sum1(sum)==12)
@@ -80,8 +80,8 @@ main::()
 		val1:float=17.5
 		val2:float=20.0
 		
-		a:*float=*val1
-		b:*float=*val1
+		a:*float=val1
+		b:*float=val1
 		
 		assert(a==*b)
 		b=*val2
@@ -89,7 +89,7 @@ main::()
 		
 		
 		i:i32=128
-		p:*i32=*i
+		p:*i32=i
 		i_cast:u64=cast{u64}cast{u32}i
 		p_cast:u64=cast{u64}p
 		assert(i_cast!=p_cast)

@@ -29,7 +29,7 @@ main::()
 	assert(global_player.alive==true)
 	
 	// Test pointers to globals
-	ptr:*int=*global_x
+	ptr:=*global_x
 	&ptr=30
 	assert(global_x==30)
 	global_pointer=*ptr

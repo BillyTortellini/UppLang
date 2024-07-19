@@ -1095,7 +1095,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
     // Add tag if Union
     if (structure->struct_type == Structure_Type::UNION)
     {
-        // Create tag enum name
+        // Create tag enum base_name
         String* tag_enum_name = 0;
         {
             String name;
@@ -1516,7 +1516,8 @@ void type_system_add_predefined_types(Type_System* system)
                 make_param(upcast(types->upp_operator), "operator"), 
                 make_param(upcast(types->any_type), "function"),
                 make_param(upcast(types->cast_mode), "cast_mode", true),
-                make_param(upcast(types->bool_type), "commutative", true)
+                make_param(upcast(types->bool_type), "commutative", true),
+                make_param(upcast(types->string_type), "name", true)
             }
         );
     }

@@ -2,6 +2,25 @@
 
 #include "rendering_core.hpp"
 
+String shader_datatype_as_string(Shader_Datatype type)
+{
+    switch (type)
+    {
+    case Shader_Datatype::FLOAT: return string_create_static("float");
+    case Shader_Datatype::UINT32: return string_create_static("uint");
+    case Shader_Datatype::VEC2: return string_create_static("vec2");
+    case Shader_Datatype::VEC3: return string_create_static("vec3");
+    case Shader_Datatype::VEC4: return string_create_static("vec4");
+    case Shader_Datatype::MAT2: return string_create_static("mat2");
+    case Shader_Datatype::MAT3: return string_create_static("mat3");
+    case Shader_Datatype::MAT4: return string_create_static("mat4");
+    case Shader_Datatype::TEXTURE_2D_BINDING: return string_create_static("sampler2D");
+    default: panic("");
+    }
+
+    return string_create_static(" E R R O R");
+}
+
 // TEXTURE
 bool texture_type_is_float(Texture_Type type)
 {
@@ -276,6 +295,33 @@ Pipeline_State pipeline_state_make_default()
 
     Depth_Test_State depth_test_state;
     depth_test_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    depth_test_state.pass_function = Depth_Pass_Function::LESS;
+
+    Pipeline_State state;
+    state.blending_state = blend_state;
+    state.culling_state = culling_state;
+    state.depth_state = depth_test_state;
+    state.polygon_filling_mode = Polygon_Filling_Mode::FILL;
+
+    return state;
+}
+
+Pipeline_State pipeline_state_make_alpha_blending(Depth_Test_Type depth_test_type)
+{
+    Blending_State blend_state;
+    blend_state.blending_enabled = true;
+    blend_state.custom_color = vec4(0.0f);
+    blend_state.source = Blend_Operand::SOURCE_ALPHA;
+    blend_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
+    blend_state.equation = Blend_Equation::ADDITION;
+
+    Face_Culling_State culling_state;
+    culling_state.culling_enabled = false;
+    culling_state.cull_mode = Face_Culling_Mode::CULL_BACKFACE;
+    culling_state.front_face_definition = Front_Face_Defintion::COUNTER_CLOCKWISE;
+
+    Depth_Test_State depth_test_state;
+    depth_test_state.test_type = depth_test_type;
     depth_test_state.pass_function = Depth_Pass_Function::LESS;
 
     Pipeline_State state;

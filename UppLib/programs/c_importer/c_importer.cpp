@@ -1197,7 +1197,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
                 instance.type = header_parser_parse_pointer_suffix(parser, base_type);
             }
 
-            // Parse instance name
+            // Parse instance base_name
             if (header_parser_test_next_token(parser, C_Token_Type::IDENTIFIER_NAME))
             {
                 instance.id = parser->tokens[parser->index].attribute.id;

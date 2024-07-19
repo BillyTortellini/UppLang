@@ -6,14 +6,25 @@
 #include "parser.hpp"
 #include "ast.hpp"
 
-// PROTOTYPES
-bool datatype_pair_equals(Datatype_Pair* a, Datatype_Pair* b) {
-    return types_are_equal(a->from, b->from) && types_are_equal(a->to, b->to);
+Overload_Key overload_key_make(Upp_Operator op, Datatype* left_type, Datatype* right_type) {
+    Overload_Key result;
+    result.op = op;
+    result.left_type = left_type;
+    result.key_is_type = true;
+    result.options.right_type = right_type;
+    return result;
 }
 
-u64 datatype_pair_hash(Datatype_Pair* pair) {
-    return hash_combine(hash_pointer(pair->from), hash_pointer(pair->to));
+Overload_Key overload_key_make_call(Datatype* left_type, String* id)
+{
+    Overload_Key result;
+    result.op = Upp_Operator::DOT_CALL;
+    result.left_type = left_type;
+    result.key_is_type = false;
+    result.options.id = id;
+    return result;
 }
+
 
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create()
