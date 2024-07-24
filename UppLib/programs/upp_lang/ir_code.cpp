@@ -735,6 +735,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
+    case Expression_Result_Type::DOT_CALL:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
         break; // Rest of this function
@@ -901,6 +902,23 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
             break;
         }
+        case Expression_Result_Type::DOT_CALL: {
+            auto& dot_call = call_info->options.dot_call;
+            if (dot_call.is_polymorphic)
+            {
+                auto function = call_info->options.dot_call.options.polymorphic.instance;
+                assert(function != nullptr, "Must be instanciated at ir_code");
+                assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
+                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+            }
+            else
+            {
+                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, dot_call.options.function);
+            }
+            break;
+        }
         case Expression_Result_Type::POLYMORPHIC_STRUCT:
         case Expression_Result_Type::TYPE: {
             panic("Must not happen after semantic analysis!");
@@ -924,6 +942,11 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             else {
                 dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
             }
+        }
+
+        if (call_info->result_type == Expression_Result_Type::DOT_CALL) {
+            assert(call.expr->type == AST::Expression_Type::MEMBER_ACCESS, "Must be true for dot call!");
+            call_instr.options.call.arguments[0] = ir_generator_generate_expression(ir_block, call.expr->options.member_access.expr);
         }
 
         // Generate code for arguments
@@ -1077,9 +1100,23 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto mem_access = expression->options.member_access;
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
-        auto src_type = get_info(mem_access.expr)->cast_info.type_afterwards;
+
+        // Handle custom member accesses
+        if (info->specifics.member_access.type == Member_Access_Type::DOT_CALL_AS_MEMBER) {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::FUNCTION_CALL;
+            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.member_access.dot_call_function);
+            instr.options.call.destination = ir_data_access_create_intermediate(ir_block, result_type);
+            instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            dynamic_array_push_back(&instr.options.call.arguments, source);
+
+            dynamic_array_push_back(&ir_block->instructions, instr);
+            return instr.options.call.destination;
+        }
 
         // Handle special case of array.data, which basically becomes an address of
+        auto src_type = get_info(mem_access.expr)->cast_info.type_afterwards;
         if (src_type->type == Datatype_Type::ARRAY)
         {
             assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");

@@ -773,8 +773,6 @@ void code_completion_find_suggestions()
     Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line_index, get_cursor_token_index(false));
     auto node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
 
-    bool fill_from_symbol_table = false;
-    bool fill_context_options = false;
     Symbol_Table* specific_table = 0;
 
     // Check for specific contexts where we can fill the suggestions more smartly (e.g. when typing struct member, module-path, auto-enum, ...)
@@ -783,14 +781,12 @@ void code_completion_find_suggestions()
         auto expr = AST::downcast<AST::Expression>(node);
         auto pass = code_query_get_analysis_pass(node);
         Datatype* type = 0;
-        fill_from_symbol_table = true;
         if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
             auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
             if (info != 0) {
                 type = expression_info_get_type(info, false);
                 if (info->result_type == Expression_Result_Type::TYPE) {
                     type = info->options.type;
-                    fill_from_symbol_table = false;
                 }
             }
         }
@@ -798,7 +794,6 @@ void code_completion_find_suggestions()
             auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
             if (info != 0) {
                 type = expression_info_get_type(info, false);
-                fill_from_symbol_table = false;
             }
         }
 
@@ -828,6 +823,34 @@ void code_completion_find_suggestions()
                 }
                 break;
             }
+
+            // Search for dot-calls
+            int pointer_level = 0;
+            auto deref_type = datatype_get_pointed_to_type(type, &pointer_level);
+            Datatype* poly_base_type = compiler.type_system.predefined_types.error_type;
+            if (deref_type->type == Datatype_Type::STRUCT) {
+                auto struct_type = downcast<Datatype_Struct>(deref_type);
+                if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                    poly_base_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
+                }
+            }
+
+            auto context = code_query_get_ast_node_symbol_table(node)->operator_context;
+            auto iter = hashtable_iterator_create(&context->operator_overloads);
+            while (hashtable_iterator_has_next(&iter))
+            {
+                SCOPE_EXIT(hashtable_iterator_next(&iter));
+
+                Overload_Key key = *iter.key;
+                Operator_Overload overload = *iter.value;
+
+                if (!(types_are_equal(deref_type, key.left_type) || types_are_equal(poly_base_type, key.left_type)) || key.op != Upp_Operator::DOT_CALL) {
+                    continue;
+                }
+
+                assert(!key.key_is_type, "Dot-Calls should have named key");
+                code_completion_add_and_rank(*key.options.id, partially_typed);
+            }
         }
     }
     else if (node->type == AST::Node_Type::PATH_LOOKUP) {
@@ -843,9 +866,6 @@ void code_completion_find_suggestions()
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
                         specific_table = symbol->options.module_progress->module_analysis->symbol_table;
-                        if (specific_table != 0) {
-                            fill_from_symbol_table = true;
-                        }
                     }
                 }
             }
@@ -873,20 +893,14 @@ void code_completion_find_suggestions()
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
                         specific_table = symbol->options.module_progress->module_analysis->symbol_table;
-                        if (specific_table != 0) {
-                            fill_from_symbol_table = true;
-                        }
                     }
                 }
             }
-            else {
-                fill_from_symbol_table = true;
-            }
         }
     }
-
-    if (!fill_from_symbol_table && !fill_context_options)
-    {
+    else {
+        // Check if we should fill context options
+        bool fill_context_options = false;
         auto& tokens = index_value_text(editor.cursor.line_index)->tokens;
         if (tokens.size != 0 && tokens[0].type == Token_Type::KEYWORD && tokens[0].options.keyword == Keyword::CONTEXT)
         { 
@@ -897,40 +911,39 @@ void code_completion_find_suggestions()
                 fill_context_options = true;
             }
         }
+
+        if (fill_context_options) {
+            auto& ids = compiler.predefined_ids;
+            code_completion_add_and_rank(*ids.add_overload, partially_typed);
+            code_completion_add_and_rank(*ids.id_import, partially_typed);
+            code_completion_add_and_rank(*ids.set_option, partially_typed);
+        }
     }
 
-    if (!fill_from_symbol_table && !fill_context_options) {
-        fill_from_symbol_table = true;
-    }
-
-
-    // Early exit if nothing has been typed (And we aren't on member access or similar)
-    if (partially_typed.size == 0 && fill_from_symbol_table && specific_table == 0 && !fill_context_options) {
+    // If no text has been written yet and we aren't on some special context (e.g. no suggestions), return
+    if (specific_table == nullptr && syntax_editor.code_completion_suggestions.size == 0 && partially_typed.size == 0) {
         return;
     }
 
-    // Find all available symbols
-    if (fill_from_symbol_table)
+    if (syntax_editor.code_completion_suggestions.size == 0)
     {
-        Symbol_Table* symbol_table = specific_table != 0 ? specific_table : symbol_table = code_query_get_ast_node_symbol_table(node);
-        if (symbol_table != 0) {
+        bool search_includes = specific_table == 0;
+        if (specific_table == 0) {
+            specific_table = code_query_get_ast_node_symbol_table(node);
+        }
+        if (specific_table != 0) {
             auto results = dynamic_array_create_empty<Symbol*>(1);
             SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_query_id(symbol_table, 0, specific_table == 0, Symbol_Access_Level::INTERNAL, &results);
+            symbol_table_query_id(specific_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &results);
             for (int i = 0; i < results.size; i++) {
                 code_completion_add_and_rank(*results[i]->id, partially_typed);
             }
         }
     }
-    else if (fill_context_options)
-    {
-        auto& ids = compiler.predefined_ids;
-        code_completion_add_and_rank(*ids.add_overload, partially_typed);
-        code_completion_add_and_rank(*ids.id_import, partially_typed);
-        code_completion_add_and_rank(*ids.set_option, partially_typed);
-    }
 
+    // Exit if no suggestions are available
     if (suggestions.size == 0) return;
+
     // Sort by ranking
     dynamic_array_bubble_sort(suggestions, code_completion_fuzzy_in_order);
     // Cut off at appropriate point

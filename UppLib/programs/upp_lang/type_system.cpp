@@ -1517,7 +1517,8 @@ void type_system_add_predefined_types(Type_System* system)
                 make_param(upcast(types->any_type), "function"),
                 make_param(upcast(types->cast_mode), "cast_mode", true),
                 make_param(upcast(types->bool_type), "commutative", true),
-                make_param(upcast(types->string_type), "name", true)
+                make_param(upcast(types->string_type), "name", true),
+                make_param(upcast(types->bool_type), "as_member_access", true)
             }
         );
     }

@@ -42,19 +42,24 @@ enum class Cast_Mode
     NONE
 };
 
-struct Custom_Cast
-{
-    ModTree_Function* function;
-    Cast_Mode cast_mode;
-};
+/*
+    Notes on Overload_Key:
+    Left + Right types are always stored as base types of pointers for querying.
+    For polymorphic overloads the base-struct type is used as the left-value
 
-struct Custom_Cast_Polymorphic
-{
-    Datatype* argument_type;
-    Polymorphic_Function_Base* function;
-    Cast_Mode cast_mode;
-};
-
+    Depending on the operator the meaning of the values differ:
+     * Dot-Call:
+        For dot-calls the left type is the type and a id is provided
+     * Array-Access:
+        Left type is array type, right type is error-type (As different index types asides from int are possible)
+     * Unop
+        Left type is type, right type is error-type, polymorphism is disabled currently
+     * Binop
+        Left and right types are set, polymorphism is disable currently
+     * Casts
+        On normal casts left type and right type are provided.
+        On polymorphic casts right type may be error type (If the polymorphic function result depends on the argument type)
+*/
 struct Overload_Key
 {
     // Note: Left and right types are always stored as the base types of pointers + pointer level
@@ -76,6 +81,8 @@ struct Operator_Overload
     int left_pointer_level;
     int right_pointer_level;
     bool switch_left_and_right; // For commutative versions
+    bool dot_call_as_member_access;
+    Cast_Mode cast_mode; // Only valid for cast overloads
 
     bool is_polymorphic;
     union {

@@ -462,6 +462,7 @@ enum class Member_Access_Type
 {
     STRUCT_MEMBER_ACCESS,
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
+    DOT_CALL_AS_MEMBER,
     OTHER
 };
 
@@ -497,7 +498,10 @@ struct Expression_Info
             bool is_polymorphic;
             union {
                 ModTree_Function* function;
-                Polymorphic_Function_Base* base;
+                struct {
+                    Polymorphic_Function_Base* base;
+                    ModTree_Function* instance;
+                } polymorphic;
             } options;
         } dot_call;
         Hardcoded_Type hardcoded;
@@ -513,6 +517,7 @@ struct Expression_Info
             Member_Access_Type type;
             Workload_Structure_Body* struct_workload;
             int index; // Either normal member index, or polymorphic parameter index
+            ModTree_Function* dot_call_function;
         } member_access;
         struct {
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
@@ -534,8 +539,9 @@ enum class Argument_State
 struct Argument_Info
 {
     Argument_State state;
-    AST::Expression* value;
-    int parameter_index; 
+    AST::Expression* expression;
+    Optional<String*> argument_name;
+    int parameter_index; // -1 Indicates that argument hasn't been matched yet or a failure to match
     bool reanalyse_param_type_flag;
     bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
 };

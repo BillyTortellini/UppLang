@@ -23,27 +23,12 @@ Generator:
 
 
 
+Dot-Callz Improvements/Problemz:
+ * Add test cases for operator overloads --> Probably only after iterators
 
-Doot Callz, lol
-Add overload to dot?
-
-take_damage :: (player: *Player, value: int)
-    player.hit_points -= value
-    if player.hit_points < 0
-        player.alive = false
-
-player := Player.{"Frank", 15, true}
-player.take_damage(12)
-
-context add_overload(".", take_damage)
-Problem: Here we have an overload with a type + name, e.g. take damage
-What we need:
-    * A function (take_damage) taking one argument
+ 
 
 TODO:
-    * Dot-Calls
-    * Custom-Member accesses --> Aren't those dot calls?
-
     * Create operators +=, -=, *=, /=, %= 
     * Command to instanciate polymorphic functions
     * Iterators
@@ -104,7 +89,6 @@ Operations that should depend on the context:
     - Array access [] (For datastructures)
 
  * dot-calls
- * Custom member accesses (e.g. set a setter/getter function for some new name...) --> Mostly for a: vec4 = ...; a.x, a.y, a.z
  * Iterators
 
 
@@ -117,11 +101,12 @@ Core: (Required for programming)
     * Operator-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
     * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters)
 
-    * Allocator system
     * C-Function calling rework
     * Incremental compiler
+    * Editor-Features (Multiple files, search/goto definition, motions + others)
 
 Additional:
+    * Allocator system
     * Better C-Importer
     * Code-Editor features
     * Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))

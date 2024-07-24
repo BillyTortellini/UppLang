@@ -51,6 +51,11 @@ bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments,
 Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table);
 void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context);
 bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level);
+Argument_Info argument_info_make(
+    AST::Expression* expression,
+    Optional<String*> argument_name = optional_make_failure<String*>(),
+    Argument_State state = Argument_State::NOT_ANALYSED,
+    int parameter_index = -1);
 
 
 
@@ -1071,6 +1076,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         auto function = info->options.function;
         return comptime_result_make_available(&function->function_index_plus_one, upcast(function->signature));
     }
+    case Expression_Result_Type::DOT_CALL: {
+        return comptime_result_make_not_comptime("Dot calls must be evaluated with bake for comptime values");
+    }
     case Expression_Result_Type::POLYMORPHIC_STRUCT: {
         return comptime_result_make_not_comptime("Cannot make comptime type_handle out of polymorphic struct");
     }
@@ -1444,6 +1452,7 @@ bool expression_has_memory_address(AST::Expression* expr)
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
+    case Expression_Result_Type::DOT_CALL:
     case Expression_Result_Type::TYPE:
     case Expression_Result_Type::NOTHING:
     case Expression_Result_Type::CONSTANT: // Constant memory must not be written to. (e.g. 5 = 10)
@@ -1513,6 +1522,22 @@ void expression_info_set_value(Expression_Info* info, Datatype* result_type)
     info->result_type = Expression_Result_Type::VALUE;
     info->options.value_type = result_type;
     info->cast_info.type_afterwards = result_type;
+}
+
+void expression_info_set_dot_call(Expression_Info* info, AST::Expression* first_argument, Operator_Overload* overload)
+{
+    info->result_type = Expression_Result_Type::DOT_CALL;
+    info->options.dot_call.first_argument = first_argument;
+    assert(overload != 0, "");
+    info->options.dot_call.is_polymorphic = overload->is_polymorphic;
+    if (overload->is_polymorphic) {
+        info->options.dot_call.options.polymorphic.base = overload->options.polymorphic;
+        info->options.dot_call.options.polymorphic.instance = nullptr;
+    }
+    else {
+        info->options.dot_call.options.function = overload->options.function;
+    }
+    info->cast_info.type_afterwards = compiler.type_system.predefined_types.error_type;
 }
 
 void expression_info_set_error(Expression_Info* info, Datatype* result_type)
@@ -1612,6 +1637,7 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
     case Expression_Result_Type::HARDCODED_FUNCTION: return upcast(hardcoded_type_to_signature(info->options.hardcoded));
     case Expression_Result_Type::TYPE: return types.type_handle;
     case Expression_Result_Type::NOTHING: return upcast(types.empty_struct_type);
+    case Expression_Result_Type::DOT_CALL:  
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT: {
         // Not sure about this at all...
@@ -3460,6 +3486,11 @@ void analysis_workload_entry(void* userdata)
                 log_semantic_error("Creating aliases for polymorphic functions not supported!", AST::upcast(definition->value_node));
                 break;
             }
+            case Expression_Result_Type::DOT_CALL: {
+                symbol->type = Symbol_Type::ERROR_SYMBOL;
+                log_semantic_error("Cannot use dot-call in definition", AST::upcast(definition->value_node));
+                break;
+            }
             case Expression_Result_Type::NOTHING: {
                 symbol->type = Symbol_Type::ERROR_SYMBOL;
                 log_semantic_error("Comptime definition expected a value, not nothing (void/no return value)", AST::upcast(definition->value_node));
@@ -4374,6 +4405,25 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
         candidate.function_signature = callable.options.hardcoded.signature;
         break;
     }
+    case Expression_Result_Type::DOT_CALL: {
+        auto& dot_call = info.options.dot_call;
+        if (dot_call.is_polymorphic) {
+            callable.type = Callable_Type::POLYMORPHIC;
+            callable.options.polymorphic.is_function = true;
+            callable.options.polymorphic.base = &dot_call.options.polymorphic.base->base_info;
+            callable.options.polymorphic.options.polymorphic_function = dot_call.options.polymorphic.base;
+            callable.parameter_count = dot_call.options.polymorphic.base->base_info.parameters.size;
+            if (dot_call.options.polymorphic.base->base_info.return_type_node != 0) {
+                callable.parameter_count -= 1; // Return type is included in polymorphic parameter array, but we don't want it for matching
+            }
+        }
+        else {
+            callable.type = Callable_Type::FUNCTION;
+            callable.options.function = dot_call.options.function;
+            candidate.function_signature = dot_call.options.function->signature;
+        }
+        break;
+    }
     default: panic("");
     }
 
@@ -4497,7 +4547,7 @@ bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments,
 
 // Returns true if successfull
 bool arguments_match_to_parameters(
-    Dynamic_Array<AST::Argument*>& arguments,
+    Array<Argument_Info*> argument_infos,
     Callable& callable,
     int unnamed_argument_count,
     bool log_errors_and_set_info,
@@ -4505,10 +4555,10 @@ bool arguments_match_to_parameters(
     Parser::Section error_report_section = Parser::Section::WHOLE)
 {
     // Check if we supply to many arguments
-    if (arguments.size > callable.parameter_count) {
+    if (argument_infos.size > callable.parameter_count) {
         if (log_errors_and_set_info) {
             log_semantic_error("Too many arguments were supplied", error_report_node, error_report_section);
-            log_error_info_argument_count(arguments.size, callable.parameter_count);
+            log_error_info_argument_count(argument_infos.size, callable.parameter_count);
         }
         return false;
     }
@@ -4524,8 +4574,7 @@ bool arguments_match_to_parameters(
     // Set index for unnamed arguments
     if (log_errors_and_set_info) {
         for (int i = 0; i < unnamed_argument_count; i++) {
-            auto argument = arguments[i];
-            auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, argument, Info_Query::CREATE_IF_NULL);
+            auto info = argument_infos[i];
             info->parameter_index = i;
         }
     }
@@ -4533,12 +4582,12 @@ bool arguments_match_to_parameters(
     // Match named arguments to parameters
     bool error_occured = false;
     int non_default_value_match_count = 0;
-    for (int i = unnamed_argument_count; i < arguments.size; i++)
+    for (int i = unnamed_argument_count; i < argument_infos.size; i++)
     {
         // Find parameter with same base_name
-        auto& argument = arguments[i];
-        assert(arguments[i]->name.available, "");
-        auto id = arguments[i]->name.value;
+        auto argument_info = argument_infos[i];
+        assert(argument_info->argument_name.available, "");
+        auto id = argument_info->argument_name.value;
         bool match_found = false;
         for (int j = 0; j < callable.parameter_count; j++)
         {
@@ -4555,8 +4604,7 @@ bool arguments_match_to_parameters(
             // Add match and check for further errors
             match_found = true;
             if (log_errors_and_set_info) {
-                auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, argument, Info_Query::CREATE_IF_NULL);
-                info->parameter_index = j;
+                argument_info->parameter_index = j;
             }
 
             if (!param.has_default_value) {
@@ -4565,7 +4613,7 @@ bool arguments_match_to_parameters(
             if (j < unnamed_argument_count) {
                 error_occured = true;
                 if (log_errors_and_set_info) {
-                    log_semantic_error("Named argument overlaps with previously given unnamed argument", upcast(argument));
+                    log_semantic_error("Named argument overlaps with previously given unnamed argument", upcast(argument_info->expression));
                 }
             }
             break;
@@ -4574,7 +4622,7 @@ bool arguments_match_to_parameters(
         if (!match_found) {
             error_occured = true;
             if (log_errors_and_set_info) {
-                log_semantic_error("No parameter matches this argument's name", upcast(argument), Parser::Section::IDENTIFIER);
+                log_semantic_error("No parameter matches this argument's name", upcast(argument_info->expression), Parser::Section::IDENTIFIER);
             }
         }
     }
@@ -4600,15 +4648,43 @@ bool arguments_match_to_parameters(
     return !error_occured;
 }
 
+bool argument_nodes_match_to_parameters(
+    Dynamic_Array<AST::Argument*> arguments,
+    Callable& callable,
+    int unnamed_argument_count,
+    bool log_errors_and_set_info,
+    AST::Node* error_report_node = 0,
+    Parser::Section error_report_section = Parser::Section::WHOLE)
+{
+    Array<Argument_Info*> infos;
+    if (arguments.size == 0) {
+        infos.size = 0;
+        infos.data = nullptr;
+    }
+    else {
+        infos = array_create_empty<Argument_Info*>(arguments.size);
+    }
+    SCOPE_EXIT(if (infos.data != nullptr) { array_destroy(&infos); });
+    for (int i = 0; i < arguments.size; i++) {
+        auto& arg = arguments[i];
+        Argument_Info* info = pass_get_node_info(semantic_analyser.current_workload->current_pass, arg, Info_Query::CREATE_IF_NULL);
+        *info = argument_info_make(arg->value, arg->name);
+        infos[i] = info;
+    }
+
+    return arguments_match_to_parameters(infos, callable, unnamed_argument_count, log_errors_and_set_info, error_report_node, error_report_section);
+}
+
+
 void arguments_analyse_in_unknown_context(Array<Argument_Info*> infos) {
     for (int i = 0; i < infos.size; i++) {
         auto arg_info = infos[i];
         if (arg_info->state != Argument_State::NOT_ANALYSED) {
-            auto value_opt = pass_get_node_info(semantic_analyser.current_workload->current_pass, arg_info->value, Info_Query::TRY_READ);
+            auto value_opt = pass_get_node_info(semantic_analyser.current_workload->current_pass, arg_info->expression, Info_Query::TRY_READ);
             assert(value_opt != 0, "Already analysed must mean that expression info for value exists!");
             continue;
         }
-        semantic_analyser_analyse_expression_value(arg_info->value, expression_context_make_unknown());
+        semantic_analyser_analyse_expression_value(arg_info->expression, expression_context_make_unknown());
     }
 }
 
@@ -5021,9 +5097,15 @@ Instanciation_Result instanciation_result_make_error() {
     return result;
 }
 
-Argument_Info argument_info_make(AST::Expression* expression, Argument_State state = Argument_State::NOT_ANALYSED, int parameter_index = -1) {
+Argument_Info argument_info_make(
+    AST::Expression* expression, 
+    Optional<String*> argument_name, 
+    Argument_State state, 
+    int parameter_index) 
+{
     Argument_Info result;
-    result.value = expression;
+    result.expression = expression;
+    result.argument_name = argument_name;
     result.state = state;
     result.parameter_index = parameter_index;
     result.ignore_during_code_generation = false;
@@ -5036,17 +5118,17 @@ Datatype* analyse_argument_if_not_already_done(Argument_Info* info, Expression_C
     switch (info->state)
     {
     case Argument_State::ANALYSED: {
-        return expression_info_get_type(get_info(info->value), false);
+        return expression_info_get_type(get_info(info->expression), false);
     }
     case Argument_State::CAST_MISSING: {
         info->state = Argument_State::ANALYSED;
-        auto value_info = get_info(info->value);
-        value_info->cast_info = expression_context_apply(expression_info_get_type(value_info, true), context, true, info->value);
+        auto value_info = get_info(info->expression);
+        value_info->cast_info = expression_context_apply(expression_info_get_type(value_info, true), context, true, info->expression);
         return expression_info_get_type(value_info, false);
     }
     case Argument_State::NOT_ANALYSED: {
         info->state = Argument_State::ANALYSED;
-        return semantic_analyser_analyse_expression_value(info->value, context);
+        return semantic_analyser_analyse_expression_value(info->expression, context);
     }
     default: panic("");
     }
@@ -5126,7 +5208,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             for (int i = 0; i < arguments.size; i++)
             {
                 auto& argument = arguments[i];
-                if (check_if_expression_contains_implicit_parameters(argument->value)) {
+                if (check_if_expression_contains_implicit_parameters(argument->expression)) {
                     create_struct_template = true;
                     break;
                 }
@@ -5171,7 +5253,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                 else
                 {
                     // Calculate constant value
-                    auto constant_result = expression_calculate_comptime_value(argument->value, "Struct arguments must be comptime");
+                    auto constant_result = expression_calculate_comptime_value(argument->expression, "Struct arguments must be comptime");
                     if (constant_result.available)
                     {
                         auto& constant = constant_result.value;
@@ -5180,7 +5262,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                             Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
                             if (handle.index >= (u32) compiler.type_system.types.size) {
                                 success = false;
-                                log_semantic_error("Invalid constant type handle index", upcast(argument->value));
+                                log_semantic_error("Invalid constant type handle index", upcast(argument->expression));
                                 continue;
                             }
 
@@ -5245,7 +5327,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 
         bool was_unavailable = false;
         auto comptime_result = expression_calculate_comptime_value(
-            argument.value, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
+            argument.expression, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
         if (comptime_result.available) 
         {
             instance_values[implicit.template_parameter->value_access_index] = polymorphic_value_make_constant(comptime_result.value);
@@ -5327,6 +5409,7 @@ Instanciation_Result instanciate_polymorphic_callable(
         {
             if (parameter_index < unnamed_argument_count) {
                 argument = arguments[parameter_index];
+                assert(argument->parameter_index == parameter_index, "");
             }
             else
             {
@@ -5334,6 +5417,11 @@ Instanciation_Result instanciate_polymorphic_callable(
                     if (arguments[j]->parameter_index = parameter_index) {
                         argument = arguments[j];
                         break;
+                    }
+                }
+                if (argument == 0) {
+                    if (!base_parameter.is_comptime && base_parameter.infos.has_default_value) {
+                        continue;
                     }
                 }
                 assert(argument != 0, "Should not happen after argument to parameter mapping");
@@ -5400,7 +5488,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             // Try to calculate comptime value
             bool was_unavailable = false;
             auto comptime_result = expression_calculate_comptime_value(
-                argument->value, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
+                argument->expression, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
             if (comptime_result.available) {
                 auto constant = comptime_result.value;
                 instance_values[base_parameter.options.value_access_index] = polymorphic_value_make_constant(constant);
@@ -5422,7 +5510,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                 parameter_type, argument_type, matched_implicit_parameter_count,
                 matching_helper, instance_values, matching_constraints);
             if (!match_success) {
-                log_semantic_error("Could not match argument with implicit-polymorphic symbols!", upcast(argument->value));
+                log_semantic_error("Could not match argument with implicit-polymorphic symbols!", upcast(argument->expression));
                 log_error_info_given_type(argument_type);
                 log_error_info_expected_type(parameter_type);
                 success = false;
@@ -5491,15 +5579,35 @@ Instanciation_Result instanciate_polymorphic_callable(
                     }
 
                     Function_Parameter parameter = function_parameter_make_empty();
-                    if (base_param.depends_on.size > 0 || base_param.infos.type->contains_type_template) {
+                    if (base_param.depends_on.size > 0 || base_param.infos.type->contains_type_template) 
+                    {
+                        // If parameter has dependencies we need to find the instanciated type
                         parameter.has_default_value = false;
+                        Argument_Info* argument = 0;
+                        {
+                            if (i < unnamed_argument_count) {
+                                argument = arguments[i];
+                                assert(argument->parameter_index == i, "");
+                            }
+                            else
+                            {
+                                for (int j = unnamed_argument_count; j < arguments.size; j++) {
+                                    if (arguments[j]->parameter_index = i) {
+                                        argument = arguments[j];
+                                        break;
+                                    }
+                                }
+                                assert(argument != 0, "Should not happen after argument to parameter mapping");
+                            }
+                        }
+                        parameter.type = expression_info_get_type(get_info(arguments[i]->expression), false);
                     }
                     else {
                         parameter.has_default_value = base_param.infos.has_default_value;
                         parameter.default_value_opt = base_param.infos.default_value_opt;
+                        parameter.type = base_param.infos.type;
                     }
                     parameter.name = base_param.infos.name;
-                    parameter.type = expression_info_get_type(get_info(arguments[i]->value), false);
                     assert(!parameter.type->contains_type_template, "");
                     dynamic_array_push_back(&unfinished.parameters, parameter);
                 }
@@ -5672,20 +5780,27 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
     case AST::Expression_Type::FUNCTION_CALL:
     {
         auto& call = expr->options.call;
-        auto& argument_nodes = call.arguments;
         info->specifics.function_call_signature = 0;
+        auto argument_infos_buffer = dynamic_array_create_empty<Argument_Info*>(call.arguments.size + 1);
+        SCOPE_EXIT(dynamic_array_destroy(&argument_infos_buffer));
+        Array<Argument_Info*> argument_infos = array_create_static(argument_infos_buffer.data, call.arguments.size);
+        Argument_Info dot_call_first_parameter; // Needs to be on the stack
 
         // Initialize all arguments
-        for (int i = 0; i < argument_nodes.size; i++) {
-            auto arg_info = get_info(argument_nodes[i], true);
-            *arg_info = argument_info_make(argument_nodes[i]->value);
+        {
+            auto& argument_nodes = call.arguments;
+            for (int i = 0; i < argument_nodes.size; i++) {
+                auto arg_info = get_info(argument_nodes[i], true);
+                *arg_info = argument_info_make(argument_nodes[i]->value, argument_nodes[i]->name);
+                dynamic_array_push_back(&argument_infos_buffer, arg_info);
+            }
         }
 
         // Check for general argument errors
         int unnamed_argument_count = 0;
-        if (arguments_check_for_naming_errors(argument_nodes, &unnamed_argument_count)) {
+        if (arguments_check_for_naming_errors(call.arguments, &unnamed_argument_count)) {
             semantic_analyser_analyse_expression_any(call.expr, expression_context_make_unknown());
-            arguments_analyse_in_unknown_context(argument_nodes);
+            arguments_analyse_in_unknown_context(argument_infos);
             EXIT_ERROR(types.error_type);
         }
 
@@ -5728,19 +5843,30 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 // Check success
                 if (encountered_unknown) {
                     semantic_analyser_set_error_flag(true);
-                    arguments_analyse_in_unknown_context(argument_nodes);
+                    arguments_analyse_in_unknown_context(argument_infos);
                     EXIT_ERROR(types.error_type);
                 }
                 if (symbols.size == 1 && candidates.size == 0) {
                     log_semantic_error("Symbol is not callable!", upcast(call.expr->options.path_lookup->last));
                     log_error_info_symbol(symbols[0]);
-                    arguments_analyse_in_unknown_context(argument_nodes);
+                    arguments_analyse_in_unknown_context(argument_infos);
                     EXIT_ERROR(types.error_type);
                 }
             }
             else
             {
                 auto* info = semantic_analyser_analyse_expression_any(call.expr, expression_context_make_auto_dereference());
+
+                // If dot call add additional argument info to array
+                if (info->result_type == Expression_Result_Type::DOT_CALL) {
+                    auto& dot_call = info->options.dot_call;
+                    unnamed_argument_count += 1;
+                    dot_call_first_parameter = argument_info_make(dot_call.first_argument, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                    dynamic_array_insert_ordered(&argument_infos_buffer, &dot_call_first_parameter, 0);
+                    argument_infos.data = argument_infos_buffer.data;
+                    argument_infos.size += 1;
+                }
+
                 auto callable_opt = overload_candidate_try_create_from_expression_info(*info);
                 if (callable_opt.available) {
                     dynamic_array_push_back(&candidates, callable_opt.value);
@@ -5753,7 +5879,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     else {
                         semantic_analyser_set_error_flag(true);
                     }
-                    arguments_analyse_in_unknown_context(argument_nodes);
+                    arguments_analyse_in_unknown_context(argument_infos);
                     EXIT_ERROR(types.error_type);
                 }
             }
@@ -5775,12 +5901,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 // Disambiguate overloads by argument names/count
                 if (candidates.size > 1)
                 {
-                    auto& arguments = call.arguments;
-                    const int named_argument_count = arguments.size - unnamed_argument_count;
+                    const int named_argument_count = argument_infos.size - unnamed_argument_count;
                     for (int i = 0; i < candidates.size; i++)
                     {
                         auto& candidate = candidates[i];
-                        if (!arguments_match_to_parameters(arguments, candidate.callable, unnamed_argument_count, false)) {
+                        if (!arguments_match_to_parameters(argument_infos, candidate.callable, unnamed_argument_count, false)) {
                             dynamic_array_swap_remove(&candidates, i);
                             i -= 1;
                         }
@@ -5842,10 +5967,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     };
 
                     // For the remaining functions, check which argument types are different, and remove based on those
-                    for (int i = 0; i < argument_nodes.size && candidates.size > 1; i++)
+                    for (int i = 0; i < argument_infos.size && candidates.size > 1; i++)
                     {
-                        auto arg = argument_nodes[i];
-                        auto arg_info = get_info(arg);
+                        auto arg_info = argument_infos[i];
 
                         // Find parameter types of all candidates
                         bool parameter_types_are_different = false;
@@ -5853,11 +5977,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                         {
                             auto& candidate = candidates[j];
                             Datatype* param_type = 0;
-                            if (arg->name.available) {
+                            if (arg_info->argument_name.available) {
                                 // Find named argument
                                 for (int k = 0; k < candidate.callable.parameter_count; k++) {
                                     auto& param = callable_get_parameter_info(candidate.callable, k);
-                                    if (param.name.available && param.name.value == arg->name.value) {
+                                    if (param.name.available && param.name.value == arg_info->argument_name.value) {
                                         param_type = param.type;
                                         break;
                                     }
@@ -5880,7 +6004,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                         }
 
                         // For each candidate figure out if argument does/doesn't match or can be cast
-                        auto argument_type = semantic_analyser_analyse_expression_value(arg->value, expression_context_make_unknown());
+                        auto argument_type = semantic_analyser_analyse_expression_value(arg_info->expression, expression_context_make_unknown());
                         casts_are_missing = true;
                         arg_info->state = Argument_State::CAST_MISSING;
                         remove_candidates_based_on_better_type_match(candidates, argument_type);
@@ -5936,24 +6060,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     }
 
                     // Analyse remaining arguments as something else
-                    arguments_analyse_in_unknown_context(argument_nodes);
+                    arguments_analyse_in_unknown_context(argument_infos);
                     EXIT_ERROR(types.error_type);
                 }
                 else if (casts_are_missing)
                 {
                     // Apply casts where necessary
-                    for (int i = 0; i < argument_nodes.size; i++)
+                    for (int i = 0; i < argument_infos.size; i++)
                     {
-                        auto argument = argument_nodes[i];
-                        auto arg_info = get_info(argument);
+                        auto arg_info = argument_infos[i];
                         if (arg_info->state == Argument_State::CAST_MISSING) {
-                            auto expr_info = get_info(argument->value);
+                            auto expr_info = get_info(arg_info->expression);
                             assert(expr_info->cast_info.cast_type == Cast_Type::NO_CAST, "");
                             expr_info->cast_info = expression_context_apply(
                                 expression_info_get_type(expr_info, true), 
                                 expression_context_make_specific_type(
                                     callable_get_parameter_info(candidates[0].callable, arg_info->parameter_index).type), 
-                                true, argument->value
+                                true, arg_info->expression
                             );
                             arg_info->state = Argument_State::ANALYSED;
                         }
@@ -5972,9 +6095,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
 
             // Do argument to parameter mapping (May have been done before for overload disambiguation)
-            bool success = arguments_match_to_parameters(argument_nodes, candidate.callable, unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
+            bool success = arguments_match_to_parameters(argument_infos, candidate.callable, unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
             if (!success) {
-                arguments_analyse_in_unknown_context(argument_nodes);
+                arguments_analyse_in_unknown_context(argument_infos);
                 if (candidate.return_value_type.available) {
                     EXIT_ERROR(candidate.return_value_type.value);
                 }
@@ -6026,6 +6149,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 case Expression_Result_Type::TYPE: {
                     EXIT_TYPE(upcast(types.type_handle));
                 }
+                case Expression_Result_Type::DOT_CALL: {
+                    log_semantic_error("Type of does not work on dot-calls", arg->value);
+                    log_error_info_expression_result_type(arg_result->result_type);
+                    EXIT_ERROR(types.error_type);
+                }
                 case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
                     log_semantic_error("Type of cannot handle polymorphic functions", arg->value);
                     log_error_info_expression_result_type(arg_result->result_type);
@@ -6048,20 +6176,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         }
         case Callable_Type::POLYMORPHIC:
         {
-            // Create argument-info array
-            Array<Argument_Info*> argument_infos;
-            if (argument_nodes.size == 0) {
-                argument_infos.data = 0;
-                argument_infos.size = 0;
-            }
-            else {
-                argument_infos = array_create_empty<Argument_Info*>(argument_nodes.size);
-            }
-            SCOPE_EXIT(if (argument_infos.data != nullptr) { array_destroy(&argument_infos); });
-            for (int i = 0; i < argument_nodes.size; i++) {
-                argument_infos[i] = get_info(argument_nodes[i]);
-            }
-
             // Instanciate
             Instanciation_Result instance_result = instanciate_polymorphic_callable(
                 callable.options.polymorphic, argument_infos, context, unnamed_argument_count, upcast(expr), Parser::Section::ENCLOSURE
@@ -6075,8 +6189,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 // Store instanciation info in expression_info
                 auto function = instance_result.options.function;
                 auto call_expr_info = get_info(call.expr);
-                assert(call_expr_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION, "");
-                call_expr_info->options.polymorphic_function.instance_fn = function;
+                if (call_expr_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) {
+                    call_expr_info->options.polymorphic_function.instance_fn = function;
+                }
+                else if (call_expr_info->result_type == Expression_Result_Type::DOT_CALL) {
+                    assert(call_expr_info->options.dot_call.is_polymorphic, "");
+                    call_expr_info->options.dot_call.options.polymorphic.instance = function;
+                }
+                else {
+                    panic("Hey");
+                }
                 semantic_analyser_register_function_call(function);
 
                 // Store final function signature for code generation
@@ -6116,10 +6238,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         auto function_signature = info->specifics.function_call_signature;
         assert(function_signature != 0, "");
         auto& params = function_signature->parameters;
-        for (int i = 0; i < argument_nodes.size; i++)
+        for (int i = 0; i < argument_infos.size; i++)
         {
-            auto arg = argument_nodes[i];
-            auto arg_info = get_info(arg);
+            auto arg_info = argument_infos[i];
             if (arg_info->ignore_during_code_generation) {
                 continue;
             }
@@ -6661,7 +6782,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             arguments_analyse_in_unknown_context(arguments);
             EXIT_ERROR(upcast(struct_signature));
         }
-        bool argument_matching_error = !arguments_match_to_parameters(
+        bool argument_matching_error = !argument_nodes_match_to_parameters(
             arguments, callable_create_struct_initializer(struct_signature), unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE);
         if (argument_matching_error) {
             arguments_analyse_in_unknown_context(arguments);
@@ -6788,8 +6909,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     assert(overload->is_polymorphic, "Must be the case for base structure");
 
                     array_pointer_level = expected_pointer_level;
-                    Argument_Info array_argument = argument_info_make(access_node.array_expr, Argument_State::ANALYSED, 0);
-                    Argument_Info index_argument = argument_info_make(access_node.index_expr, Argument_State::NOT_ANALYSED, 1);
+                    Argument_Info array_argument = argument_info_make(access_node.array_expr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                    Argument_Info index_argument = argument_info_make(access_node.index_expr, optional_make_failure<String*>(), Argument_State::NOT_ANALYSED, 1);
                     Argument_Info* arguments[2];
                     arguments[0] = &array_argument;
                     arguments[1] = &index_argument;
@@ -6945,6 +7066,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             log_error_info_expression_result_type(access_expr_info->result_type);
             EXIT_ERROR(types.error_type);
         }
+        case Expression_Result_Type::DOT_CALL: {
+            log_semantic_error("Cannot use member access ('x.y') on dot calls", member_node.expr);
+            log_error_info_expression_result_type(access_expr_info->result_type);
+            EXIT_ERROR(types.error_type);
+        }
         case Expression_Result_Type::FUNCTION:
         case Expression_Result_Type::HARDCODED_FUNCTION:
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
@@ -6966,6 +7092,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 EXIT_ERROR(types.error_type);
             }
 
+            // Check for normal member accesses (Struct members + array/slice members) (Not overloads)
             if (base_type->type == Datatype_Type::STRUCT)
             {
                 type_wait_for_size_info_to_finish(base_type);
@@ -6991,19 +7118,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                         return info;
                     }
                 }
-
-                log_semantic_error("Struct doesn't contain a member with this name", expr);
-                log_error_info_id(member_node.name);
-                EXIT_ERROR(types.error_type);
             }
-            else if (base_type->type == Datatype_Type::ARRAY || base_type->type == Datatype_Type::SLICE)
+            else if ((base_type->type == Datatype_Type::ARRAY || base_type->type == Datatype_Type::SLICE) && (member_node.name == ids.size || member_node.name == ids.data))
             {
-                if (member_node.name != ids.size && member_node.name != ids.data) {
-                    log_semantic_error("Arrays/Slices only have either .size or .data as members", expr);
-                    log_error_info_id(member_node.name);
-                    EXIT_ERROR(types.error_type);
-                }
-
                 if (base_type->type == Datatype_Type::ARRAY)
                 {
                     auto array = downcast<Datatype_Array>(base_type);
@@ -7034,14 +7151,86 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     EXIT_VALUE(member.type);
                 }
             }
-            else
+
+            // Check for dot-calls/custom member accesses
             {
-                log_semantic_error("Given type does not define member access", expr);
-                log_error_info_given_type(base_type);
-                EXIT_ERROR(types.error_type);
+                int pointer_level = 0;
+                auto type = datatype_get_pointed_to_type(base_type, &pointer_level);
+                Overload_Key key = overload_key_make_call(type, member_node.name);
+                auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+                Operator_Overload* overload = hashtable_find_element(&operator_context->operator_overloads, key);
+
+                // Check for polymorphic overload if normal overload was not found
+                if (overload == 0 && type->type == Datatype_Type::STRUCT)
+                {
+                    auto structure = downcast<Datatype_Struct>(type);
+                    if (structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                        auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
+                        key.left_type = upcast(base_struct);
+                        overload = hashtable_find_element(&operator_context->operator_overloads, key);
+                    }
+                }
+
+                if (overload != 0)
+                {
+                    // Type and name have to be correct to even get here
+                    if (try_updating_expression_pointer_level(member_node.expr, type, pointer_level, overload->left_pointer_level)) {
+                        if (overload->dot_call_as_member_access) 
+                        {
+                            ModTree_Function* function = nullptr;
+                            if (overload->is_polymorphic) 
+                            {
+                                // Instanciate polymorphic function
+                                Argument_Info argument_info = argument_info_make(member_node.expr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                                Argument_Info* info_pointer = &argument_info;
+                                Array<Argument_Info*> arguments;
+                                arguments.data = &info_pointer;
+                                arguments.size = 1;
+
+                                Callable_Polymorphic_Info poly_callable;
+                                poly_callable.base = &overload->options.polymorphic->base_info;
+                                poly_callable.is_function = true;
+                                poly_callable.options.polymorphic_function = overload->options.polymorphic;
+
+                                Instanciation_Result instance_result = instanciate_polymorphic_callable(
+                                    poly_callable, arguments, context, 1, upcast(expr), Parser::Section::WHOLE_NO_CHILDREN
+                                );
+
+                                // Check for errors
+                                if (instance_result.type == Instanciation_Result_Type::FUNCTION) {
+                                    function = instance_result.options.function;
+                                }
+                                else {
+                                    EXIT_ERROR(types.error_type);
+                                }
+                            }
+                            else {
+                                function = overload->options.function;
+                            }
+
+                            // Set dot-call in Expression-Info and return
+                            if (function->signature->return_type.available) {
+                                expression_info_set_value(info, function->signature->return_type.value);
+                            }
+                            else {
+                                expression_info_set_no_value(info);
+                            }
+                            info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
+                            info->specifics.member_access.dot_call_function = function;
+                            return info;
+                        }
+                        else {
+                            expression_info_set_dot_call(info, member_node.expr, overload);
+                            return info;
+                        }
+                    }
+                }
             }
-            panic("");
-            break;
+
+            // Error if no member access was found
+            log_semantic_error("Member access is not valid", expr);
+            log_error_info_id(member_node.name);
+            EXIT_ERROR(types.error_type);
         }
         default: panic("");
         }
@@ -7212,6 +7401,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
             case Expression_Result_Type::TYPE: {
                 EXIT_TYPE(upcast(type_system_make_pointer(operand_result->options.type)));
+            }
+            case Expression_Result_Type::DOT_CALL: {
+                log_semantic_error("Cannot get pointer to dot call", expr);
+                EXIT_ERROR(types.error_type);
+                break;
             }
             case Expression_Result_Type::NOTHING: {
                 log_semantic_error("Cannot get pointer to nothing", expr);
@@ -7934,6 +8128,13 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             }
         }
 
+        // Check if overload has correct cast_type
+        if (overload != 0) {
+            if ((int)overload->cast_mode > (int)cast_mode) {
+                overload = 0;
+            }
+        }
+
         if (overload != 0)
         {
             if (!overload->is_polymorphic) {
@@ -7944,7 +8145,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             }
             else
             {
-                Argument_Info argument_info = argument_info_make(expression, Argument_State::ANALYSED, 0);
+                Argument_Info argument_info = argument_info_make(expression, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
                 Argument_Info* info_pointer = &argument_info;
                 Array<Argument_Info*> arguments;
                 arguments.data = &info_pointer;
@@ -8119,6 +8320,11 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
         expression_info_set_type(result, final_type);
         return final_type;
     }
+    case Expression_Result_Type::DOT_CALL: {
+        log_semantic_error("Expected a type, given dot_call", expression);
+        log_error_info_expression_result_type(result->result_type);
+        return types.error_type;
+    }
     case Expression_Result_Type::NOTHING: {
         log_semantic_error("Expected a type, given nothing", expression);
         log_error_info_expression_result_type(result->result_type);
@@ -8192,6 +8398,11 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
     {
         // Function pointer read
         break;
+    }
+    case Expression_Result_Type::DOT_CALL:
+    {
+        log_semantic_error("Dot_Call cannot be used as value", expression);
+        return types.error_type;
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
     {
@@ -8303,6 +8514,7 @@ Operator_Context_Value operator_context_value_from_option(Operator_Context* cont
     }
     return result;
 }
+
 
 void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context)
 {
@@ -8428,7 +8640,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             AST::Expression* option_node = nullptr;
             AST::Expression* value_node = nullptr;
             {
-                Datatype* parameter_types[2] = {upcast(types.context_option), upcast(types.cast_mode)};
+                Datatype* parameter_types[2] = { upcast(types.context_option), upcast(types.cast_mode) };
                 Array<Datatype*> first_parameter;
                 first_parameter.size = 1;
                 first_parameter.data = &parameter_types[0];
@@ -8444,7 +8656,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 callable.only_named_arguments_after_index = 2;
                 callable.parameter_count = 2;
                 callable.options.function_pointer_type = types.type_set_option;
-                if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
+                if (!argument_nodes_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
                     arguments_analyse_in_unknown_context(arguments, first_parameter);
                     break;
                 }
@@ -8523,6 +8735,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             AST::Expression* commutative_argument_node = nullptr; // May stay null
             AST::Expression* cast_mode_argument_node = nullptr; // May stay null
             AST::Expression* name_argument_node = nullptr; // May stay null
+            AST::Expression* as_member_access_node = nullptr; // May stay null
             {
                 Datatype* context_option_ptr = upcast(types.upp_operator);
                 Array<Datatype*> first_parameter;
@@ -8537,10 +8750,10 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 Callable callable;
                 callable.type = Callable_Type::FUNCTION_POINTER;
-                callable.only_named_arguments_after_index = 3;
-                callable.parameter_count = 3;
+                callable.parameter_count = 6;
+                callable.only_named_arguments_after_index = callable.parameter_count;
                 callable.options.function_pointer_type = types.type_add_overload;
-                if (!arguments_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
+                if (!argument_nodes_match_to_parameters(arguments, callable, unnamed_argument_count, true, upcast(change_node), Parser::Section::ENCLOSURE)) {
                     arguments_analyse_in_unknown_context(arguments, first_parameter);
                     break;
                 }
@@ -8562,6 +8775,9 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     else if (arg_info->parameter_index == 4) {
                         name_argument_node = arguments[j]->value;
                     }
+                    else if (arg_info->parameter_index == 5) {
+                        as_member_access_node = arguments[j]->value;
+                    }
                     else {
                         panic("");
                     }
@@ -8574,7 +8790,9 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             int expected_argument_count = 2;
             bool commutative_available = true;
             bool polymorphic_valid = false;
+            bool cast_mode_available = false;
             bool name_available = false;
+            bool member_access_available = false;
             {
                 if (operator_argument_node->type == AST::Expression_Type::LITERAL_READ &&
                     operator_argument_node->options.literal_read.type == Literal_Type::STRING)
@@ -8628,9 +8846,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                         expected_argument_count = 1;
                         commutative_available = false;
                         polymorphic_valid = true;
+                        cast_mode_available = true;
                         break;
                     case Upp_Operator::DOT_CALL:
                         commutative_available = false;
+                        member_access_available = true;
                         polymorphic_valid = true;
                         name_available = true;
                         break;
@@ -8658,6 +8878,23 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 }
             }
 
+            bool as_member_access = false;
+            if (as_member_access_node != 0) {
+                semantic_analyser_analyse_expression_value(as_member_access_node, expression_context_make_specific_type(upcast(types.bool_type)));
+                auto value = expression_calculate_comptime_value(as_member_access_node, "'as_member_access' argument must be comptime for dot_calls");
+                if (value.available) {
+                    as_member_access = upp_constant_to_value<bool>(value.value);
+                }
+                else {
+                    errors_occured = true;
+                }
+
+                if (!member_access_available) {
+                    log_semantic_error("as_member_access is only available for dot_calls", as_member_access_node);
+                    errors_occured = true;
+                }
+            }
+
             // Analyse base_name
             String* name = 0;
             if (name_argument_node != nullptr)
@@ -8680,6 +8917,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             Cast_Mode cast_mode = Cast_Mode::EXPLICIT;
             if (cast_mode_argument_node != 0)
             {
+                if (!cast_mode_available) {
+                    log_semantic_error("Cast mode not available for this Operator", cast_mode_argument_node);
+                    errors_occured = true;
+                }
+
                 semantic_analyser_analyse_expression_value(cast_mode_argument_node, expression_context_make_specific_type(upcast(types.cast_mode)));
                 auto result = expression_calculate_comptime_value(cast_mode_argument_node, "Cast_Mode has to be comptime known");
                 if (!result.available) {
@@ -8707,6 +8949,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             overload.switch_left_and_right = false;
             overload.left_pointer_level = 0;
             overload.right_pointer_level = 0;
+            overload.cast_mode = cast_mode;
+            overload.dot_call_as_member_access = as_member_access;
 
             if (expr_info->result_type == Expression_Result_Type::FUNCTION)
             {
@@ -8716,17 +8960,26 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
                 // Check if signature is valid
                 auto signature = function->signature;
-                if (overloaded_operator == Upp_Operator::DOT_CALL) 
+                if (overloaded_operator == Upp_Operator::DOT_CALL)
                 {
                     key.key_is_type = false;
                     if (signature->parameters.size == 0) {
                         log_semantic_error("Dot call overload requires a function with at least one argument", function_argument_node);
                         errors_occured = true;
                     }
+                    else {
+                        key.left_type = datatype_get_pointed_to_type(signature->parameters[0].type, &overload.left_pointer_level);
+                    }
+
+                    if (as_member_access && signature->parameters.size > 1) {
+                        log_semantic_error("Dot-Call as member access must only have 1 argument", function_argument_node);
+                        errors_occured = true;
+                    }
+
                     if (name != 0) {
                         key.options.id = name;
                     }
-                    else 
+                    else
                     {
                         if (function->symbol == 0) {
                             log_semantic_error("Dot-Call with an unnamed function requires the name argument", function_argument_node);
@@ -8770,48 +9023,50 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 overload.is_polymorphic = true;
                 overload.options.polymorphic = expr_info->options.polymorphic_function.base;
 
+                const bool is_dot_call = overloaded_operator == Upp_Operator::DOT_CALL;
                 auto poly_base = expr_info->options.polymorphic_function.base->base_info;
                 auto function_progress = polymorphic_function_base_to_function_progress(expr_info->options.polymorphic_function.base);
                 assert(function_progress->header_workload->base.is_finished, "");
+                const int parameter_count = poly_base.parameter_nodes.size;
 
                 // Check that polymorphic base signature is valid for overload
-                if (overloaded_operator == Upp_Operator::DOT_CALL)
+                if (poly_base.return_type_index == -1 && !is_dot_call) {
+                    log_semantic_error("Function must have return type for overload", function_argument_node);
+                    errors_occured = true;
+                }
+                else if (overloaded_operator == Upp_Operator::CAST)
                 {
-                    if (poly_base.parameter_nodes.size == 0) {
-                        log_semantic_error("Dot call overload requires a function with at least one argument", function_argument_node);
+                    // If the type is known, we use it as index to second type in casts...
+                    auto return_param = poly_base.parameters[poly_base.return_type_index];
+                    if (return_param.depends_on.size == 0 && !return_param.infos.type->contains_type_template) {
+                        key.key_is_type = true;
+                        // Note: After custom-cast the destination type must be on the correct pointer level, so we don't do get_pointed_to_type here
+                        key.options.right_type = return_param.infos.type;
+                    }
+                }
+
+                // Check that no comptime arguments exist
+                for (int j = 0; j < parameter_count; j++) {
+                    auto& param = poly_base.parameters[j];
+                    if (param.is_comptime) {
+                        log_semantic_error("For overload the function parameter must not be comptime", function_argument_node);
+                        break;
+                    }
+                }
+
+                // Check argument-count and second argument
+                if (is_dot_call) {
+                    if (parameter_count == 0) {
+                        log_semantic_error("Dot_calls require at least one argument", function_argument_node);
                         errors_occured = true;
                     }
-                    key.key_is_type = false;
-                    key.options.id = function_progress->function->symbol->id; // Should never be null for polymorphic
-                    if (name != 0) {
-                        key.options.id = name;
+                    if (as_member_access && parameter_count > 1) {
+                        log_semantic_error("Dot_calls with as_member_access must have exactly one parameter", function_argument_node);
+                        errors_occured = true;
                     }
                 }
                 else
                 {
-                    if (poly_base.return_type_index == -1) {
-                        log_semantic_error("Function must have return type for overload", function_argument_node);
-                        errors_occured = true;
-                    }
-                    else if (overloaded_operator == Upp_Operator::CAST)
-                    {
-                        // If the type is known, we use it as index to second type in casts...
-                        auto return_param = poly_base.parameters[poly_base.return_type_index];
-                        if (return_param.depends_on.size == 0 && !return_param.infos.type->contains_type_template) {
-                            key.options.right_type = return_param.infos.type;
-                        }
-                    }
-
-                    // Check that no comptime arguments exist
-                    for (int j = 0; j < poly_base.parameter_nodes.size; j++) {
-                        auto& param = poly_base.parameters[j];
-                        if (param.is_comptime) {
-                            log_semantic_error("For overload the function parameter must not be comptime", function_argument_node);
-                            break;
-                        }
-                    }
-
-                    // Check argument-count and second argument
                     if (poly_base.parameter_nodes.size != expected_argument_count) {
                         log_semantic_error("The polymorphic function does not have the required argument count", function_argument_node);
                         errors_occured = true;
@@ -8847,6 +9102,16 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     if (param.is_comptime) {
                         log_semantic_error("For polymorphic overload the first parameter must not be comptime", function_argument_node);
                         errors_occured = true;
+                    }
+                }
+
+                // Set name for dot-calls
+                if (is_dot_call)
+                {
+                    key.key_is_type = false;
+                    key.options.id = function_progress->function->symbol->id; // Should never be null for polymorphic
+                    if (name != 0) {
+                        key.options.id = name;
                     }
                 }
             }
@@ -9088,9 +9353,9 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
     case AST::Statement_Type::EXPRESSION_STATEMENT:
     {
         auto& expression_node = statement->options.expression;
-        if (expression_node->type != AST::Expression_Type::FUNCTION_CALL) {
-            log_semantic_error("Expression statement must be a function call", statement);
-        }
+        // if (expression_node->type != AST::Expression_Type::FUNCTION_CALL) {
+        //     log_semantic_error("Expression statement must be a function call", statement);
+        // }
         // Note(Martin): This is a special case, in expression statements the expression may not have a value
         semantic_analyser_analyse_expression_value(expression_node, expression_context_make_unknown(), true);
         EXIT(Control_Flow::SEQUENTIAL);
@@ -9349,7 +9614,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             }
 
             // Analyse value
-            if (i < values.size) 
+            if (i < values.size)
             {
                 Expression_Context context;
                 if (datatype_is_unknown(type)) {
@@ -9885,6 +10150,9 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
                 break;
             case Expression_Result_Type::TYPE:
                 string_append_formated(string, "Type");
+                break;
+            case Expression_Result_Type::DOT_CALL:
+                string_append_formated(string, "Dot_Call");
                 break;
             default: panic("");
             }
