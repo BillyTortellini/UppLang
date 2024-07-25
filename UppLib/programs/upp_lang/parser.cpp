@@ -977,6 +977,35 @@ namespace Parser
                         parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
                         PARSE_SUCCESS(result);
                     }
+                    else if (test_operator(Operator::ASSIGN_ADD) || test_operator(Operator::ASSIGN_SUB) ||
+                        test_operator(Operator::ASSIGN_MULT) || test_operator(Operator::ASSIGN_DIV) || test_operator(Operator::ASSIGN_MODULO)) 
+                    {
+                        result->type = Statement_Type::BINOP_ASSIGNMENT;
+                        auto& assign = result->options.binop_assignment;
+                        if (test_operator(Operator::ASSIGN_ADD)) {
+                            assign.binop = Binop::ADDITION;
+                        }
+                        else if (test_operator(Operator::ASSIGN_SUB)) {
+                            assign.binop = Binop::SUBTRACTION;
+                        }
+                        else if (test_operator(Operator::ASSIGN_MULT)) {
+                            assign.binop = Binop::MULTIPLICATION;
+                        }
+                        else if (test_operator(Operator::ASSIGN_DIV)) {
+                            assign.binop = Binop::DIVISION;
+                        }
+                        else if (test_operator(Operator::ASSIGN_MODULO)) {
+                            assign.binop = Binop::MODULO;
+                        }
+                        else {
+                            panic("");
+                        }
+                        advance_token();
+
+                        assign.left_side = expr;
+                        assign.right_side = parse_expression_or_error_expr(upcast(result));
+                        PARSE_SUCCESS(result);
+                    }
                     
                     result->type = Statement_Type::EXPRESSION_STATEMENT;
                     result->options.expression = expr;
@@ -1469,6 +1498,19 @@ namespace Parser
             }
             result->type = Expression_Type::BAKE_EXPR;
             result->options.bake_expr = parse_single_expression_or_error(&result->base);
+            PARSE_SUCCESS(result);
+        }
+
+        if (test_keyword(Keyword::INSTANCIATE))
+        {
+            advance_token();
+            result->type = Expression_Type::INSTANCIATE;
+            result->options.instanciate.arguments = dynamic_array_create_empty<AST::Argument*>(1);
+            if (!test_parenthesis('(')) {
+                CHECKPOINT_EXIT;
+            }
+
+            parse_parenthesis_comma_seperated(&result->base, &result->options.instanciate.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 

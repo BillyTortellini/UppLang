@@ -4,6 +4,7 @@
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
 #include "../../datastructures/string.hpp"
+#include "../../datastructures/list.hpp"
 #include "../../datastructures/dependency_graph.hpp"
 #include "../../utility/file_io.hpp"
 
@@ -1291,6 +1292,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case AST::Expression_Type::FUNCTION_CALL: {
         return comptime_result_make_not_comptime("Function calls require #bake to be used as comtime values");
+    }
+    case AST::Expression_Type::INSTANCIATE: {
+        return comptime_result_make_not_comptime("Instanciate must be successful to use as comptime value");
     }
     case AST::Expression_Type::NEW_EXPR: {
         // New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
@@ -4680,8 +4684,11 @@ void arguments_analyse_in_unknown_context(Array<Argument_Info*> infos) {
     for (int i = 0; i < infos.size; i++) {
         auto arg_info = infos[i];
         if (arg_info->state != Argument_State::NOT_ANALYSED) {
-            auto value_opt = pass_get_node_info(semantic_analyser.current_workload->current_pass, arg_info->expression, Info_Query::TRY_READ);
-            assert(value_opt != 0, "Already analysed must mean that expression info for value exists!");
+            // Arg info expressions may be nullpointer since #instanciate exists
+            if (arg_info->expression != nullptr) {
+                auto value_opt = pass_get_node_info(semantic_analyser.current_workload->current_pass, arg_info->expression, Info_Query::TRY_READ);
+                assert(value_opt != 0, "Already analysed must mean that expression info for value exists!");
+            }
             continue;
         }
         semantic_analyser_analyse_expression_value(arg_info->expression, expression_context_make_unknown());
@@ -5110,6 +5117,12 @@ Argument_Info argument_info_make(
     result.parameter_index = parameter_index;
     result.ignore_during_code_generation = false;
     result.reanalyse_param_type_flag = false;
+    if (state == Argument_State::ANALYSED && expression != nullptr) {
+        result.argument_type = get_info(expression)->cast_info.type_afterwards;
+    }
+    else {
+        result.argument_type = compiler.type_system.predefined_types.error_type;
+    }
     return result;
 }
 
@@ -5118,23 +5131,24 @@ Datatype* analyse_argument_if_not_already_done(Argument_Info* info, Expression_C
     switch (info->state)
     {
     case Argument_State::ANALYSED: {
-        return expression_info_get_type(get_info(info->expression), false);
+        break;
     }
     case Argument_State::CAST_MISSING: {
         info->state = Argument_State::ANALYSED;
         auto value_info = get_info(info->expression);
         value_info->cast_info = expression_context_apply(expression_info_get_type(value_info, true), context, true, info->expression);
-        return expression_info_get_type(value_info, false);
+        info->argument_type = expression_info_get_type(value_info, false);
+        break;
     }
     case Argument_State::NOT_ANALYSED: {
         info->state = Argument_State::ANALYSED;
-        return semantic_analyser_analyse_expression_value(info->expression, context);
+        info->argument_type = semantic_analyser_analyse_expression_value(info->expression, context);
+        break;
     }
     default: panic("");
     }
 
-    panic("");
-    return compiler.type_system.predefined_types.error_type;
+   return info->argument_type;
 }
 
 Instanciation_Result instanciate_polymorphic_callable(
@@ -5414,7 +5428,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             else
             {
                 for (int j = unnamed_argument_count; j < arguments.size; j++) {
-                    if (arguments[j]->parameter_index = parameter_index) {
+                    if (arguments[j]->parameter_index == parameter_index) {
                         argument = arguments[j];
                         break;
                     }
@@ -5431,7 +5445,7 @@ Instanciation_Result instanciate_polymorphic_callable(
         // Skip if we can just use base-analysis result
         if (!base_parameter.is_comptime && base_parameter.depends_on.size == 0 && !base_parameter.infos.type->contains_type_template) {
             auto type = analyse_argument_if_not_already_done(argument, expression_context_make_specific_type(base_parameter.infos.type));
-            if (datatype_is_unknown(type)) {
+            if (datatype_is_unknown(type) && argument->expression != nullptr) { // Here we have a special case for #instanciate to work (Non-comptime parameters are faked in argument-info)
                 success = false;
             }
             continue;
@@ -5592,7 +5606,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                             else
                             {
                                 for (int j = unnamed_argument_count; j < arguments.size; j++) {
-                                    if (arguments[j]->parameter_index = i) {
+                                    if (arguments[j]->parameter_index == i) {
                                         argument = arguments[j];
                                         break;
                                     }
@@ -5600,7 +5614,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                                 assert(argument != 0, "Should not happen after argument to parameter mapping");
                             }
                         }
-                        parameter.type = expression_info_get_type(get_info(arguments[i]->expression), false);
+                        parameter.type = arguments[i]->argument_type;
                     }
                     else {
                         parameter.has_default_value = base_param.infos.has_default_value;
@@ -5752,7 +5766,6 @@ bool expression_is_auto_expression(AST::Expression * expression)
              expression->options.literal_read.type == Literal_Type::INTEGER  ||
              expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
-
 
 Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression * expr, Expression_Context context)
 {
@@ -6073,12 +6086,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                             auto expr_info = get_info(arg_info->expression);
                             assert(expr_info->cast_info.cast_type == Cast_Type::NO_CAST, "");
                             expr_info->cast_info = expression_context_apply(
-                                expression_info_get_type(expr_info, true), 
+                                expression_info_get_type(expr_info, true),
                                 expression_context_make_specific_type(
-                                    callable_get_parameter_info(candidates[0].callable, arg_info->parameter_index).type), 
+                                    callable_get_parameter_info(candidates[0].callable, arg_info->parameter_index).type),
                                 true, arg_info->expression
                             );
                             arg_info->state = Argument_State::ANALYSED;
+                            arg_info->argument_type = expr_info->cast_info.type_afterwards;
                         }
                     }
 
@@ -6184,7 +6198,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             // Return result
             switch (instance_result.type)
             {
-            case Instanciation_Result_Type::FUNCTION: 
+            case Instanciation_Result_Type::FUNCTION:
             {
                 // Store instanciation info in expression_info
                 auto function = instance_result.options.function;
@@ -6246,7 +6260,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
 
             // Check if already handled
-            analyse_argument_if_not_already_done(arg_info , expression_context_make_specific_type(params[arg_info->parameter_index].type));
+            analyse_argument_if_not_already_done(arg_info, expression_context_make_specific_type(params[arg_info->parameter_index].type));
         }
 
         // Exit with return type (if available)
@@ -6262,6 +6276,141 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             panic("Not a valid code path, the if before should terminate!");
             EXIT_ERROR(types.error_type);
         }
+    }
+    case AST::Expression_Type::INSTANCIATE:
+    {
+        auto& argument_nodes = expr->options.instanciate.arguments;
+        if (argument_nodes.size == 0) {
+            log_semantic_error("Instanciate must have at least one argument, first argument is the polymorphic function!", expr);
+            arguments_analyse_in_unknown_context(argument_nodes);
+            EXIT_ERROR(types.error_type);
+        }
+
+        auto first_expr = argument_nodes[0]->value;
+        if (argument_nodes[0]->name.available) {
+            log_semantic_error("Instanciate first argument must not have a name", upcast(argument_nodes[0]), Parser::Section::FIRST_TOKEN);
+            arguments_analyse_in_unknown_context(argument_nodes);
+            EXIT_ERROR(types.error_type);
+        }
+
+        // Set argument info for first argument for analyse_in_unknown_context
+        {
+            auto info = get_info(argument_nodes[0], true);
+            *info = argument_info_make(nullptr, optional_make_failure<String*>(), Argument_State::ANALYSED);
+        }
+
+        auto expression_info = semantic_analyser_analyse_expression_any(first_expr, expression_context_make_unknown());
+        if (expression_info->result_type != Expression_Result_Type::POLYMORPHIC_FUNCTION) {
+            log_semantic_error("#instanciate only works on polymorphic functions", first_expr);
+            log_error_info_expression_result_type(expression_info->result_type);
+            arguments_analyse_in_unknown_context(argument_nodes);
+            EXIT_ERROR(types.error_type);
+        }
+
+        Polymorphic_Base_Info* poly_base = &expression_info->options.polymorphic_function.base->base_info;
+
+        // Generate arguments for instanciation (This is a list so I can take pointers)
+        List<Argument_Info> argument_list = list_create<Argument_Info>();
+        SCOPE_EXIT(list_destroy(&argument_list));
+        Dynamic_Array<Argument_Info*> argument_infos = dynamic_array_create_empty<Argument_Info*>(
+            poly_base->parameters.size + poly_base->implicit_parameter_infos.size
+        );
+        SCOPE_EXIT(dynamic_array_destroy(&argument_infos));
+
+        bool errors_occured = false;
+        int unnamed_argument_count = 0;
+        if (arguments_check_for_naming_errors(argument_nodes, &unnamed_argument_count)) {
+            arguments_analyse_in_unknown_context(argument_nodes);
+            EXIT_ERROR(types.error_type);
+        }
+
+        for (int i = 1; i < argument_nodes.size; i++) {
+            auto argument_node = argument_nodes[i];
+            if (!argument_node->name.available) {
+                log_semantic_error("For #instanciate all arguments must have a name", upcast(argument_node), Parser::Section::FIRST_TOKEN);
+                errors_occured = true;
+            }
+        }
+
+        auto find_and_add_parameter = [&](String* id, int parameter_index) 
+        {
+            AST::Argument* argument_node = nullptr;
+            // Note: We start at index 1, as the first argument is always the function to instanciate
+            for (int j = 1; j < argument_nodes.size; j++) 
+            {
+                auto arg = argument_nodes[j];
+                if (arg->name.available && id) {
+                    if (arg->name.value == id) {
+                        argument_node = arg;
+                        break;
+                    }
+                }
+            }
+
+            // Check if argument could be found
+            if (argument_node == 0) {
+                log_semantic_error("Instanciate is missing an argument", expr, Parser::Section::ENCLOSURE);
+                errors_occured = true;
+                log_error_info_id(id);
+                return;
+            }
+
+            // Initialize arg info and add it to array
+            auto arg_info = get_info(argument_node, true);
+            *arg_info = argument_info_make(argument_node->value, argument_node->name, Argument_State::NOT_ANALYSED, parameter_index);
+            dynamic_array_push_back(&argument_infos, arg_info);
+        };
+
+        // Check that all comptime parameters are set
+        for (int i = 0; i < poly_base->parameter_nodes.size; i++)
+        {
+            auto& poly_parameter = poly_base->parameters[i];
+
+            if (!poly_parameter.is_comptime) 
+            {
+                // Only comptime parameters should be provided to instanciate, so in this case we have to "fake" the argument info, as no expression exists
+                Argument_Info arg_info = argument_info_make(nullptr, poly_parameter.infos.name, Argument_State::NOT_ANALYSED, i);
+                arg_info.expression = nullptr; // It should be the case that setting the state to Analysed makes sure that expression is never used
+                arg_info.state = Argument_State::ANALYSED;
+                arg_info.argument_type = types.error_type; // Normally this value is never used
+                auto list_node = list_add_at_end(&argument_list, arg_info);
+                dynamic_array_push_back(&argument_infos, &list_node->value);
+            }
+            else
+            {
+                assert(poly_parameter.infos.name.available, "I think all poly parameters must have names!");
+                find_and_add_parameter(poly_parameter.infos.name.value, i);
+            }
+        }
+
+        // Check that all implicit parameters are set
+        for (int i = 0; i < poly_base->implicit_parameter_infos.size; i++) {
+            auto& implicit = poly_base->implicit_parameter_infos[i];
+            find_and_add_parameter(implicit.id, poly_base->parameter_nodes.size + i); // Wacky index calculation, this is how extra "implicit" parameters can be specified
+        }
+
+        if (errors_occured) {
+            arguments_analyse_in_unknown_context(argument_nodes);
+            EXIT_ERROR(types.error_type);
+        }
+
+        // Otherwise try to instanciate function
+        Callable_Polymorphic_Info poly_info;
+        poly_info.base = poly_base;
+        poly_info.is_function = true;
+        poly_info.options.polymorphic_function = expression_info->options.polymorphic_function.base;
+        Array<Argument_Info*> infos_array = array_create_static(argument_infos.data, argument_infos.size);
+        auto result = instanciate_polymorphic_callable(poly_info, infos_array, expression_context_make_unknown(), 0, upcast(expr));
+        if (result.type == Instanciation_Result_Type::FUNCTION) {
+            expression_info->options.polymorphic_function.instance_fn = result.options.function;
+            EXIT_FUNCTION(result.options.function);
+        }
+        else {
+            EXIT_ERROR(types.error_type);
+        }
+
+        panic("");
+        break;
     }
     case AST::Expression_Type::PATH_LOOKUP:
     {
@@ -6342,7 +6491,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             literal_type = upcast(types.bool_type);
             value_ptr = &read.options.boolean;
             break;
-        case Literal_Type::FLOAT_VAL: 
+        case Literal_Type::FLOAT_VAL:
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(context.expected_type.type, upcast(types.f64_type)))
             {
@@ -6357,7 +6506,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
             break;
         }
-        case Literal_Type::INTEGER: 
+        case Literal_Type::INTEGER:
         {
             bool check_for_auto_conversion = false;
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
@@ -6417,7 +6566,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                         EXIT_ERROR(context.expected_type.type);
                     }
 
-                    u64 value = (u64) read.options.int_val; 
+                    u64 value = (u64)read.options.int_val;
                     switch (size)
                     {
                     case 1: {
@@ -6628,7 +6777,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         Datatype_Template_Parameter* polymorphic_count = 0;
 
         auto comptime = expression_calculate_comptime_value(array_node.size_expr, "Array size must be know at compile time");
-        if (comptime.available) 
+        if (comptime.available)
         {
             array_size_known = true;
             array_size = upp_constant_to_value<int>(comptime.value);
@@ -6898,8 +7047,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
             {
                 Overload_Key key = overload_key_make(
-                    Upp_Operator::ARRAY_ACCESS, 
-                    upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type), 
+                    Upp_Operator::ARRAY_ACCESS,
+                    upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type),
                     types.error_type
                 );
 
@@ -7175,10 +7324,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 {
                     // Type and name have to be correct to even get here
                     if (try_updating_expression_pointer_level(member_node.expr, type, pointer_level, overload->left_pointer_level)) {
-                        if (overload->dot_call_as_member_access) 
+                        if (overload->dot_call_as_member_access)
                         {
                             ModTree_Function* function = nullptr;
-                            if (overload->is_polymorphic) 
+                            if (overload->is_polymorphic)
                             {
                                 // Instanciate polymorphic function
                                 Argument_Info argument_info = argument_info_make(member_node.expr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
@@ -7287,8 +7436,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
             // Check for literals (Float and int should adjust to correct size with negate)
             Expression_Context operand_context;
-            if (is_negate && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && 
-                context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::AUTO) 
+            if (is_negate && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED &&
+                context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::AUTO)
             {
                 auto primitive = downcast<Datatype_Primitive>(context.expected_type.type);
                 if (primitive->primitive_type == Primitive_Type::INTEGER || primitive->primitive_type == Primitive_Type::FLOAT) {
@@ -7478,14 +7627,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
             // Dereference types
             if (!is_pointer_comparison) {
-                while (left_type->type == Datatype_Type::POINTER) {
-                    left_type_pointer_level += 1;
-                    left_type = downcast<Datatype_Pointer>(left_type)->points_to_type;
-                }
-                while (right_type->type == Datatype_Type::POINTER) {
-                    right_type_pointer_level += 1;
-                    right_type = downcast<Datatype_Pointer>(right_type)->points_to_type;
-                }
+                left_type = datatype_get_pointed_to_type(left_type, &left_type_pointer_level);
+                right_type = datatype_get_pointed_to_type(right_type, &right_type_pointer_level);
             }
         }
 
@@ -7674,7 +7817,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 }
 
 Expression_Cast_Info semantic_analyser_check_if_cast_possible(
-    AST::Expression* expression, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
+    AST::Expression * expression, Datatype * source_type, Datatype * destination_type, Cast_Mode cast_mode)
 {
     auto& analyser = semantic_analyser;
     auto& type_system = compiler.type_system;
@@ -8178,7 +8321,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
 }
 
 Expression_Cast_Info expression_context_apply(
-    Datatype* initial_type, Expression_Context context, bool log_errors, AST::Expression* expression, Parser::Section error_section)
+    Datatype * initial_type, Expression_Context context, bool log_errors, AST::Expression * expression, Parser::Section error_section)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -8222,7 +8365,7 @@ Expression_Cast_Info expression_context_apply(
     }
     case Expression_Context_Type::SPECIFIC_TYPE_EXPECTED: {
         result = semantic_analyser_check_if_cast_possible(
-            expression, initial_type, context.expected_type.type, context.expected_type.cast_mode 
+            expression, initial_type, context.expected_type.type, context.expected_type.cast_mode
         );
 
         // Check for errors
@@ -8251,7 +8394,7 @@ Expression_Cast_Info expression_context_apply(
     return result;
 }
 
-Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expression, Expression_Context context)
 {
     auto& type_system = compiler.type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
@@ -8263,7 +8406,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
     return result;
 }
 
-Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression * expression)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -8349,7 +8492,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
     return types.error_type;
 }
 
-Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context, bool no_value_expected)
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression * expression, Expression_Context context, bool no_value_expected)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -8428,7 +8571,7 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
 }
 
 
-u64 operator_overload_key_hash(Overload_Key* key) 
+u64 operator_overload_key_hash(Overload_Key * key)
 {
     u64 hash = hash_pointer(key->left_type);
     int op_as_int = (int)key->op;
@@ -8443,7 +8586,7 @@ u64 operator_overload_key_hash(Overload_Key* key)
     return hash;
 }
 
-bool operator_overload_key_equals(Overload_Key* a, Overload_Key* b) {
+bool operator_overload_key_equals(Overload_Key * a, Overload_Key * b) {
     if (a->key_is_type != b->key_is_type || a->op != b->op || !types_are_equal(a->left_type, b->left_type)) {
         return false;
     }
@@ -8454,7 +8597,7 @@ bool operator_overload_key_equals(Overload_Key* a, Overload_Key* b) {
 }
 
 // OPERATOR CONTEXT
-Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table)
+Operator_Context* symbol_table_install_new_operator_context(Symbol_Table * symbol_table)
 {
     // Create new operator context
     auto context = new Operator_Context;
@@ -8500,7 +8643,7 @@ struct Operator_Context_Value
     } options;
 };
 
-Operator_Context_Value operator_context_value_from_option(Operator_Context* context, Context_Option setting)
+Operator_Context_Value operator_context_value_from_option(Operator_Context * context, Context_Option setting)
 {
     Operator_Context_Value result;
     if ((int)setting >= CONTEXT_OPTION_CAST_MODE_START && (int)setting <= CONTEXT_OPTION_CAST_MODE_END) {
@@ -8516,7 +8659,7 @@ Operator_Context_Value operator_context_value_from_option(Operator_Context* cont
 }
 
 
-void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context)
+void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context * context)
 {
     auto& ids = compiler.predefined_ids;
     auto& types = compiler.type_system.predefined_types;
@@ -9181,7 +9324,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
 
 // STATEMENTS
-bool code_block_is_while(AST::Code_Block* block)
+bool code_block_is_while(AST::Code_Block * block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -9190,7 +9333,7 @@ bool code_block_is_while(AST::Code_Block* block)
     return false;
 }
 
-bool code_block_is_defer(AST::Code_Block* block)
+bool code_block_is_defer(AST::Code_Block * block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
@@ -9215,7 +9358,7 @@ bool inside_defer()
     return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
 {
     auto& type_system = compiler.type_system;
     auto& types = type_system.predefined_types;
@@ -9512,6 +9655,115 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         EXIT(Control_Flow::SEQUENTIAL);
     }
+    case AST::Statement_Type::BINOP_ASSIGNMENT:
+    {
+        auto& assignment = statement->options.binop_assignment;
+
+        // Initialize info as non-overloaded (primitive binop)
+        info->specifics.overload.function = 0;
+        info->specifics.overload.switch_arguments = false;
+
+        // Analyse left side
+        Datatype* left_type = semantic_analyser_analyse_expression_value(assignment.left_side, expression_context_make_auto_dereference());
+        if (!expression_has_memory_address(assignment.left_side)) {
+            log_semantic_error("Left side must have a memory address/cannot be a temporary value for assignment", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
+        }
+
+        // Analyse right side
+        Datatype* right_type = semantic_analyser_analyse_expression_value(assignment.right_side, expression_context_make_auto_dereference());
+
+        // Check for unknowns
+        if (datatype_is_unknown(left_type) || datatype_is_unknown(right_type)) {
+            EXIT(Control_Flow::SEQUENTIAL);
+        }
+
+        // Check if binop is a primitive operation (ints, floats, bools, pointers)
+        bool types_are_valid = false;
+        if (types_are_equal(left_type, right_type))
+        {
+            bool int_valid = false;
+            bool float_valid = false;
+            switch (assignment.binop)
+            {
+            case AST::Binop::ADDITION:
+            case AST::Binop::SUBTRACTION:
+            case AST::Binop::MULTIPLICATION:
+            case AST::Binop::DIVISION:
+                float_valid = true;
+                int_valid = true;
+                break;
+            case AST::Binop::MODULO:
+                int_valid = true;
+                break;
+            default:
+                panic("Shouldn't happen in Binop-Assignment");
+                break;
+            }
+
+            Datatype* operand_type = left_type;
+            if (operand_type->type == Datatype_Type::PRIMITIVE)
+            {
+                auto primitive = downcast<Datatype_Primitive>(operand_type);
+                if (primitive->primitive_type == Primitive_Type::INTEGER) {
+                    types_are_valid = int_valid;
+                }
+                else if (primitive->primitive_type == Primitive_Type::FLOAT) {
+                    types_are_valid = float_valid;
+                }
+            }
+        }
+
+        // Check for operator overloads if it isn't a primitive operation
+        auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+        if (!types_are_valid)
+        {
+            Upp_Operator op;
+            switch (assignment.binop)
+            {
+            case AST::Binop::ADDITION: op = Upp_Operator::ADDITION; break;
+            case AST::Binop::SUBTRACTION: op = Upp_Operator::SUBTRACTION; break;
+            case AST::Binop::MULTIPLICATION: op = Upp_Operator::MULTIPLICATION; break;
+            case AST::Binop::DIVISION: op = Upp_Operator::DIVISION; break;
+            case AST::Binop::MODULO: op = Upp_Operator::MODULO; break;
+            case AST::Binop::EQUAL: op = Upp_Operator::EQUAL; break;
+            case AST::Binop::NOT_EQUAL: op = Upp_Operator::EQUAL; break;
+            case AST::Binop::LESS: op = Upp_Operator::LESS_THAN; break;
+            case AST::Binop::LESS_OR_EQUAL: op = Upp_Operator::LESS_EQUAL; break;
+            case AST::Binop::GREATER: op = Upp_Operator::GREATER_THAN; break;
+            case AST::Binop::GREATER_OR_EQUAL: op = Upp_Operator::GREATER_EQUAL; break;
+            case AST::Binop::AND: op = Upp_Operator::AND; break;
+            case AST::Binop::OR: op = Upp_Operator::OR; break;
+            default: panic("");
+            }
+
+            Overload_Key key = overload_key_make(op, left_type, right_type);
+            auto overload = hashtable_find_element(&operator_context->operator_overloads, key);
+            if (overload != nullptr)
+            {
+                assert(!overload->is_polymorphic, "Binop overloads cannot be polymorphic currently");
+                assert(overload->options.function->signature->return_type.available, "");
+                if (!types_are_equal(left_type, overload->options.function->signature->return_type.value)) {
+                    log_semantic_error(
+                        "Overload for this binop not valid, as assignment requires return type to be the same",
+                        upcast(statement), Parser::Section::WHOLE_NO_CHILDREN
+                    );
+                }
+                info->specifics.overload.function = overload->options.function;
+                info->specifics.overload.switch_arguments = overload->switch_left_and_right;
+                semantic_analyser_register_function_call(overload->options.function);
+                types_are_valid = true;
+            }
+        }
+
+        if (!types_are_valid) {
+            log_semantic_error("Types aren't valid for binary operation", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
+            log_error_info_binary_op_type(left_type, right_type);
+            EXIT(Control_Flow::SEQUENTIAL);
+        }
+
+        EXIT(Control_Flow::SEQUENTIAL);
+        break;
+    }
     case AST::Statement_Type::ASSIGNMENT:
     {
         auto& assignment_node = statement->options.assignment;
@@ -9669,7 +9921,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymorphic_symbol_access)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block * block, bool polymorphic_symbol_access)
 {
     auto block_info = get_info(block, true);
     block_info->control_flow_locked = false;
@@ -9799,7 +10051,7 @@ void semantic_analyser_finish()
     semantic_analyser.program->main_function = main_symbol->options.function->function;
 }
 
-void function_progress_destroy(Function_Progress* progress) {
+void function_progress_destroy(Function_Progress * progress) {
     if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
         auto& base = progress->polymorphic.base;
         polymorphic_base_info_destroy(&base.base_info);
@@ -9958,11 +10210,11 @@ void semantic_analyser_reset()
     }
 }
 
-u64 ast_info_key_hash(AST_Info_Key* key) {
+u64 ast_info_key_hash(AST_Info_Key * key) {
     return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
 }
 
-bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
+bool ast_info_equals(AST_Info_Key * a, AST_Info_Key * b) {
     return a->base == b->base && a->pass == b->pass;
 }
 
@@ -10054,7 +10306,7 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void semantic_error_append_to_string(Semantic_Error e, String* string)
+void semantic_error_append_to_string(Semantic_Error e, String * string)
 {
     string_append_formated(string, e.msg);
 

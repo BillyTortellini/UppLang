@@ -80,6 +80,13 @@ namespace AST
                 }
                 break;
             }
+            case Expression_Type::INSTANCIATE: {
+                auto& instance = expr->options.instanciate;
+                if (instance.arguments.data != 0) {
+                    dynamic_array_destroy(&instance.arguments);
+                }
+                break;
+            }
             case Expression_Type::FUNCTION_SIGNATURE: {
                 auto& sig = expr->options.function_signature;
                 if (sig.parameters.data != 0) {
@@ -289,6 +296,10 @@ namespace AST
                 FILL(expr->options.bake_expr);
                 break;
             }
+            case Expression_Type::INSTANCIATE: {
+                FILL_ARRAY(expr->options.instanciate.arguments);
+                break;
+            }
             case Expression_Type::ARRAY_INITIALIZER: {
                 auto& init = expr->options.array_initializer;
                 FILL_OPTIONAL(init.type_expr);
@@ -364,6 +375,12 @@ namespace AST
                 auto ass = stat->options.assignment;
                 FILL_ARRAY(ass.left_side);
                 FILL_ARRAY(ass.right_side);
+                break;
+            }
+            case Statement_Type::BINOP_ASSIGNMENT: {
+                auto ass = stat->options.binop_assignment;
+                FILL(ass.left_side);
+                FILL(ass.right_side);
                 break;
             }
             case Statement_Type::EXPRESSION_STATEMENT: {
@@ -581,6 +598,10 @@ namespace AST
                 FILL(expr->options.bake_expr);
                 break;
             }
+            case Expression_Type::INSTANCIATE: {
+                FILL_ARRAY(expr->options.instanciate.arguments);
+                break;
+            }
             case Expression_Type::ARRAY_INITIALIZER: {
                 auto& init = expr->options.array_initializer;
                 FILL_OPTIONAL(init.type_expr);
@@ -656,6 +677,12 @@ namespace AST
                 auto ass = stat->options.assignment;
                 FILL_ARRAY(ass.left_side);
                 FILL_ARRAY(ass.right_side);
+                break;
+            }
+            case Statement_Type::BINOP_ASSIGNMENT: {
+                auto ass = stat->options.binop_assignment;
+                FILL(ass.left_side);
+                FILL(ass.right_side);
                 break;
             }
             case Statement_Type::EXPRESSION_STATEMENT: {
@@ -810,6 +837,7 @@ namespace AST
             case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
+            case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
             case Expression_Type::PATH_LOOKUP: string_append_formated(str, "PATH_LOOKUP "); break;
             case Expression_Type::LITERAL_READ: {
                 string_append_formated(str, "LITERAL_READ "); 
@@ -855,6 +883,7 @@ namespace AST
                 string_append_formated(str, "ASSIGNMENT"); 
                 break;
             }
+            case Statement_Type::BINOP_ASSIGNMENT: string_append_formated(str, "BINOP_ASSIGNMENT"); break;
             case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
             case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
             case Statement_Type::IMPORT: string_append_formated(str, "IMPORT"); break;

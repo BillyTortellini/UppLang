@@ -1715,6 +1715,55 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
             ir_generator_generate_expression(ir_block, statement->options.expression);
             break;
         }
+        case AST::Statement_Type::BINOP_ASSIGNMENT: 
+        {
+            auto info = get_info(statement);
+            auto& assign = statement->options.binop_assignment;
+
+            IR_Data_Access left_access = ir_generator_generate_expression(ir_block, assign.left_side);
+            Datatype* type = ir_data_access_get_type(&left_access);
+            IR_Data_Access right_access = ir_generator_generate_expression(ir_block, assign.right_side);
+            IR_Data_Access result_access = ir_data_access_create_intermediate(ir_block, type);
+
+            IR_Instruction assignment;
+            assignment.type = IR_Instruction_Type::MOVE;
+            assignment.options.move.destination = left_access;
+            assignment.options.move.source = result_access;
+
+            // Handle binop
+            if (info->specifics.overload.function == 0)
+            {
+                IR_Instruction binop;
+                binop.type = IR_Instruction_Type::BINARY_OP;
+                binop.options.binary_op.type = assign.binop;
+                binop.options.binary_op.destination = result_access;
+                binop.options.binary_op.operand_left = left_access;
+                binop.options.binary_op.operand_right = right_access;
+                dynamic_array_push_back(&ir_block->instructions, binop);
+            }
+            else
+            {
+                IR_Instruction call;
+                call.type = IR_Instruction_Type::FUNCTION_CALL;
+                call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                call.options.call.destination = result_access;
+                call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+                call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
+                if (info->specifics.overload.switch_arguments) {
+                    dynamic_array_push_back(&call.options.call.arguments, right_access);
+                    dynamic_array_push_back(&call.options.call.arguments, left_access);
+                }
+                else {
+                    dynamic_array_push_back(&call.options.call.arguments, left_access);
+                    dynamic_array_push_back(&call.options.call.arguments, right_access);
+                }
+                dynamic_array_push_back(&ir_block->instructions, call);
+            }
+
+            // Push assignment
+            dynamic_array_push_back(&ir_block->instructions, assignment);
+            break;
+        }
         case AST::Statement_Type::ASSIGNMENT: 
         {
             auto& as = statement->options.assignment;

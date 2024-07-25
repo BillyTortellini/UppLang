@@ -23,17 +23,12 @@ Generator:
 
 
 
-Dot-Callz Improvements/Problemz:
- * Add test cases for operator overloads --> Probably only after iterators
-
- 
-
 TODO:
-    * Create operators +=, -=, *=, /=, %= 
-    * Command to instanciate polymorphic functions
     * Iterators
 
 DONE:
+    * Binop Assignments +=, -=
+    * #instanciate
     * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
     * Fix testcases with new Syntax =*, :=*, ==*
     * New pointer assignment syntax a: *int =* i, ip :=* something
@@ -87,7 +82,6 @@ Operations that should depend on the context:
     - Binary operations +, -, *, /, %, ==, <, <=
     - Unary operations (Probably only - for math operations)
     - Array access [] (For datastructures)
-
  * dot-calls
  * Iterators
 
@@ -98,7 +92,7 @@ Operations that should depend on the context:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Operator-Context for casting, operator overloading, dot-calls, iterators, auto-pointer dereferencing, loops
+    * Loops + iterators
     * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters)
 
     * C-Function calling rework

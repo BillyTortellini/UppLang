@@ -53,6 +53,7 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::ASSIGN_DIV: return operator_info_make("/=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_MULT: return operator_info_make("*=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_POINTER: return operator_info_make("=*", Operator_Type::BINOP, true, true);
+    case Operator::ASSIGN_MODULO: return operator_info_make("=%", Operator_Type::BINOP, true, true);
     default: panic("");
     }
 
@@ -80,6 +81,7 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::AS: return string_create_static("as");
     case Keyword::CONTEXT: return string_create_static("context");
     case Keyword::BAKE: return string_create_static("#bake");
+    case Keyword::INSTANCIATE: return string_create_static("#instanciate");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CASE: return string_create_static("case");
     case Keyword::CAST: return string_create_static("cast");
@@ -424,7 +426,7 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
             int longest_index = -1;
             int longest_end = -1;
             // Check all operators
-            for (int i = 0; i < SYNTAX_OPERATOR_COUNT; i++)
+            for (int i = 0; i < (int)Operator::MAX_ENUM_VALUE; i++)
             {
                 auto op_str = syntax_operator_info((Operator)i).string;
                 bool matches = true;

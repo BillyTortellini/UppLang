@@ -280,9 +280,11 @@ struct Polymorphic_Instance_Info
 
 struct Polymorphic_Base_Info
 {
-    Array<Polymorphic_Parameter> parameters; // If return type exists, it's the last value in parameters
-    Dynamic_Array<int> parameter_analysis_order;  // Order in which arguments need to be evaluated in for instanciation
-    Dynamic_Array<Implicit_Parameter_Infos> implicit_parameter_infos; 
+    // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
+    Array<Polymorphic_Parameter> parameters;
+    // Order in which arguments need to be evaluated in for instanciation
+    Dynamic_Array<int> parameter_analysis_order; 
+    Dynamic_Array<Implicit_Parameter_Infos> implicit_parameter_infos;
     Array<Polymorphic_Value> base_parameter_values; // During base analysis only types of parameters are known
     Dynamic_Array<Polymorphic_Instance_Info> instances;
 
@@ -540,6 +542,7 @@ struct Argument_Info
 {
     Argument_State state;
     AST::Expression* expression;
+    Datatype* argument_type; // Type of analysed expression
     Optional<String*> argument_name;
     int parameter_index; // -1 Indicates that argument hasn't been matched yet or a failure to match
     bool reanalyse_param_type_flag;
@@ -574,6 +577,10 @@ struct Statement_Info
     struct {
         AST::Code_Block* block; // Continue/break
         bool is_struct_split; // Definition or assignment
+        struct {
+            ModTree_Function* function;
+            bool switch_arguments;
+        } overload; // Binop assignments (function is null if no overload)
     } specifics;
 };
 

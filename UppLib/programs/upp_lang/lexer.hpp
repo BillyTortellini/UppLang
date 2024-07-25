@@ -8,7 +8,6 @@ struct Identifier_Pool;
 struct Source_Code;
 
 // Tokens
-constexpr auto SYNTAX_OPERATOR_COUNT = 30;
 enum class Operator
 {
     ADDITION,
@@ -44,6 +43,9 @@ enum class Operator
     ASSIGN_SUB,
     ASSIGN_MULT,
     ASSIGN_DIV,
+    ASSIGN_MODULO,
+
+    MAX_ENUM_VALUE
 };
 
 enum class Operator_Type
@@ -76,6 +78,7 @@ enum class Keyword
     CAST_RAW,
     CAST_PTR,
     BAKE,
+    INSTANCIATE,
     IMPORT,
     AS,
     CONTEXT,

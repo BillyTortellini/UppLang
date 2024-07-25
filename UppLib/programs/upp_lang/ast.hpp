@@ -228,6 +228,7 @@ namespace AST
         AUTO_ENUM,
         BAKE_EXPR,
         BAKE_BLOCK,
+        INSTANCIATE,
 
         // Memory Reads
         PATH_LOOKUP,
@@ -317,6 +318,9 @@ namespace AST
                 Dynamic_Array<Definition*> members;
                 Structure_Type type;
             } structure;
+            struct {
+                Dynamic_Array<Argument*> arguments;
+            } instanciate;
             Dynamic_Array<Enum_Member*> enum_members;
         } options;
     };
@@ -333,6 +337,7 @@ namespace AST
         DEFINITION,
         BLOCK,
         ASSIGNMENT,
+        BINOP_ASSIGNMENT,
         EXPRESSION_STATEMENT,
         // Keyword Statements
         IMPORT,
@@ -360,6 +365,11 @@ namespace AST
                 Dynamic_Array<Expression*> right_side;
                 bool is_pointer_assign;
             } assignment;
+            struct {
+                Expression* left_side;
+                Expression* right_side;
+                Binop binop;
+            } binop_assignment;
             Code_Block* defer_block;
             struct {
                 Expression* condition;
