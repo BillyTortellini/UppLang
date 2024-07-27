@@ -31,6 +31,7 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::TILDE_STAR: return operator_info_make("~*", Operator_Type::BINOP, false, true);
     case Operator::TILDE_STAR_STAR: return operator_info_make("~**", Operator_Type::BINOP, false, true);
     case Operator::COLON: return operator_info_make(":", Operator_Type::BINOP, false, true);
+    case Operator::SEMI_COLON: return operator_info_make(";", Operator_Type::BINOP, false, true);
     case Operator::NOT: return operator_info_make("!", Operator_Type::BINOP, false, false);
     case Operator::AMPERSAND: return operator_info_make("&", Operator_Type::UNOP, false, false);
     case Operator::LESS_THAN: return operator_info_make("<", Operator_Type::BINOP, true, true);
@@ -80,6 +81,8 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::IMPORT: return string_create_static("import");
     case Keyword::AS: return string_create_static("as");
     case Keyword::CONTEXT: return string_create_static("context");
+    case Keyword::FOR: return string_create_static("for");
+    case Keyword::IN_KEYWORD: return string_create_static("in");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::INSTANCIATE: return string_create_static("#instanciate");
     case Keyword::BREAK: return string_create_static("break");

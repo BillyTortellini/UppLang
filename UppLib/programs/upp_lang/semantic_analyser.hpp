@@ -581,6 +581,10 @@ struct Statement_Info
             ModTree_Function* function;
             bool switch_arguments;
         } overload; // Binop assignments (function is null if no overload)
+        struct {
+            Symbol_Table* symbol_table;
+            Symbol* loop_variable_symbol;
+        } for_loop;
     } specifics;
 };
 

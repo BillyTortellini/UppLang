@@ -344,6 +344,7 @@ namespace AST
         DEFER,
         IF_STATEMENT,
         WHILE_STATEMENT,
+        FOR_LOOP,
         SWITCH_STATEMENT,
         BREAK_STATEMENT,
         CONTINUE_STATEMENT,
@@ -365,6 +366,14 @@ namespace AST
                 Dynamic_Array<Expression*> right_side;
                 bool is_pointer_assign;
             } assignment;
+            struct {
+                Definition_Symbol* loop_variable_definition;
+                Optional<Expression*> loop_variable_type;
+                Expression* initial_value;
+                Expression* condition;
+                Statement* increment_statement;
+                Code_Block* body_block;
+            } for_loop;
             struct {
                 Expression* left_side;
                 Expression* right_side;

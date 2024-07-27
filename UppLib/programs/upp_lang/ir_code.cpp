@@ -1461,370 +1461,439 @@ void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_inde
     }
 }
 
+void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* ir_block)
+{
+    auto stat_info = get_info(statement);
+    switch (statement->type)
+    {
+    case AST::Statement_Type::DEFER:
+    {
+        dynamic_array_push_back(&ir_generator.defer_stack, statement->options.defer_block);
+        break;
+    }
+    case AST::Statement_Type::DEFINITION:
+    {
+        auto definition = statement->options.definition;
+        bool is_split = get_info(statement)->specifics.is_struct_split;
+        if (definition->is_comptime) {
+            // Comptime definitions should be already handled
+            return;
+        }
+
+        IR_Data_Access broadcast_value;
+        Datatype* broadcast_type;
+        if (definition->values.size == 1) {
+            broadcast_value = ir_generator_generate_expression(ir_block, definition->values[0]);
+            broadcast_type = ir_data_access_get_type(&broadcast_value);
+        }
+
+        // Define all variables
+        for (int i = 0; i < definition->symbols.size; i++)
+        {
+            auto symbol = get_info(definition->symbols[i]);
+            assert(symbol->type == Symbol_Type::VARIABLE, "");
+            auto var_type = symbol->options.variable_type;
+            dynamic_array_push_back(&ir_block->registers, var_type);
+
+            IR_Data_Access access;
+            access.type = IR_Data_Access_Type::REGISTER;
+            access.index = ir_block->registers.size - 1;
+            access.is_memory_access = false;
+            access.option.definition_block = ir_block;
+            hashtable_insert_element(&ir_generator.variable_mapping, definition->symbols[i], access);
+
+            if (definition->values.size == 1) {
+                IR_Instruction move;
+                move.type = IR_Instruction_Type::MOVE;
+                move.options.move.destination = access;
+                move.options.move.source = broadcast_value;
+                if (is_split) {
+                    assert(broadcast_type->type == Datatype_Type::STRUCT, "");
+                    move.options.move.source = ir_data_access_create_member(
+                        ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
+                }
+                dynamic_array_push_back(&ir_block->instructions, move);
+            }
+            else if (definition->values.size != 0) {
+                assert(i < definition->values.size, "Must be guaranteed by semantic analyser!");
+                IR_Instruction move;
+                move.type = IR_Instruction_Type::MOVE;
+                move.options.move.destination = access;
+                move.options.move.source = ir_generator_generate_expression(ir_block, definition->values[i]);
+                dynamic_array_push_back(&ir_block->instructions, move);
+            }
+        }
+
+        break;
+    }
+    case AST::Statement_Type::BLOCK:
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::BLOCK;
+        instr.options.block = ir_code_block_create(ir_block->function);
+        ir_generator_generate_block(instr.options.block, statement->options.block);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        IR_Instruction label;
+        label.type = IR_Instruction_Type::LABEL;
+        label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, label);
+        hashtable_insert_element(&ir_generator.labels_break, statement->options.block, label.options.label_index);
+        break;
+    }
+    case AST::Statement_Type::IF_STATEMENT:
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::IF;
+        instr.options.if_instr.condition = ir_generator_generate_expression(ir_block, statement->options.if_statement.condition);
+        instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
+        ir_generator_generate_block(instr.options.if_instr.true_branch, statement->options.if_statement.block);
+        instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
+        if (statement->options.if_statement.else_block.available) {
+            ir_generator_generate_block(instr.options.if_instr.false_branch, statement->options.if_statement.else_block.value);
+        }
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        IR_Instruction label;
+        label.type = IR_Instruction_Type::LABEL;
+        label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, label);
+        bool valid = hashtable_insert_element(&ir_generator.labels_break, statement->options.if_statement.block, label.options.label_index);
+        assert(valid, "");
+        if (statement->options.if_statement.else_block.available) {
+            valid = hashtable_insert_element(&ir_generator.labels_break, statement->options.if_statement.else_block.value, label.options.label_index);
+            assert(valid, "");
+        }
+        break;
+    }
+    case AST::Statement_Type::SWITCH_STATEMENT:
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::SWITCH;
+        instr.options.switch_instr.condition_access = ir_generator_generate_expression(ir_block, statement->options.switch_statement.condition);
+        instr.options.switch_instr.cases = dynamic_array_create_empty<IR_Switch_Case>(statement->options.switch_statement.cases.size);
+
+        // Check for union access
+        auto cond_type = ir_data_access_get_type(&instr.options.switch_instr.condition_access);
+        if (cond_type->type == Datatype_Type::STRUCT) {
+            auto structure = downcast<Datatype_Struct>(cond_type);
+            assert(structure->struct_type == AST::Structure_Type::UNION, "");
+            instr.options.switch_instr.condition_access =
+                ir_data_access_create_member(ir_block, instr.options.switch_instr.condition_access, structure->tag_member);
+        }
+        else {
+            assert(cond_type->type == Datatype_Type::ENUM, "");
+        }
+
+        AST::Switch_Case* default_case = 0;
+        for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
+        {
+            auto switch_case = statement->options.switch_statement.cases[i];
+            if (!switch_case->value.available) {
+                default_case = switch_case;
+                continue;
+            }
+
+            auto case_info = get_info(switch_case);
+            assert(case_info->is_valid, "");
+
+            IR_Switch_Case new_case;
+            new_case.value = case_info->case_value;
+            new_case.block = ir_code_block_create(ir_block->function);
+            ir_generator_generate_block(new_case.block, switch_case->block);
+            dynamic_array_push_back(&instr.options.switch_instr.cases, new_case);
+        }
+
+        instr.options.switch_instr.default_block = ir_code_block_create(ir_block->function);
+        if (default_case != 0) {
+            ir_generator_generate_block(instr.options.switch_instr.default_block, default_case->block);
+        }
+        else {
+            IR_Instruction exit_instr;
+            exit_instr.type = IR_Instruction_Type::RETURN;
+            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+            exit_instr.options.return_instr.options.exit_code = Exit_Code::INVALID_SWITCH_CASE;
+            dynamic_array_push_back(&instr.options.switch_instr.default_block->instructions, exit_instr);
+        }
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        IR_Instruction label;
+        label.type = IR_Instruction_Type::LABEL;
+        label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, label);
+        for (int i = 0; i < statement->options.switch_statement.cases.size; i++) {
+            auto switch_case = statement->options.switch_statement.cases[i];
+            hashtable_insert_element(&ir_generator.labels_break, switch_case->block, label.options.label_index);
+        }
+        break;
+    }
+    case AST::Statement_Type::FOR_LOOP:
+    {
+        auto& for_loop = statement->options.for_loop;
+        auto& loop_info = get_info(statement)->specifics.for_loop;
+
+        // Create + initialize loop variable
+        {
+            auto symbol = loop_info.loop_variable_symbol;
+            assert(symbol->type == Symbol_Type::VARIABLE, "");
+            auto var_type = symbol->options.variable_type;
+            dynamic_array_push_back(&ir_block->registers, var_type);
+
+            IR_Data_Access access;
+            access.type = IR_Data_Access_Type::REGISTER;
+            access.index = ir_block->registers.size - 1;
+            access.is_memory_access = false;
+            access.option.definition_block = ir_block;
+            hashtable_insert_element(&ir_generator.variable_mapping, for_loop.loop_variable_definition, access);
+
+            IR_Instruction initialize;
+            initialize.type = IR_Instruction_Type::MOVE;
+            initialize.options.move.destination = access;
+            initialize.options.move.source = ir_generator_generate_expression(ir_block, for_loop.initial_value);
+            dynamic_array_push_back(&ir_block->instructions, initialize);
+        }
+
+        // Push Loop + continue/break labels
+        IR_Instruction continue_label;
+        continue_label.type = IR_Instruction_Type::LABEL;
+        continue_label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, continue_label);
+        hashtable_insert_element(&ir_generator.labels_continue, for_loop.body_block, continue_label.options.label_index);
+        hashtable_insert_element(&ir_generator.loop_increment_instructions, for_loop.body_block, for_loop.increment_statement);
+
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::WHILE;
+        instr.options.while_instr.condition_code = ir_code_block_create(ir_block->function);
+        instr.options.while_instr.condition_access = ir_generator_generate_expression(
+            instr.options.while_instr.condition_code, for_loop.condition
+        );
+        instr.options.while_instr.code = ir_code_block_create(ir_block->function);
+        ir_generator_generate_block(instr.options.while_instr.code, for_loop.body_block);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        // Push increment instruction at end of while block
+        ir_generator_generate_statement(for_loop.increment_statement, instr.options.while_instr.code);
+
+        // Push break label
+        IR_Instruction break_label;
+        break_label.type = IR_Instruction_Type::LABEL;
+        break_label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, break_label);
+        hashtable_insert_element(&ir_generator.labels_break, for_loop.body_block, break_label.options.label_index);
+
+        break;
+    }
+    case AST::Statement_Type::WHILE_STATEMENT:
+    {
+        IR_Instruction continue_label;
+        continue_label.type = IR_Instruction_Type::LABEL;
+        continue_label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, continue_label);
+        hashtable_insert_element(&ir_generator.labels_continue, statement->options.while_statement.block, continue_label.options.label_index);
+
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::WHILE;
+        instr.options.while_instr.condition_code = ir_code_block_create(ir_block->function);
+        instr.options.while_instr.condition_access = ir_generator_generate_expression(
+            instr.options.while_instr.condition_code, statement->options.if_statement.condition
+        );
+        instr.options.while_instr.code = ir_code_block_create(ir_block->function);
+        ir_generator_generate_block(instr.options.while_instr.code, statement->options.while_statement.block);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        IR_Instruction break_label;
+        break_label.type = IR_Instruction_Type::LABEL;
+        break_label.options.label_index = ir_generator.next_label_index;
+        ir_generator.next_label_index++;
+        dynamic_array_push_back(&ir_block->instructions, break_label);
+        hashtable_insert_element(&ir_generator.labels_break, statement->options.while_statement.block, break_label.options.label_index);
+
+        break;
+    }
+    case AST::Statement_Type::BREAK_STATEMENT:
+    case AST::Statement_Type::CONTINUE_STATEMENT:
+    {
+        bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
+        auto goto_block = stat_info->specifics.block;
+        ir_generator_work_through_defers(ir_block, *hashtable_find_element(&ir_generator.block_defer_depths, goto_block), false);
+
+        // Push loop increment instructions if they are available
+        if (is_continue) {
+            AST::Statement** increment_statement = hashtable_find_element(&ir_generator.loop_increment_instructions, goto_block);
+            if (increment_statement != 0) {
+                ir_generator_generate_statement(*increment_statement, ir_block);
+            }
+        }
+
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::GOTO;
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        Unresolved_Goto fill_out;
+        fill_out.block = ir_block;
+        fill_out.instruction_index = ir_block->instructions.size - 1;
+        fill_out.break_block = goto_block;
+        dynamic_array_push_back(is_continue ? &ir_generator.fill_out_continues : &ir_generator.fill_out_breaks, fill_out);
+        break;
+    }
+    case AST::Statement_Type::RETURN_STATEMENT:
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::RETURN;
+        if (statement->options.return_value.available) {
+            instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+            instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_block, statement->options.return_value.value);
+            if (ir_generator.defer_stack.size != 0) {
+                // Copy the generated expression to another location, so defers cannot interfere
+                IR_Instruction move;
+                move.type = IR_Instruction_Type::MOVE;
+                move.options.move.source = instr.options.return_instr.options.return_value;
+                move.options.move.destination = ir_data_access_create_intermediate(ir_block, ir_data_access_get_type(&move.options.move.source));
+                dynamic_array_push_back(&ir_block->instructions, move);
+                instr.options.return_instr.options.return_value = move.options.move.destination;
+            }
+        }
+        else {
+            instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+        }
+
+        ir_generator_work_through_defers(ir_block, 0, false);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+        break;
+    }
+    case AST::Statement_Type::IMPORT: {
+        break; // Imports don't generate code
+    }
+    case AST::Statement_Type::EXPRESSION_STATEMENT: {
+        ir_generator_generate_expression(ir_block, statement->options.expression);
+        break;
+    }
+    case AST::Statement_Type::BINOP_ASSIGNMENT:
+    {
+        auto info = get_info(statement);
+        auto& assign = statement->options.binop_assignment;
+
+        IR_Data_Access left_access = ir_generator_generate_expression(ir_block, assign.left_side);
+        Datatype* type = ir_data_access_get_type(&left_access);
+        IR_Data_Access right_access = ir_generator_generate_expression(ir_block, assign.right_side);
+        IR_Data_Access result_access = ir_data_access_create_intermediate(ir_block, type);
+
+        IR_Instruction assignment;
+        assignment.type = IR_Instruction_Type::MOVE;
+        assignment.options.move.destination = left_access;
+        assignment.options.move.source = result_access;
+
+        // Handle binop
+        if (info->specifics.overload.function == 0)
+        {
+            IR_Instruction binop;
+            binop.type = IR_Instruction_Type::BINARY_OP;
+            binop.options.binary_op.type = assign.binop;
+            binop.options.binary_op.destination = result_access;
+            binop.options.binary_op.operand_left = left_access;
+            binop.options.binary_op.operand_right = right_access;
+            dynamic_array_push_back(&ir_block->instructions, binop);
+        }
+        else
+        {
+            IR_Instruction call;
+            call.type = IR_Instruction_Type::FUNCTION_CALL;
+            call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call.options.call.destination = result_access;
+            call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
+            if (info->specifics.overload.switch_arguments) {
+                dynamic_array_push_back(&call.options.call.arguments, right_access);
+                dynamic_array_push_back(&call.options.call.arguments, left_access);
+            }
+            else {
+                dynamic_array_push_back(&call.options.call.arguments, left_access);
+                dynamic_array_push_back(&call.options.call.arguments, right_access);
+            }
+            dynamic_array_push_back(&ir_block->instructions, call);
+        }
+
+        // Push assignment
+        dynamic_array_push_back(&ir_block->instructions, assignment);
+        break;
+    }
+    case AST::Statement_Type::ASSIGNMENT:
+    {
+        auto& as = statement->options.assignment;
+        bool is_struct_split = get_info(statement)->specifics.is_struct_split;
+
+        IR_Data_Access broadcast_value;
+        Datatype* broadcast_type = 0;
+        if (as.right_side.size == 1) {
+            broadcast_value = ir_generator_generate_expression(ir_block, as.right_side[0]);
+            broadcast_type = ir_data_access_get_type(&broadcast_value);
+        }
+
+        for (int i = 0; i < as.left_side.size; i++)
+        {
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::MOVE;
+            instr.options.move.destination = ir_generator_generate_expression(ir_block, as.left_side[i]);
+            if (as.right_side.size == 1) {
+                if (is_struct_split) {
+                    assert(broadcast_type->type == Datatype_Type::STRUCT, "");
+                    instr.options.move.source = ir_data_access_create_member(
+                        ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
+                }
+                else {
+                    instr.options.move.source = broadcast_value;
+                }
+            }
+            else {
+                instr.options.move.source = ir_generator_generate_expression(ir_block, as.right_side[i]);
+            }
+
+            if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
+                panic("HEY");
+            }
+            dynamic_array_push_back(&ir_block->instructions, instr);
+        }
+        break;
+    }
+    case AST::Statement_Type::DELETE_STATEMENT:
+    {
+        // FUTURE: At some point this will access the Context struct for the free func, and also source_parse the size
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::FUNCTION_CALL;
+        instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
+        instr.options.call.options.hardcoded.type = Hardcoded_Type::FREE_POINTER;
+        instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(Hardcoded_Type::FREE_POINTER);
+        instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+
+        IR_Data_Access delete_access = ir_generator_generate_expression(ir_block, statement->options.delete_expr);
+        auto delete_type = ir_data_access_get_type(&delete_access);
+        if (delete_type->type == Datatype_Type::SLICE) {
+            delete_access = ir_data_access_create_member(
+                ir_block, delete_access, downcast<Datatype_Slice>(delete_type)->data_member);
+        }
+
+        dynamic_array_push_back(&instr.options.call.arguments, delete_access);
+        dynamic_array_push_back(&ir_block->instructions, instr);
+        break;
+    }
+    default: panic("Statment type invalid!");
+    }
+}
+
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block)
 {
     int defer_start_index = ir_generator.defer_stack.size;
     hashtable_insert_element(&ir_generator.block_defer_depths, ast_block, defer_start_index);
 
     // Generate code
-    for (int i = 0; i < ast_block->statements.size; i++)
-    {
-        auto statement = ast_block->statements[i];
-        auto stat_info = get_info(statement);
-        switch (statement->type)
-        {
-        case AST::Statement_Type::DEFER:
-        {
-            dynamic_array_push_back(&ir_generator.defer_stack, statement->options.defer_block);
-            break;
-        }
-        case AST::Statement_Type::DEFINITION:
-        {
-            auto definition = statement->options.definition;
-            bool is_split = get_info(statement)->specifics.is_struct_split;
-            if (definition->is_comptime) {
-                // Comptime definitions should be already handled
-                continue;
-            }
-
-            IR_Data_Access broadcast_value;
-            Datatype* broadcast_type;
-            if (definition->values.size == 1) {
-                broadcast_value = ir_generator_generate_expression(ir_block, definition->values[0]);
-                broadcast_type = ir_data_access_get_type(&broadcast_value);
-            }
-
-            // Define all variables
-            for (int i = 0; i < definition->symbols.size; i++) 
-            {
-                auto symbol = get_info(definition->symbols[i]);
-                assert(symbol->type == Symbol_Type::VARIABLE, "");
-                auto var_type = symbol->options.variable_type;
-                dynamic_array_push_back(&ir_block->registers, var_type);
-
-                IR_Data_Access access;
-                access.type = IR_Data_Access_Type::REGISTER;
-                access.index = ir_block->registers.size - 1;
-                access.is_memory_access = false;
-                access.option.definition_block = ir_block;
-                hashtable_insert_element(&ir_generator.variable_mapping, definition->symbols[i], access);
-                
-                if (definition->values.size == 1) {
-                    IR_Instruction move;
-                    move.type = IR_Instruction_Type::MOVE;
-                    move.options.move.destination = access;
-                    move.options.move.source = broadcast_value;
-                    if (is_split) {
-                        assert(broadcast_type->type == Datatype_Type::STRUCT, "");
-                        move.options.move.source = ir_data_access_create_member(
-                            ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
-                    }
-                    dynamic_array_push_back(&ir_block->instructions, move);
-                }
-                else if (definition->values.size != 0) {
-                    assert(i < definition->values.size, "Must be guaranteed by semantic analyser!");
-                    IR_Instruction move;
-                    move.type = IR_Instruction_Type::MOVE;
-                    move.options.move.destination = access;
-                    move.options.move.source = ir_generator_generate_expression(ir_block, definition->values[i]);
-                    dynamic_array_push_back(&ir_block->instructions, move);
-                }
-            }
-
-            break;
-        }
-        case AST::Statement_Type::BLOCK:
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::BLOCK;
-            instr.options.block = ir_code_block_create(ir_block->function);
-            ir_generator_generate_block(instr.options.block, statement->options.block);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-
-            IR_Instruction label;
-            label.type = IR_Instruction_Type::LABEL;
-            label.options.label_index = ir_generator.next_label_index;
-            ir_generator.next_label_index++;
-            dynamic_array_push_back(&ir_block->instructions, label);
-            hashtable_insert_element(&ir_generator.labels_break, statement->options.block, label.options.label_index);
-            break;
-        }
-        case AST::Statement_Type::IF_STATEMENT:
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::IF;
-            instr.options.if_instr.condition = ir_generator_generate_expression(ir_block, statement->options.if_statement.condition);
-            instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
-            ir_generator_generate_block(instr.options.if_instr.true_branch, statement->options.if_statement.block);
-            instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
-            if (statement->options.if_statement.else_block.available) {
-                ir_generator_generate_block(instr.options.if_instr.false_branch, statement->options.if_statement.else_block.value);
-            }
-            dynamic_array_push_back(&ir_block->instructions, instr);
-
-            IR_Instruction label;
-            label.type = IR_Instruction_Type::LABEL;
-            label.options.label_index = ir_generator.next_label_index;
-            ir_generator.next_label_index++;
-            dynamic_array_push_back(&ir_block->instructions, label);
-            bool valid = hashtable_insert_element(&ir_generator.labels_break, statement->options.if_statement.block, label.options.label_index);
-            assert(valid, "");
-            if (statement->options.if_statement.else_block.available) {
-                valid = hashtable_insert_element(&ir_generator.labels_break, statement->options.if_statement.else_block.value, label.options.label_index);
-                assert(valid, "");
-            }
-            break;
-        }
-        case AST::Statement_Type::SWITCH_STATEMENT:
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::SWITCH;
-            instr.options.switch_instr.condition_access = ir_generator_generate_expression(ir_block, statement->options.switch_statement.condition);
-            instr.options.switch_instr.cases = dynamic_array_create_empty<IR_Switch_Case>(statement->options.switch_statement.cases.size);
-
-            // Check for union access
-            auto cond_type = ir_data_access_get_type(&instr.options.switch_instr.condition_access);
-            if (cond_type->type == Datatype_Type::STRUCT) {
-                auto structure = downcast<Datatype_Struct>(cond_type);
-                assert(structure->struct_type == AST::Structure_Type::UNION, "");
-                instr.options.switch_instr.condition_access =
-                    ir_data_access_create_member(ir_block, instr.options.switch_instr.condition_access, structure->tag_member);
-            }
-            else {
-                assert(cond_type->type == Datatype_Type::ENUM, "");
-            }
-
-            AST::Switch_Case* default_case = 0;
-            for (int i = 0; i < statement->options.switch_statement.cases.size; i++)
-            {
-                auto switch_case = statement->options.switch_statement.cases[i];
-                if (!switch_case->value.available) {
-                    default_case = switch_case;
-                    continue;
-                }
-
-                auto case_info = get_info(switch_case);
-                assert(case_info->is_valid, "");
-
-                IR_Switch_Case new_case;
-                new_case.value = case_info->case_value;
-                new_case.block = ir_code_block_create(ir_block->function);
-                ir_generator_generate_block(new_case.block, switch_case->block);
-                dynamic_array_push_back(&instr.options.switch_instr.cases, new_case);
-            }
-
-            instr.options.switch_instr.default_block = ir_code_block_create(ir_block->function);
-            if (default_case != 0) {
-                ir_generator_generate_block(instr.options.switch_instr.default_block, default_case->block);
-            }
-            else {
-                IR_Instruction exit_instr;
-                exit_instr.type = IR_Instruction_Type::RETURN;
-                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-                exit_instr.options.return_instr.options.exit_code = Exit_Code::INVALID_SWITCH_CASE;
-                dynamic_array_push_back(&instr.options.switch_instr.default_block->instructions, exit_instr);
-            }
-            dynamic_array_push_back(&ir_block->instructions, instr);
-
-            IR_Instruction label;
-            label.type = IR_Instruction_Type::LABEL;
-            label.options.label_index = ir_generator.next_label_index;
-            ir_generator.next_label_index++;
-            dynamic_array_push_back(&ir_block->instructions, label);
-            for (int i = 0; i < statement->options.switch_statement.cases.size; i++) {
-                auto switch_case = statement->options.switch_statement.cases[i];
-                hashtable_insert_element(&ir_generator.labels_break, switch_case->block, label.options.label_index);
-            }
-            break;
-        }
-        case AST::Statement_Type::WHILE_STATEMENT:
-        {
-            IR_Instruction continue_label;
-            continue_label.type = IR_Instruction_Type::LABEL;
-            continue_label.options.label_index = ir_generator.next_label_index;
-            ir_generator.next_label_index++;
-            dynamic_array_push_back(&ir_block->instructions, continue_label);
-            hashtable_insert_element(&ir_generator.labels_continue, statement->options.while_statement.block, continue_label.options.label_index);
-
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::WHILE;
-            instr.options.while_instr.condition_code = ir_code_block_create(ir_block->function);
-            instr.options.while_instr.condition_access = ir_generator_generate_expression(
-                instr.options.while_instr.condition_code, statement->options.if_statement.condition
-            );
-            instr.options.while_instr.code = ir_code_block_create(ir_block->function);
-            ir_generator_generate_block(instr.options.while_instr.code, statement->options.while_statement.block);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-
-            IR_Instruction break_label;
-            break_label.type = IR_Instruction_Type::LABEL;
-            break_label.options.label_index = ir_generator.next_label_index;
-            ir_generator.next_label_index++;
-            dynamic_array_push_back(&ir_block->instructions, break_label);
-            hashtable_insert_element(&ir_generator.labels_break, statement->options.while_statement.block, break_label.options.label_index);
-
-            break;
-        }
-        case AST::Statement_Type::BREAK_STATEMENT:
-        case AST::Statement_Type::CONTINUE_STATEMENT:
-        {
-            bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
-            auto goto_block = stat_info->specifics.block;
-            ir_generator_work_through_defers(ir_block, *hashtable_find_element(&ir_generator.block_defer_depths, goto_block), false);
-
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::GOTO;
-            dynamic_array_push_back(&ir_block->instructions, instr);
-
-            Unresolved_Goto fill_out;
-            fill_out.block = ir_block;
-            fill_out.instruction_index = ir_block->instructions.size - 1;
-            fill_out.break_block = goto_block;
-            dynamic_array_push_back(is_continue ? &ir_generator.fill_out_continues : &ir_generator.fill_out_breaks, fill_out);
-            break;
-        }
-        case AST::Statement_Type::RETURN_STATEMENT:
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::RETURN;
-            if (statement->options.return_value.available) {
-                instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-                instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_block, statement->options.return_value.value);
-                if (ir_generator.defer_stack.size != 0) {
-                    // Copy the generated expression to another location, so defers cannot interfere
-                    IR_Instruction move;
-                    move.type = IR_Instruction_Type::MOVE;
-                    move.options.move.source = instr.options.return_instr.options.return_value;
-                    move.options.move.destination = ir_data_access_create_intermediate(ir_block, ir_data_access_get_type(&move.options.move.source));
-                    dynamic_array_push_back(&ir_block->instructions, move);
-                    instr.options.return_instr.options.return_value = move.options.move.destination;
-                }
-            }
-            else {
-                instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-            }
-
-            ir_generator_work_through_defers(ir_block, 0, false);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-            break;
-        }
-        case AST::Statement_Type::IMPORT: {
-            break; // Imports don't generate code
-        }
-        case AST::Statement_Type::EXPRESSION_STATEMENT: {
-            ir_generator_generate_expression(ir_block, statement->options.expression);
-            break;
-        }
-        case AST::Statement_Type::BINOP_ASSIGNMENT: 
-        {
-            auto info = get_info(statement);
-            auto& assign = statement->options.binop_assignment;
-
-            IR_Data_Access left_access = ir_generator_generate_expression(ir_block, assign.left_side);
-            Datatype* type = ir_data_access_get_type(&left_access);
-            IR_Data_Access right_access = ir_generator_generate_expression(ir_block, assign.right_side);
-            IR_Data_Access result_access = ir_data_access_create_intermediate(ir_block, type);
-
-            IR_Instruction assignment;
-            assignment.type = IR_Instruction_Type::MOVE;
-            assignment.options.move.destination = left_access;
-            assignment.options.move.source = result_access;
-
-            // Handle binop
-            if (info->specifics.overload.function == 0)
-            {
-                IR_Instruction binop;
-                binop.type = IR_Instruction_Type::BINARY_OP;
-                binop.options.binary_op.type = assign.binop;
-                binop.options.binary_op.destination = result_access;
-                binop.options.binary_op.operand_left = left_access;
-                binop.options.binary_op.operand_right = right_access;
-                dynamic_array_push_back(&ir_block->instructions, binop);
-            }
-            else
-            {
-                IR_Instruction call;
-                call.type = IR_Instruction_Type::FUNCTION_CALL;
-                call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call.options.call.destination = result_access;
-                call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
-                call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(2);
-                if (info->specifics.overload.switch_arguments) {
-                    dynamic_array_push_back(&call.options.call.arguments, right_access);
-                    dynamic_array_push_back(&call.options.call.arguments, left_access);
-                }
-                else {
-                    dynamic_array_push_back(&call.options.call.arguments, left_access);
-                    dynamic_array_push_back(&call.options.call.arguments, right_access);
-                }
-                dynamic_array_push_back(&ir_block->instructions, call);
-            }
-
-            // Push assignment
-            dynamic_array_push_back(&ir_block->instructions, assignment);
-            break;
-        }
-        case AST::Statement_Type::ASSIGNMENT: 
-        {
-            auto& as = statement->options.assignment;
-            bool is_struct_split = get_info(statement)->specifics.is_struct_split;
-
-            IR_Data_Access broadcast_value;
-            Datatype* broadcast_type = 0;
-            if (as.right_side.size == 1) {
-                broadcast_value = ir_generator_generate_expression(ir_block, as.right_side[0]);
-                broadcast_type = ir_data_access_get_type(&broadcast_value);
-            }
-
-            for (int i = 0; i < as.left_side.size; i++) 
-            {
-                IR_Instruction instr;
-                instr.type = IR_Instruction_Type::MOVE;
-                instr.options.move.destination = ir_generator_generate_expression(ir_block, as.left_side[i]);
-                if (as.right_side.size == 1) {
-                    if (is_struct_split) {
-                        assert(broadcast_type->type == Datatype_Type::STRUCT, "");
-                        instr.options.move.source = ir_data_access_create_member(
-                            ir_block, broadcast_value, downcast<Datatype_Struct>(broadcast_type)->members[i]);
-                    }
-                    else {
-                        instr.options.move.source = broadcast_value;
-                    }
-                }
-                else {
-                    instr.options.move.source = ir_generator_generate_expression(ir_block, as.right_side[i]);
-                }
-
-                if ((int)instr.options.move.source.type < 0 || (int)instr.options.move.source.type > 6) {
-                    panic("HEY");
-                }
-                dynamic_array_push_back(&ir_block->instructions, instr);
-            }
-            break;
-        }
-        case AST::Statement_Type::DELETE_STATEMENT:
-        {
-            // FUTURE: At some point this will access the Context struct for the free func, and also source_parse the size
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            instr.options.call.options.hardcoded.type = Hardcoded_Type::FREE_POINTER;
-            instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(Hardcoded_Type::FREE_POINTER);
-            instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
-
-            IR_Data_Access delete_access = ir_generator_generate_expression(ir_block, statement->options.delete_expr);
-            auto delete_type = ir_data_access_get_type(&delete_access);
-            if (delete_type->type == Datatype_Type::SLICE) {
-                delete_access = ir_data_access_create_member(
-                    ir_block, delete_access, downcast<Datatype_Slice>(delete_type)->data_member);
-            }
-
-            dynamic_array_push_back(&instr.options.call.arguments, delete_access);
-            dynamic_array_push_back(&ir_block->instructions, instr);
-            break;
-        }
-        default: panic("Statment type invalid!");
-        }
+    for (int i = 0; i < ast_block->statements.size; i++) {
+        ir_generator_generate_statement(ast_block->statements[i], ir_block);
     }
 
     ir_generator_work_through_defers(ir_block, defer_start_index, true);
@@ -1875,7 +1944,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
                 }
             }
             else if (mod_func->code_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*) mod_func->code_workload)->body_node);
+                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*)mod_func->code_workload)->body_node);
             }
             else {
                 panic("");
@@ -1909,6 +1978,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         hashtable_reset(&ir_generator.labels_break);
         hashtable_reset(&ir_generator.labels_continue);
         hashtable_reset(&ir_generator.block_defer_depths);
+        hashtable_reset(&ir_generator.loop_increment_instructions);
 
         if (gen_bytecode) {
             bytecode_generator_compile_function(compiler.bytecode_generator, ir_func);
@@ -1999,6 +2069,7 @@ IR_Generator* ir_generator_initialize()
     ir_generator.next_label_index = 0;
 
     ir_generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(8);
+    ir_generator.loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, AST::Statement*>(8);
     ir_generator.variable_mapping = hashtable_create_pointer_empty<AST::Definition_Symbol*, IR_Data_Access>(8);
     ir_generator.labels_break = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
@@ -2025,6 +2096,7 @@ void ir_generator_reset()
     hashtable_reset(&ir_generator.labels_break);
     hashtable_reset(&ir_generator.labels_continue);
     hashtable_reset(&ir_generator.block_defer_depths);
+    hashtable_reset(&ir_generator.loop_increment_instructions);
 
     dynamic_array_reset(&ir_generator.defer_stack);
     dynamic_array_reset(&ir_generator.queue_functions);
@@ -2042,6 +2114,7 @@ void ir_generator_destroy()
     hashtable_destroy(&ir_generator.labels_break);
     hashtable_destroy(&ir_generator.labels_continue);
     hashtable_destroy(&ir_generator.block_defer_depths);
+    hashtable_destroy(&ir_generator.loop_increment_instructions);
 
     dynamic_array_destroy(&ir_generator.defer_stack);
     dynamic_array_destroy(&ir_generator.queue_functions);

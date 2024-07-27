@@ -21,6 +21,7 @@ enum class Operator
     TILDE_STAR,      // ~*   Import all
     TILDE_STAR_STAR, // ~**  Transitive import all
     COLON,
+    SEMI_COLON,
     NOT,
     AMPERSAND,
     LESS_THAN,
@@ -82,8 +83,10 @@ enum class Keyword
     IMPORT,
     AS,
     CONTEXT,
+    FOR,
+    IN_KEYWORD,
 
-    MAX_ENUM_VALUE,
+    MAX_ENUM_VALUE
 };
 
 enum class Parenthesis_Type

@@ -9324,11 +9324,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
 
 // STATEMENTS
-bool code_block_is_while(AST::Code_Block * block)
+bool code_block_is_loop(AST::Code_Block * block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
-        return parent->type == AST::Statement_Type::WHILE_STATEMENT;
+        return parent->type == AST::Statement_Type::WHILE_STATEMENT || parent->type == AST::Statement_Type::FOR_LOOP;
     }
     return false;
 }
@@ -9461,7 +9461,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
         else
         {
             info->specifics.block = found_block;
-            if (is_continue && !code_block_is_while(found_block)) {
+            if (is_continue && !code_block_is_loop(found_block)) {
                 log_semantic_error("Continue can only be used on loops", statement);
                 EXIT(Control_Flow::SEQUENTIAL);
             }
@@ -9636,11 +9636,44 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
         auto& while_node = statement->options.while_statement;
         semantic_analyser_analyse_expression_value(while_node.condition, expression_context_make_specific_type(upcast(types.bool_type)));
 
-        auto flow = semantic_analyser_analyse_block(while_node.block);
-        if (flow == Control_Flow::RETURNS) {
-            EXIT(flow);
+        semantic_analyser_analyse_block(while_node.block);
+        EXIT(Control_Flow::SEQUENTIAL); // Loops are always sequential, since the condition may not be met before the first iteration
+    }
+    case AST::Statement_Type::FOR_LOOP:
+    {
+        auto& for_loop = statement->options.for_loop;
+
+        // Create new table for loop variable
+        auto symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, Symbol_Access_Level::INTERNAL);
+        info->specifics.for_loop.symbol_table = symbol_table;
+
+        // Analyse loop variable 
+        {
+            Symbol* symbol = symbol_table_define_symbol(
+                symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE, upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
+            );
+            info->specifics.for_loop.loop_variable_symbol = symbol;
+            Expression_Context context = expression_context_make_unknown();
+            if (for_loop.loop_variable_type.available) {
+                context = expression_context_make_specific_type(semantic_analyser_analyse_expression_type(for_loop.loop_variable_type.value));
+            }
+            symbol->options.variable_type = semantic_analyser_analyse_expression_value(for_loop.initial_value, context);
         }
-        EXIT(Control_Flow::SEQUENTIAL); // While is always sequential, since the condition may be wrong
+        // Use new symbol table for condition + increment
+        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
+
+        // Analyse condition
+        semantic_analyser_analyse_expression_value(for_loop.condition, expression_context_make_specific_type(upcast(types.bool_type)));
+
+        // Analyse increment statement
+        {
+            auto flow = semantic_analyser_analyse_statement(for_loop.increment_statement);
+            assert(flow == Control_Flow::SEQUENTIAL, "");
+        }
+
+        // Analyse block
+        semantic_analyser_analyse_block(for_loop.body_block);
+        EXIT(Control_Flow::SEQUENTIAL); // Loops are always sequential, since the condition may not be met before the first iteration
     }
     case AST::Statement_Type::DELETE_STATEMENT:
     {

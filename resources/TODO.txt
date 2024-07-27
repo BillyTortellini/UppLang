@@ -86,6 +86,56 @@ Operations that should depend on the context:
  * Iterators
 
 
+* Loops + iterators
+What types of loops do I want?
+
+while condition
+for x:=1; x < 12; x+=1 // Do I have semicolon?
+for a in array ? // In as keyword?
+
+* While loop (Already done)
+* for loop
+* foreach loop
+
+Implementation order:
+ * For loop first (3 conditions with semicolons?)
+ * Foreach loop with arrays and slices
+ * Add overloads to foreach loop
+
+For loop:
+    * Definition
+        x := 1
+        x: int = 1
+    * Loop condition
+        x < 15
+    * Loop increment
+        it.advance()
+        i += 1
+        i = i * 2
+       
+    Loop increment is a statement, but it can only be one of the following
+     - Assignment
+     - Binop Assignment
+     - Expression
+
+    How do i parse the statements?
+
+Things to consider:
+    * IR-Code needs to define the loop variable
+    * IR-Code needs continue + break + defers to work correctly in loop
+
+DO:
+    * At continue the increment code has to be executed
+    * At end of for loop the increment code has to be executed
+
+DONE:
+    * Maybe I don't want to create a symbol if id is invalid_symbol_name in parser...
+    * Continue and break need to work with for
+    * Loop variable needs own symbol table
+    * Continue and break need to find for loop
+
+
+
 
 
 --------------------

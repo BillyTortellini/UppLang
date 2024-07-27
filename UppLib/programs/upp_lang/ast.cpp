@@ -410,6 +410,16 @@ namespace AST
                 FILL(while_stat.block);
                 break;
             }
+            case Statement_Type::FOR_LOOP: {
+                auto loop = stat->options.for_loop;
+                FILL(loop.loop_variable_definition);
+                FILL_OPTIONAL(loop.loop_variable_type);
+                FILL(loop.initial_value);
+                FILL(loop.condition);
+                FILL(loop.increment_statement);
+                FILL(loop.body_block);
+                break;
+            }
             case Statement_Type::BREAK_STATEMENT: {
                 break;
             }
@@ -712,6 +722,16 @@ namespace AST
                 FILL(while_stat.block);
                 break;
             }
+            case Statement_Type::FOR_LOOP: {
+                auto loop = stat->options.for_loop;
+                FILL(loop.loop_variable_definition);
+                FILL_OPTIONAL(loop.loop_variable_type);
+                FILL(loop.initial_value);
+                FILL(loop.condition);
+                FILL(loop.increment_statement);
+                FILL(loop.body_block);
+                break;
+            }
             case Statement_Type::BREAK_STATEMENT: {
                 break;
             }
@@ -838,7 +858,7 @@ namespace AST
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
             case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
-            case Expression_Type::PATH_LOOKUP: string_append_formated(str, "PATH_LOOKUP "); break;
+            case Expression_Type::PATH_LOOKUP: string_append_formated(str, "EXPR_LOOKUP "); break;
             case Expression_Type::LITERAL_READ: {
                 string_append_formated(str, "LITERAL_READ "); 
                 auto& read = expr->options.literal_read;
@@ -889,6 +909,7 @@ namespace AST
             case Statement_Type::IMPORT: string_append_formated(str, "IMPORT"); break;
             case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
             case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
+            case Statement_Type::FOR_LOOP: string_append_formated(str, "FOR_LOOP"); break;
             case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
             case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
             case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;

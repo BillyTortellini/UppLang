@@ -283,15 +283,21 @@ namespace Parser
         int order = index_compare(node_position_to_token_index(range.start), node_position_to_token_index(range.end));
         assert(order != -1, "Ranges must be in order");
         if (order == 0) {
-            // INFO: There are only 3 AST-Nodes which are allowed to have a 0 sized token range:
+            // INFO: There are only 4 AST-Nodes which are allowed to have a 0 sized token range:
             //       Error-Expressions, Code-Blocks and Symbol-Reads (Empty reads)
+            //       Statement-Expressions with error type...
             if (node->type == AST::Node_Type::EXPRESSION) {
                 auto expr = downcast<Expression>(node);
                 assert(expr->type == AST::Expression_Type::ERROR_EXPR, "Only error expression may have 0-sized token range");
             }
-            else if (node->type == AST::Node_Type::CODE_BLOCK || node->type == AST::Node_Type::SYMBOL_LOOKUP) {
+            else if (node->type == AST::Node_Type::CODE_BLOCK || node->type == AST::Node_Type::SYMBOL_LOOKUP || node->type == AST::Node_Type::DEFINITION_SYMBOL) {
             }
             else if (node->type == AST::Node_Type::STATEMENT && AST::downcast<Statement>(node)->type == AST::Statement_Type::BLOCK) {
+            }
+            else if (node->type == AST::Node_Type::STATEMENT && 
+                     AST::downcast<Statement>(node)->type == AST::Statement_Type::EXPRESSION_STATEMENT &&
+                     AST::downcast<Statement>(node)->options.expression->type == AST::Expression_Type::ERROR_EXPR) 
+            {
             }
             else {
                 panic("See comment before");
@@ -885,7 +891,94 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
-        AST::Statement* parse_statement(Node* parent)
+        // This function exists because for loops only allow assignments (+ binop assign) + expression in their last part...
+        AST::Statement* parse_assignment_or_expression_statement(Node* parent)
+        {
+            CHECKPOINT_SETUP;
+            auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
+
+            auto expr = parse_expression(&result->base);
+            if (expr == 0) {
+                CHECKPOINT_EXIT;
+            }
+
+            if (test_operator(Operator::COMMA))
+            {
+                // Assume that it's a multi-assignment
+                result->type = Statement_Type::ASSIGNMENT;
+                result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.is_pointer_assign = false;
+                dynamic_array_push_back(&result->options.assignment.left_side, expr);
+                advance_token();
+
+                // Parse remaining left_side expressions
+                auto is_assign = [](Token& token) -> bool
+                {return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER); };
+                parse_comma_seperated_items(upcast(result), &result->options.assignment.left_side, parse_expression_or_error_expr, is_assign);
+
+                // Check if assignment found, otherwise error
+                if (!test_operator(Operator::ASSIGN) && !test_operator(Operator::ASSIGN_POINTER)) {
+                    CHECKPOINT_EXIT;
+                }
+                if (test_operator(Operator::ASSIGN_POINTER)) {
+                    result->options.assignment.is_pointer_assign = true;
+                }
+                advance_token();
+
+                // Parse right side
+                parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
+                PARSE_SUCCESS(result);
+            }
+            else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER))
+            {
+                result->type = Statement_Type::ASSIGNMENT;
+                result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.is_pointer_assign = test_operator(Operator::ASSIGN_POINTER);
+                dynamic_array_push_back(&result->options.assignment.left_side, expr);
+                advance_token();
+
+                // Parse right side
+                parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
+                PARSE_SUCCESS(result);
+            }
+            else if (test_operator(Operator::ASSIGN_ADD) || test_operator(Operator::ASSIGN_SUB) ||
+                test_operator(Operator::ASSIGN_MULT) || test_operator(Operator::ASSIGN_DIV) || test_operator(Operator::ASSIGN_MODULO))
+            {
+                result->type = Statement_Type::BINOP_ASSIGNMENT;
+                auto& assign = result->options.binop_assignment;
+                if (test_operator(Operator::ASSIGN_ADD)) {
+                    assign.binop = Binop::ADDITION;
+                }
+                else if (test_operator(Operator::ASSIGN_SUB)) {
+                    assign.binop = Binop::SUBTRACTION;
+                }
+                else if (test_operator(Operator::ASSIGN_MULT)) {
+                    assign.binop = Binop::MULTIPLICATION;
+                }
+                else if (test_operator(Operator::ASSIGN_DIV)) {
+                    assign.binop = Binop::DIVISION;
+                }
+                else if (test_operator(Operator::ASSIGN_MODULO)) {
+                    assign.binop = Binop::MODULO;
+                }
+                else {
+                    panic("");
+                }
+                advance_token();
+
+                assign.left_side = expr;
+                assign.right_side = parse_expression_or_error_expr(upcast(result));
+                PARSE_SUCCESS(result);
+            }
+
+            result->type = Statement_Type::EXPRESSION_STATEMENT;
+            result->options.expression = expr;
+            PARSE_SUCCESS(result);
+        }
+
+        AST::Statement* parse_statement(Node * parent)
         {
             CHECKPOINT_SETUP;
             auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
@@ -929,86 +1022,6 @@ namespace Parser
                 if (definition != 0) {
                     result->type = Statement_Type::DEFINITION;
                     result->options.definition = definition;
-                    PARSE_SUCCESS(result);
-                }
-            }
-            {
-                auto expr = parse_expression(&result->base);
-                if (expr != 0)
-                {
-                    if (test_operator(Operator::COMMA)) 
-                    {
-                        // Assume that it's an assignment
-                        result->type = Statement_Type::ASSIGNMENT;
-                        result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
-                        result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
-                        result->options.assignment.is_pointer_assign = false;
-                        dynamic_array_push_back(&result->options.assignment.left_side, expr);
-                        advance_token();
-                        
-                        // Parse remaining left_side expressions
-                        auto is_assign = [](Token& token) -> bool 
-                        {return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER); };
-                        parse_comma_seperated_items(upcast(result), &result->options.assignment.left_side, parse_expression_or_error_expr, is_assign);
-
-                        // Check if assignment found, otherwise error
-                        if (!test_operator(Operator::ASSIGN) && !test_operator(Operator::ASSIGN_POINTER)) {
-                            CHECKPOINT_EXIT;
-                        }
-                        if (test_operator(Operator::ASSIGN_POINTER)) {
-                            result->options.assignment.is_pointer_assign = true;
-                        }
-                        advance_token();
-
-                        // Parse right side
-                        parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
-                        PARSE_SUCCESS(result);
-                    }
-                    else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER)) 
-                    {
-                        result->type = Statement_Type::ASSIGNMENT;
-                        result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
-                        result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
-                        result->options.assignment.is_pointer_assign = test_operator(Operator::ASSIGN_POINTER);
-                        dynamic_array_push_back(&result->options.assignment.left_side, expr);
-                        advance_token();
-
-                        // Parse right side
-                        parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
-                        PARSE_SUCCESS(result);
-                    }
-                    else if (test_operator(Operator::ASSIGN_ADD) || test_operator(Operator::ASSIGN_SUB) ||
-                        test_operator(Operator::ASSIGN_MULT) || test_operator(Operator::ASSIGN_DIV) || test_operator(Operator::ASSIGN_MODULO)) 
-                    {
-                        result->type = Statement_Type::BINOP_ASSIGNMENT;
-                        auto& assign = result->options.binop_assignment;
-                        if (test_operator(Operator::ASSIGN_ADD)) {
-                            assign.binop = Binop::ADDITION;
-                        }
-                        else if (test_operator(Operator::ASSIGN_SUB)) {
-                            assign.binop = Binop::SUBTRACTION;
-                        }
-                        else if (test_operator(Operator::ASSIGN_MULT)) {
-                            assign.binop = Binop::MULTIPLICATION;
-                        }
-                        else if (test_operator(Operator::ASSIGN_DIV)) {
-                            assign.binop = Binop::DIVISION;
-                        }
-                        else if (test_operator(Operator::ASSIGN_MODULO)) {
-                            assign.binop = Binop::MODULO;
-                        }
-                        else {
-                            panic("");
-                        }
-                        advance_token();
-
-                        assign.left_side = expr;
-                        assign.right_side = parse_expression_or_error_expr(upcast(result));
-                        PARSE_SUCCESS(result);
-                    }
-                    
-                    result->type = Statement_Type::EXPRESSION_STATEMENT;
-                    result->options.expression = expr;
                     PARSE_SUCCESS(result);
                 }
             }
@@ -1067,6 +1080,135 @@ namespace Parser
                     loop.block = parse_code_block(&result->base, loop.condition);
                     PARSE_SUCCESS(result);
                 }
+                case Keyword::FOR:
+                {
+                    advance_token();
+                    result->type = Statement_Type::FOR_LOOP;
+                    auto& loop = result->options.for_loop;
+                    bool error_logged = false;
+
+                    // Returns true if semicolon was found (Otherwise no semicolon until end of line...)
+                    auto to_next_semicolon = [&]()->bool {
+                        if (test_operator(Operator::SEMI_COLON)) {
+                            return true;
+                        }
+                        auto pos_opt = search_token(
+                            parser.state.pos,
+                            [](Token* token, void* userdata) -> bool {
+                                return token->type == Token_Type::OPERATOR && token->options.op == Operator::SEMI_COLON;
+                            },
+                            nullptr,
+                            false
+                        );
+                        if (!pos_opt.available) return false;
+                        log_error("Un-parsable tokens until expected semicolon", 
+                            node_range_make(node_position_make_token_index(parser.state.pos), node_position_make_token_index(pos_opt.value))
+                        );
+                        error_logged = true;
+                        parser.state.pos = pos_opt.value;
+                        return true;
+                    };
+
+                    // Parse variable name
+                    loop.loop_variable_definition = parse_definition_symbol(upcast(result));
+                    if (loop.loop_variable_definition == 0) {
+                        auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
+                        definition_node->name = compiler.predefined_ids.invalid_symbol_name;
+                        node_finalize_range(upcast(definition_node));
+                        loop.loop_variable_definition = definition_node;
+                        if (!error_logged) {
+                            log_error_range_offset("Expected loop variable identifier", 0);
+                        }
+                    }
+
+                    // Parse initial value
+                    if (test_operator(Operator::DEFINE_INFER)) {
+                        loop.loop_variable_type.available = false;
+                        advance_token();
+                        loop.initial_value = parse_expression_or_error_expr(upcast(result));
+                    }
+                    else if (test_operator(Operator::COLON)) {
+                        advance_token();
+                        loop.loop_variable_type.available = true;
+                        loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
+
+                        if (test_operator(Operator::ASSIGN)) {
+                            advance_token();
+                            loop.initial_value = parse_expression_or_error_expr(upcast(result));
+                        }
+                        else {
+                            if (!error_logged) {
+                                log_error_range_offset("Expected initial value assignment (e.g. = 5) in for loop", 0);
+                                error_logged = true;
+                            }
+                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                            error_expr->type = Expression_Type::ERROR_EXPR;
+                            node_finalize_range(upcast(error_expr));
+                            loop.initial_value = error_expr;
+                        }
+                    }
+                    else {
+                        // Set initial value to error-expr, find next semicolon or exit...
+                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                        error_expr->type = Expression_Type::ERROR_EXPR;
+                        node_finalize_range(upcast(error_expr));
+                        loop.loop_variable_type.available = false;
+                        loop.initial_value = error_expr;
+                    }
+
+                    // Parse loop condition
+                    if (to_next_semicolon()) {
+                        advance_token();
+                        loop.condition = parse_expression_or_error_expr(upcast(result));
+                    }
+                    else {
+                        if (!error_logged) {
+                            log_error_range_offset("Expected Semicolon", 0);
+                            error_logged = true;
+                        }
+                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                        error_expr->type = Expression_Type::ERROR_EXPR;
+                        node_finalize_range(upcast(error_expr));
+                        loop.condition = error_expr;
+                    }
+
+                    // Parse iteration step
+                    if (to_next_semicolon()) {
+                        advance_token();
+                        loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
+                    }
+                    else {
+                        loop.increment_statement = 0;
+                        if (!error_logged) {
+                            log_error_range_offset("Expected Semicolon", 0);
+                            error_logged = true;
+                        }
+                    }
+
+                    if (loop.increment_statement == 0) {
+                        if (!error_logged) {
+                            log_error_range_offset("Expected expression or assignment as for-loop increment", 0);
+                            error_logged = true;
+                        }
+                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                        error_expr->type = Expression_Type::ERROR_EXPR;
+                        node_finalize_range(upcast(error_expr));
+
+                        auto error_statement = allocate_base<AST::Statement>(parent, AST::Node_Type::STATEMENT);
+                        error_statement->type = Statement_Type::EXPRESSION_STATEMENT;
+                        error_statement->options.expression = error_expr;
+                        node_finalize_range(upcast(error_statement));
+
+                        loop.increment_statement = error_statement;
+                    }
+
+                    // Parse body
+                    loop.body_block = parse_code_block(upcast(result), 0);
+                    if (!loop.body_block->block_id.available) {
+                        loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
+                    }
+                    PARSE_SUCCESS(result);
+                }
                 case Keyword::DEFER:
                 {
                     advance_token();
@@ -1119,7 +1261,15 @@ namespace Parser
                 }
                 }
             }
-            CHECKPOINT_EXIT;
+
+            // Otherwise try to parse expression or assignment statement
+            {
+                // Delete result, which is an allocated statement node
+                result->type = Statement_Type::IMPORT; // So that rollback doesn't read uninitialized values
+                parser_rollback(checkpoint);
+
+                return parse_assignment_or_expression_statement(parent);
+            }
         }
 
         AST::Node* parse_statement_or_context_change(Node* parent)
@@ -1329,7 +1479,7 @@ namespace Parser
 
         auto line = index_value_text(pos.line_index);
         if (remaining_line_tokens() > 0) {
-            log_error_to_pos("Unexpected Tokens, ignoring tokens and parseing follow block", token_index_make_line_end(pos.line_index));
+            log_error_to_pos("Unexpected Tokens, ignoring tokens and parsing follow block", token_index_make_line_end(pos.line_index));
         }
 
         auto next_pos = token_index_make(line_index_make(pos.line_index.block_index, pos.line_index.line_index + 2), 0);

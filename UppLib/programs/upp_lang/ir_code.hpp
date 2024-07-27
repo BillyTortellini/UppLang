@@ -261,6 +261,7 @@ struct IR_Generator
     // Stuff needed for compilation
     Hashtable<AST::Definition_Symbol*, IR_Data_Access> variable_mapping; 
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
+    Hashtable<AST::Code_Block*, AST::Statement*> loop_increment_instructions; // For for loops
 
     Dynamic_Array<Function_Stub> queue_functions;
 
