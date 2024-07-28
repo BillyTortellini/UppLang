@@ -9675,6 +9675,64 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
         semantic_analyser_analyse_block(for_loop.body_block);
         EXIT(Control_Flow::SEQUENTIAL); // Loops are always sequential, since the condition may not be met before the first iteration
     }
+    case AST::Statement_Type::FOREACH_LOOP:
+    {
+        auto& for_loop = statement->options.foreach_loop;
+        auto& loop_info = info->specifics.foreach_loop;
+        loop_info.index_variable_symbol = nullptr;
+        loop_info.loop_variable_symbol = nullptr;
+
+        // Create new table for loop variable
+        auto symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, Symbol_Access_Level::INTERNAL);
+        loop_info.symbol_table = symbol_table;
+
+        // Analyse expression
+        Datatype* expr_type = semantic_analyser_analyse_expression_value(for_loop.expression, expression_context_make_auto_dereference());
+        if (datatype_is_unknown(expr_type)) {
+            EXIT(Control_Flow::SEQUENTIAL);
+        }
+
+        // Analyse iterable 
+        Datatype* element_type = nullptr;
+        if (expr_type->type == Datatype_Type::ARRAY) {
+            element_type = upcast(type_system_make_pointer(downcast<Datatype_Array>(expr_type)->element_type));
+        }
+        else if (expr_type->type == Datatype_Type::SLICE) {
+            element_type = upcast(type_system_make_pointer(downcast<Datatype_Slice>(expr_type)->element_type));
+        }
+        else {
+            log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
+            EXIT(Control_Flow::SEQUENTIAL);
+        }
+
+        // Analyse loop variable 
+        {
+            Symbol* symbol = symbol_table_define_symbol(
+                symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE, 
+                upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
+            );
+            loop_info.loop_variable_symbol = symbol;
+            symbol->options.variable_type = element_type;
+
+            if (for_loop.index_variable_definition.available) 
+            {
+                // Use current symbol table so collisions are handled
+                RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
+                Symbol* index_symbol = symbol_table_define_symbol(
+                    symbol_table, for_loop.index_variable_definition.value->name, Symbol_Type::VARIABLE, 
+                    upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL
+                );
+                loop_info.index_variable_symbol = index_symbol;
+                index_symbol->options.variable_type = upcast(types.i32_type);
+            }
+        }
+        // Use new symbol table for condition + increment
+        RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
+
+        // Analyse body
+        semantic_analyser_analyse_block(for_loop.body_block);
+        EXIT(Control_Flow::SEQUENTIAL);
+    }
     case AST::Statement_Type::DELETE_STATEMENT:
     {
         auto delete_type = semantic_analyser_analyse_expression_value(statement->options.delete_expr, expression_context_make_unknown());

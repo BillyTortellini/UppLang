@@ -410,6 +410,14 @@ namespace AST
                 FILL(while_stat.block);
                 break;
             }
+            case Statement_Type::FOREACH_LOOP: {
+                auto loop = stat->options.foreach_loop;
+                FILL(loop.loop_variable_definition);
+                FILL_OPTIONAL(loop.index_variable_definition);
+                FILL(loop.expression);
+                FILL(loop.body_block);
+                break;
+            }
             case Statement_Type::FOR_LOOP: {
                 auto loop = stat->options.for_loop;
                 FILL(loop.loop_variable_definition);
@@ -722,6 +730,14 @@ namespace AST
                 FILL(while_stat.block);
                 break;
             }
+            case Statement_Type::FOREACH_LOOP: {
+                auto loop = stat->options.foreach_loop;
+                FILL(loop.loop_variable_definition);
+                FILL_OPTIONAL(loop.index_variable_definition);
+                FILL(loop.expression);
+                FILL(loop.body_block);
+                break;
+            }
             case Statement_Type::FOR_LOOP: {
                 auto loop = stat->options.for_loop;
                 FILL(loop.loop_variable_definition);
@@ -910,6 +926,7 @@ namespace AST
             case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
             case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;
             case Statement_Type::FOR_LOOP: string_append_formated(str, "FOR_LOOP"); break;
+            case Statement_Type::FOREACH_LOOP: string_append_formated(str, "FOREACH_LOOP"); break;
             case Statement_Type::SWITCH_STATEMENT: string_append_formated(str, "SWITCH_STATEMENT"); break;
             case Statement_Type::BREAK_STATEMENT: string_append_formated(str, "BREAK_STATEMENT"); break;
             case Statement_Type::CONTINUE_STATEMENT: string_append_formated(str, "CONTINUE_STATEMENT"); break;

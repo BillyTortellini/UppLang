@@ -585,6 +585,11 @@ struct Statement_Info
             Symbol_Table* symbol_table;
             Symbol* loop_variable_symbol;
         } for_loop;
+        struct {
+            Symbol_Table* symbol_table;
+            Symbol* loop_variable_symbol;
+            Symbol* index_variable_symbol; // May be null
+        } foreach_loop;
     } specifics;
 };
 

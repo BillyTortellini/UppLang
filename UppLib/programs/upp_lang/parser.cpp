@@ -1084,130 +1084,183 @@ namespace Parser
                 {
                     advance_token();
                     result->type = Statement_Type::FOR_LOOP;
-                    auto& loop = result->options.for_loop;
                     bool error_logged = false;
 
-                    // Returns true if semicolon was found (Otherwise no semicolon until end of line...)
-                    auto to_next_semicolon = [&]()->bool {
-                        if (test_operator(Operator::SEMI_COLON)) {
-                            return true;
-                        }
-                        auto pos_opt = search_token(
-                            parser.state.pos,
-                            [](Token* token, void* userdata) -> bool {
-                                return token->type == Token_Type::OPERATOR && token->options.op == Operator::SEMI_COLON;
-                            },
-                            nullptr,
-                            false
-                        );
-                        if (!pos_opt.available) return false;
-                        log_error("Un-parsable tokens until expected semicolon", 
-                            node_range_make(node_position_make_token_index(parser.state.pos), node_position_make_token_index(pos_opt.value))
-                        );
-                        error_logged = true;
-                        parser.state.pos = pos_opt.value;
-                        return true;
-                    };
-
                     // Parse variable name
-                    loop.loop_variable_definition = parse_definition_symbol(upcast(result));
-                    if (loop.loop_variable_definition == 0) {
+                    AST::Definition_Symbol* loop_variable = parse_definition_symbol(upcast(result));
+                    if (loop_variable == 0) {
                         auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
                         definition_node->name = compiler.predefined_ids.invalid_symbol_name;
                         node_finalize_range(upcast(definition_node));
-                        loop.loop_variable_definition = definition_node;
+                        loop_variable = definition_node;
                         if (!error_logged) {
                             log_error_range_offset("Expected loop variable identifier", 0);
+                            error_logged = true;
                         }
                     }
 
-                    // Parse initial value
-                    if (test_operator(Operator::DEFINE_INFER)) {
-                        loop.loop_variable_type.available = false;
-                        advance_token();
-                        loop.initial_value = parse_expression_or_error_expr(upcast(result));
-                    }
-                    else if (test_operator(Operator::COLON)) {
-                        advance_token();
-                        loop.loop_variable_type.available = true;
-                        loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
+                    // Seperate for-each and normal for loop
+                    if (test_operator(Operator::COMMA) || test_keyword(Keyword::IN_KEYWORD)) 
+                    {
+                        result->type = Statement_Type::FOREACH_LOOP;
+                        auto& loop = result->options.foreach_loop;
+                        loop.loop_variable_definition = loop_variable;
 
-                        if (test_operator(Operator::ASSIGN)) {
+                        // Parse index variable
+                        loop.index_variable_definition = optional_make_failure<AST::Definition_Symbol*>();
+                        if (test_operator(Operator::COMMA)) 
+                        {
+                            loop.index_variable_definition.available = true;
                             advance_token();
-                            loop.initial_value = parse_expression_or_error_expr(upcast(result));
+                            loop.index_variable_definition.value = parse_definition_symbol(upcast(result));
+                            if (loop.index_variable_definition.value == 0) {
+                                auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
+                                definition_node->name = compiler.predefined_ids.invalid_symbol_name;
+                                node_finalize_range(upcast(definition_node));
+                                loop.index_variable_definition.value = definition_node;
+                                if (!error_logged) {
+                                    log_error_range_offset("Expected index variable identifier", 0);
+                                    error_logged = true;
+                                }
+                            }
+                        }
+
+                        if (test_keyword(Keyword::IN_KEYWORD)) {
+                            advance_token();
                         }
                         else {
                             if (!error_logged) {
-                                log_error_range_offset("Expected initial value assignment (e.g. = 5) in for loop", 0);
+                                log_error_range_offset("Expected in keyword for foreach loop", 0);
+                                error_logged = true;
+                            }
+                        }
+
+                        loop.expression = parse_expression_or_error_expr(upcast(result));
+
+                        // Parse body
+                        loop.body_block = parse_code_block(upcast(result), 0);
+                        if (!loop.body_block->block_id.available) {
+                            loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
+                        }
+                        PARSE_SUCCESS(result);
+                    }
+                    else
+                    {
+                        auto& loop = result->options.for_loop;
+                        loop.loop_variable_definition = loop_variable;
+
+                        // Returns true if semicolon was found (Otherwise no semicolon until end of line...)
+                        auto to_next_semicolon = [&]()->bool {
+                            if (test_operator(Operator::SEMI_COLON)) {
+                                return true;
+                            }
+                            auto pos_opt = search_token(
+                                parser.state.pos,
+                                [](Token* token, void* userdata) -> bool {
+                                    return token->type == Token_Type::OPERATOR && token->options.op == Operator::SEMI_COLON;
+                                },
+                                nullptr,
+                                false
+                            );
+                            if (!pos_opt.available) return false;
+                            log_error("Un-parsable tokens until expected semicolon", 
+                                node_range_make(node_position_make_token_index(parser.state.pos), node_position_make_token_index(pos_opt.value))
+                            );
+                            error_logged = true;
+                            parser.state.pos = pos_opt.value;
+                            return true;
+                        };
+
+                        // Parse initial value
+                        if (test_operator(Operator::DEFINE_INFER)) {
+                            loop.loop_variable_type.available = false;
+                            advance_token();
+                            loop.initial_value = parse_expression_or_error_expr(upcast(result));
+                        }
+                        else if (test_operator(Operator::COLON)) {
+                            advance_token();
+                            loop.loop_variable_type.available = true;
+                            loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
+
+                            if (test_operator(Operator::ASSIGN)) {
+                                advance_token();
+                                loop.initial_value = parse_expression_or_error_expr(upcast(result));
+                            }
+                            else {
+                                if (!error_logged) {
+                                    log_error_range_offset("Expected initial value assignment (e.g. = 5) in for loop", 0);
+                                    error_logged = true;
+                                }
+                                auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                                error_expr->type = Expression_Type::ERROR_EXPR;
+                                node_finalize_range(upcast(error_expr));
+                                loop.initial_value = error_expr;
+                            }
+                        }
+                        else {
+                            // Set initial value to error-expr, find next semicolon or exit...
+                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                            error_expr->type = Expression_Type::ERROR_EXPR;
+                            node_finalize_range(upcast(error_expr));
+                            loop.loop_variable_type.available = false;
+                            loop.initial_value = error_expr;
+                        }
+
+                        // Parse loop condition
+                        if (to_next_semicolon()) {
+                            advance_token();
+                            loop.condition = parse_expression_or_error_expr(upcast(result));
+                        }
+                        else {
+                            if (!error_logged) {
+                                log_error_range_offset("Expected Semicolon", 0);
                                 error_logged = true;
                             }
                             auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
                             error_expr->type = Expression_Type::ERROR_EXPR;
                             node_finalize_range(upcast(error_expr));
-                            loop.initial_value = error_expr;
+                            loop.condition = error_expr;
                         }
-                    }
-                    else {
-                        // Set initial value to error-expr, find next semicolon or exit...
-                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                        error_expr->type = Expression_Type::ERROR_EXPR;
-                        node_finalize_range(upcast(error_expr));
-                        loop.loop_variable_type.available = false;
-                        loop.initial_value = error_expr;
-                    }
 
-                    // Parse loop condition
-                    if (to_next_semicolon()) {
-                        advance_token();
-                        loop.condition = parse_expression_or_error_expr(upcast(result));
-                    }
-                    else {
-                        if (!error_logged) {
-                            log_error_range_offset("Expected Semicolon", 0);
-                            error_logged = true;
+                        // Parse iteration step
+                        if (to_next_semicolon()) {
+                            advance_token();
+                            loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
                         }
-                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                        error_expr->type = Expression_Type::ERROR_EXPR;
-                        node_finalize_range(upcast(error_expr));
-                        loop.condition = error_expr;
-                    }
-
-                    // Parse iteration step
-                    if (to_next_semicolon()) {
-                        advance_token();
-                        loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
-                    }
-                    else {
-                        loop.increment_statement = 0;
-                        if (!error_logged) {
-                            log_error_range_offset("Expected Semicolon", 0);
-                            error_logged = true;
+                        else {
+                            loop.increment_statement = 0;
+                            if (!error_logged) {
+                                log_error_range_offset("Expected Semicolon", 0);
+                                error_logged = true;
+                            }
                         }
-                    }
 
-                    if (loop.increment_statement == 0) {
-                        if (!error_logged) {
-                            log_error_range_offset("Expected expression or assignment as for-loop increment", 0);
-                            error_logged = true;
+                        if (loop.increment_statement == 0) {
+                            if (!error_logged) {
+                                log_error_range_offset("Expected expression or assignment as for-loop increment", 0);
+                                error_logged = true;
+                            }
+                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+                            error_expr->type = Expression_Type::ERROR_EXPR;
+                            node_finalize_range(upcast(error_expr));
+
+                            auto error_statement = allocate_base<AST::Statement>(parent, AST::Node_Type::STATEMENT);
+                            error_statement->type = Statement_Type::EXPRESSION_STATEMENT;
+                            error_statement->options.expression = error_expr;
+                            node_finalize_range(upcast(error_statement));
+
+                            loop.increment_statement = error_statement;
                         }
-                        auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                        error_expr->type = Expression_Type::ERROR_EXPR;
-                        node_finalize_range(upcast(error_expr));
 
-                        auto error_statement = allocate_base<AST::Statement>(parent, AST::Node_Type::STATEMENT);
-                        error_statement->type = Statement_Type::EXPRESSION_STATEMENT;
-                        error_statement->options.expression = error_expr;
-                        node_finalize_range(upcast(error_statement));
-
-                        loop.increment_statement = error_statement;
+                        // Parse body
+                        loop.body_block = parse_code_block(upcast(result), 0);
+                        if (!loop.body_block->block_id.available) {
+                            loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
+                        }
+                        PARSE_SUCCESS(result);
                     }
-
-                    // Parse body
-                    loop.body_block = parse_code_block(upcast(result), 0);
-                    if (!loop.body_block->block_id.available) {
-                        loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
-                    }
-                    PARSE_SUCCESS(result);
+                    panic("");
+                    CHECKPOINT_EXIT;
                 }
                 case Keyword::DEFER:
                 {

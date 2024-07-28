@@ -143,7 +143,7 @@ enum class IR_Instruction_Address_Of_Type
     FUNCTION,
     EXTERN_FUNCTION,
     STRUCT_MEMBER,
-    ARRAY_ELEMENT
+    ARRAY_ELEMENT // Source can be both array or slice, and the result is always a pointer
 };
 
 struct IR_Instruction_Address_Of
@@ -253,6 +253,26 @@ struct Function_Stub
     IR_Function* ir_func;
 };
 
+enum class Loop_Type
+{
+    FOR_LOOP,
+    FOREACH_LOOP
+};
+
+struct Loop_Increment
+{
+    Loop_Type type;
+    struct
+    {
+        AST::Statement* increment_statement; // Valid for normal for loops
+        struct {
+            IR_Data_Access index_access;
+            IR_Data_Access iterable_access;
+            IR_Data_Access loop_variable_access;
+        } foreach_loop;
+    } options;
+};
+
 struct IR_Generator
 {
     IR_Program* program;
@@ -261,7 +281,7 @@ struct IR_Generator
     // Stuff needed for compilation
     Hashtable<AST::Definition_Symbol*, IR_Data_Access> variable_mapping; 
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
-    Hashtable<AST::Code_Block*, AST::Statement*> loop_increment_instructions; // For for loops
+    Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
 
     Dynamic_Array<Function_Stub> queue_functions;
 

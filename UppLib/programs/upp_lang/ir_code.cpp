@@ -6,6 +6,7 @@
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression);
+void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* ir_block);
 
 
 
@@ -1461,6 +1462,38 @@ void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_inde
     }
 }
 
+void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Code_Block* loop_block)
+{
+    Loop_Increment* loop_increment = hashtable_find_element(&ir_generator.loop_increment_instructions, loop_block);
+    assert(loop_increment != 0, "");
+
+    if (loop_increment->type == Loop_Type::FOR_LOOP) {
+        ir_generator_generate_statement(loop_increment->options.increment_statement, ir_block);
+    }
+    else
+    {
+        auto& foreach = loop_increment->options.foreach_loop;
+
+        // Increment index access
+        IR_Instruction increment;
+        increment.type = IR_Instruction_Type::BINARY_OP;
+        increment.options.binary_op.type = AST::Binop::ADDITION;
+        increment.options.binary_op.destination = foreach.index_access;
+        increment.options.binary_op.operand_left = foreach.index_access;
+        increment.options.binary_op.operand_right = ir_data_access_create_constant_i32(1);
+        dynamic_array_push_back(&ir_block->instructions, increment);
+
+        // Update pointer
+        IR_Instruction element_instr;
+        element_instr.type = IR_Instruction_Type::ADDRESS_OF;
+        element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
+        element_instr.options.address_of.destination = foreach.loop_variable_access;
+        element_instr.options.address_of.source = foreach.iterable_access;
+        element_instr.options.address_of.options.index_access = foreach.index_access;
+        dynamic_array_push_back(&ir_block->instructions, element_instr);
+    }
+}
+
 void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* ir_block)
 {
     auto stat_info = get_info(statement);
@@ -1639,14 +1672,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         {
             auto symbol = loop_info.loop_variable_symbol;
             assert(symbol->type == Symbol_Type::VARIABLE, "");
-            auto var_type = symbol->options.variable_type;
-            dynamic_array_push_back(&ir_block->registers, var_type);
-
-            IR_Data_Access access;
-            access.type = IR_Data_Access_Type::REGISTER;
-            access.index = ir_block->registers.size - 1;
-            access.is_memory_access = false;
-            access.option.definition_block = ir_block;
+            IR_Data_Access access = ir_data_access_create_intermediate(ir_block, symbol->options.variable_type);
             hashtable_insert_element(&ir_generator.variable_mapping, for_loop.loop_variable_definition, access);
 
             IR_Instruction initialize;
@@ -1656,6 +1682,14 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             dynamic_array_push_back(&ir_block->instructions, initialize);
         }
 
+        // Register loop increment method
+        {
+            Loop_Increment increment;
+            increment.type = Loop_Type::FOR_LOOP;
+            increment.options.increment_statement = for_loop.increment_statement;
+            hashtable_insert_element(&ir_generator.loop_increment_instructions, for_loop.body_block, increment);
+        }
+
         // Push Loop + continue/break labels
         IR_Instruction continue_label;
         continue_label.type = IR_Instruction_Type::LABEL;
@@ -1663,7 +1697,6 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         ir_generator.next_label_index++;
         dynamic_array_push_back(&ir_block->instructions, continue_label);
         hashtable_insert_element(&ir_generator.labels_continue, for_loop.body_block, continue_label.options.label_index);
-        hashtable_insert_element(&ir_generator.loop_increment_instructions, for_loop.body_block, for_loop.increment_statement);
 
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::WHILE;
@@ -1686,6 +1719,126 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         dynamic_array_push_back(&ir_block->instructions, break_label);
         hashtable_insert_element(&ir_generator.labels_break, for_loop.body_block, break_label.options.label_index);
 
+        break;
+    }
+    case AST::Statement_Type::FOREACH_LOOP:
+    {
+        auto& foreach_loop = statement->options.foreach_loop;
+        auto& loop_info = get_info(statement)->specifics.foreach_loop;
+        auto& types = compiler.type_system.predefined_types;
+
+        // Create and initialize index data-access (Always available)
+        IR_Data_Access index_access = ir_data_access_create_intermediate(ir_block, upcast(types.i32_type));
+        {
+            // Initialize
+            IR_Instruction initialize;
+            initialize.type = IR_Instruction_Type::MOVE;
+            initialize.options.move.destination = index_access;
+            initialize.options.move.source = ir_data_access_create_constant_i32(0);
+            dynamic_array_push_back(&ir_block->instructions, initialize);
+
+            if (foreach_loop.index_variable_definition.available) {
+                assert(loop_info.index_variable_symbol != 0 && loop_info.index_variable_symbol->type == Symbol_Type::VARIABLE, "");
+                hashtable_insert_element(&ir_generator.variable_mapping, foreach_loop.index_variable_definition.value, index_access);
+            }
+        }
+
+        // Create iterable access
+        IR_Data_Access iterable_access = ir_generator_generate_expression(ir_block, foreach_loop.expression);
+        auto iterable_type = ir_data_access_get_type(&iterable_access);
+
+        // Create and initialize loop variable
+        IR_Data_Access loop_variable_access = ir_data_access_create_intermediate(ir_block, upcast(loop_info.loop_variable_symbol->options.variable_type));
+        {
+            hashtable_insert_element(&ir_generator.variable_mapping, foreach_loop.loop_variable_definition, loop_variable_access);
+
+            // Initialize
+            if (iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE)
+            {
+                IR_Instruction element_instr;
+                element_instr.type = IR_Instruction_Type::ADDRESS_OF;
+                element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
+                element_instr.options.address_of.destination = loop_variable_access;
+                element_instr.options.address_of.source = iterable_access;
+                element_instr.options.address_of.options.index_access = index_access;
+                dynamic_array_push_back(&ir_block->instructions, element_instr);
+            }
+            else {
+                panic("Other types not supported yet");
+            }
+        }
+
+        // Register loop increment method
+        {
+            Loop_Increment increment;
+            increment.type = Loop_Type::FOREACH_LOOP;
+            increment.options.foreach_loop.index_access = index_access;
+            increment.options.foreach_loop.iterable_access = iterable_access;
+            increment.options.foreach_loop.loop_variable_access = loop_variable_access;
+            hashtable_insert_element(&ir_generator.loop_increment_instructions, foreach_loop.body_block, increment);
+        }
+
+        // Push loop
+        {
+            // Push loop_start label
+            {
+                IR_Instruction continue_label;
+                continue_label.type = IR_Instruction_Type::LABEL;
+                continue_label.options.label_index = ir_generator.next_label_index;
+                ir_generator.next_label_index++;
+                dynamic_array_push_back(&ir_block->instructions, continue_label);
+                hashtable_insert_element(&ir_generator.labels_continue, foreach_loop.body_block, continue_label.options.label_index);
+            }
+
+            // Push loop
+            {
+                // Create condition code
+                IR_Code_Block* condition_code = ir_code_block_create(ir_block->function);
+                IR_Data_Access condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
+                {
+                    IR_Data_Access array_size_access;
+                    if (iterable_type->type == Datatype_Type::ARRAY) {
+                        auto array_type = downcast<Datatype_Array>(iterable_type);
+                        assert(array_type->count_known, "");
+                        array_size_access = ir_data_access_create_constant_i32(array_type->element_count);
+                    }
+                    else if (iterable_type->type == Datatype_Type::SLICE) {
+                        auto slice_type = downcast<Datatype_Slice>(iterable_type);
+                        array_size_access = ir_data_access_create_member(condition_code, iterable_access, slice_type->size_member);
+                    }
+
+                    IR_Instruction comparison;
+                    comparison.type = IR_Instruction_Type::BINARY_OP;
+                    comparison.options.binary_op.type = AST::Binop::LESS;
+                    comparison.options.binary_op.operand_left = index_access;
+                    comparison.options.binary_op.operand_right = array_size_access;
+                    comparison.options.binary_op.destination = condition_access;
+                    dynamic_array_push_back(&condition_code->instructions, comparison);
+                }
+
+                // Push loop + create body code
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::WHILE;
+                instr.options.while_instr.condition_code = condition_code;
+                instr.options.while_instr.condition_access = condition_access;
+                instr.options.while_instr.code = ir_code_block_create(ir_block->function);
+                ir_generator_generate_block(instr.options.while_instr.code, foreach_loop.body_block);
+                dynamic_array_push_back(&ir_block->instructions, instr);
+
+                // Push increment instruction at end of while block
+                ir_generator_generate_block_loop_increment(instr.options.while_instr.code, foreach_loop.body_block);
+            }
+
+            // Push break label
+            {
+                IR_Instruction break_label;
+                break_label.type = IR_Instruction_Type::LABEL;
+                break_label.options.label_index = ir_generator.next_label_index;
+                ir_generator.next_label_index++;
+                dynamic_array_push_back(&ir_block->instructions, break_label);
+                hashtable_insert_element(&ir_generator.labels_break, foreach_loop.body_block, break_label.options.label_index);
+            }
+        }
         break;
     }
     case AST::Statement_Type::WHILE_STATEMENT:
@@ -1725,10 +1878,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
         // Push loop increment instructions if they are available
         if (is_continue) {
-            AST::Statement** increment_statement = hashtable_find_element(&ir_generator.loop_increment_instructions, goto_block);
-            if (increment_statement != 0) {
-                ir_generator_generate_statement(*increment_statement, ir_block);
-            }
+            ir_generator_generate_block_loop_increment(ir_block, goto_block);
         }
 
         IR_Instruction instr;
@@ -2069,7 +2219,7 @@ IR_Generator* ir_generator_initialize()
     ir_generator.next_label_index = 0;
 
     ir_generator.function_mapping = hashtable_create_pointer_empty<ModTree_Function*, IR_Function*>(8);
-    ir_generator.loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, AST::Statement*>(8);
+    ir_generator.loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, Loop_Increment>(8);
     ir_generator.variable_mapping = hashtable_create_pointer_empty<AST::Definition_Symbol*, IR_Data_Access>(8);
     ir_generator.labels_break = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
     ir_generator.labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);

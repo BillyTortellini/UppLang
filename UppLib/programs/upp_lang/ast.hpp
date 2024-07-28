@@ -345,6 +345,7 @@ namespace AST
         IF_STATEMENT,
         WHILE_STATEMENT,
         FOR_LOOP,
+        FOREACH_LOOP,
         SWITCH_STATEMENT,
         BREAK_STATEMENT,
         CONTINUE_STATEMENT,
@@ -374,6 +375,12 @@ namespace AST
                 Statement* increment_statement;
                 Code_Block* body_block;
             } for_loop;
+            struct {
+                Definition_Symbol* loop_variable_definition;
+                Optional<Definition_Symbol*> index_variable_definition;
+                Expression* expression;
+                Code_Block* body_block;
+            } foreach_loop;
             struct {
                 Expression* left_side;
                 Expression* right_side;

@@ -124,6 +124,7 @@ Things to consider:
     * IR-Code needs to define the loop variable
     * IR-Code needs continue + break + defers to work correctly in loop
 
+
 DO:
     * At continue the increment code has to be executed
     * At end of for loop the increment code has to be executed
@@ -135,6 +136,17 @@ DONE:
     * Continue and break need to find for loop
 
 
+Foreach:
+foreach a in b
+foreach a, b in c
+    something with a
+
+Depending on the iterator, a may be a pointer or a value
+
+1. Implement for slices and arrays
+2. Implement overloading
+3. Implement overloading for templated functions/types
+
 
 
 
@@ -145,9 +157,9 @@ Core: (Required for programming)
     * Loops + iterators
     * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters)
 
-    * C-Function calling rework
+    * C-Function calling rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
+    * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
     * Incremental compiler
-    * Editor-Features (Multiple files, search/goto definition, motions + others)
 
 Additional:
     * Allocator system
