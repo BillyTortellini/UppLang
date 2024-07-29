@@ -289,6 +289,7 @@ struct Render_Pass
     Pipeline_State pipeline_state;
     Framebuffer* output_buffer; // If null this is the default framebuffer
     bool queried_this_frame;
+    const char* name;
 };
 
 void render_pass_set_uniforms(Render_Pass* pass, Shader* shader, std::initializer_list<Uniform_Value> uniforms);

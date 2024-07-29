@@ -242,13 +242,14 @@ void rendering_core_remove_render_event_listener(Render_Event event, render_even
 
 void renderpass_queue_if_no_dependencies(Render_Pass* pass, Dynamic_Array<Render_Pass*>* execution_order)
 {
-    if (pass->dependency_count == 0) {
+    if (pass->dependency_count == 0) 
+    {
         dynamic_array_push_back(execution_order, pass);
         pass->dependency_count = -1; // So we don't queue twice in a frame
-    }
-    for (int i = 0; i < pass->dependents.size; i++) {
-        pass->dependents[i]->dependency_count -= 1;
-        renderpass_queue_if_no_dependencies(pass->dependents[i], execution_order);
+        for (int i = 0; i < pass->dependents.size; i++) {
+            pass->dependents[i]->dependency_count -= 1;
+            renderpass_queue_if_no_dependencies(pass->dependents[i], execution_order);
+        }
     }
 }
 
@@ -1156,6 +1157,7 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
         render_pass->queried_this_frame = true;
         render_pass->output_buffer = output_buffer;
         render_pass->pipeline_state = pipeline_state;
+        render_pass->name = name;
         return render_pass;
     }
 
@@ -1166,6 +1168,7 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
     render_pass->queried_this_frame = true;
     render_pass->output_buffer = output_buffer;
     render_pass->dependency_count = 0;
+    render_pass->name = name;
     render_pass->dependents = dynamic_array_create_empty<Render_Pass*>(1);
     return render_pass;
 }

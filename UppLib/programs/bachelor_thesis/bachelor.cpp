@@ -627,6 +627,7 @@ struct Layer
     int current_frame;
     Dynamic_Array<Frame> frames;
     bool hidden;
+    bool collisions_enabled;
     vec4 color;
 };
 
@@ -636,11 +637,13 @@ enum class Edit_Mode
     VERTEX_ADD,
     EDGE_ADD,
     VERTEX_REMOVE,
-    EDGE_REMOVE
+    EDGE_REMOVE,
+    EDGE_INCREMENT,
 };
 
 struct Vertex {
     vec2 pos;
+    vec4 color;
 };
 
 struct Graph_Editor
@@ -655,6 +658,11 @@ struct Graph_Editor
     int current_layer;
     Edit_Mode edit_mode;
     int edge_add_start_index; // -1 if no start was selected yet
+    int edge_increment_index; // -1 if no edge was selected yet
+
+    bool option_edge_no_cycles;
+    bool option_draw_edges_side_by_side;
+    bool option_new_frame_for_operations;
 
     // Camera
     vec2 camera_center;
@@ -676,6 +684,7 @@ void graph_editor_add_layer()
     layer.frames = dynamic_array_create_empty<Frame>(1);
     layer.hidden = false;
     layer.color = vec4(0.5f, 0.5f, 0.5f, 1.0f);
+    layer.collisions_enabled = true;
     Frame frame;
     frame.edges = dynamic_array_create_empty<Edge>(1);
     dynamic_array_push_back(&layer.frames, frame);
@@ -690,6 +699,10 @@ void graph_editor_initialize()
     graph_editor.vertices = dynamic_array_create_empty<Vertex>(1);
     graph_editor.layers = dynamic_array_create_empty<Layer>(1);
     graph_editor.line_renderer = line_renderer_create();
+
+    graph_editor.option_draw_edges_side_by_side = false;
+    graph_editor.option_new_frame_for_operations = false;
+    graph_editor.option_edge_no_cycles = false;
 
     graph_editor_add_layer();
 
@@ -824,16 +837,24 @@ void graph_editor_save_to_file()
         auto& v = editor.vertices[i];
         string_append_formated(&buffer, "VERTEX %f %f\n", v.pos.x, v.pos.y);
     }
-    string_append_formated(&buffer, "OPTIONS %f %f %f %d\n", editor.camera_center.x, editor.camera_center.y, editor.mouse_wheel_pos, editor.current_layer);
+    string_append_formated(
+        &buffer, "OPTIONS %f %f %f %d %d %d %d\n", 
+        editor.camera_center.x, editor.camera_center.y, editor.mouse_wheel_pos, 
+        editor.current_layer,
+        (editor.option_draw_edges_side_by_side ? 1 : 0),
+        (editor.option_edge_no_cycles ? 1 : 0),
+        (editor.option_new_frame_for_operations ? 1 : 0)
+    );
 
     // Layers
     for (int i = 0; i < editor.layers.size; i++) {
         auto& layer = editor.layers[i];
-        string_append_formated(&buffer, "LAYER %f %f %f %f %d %d\n",
-            layer.color.x, layer.color.y, layer.color.z, layer.color.w, layer.current_frame, (layer.hidden ? 1 : 0)
+        string_append_formated(&buffer, "LAYER %f %f %f %f %d %d %d\n",
+            layer.color.x, layer.color.y, layer.color.z, layer.color.w, layer.current_frame, 
+            (layer.hidden ? 1 : 0), (layer.collisions_enabled ? 1 : 0)
         );
         for (int j = 0; j < layer.frames.size; j++) {
-            auto& frame = layer.frames[i];
+            auto& frame = layer.frames[j];
             string_append_formated(&buffer, "FRAME\n");
             for (int k = 0; k < frame.edges.size; k++) {
                 auto& edge = frame.edges[k];
@@ -848,6 +869,10 @@ void graph_editor_save_to_file()
 
 bool graph_editor_load_file(const char* filepath) 
 {
+    auto& editor = graph_editor;
+    string_reset(&editor.filename);
+    string_append_formated(&editor.filename, filepath);
+
     auto file_opt = file_io_load_text_file(filepath);
     SCOPE_EXIT(file_io_unload_text_file(&file_opt));
     if (!file_opt.available) {
@@ -855,9 +880,6 @@ bool graph_editor_load_file(const char* filepath)
     }
 
     // Reset all data of current graph editor
-    auto& editor = graph_editor;
-    string_reset(&editor.filename);
-    string_append_formated(&editor.filename, filepath);
     for (int i = 0; i < editor.layers.size; i++) {
         auto& layer = editor.layers[i];
         for (int j = 0; j < layer.frames.size; j++) {
@@ -900,6 +922,7 @@ bool graph_editor_load_file(const char* filepath)
             layer.color.w = optional_unwrap(string_parse_float(&words[4]));
             layer.current_frame = optional_unwrap(string_parse_float(&words[5]));
             layer.hidden = optional_unwrap(string_parse_float(&words[6])) == 1 ? true : false;
+            layer.collisions_enabled = optional_unwrap(string_parse_float(&words[7])) == 1 ? true : false;
             layer.frames = dynamic_array_create_empty<Frame>(1);
             dynamic_array_push_back(&editor.layers, layer);
         }
@@ -921,6 +944,9 @@ bool graph_editor_load_file(const char* filepath)
             editor.camera_center.y = optional_unwrap(string_parse_float(&words[2]));
             editor.mouse_wheel_pos = optional_unwrap(string_parse_float(&words[3]));
             editor.current_layer = optional_unwrap(string_parse_int(&words[4]));
+            editor.option_draw_edges_side_by_side = optional_unwrap(string_parse_float(&words[5])) == 1 ? true : false;
+            editor.option_edge_no_cycles = optional_unwrap(string_parse_float(&words[6])) == 1 ? true : false;
+            editor.option_new_frame_for_operations = optional_unwrap(string_parse_float(&words[7])) == 1 ? true : false;
         }
         else {
             panic("Invalid word on line start!\n");
@@ -928,6 +954,95 @@ bool graph_editor_load_file(const char* filepath)
     }
 
     return true;
+}
+
+// Check if segments ab and cd intersect
+// Idea from https://www.youtube.com/watch?v=bvlIYX9cgls 
+bool line_segment_intersection(vec2 a, vec2 b, vec2 c, vec2 d, vec2* crossing = nullptr)
+{
+    float pa = (d.x - c.x) * (c.y - a.y) - (d.y - c.y) * (c.x - a.x);
+    float pb = (d.x - c.x) * (b.y - a.y) - (d.y - c.y) * (b.x - a.x);
+    float pc = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+
+    float epsilon = 0.000001f;
+    if (math_absolute(pb) < epsilon) {
+        // Line is parallel
+        return false;
+    }
+
+    float alpha = pa / pb;
+    float beta = pc / pb;
+
+    if (alpha >= 0.0f && alpha <= 1.0f && beta >= 0.0f && beta <= 1.0f) 
+    {
+        if (crossing != nullptr) {
+            *crossing = a + alpha * (b - a);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool graph_editor_edges_intersect(int a, int b, int c, int d)
+{
+    if (a == c || a == d || b == c || b == d) {
+        return false;
+    }
+    auto& v = graph_editor.vertices;
+    return line_segment_intersection(v[a].pos, v[b].pos, v[c].pos, v[d].pos);
+}
+
+bool graph_editor_new_edge_intersects_any(int a, int b)
+{
+    auto& editor = graph_editor;
+    auto& vertices = editor.vertices;
+    for (int i = 0; i < editor.layers.size; i++)
+    {
+        auto& layer = editor.layers[i];
+        if (!layer.collisions_enabled) {
+            continue;
+        }
+
+        auto& edges = layer.frames[layer.current_frame].edges;
+        for (int j = 0; j < edges.size; j++)
+        {
+            auto& edge = edges[j];
+            // If edges share an endpoint, then they don't cross
+            if (edge.a == a || edge.b == b || edge.a == b || edge.b == a) {
+                continue;
+            }
+
+            // Otherwise check if edge would be overlapping
+            vec2 pos_a = vertices[edge.a].pos;
+            vec2 pos_b = vertices[edge.b].pos;
+            vec2 pos_c = vertices[a].pos;
+            vec2 pos_d = vertices[b].pos;
+            if (line_segment_intersection(pos_a, pos_b, pos_c, pos_d)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void graph_editor_copy_current_frame()
+{
+    auto& editor = graph_editor;
+    auto& layer = editor.layers[editor.current_layer];
+
+    Frame& frame = layer.frames[layer.current_frame];
+    Frame new_frame;
+    new_frame.edges = dynamic_array_create_copy(frame.edges.data, frame.edges.size);
+    
+    // Delete all frames after this frame
+    for (int i = layer.current_frame + 1; i < layer.frames.size; i += 1) {
+        dynamic_array_destroy(&layer.frames[i].edges);
+    }
+    dynamic_array_rollback_to_size(&layer.frames, layer.current_frame + 1);
+    dynamic_array_push_back(&layer.frames, new_frame);
+    layer.current_frame = layer.frames.size - 1;
 }
 
 void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* pass_gui)
@@ -948,7 +1063,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
 
         auto push_section_header = [&](const char* name) {
             // Add Header
-            gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
+            gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(12.0f), gui_drawable_make_none()); // Padding
             gui_push_text(area, string_create_static(name), 0.5f);
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
@@ -966,7 +1081,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                 editor.edit_mode = Edit_Mode::VERTEX_REMOVE;
             }
 
-            gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2), gui_drawable_make_none());
+            gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2), gui_drawable_make_none()); // Padding
             auto edge_options = gui_add_node(area, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_none());
             gui_node_set_layout(edge_options, GUI_Stack_Direction::LEFT_TO_RIGHT);
             if (gui_push_button(edge_options, string_create_static("Add Edges"))) {
@@ -975,10 +1090,17 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             if (gui_push_button(edge_options, string_create_static("Remove Edges"))) {
                 editor.edit_mode = Edit_Mode::EDGE_REMOVE;
             }
+
+            gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2), gui_drawable_make_none()); // Padding
+            auto advanced_options = gui_add_node(area, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_none());
+            gui_node_set_layout(advanced_options, GUI_Stack_Direction::LEFT_TO_RIGHT);
+            if (gui_push_button(advanced_options, string_create_static("Edge->Triangle"))) {
+                editor.edit_mode = Edit_Mode::EDGE_INCREMENT;
+            }
         }
 
         push_section_header("File");
-        if (gui_push_button(area , string_create_static("Save"))) {
+        if (gui_push_button(area, string_create_static("Save"))) {
             do_save_file = true;
         }
         if (gui_push_button(area, string_create_static("Load"))) {
@@ -1002,8 +1124,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
 
             gui_node_set_layout(layer_node, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
             string_reset(&buffer);
-            string_append_formated(&buffer, "Layer #%d, F: %d/%d, E: %d", 
-                i, layer.current_frame + 1, layer.frames.size, layer.frames[layer.current_frame].edges.size);
+            string_append_formated(&buffer, "#%d: %d/%d", i, layer.current_frame + 1, layer.frames.size);
             gui_push_text(layer_node, buffer);
             gui_node_set_padding(layer_node, 4, 4, true);
             gui_node_enable_input(layer_node);
@@ -1024,6 +1145,8 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             gui_push_text(layer_node, string_create_static(" H:"));
             gui_push_toggle(layer_node, &layer.hidden);
             gui_push_text(layer_node, string_create_static(" C:"));
+            gui_push_toggle(layer_node, &layer.collisions_enabled);
+            gui_push_text(layer_node, string_create_static(" Color:"));
             gui_push_color_selector(layer_node, &layer.color, input);
         }
 
@@ -1042,7 +1165,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                 layer.current_frame = math_maximum(0, layer.current_frame - 1);
             }
             string_reset(&buffer);
-            string_append_formated(&buffer, "%d", layer.current_frame+1);
+            string_append_formated(&buffer, "%d", layer.current_frame + 1);
             gui_push_text(frame_area, buffer);
             if (gui_push_button(frame_area, string_create_static(">"))) {
                 layer.current_frame = math_minimum(layer.frames.size - 1, layer.current_frame + 1);
@@ -1069,19 +1192,24 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             }
         }
 
-        static vec4 color = vec4(1.0f);
-        static vec4 color2 = vec4(1.0f);
-        static vec4 color3 = vec4(1.0f);
-        gui_push_color_selector(area, &color, input);
+        push_section_header("Options");
+        {
+            auto other = gui_push_text_description(area, "Only add to start/end");
+            gui_push_toggle(other, &editor.option_edge_no_cycles);
+            other = gui_push_text_description(area, "Draw edges side_by_side");
+            gui_push_toggle(other, &editor.option_draw_edges_side_by_side);
+            other = gui_push_text_description(area, "New frame for Edits");
+            gui_push_toggle(other, &editor.option_new_frame_for_operations);
+        }
     }
 
     // Query passes
-    Render_Pass* pass_highlights =  rendering_core_query_renderpass("Highlights", pipeline_state_make_alpha_blending(), nullptr);
-    Render_Pass* pass_vertices =  rendering_core_query_renderpass("Vertex pass", pipeline_state_make_alpha_blending(), nullptr);
-    Render_Pass* pass_edges =  rendering_core_query_renderpass("Edge pass", pipeline_state_make_alpha_blending(), nullptr);
+    Render_Pass* pass_highlights = rendering_core_query_renderpass("Highlights", pipeline_state_make_alpha_blending(), nullptr);
+    Render_Pass* pass_vertices = rendering_core_query_renderpass("Vertex pass", pipeline_state_make_alpha_blending(), nullptr);
+    Render_Pass* pass_edges = rendering_core_query_renderpass("Edge pass", pipeline_state_make_alpha_blending(), nullptr);
+    render_pass_add_dependency(pass_gui, pass_highlights);
     render_pass_add_dependency(pass_highlights, pass_vertices);
     render_pass_add_dependency(pass_vertices, pass_edges);
-    render_pass_add_dependency(pass_edges, pass_gui);
 
     // Handle file loading
     {
@@ -1092,12 +1220,12 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             do_load_file = true;
         }
 
-        if (do_save_file)  {
+        if (do_save_file) {
             do_load_file = false;
             graph_editor_save_to_file();
         }
 
-        if (do_load_file) 
+        if (do_load_file)
         {
             auto open_file = file_io_open_file_selection_dialog();
             if (open_file.available) {
@@ -1179,11 +1307,17 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
     else if (input->key_pressed[(int)Key_Code::X]) {
         editor.edit_mode = Edit_Mode::EDGE_REMOVE;
     }
+    else if (input->key_pressed[(int)Key_Code::E]) {
+        editor.edit_mode = Edit_Mode::EDGE_INCREMENT;
+    }
     if (input->key_pressed[(int)Key_Code::ESCAPE]) {
         editor.edit_mode = Edit_Mode::NORMAL;
     }
     if (editor.edit_mode != Edit_Mode::EDGE_ADD) {
         editor.edge_add_start_index = -1;
+    }
+    if (editor.edit_mode != Edit_Mode::EDGE_INCREMENT) {
+        editor.edge_increment_index = -1;
     }
 
 
@@ -1200,8 +1334,30 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
     const vec4 highlight_color = orange;
 
     const float vertex_radius = 12.0f;
-    const float edge_width = 5.0f;
+    const float edge_width = 3.0f;
 
+    // Reset vertex color
+    for (int i = 0; i < editor.vertices.size; i++) {
+        editor.vertices[i].color = vertex_color;
+    }
+
+    // Calculate number of edges per vertex
+    auto& layer = editor.layers[editor.current_layer];
+    auto& frame = layer.frames[layer.current_frame];
+    auto& edges = frame.edges;
+    auto& vertices = editor.vertices;
+    Array<int> vertex_edge_count = array_create_empty<int>(vertices.size);
+    SCOPE_EXIT(array_destroy(&vertex_edge_count));
+    {
+        for (int i = 0; i < vertex_edge_count.size; i++) {
+            vertex_edge_count[i] = 0;
+        }
+        for (int i = 0; i < edges.size; i++) {
+            auto& edge = edges[i];
+            vertex_edge_count[edge.a] += 1;
+            vertex_edge_count[edge.b] += 1;
+        }
+    }
 
     // Edit mode specifics
     if (!gui_has_focus)
@@ -1233,6 +1389,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
                 Vertex vertex;
                 vertex.pos = mouse_pos_world;
+                vertex.color = vertex_color;
                 dynamic_array_push_back(&editor.vertices, vertex);
             }
             break;
@@ -1260,7 +1417,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             }
 
             // Remove if pressed
-            if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) 
+            if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT])
             {
                 int index = closest_vertex_to_mouse_index;
                 dynamic_array_remove_ordered(&editor.vertices, index);
@@ -1297,18 +1454,85 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                 break;
             }
 
-            // Check if we are too far from another point
+            // Check which points are valid for edge add
+            Dynamic_Array<int> valid_vertex_indices = dynamic_array_create_empty<int>(vertices.size);
+            SCOPE_EXIT(dynamic_array_destroy(&valid_vertex_indices));
+            bool highlight_valid_vertices = false;
+            if (editor.edge_add_start_index == -1)
+            {
+                if (editor.option_edge_no_cycles)
+                {
+                    highlight_valid_vertices = true;
+                    // Only vertices with edge_count 0 or edge_count 1 are valid
+                    for (int i = 0; i < vertices.size; i++) {
+                        if (vertex_edge_count[i] < 2) {
+                            dynamic_array_push_back(&valid_vertex_indices, i);
+                        }
+                    }
+                }
+                else {
+                    // All points are valid otherwise
+                    for (int i = 0; i < editor.vertices.size; i++) {
+                        dynamic_array_push_back(&valid_vertex_indices, i);
+                    }
+                }
+            }
+            else
+            {
+                // Only add vertices which fulfill all criterias
+                for (int i = 0; i < vertices.size; i++)
+                {
+                    auto& vertex = vertices[i];
+
+                    // Don't connect to same edge
+                    if (i == editor.edge_add_start_index) {
+                        continue;
+                    }
+                    // Check for cycles
+                    if (editor.option_edge_no_cycles && vertex_edge_count[i] > 1) {
+                        continue;
+                    }
+                    // Check for crossings
+                    if (graph_editor_new_edge_intersects_any(editor.edge_add_start_index, i)) {
+                        continue;
+                    }
+
+                    dynamic_array_push_back(&valid_vertex_indices, i);
+                }
+
+                if (editor.option_edge_no_cycles) {
+                    highlight_valid_vertices = true;
+                }
+            }
+
+            if (highlight_valid_vertices)
+            {
+                for (int i = 0; i < valid_vertex_indices.size; i++) {
+                    vertices[valid_vertex_indices[i]].color = highlight_color;
+                }
+            }
+
+            // Try to snap mouse pos to closest point within radius
             vec2 snapped_pos = mouse_pos_world;
             bool invalid;
+            bool too_far_away = false;
             {
                 const float cutoff_distance = 100.0f;
                 if (distance_to_closest >= cutoff_distance) {
                     invalid = true;
+                    too_far_away = true;
                     snapped_pos = mouse_pos_world;
                 }
                 else {
-                    invalid = false;
                     snapped_pos = editor.vertices[closest_vertex_to_mouse_index].pos;
+                    // Check if closest is valid
+                    invalid = true;
+                    for (int i = 0; i < valid_vertex_indices.size; i++) {
+                        if (closest_vertex_to_mouse_index == valid_vertex_indices[i]) {
+                            invalid = false;
+                            break;
+                        }
+                    }
                 }
 
                 if (editor.edge_add_start_index == closest_vertex_to_mouse_index) {
@@ -1323,7 +1547,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                     editor.edge_add_start_index = closest_vertex_to_mouse_index;
                 }
 
-                // Draw
+                // Draw highlight around vertex
                 if (invalid) {
                     push_circle(snapped_pos, vertex_radius * 1.1f, red);
                 }
@@ -1337,15 +1561,22 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                 Edge edge;
                 edge.a = closest_vertex_to_mouse_index;
                 edge.b = editor.edge_add_start_index;
+                if (edge.a < edge.b) {
+                    int swap = edge.a;
+                    edge.a = edge.b;
+                    edge.b = swap;
+                }
 
                 // Check if line already exists
-                auto& frame = editor.layers[editor.current_layer].frames[editor.layers[editor.current_layer].current_frame];
                 bool already_exists = false;
-                for (int i = 0; i < frame.edges.size; i++) {
-                    auto& other = frame.edges[i];
-                    if ((edge.a == other.a && edge.b == other.b) || (edge.a == other.b && edge.b == other.a)) {
-                        already_exists = true;
-                        break;
+                if (!too_far_away)
+                {
+                    for (int i = 0; i < frame.edges.size; i++) {
+                        auto& other = frame.edges[i];
+                        if ((edge.a == other.a && edge.b == other.b) || (edge.a == other.b && edge.b == other.a)) {
+                            already_exists = true;
+                            break;
+                        }
                     }
                 }
 
@@ -1358,7 +1589,10 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
                 if (mouse_pressed && !invalid)
                 {
                     if (!already_exists) {
-                        dynamic_array_push_back(&frame.edges, edge);
+                        if (editor.option_new_frame_for_operations) {
+                            graph_editor_copy_current_frame();
+                        }
+                        dynamic_array_push_back(&layer.frames[layer.current_frame].edges, edge); 
                     }
 
                     if (input->key_down[(int)Key_Code::SHIFT]) {
@@ -1399,15 +1633,112 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
 
             // Highlight line
             push_line(
-                editor.vertices[frame.edges[closest_edge_index].a].pos, 
-                editor.vertices[frame.edges[closest_edge_index].b].pos, 
+                editor.vertices[frame.edges[closest_edge_index].a].pos,
+                editor.vertices[frame.edges[closest_edge_index].b].pos,
                 edge_width * 1.1f, red
             );
             line_renderer_draw(editor.line_renderer, pass_highlights);
 
             if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
-                dynamic_array_swap_remove(&frame.edges, closest_edge_index);
+                if (editor.option_new_frame_for_operations) {
+                    graph_editor_copy_current_frame();
+                }
+                auto& edges = layer.frames[layer.current_frame].edges; // Update pointer after potential copy
+                dynamic_array_swap_remove(&edges, closest_edge_index);
             }
+
+            break;
+        }
+        case Edit_Mode::EDGE_INCREMENT:
+        {
+            auto& vertices = editor.vertices;
+            auto& layer = editor.layers[editor.current_layer];
+            auto& edges = layer.frames[layer.current_frame].edges;
+
+            // Exit if there are no edges
+            if (edges.size == 0) {
+                editor.edit_mode = Edit_Mode::NORMAL;
+                break;
+            }
+
+            // Find closest edge
+            int closest_edge_index = -1;
+            float closest_distance = 1000000.0f;
+            for (int i = 0; i < edges.size; i++) {
+                auto& edge = edges[i];
+                float d = distance_edge_to_point(vertices[edge.a].pos, vertices[edge.b].pos, mouse_pos_world);
+                if (d < closest_distance) {
+                    closest_edge_index = i;
+                    closest_distance = d;
+                }
+            }
+
+            if (editor.edge_increment_index == -1)
+            {
+                // Highlight closest line
+                push_line(
+                    editor.vertices[edges[closest_edge_index].a].pos,
+                    editor.vertices[edges[closest_edge_index].b].pos,
+                    edge_width * 1.1f, highlight_color
+                );
+                line_renderer_draw(editor.line_renderer, pass_highlights);
+
+                if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
+                    editor.edge_increment_index = closest_edge_index;
+                }
+            }
+            else
+            {
+                // Highlight all vertices that are valid (e.g. 2 lines can connect without overlap)
+                bool closest_to_mouse_valid = false;
+
+                auto& edge = edges[editor.edge_increment_index];
+                for (int i = 0; i < vertices.size; i++)
+                {
+                    auto v = vertices[i].pos;
+                    if (vertex_edge_count[i] != 0) {
+                        continue;
+                    }
+
+                    // Skip if there would be intersections
+                    if (graph_editor_new_edge_intersects_any(edge.a, i) || graph_editor_new_edge_intersects_any(edge.b, i)) {
+                        continue;
+                    }
+
+                    // Highlight vertex
+                    vertices[i].color = highlight_color;
+                    if (closest_vertex_to_mouse_index == i) {
+                        closest_to_mouse_valid = true;
+                    }
+                }
+
+                // Draw new lines
+                {
+                    push_line(vertices[edge.a].pos, vertices[closest_vertex_to_mouse_index].pos, edge_width, highlight_color);
+                    push_line(vertices[edge.b].pos, vertices[closest_vertex_to_mouse_index].pos, edge_width, highlight_color);
+                    line_renderer_draw(editor.line_renderer, pass_highlights);
+                }
+
+                if (input->mouse_pressed[(int)Mouse_Key_Code::LEFT] && closest_to_mouse_valid) 
+                {
+                    Edge edge = edges[editor.edge_increment_index];
+                    if (editor.option_new_frame_for_operations) {
+                        graph_editor_copy_current_frame();
+                    }
+                    auto& edges = layer.frames[layer.current_frame].edges; // Update pointer after potential copy
+                    dynamic_array_swap_remove(&edges, editor.edge_increment_index);
+                    Edge new1;
+                    new1.a = edge.a;
+                    new1.b = closest_vertex_to_mouse_index;
+                    Edge new2;
+                    new2.a = edge.b;
+                    new2.b = closest_vertex_to_mouse_index;
+                    dynamic_array_push_back(&edges, new1);
+                    dynamic_array_push_back(&edges, new2);
+                    editor.edge_increment_index = -1;
+                }
+            }
+
 
             break;
         }
@@ -1419,21 +1750,45 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
     {
         for (int i = 0; i < editor.vertices.size; i++) {
             auto& vertex = editor.vertices[i];
-            push_circle(vertex.pos, vertex_radius, vertex_color);
+            push_circle(vertex.pos, vertex_radius, vertex.color);
         }
         line_renderer_draw(editor.line_renderer, pass_vertices);
 
-        auto draw_layer = [&](int index) {
+        auto draw_layer = [&](int index)
+        {
             auto& layer = editor.layers[index];
             if (layer.hidden) return;
             auto& frame = layer.frames[layer.current_frame];
-            for (int j = 0; j < frame.edges.size; j++) {
+            for (int j = 0; j < frame.edges.size; j++)
+            {
                 auto& edge = frame.edges[j];
-                push_line(
-                    editor.vertices[edge.a].pos, editor.vertices[edge.b].pos,
-                    (editor.current_layer == index ? edge_width : edge_width * 0.5f), 
-                    (layer.color)
-                );
+
+                // Check if any other layer also has this edge
+                int line_count = 1;
+                int line_index = 0;
+                if (editor.option_draw_edges_side_by_side)
+                {
+                    for (int k = 0; k < editor.layers.size; k++) {
+                        if (k == index) { continue; }
+                        auto& other_layer = editor.layers[k];
+                        if (other_layer.hidden) { continue; }
+                        auto& other_edges = other_layer.frames[other_layer.current_frame].edges;
+                        for (int other_edge_index = 0; other_edge_index < other_edges.size; other_edge_index += 1) {
+                            auto& other_edge = other_edges[other_edge_index];
+                            if ((other_edge.a == edge.a && other_edge.b == edge.b) || (other_edge.a == edge.b && other_edge.b == edge.a)) {
+                                line_count += 1;
+                                if (k < index) {
+                                    line_index += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                vec2 a = editor.vertices[edge.a].pos;
+                vec2 b = editor.vertices[edge.b].pos;
+                vec2 offset = vector_rotate_90_degree_clockwise(vector_normalize(b - a)) * edge_width * 2.0f / zoom_level * (line_index - line_count / 2);
+                push_line(a + offset, b + offset, edge_width, layer.color);
             }
             line_renderer_draw(editor.line_renderer, pass_edges);
         };

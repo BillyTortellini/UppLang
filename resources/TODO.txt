@@ -1,8 +1,12 @@
 
+
+
 Bachelor Thesis:
- * Deduplicate edges
- * Options to see difference between frames
- * Options to do graph manipulation
+ * Options to do graph manipulation (Creates a new frame)
+    - 2. Triangle flip
+    - 3. Normal edge flip (start or end)
+    - 4. Remove triangle
+ * Options to see difference between frames 
  * Implement simple algorithm in gui 
     - Spawn random points (Number)
     - Create random crossing free path (Random next vertex + backtracking if not possible)
