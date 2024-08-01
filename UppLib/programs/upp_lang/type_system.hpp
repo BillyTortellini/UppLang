@@ -204,41 +204,15 @@ struct Upp_Any
     Upp_Type_Handle type;
 };
 
-enum class Upp_Operator
+enum class Context_Option
 {
-    // Binops
-    ADDITION = 1,
-    SUBTRACTION,
-    MULTIPLICATION,
-    DIVISION,
-    MODULO,
-    EQUAL,
-    NOT_EQUAL,
-    LESS_THAN,
-    LESS_EQUAL,
-    GREATER_THAN,
-    GREATER_EQUAL,
-    AND,
-    OR,
+    AUTO_DEREFERENCE = 1,
+    AUTO_ADDRESS_OF,
 
-    // Others
-    NEGATE,
-    NOT,
-    ARRAY_ACCESS,
-    CAST,
-    DOT_CALL,
-    
     MAX_ENUM_VALUE
 };
 
-const int CONTEXT_OPTION_CAST_MODE_START = 1;
-const int CONTEXT_OPTION_CAST_MODE_END = 23; // Inclusive
-const int CONTEXT_OPTION_BOOL_START = 24;
-const int CONTEXT_OPTION_BOOL_END = 25;
-const int CONTEXT_OPTION_CAST_MODE_COUNT = CONTEXT_OPTION_CAST_MODE_END - CONTEXT_OPTION_CAST_MODE_START + 1;
-const int CONTEXT_OPTION_BOOL_COUNT = CONTEXT_OPTION_BOOL_END - CONTEXT_OPTION_BOOL_START + 1;
-
-enum class Context_Option
+enum class Cast_Option
 {
     INTEGER_SIZE_UPCAST = 1,
     INTEGER_SIZE_DOWNCAST,
@@ -263,9 +237,6 @@ enum class Context_Option
     ENUM_TO_INT,
     INT_TO_ENUM,
     ARRAY_TO_SLICE,
-
-    AUTO_DEREFERENCE,
-    AUTO_ADDRESS_OF,
 
     MAX_ENUM_VALUE
 };
@@ -379,8 +350,8 @@ struct Predefined_Types
     Datatype_Struct* type_information_type;
     Datatype_Struct* any_type;
     Datatype_Enum* cast_mode;
-    Datatype_Enum* upp_operator;
     Datatype_Enum* context_option;
+    Datatype_Enum* cast_option;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_assert;
@@ -399,7 +370,12 @@ struct Predefined_Types
     Datatype_Function* type_random_i32;
 
     Datatype_Function* type_set_option;
-    Datatype_Function* type_add_overload;
+    Datatype_Function* type_set_cast_option;
+    Datatype_Function* type_add_binop;
+    Datatype_Function* type_add_unop;
+    Datatype_Function* type_add_cast;
+    Datatype_Function* type_add_array_access;
+    Datatype_Function* type_add_dotcall;
 };
 
 // TYPE SYSTEM

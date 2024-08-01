@@ -6,6 +6,9 @@
 #include "compiler_misc.hpp"
 #include "source_code.hpp"
 
+
+struct String;
+
 namespace AST
 {
     struct Expression;
@@ -122,21 +125,18 @@ namespace AST
         String* file_name;
     };
 
-    enum class Context_Change_Type
-    {
-        SET_OPTION,
-        ADD_OVERLOAD,
-        IMPORT_CONTEXT,
-    };
-
     struct Argument;
     struct Context_Change
     {
         Node base;
-        Context_Change_Type type;
-        union {
-            Path_Lookup* context_import_path;
-            Dynamic_Array<Argument*> arguments;
+        bool is_import;
+        union 
+        {
+            Path_Lookup* import_path;
+            struct {
+                Dynamic_Array<Argument*> arguments;
+                String* id;
+            } setting;
         } options;
     };
 

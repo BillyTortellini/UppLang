@@ -836,20 +836,21 @@ void code_completion_find_suggestions()
             }
 
             auto context = code_query_get_ast_node_symbol_table(node)->operator_context;
-            auto iter = hashtable_iterator_create(&context->operator_overloads);
+            auto iter = hashtable_iterator_create(&context->custom_operators);
             while (hashtable_iterator_has_next(&iter))
             {
                 SCOPE_EXIT(hashtable_iterator_next(&iter));
 
-                Overload_Key key = *iter.key;
-                Operator_Overload overload = *iter.value;
+                Custom_Operator_Key key = *iter.key;
+                Custom_Operator overload = *iter.value;
 
-                if (!(types_are_equal(deref_type, key.left_type) || types_are_equal(poly_base_type, key.left_type)) || key.op != Upp_Operator::DOT_CALL) {
+                if (key.type != Custom_Operator_Type::DOT_CALL) {
                     continue;
                 }
-
-                assert(!key.key_is_type, "Dot-Calls should have named key");
-                code_completion_add_and_rank(*key.options.id, partially_typed);
+                if (!(types_are_equal(deref_type, key.options.dot_call.datatype) || types_are_equal(poly_base_type, key.options.dot_call.datatype))) {
+                    continue;
+                }
+                code_completion_add_and_rank(*key.options.dot_call.id, partially_typed);
             }
         }
     }
@@ -914,9 +915,14 @@ void code_completion_find_suggestions()
 
         if (fill_context_options) {
             auto& ids = compiler.predefined_ids;
-            code_completion_add_and_rank(*ids.add_overload, partially_typed);
-            code_completion_add_and_rank(*ids.id_import, partially_typed);
             code_completion_add_and_rank(*ids.set_option, partially_typed);
+            code_completion_add_and_rank(*ids.set_cast_option, partially_typed);
+            code_completion_add_and_rank(*ids.id_import, partially_typed);
+            code_completion_add_and_rank(*ids.add_binop, partially_typed);
+            code_completion_add_and_rank(*ids.add_unop, partially_typed);
+            code_completion_add_and_rank(*ids.add_cast, partially_typed);
+            code_completion_add_and_rank(*ids.add_dot_call, partially_typed);
+            code_completion_add_and_rank(*ids.add_array_access, partially_typed);
         }
     }
 

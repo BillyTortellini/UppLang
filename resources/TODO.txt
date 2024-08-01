@@ -152,6 +152,37 @@ Depending on the iterator, a may be a pointer or a value
 3. Implement overloading for templated functions/types
 
 
+Overloading for iterators:
+I need following functions:
+ * Create from Iterable
+ * Next value function
+ * Has next function
+ * Value function
+
+// Context Considerations:
+Let's look at all the overload types
+ * Binop
+ * Unop
+ * Array_Access
+ * Cast
+ * Dot_Call
+ * Iterator
+
+context set_option()
+context set_cast_option()
+context add_binop
+context add_unop
+context add_array_access
+context add_cast
+context add_dot_call
+context add_iterator
+
+Implementation Plan:
+--------------------
+Rewrite so that the context works again
+update Operator_Overload struct to have options...
+
+
 
 
 --------------------

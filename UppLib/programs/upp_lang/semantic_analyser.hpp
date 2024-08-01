@@ -549,19 +549,23 @@ struct Argument_Info
     bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
 };
 
+enum class Context_Change_Info_Type
+{
+    IGNORE_ON_IMPORT, 
+    CONTEXT_OPTION,
+    CAST_OPTION,
+    CUSTOM_OPERATOR
+};
+
 struct Context_Change_Info
 {
-    bool is_valid_for_import;
-    bool is_polymorphic_custom_cast;
+    Context_Change_Info_Type type;
     union {
-        int polymorphic_cast_index;
-        struct {
-            Overload_Key key;
-            bool has_commutative_version;
-            Overload_Key commutative_key;
-        } operator_overload;
-        Context_Option option;
+        Cast_Option cast_option;
+        Context_Option context_option;
+        Custom_Operator_Key key; // Note: On polymorphic cast/commutative binop multiple keys have to be inserted!
     } options;
+    bool has_commutative_version;
 };
 
 enum class Control_Flow

@@ -18,10 +18,10 @@ namespace AST
             break;
         case Node_Type::CONTEXT_CHANGE: {
             auto change = (Context_Change*)node;
-            if (change->type != Context_Change_Type::IMPORT_CONTEXT) {
+            if (change->is_import) {
                 break;
             }
-            dynamic_array_destroy(&change->options.arguments);
+            dynamic_array_destroy(&change->options.setting.arguments);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -196,21 +196,11 @@ namespace AST
         }
         case Node_Type::CONTEXT_CHANGE: {
             auto context = (Context_Change*)node;
-            switch (context->type)
-            {
-            case Context_Change_Type::ADD_OVERLOAD: {
-                FILL_ARRAY(context->options.arguments);
-                break;
+            if (context->is_import) {
+                FILL(context->options.import_path);
             }
-            case Context_Change_Type::SET_OPTION: {
-                FILL_ARRAY(context->options.arguments);
-                break;
-            }
-            case Context_Change_Type::IMPORT_CONTEXT: {
-                FILL(context->options.context_import_path);
-                break;
-            }
-            default: panic("");
+            else {
+                FILL_ARRAY(context->options.setting.arguments);
             }
             break;
         }
@@ -484,21 +474,11 @@ namespace AST
         }
         case Node_Type::CONTEXT_CHANGE: {
             auto context = (Context_Change*)node;
-            switch (context->type)
-            {
-            case Context_Change_Type::ADD_OVERLOAD: {
-                FILL_ARRAY(context->options.arguments);
-                break;
+            if (context->is_import) {
+                FILL(context->options.import_path);
             }
-            case Context_Change_Type::SET_OPTION: {
-                FILL_ARRAY(context->options.arguments);
-                break;
-            }
-            case Context_Change_Type::IMPORT_CONTEXT: {
-                FILL(context->options.context_import_path);
-                break;
-            }
-            default: panic("");
+            else {
+                FILL_ARRAY(context->options.setting.arguments);
             }
             break;
         }
@@ -811,21 +791,11 @@ namespace AST
         }
         case Node_Type::CONTEXT_CHANGE: {
             auto context = (Context_Change*)base;
-            switch (context->type)
-            {
-            case Context_Change_Type::ADD_OVERLOAD: {
-                string_append_formated(str, "ADD_OVERLOAD");
-                break;
-            }
-            case Context_Change_Type::SET_OPTION: {
-                string_append_formated(str, "SET_OPTION");
-                break;
-            }
-            case Context_Change_Type::IMPORT_CONTEXT: {
+            if (context->is_import) {
                 string_append_formated(str, "CONTEXT_IMPORT");
-                break;
             }
-            default: panic("");
+            else {
+                string_append_formated(str, "CONTEXT_CHANGE");
             }
             break;
         }

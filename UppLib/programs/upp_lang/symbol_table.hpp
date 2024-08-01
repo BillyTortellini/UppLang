@@ -39,11 +39,13 @@ enum class Cast_Mode
     AUTO = 1,
     IMPLICIT,
     EXPLICIT,
-    NONE
+    NONE,
+    
+    MAX_ENUM_VALUE
 };
 
 /*
-    Notes on Overload_Key:
+    Notes on Custom_Operator_Key:
     Left + Right types are always stored as base types of pointers for querying.
     For polymorphic overloads the base-struct type is used as the left-value
 
@@ -60,44 +62,94 @@ enum class Cast_Mode
         On normal casts left type and right type are provided.
         On polymorphic casts right type may be error type (If the polymorphic function result depends on the argument type)
 */
-struct Overload_Key
+enum class Custom_Operator_Type
 {
-    // Note: Left and right types are always stored as the base types of pointers + pointer level
-    //       This makes it easier to check if operators already exist and if it's possible to cast
-    Datatype* left_type;
-    bool key_is_type;
-    union {
-        Datatype* right_type;
-        String* id; // For dot-calls
-    } options;
-    Upp_Operator op;
+    BINARY_OPERATOR,
+    UNARY_OPERATOR,
+    ARRAY_ACCESS,
+    CAST,
+    DOT_CALL
 };
 
-Overload_Key overload_key_make(Upp_Operator op, Datatype* left_type, Datatype* right_type);
-Overload_Key overload_key_make_call(Datatype* left_type, String* id);
-
-struct Operator_Overload
+// Note: Left and right types are always stored as the base types of pointers + pointer level.
+//       Polymorphic custom operators make use of the struct-base as the datatype and null for some Datatype* values.
+//       For binop commutativity the custom operator is inserted twice, so only a single lookup will find one of the versions
+struct Custom_Operator_Key
 {
-    int left_pointer_level;
-    int right_pointer_level;
-    bool switch_left_and_right; // For commutative versions
-    bool dot_call_as_member_access;
-    Cast_Mode cast_mode; // Only valid for cast overloads
-
-    bool is_polymorphic;
-    union {
-        ModTree_Function* function;
-        Polymorphic_Function_Base* polymorphic;
+    Custom_Operator_Type type;
+    union
+    {
+        struct {
+            AST::Binop binop;
+            Datatype* left_type;
+            Datatype* right_type;
+        } binop;
+        struct {
+            AST::Unop unop;
+            Datatype* type;
+        } unop;
+        struct {
+            Datatype* array_type;
+        } array_access;
+        struct {
+            Datatype* from_type;
+            Datatype* to_type;
+        } custom_cast;
+        struct {
+            Datatype* datatype;
+            String* id;
+        } dot_call;
     } options;
+};
+
+union Custom_Operator
+{
+    struct {
+        int left_pointer_level;
+        int right_pointer_level;
+        bool switch_left_and_right;
+        ModTree_Function* function;
+    } binop;
+    struct {
+        int pointer_level;
+        ModTree_Function* function;
+    } unop;
+    struct {
+        int array_type_pointer_level;
+        bool is_polymorphic;
+        union {
+            ModTree_Function* function;
+            Polymorphic_Function_Base* poly_base;
+        } options;
+    } array_access;
+    struct {
+        int from_pointer_level;
+        int to_pointer_level;
+        Cast_Mode cast_mode;
+        bool is_polymorphic;
+        union {
+            ModTree_Function* function;
+            Polymorphic_Function_Base* poly_base;
+        } options;
+    } custom_cast;
+    struct {
+        bool dot_call_as_member_access;
+        int pointer_level;
+        bool is_polymorphic;
+        union {
+            ModTree_Function* function;
+            Polymorphic_Function_Base* poly_base;
+        } options;
+    } dot_call;
 };
 
 struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
     Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
-    Cast_Mode cast_mode_settings[CONTEXT_OPTION_CAST_MODE_COUNT];
-    bool boolean_settings[CONTEXT_OPTION_BOOL_COUNT];
-    Hashtable<Overload_Key, Operator_Overload> operator_overloads;
+    Cast_Mode cast_options[(int)Cast_Option::MAX_ENUM_VALUE];
+    bool context_options[(int)Context_Option::MAX_ENUM_VALUE];
+    Hashtable<Custom_Operator_Key, Custom_Operator> custom_operators;
 };
 
 

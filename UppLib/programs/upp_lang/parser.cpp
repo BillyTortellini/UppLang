@@ -747,7 +747,7 @@ namespace Parser
             advance_token();
 
             if (test_keyword(Keyword::IMPORT)) {
-                result->type = Context_Change_Type::IMPORT_CONTEXT;
+                result->is_import = true;
                 advance_token();
 
                 auto path = parse_path_lookup(upcast(result));
@@ -755,36 +755,30 @@ namespace Parser
                     CHECKPOINT_EXIT;
                 }
 
-                result->options.context_import_path = path;
+                result->options.import_path = path;
                 PARSE_SUCCESS(result);
+            }
+            else {
+                result->is_import = false;
+                result->options.setting.arguments = dynamic_array_create_empty<AST::Argument*>(1);
             }
 
             // Check for identifier
-            String* id = compiler.predefined_ids.invalid_symbol_name;
             if (test_token(Token_Type::IDENTIFIER)) {
-                id = get_token()->options.identifier;
+                result->options.setting.id = get_token()->options.identifier;
                 advance_token();
             }
             else {
-                log_error_range_offset("Expected identifier after context keyword", 0);
-            }
-
-            if (id == ids.add_overload) {
-                result->type = Context_Change_Type::ADD_OVERLOAD;
-            }
-            else if (id == ids.set_option) {
-                result->type = Context_Change_Type::SET_OPTION;
-            }
-            else {
-                CHECKPOINT_EXIT;
+                result->options.setting.id = compiler.predefined_ids.invalid_symbol_name;
+                log_error_range_offset("Expected identifier or import after context keyword", 0);
             }
 
             if (!test_parenthesis('(')) {
-                CHECKPOINT_EXIT;
+                log_error_range_offset("Expected parenthesis for context", 0);
+                PARSE_SUCCESS(result);
             }
 
-            result->options.arguments = dynamic_array_create_empty<Argument*>(1);
-            parse_parenthesis_comma_seperated(&result->base, &result->options.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
+            parse_parenthesis_comma_seperated(&result->base, &result->options.setting.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 

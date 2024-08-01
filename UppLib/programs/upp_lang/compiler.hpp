@@ -58,15 +58,18 @@ struct Predefined_IDs
 
     // Context members 
     String* id_import;
-    String* add_overload;
     String* set_option;
+    String* set_cast_option;
+    String* add_binop;
+    String* add_unop;
+    String* add_cast;
+    String* add_array_access;
+    String* add_dot_call;
 
     String* context_option;
     String* context_option_enum_values[(int)Context_Option::MAX_ENUM_VALUE];
-
-    String* upp_operator;
-    String* upp_operator_enum_values[(int)Upp_Operator::MAX_ENUM_VALUE];
-    String* upp_operator_corresponding_tokens[(int)Upp_Operator::MAX_ENUM_VALUE]; // E.g. +, -, *, /
+    String* cast_option;
+    String* cast_option_enum_values[(int)Cast_Option::MAX_ENUM_VALUE];
 };
 
 // Compiler

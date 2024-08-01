@@ -6,26 +6,6 @@
 #include "parser.hpp"
 #include "ast.hpp"
 
-Overload_Key overload_key_make(Upp_Operator op, Datatype* left_type, Datatype* right_type) {
-    Overload_Key result;
-    result.op = op;
-    result.left_type = left_type;
-    result.key_is_type = true;
-    result.options.right_type = right_type;
-    return result;
-}
-
-Overload_Key overload_key_make_call(Datatype* left_type, String* id)
-{
-    Overload_Key result;
-    result.op = Upp_Operator::DOT_CALL;
-    result.left_type = left_type;
-    result.key_is_type = false;
-    result.options.id = id;
-    return result;
-}
-
-
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create()
 {

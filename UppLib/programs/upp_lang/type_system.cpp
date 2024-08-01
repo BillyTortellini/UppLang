@@ -1321,11 +1321,11 @@ void type_system_add_predefined_types(Type_System* system)
         add_enum_member(types->cast_mode, ids.cast_mode_none, 4);
         type_system_finish_enum(types->cast_mode);
 
-        types->upp_operator = type_system_make_enum_empty(ids.upp_operator);
-        for (int i = 1; i < (int)Upp_Operator::MAX_ENUM_VALUE; i++) {
-            add_enum_member(types->upp_operator, ids.upp_operator_enum_values[i], i);
+        types->cast_option = type_system_make_enum_empty(ids.cast_option);
+        for (int i = 1; i < (int)Cast_Option::MAX_ENUM_VALUE; i++) {
+            add_enum_member(types->cast_option, ids.cast_option_enum_values[i], i);
         }
-        type_system_finish_enum(types->upp_operator);
+        type_system_finish_enum(types->cast_option);
 
         types->context_option = type_system_make_enum_empty(ids.context_option);
         for (int i = 1; i < (int)Context_Option::MAX_ENUM_VALUE; i++) {
@@ -1507,18 +1507,40 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_read_bool = type_system_make_function({});
         types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
 
-        types->type_set_option = type_system_make_function({
-                make_param(upcast(types->context_option), "option"), 
-                make_param(upcast(types->cast_mode), "cast_mode") // Type doesn't really matter here
+        types->type_set_cast_option = type_system_make_function({
+                make_param(upcast(types->cast_option), "option"), 
+                make_param(upcast(types->cast_mode), "cast_mode")
             } 
         );
-        types->type_add_overload = type_system_make_function({
-                make_param(upcast(types->upp_operator), "operator"), 
-                make_param(upcast(types->any_type), "function"),
-                make_param(upcast(types->cast_mode), "cast_mode", true),
-                make_param(upcast(types->bool_type), "commutative", true),
-                make_param(upcast(types->string_type), "name", true),
-                make_param(upcast(types->bool_type), "as_member_access", true)
+        types->type_set_option = type_system_make_function({
+                make_param(upcast(types->context_option), "option"), 
+                make_param(upcast(types->bool_type), "value")
+            }
+        );
+        types->type_add_binop = type_system_make_function({
+                make_param(upcast(types->string_type), "binop"), 
+                make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
+                make_param(upcast(types->bool_type), "commutative", true)
+            }
+        );
+        types->type_add_unop = type_system_make_function({
+                make_param(upcast(types->string_type), "unop"), 
+                make_param(upcast(types->any_type), "function") // Type doesn't matter too much here...
+            }
+        );
+        types->type_add_array_access = type_system_make_function({
+                make_param(upcast(types->any_type), "function") // Type doesn't matter too much here...
+            }
+        );
+        types->type_add_dotcall = type_system_make_function({
+                make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
+                make_param(upcast(types->bool_type), "as_member_access", true),
+                make_param(upcast(types->string_type), "name", true)
+            }
+        );
+        types->type_add_cast = type_system_make_function({
+                make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
+                make_param(upcast(types->cast_mode), "cast_mode")
             }
         );
     }
