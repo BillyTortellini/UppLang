@@ -519,10 +519,12 @@ namespace Parser
             );
             auto parenthesis_pos = search_token(
                 parser.state.pos,
-                [](Token* t, void* _unused) -> bool
-                { return t->type == Token_Type::PARENTHESIS &&
-                !t->options.parenthesis.is_open && t->options.parenthesis.type == Parenthesis_Type::PARENTHESIS; },
-                0, true
+                [](Token* t, void* user_data) -> bool
+                { 
+                    Parenthesis_Type p_type = *((Parenthesis_Type*)user_data);
+                    return t->type == Token_Type::PARENTHESIS && !t->options.parenthesis.is_open && t->options.parenthesis.type == p_type; 
+                },
+                &type, true
             );
 
             // Select Recovery point

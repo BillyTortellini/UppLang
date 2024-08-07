@@ -89,11 +89,9 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         assert(symbols != 0, "Just inserted!");
     }
     else {
-        // Overloading is only allowed for functions or a struct + module combo
-        auto symbol_is_struct = [&](Symbol* symbol) -> bool {
-            if (symbol->type != Symbol_Type::TYPE) return false;
-            auto type = symbol->options.type;
-            return type->type == Datatype_Type::STRUCT;
+        // Overloading is only allowed for functions or a type + module combo
+        auto symbol_is_type = [&](Symbol* symbol) -> bool {
+            return symbol->type == Symbol_Type::TYPE;
         };
 
         bool overload_valid = false;
@@ -113,13 +111,13 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
             overload_valid = true;
             for (int i = 0; i < symbols->size; i++) {
                 auto other_symbol = (*symbols)[i];
-                if (!symbol_is_struct(other_symbol)) {
+                if (!symbol_is_type(other_symbol)) {
                     overload_valid = false;
                     break;
                 }
             }
         }
-        else if (symbol_is_struct(new_sym))
+        else if (symbol_is_type(new_sym))
         {
             overload_valid = true;
             for (int i = 0; i < symbols->size; i++) {

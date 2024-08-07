@@ -5,7 +5,7 @@ int_to_bool::(a:int)->bool
 
 main::()
 	// The operator-context allows users to define custom casts
-	context add_overload(.CAST,int_to_bool,.AUTO)
+	context add_cast(int_to_bool,.AUTO)
 	// The supplied function must have exactly one parameter and a return-type
 	
 	value:int=15

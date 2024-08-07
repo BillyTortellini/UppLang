@@ -1,0 +1,38 @@
+
+
+vec2::struct
+	x:int
+	y:int
+
+add::(a:vec2,b:vec2)->vec2
+	return.{a.x+b.x,a.y+b.y}
+
+add_ptr::(a:*vec2,b:*vec2)->*vec2
+	a.x+=b.x
+	a.y+=b.y
+	return a
+
+main::()
+	
+	// Normal binops
+		context add_binop("+",add)
+		a:=vec2.{1,3}
+		b:=vec2.{10,0}
+		c:=a+b
+		assert(c.x==11&&c.y==3)
+	
+	// Binops also work with auto-address of + auto dereference
+		a:=vec2.{1,3}
+		b:=vec2.{5,5}
+		
+		ap:=*a
+		app:=*ap
+		
+		context add_binop("*",add_ptr)
+		
+		c:=app*b
+		print_i32(c.x)
+		print_line()
+		print_i32(c.y)
+		print_line()
+		assert(c.x==6&&c.y==8&&c==*ap)

@@ -376,6 +376,7 @@ struct Predefined_Types
     Datatype_Function* type_add_cast;
     Datatype_Function* type_add_array_access;
     Datatype_Function* type_add_dotcall;
+    Datatype_Function* type_add_iterator;
 };
 
 // TYPE SYSTEM

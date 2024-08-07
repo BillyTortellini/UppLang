@@ -51,6 +51,8 @@ void polymorphic_base_info_destroy(Polymorphic_Base_Info* info);
 bool arguments_check_for_naming_errors(Dynamic_Array<AST::Argument*>& arguments, int* out_unnamed_argument_count = 0);
 Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table);
 void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context);
+bool try_updating_pointer_level(
+    Expression_Cast_Info& cast_info, Datatype* deref_type, int given_pointer_level, int expected_pointer_level, bool value_has_memory_address);
 bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level);
 Argument_Info argument_info_make(
     AST::Expression* expression,
@@ -574,7 +576,7 @@ Function_Progress* function_progress_create_with_modtree_function(
         auto header_workload = progress->header_workload;
         header_workload->progress = progress;
         header_workload->function_node = function_node;
-        header_workload->base.current_symbol_table = progress->function->parameter_table;
+        header_workload->base.current_symbol_table = parameter_table;
         header_workload->base.current_function = progress->function;
         header_workload->base.symbol_access_level = Symbol_Access_Level::INTERNAL;
     }
@@ -638,7 +640,7 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
     // Check for polymorphism
     if (struct_info.parameters.size != 0) {
-        auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node));
+        auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node), body_workload->base.current_pass);
         poly_workload->base.symbol_access_level = access_level;
         poly_workload->body_workload = body_workload;
         body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
@@ -2938,7 +2940,7 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
 
 // Returns not-available if no polymorphic-parameters were found
 Optional<Polymorphic_Base_Info> define_parameter_symbols_and_check_for_polymorphism(
-    Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, Function_Progress* progress = 0, AST::Expression* return_type = 0)
+    Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, Function_Progress* progress = 0, AST::Expression* return_type = 0)
 {
     auto& types = compiler.type_system.predefined_types;
 
@@ -2990,6 +2992,8 @@ Optional<Polymorphic_Base_Info> define_parameter_symbols_and_check_for_polymorph
     const int return_type_index = has_return_type ? parameter_nodes.size : -1;
     const int polymorphic_value_count = comptime_parameter_count + implicit_parameter_infos.size;
     // Switch progress type to polymorphic base
+    base_info.name = name;
+    assert(name != nullptr, "Should be true for non-polymorphic function");
     base_info.return_type_index = return_type_index;
     base_info.return_type_node = return_type;
     base_info.parameter_nodes = parameter_nodes;
@@ -3532,9 +3536,14 @@ void analysis_workload_entry(void* userdata)
         auto& signature_node = header_workload->function_node->options.function.signature->options.function_signature;
         auto& parameter_nodes = signature_node.parameters;
 
+        String* name = nullptr;
+        if (function->symbol != nullptr) {
+            name = function->symbol->id;
+        }
         Optional<Polymorphic_Base_Info> polymorphic_info_opt = define_parameter_symbols_and_check_for_polymorphism(
-            signature_node.parameters, workload->current_symbol_table, progress, 
-            (signature_node.return_value.available ? signature_node.return_value.value : nullptr));
+            signature_node.parameters, workload->current_symbol_table, name, progress, 
+            (signature_node.return_value.available ? signature_node.return_value.value : nullptr)
+        );
 
         if (polymorphic_info_opt.available)
         {
@@ -3655,7 +3664,8 @@ void analysis_workload_entry(void* userdata)
         // Create new symbol-table, define symbols and analyse parameters
         Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, Symbol_Access_Level::GLOBAL);
         workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-        auto poly_info_opt = define_parameter_symbols_and_check_for_polymorphism(struct_node.parameters, parameter_table, 0, 0);
+        assert(workload_poly->body_workload->struct_type->name.available, "Poly structs must have names");
+        auto poly_info_opt = define_parameter_symbols_and_check_for_polymorphism(struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->name.value, 0, 0);
         assert(poly_info_opt.available, "Must be polymorphic");
         auto& info = poly_info_opt.value;
         workload_poly->info = info;
@@ -5212,6 +5222,14 @@ Instanciation_Result instanciate_polymorphic_callable(
     Hashset<Datatype*> matching_helper = hashset_create_pointer_empty<Datatype*>(1);
     SCOPE_EXIT(hashset_destroy(&matching_helper));
     int matched_implicit_parameter_count = 0;
+    AST::Node* pass_creation_node;
+
+    if (poly_callable.is_function) {
+        pass_creation_node = upcast(polymorphic_function_base_to_function_progress(poly_callable.options.polymorphic_function)->header_workload->function_node);
+    }
+    else {
+        pass_creation_node = upcast(poly_callable.options.polymorphic_struct->body_workload->struct_node);
+    }
 
     // Handle struct template instances
     if (!poly_callable.is_function)
@@ -5337,7 +5355,7 @@ Instanciation_Result instanciate_polymorphic_callable(
         }
 
         argument.ignore_during_code_generation = true;
-        const auto& implicit = poly_base.implicit_parameter_infos[i - parameter_nodes.size];
+        const auto& implicit = poly_base.implicit_parameter_infos[argument.parameter_index - parameter_nodes.size];
         analyse_argument_if_not_already_done(&argument, expression_context_make_unknown());
 
         bool was_unavailable = false;
@@ -5378,7 +5396,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             {
                 auto workload = semantic_analyser.current_workload;
                 if (comptime_evaluation_pass == 0) {
-                    comptime_evaluation_pass = analysis_pass_allocate(workload, instanciation_node);
+                    comptime_evaluation_pass = analysis_pass_allocate(workload, pass_creation_node);
                 }
                 RESTORE_ON_SCOPE_EXIT(workload->current_pass, comptime_evaluation_pass);
                 RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
@@ -5464,7 +5482,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             //      e.g. foo :: ($T: Type_Handle, a: T)
             auto workload = semantic_analyser.current_workload;
             if (comptime_evaluation_pass == 0) {
-                comptime_evaluation_pass = analysis_pass_allocate(workload, instanciation_node);
+                comptime_evaluation_pass = analysis_pass_allocate(workload, pass_creation_node);
             }
             RESTORE_ON_SCOPE_EXIT(workload->current_pass, comptime_evaluation_pass);
             RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
@@ -5493,8 +5511,51 @@ Instanciation_Result instanciate_polymorphic_callable(
         //     argument.type = semantic_analyser_analyse_expression_type(argument.value);
         // }
         auto argument_type = analyse_argument_if_not_already_done(argument, context);
-        if (datatype_is_unknown(argument_type)) {
+        if (datatype_is_unknown(argument_type) || argument_type->contains_type_template) { // Not sure about contains type template...
             success = false;
+        }
+
+        // Check pointer level if expression_context wasn't available
+        if (parameter_type->contains_type_template && success)
+        {
+            int argument_pointer_level = 0;
+            Datatype* base_argument_type = datatype_get_pointed_to_type(argument_type, &argument_pointer_level);
+            int parameter_pointer_level = 0;
+            Datatype* base_parameter_type = datatype_get_pointed_to_type(parameter_type, &parameter_pointer_level);
+
+            // We shouldn't update the pointer level in cases where we want to match a template to the pointer type, e.g.
+            //    foo :: (a: $T)
+            //    foo(*x)
+            if (base_parameter_type->type != Datatype_Type::TEMPLATE_PARAMETER) 
+            {
+                if (argument->expression != nullptr) 
+                {
+                    if (try_updating_expression_pointer_level(argument->expression, base_argument_type, argument_pointer_level, parameter_pointer_level)) {
+                        argument_type = get_info(argument->expression)->cast_info.type_afterwards;
+                    }
+                    else {
+                        log_semantic_error("Pointer level of parameter and argument did not match", argument->expression);
+                        success = false;
+                    }
+                }
+                else 
+                {
+                    Expression_Cast_Info cast_info;
+                    cast_info.cast_type = Cast_Type::NO_CAST;
+                    cast_info.deref_count = 0;
+                    cast_info.take_address_of = false;
+                    cast_info.type_afterwards = argument_type;
+                    if (try_updating_pointer_level(cast_info, base_argument_type, argument_pointer_level, parameter_pointer_level, true)) {
+                        argument_type = cast_info.type_afterwards;
+                    }
+                    else {
+                        log_semantic_error("Pointer level of parameter and argument did not match", argument->expression);
+                        success = false;
+                    }
+                }
+
+                argument->argument_type = argument_type;
+            }
         }
 
         // If this is a comptime argument, calculate comptime value
@@ -5709,50 +5770,51 @@ Instanciation_Result instanciate_polymorphic_callable(
     semantic_analyser.current_workload->current_expression = new_info; \
     SCOPE_EXIT(semantic_analyser.current_workload->current_expression = _backup_info);
 
-bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level)
+bool try_updating_pointer_level(Expression_Cast_Info& cast_info, Datatype* deref_type, int given_pointer_level, int expected_pointer_level, bool value_has_memory_address)
 {
     auto context = semantic_analyser.current_workload->current_symbol_table->operator_context;
     bool auto_deref = operator_context_get_context_option(context, Context_Option::AUTO_DEREFERENCE);
     bool auto_address_of = operator_context_get_context_option(context, Context_Option::AUTO_ADDRESS_OF);
 
-    auto info = get_info(expr);
     if (given_pointer_level == expected_pointer_level) {
         return true;
     }
     // We cannot change the pointer level after a cast (Currently)
-    if (info->cast_info.cast_type != Cast_Type::NO_CAST) {
+    if (cast_info.cast_type != Cast_Type::NO_CAST) {
         return false;
     }
     // Remove address of (I don't think this case ever happens, but just in case)
-    if (info->cast_info.take_address_of) {
-        info->cast_info.take_address_of = false;
-        assert(info->cast_info.type_afterwards->type == Datatype_Type::POINTER, "Should be true after address of");
-        info->cast_info.type_afterwards = downcast<Datatype_Pointer>(info->cast_info.type_afterwards)->points_to_type;
+    if (cast_info.take_address_of) {
+        cast_info.take_address_of = false;
+        assert(cast_info.type_afterwards->type == Datatype_Type::POINTER, "Should be true after address of");
+        cast_info.type_afterwards = downcast<Datatype_Pointer>(cast_info.type_afterwards)->points_to_type;
         assert(given_pointer_level > 0, "Should also be true");
         given_pointer_level -= 1;
     }
 
     bool valid = false;
     if (given_pointer_level > expected_pointer_level && auto_deref) {
-        info->cast_info.deref_count += given_pointer_level - expected_pointer_level;
+        cast_info.deref_count += given_pointer_level - expected_pointer_level;
         valid = true;
     }
-    else if (given_pointer_level + 1 == expected_pointer_level &&
-        expression_has_memory_address(expr) &&
-        auto_address_of)
-    {
-        info->cast_info.take_address_of = true;
+    else if (given_pointer_level + 1 == expected_pointer_level && value_has_memory_address && auto_address_of) {
+        cast_info.take_address_of = true;
         valid = true;
     }
 
     // Set type to correct type
     if (valid) {
-        info->cast_info.type_afterwards = deref_type;
+        cast_info.type_afterwards = deref_type;
         for (int i = 0; i < expected_pointer_level; i++) {
-            info->cast_info.type_afterwards = upcast(type_system_make_pointer(info->cast_info.type_afterwards));
+            cast_info.type_afterwards = upcast(type_system_make_pointer(cast_info.type_afterwards));
         }
     }
     return valid;
+};
+
+bool try_updating_expression_pointer_level(AST::Expression* expr, Datatype* deref_type, int given_pointer_level, int expected_pointer_level) {
+    auto info = get_info(expr);
+    return try_updating_pointer_level(info->cast_info, deref_type, given_pointer_level, expected_pointer_level, expression_has_memory_address(expr));
 };
 
 bool expression_is_auto_expression(AST::Expression * expression)
@@ -5887,7 +5949,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 }
                 else {
                     if (!datatype_is_unknown(info->cast_info.type_afterwards)) {
-                        log_semantic_error("Expression is not callable!", upcast(call.expr->options.path_lookup->last));
+                        log_semantic_error("Expression is not callable!", upcast(call.expr));
                         log_error_info_expression_result_type(info->result_type);
                     }
                     else {
@@ -6096,7 +6158,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                             arg_info->argument_type = expr_info->cast_info.type_afterwards;
                         }
                     }
-
                 }
             }
 
@@ -7088,7 +7149,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
         }
         if (!type_is_valid) {
-            log_semantic_error("Type not valid for array access", expr, Parser::Section::WHOLE_NO_CHILDREN);
+            log_semantic_error("Type not valid for array access", access_node.array_expr);
             log_error_info_given_type(initial_array_type);
             EXIT_ERROR(types.error_type);
         }
@@ -7747,6 +7808,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         if (!types_are_valid)
         {
             Custom_Operator_Key key;
+            key.type = Custom_Operator_Type::BINARY_OPERATOR;
             key.options.binop.binop = binop_node.type;
             key.options.binop.left_type = left_type;
             key.options.binop.right_type = right_type;
@@ -8549,7 +8611,7 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression * expressio
 }
 
 
-u64 operator_overload_key_hash(Custom_Operator_Key * key)
+u64 custom_operator_key_hash(Custom_Operator_Key* key)
 {
     int type_as_int = (int)key->type;
     u64 hash = hash_i32(&type_as_int);
@@ -8587,12 +8649,17 @@ u64 operator_overload_key_hash(Custom_Operator_Key * key)
         hash = hash_combine(hash, hash_pointer(dot_call.id->characters)); // Should work because all strings are in string pool
         break;
     }
+    case Custom_Operator_Type::ITERATOR: {
+        auto& iter = key->options.iterator;
+        hash = hash_combine(hash, hash_pointer(iter.datatype));
+        break;
+    }
     default: panic("");
     }
     return hash;
 }
 
-bool operator_overload_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) {
+bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) {
     if (a->type != b->type) {
         return false;
     }
@@ -8616,6 +8683,9 @@ bool operator_overload_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b
     case Custom_Operator_Type::DOT_CALL: {
         return types_are_equal(a->options.dot_call.datatype, b->options.dot_call.datatype) && a->options.dot_call.id == b->options.dot_call.id;
     }
+    case Custom_Operator_Type::ITERATOR: {
+        return types_are_equal(a->options.iterator.datatype, b->options.iterator.datatype);
+    }
     default: panic("");
     }
 
@@ -8633,7 +8703,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     auto parent_context = symbol_table->operator_context;
     if (parent_context == 0)
     {
-        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, operator_overload_key_hash, operator_overload_key_equals);
+        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
         for (int i = 0; i < (int)Context_Option::MAX_ENUM_VALUE; i++) {
             context->context_options[i] = true;
         }
@@ -8645,7 +8715,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     {
         // Copy settings from parent context
         *context = *parent_context; // Shallow copy first, then fill the new hashtable
-        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, operator_overload_key_hash, operator_overload_key_equals);
+        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
         {
             auto iter = hashtable_iterator_create(&parent_context->custom_operators);
             while (hashtable_iterator_has_next(&iter)) {
@@ -8673,7 +8743,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
     };
     auto match_parameters_and_find_arguments = [&](
         Dynamic_Array<AST::Argument*> arguments, Datatype_Function* signature, AST::Node* error_report_node,
-        AST::Argument** out_arg_1 = 0, AST::Argument** out_arg_2 = 0, AST::Argument** out_arg_3 = 0)
+        AST::Argument** out_arg_1 = 0, AST::Argument** out_arg_2 = 0, AST::Argument** out_arg_3 = 0, AST::Argument** out_arg_4 = 0)
     {
         auto& types = compiler.type_system.predefined_types;
 
@@ -8687,9 +8757,10 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
         callable.type = Callable_Type::FUNCTION_POINTER;
         callable.only_named_arguments_after_index = signature->parameters.size;
         callable.parameter_count = signature->parameters.size;
-        callable.options.function_pointer_type = types.type_set_option;
+        callable.options.function_pointer_type = signature;
         if (!argument_nodes_match_to_parameters(arguments, callable, unnamed_argument_count, true, error_report_node, Parser::Section::ENCLOSURE)) {
             success = false;
+            return;
         }
 
         for (int i = 0; i < arguments.size; i++) {
@@ -8704,6 +8775,9 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             }
             else if (arg_index == 2 && out_arg_3 != nullptr) {
                 *out_arg_3 = arguments[i];
+            }
+            else if (arg_index == 3 && out_arg_4 != nullptr) {
+                *out_arg_4 = arguments[i];
             }
         }
     };
@@ -8724,7 +8798,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
 
         // Check if enum value is valid
         i32 enum_value = upp_constant_to_value<i32>(result.value);
-        if (enum_value <= 0 || enum_value >= enum_value) {
+        if (enum_value <= 0 || enum_value >= max_enum_value) {
             log_semantic_error("Enum value is invalid", argument->value);
             success = false;
             return -1;
@@ -8743,7 +8817,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             success = false;
             return false;
         }
-        return upp_constant_to_value<bool>(result.value) == 0;
+        return upp_constant_to_value<bool>(result.value) != 0;
     };
     auto analyse_expression_info_as_function = [&](AST::Expression* expr, Expression_Info* expr_info, int expected_parameter_count, bool expected_return_value) -> ModTree_Function*
     {
@@ -8957,7 +9031,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 context->cast_options[(int)option] = cast_mode;
             }
             else {
-                arguments_analyse_in_unknown_context(arguments, types.type_set_option);
+                arguments_analyse_in_unknown_context(arguments, types.type_set_cast_option);
             }
         }
         else if (change_node->options.setting.id == compiler.predefined_ids.add_binop) 
@@ -8969,11 +9043,14 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             match_parameters_and_find_arguments(arguments, types.type_add_binop, upcast(change_node), &binop_node, &function_node, &commutative_node);
 
             AST::Binop binop = AST::Binop::ADDITION;
-            if (binop_node->value != nullptr) 
+            if (binop_node != nullptr) 
             {
                 if (binop_node->value->type == AST::Expression_Type::LITERAL_READ && binop_node->value->options.literal_read.type == Literal_Type::STRING) 
                 {
+                    auto expr_info = get_info(binop_node->value, true);
+                    expression_info_set_value(expr_info, upcast(types.string_type));
                     argument_set_analysed(binop_node, upcast(types.string_type));
+
                     auto binop_str = binop_node->value->options.literal_read.options.string;
                     if (binop_str->size == 1) 
                     {
@@ -9017,7 +9094,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             ModTree_Function* function = nullptr;
             if (function_node != nullptr) {
                 Expression_Info* info = semantic_analyser_analyse_expression_any(function_node->value, expression_context_make_unknown());
-                argument_set_analysed(binop_node, types.error_type);
+                argument_set_analysed(function_node, types.error_type);
                 function = analyse_expression_info_as_function(function_node->value, info, 2, true);
             }
 
@@ -9063,7 +9140,10 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             {
                 if (unop_node->value->type == AST::Expression_Type::LITERAL_READ && unop_node->value->options.literal_read.type == Literal_Type::STRING) 
                 {
+                    auto expr_info = get_info(unop_node->value, true);
+                    expression_info_set_value(expr_info, upcast(types.string_type));
                     argument_set_analysed(unop_node, upcast(types.string_type));
+
                     auto unop_str = unop_node->value->options.literal_read.options.string;
                     if (unop_str->size == 1) 
                     {
@@ -9239,7 +9319,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             AST::Argument* function_node = nullptr;
             AST::Argument* name_node = nullptr;
             AST::Argument* as_member_access_node = nullptr;
-            match_parameters_and_find_arguments(arguments, types.type_add_array_access, upcast(change_node), &function_node, &as_member_access_node, &name_node);
+            match_parameters_and_find_arguments(arguments, types.type_add_dotcall, upcast(change_node), &function_node, &as_member_access_node, &name_node);
 
             Custom_Operator op;
             Custom_Operator_Key key;
@@ -9285,16 +9365,17 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     op.dot_call.options.function = function;
                     op.dot_call.dot_call_as_member_access = as_member_access;
                     if (function != nullptr) {
-                        key.options.array_access.array_type = datatype_get_pointed_to_type(function->signature->parameters[0].type, &op.array_access.array_type_pointer_level);
+                        key.options.dot_call.datatype = datatype_get_pointed_to_type(function->signature->parameters[0].type, &op.dot_call.pointer_level);
                     }
                 }
                 else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) 
                 {
                     Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base_info;
-                    op.array_access.is_polymorphic = true;
-                    op.array_access.options.poly_base = fn_info->options.polymorphic_function.base;
-                    key.options.array_access.array_type = poly_function_check_first_argument(poly_base, upcast(function_node), &op.array_access.array_type_pointer_level);
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 2);
+                    op.dot_call.is_polymorphic = true;
+                    op.dot_call.options.poly_base = fn_info->options.polymorphic_function.base;
+                    key.options.dot_call.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.dot_call.pointer_level);
+                    key.options.dot_call.id = fn_info->options.polymorphic_function.base->base_info.name;
+                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), poly_base->parameter_nodes.size);
                 }
                 else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
                     success = false;
@@ -9308,9 +9389,11 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             // If name is given, use name instead
             if (name_node != nullptr) 
             {
-                argument_set_analysed(name_node, upcast(types.string_type));
                 if (name_node->value->type == AST::Expression_Type::LITERAL_READ && name_node->value->options.literal_read.type == Literal_Type::STRING) {
                     key.options.dot_call.id = name_node->value->options.literal_read.options.string;
+                    auto expr_info = get_info(name_node->value, true);
+                    expression_info_set_value(expr_info, upcast(types.string_type));
+                    argument_set_analysed(name_node, upcast(types.string_type));
                 }
                 else {
                     log_semantic_error("Dotcall name must be a string literal", upcast(name_node));
@@ -9325,6 +9408,345 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             }
             else {
                 arguments_analyse_in_unknown_context(arguments, types.type_add_dotcall);
+            }
+        }
+        else if (change_node->options.setting.id == compiler.predefined_ids.add_iterator) 
+        {
+            auto& arguments = change_node->options.setting.arguments;
+            AST::Argument* fn_create_node = nullptr;
+            AST::Argument* fn_has_next_node = nullptr;
+            AST::Argument* fn_next_node = nullptr;
+            AST::Argument* fn_value_node = nullptr;
+            match_parameters_and_find_arguments(
+                arguments, types.type_add_iterator, upcast(change_node), &fn_create_node, &fn_has_next_node, &fn_next_node, &fn_value_node
+            );
+
+            Custom_Operator_Key key;
+            key.type = Custom_Operator_Type::ITERATOR;
+            Custom_Operator op;
+            auto& iter = op.iterator;
+            iter.iterable_pointer_level = 0;
+            iter.get_value_pointer_diff = 0;
+            iter.has_next_pointer_diff = 0;
+            iter.next_pointer_diff = 0;
+            iter.is_polymorphic = false; // Depends on the type of the create function expression
+
+            // Note: For polymorphic functions iterator type is not valid...
+            Datatype* iterator_type = types.error_type;
+            int iterator_pointer_level = 0;
+
+            if (fn_create_node != nullptr)
+            {
+                auto function_node = fn_create_node;
+                auto fn_info = semantic_analyser_analyse_expression_any(function_node->value, expression_context_make_unknown());
+                argument_set_analysed(function_node, upcast(types.error_type));
+                if (fn_info->result_type == Expression_Result_Type::FUNCTION) 
+                {
+                    ModTree_Function* function = fn_info->options.function;
+                    iter.options.normal.create = function;
+                    auto& parameters = function->signature->parameters;
+                    if (parameters.size != 1) {
+                        log_semantic_error("Iterator create function must have exactly one argument", upcast(function_node));
+                        success = false;
+                    }
+                    else {
+                        key.options.iterator.datatype = datatype_get_pointed_to_type(parameters[0].type, &iter.iterable_pointer_level);
+                        if (types_are_equal(key.options.iterator.datatype, types.error_type)) {
+                            success = false;
+                        }
+                    }
+
+                    if (function->signature->return_type.available) {
+                        iterator_type = datatype_get_pointed_to_type(function->signature->return_type.value, &iterator_pointer_level);
+                    }
+                    else {
+                        log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) 
+                {
+                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base_info;
+                    iter.is_polymorphic = true;
+                    iter.options.polymorphic.fn_create = fn_info->options.polymorphic_function.base;
+
+                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
+                    key.options.iterator.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.iterator.iterable_pointer_level);
+
+                    // Function must have return type, and return type must be something something...
+                    if (poly_base->return_type_index == -1) {
+                        log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                    success = false;
+                }
+                else {
+                    log_semantic_error("add_iterator argument must be a function", upcast(function_node));
+                    success = false;
+                }
+            }
+
+            if (fn_has_next_node != nullptr)
+            {
+                auto function_node = fn_has_next_node;
+                auto fn_info = semantic_analyser_analyse_expression_any(function_node->value, expression_context_make_unknown());
+                argument_set_analysed(function_node, upcast(types.error_type));
+                if (fn_info->result_type == Expression_Result_Type::FUNCTION) 
+                {
+                    ModTree_Function* function = fn_info->options.function;
+                    if (iter.is_polymorphic) {
+                        log_semantic_error("Expected polymorphic function for has_next function", upcast(function_node));
+                        success = false;
+                    }
+                    else {
+                        iter.options.normal.has_next = function;
+                    }
+
+                    auto& parameters = function->signature->parameters;
+                    if (parameters.size == 1) 
+                    {
+                        int arg_pointer_level = 0;
+                        Datatype* arg_type = datatype_get_pointed_to_type(parameters[0].type, &arg_pointer_level);
+                        if (types_are_equal(arg_type, types.error_type)) {
+                            success = false;
+                        }
+                        else if (types_are_equal(arg_type, iterator_type)) {
+                            // Check if pointer level is valid (For iterators auto-dereference and auto-address-of are always enabled)
+                            iter.has_next_pointer_diff = iterator_pointer_level - arg_pointer_level;
+                            if (iter.has_next_pointer_diff < -1) {
+                                log_semantic_error("The pointer level difference is too high for the has_next function", upcast(function_node));
+                                success = false;
+                            }
+                        }
+                        else {
+                            log_semantic_error("Iterator has_next function parameter type must match iterator_create iterator type", upcast(function_node));
+                            success = false;
+                        }
+
+                        if (function->signature->return_type.available) {
+                            if (!types_are_equal(function->signature->return_type.value, upcast(types.bool_type))) {
+                                log_semantic_error("Iterator has_next function have a boolean return type", upcast(function_node));
+                                success = false;
+                            }
+                        }
+                        else {
+                            log_semantic_error("Iterator has_next function must have a return type", upcast(function_node));
+                            success = false;
+                        }
+                    }
+                    else {
+                        log_semantic_error("Iterator has_next function must have exactly one argument", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) 
+                {
+                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base_info;
+                    if (iter.is_polymorphic) {
+                        iter.options.polymorphic.has_next = fn_info->options.polymorphic_function.base;
+                    }
+                    else {
+                        log_semantic_error("Expected normal (non-polymorphic) function for has_next function", upcast(function_node));
+                        success = false;
+                    }
+
+                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
+                    int arg_pointer_level = 0;
+                    Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(function_node), &arg_pointer_level);
+                    if (types_are_equal(arg_type, types.error_type)) {
+                        success = false;
+                    }
+
+                    // Function must have return type, and return type must be boolean
+                    if (poly_base->return_type_index != -1) {
+                        Datatype* return_type = poly_base->parameters[poly_base->return_type_index].infos.type;
+                        if (!types_are_equal(return_type, upcast(types.bool_type))) {
+                            log_semantic_error("has_next function must return a boolean", upcast(function_node));
+                            success = false;
+                        }
+                    }
+                    else {
+                        log_semantic_error("has_next function must return a boolean", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                    success = false;
+                }
+                else {
+                    log_semantic_error("add_iterator argument must be a function", upcast(function_node));
+                    success = false;
+                }
+            }
+
+            if (fn_next_node != nullptr)
+            {
+                auto function_node = fn_next_node;
+                auto fn_info = semantic_analyser_analyse_expression_any(function_node->value, expression_context_make_unknown());
+                argument_set_analysed(function_node, upcast(types.error_type));
+                if (fn_info->result_type == Expression_Result_Type::FUNCTION) 
+                {
+                    ModTree_Function* function = fn_info->options.function;
+                    if (iter.is_polymorphic) {
+                        log_semantic_error("Expected polymorphic function for next function", upcast(function_node));
+                        success = false;
+                    }
+                    else {
+                        iter.options.normal.next = function;
+                    }
+
+                    auto& parameters = function->signature->parameters;
+                    if (parameters.size == 1) 
+                    {
+                        int arg_pointer_level = 0;
+                        Datatype* arg_type = datatype_get_pointed_to_type(parameters[0].type, &arg_pointer_level);
+                        if (types_are_equal(arg_type, types.error_type)) {
+                            success = false;
+                        }
+                        else if (types_are_equal(arg_type, iterator_type)) {
+                            // Check if pointer level is valid (For iterators auto-dereference and auto-address-of are always enabled)
+                            iter.next_pointer_diff = iterator_pointer_level - arg_pointer_level;
+                            if (iter.next_pointer_diff < -1) {
+                                log_semantic_error("The pointer level difference is too high for the next function", upcast(function_node));
+                                success = false;
+                            }
+                        }
+                        else {
+                            log_semantic_error("Iterator next function parameter type must match iterator_create iterator type", upcast(function_node));
+                            success = false;
+                        }
+                    }
+                    else {
+                        log_semantic_error("Iterator next function must have exactly one argument", upcast(function_node));
+                        success = false;
+                    }
+
+                    if (function->signature->return_type.available) {
+                        log_semantic_error("Iterator next function must not have a return type", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) 
+                {
+                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base_info;
+                    if (iter.is_polymorphic) {
+                        iter.options.polymorphic.next = fn_info->options.polymorphic_function.base;
+                    }
+                    else {
+                        log_semantic_error("Expected normal (non-polymorphic) function for next function", upcast(function_node));
+                        success = false;
+                    }
+
+                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
+                    int arg_pointer_level = 0;
+                    Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(function_node), &arg_pointer_level);
+                    if (types_are_equal(arg_type, types.error_type)) {
+                        success = false;
+                    }
+
+                    // Check return type
+                    if (poly_base->return_type_index != -1) {
+                        log_semantic_error("next function must not return a value", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                    success = false;
+                }
+                else {
+                    log_semantic_error("add_iterator argument must be a function", upcast(function_node));
+                    success = false;
+                }
+            }
+
+            if (fn_value_node != nullptr)
+            {
+                auto function_node = fn_value_node;
+                auto fn_info = semantic_analyser_analyse_expression_any(function_node->value, expression_context_make_unknown());
+                argument_set_analysed(function_node, upcast(types.error_type));
+                if (fn_info->result_type == Expression_Result_Type::FUNCTION) 
+                {
+                    ModTree_Function* function = fn_info->options.function;
+                    if (iter.is_polymorphic) {
+                        log_semantic_error("Expected polymorphic function for get_value function", upcast(function_node));
+                        success = false;
+                    }
+                    else {
+                        iter.options.normal.get_value = function;
+                    }
+
+                    auto& parameters = function->signature->parameters;
+                    if (parameters.size == 1) 
+                    {
+                        int arg_pointer_level = 0;
+                        Datatype* arg_type = datatype_get_pointed_to_type(parameters[0].type, &arg_pointer_level);
+                        if (types_are_equal(arg_type, types.error_type)) {
+                            success = false;
+                        }
+                        else if (types_are_equal(arg_type, iterator_type)) {
+                            // Check if pointer level is valid (For iterators auto-dereference and auto-address-of are always enabled)
+                            iter.get_value_pointer_diff = iterator_pointer_level - arg_pointer_level;
+                            if (iter.get_value_pointer_diff < -1) {
+                                log_semantic_error("The pointer level difference is too high for the value function", upcast(function_node));
+                                success = false;
+                            }
+                        }
+                        else {
+                            log_semantic_error("Iterator value function parameter type must match iterator_create iterator type", upcast(function_node));
+                            success = false;
+                        }
+
+                        if (!function->signature->return_type.available) {
+                            log_semantic_error("iterator get_value function must return a value", upcast(function_node));
+                            success = false;
+                        }
+                    }
+                    else {
+                        log_semantic_error("Iterator value function must have exactly one argument", upcast(function_node));
+                        success = false;
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) 
+                {
+                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base_info;
+                    if (iter.is_polymorphic) {
+                        iter.options.polymorphic.get_value = fn_info->options.polymorphic_function.base;
+                    }
+                    else {
+                        log_semantic_error("Expected normal (non-polymorphic) function for get_value function", upcast(function_node));
+                        success = false;
+                    }
+
+                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
+                    int arg_pointer_level = 0;
+                    Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(function_node), &arg_pointer_level);
+                    if (types_are_equal(arg_type, types.error_type)) {
+                        success = false;
+                    }
+
+                    // Function must have return type, and return type must be boolean
+                    if (poly_base->return_type_index == -1) {
+                        log_semantic_error("get_value function must return a value", upcast(function_node));
+                    }
+                }
+                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                    success = false;
+                }
+                else {
+                    log_semantic_error("add_iterator argument must be a function", upcast(function_node));
+                    success = false;
+                }
+            }
+
+            if (success) {
+                hashtable_insert_element(&context->custom_operators, key, op);
+                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
+                info->options.key = key;
+            }
+            else {
+                arguments_analyse_in_unknown_context(arguments);
             }
         }
         else {
@@ -9695,52 +10117,211 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& loop_info = info->specifics.foreach_loop;
         loop_info.index_variable_symbol = nullptr;
         loop_info.loop_variable_symbol = nullptr;
+        loop_info.is_custom_op = false;
 
         // Create new table for loop variable
         auto symbol_table = symbol_table_create_with_parent(semantic_analyser.current_workload->current_symbol_table, Symbol_Access_Level::INTERNAL);
         loop_info.symbol_table = symbol_table;
 
         // Analyse expression
-        Datatype* expr_type = semantic_analyser_analyse_expression_value(for_loop.expression, expression_context_make_auto_dereference());
+        Datatype* expr_type = semantic_analyser_analyse_expression_value(for_loop.expression, expression_context_make_unknown());
+        int pointer_level = 0;
+        expr_type = datatype_get_pointed_to_type(expr_type, &pointer_level);
         if (datatype_is_unknown(expr_type)) {
             EXIT(Control_Flow::SEQUENTIAL);
         }
 
-        // Analyse iterable 
-        Datatype* element_type = nullptr;
-        if (expr_type->type == Datatype_Type::ARRAY) {
-            element_type = upcast(type_system_make_pointer(downcast<Datatype_Array>(expr_type)->element_type));
-        }
-        else if (expr_type->type == Datatype_Type::SLICE) {
-            element_type = upcast(type_system_make_pointer(downcast<Datatype_Slice>(expr_type)->element_type));
-        }
-        else {
-            log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
-            EXIT(Control_Flow::SEQUENTIAL);
-        }
+        // Create loop variable symbol
+        Symbol* symbol = symbol_table_define_symbol(
+            symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE,
+            upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
+        );
+        loop_info.loop_variable_symbol = symbol;
+        symbol->options.variable_type = types.error_type; // Should be updated by further code
 
-        // Analyse loop variable 
+        // Find loop-variable type
+        int expected_pointer_level = 0;
+        if (expr_type->type == Datatype_Type::SLICE || expr_type->type == Datatype_Type::ARRAY)
         {
-            Symbol* symbol = symbol_table_define_symbol(
-                symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE,
-                upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
-            );
-            loop_info.loop_variable_symbol = symbol;
-            symbol->options.variable_type = element_type;
+            expected_pointer_level = 0;
 
-            if (for_loop.index_variable_definition.available)
-            {
-                // Use current symbol table so collisions are handled
-                RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
-                Symbol* index_symbol = symbol_table_define_symbol(
-                    symbol_table, for_loop.index_variable_definition.value->name, Symbol_Type::VARIABLE,
-                    upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL
-                );
-                loop_info.index_variable_symbol = index_symbol;
-                index_symbol->options.variable_type = upcast(types.i32_type);
+            Datatype* element_type = nullptr;
+            if (expr_type->type == Datatype_Type::ARRAY) {
+                symbol->options.variable_type = upcast(type_system_make_pointer(downcast<Datatype_Array>(expr_type)->element_type));
+            }
+            else if (expr_type->type == Datatype_Type::SLICE) {
+                symbol->options.variable_type = upcast(type_system_make_pointer(downcast<Datatype_Slice>(expr_type)->element_type));
+            }
+            else {
+                log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
+                EXIT(Control_Flow::SEQUENTIAL);
             }
         }
-        // Use new symbol table for condition + increment
+        else
+        {
+            // Check for custom iterator
+            auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+
+            Custom_Operator_Key key;
+            key.type = Custom_Operator_Type::ITERATOR;
+            key.options.iterator.datatype = expr_type;
+            Custom_Operator* op = hashtable_find_element(&operator_context->custom_operators, key);
+
+            // Check for polymorphic overload
+            if (op == nullptr && expr_type->type == Datatype_Type::STRUCT) {
+                auto struct_type = downcast<Datatype_Struct>(expr_type);
+                if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                    key.options.iterator.datatype = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
+                    op = hashtable_find_element(&operator_context->custom_operators, key);
+                }
+            }
+
+            if (op != nullptr) 
+            {
+                expected_pointer_level = op->iterator.iterable_pointer_level;
+                loop_info.is_custom_op = true;
+
+                bool success = true;
+                if (op->iterator.is_polymorphic) 
+                {
+                    // Now I have to instanciate 4 different functions here + check pointer levels I guezz
+                    auto& poly_bases = op->iterator.options.polymorphic;
+
+                    // Prepare instanciation data
+                    Argument_Info iterable_argument = argument_info_make(for_loop.expression, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                    Argument_Info* arg_info_ptr = &iterable_argument;
+                    Array<Argument_Info*> argument_array;
+                    argument_array.data = &arg_info_ptr;
+                    argument_array.size = 1;
+                    Callable_Polymorphic_Info poly_info;
+                    poly_info.is_function = true;
+
+                    // create function
+                    int iterator_pointer_level = 0;
+                    Datatype* iterator_type_base = types.error_type;
+                    Datatype* iterator_type = types.error_type;
+                    {
+                        poly_info.base = &poly_bases.fn_create->base_info;
+                        poly_info.options.polymorphic_function = poly_bases.fn_create;
+                        Instanciation_Result result = instanciate_polymorphic_callable(
+                            poly_info, argument_array, expression_context_make_unknown(), 1, upcast(statement), Parser::Section::KEYWORD
+                        );
+                        if (result.type == Instanciation_Result_Type::FUNCTION) {
+                            loop_info.custom_op.fn_create = result.options.function;
+                            iterator_type_base = result.options.function->signature->return_type.value;
+                            iterator_type = datatype_get_pointed_to_type(iterator_type_base, &iterator_pointer_level); 
+                        }
+                        else {
+                            success = false;
+                        }
+
+                        // Update expression type, as instanciation may change it
+                        expr_type = datatype_get_pointed_to_type(get_info(for_loop.expression)->cast_info.type_afterwards, &pointer_level);
+                    }
+
+                    // has_next function
+                    Argument_Info iterator_argument = argument_info_make(nullptr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                    iterator_argument.argument_type = iterator_type_base;
+                    arg_info_ptr = &iterator_argument;
+                    argument_array.data = &arg_info_ptr;
+                    if (success)
+                    {
+                        poly_info.base = &poly_bases.has_next->base_info;
+                        poly_info.options.polymorphic_function = poly_bases.has_next;
+                        Instanciation_Result result = instanciate_polymorphic_callable(
+                            poly_info, argument_array, expression_context_make_unknown(), 1, upcast(statement), Parser::Section::KEYWORD
+                        );
+                        if (result.type == Instanciation_Result_Type::FUNCTION) {
+                            loop_info.custom_op.fn_has_next = result.options.function;
+                            int arg_pointer_level = 0;
+                            datatype_get_pointed_to_type(result.options.function->signature->parameters[0].type, &arg_pointer_level);
+                            loop_info.custom_op.has_next_pointer_diff = iterator_pointer_level - arg_pointer_level;
+
+                        }
+                        else {
+                            success = false;
+                        }
+                    }
+
+                    // next function
+                    if (success)
+                    {
+                        poly_info.base = &poly_bases.next->base_info;
+                        poly_info.options.polymorphic_function = poly_bases.next;
+                        Instanciation_Result result = instanciate_polymorphic_callable(
+                            poly_info, argument_array, expression_context_make_unknown(), 1, upcast(statement), Parser::Section::KEYWORD
+                        );
+                        if (result.type == Instanciation_Result_Type::FUNCTION) {
+                            loop_info.custom_op.fn_next = result.options.function;
+                            int arg_pointer_level = 0;
+                            datatype_get_pointed_to_type(result.options.function->signature->parameters[0].type, &arg_pointer_level);
+                            loop_info.custom_op.next_pointer_diff = iterator_pointer_level - arg_pointer_level;
+                        }
+                        else {
+                            success = false;
+                        }
+                    }
+
+                    // get_value
+                    if (success)
+                    {
+                        poly_info.base = &poly_bases.get_value->base_info;
+                        poly_info.options.polymorphic_function = poly_bases.get_value;
+                        Instanciation_Result result = instanciate_polymorphic_callable(
+                            poly_info, argument_array, expression_context_make_unknown(), 1, upcast(statement), Parser::Section::KEYWORD
+                        );
+                        if (result.type == Instanciation_Result_Type::FUNCTION) {
+                            loop_info.custom_op.fn_get_value = result.options.function;
+                            int arg_pointer_level = 0;
+                            datatype_get_pointed_to_type(result.options.function->signature->parameters[0].type, &arg_pointer_level);
+                            loop_info.custom_op.get_value_pointer_diff = iterator_pointer_level - arg_pointer_level;
+                        }
+                        else {
+                            success = false;
+                        }
+                    }
+                }
+                else {
+                    loop_info.custom_op.fn_create = op->iterator.options.normal.create;
+                    loop_info.custom_op.fn_has_next = op->iterator.options.normal.has_next;
+                    loop_info.custom_op.fn_next = op->iterator.options.normal.next;
+                    loop_info.custom_op.fn_get_value = op->iterator.options.normal.get_value;
+                    loop_info.custom_op.get_value_pointer_diff = op->iterator.get_value_pointer_diff;
+                    loop_info.custom_op.next_pointer_diff = op->iterator.next_pointer_diff;
+                    loop_info.custom_op.has_next_pointer_diff = op->iterator.has_next_pointer_diff;
+                }
+
+                if (success) {
+                    semantic_analyser_register_function_call(loop_info.custom_op.fn_create);
+                    semantic_analyser_register_function_call(loop_info.custom_op.fn_get_value);
+                    semantic_analyser_register_function_call(loop_info.custom_op.fn_next);
+                    semantic_analyser_register_function_call(loop_info.custom_op.fn_has_next);
+                    symbol->options.variable_type = loop_info.custom_op.fn_get_value->signature->return_type.value;
+                }
+            }
+            else
+            {
+                log_semantic_error("Cannot loop over given datatype", for_loop.expression);
+                log_error_info_given_type(expr_type);
+            }
+        }
+        
+        if (!try_updating_expression_pointer_level(for_loop.expression, expr_type, pointer_level, expected_pointer_level)) {
+            log_semantic_error("Pointer level invalid for this iterable type", for_loop.expression);
+        }
+
+        // Create index variable if available
+        if (for_loop.index_variable_definition.available)
+        {
+            // Use current symbol table so collisions are handled
+            RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
+            Symbol* index_symbol = symbol_table_define_symbol(
+                symbol_table, for_loop.index_variable_definition.value->name, Symbol_Type::VARIABLE,
+                upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL
+            );
+            loop_info.index_variable_symbol = index_symbol;
+            index_symbol->options.variable_type = upcast(types.i32_type);
+        }
         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
 
         // Analyse body
@@ -10269,7 +10850,7 @@ void semantic_analyser_reset()
         symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
         symbols.type_any = define_type_symbol("Any", upcast(types.any_type));
         symbols.type_empty = define_type_symbol("_", upcast(types.empty_struct_type));
-        symbols.type_empty = define_type_symbol("void_pointer", upcast(types.void_pointer_type));
+        symbols.type_void_pointer = define_type_symbol("void_pointer", upcast(types.void_pointer_type));
 
         auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(

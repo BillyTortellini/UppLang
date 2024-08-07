@@ -10,6 +10,7 @@ Player::struct
 main::()
 	// With the auto-dereference option, values are automatically dereferenced
 	// if it's known from the context that a dereference is required
+	// Per default this is set to true
 	
 	i:=15
 	ip:=*i

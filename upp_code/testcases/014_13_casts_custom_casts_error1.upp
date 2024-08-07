@@ -4,4 +4,4 @@ foo::(a:int)
 
 main::()
 	// Signature must have return type
-	context add_overload(.CAST,foo,.IMPLICIT)
+	context add_cast(foo,.IMPLICIT)

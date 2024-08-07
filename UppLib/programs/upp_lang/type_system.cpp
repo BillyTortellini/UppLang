@@ -1538,6 +1538,13 @@ void type_system_add_predefined_types(Type_System* system)
                 make_param(upcast(types->string_type), "name", true)
             }
         );
+        types->type_add_iterator = type_system_make_function({
+                make_param(upcast(types->any_type), "create"),
+                make_param(upcast(types->any_type), "has_next"),
+                make_param(upcast(types->any_type), "next"),
+                make_param(upcast(types->any_type), "value"),
+            }
+        );
         types->type_add_cast = type_system_make_function({
                 make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
                 make_param(upcast(types->cast_mode), "cast_mode")

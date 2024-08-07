@@ -4,4 +4,4 @@ foo::()->int
 
 main::()
 	// Exactly one argument is required
-	context add_overload(.CAST,foo,.IMPLICIT)
+	context add_cast(foo,.IMPLICIT)

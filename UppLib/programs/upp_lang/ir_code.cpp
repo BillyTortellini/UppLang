@@ -1465,7 +1465,11 @@ void ir_generator_work_through_defers(IR_Code_Block* ir_block, int defer_to_inde
 void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Code_Block* loop_block)
 {
     Loop_Increment* loop_increment = hashtable_find_element(&ir_generator.loop_increment_instructions, loop_block);
-    assert(loop_increment != 0, "");
+    if (loop_increment == nullptr) {
+        assert(loop_block->base.parent->type == AST::Node_Type::STATEMENT, "Must be while block");
+        assert(downcast<AST::Statement>(loop_block->base.parent)->type == AST::Statement_Type::WHILE_STATEMENT, "");
+        return; // While loop does not have increment instructions
+    }
 
     if (loop_increment->type == Loop_Type::FOR_LOOP) {
         ir_generator_generate_statement(loop_increment->options.increment_statement, ir_block);
@@ -1484,13 +1488,33 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         dynamic_array_push_back(&ir_block->instructions, increment);
 
         // Update pointer
-        IR_Instruction element_instr;
-        element_instr.type = IR_Instruction_Type::ADDRESS_OF;
-        element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
-        element_instr.options.address_of.destination = foreach.loop_variable_access;
-        element_instr.options.address_of.source = foreach.iterable_access;
-        element_instr.options.address_of.options.index_access = foreach.index_access;
-        dynamic_array_push_back(&ir_block->instructions, element_instr);
+        if (foreach.is_custom_iterator)
+        {
+            IR_Instruction next_call;
+            next_call.type = IR_Instruction_Type::FUNCTION_CALL;
+            next_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            next_call.options.call.destination = foreach.loop_variable_access;
+            next_call.options.call.options.function = foreach.next_function;
+            next_call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+            IR_Data_Access argument_access = foreach.iterator_access;
+            for (int i = 0; i < foreach.iterator_deref_value; i++) {
+                argument_access = ir_data_access_create_dereference(ir_block, argument_access);
+            }
+            if (foreach.iterator_deref_value == -1) {
+                argument_access = ir_data_access_create_address_of(ir_block, foreach.iterator_access);
+            }
+            dynamic_array_push_back(&next_call.options.call.arguments, argument_access);
+            dynamic_array_push_back(&ir_block->instructions, next_call);
+        }
+        else {
+            IR_Instruction element_instr;
+            element_instr.type = IR_Instruction_Type::ADDRESS_OF;
+            element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
+            element_instr.options.address_of.destination = foreach.loop_variable_access;
+            element_instr.options.address_of.source = foreach.iterable_access;
+            element_instr.options.address_of.options.index_access = foreach.index_access;
+            dynamic_array_push_back(&ir_block->instructions, element_instr);
+        }
     }
 }
 
@@ -1748,13 +1772,28 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         auto iterable_type = ir_data_access_get_type(&iterable_access);
 
         // Create and initialize loop variable
+        Datatype* iterator_type = nullptr;
+        IR_Data_Access iterator_access; // Only valid for custom iterators
         IR_Data_Access loop_variable_access = ir_data_access_create_intermediate(ir_block, upcast(loop_info.loop_variable_symbol->options.variable_type));
         {
             hashtable_insert_element(&ir_generator.variable_mapping, foreach_loop.loop_variable_definition, loop_variable_access);
 
             // Initialize
-            if (iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE)
+            if (loop_info.is_custom_op) {
+                iterator_type = loop_info.custom_op.fn_create->signature->return_type.value;
+                iterator_access = ir_data_access_create_intermediate(ir_block, iterator_type);
+                IR_Instruction iter_create_instr;
+                iter_create_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+                iter_create_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                iter_create_instr.options.call.destination = iterator_access;
+                iter_create_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_create);
+                iter_create_instr.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+                dynamic_array_push_back(&iter_create_instr.options.call.arguments, iterable_access);
+                dynamic_array_push_back(&ir_block->instructions, iter_create_instr);
+            }
+            else
             {
+                assert(iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE, "Other types not supported currently");
                 IR_Instruction element_instr;
                 element_instr.type = IR_Instruction_Type::ADDRESS_OF;
                 element_instr.options.address_of.type = IR_Instruction_Address_Of_Type::ARRAY_ELEMENT;
@@ -1762,9 +1801,6 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 element_instr.options.address_of.source = iterable_access;
                 element_instr.options.address_of.options.index_access = index_access;
                 dynamic_array_push_back(&ir_block->instructions, element_instr);
-            }
-            else {
-                panic("Other types not supported yet");
             }
         }
 
@@ -1775,6 +1811,12 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             increment.options.foreach_loop.index_access = index_access;
             increment.options.foreach_loop.iterable_access = iterable_access;
             increment.options.foreach_loop.loop_variable_access = loop_variable_access;
+            increment.options.foreach_loop.is_custom_iterator = loop_info.is_custom_op;
+            if (loop_info.is_custom_op) {
+                increment.options.foreach_loop.iterator_access = iterator_access;
+                increment.options.foreach_loop.next_function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_next);
+                increment.options.foreach_loop.iterator_deref_value = loop_info.custom_op.next_pointer_diff;
+            }
             hashtable_insert_element(&ir_generator.loop_increment_instructions, foreach_loop.body_block, increment);
         }
 
@@ -1795,6 +1837,25 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 // Create condition code
                 IR_Code_Block* condition_code = ir_code_block_create(ir_block->function);
                 IR_Data_Access condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
+                if (loop_info.is_custom_op) 
+                {
+                    IR_Instruction has_next_call;
+                    has_next_call.type = IR_Instruction_Type::FUNCTION_CALL;
+                    has_next_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                    has_next_call.options.call.destination = condition_access;
+                    has_next_call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_has_next);
+                    has_next_call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+                    IR_Data_Access argument_access = iterator_access;
+                    for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
+                        argument_access = ir_data_access_create_dereference(condition_code, argument_access);
+                    }
+                    if (loop_info.custom_op.has_next_pointer_diff == -1) {
+                        argument_access = ir_data_access_create_address_of(condition_code, iterator_access);
+                    }
+                    dynamic_array_push_back(&has_next_call.options.call.arguments, argument_access);
+                    dynamic_array_push_back(&condition_code->instructions, has_next_call);
+                }
+                else 
                 {
                     IR_Data_Access array_size_access;
                     if (iterable_type->type == Datatype_Type::ARRAY) {
@@ -1822,7 +1883,27 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 instr.options.while_instr.condition_code = condition_code;
                 instr.options.while_instr.condition_access = condition_access;
                 instr.options.while_instr.code = ir_code_block_create(ir_block->function);
+
+                // Create get_value call for custom operators
+                if (loop_info.is_custom_op) {
+                    IR_Instruction get_value_call;
+                    get_value_call.type = IR_Instruction_Type::FUNCTION_CALL;
+                    get_value_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                    get_value_call.options.call.destination = loop_variable_access;
+                    get_value_call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_get_value);
+                    get_value_call.options.call.arguments = dynamic_array_create_empty<IR_Data_Access>(1);
+                    IR_Data_Access argument_access = iterator_access;
+                    for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
+                        argument_access = ir_data_access_create_dereference(condition_code, argument_access);
+                    }
+                    if (loop_info.custom_op.has_next_pointer_diff == -1) {
+                        argument_access = ir_data_access_create_address_of(condition_code, iterator_access);
+                    }
+                    dynamic_array_push_back(&get_value_call.options.call.arguments, argument_access);
+                    dynamic_array_push_back(&instr.options.while_instr.code->instructions, get_value_call);
+                }
                 ir_generator_generate_block(instr.options.while_instr.code, foreach_loop.body_block);
+
                 dynamic_array_push_back(&ir_block->instructions, instr);
 
                 // Push increment instruction at end of while block

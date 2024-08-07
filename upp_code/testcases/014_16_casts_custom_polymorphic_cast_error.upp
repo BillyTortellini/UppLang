@@ -5,4 +5,4 @@ foo::(a:$T,x:int)->bool
 
 
 main::()
-	context add_overload(.CAST,foo,.AUTO)
+	context add_cast(foo,.AUTO)

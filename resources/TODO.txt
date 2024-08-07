@@ -1,186 +1,27 @@
 
-
-
-Bachelor Thesis:
- * Options to do graph manipulation (Creates a new frame)
-    - 2. Triangle flip
-    - 3. Normal edge flip (start or end)
-    - 4. Remove triangle
- * Options to see difference between frames 
- * Implement simple algorithm in gui 
-    - Spawn random points (Number)
-    - Create random crossing free path (Random next vertex + backtracking if not possible)
-    - Create random compatible path
-
-
-DONE:
- * 2D Camera
- * Draw Lines (Rectangles)
- * Draw Points (Vertices)
- * Adding points and lines with mouse clicks
- * Snap lines to points
- * Save and load (+ Window position) (And load last saved on startup...)
-
-Generator:
- * Uniforms should have distinct locations, because names will suck
- * Variable interpolation
-
-
-
 TODO:
-    * Iterators
+ * Add testcases for custom operators
 
-DONE:
-    * Binop Assignments +=, -=
-    * #instanciate
-    * Literals float and int should auto-cast to larger/smaller or signed/unsigned values if the context allows for it...
-    * Fix testcases with new Syntax =*, :=*, ==*
-    * New pointer assignment syntax a: *int =* i, ip :=* something
-    * Context cast-settings should also use function-call syntax, e.g. context change_cast_setting(.INTEGER_SIZE_UPCAST, .AUTO)
-    * Rework cast overloads to use the same things
-    * Make all testcases work again!
-    * Context better editor compatability, e.g. context auto-complete
-    * Polymorphic overloads for []
-    * Reworked polymorphic instanciation (Simpler + still works)
-    
-    * Overloads for [] 
-    * Overloads for - and !
-    * Operator overloads should work with context import
-    * If commutative and types aren't equal, then add overload as commutative (Default should be false)
-    * Add all binary operators
-    * Implement commutative for operators
-    * Adding overloads with Strings, e.g. "+", "-"
-    * Calculate comptime value of binary operations should not work with overloads, same with casts!
-
-    * Symbol overload should work for modules, and modules are only accessible in path-lookups/specific scenarios?
-    * Context-change imports should work for custom_casts
-    * Bug-Fix: y:Optional(int)=optional_make_failure(T=int) --> Should work, problem with setting implicit values with named parameters
-    * Polymorphic casts
-    * Add custom casts 
-    * Remove raw_casts from AST
-    * Pointer to u64 and back
-    * Syntax editor auto-complete
-    * Pointer_to_bool cast
-    * Check that auto-dereference works correctly for assignments
-    * Implement all casting related options
-    * Context changes in code-blocks (Not just module)
-    * Importing context-changes from other modules
-
-
-
-
-
-
-Operator context design:
-------------------------
-Operations that should depend on the context:
- * Casts (Valid/Invalid casts)
-    operator cast integer_size_upcast = something
-    operator cast add(cast_function, can_fail=true?-->Causes panic I guess)
- * pointer dereferencing/auto address of (Kinda casting like)
-    operator cast auto_dereference = true
-    operator cast auto_address_of = false
- * Importing operators from other scopes (Probably just goes through things and set's them again) 
-    operator import Dynamic_Array~Operations
- * Operator Overloading
-    - Binary operations +, -, *, /, %, ==, <, <=
-    - Unary operations (Probably only - for math operations)
-    - Array access [] (For datastructures)
- * dot-calls
- * Iterators
-
-
-* Loops + iterators
-What types of loops do I want?
-
-while condition
-for x:=1; x < 12; x+=1 // Do I have semicolon?
-for a in array ? // In as keyword?
-
-* While loop (Already done)
-* for loop
-* foreach loop
-
-Implementation order:
- * For loop first (3 conditions with semicolons?)
- * Foreach loop with arrays and slices
- * Add overloads to foreach loop
-
-For loop:
-    * Definition
-        x := 1
-        x: int = 1
-    * Loop condition
-        x < 15
-    * Loop increment
-        it.advance()
-        i += 1
-        i = i * 2
-       
-    Loop increment is a statement, but it can only be one of the following
-     - Assignment
-     - Binop Assignment
-     - Expression
-
-    How do i parse the statements?
-
-Things to consider:
-    * IR-Code needs to define the loop variable
-    * IR-Code needs continue + break + defers to work correctly in loop
-
-
-DO:
-    * At continue the increment code has to be executed
-    * At end of for loop the increment code has to be executed
-
-DONE:
-    * Maybe I don't want to create a symbol if id is invalid_symbol_name in parser...
-    * Continue and break need to work with for
-    * Loop variable needs own symbol table
-    * Continue and break need to find for loop
-
-
-Foreach:
-foreach a in b
-foreach a, b in c
-    something with a
-
-Depending on the iterator, a may be a pointer or a value
-
-1. Implement for slices and arrays
-2. Implement overloading
-3. Implement overloading for templated functions/types
-
-
-Overloading for iterators:
-I need following functions:
- * Create from Iterable
- * Next value function
- * Has next function
- * Value function
-
-// Context Considerations:
-Let's look at all the overload types
+Custom operators testcases:
  * Binop
  * Unop
  * Array_Access
- * Cast
  * Dot_Call
  * Iterator
+ * Cast --> DONE
 
-context set_option()
-context set_cast_option()
-context add_binop
-context add_unop
-context add_array_access
-context add_cast
-context add_dot_call
-context add_iterator
+DONE:
+ * Fix testcases
+ * Fix parser indefinite loop
+ * Fix syntax editor colors
+ * Add function color to dot call
+ * Add add_iterator to syntax_editor
+ * Check why IR-Generator generates _ registers
+ * Iterators for polymorphic structs
+ * Fix polymorphics with auto-address of and dereference
+    -> On foreach loop instanciation re-check pointer levels...
 
-Implementation Plan:
---------------------
-Rewrite so that the context works again
-update Operator_Overload struct to have options...
+
 
 
 
@@ -189,10 +30,10 @@ update Operator_Overload struct to have options...
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Loops + iterators
-    * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters)
-
+    * Custom iterators
+    * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters + maybe pointer level on datatype?)
     * C-Function calling rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
+
     * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
     * Incremental compiler
 
@@ -212,11 +53,13 @@ Additional:
     * Literal overhaul
     * Using on structs
     * Location information (Mostly for logging)
+    * Debugger
 
 -----------------
 Code improvements:
     * Deduplication of comptime instances when the generated ir-code is the same
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+    * IR_Code generates empty-struct type registers for some Statement_Type::Expression_Statement
 
 -----------------
 Missing Test-Cases:

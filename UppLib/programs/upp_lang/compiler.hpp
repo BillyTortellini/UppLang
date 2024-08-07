@@ -65,6 +65,7 @@ struct Predefined_IDs
     String* add_cast;
     String* add_array_access;
     String* add_dot_call;
+    String* add_iterator;
 
     String* context_option;
     String* context_option_enum_values[(int)Context_Option::MAX_ENUM_VALUE];

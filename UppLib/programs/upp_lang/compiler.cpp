@@ -232,6 +232,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.add_cast = add_id("add_cast");
             ids.add_array_access = add_id("add_array_access");
             ids.add_dot_call = add_id("add_dot_call");
+            ids.add_iterator = add_id("add_iterator");
 
             ids.cast_option = add_id("Cast_Option");
             ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");

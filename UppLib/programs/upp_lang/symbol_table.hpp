@@ -68,7 +68,8 @@ enum class Custom_Operator_Type
     UNARY_OPERATOR,
     ARRAY_ACCESS,
     CAST,
-    DOT_CALL
+    DOT_CALL,
+    ITERATOR
 };
 
 // Note: Left and right types are always stored as the base types of pointers + pointer level.
@@ -99,6 +100,9 @@ struct Custom_Operator_Key
             Datatype* datatype;
             String* id;
         } dot_call;
+        struct {
+            Datatype* datatype; // Iterable type
+        } iterator;
     } options;
 };
 
@@ -141,6 +145,28 @@ union Custom_Operator
             Polymorphic_Function_Base* poly_base;
         } options;
     } dot_call;
+    struct {
+        int iterable_pointer_level;
+        int has_next_pointer_diff; // Either -1 (Address-Of), 0 (Same pointer level) or >= 1
+        int next_pointer_diff;
+        int get_value_pointer_diff;
+
+        bool is_polymorphic; 
+        union {
+            struct {
+                ModTree_Function* create;
+                ModTree_Function* has_next;
+                ModTree_Function* next;
+                ModTree_Function* get_value;
+            } normal;
+            struct {
+                Polymorphic_Function_Base* fn_create;
+                Polymorphic_Function_Base* has_next;
+                Polymorphic_Function_Base* next;
+                Polymorphic_Function_Base* get_value;
+            } polymorphic;
+        } options;
+    } iterator;
 };
 
 struct Workload_Operator_Context_Change;

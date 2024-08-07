@@ -17,7 +17,7 @@ Color::enum
 	BLUE
 
 main::()
-	context set_option(.ARRAY_TO_SLICE,.AUTO)
+	context set_cast_option(.ARRAY_TO_SLICE,.AUTO)
 	//
 		The following Operations also have shorthand notations so
 		that the type is not necessary anymore

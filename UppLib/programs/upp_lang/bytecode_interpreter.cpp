@@ -764,14 +764,14 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             i32 size = *(i32*)argument_start;
             assert(size != 0, "");
             void* alloc_data = malloc(size);
-            //logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
+            // logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
             memory_copy(thread->return_register, &alloc_data, 8);
             break;
         }
         case Hardcoded_Type::FREE_POINTER: {
             byte* argument_start = thread->stack_pointer + i->op2 - 8;
             void* free_data = *(void**)argument_start;
-            //logg("Interpreter Free pointer: %p\n", free_data);
+            // logg("Interpreter Free pointer: %p\n", free_data);
             free(free_data);
             *(void**)argument_start = (void*)1;
             break;

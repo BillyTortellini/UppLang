@@ -923,6 +923,7 @@ void code_completion_find_suggestions()
             code_completion_add_and_rank(*ids.add_cast, partially_typed);
             code_completion_add_and_rank(*ids.add_dot_call, partially_typed);
             code_completion_add_and_rank(*ids.add_array_access, partially_typed);
+            code_completion_add_and_rank(*ids.add_iterator, partially_typed);
         }
     }
 
@@ -1828,6 +1829,25 @@ void syntax_highlighting_set_symbol_colors(AST::Node* base)
     Symbol* symbol = code_query_get_ast_node_symbol(base);
     if (symbol != 0) {
         syntax_highlighting_set_section_text_color(base, Parser::Section::IDENTIFIER, symbol_type_to_color(symbol->type));
+    }
+
+    // Highlight dot-calls
+    if (base->type == AST::Node_Type::EXPRESSION) 
+    {
+        auto expr = downcast<AST::Expression>(base);
+        if (expr->type == AST::Expression_Type::MEMBER_ACCESS) 
+        {
+            auto pass = code_query_get_analysis_pass(base);
+            if (pass != 0)
+            {
+                auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
+                if (info != nullptr) {
+                    if (info->result_type == Expression_Result_Type::DOT_CALL || info->specifics.member_access.dot_call_function != nullptr) {
+                        syntax_highlighting_set_section_text_color(base, Parser::Section::END_TOKEN, Syntax_Color::FUNCTION);
+                    }
+                }
+            }
+        }
     }
 
     // Do syntax highlighting for children

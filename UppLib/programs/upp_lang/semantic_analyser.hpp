@@ -280,6 +280,8 @@ struct Polymorphic_Instance_Info
 
 struct Polymorphic_Base_Info
 {
+    String* name; // Either struct or function name
+
     // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
     Array<Polymorphic_Parameter> parameters;
     // Order in which arguments need to be evaluated in for instanciation
@@ -593,6 +595,17 @@ struct Statement_Info
             Symbol_Table* symbol_table;
             Symbol* loop_variable_symbol;
             Symbol* index_variable_symbol; // May be null
+
+            bool is_custom_op;
+            struct {
+                int has_next_pointer_diff; // Either -1 (Address-Of), 0 (Same pointer level) or >= 1
+                int next_pointer_diff;
+                int get_value_pointer_diff;
+                ModTree_Function* fn_create;
+                ModTree_Function* fn_has_next;
+                ModTree_Function* fn_next;
+                ModTree_Function* fn_get_value;
+            } custom_op;
         } foreach_loop;
     } specifics;
 };
@@ -687,7 +700,6 @@ struct Predefined_Symbols
     Symbol* type_f32;
     Symbol* type_f64;
     Symbol* type_byte;
-    Symbol* type_void;
 
     // Symbols for 'compiler' provided structs
     Symbol* type_string;
@@ -695,6 +707,7 @@ struct Predefined_Symbols
     Symbol* type_type_information;
     Symbol* type_any;
     Symbol* type_empty;
+    Symbol* type_void_pointer;
 
     // Symbols for hardcoded types
     Symbol* hardcoded_type_info;

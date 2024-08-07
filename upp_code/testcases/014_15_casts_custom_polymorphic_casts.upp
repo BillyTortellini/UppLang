@@ -9,7 +9,7 @@ is_available::(opt:Optional($T))->bool
 	return opt.available
 
 main::()
-	context add_overload(.CAST,is_available,.AUTO)
+	context add_cast(is_available,.AUTO)
 	value:Optional(int)=.{15,true}
 	
 	if value
