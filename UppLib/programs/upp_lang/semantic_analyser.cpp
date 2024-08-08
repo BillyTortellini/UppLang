@@ -5797,9 +5797,24 @@ bool try_updating_pointer_level(Expression_Cast_Info& cast_info, Datatype* deref
         cast_info.deref_count += given_pointer_level - expected_pointer_level;
         valid = true;
     }
-    else if (given_pointer_level + 1 == expected_pointer_level && value_has_memory_address && auto_address_of) {
-        cast_info.take_address_of = true;
-        valid = true;
+    else if (given_pointer_level < expected_pointer_level ) 
+    {
+        int difference = expected_pointer_level - given_pointer_level;
+        // Check if we can solve the pointer level with the deref_count
+        if (cast_info.deref_count >= difference) {
+            cast_info.deref_count -= difference;
+            valid = true;
+        }
+        else {
+            given_pointer_level += cast_info.deref_count;
+            cast_info.deref_count = 0;
+
+            // Note: I think value_has_memor_address is probably wrong here, as it could refer to the pointer value
+            if (given_pointer_level + 1 == expected_pointer_level && value_has_memory_address && auto_address_of) {
+                cast_info.take_address_of = true;
+                valid = true;
+            }
+        }
     }
 
     // Set type to correct type
@@ -7674,24 +7689,34 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             bool left_requires_context = expression_is_auto_expression(binop_node.left);
             bool right_requires_context = expression_is_auto_expression(binop_node.right);
 
-            Expression_Context default_context = is_pointer_comparison ? expression_context_make_unknown() : expression_context_make_auto_dereference();
+            Expression_Context context = expression_context_make_unknown();
             if ((left_requires_context && right_requires_context) || (!left_requires_context && !right_requires_context)) {
-                left_type = semantic_analyser_analyse_expression_value(binop_node.left, default_context);
-                right_type = semantic_analyser_analyse_expression_value(binop_node.right, default_context);
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, context);
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, context);
+                if (!is_pointer_comparison) {
+                    left_type = datatype_get_pointed_to_type(left_type, &left_type_pointer_level);
+                    right_type = datatype_get_pointed_to_type(right_type, &right_type_pointer_level);
+                }
             }
             else if (left_requires_context && !right_requires_context) {
-                right_type = semantic_analyser_analyse_expression_value(binop_node.right, default_context);
+                right_type = semantic_analyser_analyse_expression_value(binop_node.right, context);
+                if (!is_pointer_comparison) {
+                    right_type = datatype_get_pointed_to_type(right_type, &right_type_pointer_level);
+                }
                 left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type));
+                if (!is_pointer_comparison) {
+                    left_type = datatype_get_pointed_to_type(left_type, &left_type_pointer_level);
+                }
             }
             else if (!left_requires_context && right_requires_context) {
-                left_type = semantic_analyser_analyse_expression_value(binop_node.left, default_context);
+                left_type = semantic_analyser_analyse_expression_value(binop_node.left, context);
+                if (!is_pointer_comparison) {
+                    left_type = datatype_get_pointed_to_type(left_type, &left_type_pointer_level);
+                }
                 right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
-            }
-
-            // Dereference types
-            if (!is_pointer_comparison) {
-                left_type = datatype_get_pointed_to_type(left_type, &left_type_pointer_level);
-                right_type = datatype_get_pointed_to_type(right_type, &right_type_pointer_level);
+                if (!is_pointer_comparison) {
+                    right_type = datatype_get_pointed_to_type(right_type, &right_type_pointer_level);
+                }
             }
         }
 
@@ -9118,7 +9143,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     Custom_Operator_Key commutative_key = key;
                     commutative_key.options.binop.left_type = key.options.binop.right_type;
                     commutative_key.options.binop.right_type = key.options.binop.left_type;
-                    hashtable_insert_element(&context->custom_operators, key, op);
+                    hashtable_insert_element(&context->custom_operators, commutative_key, commutative_op);
                 }
 
                 info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;

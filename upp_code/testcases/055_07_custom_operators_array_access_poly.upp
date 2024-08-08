@@ -1,0 +1,43 @@
+
+Player::struct
+	name:String
+	age:int
+
+Holder::struct(T:Type_Handle)
+	values:[32]T
+	size:int
+
+push_back::(holder:*Holder($T),value:T)
+	if holder.size>=holder.values.size
+		return
+	
+	holder.values[holder.size]=value
+	holder.size+=1
+
+at::(holder:*Holder($T),index:int)->*T
+	return holder.values[index]
+
+main::()
+	context add_array_access(at)
+	
+	pete:=Player.{"Pete",47}
+	frank:=Player.{"Frank",12}
+	cory:=Player.{"Cory",23}
+	
+	holder:Holder(Player)
+	holder.size=0
+	push_back(holder,pete)
+	push_back(holder,frank)
+	push_back(holder,cory)
+	
+	hp:=*holder
+	hpp:=*hp
+	
+	x:=holder[0]
+	y:=hp[1]
+	z:=hpp[2]
+	
+	assert(x.age==47)
+	assert(y.age==12)
+	assert(z.age==23)
+	

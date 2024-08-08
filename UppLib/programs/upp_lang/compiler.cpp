@@ -762,6 +762,18 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         test_case_make("054_22_polymorphic_lambdas.upp", true),
         test_case_make("054_23_polymorphic_comptime_function_pointer.upp", true),
         test_case_make("054_24_polymorphic_bake.upp", true),
+
+        test_case_make("055_01_custom_operators_binop.upp", true),
+        test_case_make("055_02_custom_operators_binop_errors.upp", false),
+        test_case_make("055_03_custom_operators_unop.upp", true),
+        test_case_make("055_04_custom_operators_unop_errors.upp", false),
+        test_case_make("055_05_custom_operators_array_access.upp", true),
+        test_case_make("055_06_custom_operators_array_access_error.upp", false),
+        test_case_make("055_07_custom_operators_array_access_poly.upp", true),
+        test_case_make("055_08_custom_operators_dot_call.upp", true),
+        test_case_make("055_09_custom_operators_dot_call_poly.upp", true),
+        test_case_make("055_10_custom_operators_iterator.upp", true),
+        test_case_make("055_11_custom_operators_iterator_poly.upp", true),
     };
     int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
 

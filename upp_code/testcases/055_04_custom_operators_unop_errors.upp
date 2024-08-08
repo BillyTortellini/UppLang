@@ -1,0 +1,9 @@
+
+Node::struct
+	value:int
+
+no_return::(a:Node)
+	
+
+main::()
+	context add_unop("-",no_return)

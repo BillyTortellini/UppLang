@@ -1,0 +1,30 @@
+Player::struct
+	name:String
+	age:int
+
+Holder::struct(T:Type_Handle,C:int)
+	values:[C]T
+	size:int
+
+push_back::(holder:*Holder($T,$C),value:T)
+	if holder.size>=C
+		return
+	
+	holder.values[holder.size]=value
+	holder.size+=1
+
+main::()
+	context add_dot_call(push_back)
+	
+	frank:=Player.{"Frank",100}
+	pete:=Player.{"Pete",12}
+	clara:=Player.{"Clara",32}
+	
+	holder:Holder(Player,16)
+	holder.size=0
+	
+	holder.push_back(frank)
+	holder.push_back(pete)
+	holder.push_back(clara)
+	
+	assert(holder.values[1].age==12)

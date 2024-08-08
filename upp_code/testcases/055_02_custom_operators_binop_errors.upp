@@ -1,0 +1,6 @@
+
+single_arg::(a:int)->int
+	return-a
+
+main::()
+	context add_binop("+",single_arg)

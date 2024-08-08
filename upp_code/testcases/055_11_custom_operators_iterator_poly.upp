@@ -1,0 +1,23 @@
+
+import"../dynamic_array.upp"
+context import Dynamic_Array~Context
+
+main::()
+	values:=Dynamic_Array~create(T=int)
+	defer
+		values.destroy()
+	
+	values.push_back(10)
+	values.push_back(20)
+	values.push_back(100)
+	
+	//Double values
+	for v in values
+		v*=2
+	
+	//Sum up
+	sum:=0
+	for v in values
+		sum+=v
+	
+	assert(sum==260)

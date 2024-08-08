@@ -1,0 +1,35 @@
+
+Holder::struct
+	values:[32]int
+	size:int
+
+push_back::(holder:*Holder,value:int)
+	if holder.size>=holder.values.size
+		return
+	
+	holder.values[holder.size]=value
+	holder.size+=1
+
+at::(holder:*Holder,index:int)->*int
+	return holder.values[index]
+
+main::()
+	context add_array_access(at)
+	
+	holder:Holder
+	holder.size=0
+	push_back(holder,1)
+	push_back(holder,17)
+	push_back(holder,3)
+	
+	hp:=*holder
+	hpp:=*hp
+	
+	x:=holder[0]
+	y:=hp[1]
+	z:=hpp[2]
+	
+	assert(x==1)
+	assert(y==17)
+	assert(z==3)
+	

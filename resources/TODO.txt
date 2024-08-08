@@ -2,14 +2,6 @@
 TODO:
  * Add testcases for custom operators
 
-Custom operators testcases:
- * Binop
- * Unop
- * Array_Access
- * Dot_Call
- * Iterator
- * Cast --> DONE
-
 DONE:
  * Fix testcases
  * Fix parser indefinite loop

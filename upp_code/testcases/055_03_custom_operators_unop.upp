@@ -1,0 +1,20 @@
+
+Node::struct
+	value:int
+
+negate::(a:*Node)->Node
+	return.{-a.value}
+
+not::(a:Node)->Node
+	return.{a.value*2}
+
+main::()
+	context add_unop("-",negate)
+	context add_unop("!",not)
+	
+	n:=Node.{5}
+	a:=-n
+	b:=!n
+	
+	assert(a.value==-5)
+	assert(b.value==10)

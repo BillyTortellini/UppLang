@@ -1,0 +1,30 @@
+
+Range::struct
+	max_value:int
+	index:int
+
+Range::module
+	make::(max_value:int)->Range
+		return.{max_value,0}
+	
+	has_next::(range:Range)->bool
+		return range.index<range.max_value
+	
+	next::(range:*Range)
+		range.index+=1
+	
+	get_value::(range:Range)->int
+		return range.index
+	
+	Context::module
+		context add_iterator(make,has_next,next,get_value)
+
+main::()
+	context import Range~Context
+	
+	sum:=0
+	for i in 10
+		sum+=i
+	
+	print_i32(sum)
+	assert(sum==45)

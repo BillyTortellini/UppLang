@@ -12,6 +12,12 @@ add_ptr::(a:*vec2,b:*vec2)->*vec2
 	a.y+=b.y
 	return a
 
+add_weird::(a:*int,b:bool)->vec2
+	val:=&a
+	if b
+		val+=1
+	return.{val,val}
+
 main::()
 	
 	// Normal binops
@@ -31,8 +37,13 @@ main::()
 		context add_binop("*",add_ptr)
 		
 		c:=app*b
-		print_i32(c.x)
-		print_line()
-		print_i32(c.y)
-		print_line()
 		assert(c.x==6&&c.y==8&&c==*ap)
+	
+	// Binops don't have to be symmetric
+		context add_binop("+",add_weird,commutative=true)
+		i:=7
+		x:=i+true
+		y:=false+i
+		print_i32(y.x)
+		assert(x.x==8&&x.y==8)
+		assert(y.x==7&&y.y==7)
