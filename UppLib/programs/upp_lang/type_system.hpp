@@ -157,8 +157,8 @@ struct Datatype_Slice {
 
 struct Datatype_Struct {
     Datatype base;
-    Dynamic_Array<Struct_Member> members;
     AST::Structure_Type struct_type;
+    Dynamic_Array<Struct_Member> members;
     Struct_Member tag_member; // Only valid for unions
 
     Optional<String*> name;

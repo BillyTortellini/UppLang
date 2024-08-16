@@ -1,28 +1,18 @@
 
-TODO:
- * Add testcases for custom operators
 
-DONE:
- * Fix testcases
- * Fix parser indefinite loop
- * Fix syntax editor colors
- * Add function color to dot call
- * Add add_iterator to syntax_editor
- * Check why IR-Generator generates _ registers
- * Iterators for polymorphic structs
- * Fix polymorphics with auto-address of and dereference
-    -> On foreach loop instanciation re-check pointer levels...
+Implementation Strategy:
+ - New Variant type
+ - Syntax + Parsing
+ - Implement Subtypes for simple variants
+ - Struct-Variants (Variants inside struct should work)
 
-
-
-
+ - Rework type system (Const + pointer level per type, base_struct, enum linear values + start value)
 
 
 --------------------
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Custom iterators
     * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters + maybe pointer level on datatype?)
     * C-Function calling rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
 
@@ -61,55 +51,6 @@ Missing Test-Cases:
     * Imports
 
 -----------------
-
-
-
-
-
-DONE:
- * Being able to set implicit parameters as named arguments ...
- * Correct polymorphic matching (Check if all types have matched, none were missed e.g.)
- * Add type-safety for polymorphic functions (IN WORK)
- * Remove polymorphic information from normal function parameters, add to polymorphic base, add new symbol for polymorphic parameter
- * Remove workloads for function parameters, just search for Symbol-Read references and set them to valid, similar to type-parameters
- * Comptime function pointers need to work
- * Polymorphic return type
- * Anonymous structs inside structs with templates --> kinda need to share the template
-
-
-Example code: Hashtable
-
-Hashable :: struct(T: Type)
-    equals: (a: T, b: T) -> bool
-    hash: (a: T) -> u64
-
-Hash_Entry :: struct(T: Type)
-    hash: u64
-    valid: bool
-    entry: T
-    next: *Hash_Entry(T)
-
-Hashtable :: struct(H: Hashable($T), default_value: T)
-    entries: []T
-    element_count: int
-
-Result :: struct($T, Status_Type: Type = bool)
-    value: T
-    success: Status_Type
-
-find :: (table: Hashtable($H), value: H.T) -> *H.T
-    hash := H.hash(value)
-    index := something(hash)
-    if index != -1
-        return entry[i]
-    return *entry[i]
-
-create :: (capacity: int) -> Hashtable($H)
-
-x, success := Hashtable~find(table, 15)
-    
-
-
 
 
 
