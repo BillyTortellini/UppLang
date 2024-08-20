@@ -64,8 +64,8 @@ namespace Parser
 
     void initialize()
     {
-        parser.allocated_nodes = dynamic_array_create_empty<AST::Node*>(32);
-        parser.new_error_messages = dynamic_array_create_empty<Error_Message>(1);
+        parser.allocated_nodes = dynamic_array_create<AST::Node*>(32);
+        parser.new_error_messages = dynamic_array_create<Error_Message>(1);
         reset();
     }
 
@@ -326,7 +326,7 @@ namespace Parser
     {
         // IDEA: Maybe I can move this whole function to source_code, since it could be used outside of parsing
         // PERF: The parenthesis stack can be held in the parser, and just be resetted here
-        Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create_empty<Parenthesis>(1);
+        Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create<Parenthesis>(1);
         SCOPE_EXIT(dynamic_array_destroy(&parenthesis_stack));
 
         Token_Index pos = start;
@@ -667,8 +667,8 @@ namespace Parser
             code_block = allocate_base<Code_Block>(AST::upcast(statement), Node_Type::CODE_BLOCK);
             code_block->base.range = node_range_make_block(block_index);
             code_block->base.bounding_range = node_range_make_block(block_index);
-            code_block->statements = dynamic_array_create_empty<Statement*>(1);
-            code_block->context_changes = dynamic_array_create_empty<Context_Change*>(1);
+            code_block->statements = dynamic_array_create<Statement*>(1);
+            code_block->context_changes = dynamic_array_create<Context_Change*>(1);
             code_block->block_id = optional_make_failure<String*>();
             parse_source_block(AST::upcast(code_block), block_index, Block_Context::STATEMENTS);
             return AST::upcast(statement);
@@ -762,7 +762,7 @@ namespace Parser
             }
             else {
                 result->is_import = false;
-                result->options.setting.arguments = dynamic_array_create_empty<AST::Argument*>(1);
+                result->options.setting.arguments = dynamic_array_create<AST::Argument*>(1);
             }
 
             // Check for identifier
@@ -793,9 +793,9 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
-            result->symbols = dynamic_array_create_empty<Definition_Symbol*>(1);
-            result->types = dynamic_array_create_empty<AST::Expression*>(1);
-            result->values = dynamic_array_create_empty<AST::Expression*>(1);
+            result->symbols = dynamic_array_create<Definition_Symbol*>(1);
+            result->types = dynamic_array_create<AST::Expression*>(1);
+            result->values = dynamic_array_create<AST::Expression*>(1);
 
             // Parse comma seperated list of identifiers
             auto found_definition_operator = [](Token& token) -> bool {
@@ -902,8 +902,8 @@ namespace Parser
             {
                 // Assume that it's a multi-assignment
                 result->type = Statement_Type::ASSIGNMENT;
-                result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
-                result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
+                result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.is_pointer_assign = false;
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
@@ -929,8 +929,8 @@ namespace Parser
             else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER))
             {
                 result->type = Statement_Type::ASSIGNMENT;
-                result->options.assignment.left_side = dynamic_array_create_empty<Expression*>(1);
-                result->options.assignment.right_side = dynamic_array_create_empty<Expression*>(1);
+                result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
+                result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.is_pointer_assign = test_operator(Operator::ASSIGN_POINTER);
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
@@ -1040,7 +1040,7 @@ namespace Parser
                     while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
                     {
                         auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
-                        implicit_else_block->statements = dynamic_array_create_empty<Statement*>(1);
+                        implicit_else_block->statements = dynamic_array_create<Statement*>(1);
                         implicit_else_block->block_id = optional_make_failure<String*>();
 
                         auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
@@ -1271,7 +1271,7 @@ namespace Parser
                     result->type = Statement_Type::SWITCH_STATEMENT;
                     auto& switch_stat = result->options.switch_statement;
                     switch_stat.condition = parse_expression_or_error_expr(&result->base);
-                    switch_stat.cases = dynamic_array_create_empty<Switch_Case*>(1);
+                    switch_stat.cases = dynamic_array_create<Switch_Case*>(1);
                     switch_stat.label = parse_block_label(switch_stat.condition);
                     parse_follow_block(AST::upcast(result), Block_Context::SWITCH);
                     PARSE_SUCCESS(result);
@@ -1332,14 +1332,14 @@ namespace Parser
             return upcast(parse_statement(parent));
         }
 
-        Enum_Member* parse_enum_member(Node* parent)
+        Enum_Member_Node* parse_enum_member(Node* parent)
         {
             if (!test_token(Token_Type::IDENTIFIER)) {
                 return 0;
             }
 
             CHECKPOINT_SETUP;
-            auto result = allocate_base<Enum_Member>(parent, Node_Type::ENUM_MEMBER);
+            auto result = allocate_base<Enum_Member_Node>(parent, Node_Type::ENUM_MEMBER);
             result->name = get_token(0)->options.identifier;
             advance_token();
             if (test_operator(Operator::DEFINE_COMPTIME))
@@ -1472,8 +1472,8 @@ namespace Parser
         // logg("Create new block parse for: %d %p\n", block_index.block_index, block_parse);
         block_parse->context = context;
         block_parse->index = block_index;
-        block_parse->items = dynamic_array_create_empty<Line_Item>(1);
-        block_parse->child_block_parses = dynamic_array_create_empty<Block_Parse*>(1);
+        block_parse->items = dynamic_array_create<Line_Item>(1);
+        block_parse->child_block_parses = dynamic_array_create<Block_Parse*>(1);
         block_parse->parent_parse = parser.state.block_parse;
         block_parse->line_count = index_value(block_index)->lines.size;
         block_parse->parent = parent;
@@ -1565,8 +1565,8 @@ namespace Parser
         if (follow_block_opt.available) {
             result->base.range = node_range_make_block(follow_block_opt.value);
         }
-        result->statements = dynamic_array_create_empty<Statement*>(1);
-        result->context_changes = dynamic_array_create_empty<Context_Change*>(1);
+        result->statements = dynamic_array_create<Statement*>(1);
+        result->context_changes = dynamic_array_create<Context_Change*>(1);
         result->block_id = parse_block_label(related_expression);
         parse_follow_block(AST::upcast(result), Block_Context::STATEMENTS);
         PARSE_SUCCESS(result);
@@ -1625,7 +1625,7 @@ namespace Parser
         }
 
         Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
-        path->parts = dynamic_array_create_empty<Symbol_Lookup*>(1);
+        path->parts = dynamic_array_create<Symbol_Lookup*>(1);
 
         while (true)
         {
@@ -1704,7 +1704,7 @@ namespace Parser
         {
             advance_token();
             result->type = Expression_Type::INSTANCIATE;
-            result->options.instanciate.arguments = dynamic_array_create_empty<AST::Argument*>(1);
+            result->options.instanciate.arguments = dynamic_array_create<AST::Argument*>(1);
             if (!test_parenthesis('(')) {
                 CHECKPOINT_EXIT;
             }
@@ -1749,6 +1749,13 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
+        if (test_keyword(Keyword::CONST_KEYWORD)) {
+            advance_token();
+            result->type = Expression_Type::CONST_TYPE;
+            result->options.const_type = parse_expression_or_error_expr(&result->base);
+            PARSE_SUCCESS(result);
+        }
+
         // Path/Identifier
         if (test_token(Token_Type::IDENTIFIER))
         {
@@ -1774,7 +1781,7 @@ namespace Parser
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
-                init.arguments = dynamic_array_create_empty<Argument*>(1);
+                init.arguments = dynamic_array_create<Argument*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
@@ -1783,7 +1790,7 @@ namespace Parser
                 result->type = Expression_Type::ARRAY_INITIALIZER;
                 auto& init = result->options.array_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
-                init.values = dynamic_array_create_empty<Expression*>(1);
+                init.values = dynamic_array_create<Expression*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
                 PARSE_SUCCESS(result);
             }
@@ -1822,7 +1829,7 @@ namespace Parser
         {
             result->type = Expression_Type::FUNCTION_SIGNATURE;
             auto& signature = result->options.function_signature;
-            signature.parameters = dynamic_array_create_empty<Parameter*>(1);
+            signature.parameters = dynamic_array_create<Parameter*>(1);
             signature.return_value.available = false;
             parse_parenthesis_comma_seperated(&result->base, &signature.parameters, parse_parameter, Parenthesis_Type::PARENTHESIS);
 
@@ -1878,8 +1885,8 @@ namespace Parser
             test_keyword_offset(Keyword::UNION, 0))
         {
             result->type = Expression_Type::STRUCTURE_TYPE;
-            result->options.structure.members = dynamic_array_create_empty<Definition*>(1);
-            result->options.structure.parameters = dynamic_array_create_empty<Parameter*>(1);
+            result->options.structure.members = dynamic_array_create<Definition*>(1);
+            result->options.structure.parameters = dynamic_array_create<Parameter*>(1);
             if (test_keyword_offset(Keyword::STRUCT, 0)) {
                 result->options.structure.type = AST::Structure_Type::STRUCT;
             }
@@ -1901,16 +1908,16 @@ namespace Parser
         }
         if (test_keyword_offset(Keyword::ENUM, 0)) {
             result->type = Expression_Type::ENUM_TYPE;
-            result->options.enum_members = dynamic_array_create_empty<Enum_Member*>(1);
+            result->options.enum_members = dynamic_array_create<Enum_Member_Node*>(1);
             advance_token();
             parse_follow_block(AST::upcast(result), Block_Context::ENUM);
             PARSE_SUCCESS(result);
         }
         if (test_keyword_offset(Keyword::MODULE, 0)) {
             auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
-            module->definitions = dynamic_array_create_empty<Definition*>(1);
-            module->import_nodes = dynamic_array_create_empty<Import*>(1);
-            module->context_changes = dynamic_array_create_empty<Context_Change*>(1);
+            module->definitions = dynamic_array_create<Definition*>(1);
+            module->import_nodes = dynamic_array_create<Import*>(1);
+            module->context_changes = dynamic_array_create<Context_Change*>(1);
             advance_token();
             parse_follow_block(AST::upcast(module), Block_Context::MODULE);
             node_finalize_range(AST::upcast(module));
@@ -1938,7 +1945,7 @@ namespace Parser
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_success(child);
-                init.arguments = dynamic_array_create_empty<Argument*>(1);
+                init.arguments = dynamic_array_create<Argument*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
@@ -1947,7 +1954,7 @@ namespace Parser
                 result->type = Expression_Type::ARRAY_INITIALIZER;
                 auto& init = result->options.array_initializer;
                 init.type_expr = optional_make_success(child);
-                init.values = dynamic_array_create_empty<Expression*>(1);
+                init.values = dynamic_array_create<Expression*>(1);
                 parse_parenthesis_comma_seperated(&result->base, &init.values, parse_expression, Parenthesis_Type::BRACKETS);
                 PARSE_SUCCESS(result);
             }
@@ -1982,7 +1989,7 @@ namespace Parser
             result->type = Expression_Type::FUNCTION_CALL;
             auto& call = result->options.call;
             call.expr = child;
-            call.arguments = dynamic_array_create_empty<Argument*>(1);
+            call.arguments = dynamic_array_create<Argument*>(1);
             parse_parenthesis_comma_seperated<Argument>(&result->base, &call.arguments, parse_argument, Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
@@ -2054,7 +2061,7 @@ namespace Parser
         Expression* start_expr = parse_single_expression(parent);
         if (start_expr == 0) return 0;
 
-        Dynamic_Array<Binop_Link> links = dynamic_array_create_empty<Binop_Link>(1);
+        Dynamic_Array<Binop_Link> links = dynamic_array_create<Binop_Link>(1);
         SCOPE_EXIT(dynamic_array_destroy(&links));
         while (true)
         {
@@ -2144,9 +2151,9 @@ namespace Parser
         auto& code = parser.state.parsed_code->code;
         parser.state.pos = token_index_make_root(code);
         root = allocate_base<Module>(0, Node_Type::MODULE);
-        root->definitions = dynamic_array_create_empty<Definition*>(1);
-        root->import_nodes = dynamic_array_create_empty<Import*>(1);
-        root->context_changes = dynamic_array_create_empty<Context_Change*>(1);
+        root->definitions = dynamic_array_create<Definition*>(1);
+        root->import_nodes = dynamic_array_create<Import*>(1);
+        root->context_changes = dynamic_array_create<Context_Change*>(1);
 
         // Parse root
         parse_source_block(AST::upcast(root), block_index_make_root(code), Block_Context::MODULE);
@@ -2255,7 +2262,7 @@ namespace Parser
             }
             for (int i = 0; i < block_parse->items.size; i++) {
                 auto& item = block_parse->items[i].node;
-                dynamic_array_push_back(&expression->options.enum_members, AST::downcast<AST::Enum_Member>(item));
+                dynamic_array_push_back(&expression->options.enum_members, AST::downcast<AST::Enum_Member_Node>(item));
             }
             break;
         }
@@ -2329,7 +2336,7 @@ namespace Parser
         Parsed_Code* parsed_code = new Parsed_Code;
         parsed_code->block_parses = hashtable_create_empty<Block_Index, Block_Parse*>(1, block_index_hash, block_index_equal);
         parsed_code->code = code;
-        parsed_code->error_messages = dynamic_array_create_empty<Error_Message>(1);
+        parsed_code->error_messages = dynamic_array_create<Error_Message>(1);
         parsed_code->timestamp.node_index = 0;
 
         parser_prepare_parsing(parsed_code);
@@ -2399,7 +2406,7 @@ namespace Parser
 
         Block_Difference new_diff;
         new_diff.block_index = block_index.block_index;
-        new_diff.line_states = dynamic_array_create_empty<Line_Status>((*block_parse)->line_count);
+        new_diff.line_states = dynamic_array_create<Line_Status>((*block_parse)->line_count);
         for (int i = 0; i < (*block_parse)->line_count; i++) {
             Line_Status line_state;
             line_state.is_original = true;
@@ -2527,7 +2534,7 @@ namespace Parser
     void execute_incremental(Parsed_Code* parsed_code, Code_History* history)
     {
         // Get changes since last sync
-        Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
+        Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>(1);
         SCOPE_EXIT(dynamic_array_destroy(&changes));
         auto now = history_get_timestamp(history);
         history_get_changes_between(history, parsed_code->timestamp, now, &changes);
@@ -2541,8 +2548,8 @@ namespace Parser
 
         Source_Difference differences;
         differences.parsed_code = parsed_code;
-        differences.removed_blocks = dynamic_array_create_empty<Block_Index>(1);
-        differences.block_differences = dynamic_array_create_empty<Block_Difference>(1);
+        differences.removed_blocks = dynamic_array_create<Block_Index>(1);
+        differences.block_differences = dynamic_array_create<Block_Difference>(1);
         SCOPE_EXIT(
             for (int i = 0; i < differences.block_differences.size; i++) {
                 dynamic_array_destroy(&differences.block_differences[i].line_states);
@@ -2658,7 +2665,7 @@ namespace Parser
                 Line_Item reparse_item;
                 int new_line_start;
             };
-            Array<Original_Item_Change> original_item_changes = array_create_empty<Original_Item_Change>(block_parse->items.size);
+            Array<Original_Item_Change> original_item_changes = array_create<Original_Item_Change>(block_parse->items.size);
             SCOPE_EXIT(array_destroy(&original_item_changes));
             for (int i = 0; i < block_parse->items.size; i++) {
                 original_item_changes[i].needs_reparse = true;
@@ -2745,7 +2752,7 @@ namespace Parser
             parser.state.block_parse = block_parse;
             int line_index = 0;
             auto block = index_value(block_parse->index);
-            Dynamic_Array<Line_Item> new_line_items = dynamic_array_create_empty<Line_Item>(1);
+            Dynamic_Array<Line_Item> new_line_items = dynamic_array_create<Line_Item>(1);
             SCOPE_EXIT(dynamic_array_destroy(&new_line_items));
             while (line_index < block->lines.size)
             {
@@ -2799,7 +2806,7 @@ namespace Parser
                     bool was_deleted;
                     bool was_changed;
                 };
-                Array<Original_Line_Change> original_line_changes = array_create_empty<Original_Line_Change>(block_parse->line_count);
+                Array<Original_Line_Change> original_line_changes = array_create<Original_Line_Change>(block_parse->line_count);
                 SCOPE_EXIT(array_destroy(&original_line_changes));
                 for (int i = 0; i < original_line_changes.size; i++) {
                     original_line_changes[i].was_deleted = true;

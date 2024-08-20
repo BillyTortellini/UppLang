@@ -27,8 +27,8 @@ template<typename T>
 Block_Allocator<T> block_allocator_create_empty(int initial_capacity) 
 {
     Block_Allocator<T> result;
-    result.memory = dynamic_array_create_empty<Array<Block_Node<T>>>(1);
-    dynamic_array_push_back(&result.memory, array_create_empty<Block_Node<T>>(math_maximum(initial_capacity, 0)));
+    result.memory = dynamic_array_create<Array<Block_Node<T>>>(1);
+    dynamic_array_push_back(&result.memory, array_create<Block_Node<T>>(math_maximum(initial_capacity, 0)));
     block_allocator_reset(&result);
 
     result.current_block = &result.memory[0][0];
@@ -75,7 +75,7 @@ T* block_allocator_allocate(Block_Allocator<T>* allocator)
     // Check if we need to allocate
     if (curr->next == 0)
     {
-        Array<Block_Node<T>> new_memory = array_create_empty<Block_Node<T>>(allocator->allocated_block_count * 2);
+        Array<Block_Node<T>> new_memory = array_create<Block_Node<T>>(allocator->allocated_block_count * 2);
         allocator->allocated_block_count = allocator->allocated_block_count * 3;
         dynamic_array_push_back(&allocator->memory, new_memory);
         Block_Node<T>* prev = allocator->current_block;

@@ -149,7 +149,7 @@ Input_Replay input_replay_create()
     Input_Replay result;
     result.code_state_initial = string_create_empty(1);
     result.code_state_afterwards = string_create_empty(1);
-    result.recorded_inputs = dynamic_array_create_empty<Key_Message>(1);
+    result.recorded_inputs = dynamic_array_create<Key_Message>(1);
     result.currently_recording = false;
     result.currently_replaying = false;
     return result;
@@ -315,7 +315,7 @@ void syntax_editor_synchronize_tokens()
 {
     auto& editor = syntax_editor;
     // Get changes since last sync
-    Dynamic_Array<Code_Change> changes = dynamic_array_create_empty<Code_Change>(1);
+    Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>(1);
     SCOPE_EXIT(dynamic_array_destroy(&changes));
     auto now = history_get_timestamp(&editor.history);
     history_get_changes_between(&editor.history, editor.last_token_synchronized, now, &changes);
@@ -325,7 +325,7 @@ void syntax_editor_synchronize_tokens()
     }
 
     // Find out which lines were changed
-    auto line_changes = dynamic_array_create_empty<Line_Index>(1);
+    auto line_changes = dynamic_array_create<Line_Index>(1);
     SCOPE_EXIT(dynamic_array_destroy(&line_changes));
     auto helper_add_delete_line_item = [&line_changes](Line_Index new_line_index, bool is_insert) -> void {
         for (int i = 0; i < line_changes.size; i++) {
@@ -433,7 +433,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             }
         }
 
-        auto error_ranges = dynamic_array_create_empty<Token_Range>(1);
+        auto error_ranges = dynamic_array_create<Token_Range>(1);
         SCOPE_EXIT(dynamic_array_destroy(&error_ranges));
 
         // Semantic Analysis Errors
@@ -827,7 +827,7 @@ void code_completion_find_suggestions()
             // Search for dot-calls
             int pointer_level = 0;
             auto deref_type = datatype_get_pointed_to_type(type, &pointer_level);
-            Datatype* poly_base_type = compiler.type_system.predefined_types.error_type;
+            Datatype* poly_base_type = compiler.type_system.predefined_types.unknown_type;
             if (deref_type->type == Datatype_Type::STRUCT) {
                 auto struct_type = downcast<Datatype_Struct>(deref_type);
                 if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
@@ -939,7 +939,7 @@ void code_completion_find_suggestions()
             specific_table = code_query_get_ast_node_symbol_table(node);
         }
         if (specific_table != 0) {
-            auto results = dynamic_array_create_empty<Symbol*>(1);
+            auto results = dynamic_array_create<Symbol*>(1);
             SCOPE_EXIT(dynamic_array_destroy(&results));
             symbol_table_query_id(specific_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &results);
             for (int i = 0; i < results.size; i++) {
@@ -1597,9 +1597,9 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 {
     memory_zero(&syntax_editor);
     syntax_editor.context_text = string_create_empty(256);
-    syntax_editor.errors = dynamic_array_create_empty<Error_Display>(1);
-    syntax_editor.token_range_buffer = dynamic_array_create_empty<Token_Range>(1);
-    syntax_editor.code_completion_suggestions = dynamic_array_create_empty<Fuzzy_Search>(1);
+    syntax_editor.errors = dynamic_array_create<Error_Display>(1);
+    syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
+    syntax_editor.code_completion_suggestions = dynamic_array_create<Fuzzy_Search>(1);
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);

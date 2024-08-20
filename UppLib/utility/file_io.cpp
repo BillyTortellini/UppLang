@@ -44,7 +44,7 @@ Optional<Array<byte>> file_io_load_binary_file(const char* filepath)
     fseek(file, 0, SEEK_SET); // Put cursor back to start of file
     
     // Read 
-    result.value = array_create_empty<byte>((int)fileSize);
+    result.value = array_create<byte>((int)fileSize);
 
     u64 readSize = (u64) fread(result.value.data, 1, fileSize, file); 
     if (readSize != fileSize) {

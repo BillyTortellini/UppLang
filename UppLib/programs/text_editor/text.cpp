@@ -3,7 +3,7 @@
 #include <cstring>
 
 Dynamic_Array<String> text_create_empty() {
-    Dynamic_Array<String> text = dynamic_array_create_empty<String>(6);
+    Dynamic_Array<String> text = dynamic_array_create<String>(6);
     dynamic_array_push_back(&text, string_create_empty(16));
     return text;
 }
@@ -289,7 +289,7 @@ bool test_text_to_string_and_back(String string)
 
 void test_text_editor()
 {
-    Dynamic_Array<String> text = dynamic_array_create_empty<String>(4);
+    Dynamic_Array<String> text = dynamic_array_create<String>(4);
     dynamic_array_push_back(&text, string_create_empty(64));
 
     String str = string_create_static("Hello there\n What is up my dude\n\n Hello there\n what\n\n");

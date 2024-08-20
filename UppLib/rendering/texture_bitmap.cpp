@@ -21,7 +21,7 @@ Texture_Bitmap texture_bitmap_create_from_data_with_pitch(int width, int height,
     result.width = width;
     result.height = height;
     result.channel_count = 1;
-    result.data = array_create_empty<byte>(width*height);
+    result.data = array_create<byte>(width*height);
     for (int x = 0; x < width; x++) 
     {
         for (int y = 0; y < height; y++) 
@@ -40,7 +40,7 @@ Texture_Bitmap texture_bitmap_create_from_bitmap_with_pitch(int width, int heigh
     result.width = width;
     result.height = height;
     result.channel_count = 1;
-    result.data = array_create_empty<byte>(width*height);
+    result.data = array_create<byte>(width*height);
     for (int x = 0; x < width; x++) 
     {
         for (int y = 0; y < height; y++) 
@@ -65,7 +65,7 @@ Texture_Bitmap texture_bitmap_create_empty(int width, int height, int channel_co
     result.width = width;
     result.height = height;
     result.channel_count = channel_count;
-    result.data = array_create_empty<byte>(width*height*channel_count);
+    result.data = array_create<byte>(width*height*channel_count);
     return result;
 }
 
@@ -127,7 +127,7 @@ Texture_Bitmap texture_bitmap_create_test_bitmap(int size)
         Color_Mono() {}
     };
 
-    Array<Color_Mono> image_data = array_create_empty<Color_Mono>(size*size);
+    Array<Color_Mono> image_data = array_create<Color_Mono>(size*size);
     SCOPE_EXIT(array_destroy(&image_data));
     for (int x_int = 0; x_int < size; x_int++) {
         for (int y_int = 0; y_int < size; y_int++) {
@@ -156,7 +156,7 @@ Texture_Bitmap texture_bitmap_binary_parser_read(BinaryParser* parser)
     result.width = binary_parser_read_int(parser);
     result.height = binary_parser_read_int(parser);
     result.channel_count = binary_parser_read_int(parser);
-    result.data = array_create_empty<byte>(result.width * result.height * result.channel_count);
+    result.data = array_create<byte>(result.width * result.height * result.channel_count);
     binary_parser_read_bytes(parser, result.data);
     return result;
 }
@@ -221,9 +221,9 @@ void distance_field_find_hull_parabolas(Array<float> row, Array<vec2>& hull_vert
 
 void distance_field_horizontal_pass(Array<float> row)
 {
-    Array<float> hull_intersections = array_create_empty<float>(row.size*2);
+    Array<float> hull_intersections = array_create<float>(row.size*2);
     SCOPE_EXIT(array_destroy(&hull_intersections));
-    Array<vec2> hull_vertices = array_create_empty<vec2>(row.size);
+    Array<vec2> hull_vertices = array_create<vec2>(row.size);
     SCOPE_EXIT(array_destroy(&hull_vertices));
 
     distance_field_find_hull_parabolas(row, hull_vertices, hull_intersections);
@@ -257,7 +257,7 @@ void float_array_transpose(Array<float> distances, int size)
 
 Array<float> distance_field_create_from_bool_array(Array<byte> source, int width, bool antialiased)
 {
-    Array<float> distances = array_create_empty<float>(width*width);
+    Array<float> distances = array_create<float>(width*width);
 
     // Initialize distances to a high value
     for (int x = 0; x < width; x++) {
@@ -343,7 +343,7 @@ Array<float> texture_bitmap_create_distance_field(Texture_Bitmap* source)
 Array<float> texture_bitmap_create_distance_field_bad(Texture_Bitmap* source)
 {
     int width = source->width;
-    Array<float> distances = array_create_empty<float>(width*width);
+    Array<float> distances = array_create<float>(width*width);
 
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < width; y++) {

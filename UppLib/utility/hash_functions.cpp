@@ -84,7 +84,7 @@ u64 hash_combine(u64 a, u64 b) {
     return hash_memory(array_create_static_as_bytes(array, 2));
 }
 
-u64 hash_combine(u64 a, bool value) {
+u64 hash_bool(u64 a, bool value) {
     u64 result = a;
     if (value) {
         result = result << 1;

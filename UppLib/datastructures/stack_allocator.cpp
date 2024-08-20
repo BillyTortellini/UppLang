@@ -5,8 +5,8 @@
 Stack_Allocator stack_allocator_create_empty(int byte_size)
 {
     Stack_Allocator result;
-    result.memory = dynamic_array_create_empty<Array<byte>>(1);
-    Array<byte> pool = array_create_empty<byte>(math_maximum(32, byte_size));
+    result.memory = dynamic_array_create<Array<byte>>(1);
+    Array<byte> pool = array_create<byte>(math_maximum(32, byte_size));
     dynamic_array_push_back(&result.memory, pool);
     result.current_pool_index = 0;
     result.stack_pointer = 0;
@@ -35,7 +35,7 @@ void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, siz
         }
         else 
         {
-            Array<byte> new_pool = array_create_empty<byte>(curr_size * 2);
+            Array<byte> new_pool = array_create<byte>(curr_size * 2);
             dynamic_array_push_back(&allocator->memory, new_pool);
             allocator->current_pool_index = allocator->memory.size - 1;
             curr_size = allocator->memory[allocator->current_pool_index].size;

@@ -32,9 +32,9 @@ void rendering_core_initialize(int backbuffer_width, int backbuffer_height, floa
     result.render_information.backbuffer_width = backbuffer_width;
     result.render_information.backbuffer_height = backbuffer_height;
 
-    result.render_event_listeners = dynamic_array_create_empty<Render_Event_Listener>(1);
-    result.vertex_attributes = dynamic_array_create_empty<Vertex_Attribute_Base*>(1);
-    result.vertex_descriptions = dynamic_array_create_empty<Vertex_Description*>(1);
+    result.render_event_listeners = dynamic_array_create<Render_Event_Listener>(1);
+    result.vertex_attributes = dynamic_array_create<Vertex_Attribute_Base*>(1);
+    result.vertex_descriptions = dynamic_array_create<Vertex_Description*>(1);
     result.meshes = hashtable_create_empty<String, Mesh*>(4, hash_string, string_equals);
     result.shaders = hashtable_create_empty<String, Hotreload_Shader>(4, hash_string, string_equals);
     result.render_passes = hashtable_create_empty<String, Render_Pass*>(4, hash_string, string_equals);
@@ -392,7 +392,7 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
     // Execute all renderpasses
     {
         // Generate execution queue based on dependencies of passes
-        auto execution_queue = dynamic_array_create_empty<Render_Pass*>(core.render_passes.element_count);
+        auto execution_queue = dynamic_array_create<Render_Pass*>(core.render_passes.element_count);
         {
             auto it = hashtable_iterator_create(&core.render_passes);
             while (hashtable_iterator_has_next(&it)) {
@@ -636,7 +636,7 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
     mesh->index_count = 0;
 
     // Generate buffers
-    mesh->buffers = array_create_empty<Attribute_Buffer>(description->attributes.size);
+    mesh->buffers = array_create<Attribute_Buffer>(description->attributes.size);
     for (int i = 0; i < mesh->buffers.size; i++) 
     {
         auto& buffer = mesh->buffers[i];
@@ -652,7 +652,7 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
             is_index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER,
             mesh->reset_every_frame ? GPU_Buffer_Usage::DYNAMIC : GPU_Buffer_Usage::STATIC
         );
-        buffer.attribute_data = dynamic_array_create_empty<byte>(1);
+        buffer.attribute_data = dynamic_array_create<byte>(1);
     }
     hashtable_insert_element(&core.meshes, string_create_static(name), mesh);
 
@@ -707,9 +707,9 @@ Shader* shader_create_empty()
     Shader* shader = new Shader;
     shader->compiled = false;
     shader->program_id = 0;
-    shader->input_layout = dynamic_array_create_empty<Shader_Input_Info>(1);
-    shader->uniform_infos = dynamic_array_create_empty<Uniform_Info>(1);
-    shader->allocated_strings = dynamic_array_create_empty<String>(1);
+    shader->input_layout = dynamic_array_create<Shader_Input_Info>(1);
+    shader->uniform_infos = dynamic_array_create<Uniform_Info>(1);
+    shader->allocated_strings = dynamic_array_create<String>(1);
     return shader;
 }
 
@@ -1163,13 +1163,13 @@ Render_Pass* rendering_core_query_renderpass(const char* name, Pipeline_State pi
 
     Render_Pass* render_pass = new Render_Pass;
     hashtable_insert_element(&core.render_passes, string_create_static(name), render_pass);
-    render_pass->commands = dynamic_array_create_empty<Render_Pass_Command>(1);
+    render_pass->commands = dynamic_array_create<Render_Pass_Command>(1);
     render_pass->pipeline_state = pipeline_state;
     render_pass->queried_this_frame = true;
     render_pass->output_buffer = output_buffer;
     render_pass->dependency_count = 0;
     render_pass->name = name;
-    render_pass->dependents = dynamic_array_create_empty<Render_Pass*>(1);
+    render_pass->dependents = dynamic_array_create<Render_Pass*>(1);
     return render_pass;
 }
 

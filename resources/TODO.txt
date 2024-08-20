@@ -1,4 +1,38 @@
 
+Rework Constant + Pointer system....
+
+Constant/String rework:
+ * Add constant keyword
+ * Make constant types work
+
+
+Type-System Rework:
+-------------------
+ * Datatype_Base now has is_constant
+ * type_system make constant should exist now... (By default all types created in type system are not constant) 
+ * Type deduplication with hashed type constructors
+ * Rename void_pointer to byte_pointer
+    - Rename pointer options
+ * Move all symbols into new namespace (u8, u16, u32, u64), maybe work on aliasing things
+ * String update:
+ * Void Pointer Update:
+    - Void_Pointer type removed
+    - new Byte type (Struct with value member -> u8)
+
+    - Void_Pointer --> new Byte type (Should work like void* in C++ (For interoperability and for Aliasing Rules...))
+       --> Should be the only type where we can expect aliasing with other types (Not like C++ const char*, void*, u8*?)
+    - Should byte slice also exist? Since we cannot make things like that? I guess u8 slice exists, but then we don't get void pointer characteristics
+    String can use a const byte pointer now
+    Any should also use byte pointer then
+    Byte type = Struct with member .value (u8)
+
+Design Questions:
+Void pointer/byte pointer/byte datatype/byte slice?
+Strings?
+Can you cast away constant? Is constant per default removed with cast?
+Syntax to make constant types? --> Why
+
+
 
 Implementation Strategy:
  - New Variant type

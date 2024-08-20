@@ -23,18 +23,18 @@ Bytecode_Generator bytecode_generator_create()
 {
     Bytecode_Generator result;
     // Code
-    result.instructions = dynamic_array_create_empty<Bytecode_Instruction>(64);
+    result.instructions = dynamic_array_create<Bytecode_Instruction>(64);
 
     // Code Information
     result.function_locations = hashtable_create_pointer_empty<IR_Function*, int>(64);
     result.function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
     result.code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-    result.stack_offsets = dynamic_array_create_empty<Dynamic_Array<int>>(64);
+    result.stack_offsets = dynamic_array_create<Dynamic_Array<int>>(64);
 
     // Fill outs
-    result.fill_out_gotos = dynamic_array_create_empty<Goto_Label>(64);
-    result.label_locations = dynamic_array_create_empty<int>(64);
-    result.fill_out_calls = dynamic_array_create_empty<Function_Reference>(64);
+    result.fill_out_gotos = dynamic_array_create<Goto_Label>(64);
+    result.label_locations = dynamic_array_create<int>(64);
+    result.fill_out_calls = dynamic_array_create<Function_Reference>(64);
     return result;
 }
 
@@ -128,7 +128,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_CONSTANT;
         load_instruction.op2 = access.index;
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
             load_instruction.op3 = 8;
         }
         else {
@@ -144,7 +144,7 @@ int bytecode_generator_data_access_to_stack_offset(Bytecode_Generator* generator
         load_instruction.instruction_type = Instruction_Type::READ_GLOBAL;
         load_instruction.op2 = access.index;
         if (access.is_memory_access) {
-            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.void_pointer_type);
+            load_instruction.op1 = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
             load_instruction.op3 = 8;
         }
         else {
@@ -359,7 +359,7 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
         offset = access.index;
         break;
     }
-    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_pointer_type);
+    load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.byte_pointer);
     load_instr.op2 = offset;
     bytecode_generator_add_instruction(generator, load_instr);
     return load_instr.op1;
@@ -463,7 +463,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
     int rewind_stack_offset = generator->current_stack_offset;
     SCOPE_EXIT(generator->current_stack_offset = rewind_stack_offset);
     {
-        Dynamic_Array<int> register_stack_offsets = dynamic_array_create_empty<int>(code_block->registers.size);
+        Dynamic_Array<int> register_stack_offsets = dynamic_array_create<int>(code_block->registers.size);
         generator->current_stack_offset = stack_offsets_calculate(&code_block->registers, &register_stack_offsets, generator->current_stack_offset);
         dynamic_array_push_back(&generator->stack_offsets, register_stack_offsets);
         hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
@@ -502,7 +502,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             // Put arguments into the correct place on the stack
-            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.void_pointer_type);
+            int pointer_offset = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.byte_pointer);
             int argument_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // I think 16 is the hightest i have
             for (int i = 0; i < function_sig->parameters.size; i++)
             {
@@ -624,8 +624,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             int condition_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, switch_instr->condition_access);
             int cmp_result_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.bool_type));
 
-            Dynamic_Array<int> case_jump_indices = dynamic_array_create_empty<int>(switch_instr->cases.size);
-            Dynamic_Array<int> jmp_to_switch_end_indices = dynamic_array_create_empty<int>(switch_instr->cases.size + 1);
+            Dynamic_Array<int> case_jump_indices = dynamic_array_create<int>(switch_instr->cases.size);
+            Dynamic_Array<int> jmp_to_switch_end_indices = dynamic_array_create<int>(switch_instr->cases.size + 1);
             SCOPE_EXIT(dynamic_array_destroy(&case_jump_indices));
             SCOPE_EXIT(dynamic_array_destroy(&jmp_to_switch_end_indices));
 
@@ -830,7 +830,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             case IR_Instruction_Address_Of_Type::DATA: {
                 int pointer_offset = bytecode_generator_get_pointer_to_access(generator, address_of->source);
                 bytecode_generator_write_stack_offset_to_destination(
-                    generator, pointer_offset, types.void_pointer_type, address_of->destination
+                    generator, pointer_offset, types.byte_pointer, address_of->destination
                 );
                 break;
             }
@@ -939,7 +939,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Datatype* operand_types = ir_data_access_get_type(&binary_op->operand_left);
-            if (operand_types->type == Datatype_Type::POINTER || operand_types->type == Datatype_Type::VOID_POINTER) {
+            if (operand_types->type == Datatype_Type::POINTER || operand_types->type == Datatype_Type::BYTE_POINTER) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {
@@ -983,7 +983,7 @@ void bytecode_generator_generate_function_code(Bytecode_Generator* generator, IR
         Dynamic_Array<int>* parameter_offsets = &generator->stack_offsets[stack_offset_index];
 
         auto& function_parameters = function->function_type->parameters;
-        Array<Datatype*> parameter_types = array_create_empty<Datatype*>(function_parameters.size);
+        Array<Datatype*> parameter_types = array_create<Datatype*>(function_parameters.size);
         SCOPE_EXIT(array_destroy(&parameter_types));
         for (int i = 0; i < function_parameters.size; i++) {
             parameter_types[i] = function_parameters[i].type;
@@ -1034,7 +1034,7 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function)
 {
     assert(hashtable_find_element(&generator->function_locations, function) == 0, "");
-    Dynamic_Array<int> parameter_stack_offsets = dynamic_array_create_empty<int>(16);
+    Dynamic_Array<int> parameter_stack_offsets = dynamic_array_create<int>(16);
     dynamic_array_push_back(&generator->stack_offsets, parameter_stack_offsets);
     hashtable_insert_element(&generator->function_parameter_stack_offset_index, function, generator->stack_offsets.size - 1);
     bytecode_generator_generate_function_code(generator, function);

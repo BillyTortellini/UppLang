@@ -166,7 +166,7 @@ namespace AST
             break;
         }
         case Node_Type::ENUM_MEMBER: {
-            auto enum_member = (Enum_Member*)node;
+            auto enum_member = (Enum_Member_Node*)node;
             FILL_OPTIONAL(enum_member->value);
             break;
         }
@@ -305,6 +305,11 @@ namespace AST
             case Expression_Type::SLICE_TYPE: {
                 auto& slice = expr->options.slice_type;
                 FILL(slice);
+                break;
+            }
+            case Expression_Type::CONST_TYPE: {
+                auto& const_type = expr->options.const_type;
+                FILL(const_type);
                 break;
             }
             case Expression_Type::AUTO_ENUM: {
@@ -465,7 +470,7 @@ namespace AST
             break;
         }
         case Node_Type::ENUM_MEMBER: {
-            auto enum_member = (Enum_Member*)node;
+            auto enum_member = (Enum_Member_Node*)node;
             FILL_OPTIONAL(enum_member->value);
             break;
         }
@@ -615,6 +620,11 @@ namespace AST
             case Expression_Type::SLICE_TYPE: {
                 auto& slice = expr->options.slice_type;
                 FILL(slice);
+                break;
+            }
+            case Expression_Type::CONST_TYPE: {
+                auto& const_type = expr->options.const_type;
+                FILL(const_type);
                 break;
             }
             case Expression_Type::AUTO_ENUM: {
@@ -819,7 +829,7 @@ namespace AST
             break;
         }
         case Node_Type::ENUM_MEMBER: {
-            auto mem = (Enum_Member*)base;
+            auto mem = (Enum_Member_Node*)base;
             string_append_formated(str, "ENUM_MEMBER ");
             string_append_string(str, mem->name);
             break;
@@ -867,6 +877,7 @@ namespace AST
             case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
             case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
             case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
+            case Expression_Type::CONST_TYPE: string_append_formated(str, "CONST_TYPE"); break;
             case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
             case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
             case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;
@@ -913,7 +924,7 @@ namespace AST
     void base_append_to_string_recursive(Node* base, String* str, int indentation)
     {
         base_append_to_string(base, str);
-        Dynamic_Array<Node*> children = dynamic_array_create_empty<Node*>(1);
+        Dynamic_Array<Node*> children = dynamic_array_create<Node*>(1);
         SCOPE_EXIT(dynamic_array_destroy(&children));
         base_enumerate_children(base, &children);
 
@@ -1007,7 +1018,7 @@ namespace AST
         bool type_correct(Expression* base) {
             return base->base.type == Node_Type::EXPRESSION;
         }
-        bool type_correct(Enum_Member* base) {
+        bool type_correct(Enum_Member_Node* base) {
             return base->base.type == Node_Type::ENUM_MEMBER;
         }
         bool type_correct(Module* base) {

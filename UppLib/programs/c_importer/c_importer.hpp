@@ -88,7 +88,7 @@ enum class C_Import_Type_Type
     STRUCTURE,
     ENUM,
     FUNCTION_SIGNATURE,
-    ERROR_TYPE,
+    UNKNOWN_TYPE,
 };
 
 struct C_Import_Type
@@ -111,7 +111,7 @@ struct C_Import_Type
 struct C_Import_Type_System
 {
     Dynamic_Array<C_Import_Type*> registered_types;
-    C_Import_Type* error_type;
+    C_Import_Type* unknown_type;
 };
 
 enum class C_Import_Symbol_Type

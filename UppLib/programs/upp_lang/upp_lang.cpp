@@ -130,7 +130,7 @@ void test_things()
         set = hashset_create_empty<Dummy>(32, dummy_hash, &dummy_compare);
         SCOPE_EXIT(hashset_destroy(&set));
 
-        Dynamic_Array<Dummy> added = dynamic_array_create_empty<Dummy>(64);
+        Dynamic_Array<Dummy> added = dynamic_array_create<Dummy>(64);
         SCOPE_EXIT(dynamic_array_destroy(&added));
         for (int i = 0; i < 100000; i++)
         {

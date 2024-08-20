@@ -53,8 +53,8 @@ void shader_generator_initialize() {
         shader_generator.stages[i].code = string_create_empty(32);
         shader_generator.stages[i].definitions = string_create_empty(32);
     }
-    shader_generator.variables = dynamic_array_create_empty<Shader_Variable*>(1);
-    shader_generator.allocated_shaders = dynamic_array_create_empty<Shader*>(1);
+    shader_generator.variables = dynamic_array_create<Shader_Variable*>(1);
+    shader_generator.allocated_shaders = dynamic_array_create<Shader*>(1);
     shader_generator_start_shader();
 }
 
@@ -681,12 +681,12 @@ void graph_editor_add_layer()
 {
     Layer layer;
     layer.current_frame = 0;
-    layer.frames = dynamic_array_create_empty<Frame>(1);
+    layer.frames = dynamic_array_create<Frame>(1);
     layer.hidden = false;
     layer.color = vec4(0.5f, 0.5f, 0.5f, 1.0f);
     layer.collisions_enabled = true;
     Frame frame;
-    frame.edges = dynamic_array_create_empty<Edge>(1);
+    frame.edges = dynamic_array_create<Edge>(1);
     dynamic_array_push_back(&layer.frames, frame);
     dynamic_array_push_back(&graph_editor.layers, layer);
     graph_editor.current_layer = graph_editor.layers.size - 1;
@@ -696,8 +696,8 @@ bool graph_editor_load_file(const char* filepath);
 
 void graph_editor_initialize()
 {
-    graph_editor.vertices = dynamic_array_create_empty<Vertex>(1);
-    graph_editor.layers = dynamic_array_create_empty<Layer>(1);
+    graph_editor.vertices = dynamic_array_create<Vertex>(1);
+    graph_editor.layers = dynamic_array_create<Layer>(1);
     graph_editor.line_renderer = line_renderer_create();
 
     graph_editor.option_draw_edges_side_by_side = false;
@@ -923,12 +923,12 @@ bool graph_editor_load_file(const char* filepath)
             layer.current_frame = optional_unwrap(string_parse_float(&words[5]));
             layer.hidden = optional_unwrap(string_parse_float(&words[6])) == 1 ? true : false;
             layer.collisions_enabled = optional_unwrap(string_parse_float(&words[7])) == 1 ? true : false;
-            layer.frames = dynamic_array_create_empty<Frame>(1);
+            layer.frames = dynamic_array_create<Frame>(1);
             dynamic_array_push_back(&editor.layers, layer);
         }
         else if (string_equals(&words[0], &prefix_frame)) {
             Frame f;
-            f.edges = dynamic_array_create_empty<Edge>(1);
+            f.edges = dynamic_array_create<Edge>(1);
             dynamic_array_push_back(&editor.layers[editor.layers.size - 1].frames, f);
         }
         else if (string_equals(&words[0], &prefix_edge)) {
@@ -1172,7 +1172,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             }
             if (gui_push_button(frame_area, string_create_static("+"))) {
                 Frame frame;
-                frame.edges = dynamic_array_create_empty<Edge>(1);
+                frame.edges = dynamic_array_create<Edge>(1);
                 dynamic_array_push_back(&layer.frames, frame);
                 layer.current_frame = layer.frames.size - 1;
             }
@@ -1346,7 +1346,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
     auto& frame = layer.frames[layer.current_frame];
     auto& edges = frame.edges;
     auto& vertices = editor.vertices;
-    Array<int> vertex_edge_count = array_create_empty<int>(vertices.size);
+    Array<int> vertex_edge_count = array_create<int>(vertices.size);
     SCOPE_EXIT(array_destroy(&vertex_edge_count));
     {
         for (int i = 0; i < vertex_edge_count.size; i++) {
@@ -1455,7 +1455,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
             }
 
             // Check which points are valid for edge add
-            Dynamic_Array<int> valid_vertex_indices = dynamic_array_create_empty<int>(vertices.size);
+            Dynamic_Array<int> valid_vertex_indices = dynamic_array_create<int>(vertices.size);
             SCOPE_EXIT(dynamic_array_destroy(&valid_vertex_indices));
             bool highlight_valid_vertices = false;
             if (editor.edge_add_start_index == -1)

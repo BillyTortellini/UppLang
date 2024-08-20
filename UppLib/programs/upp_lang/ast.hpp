@@ -163,7 +163,7 @@ namespace AST
         Dynamic_Array<Context_Change*> context_changes;
     };
 
-    struct Enum_Member
+    struct Enum_Member_Node
     {
         Node base;
         String* name;
@@ -246,6 +246,7 @@ namespace AST
         ENUM_TYPE,
         ARRAY_TYPE,
         SLICE_TYPE,
+        CONST_TYPE,
 
         ERROR_EXPR,
     };
@@ -313,6 +314,7 @@ namespace AST
                 Expression* type_expr;
             } array_type;
             Expression* slice_type;
+            Expression* const_type;
             struct {
                 Dynamic_Array<Parameter*> parameters;
                 Dynamic_Array<Definition*> members;
@@ -321,7 +323,7 @@ namespace AST
             struct {
                 Dynamic_Array<Argument*> arguments;
             } instanciate;
-            Dynamic_Array<Enum_Member*> enum_members;
+            Dynamic_Array<Enum_Member_Node*> enum_members;
         } options;
     };
 
@@ -427,7 +429,7 @@ namespace AST
         bool type_correct(Argument* base);
         bool type_correct(Parameter* base);
         bool type_correct(Expression* base);
-        bool type_correct(Enum_Member* base);
+        bool type_correct(Enum_Member_Node* base);
         bool type_correct(Module* base);
         bool type_correct(Import* base);
         bool type_correct(Path_Lookup* base);

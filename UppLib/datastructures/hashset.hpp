@@ -96,7 +96,7 @@ Hashset<T> hashset_create_empty(int capacity, u64(*hash_function)(T*), bool(*equ
 {
     Hashset<T> result;
     result.element_count = 0;
-    result.entries = array_create_empty<Hashset_Entry<T>>(primes_find_next_suitable_for_set_size(capacity));
+    result.entries = array_create<Hashset_Entry<T>>(primes_find_next_suitable_for_set_size(capacity));
     for (int i = 0; i < result.entries.size; i++) {
         result.entries[i].valid = false;
         result.entries[i].next = 0;

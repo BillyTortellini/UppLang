@@ -19,7 +19,7 @@ struct Array
 };
 
 template<typename T>
-Array<T> array_create_empty(int size) {
+Array<T> array_create(int size) {
     Array<T> result;
     if (size > 0) {
         result.data = new T[size];
@@ -33,7 +33,7 @@ Array<T> array_create_empty(int size) {
 
 template<typename T>
 Array<T> array_create_from_list(std::initializer_list<T> list) {
-    Array<T> result = array_create_empty<T>((int)list.size());
+    Array<T> result = array_create<T>((int)list.size());
     int i = 0;
     for (auto item : list) {
         result[i] = item;
@@ -44,7 +44,7 @@ Array<T> array_create_from_list(std::initializer_list<T> list) {
 
 template<typename T>
 Array<T> array_create_copy(T* data, int size) {
-    Array<T> result = array_create_empty<T>(size);
+    Array<T> result = array_create<T>(size);
     memory_copy(result.data, data, size * sizeof(T));
     return result;
 }

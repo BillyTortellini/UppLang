@@ -305,7 +305,6 @@ struct Workload_Structure_Body
     Workload_Base base;
 
     Datatype_Struct* struct_type;
-    Dynamic_Array<Datatype_Array*> arrays_depending_on_struct_size;
     AST::Expression* struct_node;
 
     Polymorphic_Analysis_Type polymorphic_type;

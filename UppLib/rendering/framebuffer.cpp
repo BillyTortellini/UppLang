@@ -10,7 +10,7 @@ Framebuffer* framebuffer_create(Texture_Type type, Depth_Type depth_type, bool f
     Framebuffer* result = new Framebuffer();
     result->width = width;
     result->height = height;
-    result->attachments = dynamic_array_create_empty<Texture*>(1);
+    result->attachments = dynamic_array_create<Texture*>(1);
     result->resize_with_window = fullscreen;
     if (fullscreen) {
         rendering_core_add_render_event_listener(Render_Event::WINDOW_SIZE_CHANGED, &framebuffer_window_resize_callback, result);

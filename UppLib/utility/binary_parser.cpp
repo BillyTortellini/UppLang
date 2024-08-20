@@ -6,7 +6,7 @@
 BinaryParser binary_parser_create_empty(int capacity) {
     BinaryParser result;
     result.current_position = 0;
-    result.data = dynamic_array_create_empty<byte>(capacity);
+    result.data = dynamic_array_create<byte>(capacity);
     return result;
 }
 

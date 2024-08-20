@@ -5,6 +5,11 @@
 #include "../math/scalars.hpp"
 #include <algorithm>
 
+// Notes:
+// Dynamic_Arrays with 0 size/capacity should work by default, so that
+// empty arrays don't require any dynamic memory allocations.
+// This adds some 'cost' into resizing and creating/destruction logic, but it shouldn't cause any problems.
+
 template <typename T>
 struct Dynamic_Array
 {
@@ -21,46 +26,34 @@ struct Dynamic_Array
 };
 
 template <typename T>
-Dynamic_Array<T> dynamic_array_create_empty(int capacity) {
-    capacity = math_maximum(capacity, 1);
+Dynamic_Array<T> dynamic_array_create(int capacity = 0) {
     Dynamic_Array<T> result;
     result.capacity = capacity;
     result.size = 0;
-    result.data = new T[capacity];
-    return result;
-}
-
-template <typename T>
-Dynamic_Array<T> dynamic_array_create_null() {
-    Dynamic_Array<T> result;
-    result.capacity = 0;
-    result.size = 0;
-    result.data = nullptr;
+    if (capacity == 0) {
+        result.data = 0;
+    }
+    else {
+        result.data = new T[capacity];
+    }
     return result;
 }
 
 template<typename T>
 Dynamic_Array<T> dynamic_array_create_copy(T* data, int size) {
-    Dynamic_Array<T> result = dynamic_array_create_empty<T>(size);
-    memory_copy(result.data, data, size * sizeof(T));
+    Dynamic_Array<T> result = dynamic_array_create<T>(size);
+    if (size != 0) {
+        memory_copy(result.data, data, size * sizeof(T));
+    }
     result.size = size;
     return result;
 }
 
 template <typename T>
 void dynamic_array_destroy(Dynamic_Array<T>* array) {
-    delete[] array->data;
-    array->data = 0;
-    array->size = 0;
-    array->capacity = 0;
-}
-
-template <typename T>
-void dynamic_array_destroy_check_null(Dynamic_Array<T>* array) {
-    if (array->data == nullptr) {
-        return;
+    if (array->capacity != 0) {
+        delete[] array->data;
     }
-    delete[] array->data;
     array->data = 0;
     array->size = 0;
     array->capacity = 0;
@@ -70,8 +63,10 @@ template <typename T>
 void dynamic_array_reserve(Dynamic_Array<T>* array, int capacity) {
     if (array->capacity < capacity) {
         T* new_data = new T[capacity];
-        memory_copy(new_data, array->data, sizeof(T) * array->size);
-        delete[] array->data;
+        if (array->capacity != 0) {
+            memory_copy(new_data, array->data, sizeof(T) * array->size);
+            delete[] array->data;
+        }
         array->capacity = capacity;
         array->data = new_data;
     }
@@ -84,14 +79,6 @@ void dynamic_array_push_back(Dynamic_Array<T>* array, T item) {
     }
     array->data[array->size] = item;
     array->size++;
-}
-
-template <typename T>
-void dynamic_array_push_back_check_null(Dynamic_Array<T>* array, T item) {
-    if (array->size == 0) {
-        *array = dynamic_array_create_empty<T>(1);
-    }
-    dynamic_array_push_back(array, item);
 }
 
 template<typename T>

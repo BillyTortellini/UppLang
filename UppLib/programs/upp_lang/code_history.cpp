@@ -22,7 +22,7 @@ void code_change_destroy(Code_Change* change)
 Code_History code_history_create(Source_Code* code)
 {
     Code_History result;
-    result.nodes = dynamic_array_create_empty<History_Node>(1);
+    result.nodes = dynamic_array_create<History_Node>(1);
     result.code = code;
     code_history_reset(&result);
     return result;
@@ -608,12 +608,12 @@ void history_get_changes_between(Code_History* history, History_Timestamp start_
 
     // Info: This is a modifier Breadth-First search, because of the tree structure we only visited each node from exactly one previous node
     //      Also, in this search, we search from the End to the start, so we don't have to reverse the path once we found it
-    auto goto_index = array_create_empty<int>(history->nodes.size);
+    auto goto_index = array_create<int>(history->nodes.size);
     SCOPE_EXIT(array_destroy(&goto_index));
 
     // Find path
     {
-        auto layer_nodes = dynamic_array_create_empty<int>(history->nodes.size);
+        auto layer_nodes = dynamic_array_create<int>(history->nodes.size);
         SCOPE_EXIT(dynamic_array_destroy(&layer_nodes));
         int current_layer_start = 0;
 

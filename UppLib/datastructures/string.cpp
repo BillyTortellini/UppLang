@@ -447,7 +447,7 @@ bool string_test_char(String str, int char_index, char c)
 
 Array<String> string_split(String string, char c)
 {
-    auto parts = dynamic_array_create_empty<String>(1);
+    auto parts = dynamic_array_create<String>(1);
     int last_end_index = -1;
     for (int i = 0; i < string.size; i++) {
         if (string.characters[i] == c && i > (last_end_index + 1)) {

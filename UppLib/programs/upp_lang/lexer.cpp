@@ -83,6 +83,7 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::CONTEXT: return string_create_static("context");
     case Keyword::FOR: return string_create_static("for");
     case Keyword::IN_KEYWORD: return string_create_static("in");
+    case Keyword::CONST_KEYWORD: return string_create_static("const");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::INSTANCIATE: return string_create_static("#instanciate");
     case Keyword::BREAK: return string_create_static("break");

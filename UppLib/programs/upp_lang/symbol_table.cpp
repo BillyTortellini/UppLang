@@ -12,7 +12,7 @@ Symbol_Table* symbol_table_create()
     auto analyser = compiler.semantic_analyser;
     Symbol_Table* result = new Symbol_Table;
     dynamic_array_push_back(&analyser->allocated_symbol_tables, result);
-    result->included_tables = dynamic_array_create_empty<Included_Table>(1);
+    result->included_tables = dynamic_array_create<Included_Table>(1);
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
     result->operator_context = 0;
     return result;
@@ -77,13 +77,13 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
     new_sym->access_level = access_level;
-    new_sym->references = dynamic_array_create_empty<AST::Symbol_Lookup*>(1);
+    new_sym->references = dynamic_array_create<AST::Symbol_Lookup*>(1);
 
     // Check if symbol is already defined
     bool add_to_symbol_table = true;
     Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&symbol_table->symbols, id);
     if (symbols == 0) {
-        Dynamic_Array<Symbol*> new_symbols = dynamic_array_create_empty<Symbol*>(1);
+        Dynamic_Array<Symbol*> new_symbols = dynamic_array_create<Symbol*>(1);
         hashtable_insert_element(&symbol_table->symbols, id, new_symbols);
         symbols = hashtable_find_element(&symbol_table->symbols, id);
         assert(symbols != 0, "Just inserted!");

@@ -3,8 +3,8 @@
 Dependency_Graph dependency_graph_create()
 {
     Dependency_Graph result;
-    result.execution_order = dynamic_array_create_empty<int>(1);
-    result.items = dynamic_array_create_empty<Dependency_Node>(1);
+    result.execution_order = dynamic_array_create<int>(1);
+    result.items = dynamic_array_create<Dependency_Node>(1);
     return result;
 }
 
@@ -20,7 +20,7 @@ void dependency_graph_destroy(Dependency_Graph* graph)
 int dependency_graph_add_node(Dependency_Graph* graph)
 {
     Dependency_Node node;
-    node.dependents = dynamic_array_create_empty<int>(1);
+    node.dependents = dynamic_array_create<int>(1);
     node.finished = false;
     node.open_dependency_count = 0;
     dynamic_array_push_back(&graph->items, node);

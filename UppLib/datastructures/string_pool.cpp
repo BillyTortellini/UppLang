@@ -5,7 +5,7 @@
 String_Pool string_pool_create(int expected_string_count, int expected_capacity) {
     String_Pool result;
     result.expected_capacity = expected_capacity;
-    result.pool = dynamic_array_create_empty<String*>(expected_string_count);
+    result.pool = dynamic_array_create<String*>(expected_string_count);
     for (int i = 0; i < expected_string_count; i++) {
         result.pool[i] = new String();
         *result.pool[i] = string_create_empty(expected_capacity);

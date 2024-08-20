@@ -183,7 +183,7 @@ GLuint opengl_utils_create_program_from_filepaths(Array<const char*> filepaths)
         }
     }
 
-    Array<GLuint> shader_ids = array_create_empty<GLuint>(filepaths.size);
+    Array<GLuint> shader_ids = array_create<GLuint>(filepaths.size);
     SCOPE_EXIT(array_destroy(&shader_ids));
 
     int compiled_shader_count = 0;

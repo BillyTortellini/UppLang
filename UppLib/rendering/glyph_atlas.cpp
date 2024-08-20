@@ -54,9 +54,9 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     bool render_antialiased)
 {
     Glyph_Atlas result;
-    result.character_to_glyph_map = array_create_empty<int>(256);
+    result.character_to_glyph_map = array_create<int>(256);
     result.cursor_advance = 0;
-    result.glyph_informations = dynamic_array_create_empty<Glyph_Information>(128);
+    result.glyph_informations = dynamic_array_create<Glyph_Information>(128);
 
     // Initialize freetype
     FT_Library library;
@@ -232,16 +232,16 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_atlas_file(const char* atlas_filep
     result.descender = binary_parser_read_int(parser);
     result.cursor_advance = binary_parser_read_int(parser);
     result.atlas_bitmap = texture_bitmap_binary_parser_read(parser);
-    result.atlas_distance_field = array_create_empty<float>(width*height);
+    result.atlas_distance_field = array_create<float>(width*height);
     binary_parser_read_bytes(parser, array_as_bytes(&result.atlas_distance_field));
     int glyph_information_count = binary_parser_read_int(parser);
-    result.glyph_informations = dynamic_array_create_empty<Glyph_Information>(glyph_information_count);
+    result.glyph_informations = dynamic_array_create<Glyph_Information>(glyph_information_count);
     for (int i = 0; i < glyph_information_count; i++) {
         Glyph_Information info = glyph_information_binary_parser_read(parser);
         dynamic_array_push_back(&result.glyph_informations, info);
     }
     int character_to_glyph_map_size = binary_parser_read_int(parser);
-    result.character_to_glyph_map = array_create_empty<int>(character_to_glyph_map_size);
+    result.character_to_glyph_map = array_create<int>(character_to_glyph_map_size);
     binary_parser_read_bytes(parser, array_as_bytes(&result.character_to_glyph_map));
 
     return optional_make_success(result);

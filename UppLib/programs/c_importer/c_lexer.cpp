@@ -288,8 +288,8 @@ bool character_is_letter(int c) {
 C_Lexer c_lexer_create()
 {
     C_Lexer lexer;
-    lexer.tokens = dynamic_array_create_empty<C_Token>(1024);
-    lexer.tokens_with_decoration = dynamic_array_create_empty<C_Token>(1024);
+    lexer.tokens = dynamic_array_create<C_Token>(1024);
+    lexer.tokens_with_decoration = dynamic_array_create<C_Token>(1024);
 
     lexer.keywords = hashtable_create_empty<String, C_Token_Type>(64, &hash_string, &string_equals);
     hashtable_insert_element(&lexer.keywords, string_create_static("if"), C_Token_Type::IF);

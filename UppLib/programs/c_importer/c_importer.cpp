@@ -26,15 +26,15 @@ C_Import_Package c_import_package_create()
 {
     C_Import_Package result;
     result.symbol_table.symbols = hashtable_create_pointer_empty<String*, C_Import_Symbol>(64);
-    result.type_system.registered_types = dynamic_array_create_empty<C_Import_Type*>(64);
+    result.type_system.registered_types = dynamic_array_create<C_Import_Type*>(64);
 
     C_Import_Type* error_prototype = new C_Import_Type;
-    error_prototype->type = C_Import_Type_Type::ERROR_TYPE;
+    error_prototype->type = C_Import_Type_Type::UNKNOWN_TYPE;
     error_prototype->byte_size = 1;
     error_prototype->alignment = 1;
     error_prototype->qualifiers = (C_Type_Qualifiers)0;
     dynamic_array_push_back(&result.type_system.registered_types, error_prototype);
-    result.type_system.error_type = error_prototype;
+    result.type_system.unknown_type = error_prototype;
 
     return result;
 }
@@ -49,7 +49,7 @@ void c_import_package_destroy(C_Import_Package* package)
         case C_Import_Type_Type::ARRAY:
         case C_Import_Type_Type::POINTER:
         case C_Import_Type_Type::PRIMITIVE:
-        case C_Import_Type_Type::ERROR_TYPE:
+        case C_Import_Type_Type::UNKNOWN_TYPE:
             break;
         case C_Import_Type_Type::ENUM:
             dynamic_array_destroy(&type->enumeration.members);
@@ -77,7 +77,7 @@ C_Import_Type* c_import_type_system_register_type(C_Import_Type_System* system, 
         if (cmp_type->qualifiers != type.qualifiers) continue;
         switch (type.type)
         {
-        case C_Import_Type_Type::ERROR_TYPE:
+        case C_Import_Type_Type::UNKNOWN_TYPE:
             return cmp_type;
         case C_Import_Type_Type::ENUM:
         case C_Import_Type_Type::STRUCTURE:
@@ -214,7 +214,7 @@ Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
     result.identifier_call_conv_vectorcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__vectorcall"));
 
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
-    result.tokens = dynamic_array_create_empty<C_Token>(lexer->tokens.size);
+    result.tokens = dynamic_array_create<C_Token>(lexer->tokens.size);
 
     String* identifier_pragma_underscore = identifier_pool_add(lexer->identifier_pool, string_create_static("__pragma"));
     String* identifier_declspec = identifier_pool_add(lexer->identifier_pool, string_create_static("__declspec"));
@@ -652,10 +652,10 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
             if (symbol == 0)
             {
                 if (prototype.type == C_Import_Type_Type::ENUM) {
-                    prototype.enumeration.members = dynamic_array_create_empty<C_Import_Enum_Member>(4);
+                    prototype.enumeration.members = dynamic_array_create<C_Import_Enum_Member>(4);
                 }
                 else {
-                    prototype.structure.members = dynamic_array_create_empty<C_Import_Structure_Member>(4);
+                    prototype.structure.members = dynamic_array_create<C_Import_Structure_Member>(4);
                 }
                 structure_type = c_import_type_system_register_type(&parser->result_package.type_system, prototype);
 
@@ -682,10 +682,10 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
         }
         else {
             if (prototype.type == C_Import_Type_Type::ENUM) {
-                prototype.enumeration.members = dynamic_array_create_empty<C_Import_Enum_Member>(4);
+                prototype.enumeration.members = dynamic_array_create<C_Import_Enum_Member>(4);
             }
             else {
-                prototype.structure.members = dynamic_array_create_empty<C_Import_Structure_Member>(4);
+                prototype.structure.members = dynamic_array_create<C_Import_Structure_Member>(4);
             }
             structure_type = c_import_type_system_register_type(&parser->result_package.type_system, prototype);
         }
@@ -873,7 +873,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
                     // This should not happen
                     //print_tokens_till_newline(parser->tokens, parser->source_code, parser->index);
                     //print_tokens_till_newline_token_style(parser->tokens, parser->source_code, parser->index, parser->code_source);
-                    return optional_make_success(parser->result_package.type_system.error_type);
+                    return optional_make_success(parser->result_package.type_system.unknown_type);
                     //return optional_make_failure<C_Import_Type*>();
                      //panic("Check if this happens, otherwise return failure");
                 }
@@ -923,7 +923,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
     case C_Import_Type_Type::ARRAY:
     case C_Import_Type_Type::POINTER:
     case C_Import_Type_Type::PRIMITIVE:
-    case C_Import_Type_Type::ERROR_TYPE:
+    case C_Import_Type_Type::UNKNOWN_TYPE:
         break;
     default: panic("WHAT");
     }
@@ -1064,7 +1064,7 @@ Optional<Dynamic_Array<C_Import_Parameter>> header_parser_parse_parameters(Heade
     }
     parser->index += 1;
 
-    Dynamic_Array<C_Import_Parameter> parameters = dynamic_array_create_empty<C_Import_Parameter>(2);
+    Dynamic_Array<C_Import_Parameter> parameters = dynamic_array_create<C_Import_Parameter>(2);
     bool success = true;
     while (true)
     {
@@ -1134,7 +1134,7 @@ Optional<C_Variable_Definition> header_parser_parse_variable_definition(Header_P
 
     C_Variable_Definition result;
     result.base_type = base_type;
-    result.instances = dynamic_array_create_empty<C_Variable_Instance>(2);
+    result.instances = dynamic_array_create<C_Variable_Instance>(2);
     bool success = true;
     SCOPE_EXIT(if (!success) { checkpoint_rewind(checkpoint); dynamic_array_destroy(&result.instances); });
     // Differentiate Function pointer definition from Variable definition
@@ -1297,7 +1297,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
         }
         break;
     }
-    case C_Import_Type_Type::ERROR_TYPE: {
+    case C_Import_Type_Type::UNKNOWN_TYPE: {
         string_append_formated(string, "ERROR_TYPE");
         break;
     }
@@ -1725,7 +1725,7 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
         int count = 0;
         Timer timer = timer_make();
         double last_time = timer_current_time_in_seconds(&timer);
-        Dynamic_Array<Print_Destination> destinations = dynamic_array_create_empty<Print_Destination>(256);
+        Dynamic_Array<Print_Destination> destinations = dynamic_array_create<Print_Destination>(256);
         SCOPE_EXIT(dynamic_array_destroy(&destinations));
         while (hashtable_iterator_has_next(&iter))
         {
@@ -1804,7 +1804,7 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
             return optional_make_failure<C_Import_Package>();
         }
 
-        Dynamic_Array<int> sizes = dynamic_array_create_empty<int>(destinations.size);
+        Dynamic_Array<int> sizes = dynamic_array_create<int>(destinations.size);
         SCOPE_EXIT(dynamic_array_destroy(&sizes));
         int index = 0;
         while (index < sizeof_res.value.output.size)
@@ -2038,7 +2038,7 @@ Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*
         //}
         signature.options.structure.symbol = 0;
         signature.options.structure.struct_type = Structure_Type::C_UNION;
-        signature.options.structure.members = dynamic_array_create_empty<Struct_Member>(type->structure.members.size);
+        signature.options.structure.members = dynamic_array_create<Struct_Member>(type->structure.members.size);
         if (!type->structure.contains_bitfield)
         {
             for (int i = 0; i < type->structure.members.size; i++) {
@@ -2057,7 +2057,7 @@ Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*
     {
         signature.type = Datatype_Type::FUNCTION;
         signature.options.function.return_type = import_c_type(type->function_signature.return_type, type_conversions);
-        signature.options.function.parameter_types = dynamic_array_create_empty<Datatype*>(type->function_signature.parameters.size);
+        signature.options.function.parameter_types = dynamic_array_create<Datatype*>(type->function_signature.parameters.size);
         for (int i = 0; i < type->function_signature.parameters.size; i++) {
             dynamic_array_push_back(
                 &signature.options.function.parameter_types,

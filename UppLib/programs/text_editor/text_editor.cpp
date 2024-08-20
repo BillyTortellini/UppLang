@@ -236,7 +236,7 @@ void text_history_delete_character(Text_History* history, Text_Position pos) {
 
 void text_history_start_record_complex_command(Text_History* history) {
     if (history->recording_depth < 0) panic("Error, recording depth is negative!!\n");
-    if (history->recording_depth == 0) history->complex_command = dynamic_array_create_empty<Text_Change>(32);
+    if (history->recording_depth == 0) history->complex_command = dynamic_array_create<Text_Change>(32);
     history->recording_depth++;
     history->complex_command_start_pos = history->editor->cursor_position;
 }
@@ -301,7 +301,7 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
     result->text = text_create_empty();
 
     result->renderer = text_renderer;
-    result->text_highlights = dynamic_array_create_empty<Dynamic_Array<Text_Highlight>>(32);
+    result->text_highlights = dynamic_array_create<Dynamic_Array<Text_Highlight>>(32);
     result->line_size_cm = 0.3f;
     result->first_rendered_line = 0;
     result->first_rendered_char = 0;
@@ -318,14 +318,14 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
     result->last_search_char = ' ';
     result->last_search_was_forwards = true;
     result->last_keymessage_time = 0.0;
-    result->jump_history = dynamic_array_create_empty<Text_Editor_Jump>(32);
+    result->jump_history = dynamic_array_create<Text_Editor_Jump>(32);
     result->jump_history_index = 0;
 
     result->last_normal_mode_command = normal_mode_command_make(Normal_Mode_Command_Type::MOVEMENT, 0);
     result->last_normal_mode_command.movement = movement_make(Movement_Type::MOVE_LEFT, 0, 0);
-    result->normal_mode_incomplete_command = dynamic_array_create_empty<Key_Message>(32);
+    result->normal_mode_incomplete_command = dynamic_array_create<Key_Message>(32);
     result->record_insert_mode_inputs = true;
-    result->last_insert_mode_inputs = dynamic_array_create_empty<Key_Message>(32);
+    result->last_insert_mode_inputs = dynamic_array_create<Key_Message>(32);
     result->yanked_string = string_create_empty(64);
     result->last_yank_was_line = false;
 
@@ -351,7 +351,7 @@ void text_editor_destroy(Text_Editor* editor)
 void text_editor_synchronize_highlights_array(Text_Editor* editor)
 {
     while (editor->text_highlights.size < editor->text.size) {
-        Dynamic_Array<Text_Highlight> line_highlights = dynamic_array_create_empty<Text_Highlight>(32);
+        Dynamic_Array<Text_Highlight> line_highlights = dynamic_array_create<Text_Highlight>(32);
         dynamic_array_push_back(&editor->text_highlights, line_highlights);
     }
 }

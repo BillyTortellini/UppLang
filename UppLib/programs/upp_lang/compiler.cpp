@@ -103,7 +103,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.c_compiler = new C_Compiler;
     *compiler.c_compiler = c_compiler_create();
 
-    compiler.code_sources = dynamic_array_create_empty<Code_Source*>(1);
+    compiler.code_sources = dynamic_array_create<Code_Source*>(1);
     return &compiler;
 }
 
@@ -217,6 +217,8 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.empty_string =        add_id("");
             ids.invalid_symbol_name = add_id("__INVALID_SYMBOL_NAME");
             ids.id_struct =           add_id("Struct");
+            ids.byte =                add_id("byte");
+            ids.value =               add_id("value");
 
             ids.cast_mode =          add_id("Cast_Mode");
             ids.cast_mode_auto =     add_id("AUTO");
@@ -876,7 +878,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
     }
 
     // Stress testing again but with correct parenthesis order
-    Dynamic_Array<char> stack_parenthesis = dynamic_array_create_empty<char>(256);
+    Dynamic_Array<char> stack_parenthesis = dynamic_array_create<char>(256);
     SCOPE_EXIT(dynamic_array_destroy(&stack_parenthesis));
     for (int i = 0; i < code.size; i++)
     {

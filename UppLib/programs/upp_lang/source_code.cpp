@@ -14,8 +14,8 @@ void source_text_remove_invalid_whitespaces(String& text);
 Source_Code* source_code_create()
 {
     Source_Code* result = new Source_Code;
-    result->block_buffer = dynamic_array_create_empty<Source_Block>(1);
-    result->free_blocks = dynamic_array_create_empty<int>(1);
+    result->block_buffer = dynamic_array_create<Source_Block>(1);
+    result->free_blocks = dynamic_array_create<int>(1);
     source_code_reset(result);
     return result;
 }
@@ -37,7 +37,7 @@ Block_Index source_block_insert_empty_block(Line_Index line_index)
     {
         // INFO: Use unsafe version of index_value here, because block isn't valid
         auto block = index_value_unsafe(new_index);
-        block->lines = dynamic_array_create_empty<Source_Line>(1);
+        block->lines = dynamic_array_create<Source_Line>(1);
         block->parent = line_index.block_index;
         block->valid = true;
 
@@ -70,8 +70,8 @@ void source_block_insert_line(Line_Index line_index)
 {
     Source_Line new_line;
     new_line.is_block_reference = false;
-    new_line.options.text.infos = dynamic_array_create_empty<Render_Info>(1);
-    new_line.options.text.tokens = dynamic_array_create_empty<Token>(1);
+    new_line.options.text.infos = dynamic_array_create<Render_Info>(1);
+    new_line.options.text.tokens = dynamic_array_create<Token>(1);
     new_line.options.text.text = string_create_empty(1);
 
     // Insert ordered into parent
@@ -110,7 +110,7 @@ void source_code_reset(Source_Code* code)
 
     // Insert root block
     Source_Block root;
-    root.lines = dynamic_array_create_empty<Source_Line>(1);
+    root.lines = dynamic_array_create<Source_Line>(1);
     root.valid = true;
     root.parent = block_index_make(code, -1);
     dynamic_array_push_back(&code->block_buffer, root);

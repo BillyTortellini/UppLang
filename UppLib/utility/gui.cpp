@@ -198,7 +198,7 @@ void gui_initialize(Text_Renderer* text_renderer, Window* window)
     auto& pre = rendering_core.predefined;
 
     gui.text_renderer = text_renderer;
-    gui.nodes = dynamic_array_create_empty<GUI_Node>(1);
+    gui.nodes = dynamic_array_create<GUI_Node>(1);
     gui.window = window;
     gui.input = window_get_input(window);
     gui.cursor_type = Cursor_Icon_Type::ARROW;
@@ -555,8 +555,8 @@ void gui_layout_layout_children(int node_index, int dim)
     if (in_stack_dimension)
     {
         // Collect fill children and calculate space
-        Dynamic_Array<GUI_Constraint> preferred_constraints = dynamic_array_create_empty<GUI_Constraint>(1);
-        Dynamic_Array<GUI_Constraint> fill_constraints = dynamic_array_create_empty<GUI_Constraint>(1);
+        Dynamic_Array<GUI_Constraint> preferred_constraints = dynamic_array_create<GUI_Constraint>(1);
+        Dynamic_Array<GUI_Constraint> fill_constraints = dynamic_array_create<GUI_Constraint>(1);
         SCOPE_EXIT(dynamic_array_destroy(&preferred_constraints));
         SCOPE_EXIT(dynamic_array_destroy(&fill_constraints));
         int space_without_padding = node_size - node.layout.padding[dim] * 2;
@@ -1020,13 +1020,13 @@ void gui_update_and_render(Render_Pass* render_pass)
     // Remove unreferenced nodes (And update indices accurdingly)
     {
         // Generate new node positions
-        Array<int> new_node_indices = array_create_empty<int>(nodes.size);
+        Array<int> new_node_indices = array_create<int>(nodes.size);
         SCOPE_EXIT(array_destroy(&new_node_indices));
         int next_free_index = 0;
         gui_remove_unreferenced_nodes_recursive(new_node_indices, 0, next_free_index, false, false);
 
         // Do compaction
-        Dynamic_Array<GUI_Node> new_nodes = dynamic_array_create_empty<GUI_Node>(next_free_index + 1);
+        Dynamic_Array<GUI_Node> new_nodes = dynamic_array_create<GUI_Node>(next_free_index + 1);
         new_nodes.size = next_free_index;
         for (int i = 0; i < nodes.size; i++) {
             int new_index = new_node_indices[i];
@@ -1098,17 +1098,17 @@ void gui_update_and_render(Render_Pass* render_pass)
         auto& nodes = gui.nodes;
 
         // Generate draw batches
-        Array<int> execution_order = array_create_empty<int>(nodes.size);
-        Dynamic_Array<int> batch_start_indices = dynamic_array_create_empty<int>(nodes.size);
+        Array<int> execution_order = array_create<int>(nodes.size);
+        Dynamic_Array<int> batch_start_indices = dynamic_array_create<int>(nodes.size);
         SCOPE_EXIT(array_destroy(&execution_order));
         SCOPE_EXIT(dynamic_array_destroy(&batch_start_indices));
         {
             // Initialize dependency graph structure
-            Array<GUI_Dependency> dependencies = array_create_empty<GUI_Dependency>(nodes.size);
+            Array<GUI_Dependency> dependencies = array_create<GUI_Dependency>(nodes.size);
             for (int i = 0; i < dependencies.size; i++) {
                 auto& dependency = dependencies[i];
                 dependency.dependency_count = 0;
-                dependency.dependents = dynamic_array_create_empty<int>(1);
+                dependency.dependents = dynamic_array_create<int>(1);
             }
             SCOPE_EXIT(
                 for (int i = 0; i < dependencies.size; i++) {

@@ -91,7 +91,7 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
 {
     Hashtable<K, V> result;
     result.element_count = 0;
-    result.entries = array_create_empty<Hashtable_Entry<K, V>>(primes_find_next_suitable_for_set_size(capacity));
+    result.entries = array_create<Hashtable_Entry<K, V>>(primes_find_next_suitable_for_set_size(capacity));
     for (int i = 0; i < result.entries.size; i++) {
         result.entries[i].valid = false;
         result.entries[i].next = 0;

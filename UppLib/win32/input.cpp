@@ -129,8 +129,8 @@ void key_message_append_to_string(Key_Message* msg, String* string)
 Input input_create()
 {
     Input result;
-    result.key_messages = dynamic_array_create_empty<Key_Message>(64);
-    result.mouse_messages = dynamic_array_create_empty<Mouse_Message>(64);
+    result.key_messages = dynamic_array_create<Key_Message>(64);
+    result.mouse_messages = dynamic_array_create<Mouse_Message>(64);
     input_reset(&result);
     memory_set_bytes(result.key_down, KEYBOARD_KEY_COUNT, 0);
     memory_set_bytes(result.mouse_down, MOUSE_KEY_COUNT, 0);

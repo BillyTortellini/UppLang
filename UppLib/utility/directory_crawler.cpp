@@ -69,7 +69,7 @@ void directory_crawler_print_all_files(DirectoryCrawler* crawler)
     
 Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler) 
 {
-    Dynamic_Array<FileInfo> file_infos = dynamic_array_create_empty<FileInfo>(8);
+    Dynamic_Array<FileInfo> file_infos = dynamic_array_create<FileInfo>(8);
 
     HANDLE search_handle;
     WIN32_FIND_DATA found_file_description;
@@ -80,7 +80,7 @@ Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler)
         search_handle = FindFirstFile(search_path.characters, &found_file_description);
     }
     if (search_handle == INVALID_HANDLE_VALUE) {
-        return array_create_empty<FileInfo>(0);
+        return array_create<FileInfo>(0);
     }
 
     // Loop over all found files

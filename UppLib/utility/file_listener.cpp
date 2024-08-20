@@ -42,7 +42,7 @@ void watched_file_destroy(Watched_File* watched_file) {
 
 File_Listener* file_listener_create() {
     File_Listener* result = new File_Listener();
-    result->files = dynamic_array_create_empty<Watched_File*>(8);
+    result->files = dynamic_array_create<Watched_File*>(8);
     return result;
 }
 

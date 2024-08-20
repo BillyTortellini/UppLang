@@ -249,15 +249,15 @@ struct StreetNetwork
 
 StreetNetwork streetnetwork_create(float grid_width, int row_count) {
     StreetNetwork result;
-    result.positions = dynamic_array_create_empty<vec2>(32);
-    result.lines = dynamic_array_create_empty<StreetLine>(32);
-    result.open_branches = dynamic_array_create_empty<StreetBranch>(32);
-    result.buildings = dynamic_array_create_empty<StreetBuildingPlaceholder>(128);
+    result.positions = dynamic_array_create<vec2>(32);
+    result.lines = dynamic_array_create<StreetLine>(32);
+    result.open_branches = dynamic_array_create<StreetBranch>(32);
+    result.buildings = dynamic_array_create<StreetBuildingPlaceholder>(128);
     result.grid_width = grid_width;
     result.row_count = row_count;
-    result.grid = array_create_empty<Dynamic_Array<int>>(row_count * row_count);
+    result.grid = array_create<Dynamic_Array<int>>(row_count * row_count);
     for (int i = 0; i < row_count * row_count; i++) {
-        result.grid[i] = dynamic_array_create_empty<int>(4);
+        result.grid[i] = dynamic_array_create<int>(4);
     }
     return result;
 }
@@ -303,9 +303,9 @@ void streetnetwork_update_grid_size(StreetNetwork* network, float size, int row_
 
     network->grid_width = size;
     network->row_count = row_count;
-    network->grid = array_create_empty<Dynamic_Array<int>>(row_count * row_count);
+    network->grid = array_create<Dynamic_Array<int>>(row_count * row_count);
     for (int i = 0; i < row_count * row_count; i++) {
-        network->grid[i] = dynamic_array_create_empty<int>(4);
+        network->grid[i] = dynamic_array_create<int>(4);
     }
 }
 
@@ -796,7 +796,7 @@ void streetnetwork_generate_main_road(StreetNetwork* network, vec2 size, int hot
     }
 
     // Create streets for x closest points
-    Dynamic_Array<int> connected_indices = dynamic_array_create_empty<int>(16);
+    Dynamic_Array<int> connected_indices = dynamic_array_create<int>(16);
     SCOPE_EXIT(dynamic_array_destroy(&connected_indices));
     int position_count = network->positions.size;
     for (int i = 0; i < position_count; i++)
@@ -859,7 +859,7 @@ void street_generate_between_hotspots_random(
         direction = vec2(math_sine(angle), math_cosine(angle));
     }
 
-    DynamicArray<vec2> street_points = dynamic_array_create_empty<vec2>(64);
+    DynamicArray<vec2> street_points = dynamic_array_create<vec2>(64);
     SCOPE_EXIT(dynamic_array_destroy(&street_points));
     dynamic_array_push_back(&street_points, current_point);
 
@@ -897,7 +897,7 @@ struct Polygon2D
 
 Polygon2D polygon_2d_create() {
     Polygon2D result;
-    result.positions = dynamic_array_create_empty<vec2>(16);
+    result.positions = dynamic_array_create<vec2>(16);
     return result;
 }
 
@@ -949,7 +949,7 @@ bool triangle_2d_point_inside(vec2 a, vec2 b, vec2 c, vec2 p)
 void polygon_2d_triangulate(Polygon2D* polygon, Dynamic_Array<uint32>* index_buffer)
 {
     Dynamic_Array<vec2>& positions = polygon->positions;
-    Dynamic_Array<int> indices = dynamic_array_create_empty<int>(positions.size);
+    Dynamic_Array<int> indices = dynamic_array_create<int>(positions.size);
     SCOPE_EXIT(dynamic_array_destroy(&indices));
     for (int i = 0; i < positions.size; i++) {
         dynamic_array_push_back(&indices, i);
@@ -1065,9 +1065,9 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
         if (start_index == -1) start_index = 0;
     }
 
-    Array<int> collisions_p0 = array_create_empty<int>(p0->positions.size);
-    Array<int> collisions_p1 = array_create_empty<int>(p1->positions.size);
-    Array<int> intersections = array_create_empty<int>(p1->positions.size);
+    Array<int> collisions_p0 = array_create<int>(p0->positions.size);
+    Array<int> collisions_p1 = array_create<int>(p1->positions.size);
+    Array<int> intersections = array_create<int>(p1->positions.size);
     SCOPE_EXIT(array_destroy(&collisions_p0));
     SCOPE_EXIT(array_destroy(&collisions_p1));
     for (int i = 0; i < collisions_p0.size; i++) collisions_p0[i] = -1;
@@ -1095,7 +1095,7 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
 
     }
 
-    Dynamic_Array<vec2> points = dynamic_array_create_empty<vec2>(16);
+    Dynamic_Array<vec2> points = dynamic_array_create<vec2>(16);
     SCOPE_EXIT(dynamic_array_destroy(&points));
     if (start_index == -1) { // All points inside
         dynamic_array_reset(&p0->positions);
@@ -1109,7 +1109,7 @@ void polygon_2d_union_new(Polygon2D* p0, Polygon2D* p1)
 void polygon_2d_union(Polygon2D* p0, Polygon2D* p1)
 {
     // Walk along p0, intersect line_index with all other lines in p1, if int
-    Dynamic_Array<vec2> points = dynamic_array_create_empty<vec2>(16);
+    Dynamic_Array<vec2> points = dynamic_array_create<vec2>(16);
     SCOPE_EXIT(dynamic_array_destroy(&points));
     int start_index = -1;
     for (int i = 0; i < p0->positions.size; i++) {
@@ -1290,7 +1290,7 @@ void building_create_from_polygon_2d(Polygon2D* polygon, Dynamic_Array<Building_
         dynamic_array_push_back(vertices, building_vertex_make(vec3(p.x, height, -p.y), vec3(0.0f, 1.0f, 0.0f), uv));
     }
 
-    Dynamic_Array<uint32> ceiling_indices = dynamic_array_create_empty<uint32>(polygon->positions.size * 2);
+    Dynamic_Array<uint32> ceiling_indices = dynamic_array_create<uint32>(polygon->positions.size * 2);
     SCOPE_EXIT(dynamic_array_destroy(&ceiling_indices));
     polygon_2d_triangulate(polygon, &ceiling_indices);
     for (int i = 0; i < ceiling_indices.size; i++) {
@@ -1304,8 +1304,8 @@ Mesh_GPU_Data city_street_create_mesh_from_network()
 
 //Mesh_GPU_Buffer city_building_create_mesh_from_polygon(Polygon2D* polygon, float height, Rendering_Core* core)
 //{
-//    Dynamic_Array<Building_Vertex> building_vertices = dynamic_array_create_empty<Building_Vertex>(32);
-//    Dynamic_Array<uint32> building_indices = dynamic_array_create_empty<uint32>(32);
+//    Dynamic_Array<Building_Vertex> building_vertices = dynamic_array_create<Building_Vertex>(32);
+//    Dynamic_Array<uint32> building_indices = dynamic_array_create<uint32>(32);
 //    SCOPE_EXIT(dynamic_array_destroy(&building_vertices));
 //    SCOPE_EXIT(dynamic_array_destroy(&building_indices));
 //    building_create_from_polygon_2d(polygon, &building_vertices, &building_indices, 5.0f);

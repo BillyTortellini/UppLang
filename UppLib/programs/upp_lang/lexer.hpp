@@ -85,6 +85,7 @@ enum class Keyword
     CONTEXT,
     FOR,
     IN_KEYWORD,
+    CONST_KEYWORD,
 
     MAX_ENUM_VALUE
 };

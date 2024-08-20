@@ -158,7 +158,7 @@ OpenGL_State opengl_state_create()
     int texture_unit_count;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &texture_unit_count);
     texture_unit_count = math_minimum(2048, texture_unit_count);
-    result.texture_unit_bindings = array_create_empty<Texture_Unit_Binding>(texture_unit_count);
+    result.texture_unit_bindings = array_create<Texture_Unit_Binding>(texture_unit_count);
     for (int i = 0; i < texture_unit_count; i++) {
         auto& binding = result.texture_unit_bindings[i];
         binding.bound_texture_id = 0;

@@ -16,8 +16,8 @@ void c_generator_output_cast_with_type(C_Generator* generator, String* output, D
 C_Compiler c_compiler_create()
 {
     C_Compiler result;
-    result.source_files = dynamic_array_create_empty<String>(4);
-    result.lib_files = dynamic_array_create_empty<String>(4);
+    result.source_files = dynamic_array_create<String>(4);
+    result.lib_files = dynamic_array_create<String>(4);
     result.initialized = true;
     result.last_compile_successfull = false;
     // Load system vars (Required to use cl.exe and link.exe)
@@ -180,12 +180,12 @@ C_Generator c_generator_create()
     result.section_string_data = string_create_empty(4096);
     result.section_globals = string_create_empty(4096);
     result.section_constants = string_create_empty(4096);
-    result.array_index_stack = dynamic_array_create_empty<int>(16);
-    result.translation_constant_to_name = dynamic_array_create_empty<String>(64);
+    result.array_index_stack = dynamic_array_create<int>(16);
+    result.translation_constant_to_name = dynamic_array_create<String>(64);
     result.translation_type_to_name = hashtable_create_pointer_empty<Datatype*, String>(128);
     result.translation_function_to_name = hashtable_create_pointer_empty<IR_Function*, String>(128);
     result.translation_code_block_to_name = hashtable_create_pointer_empty<IR_Code_Block*, String>(128);
-    result.type_dependencies = dynamic_array_create_empty<C_Type_Definition_Dependency>(64);
+    result.type_dependencies = dynamic_array_create<C_Type_Definition_Dependency>(64);
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Datatype*, int>(64);
     result.name_counter = 0;
     return result;
@@ -306,8 +306,8 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
         {
             C_Type_Definition_Dependency dependant;
             dependant.signature = type;
-            dependant.incoming_dependencies = dynamic_array_create_empty<int>(2);
-            dependant.outgoing_dependencies = dynamic_array_create_empty<int>(1);
+            dependant.incoming_dependencies = dynamic_array_create<int>(2);
+            dependant.outgoing_dependencies = dynamic_array_create<int>(1);
             dynamic_array_push_back(&generator->type_dependencies, dependant);
         }
         else
@@ -331,7 +331,7 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
         string_append_formated(&generator->section_struct_implementations, tmp.characters);
         break;
     }
-    case Datatype_Type::ERROR_TYPE:
+    case Datatype_Type::UNKNOWN_TYPE:
         string_append_formated(&type_name, "ERROR_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
         break;
     case Datatype_Type::FUNCTION: 
@@ -360,7 +360,7 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
     }
     case Datatype_Type::POINTER:
     {
-        c_generator_output_type_reference(generator, &type_name, downcast<Datatype_Pointer>(type)->points_to_type);
+        c_generator_output_type_reference(generator, &type_name, downcast<Datatype_Pointer>(type)->element_type);
         string_append_formated(&type_name, "*");
         break;
     }
@@ -421,13 +421,13 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
 
         C_Type_Definition_Dependency dependant;
         dependant.signature = type;
-        dependant.incoming_dependencies = dynamic_array_create_empty<int>(2);
-        dependant.outgoing_dependencies = dynamic_array_create_empty<int>(2);
+        dependant.incoming_dependencies = dynamic_array_create<int>(2);
+        dependant.outgoing_dependencies = dynamic_array_create<int>(2);
         dynamic_array_push_back(&generator->type_dependencies, dependant);
         hashtable_insert_element(&generator->type_to_dependency_mapping, type, generator->type_dependencies.size - 1);
         break;
     }
-    case Datatype_Type::VOID_POINTER:
+    case Datatype_Type::BYTE_POINTER:
         string_append_formated(&type_name, "void*");
         break;
     default: panic("Hey");
@@ -995,7 +995,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
     // Generate strings for all constant-accesses
     {
         auto& constants = compiler->constant_pool.constants;
-        Array<int> constant_start_byte_in_buffer = array_create_empty<int>(constants.size);
+        Array<int> constant_start_byte_in_buffer = array_create<int>(constants.size);
         SCOPE_EXIT(array_destroy(&constant_start_byte_in_buffer));
         int constant_buffer_pos = 0;
         string_append_formated(&generator->section_constants, "byte constant_buffer[] = {\n   ");
@@ -1080,7 +1080,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                 default: panic("HEY");
                 }
             }
-            else if (type->type == Datatype_Type::VOID_POINTER && *(void**)raw_data == nullptr) {
+            else if (type->type == Datatype_Type::BYTE_POINTER && *(void**)raw_data == nullptr) {
                 string_append_formated(&output, "nullptr");
             }
             else if (type->type == Datatype_Type::TYPE_HANDLE) {
@@ -1199,7 +1199,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         }
 
         // Count dependencies, prepare structs
-        Dynamic_Array<int> resolved_dependency_queue = dynamic_array_create_empty<int>(generator->type_dependencies.size);
+        Dynamic_Array<int> resolved_dependency_queue = dynamic_array_create<int>(generator->type_dependencies.size);
         SCOPE_EXIT(dynamic_array_destroy(&resolved_dependency_queue));
         for (int i = 0; i < generator->type_dependencies.size; i++)
         {

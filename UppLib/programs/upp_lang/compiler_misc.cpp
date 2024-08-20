@@ -126,10 +126,10 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 Extern_Sources extern_sources_create()
 {
     Extern_Sources result;
-    result.extern_functions = dynamic_array_create_empty<Extern_Function_Identifier>(8);
-    result.headers_to_include = dynamic_array_create_empty<String*>(8);
-    result.source_files_to_compile = dynamic_array_create_empty<String*>(8);
-    result.lib_files = dynamic_array_create_empty<String*>(8);
+    result.extern_functions = dynamic_array_create<Extern_Function_Identifier>(8);
+    result.headers_to_include = dynamic_array_create<String*>(8);
+    result.source_files_to_compile = dynamic_array_create<String*>(8);
+    result.lib_files = dynamic_array_create<String*>(8);
     result.extern_type_signatures = hashtable_create_pointer_empty<Datatype*, String*>(8);
     return result;
 }
@@ -224,8 +224,8 @@ struct Fiber_Pool
 
 Fiber_Pool* fiber_pool_create() {
     Fiber_Pool* pool = new Fiber_Pool;
-    pool->allocated_fibers = dynamic_array_create_empty<Fiber_Info>(1);
-    pool->next_free_index = dynamic_array_create_empty<int>(1);
+    pool->allocated_fibers = dynamic_array_create<Fiber_Info>(1);
+    pool->next_free_index = dynamic_array_create<int>(1);
     if (!fiber_initialize()) {
         panic("Couldn't create fiber_pool, fiber initialization failed!\n");
     }

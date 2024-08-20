@@ -26,9 +26,9 @@ Constant_Pool constant_pool_create()
 {
     Constant_Pool result;
     result.constant_memory = stack_allocator_create_empty(2048);
-    result.constants = dynamic_array_create_empty<Upp_Constant>(2048);
-    result.references = dynamic_array_create_empty<Upp_Constant_Reference>(128);
-    result.function_references = dynamic_array_create_empty<Upp_Constant_Function_Reference>(32);
+    result.constants = dynamic_array_create<Upp_Constant>(2048);
+    result.references = dynamic_array_create<Upp_Constant_Reference>(128);
+    result.function_references = dynamic_array_create<Upp_Constant_Function_Reference>(32);
     result.saved_pointers = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
     result.deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
     return result;
@@ -110,7 +110,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
     switch (signature->type)
     {
     case Datatype_Type::TYPE_HANDLE:
-    case Datatype_Type::ERROR_TYPE:
+    case Datatype_Type::UNKNOWN_TYPE:
     case Datatype_Type::ENUM:
     case Datatype_Type::TEMPLATE_PARAMETER:
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
@@ -134,7 +134,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
     }
     case Datatype_Type::POINTER:
     {
-        Datatype* points_to = downcast<Datatype_Pointer>(signature)->points_to_type;
+        Datatype* points_to = downcast<Datatype_Pointer>(signature)->element_type;
         for (int i = 0; i < array_size; i++) {
             void** pointer_address = (void**)(bytes.data + start_offset + offset_per_element * i);
             if (*pointer_address != nullptr) { // Dont record null-pointers
@@ -168,7 +168,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
         return true;
     }
-    case Datatype_Type::VOID_POINTER: {
+    case Datatype_Type::BYTE_POINTER: {
         for (int i = 0; i < array_size; i++) {
             void** pointer_address = (void**) (bytes.data + start_offset + offset_per_element * i);
             if (*pointer_address != nullptr) {
@@ -343,7 +343,7 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
     {
         // Create pointers array if necessary
         if (memory_info.contains_reference) {
-            pointer_infos = dynamic_array_create_empty<Pointer_Info>(1);
+            pointer_infos = dynamic_array_create<Pointer_Info>(1);
         }
         else {
             pointer_infos.data = 0;
@@ -351,7 +351,7 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
             pointer_infos.capacity = 0;
         }
         if (memory_info.contains_function_pointer) {
-            function_references = dynamic_array_create_empty<Upp_Constant_Function_Reference>(1);
+            function_references = dynamic_array_create<Upp_Constant_Function_Reference>(1);
         }
         else {
             function_references.data = 0;

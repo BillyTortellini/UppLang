@@ -46,6 +46,8 @@ struct Predefined_IDs
     String* cast_mode_implicit;
     String* cast_mode_explicit;
     String* cast_mode_none;
+    String* byte;
+    String* value;
 
     // Hardcoded functions
     String* type_of;
