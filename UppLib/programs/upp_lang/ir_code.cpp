@@ -570,13 +570,25 @@ Datatype* ir_data_access_get_type(IR_Data_Access* access)
     case IR_Data_Access_Type::PARAMETER:
         sig = access->option.function->function_type->parameters[access->index].type;
         break;
+    case IR_Data_Access_Type::NOTHING:
+        sig = upcast(compiler.type_system.predefined_types.u8_type);
+        break;
     default: panic("Hey!");
     }
     if (access->is_memory_access) {
-        assert(sig->type == Datatype_Type::POINTER, "");
-        return downcast<Datatype_Pointer>(sig)->element_type;
+        assert(datatype_get_non_const_type(sig)->type == Datatype_Type::POINTER, "");
+        return downcast<Datatype_Pointer>(datatype_get_non_const_type(sig))->element_type;
     }
-    return sig;
+    return datatype_get_non_const_type(sig);
+}
+
+IR_Data_Access ir_data_access_create_nothing()
+{
+    IR_Data_Access access;
+    access.index = 0;
+    access.is_memory_access = false;
+    access.type = IR_Data_Access_Type::NOTHING;
+    return access;
 }
 
 IR_Data_Access ir_data_access_create_global(ModTree_Global* global)
@@ -611,7 +623,7 @@ IR_Data_Access ir_data_access_create_dereference(IR_Code_Block* block, IR_Data_A
         access.is_memory_access = true;
         return access;
     }
-    Datatype* ptr_type = ir_data_access_get_type(&access);
+    Datatype* ptr_type = datatype_get_non_const_type(ir_data_access_get_type(&access));
     assert(ptr_type->type == Datatype_Type::POINTER, "");
     IR_Data_Access ptr_access = ir_data_access_create_intermediate(block, ptr_type);
     IR_Instruction instr;
@@ -845,22 +857,25 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
 
         IR_Instruction call_instr;
         call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        call_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, result_type);
+        Datatype_Function* signature = nullptr;
         switch (call_info->result_type)
         {
         case Expression_Result_Type::FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, call_info->options.function);
+            signature = call_instr.options.call.options.function->function_type;
             break;
         }
         case Expression_Result_Type::VALUE: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
             call_instr.options.call.options.pointer_access = ir_generator_generate_expression(ir_block, call.expr);
+            signature = downcast<Datatype_Function>(call_info->cast_info.result_type->base_type);
             break;
         }
         case Expression_Result_Type::CONSTANT: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
             call_instr.options.call.options.pointer_access = ir_data_access_create_constant(call_info->options.constant);
+            signature = downcast<Datatype_Function>(call_info->options.constant.type->base_type);
             break;
         }
         case Expression_Result_Type::HARDCODED_FUNCTION:
@@ -882,6 +897,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
                 exit_instr.options.return_instr.options.exit_code = Exit_Code::ASSERTION_FAILED;
                 dynamic_array_push_back(&if_instr.options.if_instr.false_branch->instructions, exit_instr);
+
+                call_instr.options.call.destination = ir_data_access_create_nothing();
                 return call_instr.options.call.destination;
             }
             case Hardcoded_Type::TYPE_OF: {
@@ -891,7 +908,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             }
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             call_instr.options.call.options.hardcoded.type = hardcoded;
-            call_instr.options.call.options.hardcoded.signature = hardcoded_type_to_signature(hardcoded);
+            signature = hardcoded_type_to_signature(hardcoded);
+            call_instr.options.call.options.hardcoded.signature = signature;
             break;
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION: 
@@ -901,6 +919,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+            signature = function->signature;
             break;
         }
         case Expression_Result_Type::DOT_CALL: {
@@ -912,11 +931,13 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
                 call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                 call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+                signature = function->signature;
             }
             else
             {
                 call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                 call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, dot_call.options.function);
+                signature = dot_call.options.function->signature;
             }
             break;
         }
@@ -926,6 +947,15 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             break;
         }
         default: panic("");
+        }
+
+        // Generate return value
+        assert(signature != nullptr, "");
+        if (signature->return_type.available) {
+            call_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, signature->return_type.value);
+        }
+        else {
+            call_instr.options.call.destination = ir_data_access_create_nothing();
         }
 
         // Generate arguments 
@@ -1117,7 +1147,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
 
         // Handle special case of array.data, which basically becomes an address of
-        auto src_type = get_info(mem_access.expr)->cast_info.type_afterwards;
+        auto src_type = get_info(mem_access.expr)->cast_info.result_type;
         if (src_type->type == Datatype_Type::ARRAY)
         {
             assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
@@ -1235,8 +1265,10 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     auto cast_type = cast_info.cast_type;
 
     // Auto operations
-    if (cast_info.take_address_of) {
-        source = ir_data_access_create_address_of(ir_block, source);
+    if (cast_info.deref_count < 0) {
+        for (int i = 0; i < -cast_info.deref_count; i++) {
+            source = ir_data_access_create_address_of(ir_block, source);
+        }
     }
     else
     {
@@ -1266,35 +1298,35 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     case Cast_Type::NO_CAST:
         panic("Should have been handled elsewhere!");
     case Cast_Type::INTEGERS: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INTEGERS);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::INTEGERS);
     }
     case Cast_Type::FLOATS: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::FLOATS);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::FLOATS);
     }
     case Cast_Type::FLOAT_TO_INT: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::FLOAT_TO_INT);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::FLOAT_TO_INT);
     }
     case Cast_Type::INT_TO_FLOAT: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INT_TO_FLOAT);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::INT_TO_FLOAT);
     }
     case Cast_Type::POINTERS: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::POINTERS);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::POINTERS);
     }
     case Cast_Type::POINTER_TO_U64: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::POINTER_TO_U64);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::POINTER_TO_U64);
     }
     case Cast_Type::U64_TO_POINTER: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::U64_TO_POINTER);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::U64_TO_POINTER);
     }
     case Cast_Type::ENUM_TO_INT: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::ENUM_TO_INT);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::ENUM_TO_INT);
     }
     case Cast_Type::INT_TO_ENUM: {
-        return make_simple_cast(ir_block, source, cast_info.type_afterwards, IR_Cast_Type::INT_TO_ENUM);
+        return make_simple_cast(ir_block, source, cast_info.result_type, IR_Cast_Type::INT_TO_ENUM);
     }
     case Cast_Type::ARRAY_TO_SLICE:
     {
-        Datatype_Slice* slice_type = downcast<Datatype_Slice>(cast_info.type_afterwards);
+        Datatype_Slice* slice_type = downcast<Datatype_Slice>(cast_info.result_type);
         Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
         IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, upcast(slice_type));
         // Set size
@@ -1323,7 +1355,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
         instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
         instr.options.call.arguments = dynamic_array_create<IR_Data_Access>(1);
         dynamic_array_push_back(&instr.options.call.arguments, source);
-        instr.options.call.destination = ir_data_access_create_intermediate(ir_block, cast_info.type_afterwards);
+        instr.options.call.destination = ir_data_access_create_intermediate(ir_block, cast_info.result_type);
         instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, cast_info.options.custom_cast_function);
         dynamic_array_push_back(&ir_block->instructions, instr);
         return instr.options.call.destination;
@@ -1344,14 +1376,14 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
         // Check if type matches given type, if not error out
         IR_Data_Access access_operand = source;
         IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
-        IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, cast_info.type_afterwards);
+        IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, cast_info.result_type);
         {
             IR_Instruction cmp_instr;
             cmp_instr.type = IR_Instruction_Type::BINARY_OP;
             cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
             cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
                 types.type_handle,
-                array_create_static_as_bytes<u32>(&cast_info.type_afterwards->type_handle.index, 1)
+                array_create_static_as_bytes<u32>(&cast_info.result_type->type_handle.index, 1)
             );
             cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand, types.any_type->members[1]);
             cmp_instr.options.binary_op.destination = access_valid_cast;
@@ -1376,7 +1408,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
                 cast_instr.options.cast.type = IR_Cast_Type::POINTERS;
                 cast_instr.options.cast.source = any_data_access;
                 cast_instr.options.cast.destination = ir_data_access_create_intermediate(
-                    branch_valid, upcast(type_system_make_pointer(cast_info.type_afterwards))
+                    branch_valid, upcast(type_system_make_pointer(cast_info.result_type))
                 );
                 dynamic_array_push_back(&branch_valid->instructions, cast_instr);
                 any_data_access = cast_instr.options.cast.destination;

@@ -918,7 +918,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
         String str = string_create("Unsized_Array_U8");
         hashtable_insert_element(&generator->translation_type_to_name, upcast(type_u8_array), str);
         String str_str = string_create("Upp_String");
-        hashtable_insert_element(&generator->translation_type_to_name, upcast(types.string_type), str_str);
+        hashtable_insert_element(&generator->translation_type_to_name, upcast(types.c_string), str_str);
     }
 
     // Create all Type_Signatures

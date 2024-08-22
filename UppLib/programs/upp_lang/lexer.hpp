@@ -34,6 +34,7 @@ enum class Operator
     POINTER_NOT_EQUALS,
     DEFINE_COMPTIME, // ::
     DEFINE_INFER, // :=
+    DEFINE_INFER_POINTER, // :=*
     AND,
     OR,
     ARROW,
@@ -76,8 +77,7 @@ enum class Keyword
     DELETE_KEYWORD,
     DEFER,
     CAST,
-    CAST_RAW,
-    CAST_PTR,
+    CAST_POINTER,
     BAKE,
     INSTANCIATE,
     IMPORT,

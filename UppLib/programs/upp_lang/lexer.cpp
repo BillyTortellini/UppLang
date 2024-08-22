@@ -44,6 +44,7 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::POINTER_NOT_EQUALS: return operator_info_make("!=*", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_COMPTIME: return operator_info_make("::", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER: return operator_info_make(":=", Operator_Type::BINOP, true, true);
+    case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
     case Operator::AND: return operator_info_make("&&", Operator_Type::BOTH, true, true); // Could also be double dereference &&int_pointer_pointer
     case Operator::OR: return operator_info_make("||", Operator_Type::BINOP, true, true);
     case Operator::ARROW: return operator_info_make("->", Operator_Type::BINOP, true, true);
@@ -89,8 +90,7 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CASE: return string_create_static("case");
     case Keyword::CAST: return string_create_static("cast");
-    case Keyword::CAST_RAW: return string_create_static("cast_raw");
-    case Keyword::CAST_PTR: return string_create_static("cast_ptr");
+    case Keyword::CAST_POINTER: return string_create_static("cast_pointer");
     case Keyword::CONTINUE: return string_create_static("continue");
     case Keyword::C_UNION: return string_create_static("c_union");
     case Keyword::DEFAULT: return string_create_static("default");

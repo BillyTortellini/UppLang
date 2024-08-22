@@ -450,12 +450,12 @@ enum class Cast_Type
 // The dereferences/address_of is applied before the cast
 struct Expression_Cast_Info
 {
-    int deref_count;
-    bool take_address_of;
+    Datatype* initial_type;
+    Datatype* result_type;
+    int deref_count; // May be negative to indicate take-address of
     Cast_Type cast_type;
-    Datatype* type_afterwards;
 
-    struct {
+    union {
         ModTree_Function* custom_cast_function;
         const char* error_msg; // Null, except if the cast is invalid
     } options;
@@ -553,7 +553,6 @@ struct Argument_Info
 enum class Context_Change_Info_Type
 {
     IGNORE_ON_IMPORT, 
-    CONTEXT_OPTION,
     CAST_OPTION,
     CUSTOM_OPERATOR
 };
@@ -563,7 +562,6 @@ struct Context_Change_Info
     Context_Change_Info_Type type;
     union {
         Cast_Option cast_option;
-        Context_Option context_option;
         Custom_Operator_Key key; // Note: On polymorphic cast/commutative binop multiple keys have to be inserted!
     } options;
     bool has_commutative_version;
@@ -597,13 +595,13 @@ struct Statement_Info
 
             bool is_custom_op;
             struct {
-                int has_next_pointer_diff; // Either -1 (Address-Of), 0 (Same pointer level) or >= 1
-                int next_pointer_diff;
-                int get_value_pointer_diff;
                 ModTree_Function* fn_create;
                 ModTree_Function* fn_has_next;
                 ModTree_Function* fn_next;
                 ModTree_Function* fn_get_value;
+                int has_next_pointer_diff;
+                int next_pointer_diff;
+                int get_value_pointer_diff;
             } custom_op;
         } foreach_loop;
     } specifics;
@@ -701,7 +699,6 @@ struct Predefined_Symbols
     Symbol* type_byte;
 
     // Symbols for 'compiler' provided structs
-    Symbol* type_string;
     Symbol* type_type;
     Symbol* type_type_information;
     Symbol* type_any;

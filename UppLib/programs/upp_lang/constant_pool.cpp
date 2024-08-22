@@ -117,6 +117,11 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
     case Datatype_Type::PRIMITIVE: {
         return true;
     }
+    case Datatype_Type::CONSTANT: {
+        return record_pointers_and_set_padding_bytes_zero_recursive(
+            downcast<Datatype_Constant>(signature)->element_type, array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references
+        );
+    }
     case Datatype_Type::FUNCTION: {
         auto& functions = compiler.semantic_analyser->program->functions;
         for (int i = 0; i < array_size; i++) {
@@ -314,6 +319,8 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
 Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, int array_size, Array<byte> bytes)
 {
+    signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
+
     Constant_Pool* pool = &compiler.constant_pool;
     pool->added_internal_constants += 1;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");

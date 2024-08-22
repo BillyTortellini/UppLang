@@ -799,6 +799,7 @@ void code_completion_find_suggestions()
 
         if (type != 0)
         {
+            type = type->base_type;
             switch (type->type)
             {
             case Datatype_Type::ARRAY:
@@ -825,11 +826,9 @@ void code_completion_find_suggestions()
             }
 
             // Search for dot-calls
-            int pointer_level = 0;
-            auto deref_type = datatype_get_pointed_to_type(type, &pointer_level);
             Datatype* poly_base_type = compiler.type_system.predefined_types.unknown_type;
-            if (deref_type->type == Datatype_Type::STRUCT) {
-                auto struct_type = downcast<Datatype_Struct>(deref_type);
+            if (type->type == Datatype_Type::STRUCT) {
+                auto struct_type = downcast<Datatype_Struct>(type);
                 if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                     poly_base_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
                 }
@@ -847,7 +846,7 @@ void code_completion_find_suggestions()
                 if (key.type != Custom_Operator_Type::DOT_CALL) {
                     continue;
                 }
-                if (!(types_are_equal(deref_type, key.options.dot_call.datatype) || types_are_equal(poly_base_type, key.options.dot_call.datatype))) {
+                if (!(types_are_equal(type, key.options.dot_call.datatype) || types_are_equal(poly_base_type, key.options.dot_call.datatype))) {
                     continue;
                 }
                 code_completion_add_and_rank(*key.options.dot_call.id, partially_typed);

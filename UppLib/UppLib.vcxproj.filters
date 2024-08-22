@@ -255,9 +255,6 @@
     <ClInclude Include="programs\upp_lang\syntax_editor.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\ast.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -326,6 +323,9 @@
     </ClInclude>
     <ClInclude Include="programs\bachelor_thesis\bachelor.hpp">
       <Filter>Header Files\Programs\Bachelor_Thesis</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\ast.hpp">
+      <Filter>Header Files\Programs\C_Importer</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

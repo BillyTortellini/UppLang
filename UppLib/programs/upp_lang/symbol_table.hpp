@@ -36,31 +36,21 @@ namespace AST
 // OPERATOR CONTEXT
 enum class Cast_Mode
 {
-    AUTO = 1,
-    IMPLICIT,
-    EXPLICIT,
-    NONE,
+    NONE = 1,
+    EXPLICIT, // cast{u64} i
+    INFERRED, // cast{u64} 
+    IMPLICIT, // x: u32 = i
+
+    POINTER_EXPLICIT,
+    POINTER_INFERRED,
     
     MAX_ENUM_VALUE
 };
 
 /*
     Notes on Custom_Operator_Key:
-    Left + Right types are always stored as base types of pointers for querying.
-    For polymorphic overloads the base-struct type is used as the left-value
-
-    Depending on the operator the meaning of the values differ:
-     * Dot-Call:
-        For dot-calls the left type is the type and a id is provided
-     * Array-Access:
-        Left type is array type, right type is error-type (As different index types asides from int are possible)
-     * Unop
-        Left type is type, right type is error-type, polymorphism is disabled currently
-     * Binop
-        Left and right types are set, polymorphism is disable currently
-     * Casts
-        On normal casts left type and right type are provided.
-        On polymorphic casts right type may be error type (If the polymorphic function result depends on the argument type)
+    The key-types are always stored as the base_type (E.g. no pointer/constant types).
+    After querying the analyse has to make sure that the pointer/constant levels are valid
 */
 enum class Custom_Operator_Type
 {
@@ -94,7 +84,7 @@ struct Custom_Operator_Key
         } array_access;
         struct {
             Datatype* from_type;
-            Datatype* to_type;
+            Datatype* to_type; // May be null for polymorphic casts
         } custom_cast;
         struct {
             Datatype* datatype;
@@ -109,27 +99,26 @@ struct Custom_Operator_Key
 union Custom_Operator
 {
     struct {
-        int left_pointer_level;
-        int right_pointer_level;
         bool switch_left_and_right;
+        Type_Mods left_mods;
+        Type_Mods right_mods;
         ModTree_Function* function;
     } binop;
     struct {
-        int pointer_level;
         ModTree_Function* function;
+        Type_Mods mods;
     } unop;
     struct {
-        int array_type_pointer_level;
         bool is_polymorphic;
+        Type_Mods mods;
         union {
             ModTree_Function* function;
             Polymorphic_Function_Base* poly_base;
         } options;
     } array_access;
     struct {
-        int from_pointer_level;
-        int to_pointer_level;
         Cast_Mode cast_mode;
+        Type_Mods mods;
         bool is_polymorphic;
         union {
             ModTree_Function* function;
@@ -138,7 +127,7 @@ union Custom_Operator
     } custom_cast;
     struct {
         bool dot_call_as_member_access;
-        int pointer_level;
+        Type_Mods mods;
         bool is_polymorphic;
         union {
             ModTree_Function* function;
@@ -146,11 +135,7 @@ union Custom_Operator
         } options;
     } dot_call;
     struct {
-        int iterable_pointer_level;
-        int has_next_pointer_diff; // Either -1 (Address-Of), 0 (Same pointer level) or >= 1
-        int next_pointer_diff;
-        int get_value_pointer_diff;
-
+        Type_Mods iterable_mods;
         bool is_polymorphic; 
         union {
             struct {
@@ -174,7 +159,6 @@ struct Operator_Context
 {
     Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
     Cast_Mode cast_options[(int)Cast_Option::MAX_ENUM_VALUE];
-    bool context_options[(int)Context_Option::MAX_ENUM_VALUE];
     Hashtable<Custom_Operator_Key, Custom_Operator> custom_operators;
 };
 

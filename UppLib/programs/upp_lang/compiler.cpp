@@ -247,24 +247,14 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.cast_option_enum_values[(int)Cast_Option::INT_TO_FLOAT] = add_id("INT_TO_FLOAT");
             ids.cast_option_enum_values[(int)Cast_Option::FLOAT_TO_INT] = add_id("FLOAT_TO_INT");
             ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_POINTER] = add_id("POINTER_TO_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::VOID_POINTER_TO_POINTER] = add_id("VOID_POINTER_TO_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_VOID_POINTER] = add_id("POINTER_TO_VOID_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_U64] = add_id("POINTER_TO_U64");
-            ids.cast_option_enum_values[(int)Cast_Option::U64_TO_POINTER] = add_id("U64_TO_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::FUNCTION_POINTER_TO_VOID] = add_id("FUNCTION_POINTER_TO_VOID");
-            ids.cast_option_enum_values[(int)Cast_Option::VOID_TO_FUNCTION_POINTER] = add_id("VOID_TO_FUNCTION_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_BOOL] = add_id("POINTER_TO_BOOL");
-            ids.cast_option_enum_values[(int)Cast_Option::FUNCTION_POINTER_TO_BOOL] = add_id("FUNCTION_POINTER_TO_BOOL");
-            ids.cast_option_enum_values[(int)Cast_Option::VOID_POINTER_TO_BOOL] = add_id("VOID_POINTER_TO_BOOL");
+            ids.cast_option_enum_values[(int)Cast_Option::FROM_BYTE_POINTER] = add_id("FROM_BYTE_POINTER");
+            ids.cast_option_enum_values[(int)Cast_Option::TO_BYTE_POINTER] = add_id("TO_BYTE_POINTER");
+            ids.cast_option_enum_values[(int)Cast_Option::POINTER_NULL_CHECK] = add_id("POINTER_NULL_CHECK");
             ids.cast_option_enum_values[(int)Cast_Option::TO_ANY] = add_id("TO_ANY");
             ids.cast_option_enum_values[(int)Cast_Option::FROM_ANY] = add_id("FROM_ANY");
             ids.cast_option_enum_values[(int)Cast_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
             ids.cast_option_enum_values[(int)Cast_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
             ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
-
-            ids.context_option = add_id("Context_Option");
-            ids.context_option_enum_values[(int)Context_Option::AUTO_ADDRESS_OF] = add_id("AUTO_ADDRESS_OF");
-            ids.context_option_enum_values[(int)Context_Option::AUTO_DEREFERENCE] = add_id("AUTO_DEREFERENCE");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore
@@ -646,7 +636,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
     enable_analysis = true;
     enable_ir_gen = true;
     enable_bytecode_gen = true;
-    enable_c_generation = true;
+    enable_c_generation = false;
     enable_c_compilation = run_testcases_compiled;
     enable_output = false;
     enable_execution = true;

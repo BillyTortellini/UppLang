@@ -1,37 +1,29 @@
 
-Rework Constant + Pointer system....
+TODO:
+ * Fix current Testcases
+ * Add testcases for constant, auto-address of and others
 
-Constant/String rework:
- * Add constant keyword
- * Make constant types work
+DONE:
+ * Update strings (E.g. remove string literal type, think about with size vs without size...)
+ * Update IR-Code to work with negative dereference values
+ * Literals should be constant
+ * Define-Infer should remove constant tag, e.g. x := 15 + 12 !
+ * Disable assignments to constants
+ * Comptime values should be constant
+ * Make function parameters constant
+ * Member access on constants should yield constants
+ * Remove the options for auto-dereference and auto-address of completely, and just make them standard everywhere...
 
-
-Type-System Rework:
--------------------
- * Datatype_Base now has is_constant
- * type_system make constant should exist now... (By default all types created in type system are not constant) 
- * Type deduplication with hashed type constructors
- * Rename void_pointer to byte_pointer
-    - Rename pointer options
- * Move all symbols into new namespace (u8, u16, u32, u64), maybe work on aliasing things
- * String update:
- * Void Pointer Update:
-    - Void_Pointer type removed
-    - new Byte type (Struct with value member -> u8)
-
-    - Void_Pointer --> new Byte type (Should work like void* in C++ (For interoperability and for Aliasing Rules...))
-       --> Should be the only type where we can expect aliasing with other types (Not like C++ const char*, void*, u8*?)
-    - Should byte slice also exist? Since we cannot make things like that? I guess u8 slice exists, but then we don't get void pointer characteristics
-    String can use a const byte pointer now
-    Any should also use byte pointer then
-    Byte type = Struct with member .value (u8)
-
-Design Questions:
-Void pointer/byte pointer/byte datatype/byte slice?
-Strings?
-Can you cast away constant? Is constant per default removed with cast?
-Syntax to make constant types? --> Why
-
+Thinking about:
+ * Is initializing const values allowed? e.g. x: const int = 5 (Simple for byte-code interpreter, but c-generator is gonna suck)
+ * Temporary values and auto-address of
+ * Const define infer? x: const = value
+ * Mutable keyword for parameters, to indicate that we shouldn't make them constant...
+ * Struct members should not allowed to be constant? --> Not sure, but initialization is going to be an issue then...
+ * How about optional pointer types (e.g. ?*), which indicates that they may be null?
+    And don't care about initialization, you should still be able to force a null/uninitialized on non-null pointers, e.g. cast null
+    Also you should still be able to check for null on non-nullable pointers
+    The difference is that you cannot dereference optional pointers, e.g. you need to check first and then maybe call a ptr.deref?
 
 
 Implementation Strategy:
@@ -47,7 +39,7 @@ Implementation Strategy:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Union rework, e.g. Addressable sub-types + better switch (Const types/parameters + maybe pointer level on datatype?)
+    * Union rework, e.g. Addressable sub-types + better switch 
     * C-Function calling rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
 
     * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
@@ -76,6 +68,7 @@ Code improvements:
     * Deduplication of comptime instances when the generated ir-code is the same
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
     * IR_Code generates empty-struct type registers for some Statement_Type::Expression_Statement
+    * Symbol table lookups could be combined into a single hashtable?
 
 -----------------
 Missing Test-Cases:

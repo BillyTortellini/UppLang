@@ -793,6 +793,7 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
+            result->is_pointer_definition = false;
             result->symbols = dynamic_array_create<Definition_Symbol*>(1);
             result->types = dynamic_array_create<AST::Expression*>(1);
             result->values = dynamic_array_create<AST::Expression*>(1);
@@ -806,7 +807,7 @@ namespace Parser
             };
             parse_comma_seperated_items(upcast(result), &result->symbols, parse_definition_symbol, found_definition_operator);
 
-            // Check if there is a colon :, or a := or an ::
+            // Check if there is a colon :, or a := or an :: or :=*
             if (test_operator(Operator::COLON))
             {
                 advance_token();
@@ -814,7 +815,8 @@ namespace Parser
                 auto found_value_start = [](Token& token) -> bool {
                     return token.type == Token_Type::OPERATOR &&
                         (token.options.op == Operator::COLON ||
-                         token.options.op == Operator::ASSIGN);
+                         token.options.op == Operator::ASSIGN ||
+                         token.options.op == Operator::ASSIGN_POINTER);
                 };
                 parse_comma_seperated_items(upcast(result), &result->types, parse_expression_or_error_expr, found_value_start);
 
@@ -824,6 +826,11 @@ namespace Parser
                 }
                 else if (test_operator(Operator::COLON)) {
                     result->is_comptime = true;
+                    advance_token();
+                }
+                else if (test_operator(Operator::ASSIGN_POINTER)) {
+                    result->is_comptime = false;
+                    result->is_pointer_definition = true;
                     advance_token();
                 }
                 else {
@@ -837,6 +844,11 @@ namespace Parser
             else if (test_operator(Operator::DEFINE_INFER)) {
                 advance_token();
                 result->is_comptime = false;
+            }
+            else if (test_operator(Operator::DEFINE_INFER_POINTER)) {
+                advance_token();
+                result->is_comptime = false;
+                result->is_pointer_definition = true;
             }
             else {
                 CHECKPOINT_EXIT;
@@ -1714,11 +1726,12 @@ namespace Parser
         }
 
         // Casts
-        if (test_keyword(Keyword::CAST))
+        if (test_keyword(Keyword::CAST) || test_keyword(Keyword::CAST_POINTER))
         {
-            advance_token();
             result->type = Expression_Type::CAST;
             auto& cast = result->options.cast;
+            cast.is_pointer_cast = test_keyword(Keyword::CAST_POINTER);
+            advance_token();
             cast.to_type.available = false;
             if (test_parenthesis_offset('{', 0))
             {

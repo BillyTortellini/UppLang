@@ -18,6 +18,7 @@ enum class IR_Data_Access_Type
     PARAMETER,
     REGISTER,
     CONSTANT,
+    NOTHING, // Placeholder for function that return nothing
 };
 
 struct IR_Data_Access

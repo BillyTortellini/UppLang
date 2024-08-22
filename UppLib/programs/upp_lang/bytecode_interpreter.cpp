@@ -790,21 +790,30 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
         case Hardcoded_Type::PRINT_STRING: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 24;
-            char* str = *(char**)argument_start;
-            int size = *(int*)(argument_start + 16);
+            byte* argument_start = thread->stack_pointer + i->op2 - sizeof(Upp_C_String);
+            Upp_C_String string = *(Upp_C_String*)argument_start;
 
-            if (size == 0) {break;}
-            if (size >= 10000) {
+            // Check if string size is correct
+            if (string.slice.size == 0) {break;}
+            if (string.slice.size >= 10000) {
                 thread->error_occured = true;
                 thread->exit_code = Exit_Code::OUT_OF_BOUNDS;
                 return true;
             }
-            char* buffer = new char[size + 1];
-            SCOPE_EXIT(delete[] buffer);
-            interpreter_safe_memcopy(thread, buffer, str, size);
-            buffer[size] = 0;
-            logg("%s", buffer);
+            // Check if pointer data is correct
+            if (!memory_is_readable((void*)string.slice.data_ptr, string.slice.size)) {
+                thread->error_occured = true;
+                thread->exit_code = Exit_Code::OUT_OF_BOUNDS;
+                return true;
+            }
+            // Check if string is correctly null-terminated
+            if (!string.slice.data_ptr[string.slice.size - 1] == '\0') {
+                thread->error_occured = true;
+                thread->exit_code = Exit_Code::CODE_ERROR_OCCURED;
+                return true;
+            }
+
+            logg("%s", (const char*) string.slice.data_ptr);
             break;
         }
         case Hardcoded_Type::PRINT_LINE: {

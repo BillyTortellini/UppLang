@@ -358,6 +358,7 @@ int bytecode_generator_get_pointer_to_access(Bytecode_Generator* generator, IR_D
         load_instr.instruction_type = Instruction_Type::LOAD_CONSTANT_ADDRESS;
         offset = access.index;
         break;
+    default: panic("");
     }
     load_instr.op1 = bytecode_generator_create_temporary_stack_offset(generator, compiler.type_system.predefined_types.byte_pointer);
     load_instr.op2 = offset;
@@ -384,6 +385,7 @@ int stack_offsets_calculate(Dynamic_Array<Datatype*>* types, Dynamic_Array<int>*
 
 Bytecode_Type type_base_to_bytecode_type(Datatype* type)
 {
+    type = datatype_get_non_const_type(type);
     assert(type->type == Datatype_Type::PRIMITIVE || type->type == Datatype_Type::ENUM || type->type == Datatype_Type::TYPE_HANDLE, "HEY");
     if (type->type == Datatype_Type::TYPE_HANDLE) {
         return Bytecode_Type::UINT32;
@@ -964,7 +966,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             }
 
-            Datatype* operand_type = ir_data_access_get_type(&unary_op->source);
+            Datatype* operand_type = datatype_get_non_const_type(ir_data_access_get_type(&unary_op->source));
             assert(operand_type->type == Datatype_Type::PRIMITIVE, "Should not happen");
             instr.op3 = (int)type_base_to_bytecode_type(operand_type);
             instr.op2 = bytecode_generator_data_access_to_stack_offset(generator, unary_op->source);

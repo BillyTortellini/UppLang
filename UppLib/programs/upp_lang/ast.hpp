@@ -180,6 +180,7 @@ namespace AST
     {
         Node base;
         bool is_comptime; // :: instead of :=
+        bool is_pointer_definition; // :=* or x: *int =*
         Dynamic_Array<Definition_Symbol*> symbols;
         Dynamic_Array<Expression*> types;
         Dynamic_Array<Expression*> values;
@@ -279,6 +280,7 @@ namespace AST
             } new_expr;
             struct {
                 Optional<Expression*> to_type;
+                bool is_pointer_cast;
                 Expression* operand;
             } cast;
             Path_Lookup* path_lookup;

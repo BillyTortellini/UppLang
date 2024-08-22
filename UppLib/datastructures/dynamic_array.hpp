@@ -73,9 +73,18 @@ void dynamic_array_reserve(Dynamic_Array<T>* array, int capacity) {
 }
 
 template <typename T>
+void dynamic_array_reserve_exponential(Dynamic_Array<T>* array, int required_capacity) {
+    int new_size = math_maximum(1, array->capacity);
+    while (new_size < required_capacity) {
+        new_size = new_size * 2;
+    }
+    dynamic_array_reserve(array, new_size);
+}
+
+template <typename T>
 void dynamic_array_push_back(Dynamic_Array<T>* array, T item) {
     if (array->size >= array->capacity) {
-        dynamic_array_reserve(array, array->capacity * 2);
+        dynamic_array_reserve_exponential(array, array->size + 1);
     }
     array->data[array->size] = item;
     array->size++;
@@ -132,7 +141,7 @@ void dynamic_array_insert_ordered(Dynamic_Array<T>* a, T item, int index)
     }
     if (index < 0) index = 0;
     if (a->size + 1 > a->capacity) {
-        dynamic_array_reserve(a, a->capacity*2);
+        dynamic_array_reserve_exponential(a, a->size + 1);
     }
     for (int i = a->size; i-1 >= index; i--) {
         a->data[i] = a->data[i-1];
@@ -221,7 +230,7 @@ template <typename T>
 int dynamic_array_push_back_dummy(Dynamic_Array<T>* array)
 {
     if (array->size >= array->capacity) {
-        dynamic_array_reserve(array, array->capacity * 2);
+        dynamic_array_reserve_exponential(array, array->size + 1);
     }
     array->size++;
     return array->size - 1;
