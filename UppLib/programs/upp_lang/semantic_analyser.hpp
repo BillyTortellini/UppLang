@@ -452,8 +452,12 @@ struct Expression_Cast_Info
 {
     Datatype* initial_type;
     Datatype* result_type;
+    bool initial_value_is_temporary;
+    bool result_value_is_temporary;
+
     int deref_count; // May be negative to indicate take-address of
     Cast_Type cast_type;
+
 
     union {
         ModTree_Function* custom_cast_function;
@@ -544,6 +548,7 @@ struct Argument_Info
     Argument_State state;
     AST::Expression* expression;
     Datatype* argument_type; // Type of analysed expression
+    bool is_temporary_value;
     Optional<String*> argument_name;
     int parameter_index; // -1 Indicates that argument hasn't been matched yet or a failure to match
     bool reanalyse_param_type_flag;
