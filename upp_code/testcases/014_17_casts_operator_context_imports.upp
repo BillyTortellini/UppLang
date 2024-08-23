@@ -3,15 +3,15 @@
 // It is possible to import all used operators from other modules
 
 Integer_Auto_Casts::module
-	context set_cast_option(.INTEGER_SIZE_UPCAST,.AUTO)
-	context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED,.AUTO)
-	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED,.AUTO)
+	context set_cast_option(.INTEGER_SIZE_UPCAST,.IMPLICIT)
+	context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED,.IMPLICIT)
+	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED,.IMPLICIT)
 
 is_even::(n:int)->bool
 	return n%2==0
 
 Integer_Is_Even::module
-	context add_cast(is_even,.AUTO)
+	context add_cast(is_even,.IMPLICIT)
 
 main::()
 	context import Integer_Auto_Casts

@@ -32,8 +32,8 @@ main::()
 	x:=optional_make_success(15)
 	y:Optional(int)=optional_make_failure()
 	
-	context add_cast(optional_is_available,.IMPLICIT)
-	context add_cast(optional_unwrap,.IMPLICIT)
+	context add_cast(optional_is_available,.INFERRED)
+	context add_cast(optional_unwrap,.INFERRED)
 	
 	b1:bool=cast x
 	b2:bool=cast y

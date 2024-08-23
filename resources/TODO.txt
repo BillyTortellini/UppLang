@@ -1,24 +1,5 @@
 
-What does the has_memory_address prevent:
-    15 = 12
-    add(1, 2) = 3
-    increment(17)
-
-Questions:
-Is there any situation where it is usefull to do these things?
-    Probably not, as it's easy to emulate by writing to a variable first
-How hard is it to implement:
-    
-
-Currently used in:
- - Get pointer e, g. ip :=* *i
- - Assignments 
-Currently removed from
- - Casts/Auto operations
-
-
 TODO:
- * Reintegrate the has_memory_address system...
  * Fix current Testcases
  * Add testcases for constant, auto-address of and others
 

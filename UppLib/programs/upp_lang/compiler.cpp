@@ -27,7 +27,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -221,10 +221,10 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.value =               add_id("value");
 
             ids.cast_mode =          add_id("Cast_Mode");
-            ids.cast_mode_auto =     add_id("AUTO");
-            ids.cast_mode_implicit = add_id("IMPLICIT");
-            ids.cast_mode_explicit = add_id("EXPLICIT");
             ids.cast_mode_none =     add_id("NONE");
+            ids.cast_mode_explicit = add_id("EXPLICIT");
+            ids.cast_mode_inferred = add_id("INFERRED");
+            ids.cast_mode_implicit = add_id("IMPLICIT");
 
             ids.id_import = add_id("import");
             ids.set_option = add_id("set_option");

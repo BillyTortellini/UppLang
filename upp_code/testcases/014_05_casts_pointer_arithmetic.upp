@@ -1,15 +1,15 @@
 
 
 main::()
-	// Since we don't have pointer-arithmetic in Upp,
-	// we need to cast pointers to u64 values, and cast them back
+	// Casting between pointers is done with cast_pointer keyword,
+	// which can also cast pointers to u64 and back (to get the pointer address)
 	values:[3]int=.[1,2,3]
 	ip:=*values[0]
-	address:u64=cast{u64}ip
-	address=address+cast{u64}cast{u32}type_info(int).size
+	address:u64=cast_pointer{u64}ip
+	address=address+cast{u64}type_info(int).size
 	
-	ip=*cast{*int}address
-	&ip=5
+	ip=*cast_pointer{*int}address
+	ip=5
 	
 	assert(values[0]==1)
 	assert(values[1]==5)

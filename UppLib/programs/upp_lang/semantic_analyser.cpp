@@ -2872,7 +2872,10 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     parameter.name = parameter_node->name;
 
     // Analyse type
-    parameter.type = type_system_make_constant(semantic_analyser_analyse_expression_type(parameter_node->type));
+    parameter.type = semantic_analyser_analyse_expression_type(parameter_node->type);
+    if (!parameter_node->is_comptime) {
+        parameter.type = type_system_make_constant(parameter.type);
+    }
 
     // Check if default value exists
     parameter.default_value_exists = parameter_node->default_value.available;
@@ -5339,7 +5342,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                     if (constant_result.available)
                     {
                         auto& constant = constant_result.value;
-                        if (constant.type->type == Datatype_Type::TYPE_HANDLE)
+                        if (datatype_get_non_const_type(constant.type)->type == Datatype_Type::TYPE_HANDLE)
                         {
                             Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
                             if (handle.index >= (u32) compiler.type_system.types.size) {
@@ -6507,12 +6510,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         Expression_Context operand_context;
         if (cast->to_type.available) {
             auto destination_type = semantic_analyser_analyse_expression_type(cast->to_type.value);
-            operand_context = expression_context_make_specific_type(destination_type, Cast_Mode::EXPLICIT);
+            operand_context = expression_context_make_specific_type(destination_type, cast->is_pointer_cast ? Cast_Mode::POINTER_EXPLICIT : Cast_Mode::EXPLICIT);
         }
         else
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                operand_context = expression_context_make_specific_type(context.expected_type.type, Cast_Mode::INFERRED);
+                operand_context = expression_context_make_specific_type(context.expected_type.type, cast->is_pointer_cast ? Cast_Mode::POINTER_INFERRED : Cast_Mode::INFERRED);
             }
             else {
                 log_semantic_error("No context is available for auto cast", expr);
@@ -6541,6 +6544,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         i32 value_i32;
         i32 value_i64;
         f32 value_f32;
+        f64 value_f64;
 
         switch (read.type)
         {
@@ -6550,9 +6554,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             break;
         case Literal_Type::FLOAT_VAL:
         {
-            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(context.expected_type.type, upcast(types.f64_type)))
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(datatype_get_non_const_type(context.expected_type.type), upcast(types.f64_type)))
             {
-                literal_type = upcast(types.f64_type);
+                literal_type = context.expected_type.type;
                 value_ptr = &read.options.float_val;
             }
             else
@@ -6566,18 +6570,40 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         case Literal_Type::INTEGER:
         {
             bool check_for_auto_conversion = false;
-            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                if (context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::IMPLICIT) {
-                    if (downcast<Datatype_Primitive>(context.expected_type.type)->primitive_type == Primitive_Type::INTEGER) {
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) 
+            {
+                Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
+                if (expected->type == Datatype_Type::PRIMITIVE) 
+                {
+                    auto primitive_type = downcast<Datatype_Primitive>(expected)->primitive_type;
+                    if (primitive_type == Primitive_Type::INTEGER) {
                         check_for_auto_conversion = true;
+                    }
+                    else if (primitive_type == Primitive_Type::FLOAT) 
+                    {
+                        if (expected->memory_info.value.size == 4) {
+                            literal_type = upcast(types.f32_type);
+                            value_f32 = (float)read.options.int_val;
+                            value_ptr = &value_f32;
+                        }
+                        else if (expected->memory_info.value.size == 8) {
+                            literal_type = upcast(types.f64_type);
+                            value_f64 = (double)read.options.int_val;
+                            value_ptr = &value_f64;
+                        }
+                        else {
+                            panic("Float with non 4/8 size?");
+                        }
+                        break;
                     }
                 }
             }
 
             if (check_for_auto_conversion)
             {
-                bool is_signed = downcast<Datatype_Primitive>(context.expected_type.type)->is_signed;
-                int size = context.expected_type.type->memory_info.value.size;
+                Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
+                bool is_signed = downcast<Datatype_Primitive>(expected)->is_signed;
+                int size = expected->memory_info.value.size;
 
                 bool size_is_valid = true;
                 if (is_signed)
@@ -6663,6 +6689,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     log_semantic_error("Literal value is outside the range of expected type. To still use this value a cast is required", expr);
                     EXIT_ERROR(type_system_make_constant(context.expected_type.type));
                 }
+                literal_type = context.expected_type.type;
             }
             else
             {
@@ -6914,9 +6941,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
         }
 
+        Datatype* result_type = type;
+        if (type->type == Datatype_Type::CONSTANT) {
+            type = datatype_get_non_const_type(type);
+        }
+
         if (datatype_is_unknown(type)) {
             arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(type);
+            EXIT_ERROR(result_type);
         }
 
         // Check type errors
@@ -6924,7 +6956,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             log_semantic_error("Struct initializer requires structure type", expr);
             log_error_info_given_type(type);
             arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(type);
+            EXIT_ERROR(result_type);
         }
         type_wait_for_size_info_to_finish(type);
 
@@ -6944,7 +6976,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 if (!arg->name.available) {
                     log_semantic_error("Union initializer requires a named argument, not an unnamed one", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
                     arguments_analyse_in_unknown_context(init_node.arguments);
-                    EXIT_ERROR(upcast(struct_signature));
+                    EXIT_ERROR(result_type);
                 }
 
                 // Find corresponding member
@@ -6959,26 +6991,26 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 if (arg_info->parameter_index == -1) {
                     log_semantic_error("Union does not contain a member with this name", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
                     arguments_analyse_in_unknown_context(init_node.arguments);
-                    EXIT_ERROR(upcast(struct_signature));
+                    EXIT_ERROR(result_type);
                 }
                 auto& member = members[arg_info->parameter_index];
                 if (member.offset == struct_signature->tag_member.offset) {
                     log_semantic_error("Cannot set the tag value in initializer", AST::upcast(init_node.arguments[0]));
                     arguments_analyse_in_unknown_context(init_node.arguments);
-                    EXIT_ERROR(upcast(struct_signature));
+                    EXIT_ERROR(result_type);
                 }
 
                 semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(member.type));
-                EXIT_VALUE(upcast(struct_signature), true);
+                EXIT_VALUE(result_type, true);
             }
             else if (init_node.arguments.size > 1) {
                 log_semantic_error("Only one value must be given for union initializer", expr);
                 arguments_analyse_in_unknown_context(init_node.arguments);
-                EXIT_ERROR(upcast(struct_signature));
+                EXIT_ERROR(result_type);
             }
             else {
                 log_semantic_error("One initializer value is required in union initializer", expr, Parser::Section::ENCLOSURE);
-                EXIT_ERROR(upcast(struct_signature));
+                EXIT_ERROR(result_type);
             }
         }
 
@@ -7016,11 +7048,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         {
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
             {
-                if (context.expected_type.type->type == Datatype_Type::ARRAY) {
-                    element_type = downcast<Datatype_Array>(context.expected_type.type)->element_type;
+                Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
+
+                if (expected->type == Datatype_Type::ARRAY) {
+                    element_type = downcast<Datatype_Array>(expected)->element_type;
                 }
-                else if (context.expected_type.type->type == Datatype_Type::SLICE) {
-                    element_type = downcast<Datatype_Slice>(context.expected_type.type)->element_type;
+                else if (expected->type == Datatype_Type::SLICE) {
+                    element_type = downcast<Datatype_Slice>(expected)->element_type;
                 }
                 else {
                     element_type = 0;
@@ -7035,13 +7069,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         int array_element_count = init_node.values.size;
         // There are no 0-sized arrays, only 0-sized slices. So if we encounter an empty initializer, e.g. type.[], we return an empty slice
         if (array_element_count == 0) {
-            EXIT_VALUE(upcast(type_system_make_slice(element_type)), true);
+            Datatype* result_type = upcast(type_system_make_slice(element_type));
+            EXIT_VALUE(result_type, true);
         }
 
         for (int i = 0; i < init_node.values.size; i++) {
             semantic_analyser_analyse_expression_value(init_node.values[i], expression_context_make_specific_type(element_type));
         }
-        EXIT_VALUE(upcast(type_system_make_array(element_type, true, array_element_count)), true);
+        Datatype* result_type = upcast(type_system_make_array(element_type, true, array_element_count));
+        EXIT_VALUE(result_type, true);
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
@@ -7050,6 +7086,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
         auto& access_node = expr->options.array_access;
         Datatype* array_type = semantic_analyser_analyse_expression_value(access_node.array_expr, expression_context_make_auto_dereference());
+        array_type = array_type->base_type; // Remove const modifier
         if (datatype_is_unknown(array_type)) {
             EXIT_ERROR(types.unknown_type);
         }
@@ -7378,7 +7415,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                 if (custom_operator == 0 && datatype->base_type->type == Datatype_Type::STRUCT)
                 {
                     auto structure = downcast<Datatype_Struct>(datatype->base_type);
-                    if (structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                    if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                         auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
                         key.options.dot_call.datatype = upcast(base_struct);
                         custom_operator = hashtable_find_element(&operator_context->custom_operators, key);
@@ -7985,7 +8022,6 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
             }
 
             result.result_value_is_temporary = result_is_temporary;
-            result.cast_type = Cast_Type::POINTER_NULL_CHECK;
             return result;
         }
     }
@@ -8030,12 +8066,19 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
         {
         case Datatype_Type::ARRAY:
         {
-            if (destination->type == Datatype_Type::SLICE) {
+            if (destination->type == Datatype_Type::SLICE) 
+            {
                 auto source_array = downcast<Datatype_Array>(source);
                 auto dest_slice = downcast<Datatype_Slice>(destination);
-                if (types_are_equal(datatype_get_non_const_type(source_array->element_type), datatype_get_non_const_type(dest_slice->element_type))) {
-                    result.cast_type = Cast_Type::ARRAY_TO_SLICE;
-                    allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::ARRAY_TO_SLICE);
+                if (types_are_equal(datatype_get_non_const_type(source_array->element_type), datatype_get_non_const_type(dest_slice->element_type))) 
+                {
+                    bool array_is_const = type_mods_is_constant(source_type->mods, 0) || source_array->element_type->type == Datatype_Type::CONSTANT;
+                    bool slice_ptr_is_const = dest_slice->element_type->type == Datatype_Type::CONSTANT;
+                    // We can only cast to slice if we respect the constant rules
+                    if (!(array_is_const && !slice_ptr_is_const)) {
+                        result.cast_type = Cast_Type::ARRAY_TO_SLICE;
+                        allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::ARRAY_TO_SLICE);
+                    }
                 }
             }
             break;
@@ -8123,17 +8166,17 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
                     }
 
                     // For integer cast to work, both size and signed must be castable
-                    allowed_mode = (Cast_Mode)math_maximum((int)size_mode, (int)signed_mode);
+                    allowed_mode = (Cast_Mode)math_minimum((int)size_mode, (int)signed_mode);
                 }
                 else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::INTEGER)
                 {
                     result.cast_type = Cast_Type::INT_TO_FLOAT;
-                    allowed_mode = Cast_Mode::IMPLICIT;
+                    allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INT_TO_FLOAT);
                 }
                 else if (dst_primitive->primitive_type == Primitive_Type::INTEGER && src_primitive->primitive_type == Primitive_Type::FLOAT)
                 {
                     result.cast_type = Cast_Type::FLOAT_TO_INT;
-                    allowed_mode = Cast_Mode::INFERRED;
+                    allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FLOAT_TO_INT);
                 }
                 else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::FLOAT)
                 {
@@ -8242,6 +8285,8 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
                     if (types_are_equal(function->signature->return_type.value, destination_type)) {
                         result.cast_type = Cast_Type::CUSTOM_CAST;
                         result.options.custom_cast_function = function;
+                        result.result_value_is_temporary = true;
+                        result.result_type = destination_type;
                         semantic_analyser_register_function_call(function);
                         return result;
                     }
@@ -8253,6 +8298,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
     // Return Invalid if no casts were found
     result.cast_type = Cast_Type::INVALID;
     result.result_type = destination_type;
+    result.result_value_is_temporary = false;
     result.deref_count = 0;
     return result;
 }
@@ -8369,7 +8415,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression * expression
             }
             return result->cast_info.result_type;
         }
-        if (!types_are_equal(result->cast_info.result_type, types.type_handle))
+        if (!types_are_equal(datatype_get_non_const_type(result->cast_info.result_type), types.type_handle))
         {
             log_semantic_error("Expression cannot be converted to type", expression);
             log_error_info_given_type(result->cast_info.result_type);
@@ -9759,6 +9805,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& switch_node = statement->options.switch_statement;
 
         auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
+        switch_type = datatype_get_non_const_type(switch_type);
         if (switch_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
             switch_type = downcast<Datatype_Struct>(switch_type)->tag_member.type;
         }
@@ -10350,11 +10397,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 type = semantic_analyser_analyse_expression_type(types[i]);
                 type_exists = true;
                 bool is_pointer = datatype_is_pointer(type);
-                if (is_pointer && !definition->is_pointer_definition) {
-                    log_semantic_error("Pointer definition (=*/:=*) is required if the type should be a pointer type!", upcast(types[i]));
-                }
-                else if (!is_pointer && definition->is_pointer_definition) {
-                    log_semantic_error("For pointer definition (=*/:=*) the type must be a pointer type!", upcast(types[i]));
+                if (values.size > 0) {
+                    if (is_pointer && !definition->is_pointer_definition) {
+                        log_semantic_error("Pointer definition (=*/:=*) is required if the type should be a pointer type!", upcast(types[i]));
+                    }
+                    else if (!is_pointer && definition->is_pointer_definition) {
+                        log_semantic_error("For pointer definition (=*/:=*) the type must be a pointer type!", upcast(types[i]));
+                    }
                 }
             }
             else if (types.size == 1) {
@@ -10383,7 +10432,12 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     context = expression_context_make_specific_type(type);
                 }
                 else {
-                    context = expression_context_make_unknown();
+                    if (definition->is_pointer_definition) {
+                        context = expression_context_make_unknown();
+                    }
+                    else {
+                        context = expression_context_make_auto_dereference();
+                    }
                 }
                 auto value_type = semantic_analyser_analyse_expression_value(values[i], context);
                 if (!type_exists) 

@@ -1,11 +1,13 @@
 
 foo::(ip:*int)
-	&ip=&ip+1
+	ip=ip+1
 
 main::()
-	// The context also allows the use of auto-address of
-	// Per default this option is already set to true
-	context set_option(.AUTO_ADDRESS_OF,true)
+	// The address-of operation is automatically applied if
+	// the pointer level of the expected value is higher then the given value
 	value:int=15
 	foo(value)
+	return
+	print_i32(value)
+	return
 	assert(value==16)

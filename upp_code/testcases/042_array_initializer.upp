@@ -1,5 +1,5 @@
 Player::struct
-	name:String
+	name:[]const u8
 	age:int
 	alive:bool
 
@@ -12,7 +12,7 @@ add_ints::(ints:[]int)->int
 	return sum
 
 main::()
-	context set_cast_option(.ARRAY_TO_SLICE,.AUTO)
+	context set_cast_option(.ARRAY_TO_SLICE,.IMPLICIT)
 	
 	// Array init syntax
 	x:[5]int=int.[0,1,2,3,4]

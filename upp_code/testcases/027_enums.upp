@@ -17,8 +17,8 @@ main::()
 	assert(color==Color.RED)
 	assert(color!=Color.GREEN)
 	
-	// Enums are internally stored as integers
-	reinterpreted:i32=&(cast{*i32}*color)
+	// Enums are internally stored as integers, and can be cast to/from int
+	reinterpreted:i32=cast{i32}color
 	assert(reinterpreted==1)
 	
 	// They can be explicity cast to integer to avoid the previous, more complicated pointer casting

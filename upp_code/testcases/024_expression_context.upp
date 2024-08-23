@@ -4,9 +4,9 @@
 	of a variable to use it.In Upp I try to emulate this by with the following features:
 	
 	1.Type Inference(Definitions)
-	x:=15// type is deduced from expression, beeing an int
-	2.Pointer Usage
-	x:=15+integer_pointer// Pointer is beeing dereference automatically
+	x:=15// type is deduced from expression, being an int
+	2.Pointers as values
+	x:=15+integer_pointer// Pointer is being dereference automatically
 	3.Casts
 	x:int=cast 15.5// Cast from float to int is done through context
 	4.Auto-Expressions(Struct initializer,array-initializer,enum)
@@ -41,8 +41,8 @@ main::()
 		res:int=a+b
 		assert(res==12)
 		
-		ap:*int=a
-		bp:*int=b
+		ap:*int=*a
+		bp:*int=*b
 		assert(ap!=bp)
 		
 		res=ap+b
@@ -60,9 +60,9 @@ main::()
 		sum.b=7
 		
 		sum_p:=*sum
-		sum_pp:=*sum_p
-		sum_ppp:=*sum_pp
-		sum_pppp:=*sum_ppp
+		sum_pp:=**sum_p
+		sum_ppp:=**sum_pp
+		sum_pppp:=**sum_ppp
 		
 		res:int
 		assert(calc_sum1(sum)==12)
@@ -76,12 +76,12 @@ main::()
 		assert(calc_sum4(sum_pppp)==12)
 	
 	// Currently the only operations where this doesn't exactly apply are pointer comparisons and casts to u64
-	// In these cases, Pointer Comparison and Raw-Casts need to be used
+	// In these cases, Pointer Comparison and pointer_cast need to be used
 		val1:float=17.5
 		val2:float=20.0
 		
-		a:*float=val1
-		b:*float=val1
+		a:*float=*val1
+		b:*float=*val1
 		
 		assert(a==*b)
 		b=*val2
@@ -89,9 +89,9 @@ main::()
 		
 		
 		i:i32=128
-		p:*i32=i
-		i_cast:u64=cast{u64}cast{u32}i
-		p_cast:u64=cast{u64}p
+		p:*i32=*i
+		i_cast:u64=cast{u64}i
+		p_cast:u64=cast_pointer{u64}p
 		assert(i_cast!=p_cast)
 	
 	
@@ -102,3 +102,4 @@ main::()
 		
 		mult_and_change_sum(sum)
 		assert(sum.a==45)
+		

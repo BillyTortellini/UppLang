@@ -24,8 +24,8 @@ main::()
 	i:int=15
 	
 	// For example, pointers can be converted to bool for simple null checks
-		context set_cast_option(.POINTER_TO_BOOL,.AUTO)
-		ip:*int=null
+		context set_cast_option(.POINTER_NULL_CHECK,.IMPLICIT)
+		ip:*int=*null
 		assert(ip==*null)
 		assert(!cast{bool}ip)
 		
@@ -34,13 +34,13 @@ main::()
 		assert(ip)
 	
 	// Arrays can be automatically-cast to slices
-		context set_cast_option(.ARRAY_TO_SLICE,.AUTO)
+		context set_cast_option(.ARRAY_TO_SLICE,.IMPLICIT)
 		values:[4]int=.[1,2,3,4]
 		sum:=add_numbers(values)
 		assert(sum==10)
 	
 	// To and from any could also be done as auto
-		context set_cast_option(.TO_ANY,.AUTO)
+		context set_cast_option(.TO_ANY,.IMPLICIT)
 		assert(primitive_type_value(15)==0)
 		assert(primitive_type_value(2.5)==1)
 		assert(primitive_type_value(false)==2)

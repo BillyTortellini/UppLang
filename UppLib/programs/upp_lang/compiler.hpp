@@ -42,10 +42,10 @@ struct Predefined_IDs
     String* empty_string;
     String* invalid_symbol_name;
     String* cast_mode;
-    String* cast_mode_auto;
-    String* cast_mode_implicit;
-    String* cast_mode_explicit;
     String* cast_mode_none;
+    String* cast_mode_explicit;
+    String* cast_mode_inferred;
+    String* cast_mode_implicit;
     String* byte;
     String* value;
 

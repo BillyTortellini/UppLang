@@ -1,12 +1,12 @@
-Player :: struct
-	name: String
-	age: int
-	alive: bool
+Player::struct
+	name:[]const u8
+	age:int
+	alive:bool
 
-main :: ()
-	p1 := Player.{name = "Herb", age = 15, alive = true}
-	p2 := Player.{name = "Frank", age = 32, alive = false}
-	p3 := Player.{name = "Dingus", age = 0, alive = true}
-	assert(p1.age == 15 && p1.alive == true)
-	assert(p2.age == 32 && p2.alive == false)
-	assert(p3.age == 0 && p3.alive == true)
+main::()
+	p1:=Player.{name="Herb",age=15,alive=true}
+	p2:=Player.{name="Frank",age=32,alive=false}
+	p3:=Player.{name="Dingus",age=0,alive=true}
+	assert(p1.age==15&&p1.alive==true)
+	assert(p2.age==32&&p2.alive==false)
+	assert(p3.age==0&&p3.alive==true)

@@ -829,7 +829,7 @@ void code_completion_find_suggestions()
             Datatype* poly_base_type = compiler.type_system.predefined_types.unknown_type;
             if (type->type == Datatype_Type::STRUCT) {
                 auto struct_type = downcast<Datatype_Struct>(type);
-                if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                     poly_base_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
                 }
             }

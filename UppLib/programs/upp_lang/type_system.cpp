@@ -939,6 +939,19 @@ Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> p
     else {
         result->return_type = optional_make_failure<Datatype*>();
     }
+    result->parameters_with_default_value_count = 0;
+    for (int i = 0; i < parameters.size; i++) {
+        auto& param = parameters[i];
+        if (param.default_value_exists) {
+            result->parameters_with_default_value_count += 1;
+        }
+        if (param.type->contains_type_template) {
+            result->base.contains_type_template = true;
+        }
+    }
+    if (result->return_type.available && result->return_type.value->contains_type_template) {
+        result->base.contains_type_template = true;
+    }
 
     auto& internal_info = type_system_register_type(upcast(result))->options.function;
     {
@@ -1320,10 +1333,10 @@ void type_system_add_predefined_types(Type_System* system)
             item.value = value;
             dynamic_array_push_back(&enum_type->members, item);
         };
-        add_enum_member(types->cast_mode, ids.cast_mode_auto, 1);
-        add_enum_member(types->cast_mode, ids.cast_mode_implicit, 2);
-        add_enum_member(types->cast_mode, ids.cast_mode_explicit, 3);
-        add_enum_member(types->cast_mode, ids.cast_mode_none, 4);
+        add_enum_member(types->cast_mode, ids.cast_mode_none, 1);
+        add_enum_member(types->cast_mode, ids.cast_mode_explicit, 2);
+        add_enum_member(types->cast_mode, ids.cast_mode_inferred, 3);
+        add_enum_member(types->cast_mode, ids.cast_mode_implicit, 4);
         type_system_finish_enum(types->cast_mode);
 
         types->cast_option = type_system_make_enum_empty(ids.cast_option);

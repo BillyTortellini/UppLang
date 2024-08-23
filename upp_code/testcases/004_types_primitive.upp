@@ -1,4 +1,5 @@
 main::()
+	// Here are all primitive types currently available
 	x0:int
 	x1:float
 	x_1:bool

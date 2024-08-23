@@ -1,5 +1,5 @@
 Player::struct
-	name:String
+	name:[]const u8
 	level:int
 	alive:bool
 

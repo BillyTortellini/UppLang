@@ -1326,8 +1326,8 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     }
     case Cast_Type::ARRAY_TO_SLICE:
     {
-        Datatype_Slice* slice_type = downcast<Datatype_Slice>(cast_info.result_type);
-        Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
+        Datatype_Slice* slice_type = downcast<Datatype_Slice>(datatype_get_non_const_type(cast_info.result_type));
+        Datatype_Array* array_type = downcast<Datatype_Array>(datatype_get_non_const_type(source_type));
         IR_Data_Access slice_access = ir_data_access_create_intermediate(ir_block, upcast(slice_type));
         // Set size
         {
