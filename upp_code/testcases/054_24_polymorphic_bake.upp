@@ -1,19 +1,19 @@
 
-string_equals::(a:String,b:String)->bool
+c_str::[]const u8
+
+string_equals::(a:c_str,b:c_str)->bool
 	if a.size!=b.size
 		return false
 	
 	i:=0
 	while i<a.size
-		if a.character_buffer[i]!=b.character_buffer[i]
+		if a[i]!=b[i]
 			return false
 		i=i+1
 	
 	return true
 
-offset_off::(a:$T,$name:String)->int
-	context set_option(.AUTO_DEREFERENCE,true)
-	
+offset_off::(a:$T,$name:c_str)->int
 	offset:=#bake
 		info:=type_info(T)
 		if info.options.tag==.structure

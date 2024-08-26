@@ -1,2 +1,9 @@
-foo::()
-	print_string("Hello World!")
+Test::module
+	Node::struct($T:Type_Handle)
+		x:T
+	
+	double::(n:*Node($T))
+		n.x*=2
+	
+	Operators::module
+		context add_dot_call(double)

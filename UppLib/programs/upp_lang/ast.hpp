@@ -197,6 +197,7 @@ namespace AST
     {
         Node base;
         bool is_comptime; // $ at the start
+        bool is_mutable; // mut at the start
         String* name;
         Expression* type;
         Optional<Expression*> default_value;

@@ -2873,7 +2873,7 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
 
     // Analyse type
     parameter.type = semantic_analyser_analyse_expression_type(parameter_node->type);
-    if (!parameter_node->is_comptime) {
+    if (!parameter_node->is_comptime && !parameter_node->is_mutable) {
         parameter.type = type_system_make_constant(parameter.type);
     }
 
@@ -3608,6 +3608,12 @@ void analysis_workload_entry(void* userdata)
             if (function->contains_errors) {
                 cluster_contains_error = true;
                 break;
+            }
+            for (int j = 0; j < function->calls.size; j++) {
+                ModTree_Function* calls = function->calls[j];
+                if (calls->contains_errors) {
+                    cluster_contains_error = true;
+                }
             }
         }
 
@@ -4424,7 +4430,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
     case Expression_Result_Type::VALUE:
     {
         // TODO: Check if this is comptime known, then we dont need a function pointer call
-        auto type = info.options.type;
+        auto type = datatype_get_non_const_type(info.options.type);
         if (type->type == Datatype_Type::FUNCTION) {
             candidate.function_signature = downcast<Datatype_Function>(type);
             callable.type = Callable_Type::FUNCTION_POINTER;
@@ -4437,7 +4443,8 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
     }
     case Expression_Result_Type::CONSTANT: {
         auto& constant = info.options.constant;
-        if (constant.type->type != Datatype_Type::FUNCTION) {
+        auto type = datatype_get_non_const_type(constant.type);
+        if (type->type != Datatype_Type::FUNCTION) {
             return optional_make_failure<Overload_Candidate>();
         }
 
@@ -4448,7 +4455,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 
         callable.type = Callable_Type::FUNCTION;
         callable.options.function = semantic_analyser.program->functions[function_index];
-        candidate.function_signature = downcast<Datatype_Function>(constant.type);
+        candidate.function_signature = downcast<Datatype_Function>(type);
         break;
     }
     case Expression_Result_Type::FUNCTION: {
@@ -6191,6 +6198,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         {
         case Callable_Type::FUNCTION: {
             info->specifics.function_call_signature = callable.options.function->signature;
+            // semantic_analyser_register_function_call(callable.options.function); // Note: Not necessary here because this is already done when symbol is resolved
             break;
         }
         case Callable_Type::FUNCTION_POINTER: {
@@ -7622,7 +7630,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
             // Handle constant type_handles correctly
             if (operand_result->result_type == Expression_Result_Type::CONSTANT &&
-                operand_result->options.constant.type->type == Datatype_Type::TYPE_HANDLE)
+                datatype_get_non_const_type(operand_result->options.constant.type)->type == Datatype_Type::TYPE_HANDLE)
             {
                 auto handle = upp_constant_to_value<Upp_Type_Handle>(operand_result->options.constant);
                 if ((int)handle.index < 0 || (int)handle.index >= type_system->types.size) {
@@ -9361,7 +9369,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
             auto& iter = op.iterator;
             iter.is_polymorphic = false; // Depends on the type of the create function expression
 
-            Datatype* iterator_type = types.unknown_type;
+            Datatype* iterator_type = types.unknown_type; // Note: Iterator type is not available for polymorphic functions
 
             if (fn_create_node != nullptr && success)
             {
@@ -9405,14 +9413,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
                     key.options.iterator.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.iterator.iterable_mods);
 
-                    // Function must have return type, and return type must be something something...
-                    if (poly_base->return_type_index != -1) {
-                        iterator_type = poly_base->parameters[poly_base->return_type_index].infos.type;
-                        if (types_are_equal(iterator_type->base_type, types.unknown_type)) { // Note the difference between types_are_equal and is_unknown
-                            success = false;
-                        }
-                    }
-                    else {
+                    // Function must have return type
+                    if (poly_base->return_type_index == -1) {
                         log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
                         success = false;
                     }
@@ -9531,7 +9533,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(function_node), &unused);
                     if (!success) return;
 
-                    // Note: A more sophisticated check could probabaly be used here, but it has to involve struct instance templates and others
+                    // Note: We don't know the iterator type from the make function, as this is currently not provided by the
+                    //      polymorphic base analysis. So here we only check that everything works
                     if (types_are_equal(arg_type->base_type, types.unknown_type)) {
                         success = false;
                     }
@@ -10053,6 +10056,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     // has_next function
                     Argument_Info iterator_argument = argument_info_make(nullptr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
                     iterator_argument.argument_type = iterator_type;
+                    iterator_argument.is_temporary_value = false;
                     arg_info_ptr = &iterator_argument;
                     argument_array.data = &arg_info_ptr;
                     if (success)
@@ -10074,6 +10078,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     // next function
                     if (success)
                     {
+                        // Reset argument info as instanciate may have change pointer/poly value
+                        iterator_argument = argument_info_make(nullptr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                        iterator_argument.argument_type = iterator_type;
+                        iterator_argument.is_temporary_value = false;
+
                         poly_info.base = &poly_bases.next->base_info;
                         poly_info.options.polymorphic_function = poly_bases.next;
                         Instanciation_Result result = instanciate_polymorphic_callable(
@@ -10091,6 +10100,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     // get_value
                     if (success)
                     {
+                        // Reset argument info as instanciate may have change pointer/poly value
+                        iterator_argument = argument_info_make(nullptr, optional_make_failure<String*>(), Argument_State::ANALYSED, 0);
+                        iterator_argument.argument_type = iterator_type;
+                        iterator_argument.is_temporary_value = false;
+
                         poly_info.base = &poly_bases.get_value->base_info;
                         poly_info.options.polymorphic_function = poly_bases.get_value;
                         Instanciation_Result result = instanciate_polymorphic_callable(
@@ -10117,7 +10131,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                         for (int i = 0; i < 3; i++) 
                         {
                             ModTree_Function* function = functions[i];
-                            if (!function->signature->parameters.size != 1) {
+                            if (function->signature->parameters.size != 1) {
                                 log_semantic_error("Instanciated function did not have exactly 1 parameter", upcast(for_loop.expression));
                                 success = false;
                                 continue;
@@ -10130,7 +10144,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                                 continue;
                             }
 
-                            if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, true)) {
+                            if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, false)) {
                                 log_semantic_error("Instanciated function parameter mods were not compatible with iterator_type mods", upcast(for_loop.expression));
                                 success = false;
                                 continue;

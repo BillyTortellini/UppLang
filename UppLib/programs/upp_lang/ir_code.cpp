@@ -1378,12 +1378,14 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
         IR_Data_Access access_valid_cast = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
         IR_Data_Access access_result = ir_data_access_create_intermediate(ir_block, cast_info.result_type);
         {
+            // Note: We always compare with non-const type, so any casts work from/to const
+            auto type_handle = datatype_get_non_const_type(cast_info.result_type)->type_handle;
+
             IR_Instruction cmp_instr;
             cmp_instr.type = IR_Instruction_Type::BINARY_OP;
             cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
             cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
-                types.type_handle,
-                array_create_static_as_bytes<u32>(&cast_info.result_type->type_handle.index, 1)
+                types.type_handle, array_create_static_as_bytes(&type_handle, 1)
             );
             cmp_instr.options.binary_op.operand_right = ir_data_access_create_member(ir_block, access_operand, types.any_type->members[1]);
             cmp_instr.options.binary_op.destination = access_valid_cast;
@@ -1457,14 +1459,16 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
         }
         // Set type
         {
+            // Note: We always compare with non-const type, so any casts work from/to const
+            auto type_handle = datatype_get_non_const_type(source_type)->type_handle;
+
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::MOVE;
             instr.options.move.destination = ir_data_access_create_member(
                 ir_block, any_access, types.any_type->members[1]
             );
             instr.options.move.source = ir_data_access_create_constant(
-                upcast(types.type_handle),
-                array_create_static_as_bytes(&source_type->type_handle, 1)
+                upcast(types.type_handle), array_create_static_as_bytes(&type_handle, 1)
             );
             dynamic_array_push_back(&ir_block->instructions, instr);
         }

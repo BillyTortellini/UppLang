@@ -874,6 +874,7 @@ Datatype* type_system_make_constant(Datatype* datatype)
 {
     auto& type_system = compiler.type_system;
     if (datatype->type == Datatype_Type::CONSTANT) return datatype;
+    if (datatype->type == Datatype_Type::TEMPLATE_PARAMETER) return datatype; // Note: This could cause problems, but makes poly-matching easier
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::CONSTANT;

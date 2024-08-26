@@ -11,5 +11,4 @@ main::()
 	a.next=*b
 	b.value=15
 	
-	context set_option(.AUTO_DEREFERENCE,true)
 	assert(a.next.value==15)

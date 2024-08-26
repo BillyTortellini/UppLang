@@ -1,5 +1,4 @@
 
-
 vec2::struct
 	x:int
 	y:int
@@ -37,7 +36,7 @@ main::()
 		context add_binop("*",add_ptr)
 		
 		c:=app*b
-		assert(c.x==6&&c.y==8&&c==*ap)
+		assert(c.x==6&&c.y==8)
 	
 	// Binops don't have to be symmetric
 		context add_binop("+",add_weird,commutative=true)

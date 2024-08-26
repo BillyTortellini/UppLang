@@ -1606,8 +1606,13 @@ namespace Parser
         auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
         result->is_comptime = false;
         result->default_value.available = false;
+        result->is_mutable = false;
         if (test_operator(Operator::DOLLAR)) {
             result->is_comptime = true;
+            advance_token();
+        }
+        else if (test_keyword(Keyword::MUTABLE)) {
+            result->is_mutable = true;
             advance_token();
         }
 
@@ -1837,7 +1842,8 @@ namespace Parser
         if (test_parenthesis_offset('(', 0) && (
             test_parenthesis_offset(')', 1) ||
             (test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Operator::COLON, 2)) ||
-            (test_operator_offset(Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
+            (test_operator_offset(Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2)) ||
+            (test_keyword_offset(Keyword::MUTABLE, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
             ))
         {
             result->type = Expression_Type::FUNCTION_SIGNATURE;

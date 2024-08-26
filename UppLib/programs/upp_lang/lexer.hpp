@@ -86,6 +86,7 @@ enum class Keyword
     FOR,
     IN_KEYWORD,
     CONST_KEYWORD,
+    MUTABLE, // mut
 
     MAX_ENUM_VALUE
 };

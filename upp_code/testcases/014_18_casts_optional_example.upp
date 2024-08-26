@@ -29,7 +29,8 @@ print_optional_int::(optional:Optional(int))
 	print_line()
 
 main::()
-	x:=optional_make_success(15)
+	val:=15
+	x:=optional_make_success(val)
 	y:Optional(int)=optional_make_failure()
 	
 	context add_cast(optional_is_available,.INFERRED)
