@@ -808,11 +808,52 @@ void code_completion_find_suggestions()
                 code_completion_add_and_rank(string_create_static("size"), partially_typed);
                 break;
             }
-            case Datatype_Type::STRUCT: {
-                auto& members = downcast<Datatype_Struct>(type)->members;
+            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
+            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+            case Datatype_Type::STRUCT: 
+            {
+                Datatype_Struct* structure = 0;
+                if (type->type == Datatype_Type::STRUCT) {
+                    structure = downcast<Datatype_Struct>(type);
+                }
+                else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
+                    structure = downcast<Datatype_Struct_Instance_Template>(type)->struct_base->body_workload->struct_type;
+                }
+                else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE) {
+                    structure = downcast<Datatype_Struct_Instance_Template_Subtype>(type)->struct_template->struct_base->body_workload->struct_type;
+                }
+
+                auto& members = structure->members;
                 for (int i = 0; i < members.size; i++) {
                     auto& mem = members[i];
                     code_completion_add_and_rank(*mem.id, partially_typed);
+                }
+                if (structure->subtypes.size > 0) {
+                    code_completion_add_and_rank(*compiler.predefined_ids.tag, partially_typed);
+                }
+                for (int i = 0; i < structure->subtypes.size; i++) {
+                    auto& sub = structure->subtypes[i];
+                    code_completion_add_and_rank(*sub.name, partially_typed);
+                }
+                break;
+            }
+            case Datatype_Type::STRUCT_SUBTYPE: 
+            {
+                // On subtype, accesses to the subtype name + base members + subtype members are valid
+                auto subtype = downcast<Datatype_Struct_Subtype>(type);
+                auto& members = subtype->structure->members;
+                for (int i = 0; i < members.size; i++) {
+                    auto& mem = members[i];
+                    code_completion_add_and_rank(*mem.id, partially_typed);
+                }
+                code_completion_add_and_rank(*compiler.predefined_ids.tag, partially_typed);
+                if (subtype->valid_subtype) {
+                    code_completion_add_and_rank(*subtype->subtype_name, partially_typed);
+                    auto& sub_members = subtype->structure->subtypes[subtype->subtype_index].type->members;
+                    for (int i = 0; i < sub_members.size; i++) {
+                        auto& mem = sub_members[i];
+                        code_completion_add_and_rank(*mem.id, partially_typed);
+                    }
                 }
                 break;
             }
@@ -1841,7 +1882,7 @@ void syntax_highlighting_set_symbol_colors(AST::Node* base)
             {
                 auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
                 if (info != nullptr) {
-                    if (info->result_type == Expression_Result_Type::DOT_CALL || info->specifics.member_access.dot_call_function != nullptr) {
+                    if (info->result_type == Expression_Result_Type::DOT_CALL || info->specifics.member_access.options.dot_call_function != nullptr) {
                         syntax_highlighting_set_section_text_color(base, Parser::Section::END_TOKEN, Syntax_Color::FUNCTION);
                     }
                 }

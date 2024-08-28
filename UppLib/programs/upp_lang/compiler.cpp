@@ -255,6 +255,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.cast_option_enum_values[(int)Cast_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
             ids.cast_option_enum_values[(int)Cast_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
             ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+            ids.cast_option_enum_values[(int)Cast_Option::TO_SUBTYPE] = add_id("TO_SUBTYPE");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore

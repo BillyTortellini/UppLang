@@ -16,6 +16,13 @@ namespace AST
         case Node_Type::DEFINITION_SYMBOL: 
         case Node_Type::ENUM_MEMBER: 
             break;
+        case Node_Type::STRUCT_MEMBER: {
+            auto member = (Structure_Member_Node*)node;
+            if (!member->is_expression) {
+                dynamic_array_destroy(&member->options.subtype_members);
+            }
+            break;
+        }
         case Node_Type::CONTEXT_CHANGE: {
             auto change = (Context_Change*)node;
             if (change->is_import) {
@@ -168,6 +175,16 @@ namespace AST
         case Node_Type::ENUM_MEMBER: {
             auto enum_member = (Enum_Member_Node*)node;
             FILL_OPTIONAL(enum_member->value);
+            break;
+        }
+        case Node_Type::STRUCT_MEMBER: {
+            auto member = (Structure_Member_Node*)node;
+            if (member->is_expression) {
+                FILL(member->options.expression);
+            }
+            else {
+                FILL_ARRAY(member->options.subtype_members);
+            }
             break;
         }
         case Node_Type::ARGUMENT: {
@@ -472,6 +489,16 @@ namespace AST
         case Node_Type::ENUM_MEMBER: {
             auto enum_member = (Enum_Member_Node*)node;
             FILL_OPTIONAL(enum_member->value);
+            break;
+        }
+        case Node_Type::STRUCT_MEMBER: {
+            auto member = (Structure_Member_Node*)node;
+            if (member->is_expression) {
+                FILL(member->options.expression);
+            }
+            else {
+                FILL_ARRAY(member->options.subtype_members);
+            }
             break;
         }
         case Node_Type::SYMBOL_LOOKUP: {
@@ -834,6 +861,12 @@ namespace AST
             string_append_string(str, mem->name);
             break;
         }
+        case Node_Type::STRUCT_MEMBER: {
+            auto mem = (Structure_Member_Node*)base;
+            string_append_formated(str, "STRUCT_MEMBER ");
+            string_append_string(str, mem->name);
+            break;
+        }
         case Node_Type::PARAMETER: {
             auto param = (Parameter*)base;
             string_append_formated(str, "PARAMETER ");
@@ -990,6 +1023,9 @@ namespace AST
     {
         bool type_correct(Context_Change* base) {
             return base->base.type == Node_Type::CONTEXT_CHANGE;
+        }
+        bool type_correct(Structure_Member_Node* base) {
+            return base->base.type == Node_Type::STRUCT_MEMBER;
         }
         bool type_correct(Symbol_Lookup* base) {
             return base->base.type == Node_Type::SYMBOL_LOOKUP;

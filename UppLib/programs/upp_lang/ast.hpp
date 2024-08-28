@@ -95,6 +95,7 @@ namespace AST
         PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
         IMPORT,            // Aliases/Symbol-Import/File-Loading
         ENUM_MEMBER,       // ID with or without value-expr
+        STRUCT_MEMBER,     // Either a normal member or a struct-subtype
         SWITCH_CASE,       // Expression 
         CONTEXT_CHANGE,    // Changing some operator context
     };
@@ -214,7 +215,17 @@ namespace AST
     enum class Structure_Type {
         STRUCT = 1,
         UNION,
-        C_UNION
+    };
+
+    struct Structure_Member_Node
+    {
+        Node base;
+        String* name;
+        bool is_expression; // Either expression or subtype_members
+        union {
+            Expression* expression;
+            Dynamic_Array<Structure_Member_Node*> subtype_members;
+        } options;
     };
 
     enum class Expression_Type
@@ -305,6 +316,7 @@ namespace AST
                 Optional<Expression*> return_value;
             } function_signature;
             struct {
+                Optional<String*> subtype_name;
                 Optional<Expression*> type_expr;
                 Dynamic_Array<Argument*> arguments;
             } struct_initializer;
@@ -320,7 +332,7 @@ namespace AST
             Expression* const_type;
             struct {
                 Dynamic_Array<Parameter*> parameters;
-                Dynamic_Array<Definition*> members;
+                Dynamic_Array<Structure_Member_Node*> members;
                 Structure_Type type;
             } structure;
             struct {
@@ -439,6 +451,7 @@ namespace AST
         bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);
         bool type_correct(Context_Change* base);
+        bool type_correct(Structure_Member_Node* base);
     }
 
     template<typename T>

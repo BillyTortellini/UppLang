@@ -860,6 +860,39 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
+        Structure_Member_Node* parse_struct_member(Node* parent)
+        {
+            // INFO: Definitions, like all line items, cannot start in the middle of a line
+            CHECKPOINT_SETUP;
+            if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
+            if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+
+            auto result = allocate_base<Structure_Member_Node>(parent, AST::Node_Type::STRUCT_MEMBER);
+            result->is_expression = true;
+            result->options.expression = nullptr;
+            result->name = get_token()->options.identifier;
+            advance_token();
+
+            if (!test_operator(Operator::COLON)) {
+                log_error_range_offset("Expected follow block or : after struct member name!", 0);
+                auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+                error_expr->type = Expression_Type::ERROR_EXPR;
+                node_finalize_range(upcast(error_expr));
+                result->options.expression = error_expr;
+                PARSE_SUCCESS(result);
+            }
+            advance_token();
+
+            if (on_follow_block()) {
+                result->is_expression = false;
+                result->options.subtype_members = dynamic_array_create<Structure_Member_Node*>();
+                parse_follow_block(AST::upcast(result), Block_Context::STRUCT);
+                PARSE_SUCCESS(result);
+            }
+
+            result->options.expression = parse_expression_or_error_expr(upcast(result));
+            PARSE_SUCCESS(result);
+        }
 
         AST::Node* parse_module_item(AST::Node* parent)
         {
@@ -1428,7 +1461,7 @@ namespace Parser
             result.node = Block_Items::parse_statement_or_context_change(parent);
             break;
         case Block_Context::STRUCT:
-            result.node = AST::upcast(Block_Items::parse_definition(parent));
+            result.node = AST::upcast(Block_Items::parse_struct_member(parent));
             break;
         case Block_Context::SWITCH:
             result.node = AST::upcast(Block_Items::parse_switch_case(parent));
@@ -1794,12 +1827,25 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            if (test_token(Token_Type::IDENTIFIER) && test_parenthesis_offset('{', 1)) // Struct subtype initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
-                init.arguments = dynamic_array_create<Argument*>(1);
+                init.subtype_name.available = true;
+                init.subtype_name.value = get_token()->options.identifier;
+                advance_token();
+                init.arguments = dynamic_array_create<Argument*>();
+                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                PARSE_SUCCESS(result);
+            }
+            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            {
+                result->type = Expression_Type::STRUCT_INITIALIZER;
+                auto& init = result->options.struct_initializer;
+                init.type_expr = optional_make_failure<Expression*>();
+                init.subtype_name.available = false;
+                init.arguments = dynamic_array_create<Argument*>();
                 parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
@@ -1899,18 +1945,13 @@ namespace Parser
             result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);
         }
-        if (test_keyword_offset(Keyword::STRUCT, 0) ||
-            test_keyword_offset(Keyword::C_UNION, 0) ||
-            test_keyword_offset(Keyword::UNION, 0))
+        if (test_keyword_offset(Keyword::STRUCT, 0) || test_keyword_offset(Keyword::UNION, 0))
         {
             result->type = Expression_Type::STRUCTURE_TYPE;
-            result->options.structure.members = dynamic_array_create<Definition*>(1);
-            result->options.structure.parameters = dynamic_array_create<Parameter*>(1);
+            result->options.structure.members = dynamic_array_create<Structure_Member_Node*>();
+            result->options.structure.parameters = dynamic_array_create<Parameter*>();
             if (test_keyword_offset(Keyword::STRUCT, 0)) {
                 result->options.structure.type = AST::Structure_Type::STRUCT;
-            }
-            else if (test_keyword_offset(Keyword::C_UNION, 0)) {
-                result->options.structure.type = AST::Structure_Type::C_UNION;
             }
             else {
                 result->options.structure.type = AST::Structure_Type::UNION;
@@ -1959,7 +2000,19 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_parenthesis_offset('{', 0)) // Struct Initializer
+            if (test_token(Token_Type::IDENTIFIER) && test_parenthesis_offset('{', 1)) // Struct subtype initializer
+            {
+                result->type = Expression_Type::STRUCT_INITIALIZER;
+                auto& init = result->options.struct_initializer;
+                init.type_expr = optional_make_success(child);
+                init.subtype_name.available = true;
+                init.subtype_name.value = get_token()->options.identifier;
+                advance_token();
+                init.arguments = dynamic_array_create<Argument*>();
+                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                PARSE_SUCCESS(result);
+            }
+            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
@@ -2217,14 +2270,19 @@ namespace Parser
             break;
         }
         case Block_Context::STRUCT: {
-            if (block_parse->parent->type != AST::Node_Type::EXPRESSION) {
-                break;
+            if (block_parse->parent->type == AST::Node_Type::EXPRESSION) {
+                auto expression = AST::downcast<AST::Expression>(block_parse->parent);
+                if (expression->type != AST::Expression_Type::STRUCTURE_TYPE) {
+                    break;
+                }
+                dynamic_array_reset(&expression->options.structure.members);
             }
-            auto expression = AST::downcast<AST::Expression>(block_parse->parent);
-            if (expression->type != AST::Expression_Type::STRUCTURE_TYPE) {
-                break;
+            else if (block_parse->parent->type == AST::Node_Type::STRUCT_MEMBER) {
+                auto member_node = downcast<Structure_Member_Node>(block_parse->parent);
+                if (!member_node->is_expression) {
+                    dynamic_array_reset(&member_node->options.subtype_members);
+                }
             }
-            dynamic_array_reset(&expression->options.structure.members);
             break;
         }
         case Block_Context::SWITCH: {
@@ -2303,16 +2361,28 @@ namespace Parser
             break;
         }
         case Block_Context::STRUCT: {
-            if (block_parse->parent->type != AST::Node_Type::EXPRESSION) {
-                break;
+            if (block_parse->parent->type == AST::Node_Type::EXPRESSION) 
+            {
+                auto expression = AST::downcast<AST::Expression>(block_parse->parent);
+                if (expression->type != AST::Expression_Type::STRUCTURE_TYPE) {
+                    break;
+                }
+                for (int i = 0; i < block_parse->items.size; i++) {
+                    auto& item = block_parse->items[i].node;
+                    dynamic_array_push_back(&expression->options.structure.members, AST::downcast<AST::Structure_Member_Node>(item));
+                }
             }
-            auto expression = AST::downcast<AST::Expression>(block_parse->parent);
-            if (expression->type != AST::Expression_Type::STRUCTURE_TYPE) {
-                break;
+            else if (block_parse->parent->type == AST::Node_Type::STRUCT_MEMBER) 
+            {
+                auto parent_member = AST::downcast<AST::Structure_Member_Node>(block_parse->parent);
+                assert(!parent_member->is_expression, "");
+                for (int i = 0; i < block_parse->items.size; i++) {
+                    auto& item = block_parse->items[i].node;
+                    dynamic_array_push_back(&parent_member->options.subtype_members, AST::downcast<AST::Structure_Member_Node>(item));
+                }
             }
-            for (int i = 0; i < block_parse->items.size; i++) {
-                auto& item = block_parse->items[i].node;
-                dynamic_array_push_back(&expression->options.structure.members, AST::downcast<AST::Definition>(item));
+            else {
+                break;
             }
             break;
         }

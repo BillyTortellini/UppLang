@@ -1,38 +1,38 @@
 
+
+
 TODO:
- * Fix current Testcases
- * Add testcases for constant, auto-address of and others
+-----
+ * Switch
+ * Subtype hierarachy
+ * Fix testcases
+ * Probably add testcases for a lot of shit...
+ * Maybe do assignment where we just move the given type, e.g. no pointer/other for templates...
 
 DONE:
- * Update strings (E.g. remove string literal type, think about with size vs without size...)
- * Update IR-Code to work with negative dereference values
- * Literals should be constant
- * Define-Infer should remove constant tag, e.g. x := 15 + 12 !
- * Disable assignments to constants
- * Comptime values should be constant
- * Make function parameters constant
- * Member access on constants should yield constants
- * Remove the options for auto-dereference and auto-address of completely, and just make them standard everywhere...
-
-Thinking about:
- * Is initializing const values allowed? e.g. x: const int = 5 (Simple for byte-code interpreter, but c-generator is gonna suck)
- * Temporary values and auto-address of
- * Const define infer? x: const = value
- * Mutable keyword for parameters, to indicate that we shouldn't make them constant...
- * Struct members should not allowed to be constant? --> Not sure, but initialization is going to be an issue then...
- * How about optional pointer types (e.g. ?*), which indicates that they may be null?
-    And don't care about initialization, you should still be able to force a null/uninitialized on non-null pointers, e.g. cast null
-    Also you should still be able to check for null on non-nullable pointers
-    The difference is that you cannot dereference optional pointers, e.g. you need to check first and then maybe call a ptr.deref?
+ * Polymorphic subtypes (Struct instance templates) + matching
+ * Check upcast to base type
+ * Update Struct-Initializer
+ * Struct initializer comptime calculation
+ * IR-Code needs to set tag correctly
 
 
-Implementation Strategy:
- - New Variant type
- - Syntax + Parsing
- - Implement Subtypes for simple variants
- - Struct-Variants (Variants inside struct should work)
 
- - Rework type system (Const + pointer level per type, base_struct, enum linear values + start value)
+
+Polymorphic Subtypes and polymorphic Matching with constants should be thought about...
+What about polymorphic sub-types (e.g. Subtypes of struct instance templates?)
+foo :: (a: *Address(int).IPv4)
+
+
+
+
+
+
+TODO:
+ * Add testcases for constant, auto-address of and others
+
+
+
 
 
 --------------------
@@ -62,14 +62,17 @@ Additional:
     * Using on structs
     * Location information (Mostly for logging)
     * Debugger
+    * Optional pointer types (e.g. ?*)
+    * Const define infer
 
 -----------------
 Code improvements:
     * Deduplication of comptime instances when the generated ir-code is the same
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
-    * IR_Code generates empty-struct type registers for some Statement_Type::Expression_Statement
     * Symbol table lookups could be combined into a single hashtable?
-    * Expression_Info could already store if value is comptime calculatable (Could e.g. be done for performance)
+    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
+    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
+    * Remove polymorphic base-analysis (Could make lot's of things a lot easier, e.g. conditional compilation...)
 
 -----------------
 Missing Test-Cases:
@@ -83,6 +86,194 @@ Missing Test-Cases:
 
 
 
+
+
+
+
+
+
+
+Design Decisions to be made:
+----------------------------
+My original idea was that we would be able to specify multiple subtypes of some structures, e.g.
+
+Game_Object:
+    id: int
+    transform: Transform
+    render_subtype: variant
+        Model ...
+            mesh: *Mesh
+            shader: *Shader
+        Effect ...
+        Foliage ...
+        None ...
+    logic_subtype: variant
+        Player
+            gamer_tag: String
+        Enemy
+        None
+
+and then you could do something like
+    player: Game_Object{Model, Player}
+    player.mesh
+    player.shader
+    player.gamer_tag
+
+    object: Game_Object
+
+
+Advantages/Disadvantages:
+-------------------------
+ * Complexity is higher
+ * Otherwise bettah
+This is the definitely the more advanced system
+
+Question: How would the compiler handle self-references to subtypes in this system?
+--> You could cache the tags in the type-constructor, so you would never duplicate
+--> If the subtype isn't finished yet we can add a waiting-workload to the struct
+--> Once it finishes, the type can check if it's a valid sub-type or not...
+  --> On member access we can check if it's an error, or if we should wait
+
+Render_Object :: variant
+    Model:
+        mesh: *Mesh
+        shader: *Shader
+    Copy:
+        template: *Game_Object.(Model, Player)
+        mods: Mods
+
+Logic :: struct
+    Player
+        gamer_tag: String
+        input: *Input
+    Enemy
+        state_machine: *State_Machine
+        state: int
+        aggro: *Game_Object.(Player)
+
+Game_Object :: struct
+    id: int
+    render_object: Render_Object
+    logic: Logic
+    
+Further design things you could/could not do:
+ * types of subtypes
+ * types of pointers...
+
+
+Ideas for variant syntax:
+1. new keyword, subtypes have uppercase names
+    Address :: variant
+        IPv4
+            bytes: [4] byte
+        IPv6
+            bytes: [8]byte
+        Location
+            street_name: String
+            city_code: int
+            house_number: int
+
+2. Just use struct again
+    Address :: struct
+        index: int
+        IPv4:
+            bytes: [4] byte
+        IPv6:
+            bytes: [8]byte
+        Location:
+            street_name: String
+            city_code: int
+            house_number: int
+What would be the problems with this approach?
+
+
+Syntax for accessing subtype-types + values
+    // For base-types, we can access members normally (+ tag exists and can be read/written to)
+    a: Address
+    a.tag = .IPv4
+    a.IPv4.bytes = .[127, 0, 0, 1]
+
+    // For subtypes, the subtype members are accessible
+    v4: Address.IPv4
+    v4.index = 15 
+    v4.bytes = .[172, 0, 0, 1]
+
+Syntax for multiple subtypes:
+    // Either we go for some sort of stacking, like
+    player: Game_Object.Player.Model
+
+    // Or we use some new syntax for this?
+    player: Game_Object.(Player, Model)
+
+
+Implementation:
+1. Remove union, c_union is now union
+2. Change struct syntax, so that AST::Struct_Member can be a struct-subtype
+3. Add parsing for this
+
+I think implementing single inheritance is good enough for the start
+
+    
+Node :: struct
+    Statement:
+        Assignment:
+            left: *Node.Expression
+            right: *Node.Expression
+        Delete:
+            value: *Node.Expression
+    Expression:
+        Path_Lookup:
+            fuck
+
+lookup: Node.Expression.Path_Lookup
+node: Node
+if node.tag == .Statement
+    stat :=* cast{Node.Statement} node
+
+Variants:
+---------
+
+Vehicle :: variant
+    Car:
+        fuel: int
+    Bike:
+        electric: bool
+        
+
+Expression :: struct
+{
+    base: struct
+        token_range: ...
+    Binop:
+        left: *Expression
+        right: *Expression
+    Unop:
+        value: *Expression
+        unop: enum
+            NEGATE
+            NOT
+            POINTER
+            DEREFERENCE
+}
+
+binop: Expression.Binop
+binop.base.token_range
+binop.left
+binop.right
+
+C++
+Expression :: struct {
+    base: Node
+    union {
+        struct {
+            Expression* left;
+            Expression* right;
+        } binop;
+    } options;
+}
+
+
+ * Size and member analysis similar to structs
 
 
 

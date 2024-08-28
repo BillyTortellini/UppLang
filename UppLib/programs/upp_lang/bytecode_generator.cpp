@@ -857,7 +857,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT:
             {
-                Datatype* array_type = ir_data_access_get_type(&address_of->source);
+                Datatype* array_type = datatype_get_non_const_type(ir_data_access_get_type(&address_of->source));
                 int base_pointer_offset;
                 Datatype* element_type = 0;
                 if (array_type->type == Datatype_Type::ARRAY) {

@@ -1,9 +1,38 @@
-Test::module
-	Node::struct($T:Type_Handle)
-		x:T
+
+
+c_str::[]const u8
+
+Address::struct
+	IPv4:
+		bytes:[4]u8
+	Location:
+		street_name:c_str
+		city_code:int
+
+print_address::(a:Address)
+	if a.tag==.Location
+		loc:=*a.Location
+		print_string(loc.street_name)
+		print_string(" ")
+		print_i32(loc.city_code)
+	else if a.tag==.IPv4
+		v4:=*a.IPv4
+		for val,i in v4.bytes
+			print_i32(cast{int}val)
+			if i!=3
+				print_string(".")
+	print_line()
+
+main::()
+	v4:Address.IPv4=.{u8.[128,0,0,1]}
+	print_address(v4)
 	
-	double::(n:*Node($T))
-		n.x*=2
+	a:Address=.Location{"Pitsborough",15}
+	print_address(a)
 	
-	Operators::module
-		context add_dot_call(double)
+	print_i32(cast{i32}a.tag)
+	print_line()
+	context set_cast_option(.TO_SUBTYPE,.INFERRED)
+	b:Address=v4
+	loc:Address.Location=cast b
+	

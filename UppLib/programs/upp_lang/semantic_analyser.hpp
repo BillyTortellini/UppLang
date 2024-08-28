@@ -454,10 +454,10 @@ struct Expression_Cast_Info
     Datatype* result_type;
     bool initial_value_is_temporary;
     bool result_value_is_temporary;
+    bool check_subtype_tag_on_value;
 
     int deref_count; // May be negative to indicate take-address of
     Cast_Type cast_type;
-
 
     union {
         ModTree_Function* custom_cast_function;
@@ -467,10 +467,10 @@ struct Expression_Cast_Info
 
 enum class Member_Access_Type
 {
-    STRUCT_MEMBER_ACCESS,
+    STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
     DOT_CALL_AS_MEMBER,
-    OTHER
+    STRUCT_SUBTYPE,
 };
 
 enum class Expression_Result_Type
@@ -522,9 +522,14 @@ struct Expression_Info
         Function_Parameter* implicit_parameter;
         struct {
             Member_Access_Type type;
-            Workload_Structure_Body* struct_workload;
-            int index; // Either normal member index, or polymorphic parameter index
-            ModTree_Function* dot_call_function;
+            union {
+                struct {
+                    Workload_Structure_Body* struct_workload;
+                    int index; // Either normal member index, or polymorphic parameter index
+                } poly_access;
+                Struct_Member member;
+                ModTree_Function* dot_call_function;
+            } options;
         } member_access;
         struct {
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)

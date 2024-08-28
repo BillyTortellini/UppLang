@@ -30,8 +30,8 @@ enum class Operator
     GREATER_EQUAL,
     EQUALS,
     NOT_EQUALS,
-    POINTER_EQUALS,
-    POINTER_NOT_EQUALS,
+    POINTER_EQUALS,     // *==
+    POINTER_NOT_EQUALS, // *!=
     DEFINE_COMPTIME, // ::
     DEFINE_INFER, // :=
     DEFINE_INFER_POINTER, // :=*
@@ -72,7 +72,6 @@ enum class Keyword
     NEW,
     STRUCT,
     UNION,
-    C_UNION,
     ENUM,
     DELETE_KEYWORD,
     DEFER,

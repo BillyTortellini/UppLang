@@ -114,12 +114,18 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
     case Datatype_Type::ENUM:
     case Datatype_Type::TEMPLATE_PARAMETER:
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
     case Datatype_Type::PRIMITIVE: {
         return true;
     }
     case Datatype_Type::CONSTANT: {
         return record_pointers_and_set_padding_bytes_zero_recursive(
             downcast<Datatype_Constant>(signature)->element_type, array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references
+        );
+    }
+    case Datatype_Type::STRUCT_SUBTYPE: {
+        return record_pointers_and_set_padding_bytes_zero_recursive(
+            upcast(downcast<Datatype_Struct_Subtype>(signature)->structure), array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references
         );
     }
     case Datatype_Type::FUNCTION: {
@@ -236,39 +242,41 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
         // Loop over each member and call this function recursively
         auto structure = downcast<Datatype_Struct>(signature);
         auto& members = structure->members;
-        switch (structure->struct_type)
-        {
-        case AST::Structure_Type::STRUCT:
-        {
-            for (int member_index = 0; member_index < members.size; member_index++) {
-                Struct_Member* member = &members[member_index];
 
-                // Set padding to zero
-                int padding_after_member = 0;
-                if (member_index == members.size - 1) {
-                    padding_after_member = memory_info.size - (member->offset + member->type->memory_info.value.size);
-                }
-                else {
-                    padding_after_member = members[member_index + 1].offset - (member->offset + member->type->memory_info.value.size);
-                }
-                if (padding_after_member != 0) {
-                    for (int i = 0; i < array_size; i++) {
-                        int member_offset = start_offset + offset_per_element * i + member->offset;
-                        memory_set_bytes(bytes.data + member_offset + member->type->memory_info.value.size, padding_after_member, 0);
-                    }
-                }
+        if (structure->struct_type == AST::Structure_Type::UNION) {
+            return false; // In theory unions without references could be serialized, but the padding may not be 0, so just disallow it for now
+        }
 
-                // Search members for references 
-                bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-                    member->type, array_size, bytes, start_offset + member->offset, offset_per_element, pointer_infos, function_references);
-                if (!success) {
-                    return false;
+        // Serialize all members
+        for (int member_index = 0; member_index < members.size; member_index++) 
+        {
+            Struct_Member* member = &members[member_index];
+
+            // Set padding to zero
+            int padding_after_member = 0;
+            if (member_index == members.size - 1) {
+                padding_after_member = memory_info.size - (member->offset + member->type->memory_info.value.size);
+            }
+            else {
+                padding_after_member = members[member_index + 1].offset - (member->offset + member->type->memory_info.value.size);
+            }
+            if (padding_after_member != 0) {
+                for (int i = 0; i < array_size; i++) {
+                    int member_offset = start_offset + offset_per_element * i + member->offset;
+                    memory_set_bytes(bytes.data + member_offset + member->type->memory_info.value.size, padding_after_member, 0);
                 }
             }
 
-            return true;
+            // Search members for references 
+            bool success = record_pointers_and_set_padding_bytes_zero_recursive(
+                member->type, array_size, bytes, start_offset + member->offset, offset_per_element, pointer_infos, function_references);
+            if (!success) {
+                return false;
+            }
         }
-        case AST::Structure_Type::UNION:
+
+        // Handle struct subtypes
+        if (structure->subtypes.size > 0)
         {
             Datatype* tag_type = structure->tag_member.type;
             assert(tag_type->type == Datatype_Type::ENUM, "");
@@ -277,37 +285,48 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
             for (int i = 0; i < array_size; i++) 
             {
-                int union_offset = start_offset + offset_per_element * i;
-                int enum_value = *(int*)(bytes.data + union_offset + structure->tag_member.offset);
+                int struct_offset = start_offset + offset_per_element * i;
+                int enum_value = *(int*)(bytes.data + struct_offset + structure->tag_member.offset);
                 if (enum_value <= 0 || enum_value > tag_enum->members.size) { // 0 is currently not a valid tag value
                     return false;
                 }
 
                 // Figure out active member
-                auto& active_member = structure->members[enum_value - 1];
+                auto& active_subtype = structure->subtypes[enum_value - 1];
+                auto& subtype_memory = active_subtype.type->base.memory_info.value;
 
-                // Check for padding
-                int padding = structure->tag_member.offset - (active_member.offset + active_member.type->memory_info.value.size);
-                assert(padding >= 0, "Cannot have negative padding");
-                if (padding != 0) {
-                    memory_set_bytes(bytes.data + union_offset + active_member.type->memory_info.value.size, padding, 0);
+                // Check padding between last struct member and subtype start
+                {
+                    int last_member_offset = 0;
+                    if (structure->members.size > 0) {
+                        auto& last = structure->members[structure->members.size - 1];
+                        last_member_offset = last.offset + last.type->memory_info.value.size;
+                    }
+                    if (active_subtype.offset > last_member_offset) {
+                        int padding = active_subtype.offset - last_member_offset;
+                        memory_set_bytes(bytes.data + struct_offset + last_member_offset, padding, 0);
+                    }
+                }
+
+                // Check for padding between subtype value and tag type
+                {
+                    int padding = structure->tag_member.offset - (active_subtype.offset + subtype_memory.size);
+                    assert(padding >= 0, "Cannot have negative padding");
+                    if (padding != 0) {
+                        memory_set_bytes(bytes.data + struct_offset + subtype_memory.size, padding, 0);
+                    }
                 }
 
                 // Search member for references
                 bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-                    active_member.type, 1, bytes, union_offset, active_member.type->memory_info.value.size, pointer_infos, function_references);
+                    upcast(active_subtype.type), 1, bytes, struct_offset + active_subtype.offset, subtype_memory.size, pointer_infos, function_references
+                );
                 if (!success) {
                     return false;
                 }
             }
+        }
 
-            return true;
-        }
-        case AST::Structure_Type::C_UNION: {
-            return false; // In theory C-unions without references could be serialized, but the padding may not be 0, so just disallow it for now
-        }
-        default: panic("");
-        }
         break;
     }
     default: panic("");

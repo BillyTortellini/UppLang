@@ -1017,34 +1017,53 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         IR_Data_Access struct_access = ir_data_access_create_intermediate(ir_block, result_type);
-        auto struct_type = downcast<Datatype_Struct>(ir_data_access_get_type(&struct_access));
-        auto& members = struct_type->members;
+        Datatype_Struct* structure = nullptr;
+        Datatype_Struct_Subtype* subtype = nullptr;
+        {
+            Datatype* type = datatype_get_non_const_type(ir_data_access_get_type(&struct_access));
+            if (type->type == Datatype_Type::STRUCT) {
+                structure = downcast<Datatype_Struct>(type);
+                subtype = nullptr;
+            }
+            else {
+                subtype = downcast<Datatype_Struct_Subtype>(type);
+                structure = subtype->structure;
+            }
+        }
 
+        auto& members = structure->members;
         auto struct_init = expression->options.struct_initializer;
         for (int i = 0; i < struct_init.arguments.size; i++)
         {
             auto arg = struct_init.arguments[i];
             auto arg_info = get_info(arg);
             
-            assert(result_type->type == Datatype_Type::STRUCT, "");
+            Struct_Member member;
+            if (arg_info->parameter_index < members.size) {
+                member = members[arg_info->parameter_index];
+            }
+            else {
+                assert(subtype != nullptr, "");
+                auto& sub = structure->subtypes[subtype->subtype_index];
+                member = sub.type->members[arg_info->parameter_index - members.size];
+                member.offset += sub.offset;
+            }
 
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, members[arg_info->parameter_index]);
+            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, member);
             move_instr.options.move.source = ir_generator_generate_expression(ir_block, arg->value);
             dynamic_array_push_back(&ir_block->instructions, move_instr);
         }
 
-        // Initialize union tag
-        if (struct_type->struct_type == AST::Structure_Type::UNION)
+        // Initialize subtype tag
+        if (structure->subtypes.size > 0)
         {
-            assert(struct_init.arguments.size == 1, "");
-            int member_index = get_info(struct_init.arguments[0])->parameter_index;
-
+            assert(subtype != nullptr, "");
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, struct_type->tag_member);
-            move_instr.options.move.source = ir_data_access_create_constant_i32(member_index + 1); // There's a reason this is plus 1, but i forgot...
+            move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, structure->tag_member);
+            move_instr.options.move.source = ir_data_access_create_constant_i32(subtype->subtype_index + 1); // There's a reason this is plus 1, but i forgot...
             dynamic_array_push_back(&ir_block->instructions, move_instr);
         }
         return struct_access;
@@ -1131,13 +1150,14 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
     {
         auto mem_access = expression->options.member_access;
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
+        auto src_type = get_info(mem_access.expr)->cast_info.result_type;
 
         // Handle custom member accesses
         if (info->specifics.member_access.type == Member_Access_Type::DOT_CALL_AS_MEMBER) {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.member_access.dot_call_function);
+            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.member_access.options.dot_call_function);
             instr.options.call.destination = ir_data_access_create_intermediate(ir_block, result_type);
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access>(1);
             dynamic_array_push_back(&instr.options.call.arguments, source);
@@ -1147,7 +1167,6 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
 
         // Handle special case of array.data, which basically becomes an address of
-        auto src_type = get_info(mem_access.expr)->cast_info.result_type;
         if (src_type->type == Datatype_Type::ARRAY)
         {
             assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
@@ -1166,10 +1185,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         }
 
         // Handle normal member access
-        auto member_result = type_signature_find_member_by_id(src_type, mem_access.name);
-        assert(member_result.available, "Must be availabe");
-
-        return ir_data_access_create_member(ir_block, source, member_result.value);
+        assert(info->specifics.member_access.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
+        return ir_data_access_create_member(ir_block, source, info->specifics.member_access.options.member);
     }
     case AST::Expression_Type::NEW_EXPR:
     {
@@ -1263,6 +1280,50 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
     auto info = get_info(expression);
     auto& cast_info = info->cast_info;
     auto cast_type = cast_info.cast_type;
+
+    // Add code for subtype check
+    if (cast_info.check_subtype_tag_on_value)
+    {
+        Datatype_Struct* from = downcast<Datatype_Struct>(datatype_get_non_const_type(cast_info.initial_type));
+        Datatype_Struct_Subtype* to = downcast<Datatype_Struct_Subtype>( datatype_get_non_const_type(cast_info.result_type));
+        assert(from->subtypes.size > 0, "");
+
+        // Get tag member access for source
+        IR_Data_Access member_access = source;
+        for (int i = 0; i < cast_info.initial_type->mods.pointer_level; i++) {
+            member_access = ir_data_access_create_dereference(ir_block, member_access); // Handles const
+        }
+        member_access = ir_data_access_create_member(ir_block, member_access, from->tag_member);
+
+        // Compare tag member to expected value
+        IR_Data_Access not_equal_bool = ir_data_access_create_intermediate(ir_block, upcast(compiler.type_system.predefined_types.bool_type));
+        {
+            int tag_value = to->subtype_index + 1;
+            IR_Data_Access expected_tag_value = ir_data_access_create_constant(from->tag_member.type, array_create_static_as_bytes(&tag_value, 1));
+
+            IR_Instruction test_instr;
+            test_instr.type = IR_Instruction_Type::BINARY_OP;
+            test_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
+            test_instr.options.binary_op.operand_left = member_access;
+            test_instr.options.binary_op.operand_right = expected_tag_value;
+            test_instr.options.binary_op.destination = not_equal_bool;
+            dynamic_array_push_back(&ir_block->instructions, test_instr);
+        }
+
+        // Make branch that errors if not_equal
+        IR_Instruction if_instr;
+        if_instr.type = IR_Instruction_Type::IF;
+        if_instr.options.if_instr.condition = not_equal_bool;
+        if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
+        if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
+        dynamic_array_push_back(&ir_block->instructions, if_instr);
+
+        IR_Instruction exit_instr;
+        exit_instr.type = IR_Instruction_Type::RETURN;
+        exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+        exit_instr.options.return_instr.options.exit_code = Exit_Code::CODE_ERROR_OCCURED;
+        dynamic_array_push_back(&if_instr.options.if_instr.true_branch->instructions, exit_instr);
+    }
 
     // Auto operations
     if (cast_info.deref_count < 0) {
@@ -1829,6 +1890,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             }
             else
             {
+                iterable_type = datatype_get_non_const_type(iterable_type);
                 assert(iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE, "Other types not supported currently");
                 IR_Instruction element_instr;
                 element_instr.type = IR_Instruction_Type::ADDRESS_OF;

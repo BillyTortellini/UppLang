@@ -9,6 +9,8 @@
 struct Symbol;
 struct Timer;
 struct Datatype;
+struct Datatype_Struct;
+struct Subtype_Info;
 struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
@@ -60,6 +62,7 @@ enum class Datatype_Type
     STRUCT,
     ENUM,
     FUNCTION,
+    STRUCT_SUBTYPE,
     TYPE_HANDLE,
     BYTE_POINTER, // Same as void* in C++
     CONSTANT,
@@ -67,7 +70,8 @@ enum class Datatype_Type
 
     // Types for polymorphism
     TEMPLATE_PARAMETER,
-    STRUCT_INSTANCE_TEMPLATE
+    STRUCT_INSTANCE_TEMPLATE,
+    STRUCT_INSTANCE_TEMPLATE_SUBTYPE
 };
 
 struct Datatype_Memory_Info
@@ -155,23 +159,38 @@ struct Datatype_Function
     int parameters_with_default_value_count;
 };
 
+struct Datatype_Struct_Subtype
+{
+    Datatype base;
+    Datatype_Struct* structure;
+    String* subtype_name; // Note: May be invalid
+    bool valid_subtype; // Subtypes may be invalid, e.g. Entity.Huuman will result in an invalid subtype)
+    int subtype_index; // -1 if type is invalid...
+};
+
+struct Subtype_Info
+{
+    String* name;
+    Datatype_Struct* type;
+    int offset;
+};
+
 struct Datatype_Struct 
 {
     Datatype base;
     AST::Structure_Type struct_type;
-    // Note: If this datatype is constant, then the parameters are non-owning (See datatype_base_destroy)
     Dynamic_Array<Struct_Member> members;
-    Struct_Member tag_member; // Only valid for unions
+    Dynamic_Array<Subtype_Info> subtypes;
+    Struct_Member tag_member; // Only valid for subtype-structs...
 
     Optional<String*> name;
     Workload_Structure_Body* workload; // May be null if it's a predefined struct
-    Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays and constant types
+    Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays, constant types or struct_subtypes
 };
 
 struct Datatype_Enum
 {
     Datatype base;
-    // Note: If this datatype is constant, then the parameters are non-owning (See datatype_base_destroy)
     Dynamic_Array<Enum_Member> members;
     String* name;
 
@@ -195,6 +214,13 @@ struct Datatype_Struct_Instance_Template
     Datatype base;
     Workload_Structure_Polymorphic* struct_base;
     Array<Polymorphic_Value> instance_values; // These need to be stored somewhere else now...
+};
+
+struct Datatype_Struct_Instance_Template_Subtype
+{
+    Datatype base;
+    Datatype_Struct_Instance_Template* struct_template;
+    String* subtype_name;
 };
 
 
@@ -252,6 +278,7 @@ enum class Cast_Option
     ENUM_TO_INT,
     INT_TO_ENUM,
     ARRAY_TO_SLICE,
+    TO_SUBTYPE,
 
     MAX_ENUM_VALUE
 };
@@ -278,17 +305,25 @@ struct Internal_Type_Struct_Member
     int offset;
 };
 
-struct Internal_Structure_Type
+struct Internal_Type_Struct_Subtype
 {
-    int tag_member_index;
-    AST::Structure_Type tag;
+    Upp_Type_Handle type;
+    int subtype_index;
+};
+
+struct Internal_Type_Subtype_Info
+{
+    Upp_C_String name;
+    Upp_Type_Handle type;
+    int offset;
 };
 
 struct Internal_Type_Struct
 {
     Upp_Slice<Internal_Type_Struct_Member> members;
+    Upp_Slice<Internal_Type_Subtype_Info> subtypes;
     Upp_C_String name;
-    Internal_Structure_Type type;
+    bool is_union;
 };
 
 struct Internal_Type_Enum_Member
@@ -314,10 +349,12 @@ struct Internal_Type_Enum
     Upp_C_String name;
 };
 
-struct Internal_Type_Info_Options
+struct Internal_Type_Information
 {
+    Upp_Type_Handle type_handle;
+    int size;
+    int alignment;
     union {
-        struct {} type_type;
         Upp_Type_Handle pointer;
         Upp_Type_Handle constant;
         Internal_Type_Array array;
@@ -326,16 +363,9 @@ struct Internal_Type_Info_Options
         Internal_Type_Function function;
         Internal_Type_Struct structure;
         Internal_Type_Enum enumeration;
-    };
+        Internal_Type_Struct_Subtype struct_subtype;
+    } options;
     Datatype_Type tag;
-};
-
-struct Internal_Type_Information
-{
-    Upp_Type_Handle type_handle;
-    int size;
-    int alignment;
-    Internal_Type_Info_Options options;
 };
 
 
@@ -346,7 +376,8 @@ enum class Type_Deduplication_Type
     CONSTANT,
     SLICE,
     ARRAY,
-    FUNCTION
+    FUNCTION,
+    SUBTYPE
 };
 
 struct Type_Deduplication
@@ -357,6 +388,10 @@ struct Type_Deduplication
         Datatype* non_constant_type;
         Datatype* pointer_element_type;
         Datatype* slice_element_type;
+        struct {
+            Datatype* base_type;
+            String* name;
+        } subtype;
         struct {
             Datatype* element_type;
             bool size_known;
@@ -442,10 +477,13 @@ void type_system_add_predefined_types(Type_System* system);
 
 Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
+Datatype_Struct_Instance_Template_Subtype* type_system_make_struct_instance_template_subtype(Datatype_Struct_Instance_Template* instance_template, String* name);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
+Datatype_Struct_Subtype* type_system_make_struct_subtype(Datatype_Struct* base_type, String* subtype_name);
+Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);
 
 // Note: Takes ownership of parameters (Or deletes them if type deduplication kicked in)
 Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type = 0); 
@@ -465,7 +503,6 @@ bool types_are_equal(Datatype* a, Datatype* b);
 bool datatype_is_unknown(Datatype* a);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
-Optional<Struct_Member> type_signature_find_member_by_id(Datatype* type, String* id);  // Valid for both structs, unions and slices
 Datatype* datatype_get_non_const_type(Datatype* datatype);
 bool type_mods_is_constant(Type_Mods mods, int pointer_level);
 Type_Mods type_mods_make(int pointer_level, u32 const_flags);
@@ -483,6 +520,8 @@ inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Template_Parameter* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct_Instance_Template* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Struct_Subtype* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Struct_Instance_Template_Subtype* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
 inline Datatype_Type get_datatype_type(Datatype_Function* unused) { return Datatype_Type::FUNCTION; }
@@ -494,6 +533,8 @@ inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Dataty
 inline Datatype_Type get_datatype_type(Datatype_Template_Parameter* unused) { return Datatype_Type::TEMPLATE_PARAMETER; }
 inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE; }
 inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
+inline Datatype_Type get_datatype_type(Datatype_Struct_Subtype* base) { return Datatype_Type::STRUCT_SUBTYPE; }
+inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template_Subtype* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>

@@ -40,8 +40,8 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::GREATER_EQUAL: return operator_info_make(">=", Operator_Type::BINOP, true, true);
     case Operator::EQUALS: return operator_info_make("==", Operator_Type::BINOP, true, true);
     case Operator::NOT_EQUALS: return operator_info_make("!=", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_EQUALS: return operator_info_make("==*", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_NOT_EQUALS: return operator_info_make("!=*", Operator_Type::BINOP, true, true);
+    case Operator::POINTER_EQUALS: return operator_info_make("*==", Operator_Type::BINOP, true, true);
+    case Operator::POINTER_NOT_EQUALS: return operator_info_make("*!=", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_COMPTIME: return operator_info_make("::", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER: return operator_info_make(":=", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
@@ -93,7 +93,6 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::CAST: return string_create_static("cast");
     case Keyword::CAST_POINTER: return string_create_static("cast_pointer");
     case Keyword::CONTINUE: return string_create_static("continue");
-    case Keyword::C_UNION: return string_create_static("c_union");
     case Keyword::DEFAULT: return string_create_static("default");
     case Keyword::DEFER: return string_create_static("defer");
     case Keyword::DELETE_KEYWORD: return string_create_static("delete");

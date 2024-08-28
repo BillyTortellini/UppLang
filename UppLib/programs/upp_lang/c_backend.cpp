@@ -374,6 +374,17 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
         string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
         break;
     }
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
+    {
+        string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
+        break;
+    }
+    case Datatype_Type::STRUCT_SUBTYPE:
+    {
+        panic("TODO");
+        string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
+        break;
+    }
     case Datatype_Type::PRIMITIVE:
     {
         auto primitive = downcast<Datatype_Primitive>(type);
