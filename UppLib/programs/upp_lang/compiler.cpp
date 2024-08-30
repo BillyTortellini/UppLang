@@ -211,6 +211,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.size =                add_id("size");
             ids.data =                add_id("data");
             ids.tag =                 add_id("tag");
+            ids.anon_struct =         add_id("Anonymous");
             ids.main =                add_id("main");
             ids.type_of =             add_id("type_of");
             ids.type_info =           add_id("type_info");

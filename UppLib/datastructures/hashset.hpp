@@ -132,6 +132,7 @@ void hashset_reset(Hashset<T>* set)
             }
         }
     }
+    set->element_count = 0;
 }
 
 template <typename T>

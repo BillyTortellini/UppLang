@@ -1,10 +1,129 @@
 
 
+TODO:
+-----
+ - Downcast should probably check tag?
+ - Switch
+ - Struct Initializer
+
+Probably tomorrow:
+
+
+
+How do I store the subtype hierarchy?
+
+The questions the type mods presents are:
+What do the type-mods need to fullfill:
+ * Is equal would be nice
+ * Is a subtype of b? (Has to look in the )
+
+
+Ideas I would like to try out:
+ * Parser checks if subtypes have the same name, and if so, changes it to some error-name...
+ * When analysing a struct, we pre-determine the struct-hierarchy based on the node, so subtype-creation doesn't have to wait for type_size to finish
+ * Type_Mods containing subtype-hierarchy (Only names of subtypes)
+ * Base_Type of type points to structure
+ * Subtype Type can contain general datatype (E.g. struct_template_instance or error_type (If hierarchy is false))
+ * When checking member access searching the type takes a bit longer...
+
+
+Questions: Should struct subtype members be allowed to have same names as base-type?
+    Node :: struct
+        index: int
+        Expression: 
+            index: bool
+No...
+
+How to deal with subtypes/members having the same names?
+ * Parser cannot check it (As it's a multi line thing, also not parsers job)
+ * Could check on workload-creation..., could be fine...
+
+What if the subtype name isn't valid...
+
+
+Thinking a little bit more about subtypes...
+What if... and hear me out... if... fuck... bitches...
+
+So arguably maybe type_mods and type_base aren't the worst idea overall...
+E.g. type_base is still struct, but mods contain the given subtype
+Also maybe it's possible to have subtype-info for normal structs, which just gives you the base info...,
+and then you can check is_subtype_of()
+
+Also we can analyse the subtype-structure of a struct without having to look at anything else currently
+
+What if the type mods contain the structure of the subtype, e.g. 
+the ID-Hierarchy
+
+What about something like
+Datatype_Struct*
+    
+
+So what are the type-mods used for:
+They are used so that both the id of a type has to match (base-type) + the type_mods have to match...
+
+
+Type_Mods :: struct
+    pointer_level: int
+    const_flags: int
+    subtype_info: *Subtype_Info
+
+Currently we have a lot of:
+
+Datatype_Struct* structure
+Datatype_Struct_Subtype* subtype;
+if (type->base_type->type == Datatype_Type::STRUCTURE) {
+}
+else if (type->base_type->type == Datatype_Type::STRUCT_SUBTYPE) {
+}
+
+And the combination would be:
+if (type->base_type->type == Datatype_Type::STRUCTURE) {
+    do something
+    type->mods.subtype
+}
+
+Where the subtype contains:
+ sheet
+But then we could have subtypes on non-struct types, e.g.
+Subtype of Struct_Instance_Template, and this would also work fine...
+
+And for member access it would be enough to have
+Should array/Slice/Function have subtype upcasts?
+
+// Definitly not by default, but I think casting could be supported here...
+[]*Node.Expression -> []*Node
+
+Subtype_Info:
+    int hierarchy_level;
+    Subtype_Info* subtype_of; // Only 0 if base...
+    String* name;
+
+switch Color
+    case .RED
+    case .GREEN
+    case .BLUE
+
+switch Color
+    .RED
+        What
+    .GREEN
+        The
+    .BLUE   
+        Fuck
+
+
+switches are exhaustive without break
+switches only work on enums and struct-subtypes
+
+Do I want the case-keyword?
+Don't think so
+
+
 
 TODO:
 -----
+ * Subtype hierarchy
  * Switch
- * Subtype hierarachy
  * Fix testcases
  * Probably add testcases for a lot of shit...
  * Maybe do assignment where we just move the given type, e.g. no pointer/other for templates...

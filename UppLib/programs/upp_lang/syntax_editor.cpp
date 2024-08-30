@@ -799,6 +799,7 @@ void code_completion_find_suggestions()
 
         if (type != 0)
         {
+            auto original = type;
             type = type->base_type;
             switch (type->type)
             {
@@ -808,7 +809,6 @@ void code_completion_find_suggestions()
                 code_completion_add_and_rank(string_create_static("size"), partially_typed);
                 break;
             }
-            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
             case Datatype_Type::STRUCT: 
             {
@@ -819,41 +819,24 @@ void code_completion_find_suggestions()
                 else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
                     structure = downcast<Datatype_Struct_Instance_Template>(type)->struct_base->body_workload->struct_type;
                 }
-                else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE) {
-                    structure = downcast<Datatype_Struct_Instance_Template_Subtype>(type)->struct_template->struct_base->body_workload->struct_type;
-                }
 
-                auto& members = structure->members;
+                Struct_Content* content = type_mods_get_subtype(structure, original->mods);
+                auto& members = content->members;
                 for (int i = 0; i < members.size; i++) {
                     auto& mem = members[i];
                     code_completion_add_and_rank(*mem.id, partially_typed);
                 }
-                if (structure->subtypes.size > 0) {
+                if (content->subtypes.size > 0) {
                     code_completion_add_and_rank(*compiler.predefined_ids.tag, partially_typed);
                 }
-                for (int i = 0; i < structure->subtypes.size; i++) {
-                    auto& sub = structure->subtypes[i];
-                    code_completion_add_and_rank(*sub.name, partially_typed);
+                for (int i = 0; i < content->subtypes.size; i++) {
+                    auto sub = content->subtypes[i];
+                    code_completion_add_and_rank(*sub->name, partially_typed);
                 }
-                break;
-            }
-            case Datatype_Type::STRUCT_SUBTYPE: 
-            {
-                // On subtype, accesses to the subtype name + base members + subtype members are valid
-                auto subtype = downcast<Datatype_Struct_Subtype>(type);
-                auto& members = subtype->structure->members;
-                for (int i = 0; i < members.size; i++) {
-                    auto& mem = members[i];
-                    code_completion_add_and_rank(*mem.id, partially_typed);
-                }
-                code_completion_add_and_rank(*compiler.predefined_ids.tag, partially_typed);
-                if (subtype->valid_subtype) {
-                    code_completion_add_and_rank(*subtype->subtype_name, partially_typed);
-                    auto& sub_members = subtype->structure->subtypes[subtype->subtype_index].type->members;
-                    for (int i = 0; i < sub_members.size; i++) {
-                        auto& mem = sub_members[i];
-                        code_completion_add_and_rank(*mem.id, partially_typed);
-                    }
+                // Add base name if available
+                if (original->mods.subtype_index->indices.size > 0) {
+                    Struct_Content* content = type_mods_get_subtype(structure, type->mods, type->mods.subtype_index->indices.size - 1);
+                    code_completion_add_and_rank(*content->name, partially_typed);
                 }
                 break;
             }
@@ -955,7 +938,6 @@ void code_completion_find_suggestions()
 
         if (fill_context_options) {
             auto& ids = compiler.predefined_ids;
-            code_completion_add_and_rank(*ids.set_option, partially_typed);
             code_completion_add_and_rank(*ids.set_cast_option, partially_typed);
             code_completion_add_and_rank(*ids.id_import, partially_typed);
             code_completion_add_and_rank(*ids.add_binop, partially_typed);

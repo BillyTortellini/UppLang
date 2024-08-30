@@ -374,12 +374,7 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
         string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
         break;
     }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
-    {
-        string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
-        break;
-    }
-    case Datatype_Type::STRUCT_SUBTYPE:
+    case Datatype_Type::SUBTYPE:
     {
         panic("TODO");
         string_append_formated(&type_name, "TEMPLATE_TYPE_BACKEND_");  // See hardcoded_functions.h for definition
@@ -420,13 +415,8 @@ void c_generator_register_type_name(C_Generator* generator, Datatype* type)
     case Datatype_Type::STRUCT:
     {
         auto structure = downcast<Datatype_Struct>(type);
-        auto& members = structure->members;
-        if (structure->name.available) {
-            string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, structure->name.value->characters);
-        }
-        else {
-            string_append_formated(&type_name, "struct_%d", generator->name_counter);
-        }
+        auto& members = structure->content.members;
+        string_append_formated(&type_name, "struct_%d_%s", generator->name_counter, structure->content.name->characters);
         generator->name_counter++;
         string_append_formated(&generator->section_struct_prototypes, "struct %s;\n", type_name.characters);
 
@@ -1188,7 +1178,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
             C_Type_Definition_Dependency* dependency = &generator->type_dependencies[i];
             if (dependency->signature->type == Datatype_Type::STRUCT)
             {
-                auto& members = downcast<Datatype_Struct>(dependency->signature)->members;
+                auto& members = downcast<Datatype_Struct>(dependency->signature)->content.members;
                 for (int j = 0; j < members.size; j++)
                 {
                     Struct_Member* member = &members[j];
@@ -1248,7 +1238,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                 if (type->type == Datatype_Type::STRUCT)
                 {
                     auto structure = downcast<Datatype_Struct>(type);
-                    auto& members = structure->members;
+                    auto& members = structure->content.members;
 
                     string_append_formated(&generator->section_struct_implementations, "struct %s {\n", type_name->characters);
                     int member_indentation = 1;
@@ -1273,7 +1263,7 @@ void c_generator_generate(C_Generator* generator, Compiler* compiler)
                     }
                     if (structure->struct_type == AST::Structure_Type::UNION) {
                         string_add_indentation(&generator->section_struct_implementations, 1);
-                        Struct_Member* member = &structure->tag_member;
+                        Struct_Member* member = &structure->content.tag_member;
                         c_generator_output_type_reference(generator, &generator->section_struct_implementations, member->type);
                         string_append_formated(&generator->section_struct_implementations, " %s;\n", member->id->characters);
                     }

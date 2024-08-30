@@ -10,7 +10,7 @@ struct Symbol;
 struct Timer;
 struct Datatype;
 struct Datatype_Struct;
-struct Subtype_Info;
+struct Datatype_Subtype;
 struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
@@ -62,7 +62,7 @@ enum class Datatype_Type
     STRUCT,
     ENUM,
     FUNCTION,
-    STRUCT_SUBTYPE,
+    SUBTYPE,
     TYPE_HANDLE,
     BYTE_POINTER, // Same as void* in C++
     CONSTANT,
@@ -70,8 +70,7 @@ enum class Datatype_Type
 
     // Types for polymorphism
     TEMPLATE_PARAMETER,
-    STRUCT_INSTANCE_TEMPLATE,
-    STRUCT_INSTANCE_TEMPLATE_SUBTYPE
+    STRUCT_INSTANCE_TEMPLATE
 };
 
 struct Datatype_Memory_Info
@@ -83,10 +82,21 @@ struct Datatype_Memory_Info
     bool contains_function_pointer;
 };
 
+struct Named_Index
+{
+    String* name;
+    int index;
+};
+
+struct Subtype_Index {
+    Dynamic_Array<Named_Index> indices;
+};
+
 struct Type_Mods
 {
     u32 constant_flags;
     int pointer_level;
+    Subtype_Index* subtype_index;
 };
 
 struct Datatype
@@ -159,31 +169,28 @@ struct Datatype_Function
     int parameters_with_default_value_count;
 };
 
-struct Datatype_Struct_Subtype
+struct Datatype_Subtype
 {
     Datatype base;
-    Datatype_Struct* structure;
-    String* subtype_name; // Note: May be invalid
-    bool valid_subtype; // Subtypes may be invalid, e.g. Entity.Huuman will result in an invalid subtype)
-    int subtype_index; // -1 if type is invalid...
+    Datatype* base_type;
+    String* subtype_name;
+    int subtype_index;
 };
 
-struct Subtype_Info
+struct Struct_Content
 {
-    String* name;
-    Datatype_Struct* type;
-    int offset;
+    String* name; // For base struct this is the name, otherwise subtype names/ids
+    Dynamic_Array<Struct_Member> members;
+    Dynamic_Array<Struct_Content*> subtypes;
+    Struct_Member tag_member; // Only valid if subtypes aren't empty
 };
 
 struct Datatype_Struct 
 {
     Datatype base;
     AST::Structure_Type struct_type;
-    Dynamic_Array<Struct_Member> members;
-    Dynamic_Array<Subtype_Info> subtypes;
-    Struct_Member tag_member; // Only valid for subtype-structs...
+    Struct_Content content;
 
-    Optional<String*> name;
     Workload_Structure_Body* workload; // May be null if it's a predefined struct
     Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays, constant types or struct_subtypes
 };
@@ -215,14 +222,6 @@ struct Datatype_Struct_Instance_Template
     Workload_Structure_Polymorphic* struct_base;
     Array<Polymorphic_Value> instance_values; // These need to be stored somewhere else now...
 };
-
-struct Datatype_Struct_Instance_Template_Subtype
-{
-    Datatype base;
-    Datatype_Struct_Instance_Template* struct_template;
-    String* subtype_name;
-};
-
 
 void datatype_append_to_string(String* string, Datatype* type);
 void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* string);
@@ -305,24 +304,24 @@ struct Internal_Type_Struct_Member
     int offset;
 };
 
-struct Internal_Type_Struct_Subtype
+struct Internal_Type_Subtype
 {
     Upp_Type_Handle type;
+    Upp_C_String subtype_name;
     int subtype_index;
 };
 
-struct Internal_Type_Subtype_Info
+struct Internal_Type_Struct_Content
 {
+    Upp_Slice<Internal_Type_Struct_Member> members;
+    Upp_Slice<Internal_Type_Struct_Content> subtypes;
+    Internal_Type_Struct_Member tag_member;
     Upp_C_String name;
-    Upp_Type_Handle type;
-    int offset;
 };
 
 struct Internal_Type_Struct
 {
-    Upp_Slice<Internal_Type_Struct_Member> members;
-    Upp_Slice<Internal_Type_Subtype_Info> subtypes;
-    Upp_C_String name;
+    Internal_Type_Struct_Content content;
     bool is_union;
 };
 
@@ -354,6 +353,7 @@ struct Internal_Type_Information
     Upp_Type_Handle type_handle;
     int size;
     int alignment;
+
     union {
         Upp_Type_Handle pointer;
         Upp_Type_Handle constant;
@@ -363,7 +363,7 @@ struct Internal_Type_Information
         Internal_Type_Function function;
         Internal_Type_Struct structure;
         Internal_Type_Enum enumeration;
-        Internal_Type_Struct_Subtype struct_subtype;
+        Internal_Type_Subtype struct_subtype;
     } options;
     Datatype_Type tag;
 };
@@ -391,6 +391,7 @@ struct Type_Deduplication
         struct {
             Datatype* base_type;
             String* name;
+            int index;
         } subtype;
         struct {
             Datatype* element_type;
@@ -465,8 +466,11 @@ struct Type_System
     Predefined_Types predefined_types;
 
     Hashtable<Type_Deduplication, Datatype*> deduplication_table;
+    Hashset<Subtype_Index*> subtype_index_deduplication;
     Dynamic_Array<Datatype*> types;
     Dynamic_Array<Internal_Type_Information*> internal_type_infos;
+
+    Subtype_Index subtype_base_index;
 };
 
 Type_System type_system_create(Timer* timer);
@@ -477,12 +481,11 @@ void type_system_add_predefined_types(Type_System* system);
 
 Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
-Datatype_Struct_Instance_Template_Subtype* type_system_make_struct_instance_template_subtype(Datatype_Struct_Instance_Template* instance_template, String* name);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
-Datatype_Struct_Subtype* type_system_make_struct_subtype(Datatype_Struct* base_type, String* subtype_name);
+Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
 Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);
 
 // Note: Takes ownership of parameters (Or deletes them if type deduplication kicked in)
@@ -491,8 +494,9 @@ Datatype_Function* type_system_make_function(std::initializer_list<Function_Para
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name);
-Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name = 0, Workload_Structure_Body* workload = 0);
-void struct_add_member(Datatype_Struct* structure, String* id, Datatype* member_type);
+Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload = 0);
+void struct_add_member(Struct_Content* content, String* id, Datatype* member_type);
+Struct_Content* struct_add_subtype(Struct_Content* content, String* id);
 void type_system_finish_struct(Datatype_Struct* structure);
 void type_system_finish_enum(Datatype_Enum* enum_type);
 void type_system_finish_array(Datatype_Array* array);
@@ -505,7 +509,9 @@ bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_non_const_type(Datatype* datatype);
 bool type_mods_is_constant(Type_Mods mods, int pointer_level);
-Type_Mods type_mods_make(int pointer_level, u32 const_flags);
+Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int level = -1);
+Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
+Type_Mods type_mods_make(int pointer_level, u32 const_flags, Subtype_Index* subtype = 0);
 
 
 // Casting functions
@@ -520,8 +526,7 @@ inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Template_Parameter* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct_Instance_Template* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Struct_Subtype* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Struct_Instance_Template_Subtype* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
 inline Datatype_Type get_datatype_type(Datatype_Function* unused) { return Datatype_Type::FUNCTION; }
@@ -533,8 +538,7 @@ inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Dataty
 inline Datatype_Type get_datatype_type(Datatype_Template_Parameter* unused) { return Datatype_Type::TEMPLATE_PARAMETER; }
 inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE; }
 inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
-inline Datatype_Type get_datatype_type(Datatype_Struct_Subtype* base) { return Datatype_Type::STRUCT_SUBTYPE; }
-inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template_Subtype* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE; }
+inline Datatype_Type get_datatype_type(Datatype_Subtype* base) { return Datatype_Type::SUBTYPE; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>

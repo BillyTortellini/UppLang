@@ -1927,13 +1927,13 @@ Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*
     case C_Import_Type_Type::ARRAY: {
         signature.type = Datatype_Type::ARRAY;
         signature.options.array.element_count = type->array.array_size;
-        signature.options.array.element_type = import_c_type(type->array.element_type, type_conversions);
+        signature.options.array.base_type = import_c_type(type->array.base_type, type_conversions);
         result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
     case C_Import_Type_Type::POINTER: {
         signature.type = Datatype_Type::POINTER;
-        signature.options.pointer_child = import_c_type(type->array.element_type, type_conversions);
+        signature.options.pointer_child = import_c_type(type->array.base_type, type_conversions);
         result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;
     }
@@ -2022,7 +2022,7 @@ Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*
     }
     case C_Import_Type_Type::ERROR_TYPE: {
         signature.type = Datatype_Type::ARRAY;
-        signature.options.array.element_type = type_system.u8_type;
+        signature.options.array.base_type = type_system.u8_type;
         signature.options.array.element_count = type->byte_size;
         result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
         break;

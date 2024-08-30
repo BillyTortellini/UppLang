@@ -610,6 +610,57 @@ Function_Progress* function_progress_create_with_modtree_function(
     return progress;
 }
 
+// Creates member-types and sub-types, and also checks if the member names are valid...
+// Note: We want to know the subtypes so that subtype creation can check the subtypes of a non-analysed struct...
+void add_struct_members_empty_recursive(
+    Struct_Content* content, Dynamic_Array<AST::Structure_Member_Node*> member_nodes, bool report_errors, 
+    String* parent_name, Dynamic_Array<AST::Parameter*> struct_params)
+{
+    assert(content->members.size == 0, "");
+    assert(content->subtypes.size == 0, "");
+
+    for (int i = 0; i < member_nodes.size; i++) 
+    {
+        auto member_node = member_nodes[i];
+        if (member_node->is_expression) {
+            Struct_Member member;
+            member.id = member_node->name;
+            member.offset = -1;
+            member.type = compiler.type_system.predefined_types.unknown_type;
+            dynamic_array_push_back(&content->members, member);
+        }
+        else {
+            auto subtype = struct_add_subtype(content, member_node->name);
+            add_struct_members_empty_recursive(subtype, member_node->options.subtype_members, report_errors, content->name, struct_params);
+        }
+
+        // Check if this name is already defined on the same level
+        if (report_errors)
+        {
+            // Check other members
+            for (int j = 0; j < i; j++) {
+                auto other = member_nodes[j];
+                if (other->name == member_node->name) {
+                    log_semantic_error("Struct member name is already defined in previous member", upcast(member_node), Parser::Section::IDENTIFIER);
+                }
+            }
+
+            // Check struct params
+            for (int j = 0; j < struct_params.size; j++) {
+                auto param = struct_params[j];
+                if (param->name == member_node->name) {
+                    log_semantic_error("Struct member name is already defined as struct parameter name", upcast(member_node), Parser::Section::IDENTIFIER);
+                }
+            }
+
+            // Check parent_name
+            if (member_node->name == parent_name) {
+                log_semantic_error("Struct member name has the same name as struct/subtype name", upcast(member_node), Parser::Section::IDENTIFIER);
+            }
+        }
+    }
+}
+
 Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node, Symbol* symbol,
     bool is_polymorphic_instance, Symbol_Access_Level access_level = Symbol_Access_Level::GLOBAL)
 {
@@ -618,7 +669,13 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
     // Create body workload
     auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(upcast(struct_node));
-    body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? 0 : symbol->id), body_workload);
+    body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? compiler.predefined_ids.anon_struct : symbol->id), body_workload);
+    add_struct_members_empty_recursive(
+        &body_workload->struct_type->content, struct_info.members, !is_polymorphic_instance, nullptr, struct_info.parameters
+    );
+    if (struct_info.type == AST::Structure_Type::UNION && body_workload->struct_type->content.subtypes.size > 0 && !is_polymorphic_instance) {
+        log_semantic_error("Union must not contain subtypes", upcast(struct_node), Parser::Section::KEYWORD);
+    }
     body_workload->struct_node = struct_node;
     body_workload->polymorphic_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
     body_workload->base.symbol_access_level = access_level;
@@ -1288,6 +1345,14 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         else if (access_info.type == Member_Access_Type::STRUCT_SUBTYPE) {
             panic("Should be handled by type_type!");
         }
+        else if (access_info.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST) 
+        {
+            Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
+            if (value_struct.type != Comptime_Result_Type::AVAILABLE) {
+                return value_struct;
+            }
+            return comptime_result_make_available(value_struct.data, result_type);
+        }
 
         Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
         if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
@@ -1358,62 +1423,63 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         auto& arguments = expr->options.struct_initializer.arguments;
+        return comptime_result_make_not_comptime("Not implemented/updated yet");
 
-        // Allocate result type
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-        memory_set_bytes(result_buffer, result_type_size->size, 0);
+        // // Allocate result type
+        // void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+        // memory_set_bytes(result_buffer, result_type_size->size, 0);
 
-        // Find struct/type + subtype
-        Datatype_Struct* structure;
-        Datatype_Struct_Subtype* subtype;
-        {
-            Datatype* type = datatype_get_non_const_type(result_type);
-            if (type->type == Datatype_Type::STRUCT) {
-                structure = downcast<Datatype_Struct>(type);
-                subtype = nullptr;
-            }
-            else if (type->type == Datatype_Type::STRUCT_SUBTYPE) {
-                subtype = downcast<Datatype_Struct_Subtype>(type);
-                structure = subtype->structure;
-            }
-            else {
-                panic("Type must be struct/struct subtype for initializer");
-            }
-        }
+        // // Find struct/type + subtype
+        // Datatype_Struct* structure;
+        // Datatype_Subtype* subtype;
+        // {
+        //     Datatype* type = datatype_get_non_const_type(result_type);
+        //     if (type->type == Datatype_Type::STRUCT) {
+        //         structure = downcast<Datatype_Struct>(type);
+        //         subtype = nullptr;
+        //     }
+        //     else if (type->type == Datatype_Type::SUBTYPE) {
+        //         subtype = downcast<Datatype_Subtype>(type);
+        //         structure = subtype->structure;
+        //     }
+        //     else {
+        //         panic("Type must be struct/struct subtype for initializer");
+        //     }
+        // }
 
-        // Set all arguments values
-        for (int i = 0; i < arguments.size; i++) 
-        {
-            auto arg = arguments[i];
-            auto arg_info = get_info(arg);
-            Struct_Member member;
-            if (arg_info->parameter_index < structure->members.size) {
-                member = structure->members[arg_info->parameter_index];
-            }
-            else {
-                assert(subtype != nullptr, "");
-                auto& sub = structure->subtypes[subtype->subtype_index];
-                member = sub.type->members[arg_info->parameter_index - structure->members.size];
-                member.offset += sub.offset;
-            }
-            assert(member.type->memory_info.available, "");
+        // // Set all arguments values
+        // for (int i = 0; i < arguments.size; i++) 
+        // {
+        //     auto arg = arguments[i];
+        //     auto arg_info = get_info(arg);
+        //     Struct_Member member;
+        //     if (arg_info->parameter_index < structure->members.size) {
+        //         member = structure->members[arg_info->parameter_index];
+        //     }
+        //     else {
+        //         assert(subtype != nullptr, "");
+        //         auto& sub = structure->subtypes[subtype->subtype_index];
+        //         member = sub.type->members[arg_info->parameter_index - structure->members.size];
+        //         member.offset += sub.offset;
+        //     }
+        //     assert(member.type->memory_info.available, "");
 
-            auto arg_result = expression_calculate_comptime_value_internal(arg->value);
-            if (arg_result.type != Comptime_Result_Type::AVAILABLE) {
-                return arg_result;
-            }
+        //     auto arg_result = expression_calculate_comptime_value_internal(arg->value);
+        //     if (arg_result.type != Comptime_Result_Type::AVAILABLE) {
+        //         return arg_result;
+        //     }
 
-            memory_copy((byte*)result_buffer + member.offset, arg_result.data, member.type->memory_info.value.size);
-        }
+        //     memory_copy((byte*)result_buffer + member.offset, arg_result.data, member.type->memory_info.value.size);
+        // }
 
-        // Set subtype tag if required
-        if (subtype != 0) {
-            auto& tag_member = structure->tag_member;
-            int tag_value = subtype->subtype_index + 1;
-            memory_copy((byte*)result_buffer + tag_member.offset, &tag_value, tag_member.type->memory_info.value.size);
-        }
+        // // Set subtype tag if required
+        // if (subtype != 0) {
+        //     auto& tag_member = structure->tag_member;
+        //     int tag_value = subtype->subtype_index + 1;
+        //     memory_copy((byte*)result_buffer + tag_member.offset, &tag_value, tag_member.type->memory_info.value.size);
+        // }
 
-        return comptime_result_make_available(result_buffer, result_type);
+        // return comptime_result_make_available(result_buffer, result_type);
     }
     default: panic("");
     }
@@ -2736,14 +2802,12 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         break;
     }
     case Analysis_Workload_Type::STRUCT_BODY: {
-        auto name = downcast<Workload_Structure_Body>(workload)->struct_type->name;
-        const char* struct_id = name.available ? name.value->characters : "Anonymous_Struct";
+        auto struct_id = downcast<Workload_Structure_Body>(workload)->struct_type->content.name->characters;
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
     }
     case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-        auto name = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->name;
-        const char* struct_id = name.available ? name.value->characters : "Anonymous_Struct";
+        auto struct_id = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->content.name->characters;
         string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
         break;
     }
@@ -3260,69 +3324,40 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
     return import_workload;
 }
 
-void analyse_structure_member_node(AST::Structure_Member_Node* member_node, Datatype_Struct* parent_type, Dynamic_Array<AST::Parameter*> struct_params)
+void analyse_structure_member_nodes_recursive(Struct_Content* content, Dynamic_Array<AST::Structure_Member_Node*> member_nodes)
 {
     auto& types = compiler.type_system.predefined_types;
 
-    // Check if base_name is already in use
-    bool name_available = true;
-    for (int i = 0; i < parent_type->members.size && name_available; i++) {
-        auto& other = parent_type->members[i];
-        if (other.id == member_node->name) {
-            log_semantic_error("Member name already in use", upcast(member_node), Parser::Section::IDENTIFIER);
-            name_available = false;
-        }
-    }
-    for (int i = 0; i < struct_params.size && name_available; i++) {
-        auto& param = struct_params[i];
-        if (param->name == member_node->name) {
-            log_semantic_error("Member name is already taken by parameter", upcast(member_node), Parser::Section::IDENTIFIER);
-            name_available = false;
-        }
-    }
-
-    if (member_node->is_expression) 
+    int member_index = 0;
+    int subtype_index = 0;
+    for (int i = 0; i < member_nodes.size; i++)
     {
-        Struct_Member member;
-        member.id = member_node->name;
-        member.offset = 0; 
-        member.type = semantic_analyser_analyse_expression_type(member_node->options.expression);
-
-        // Wait for member size to be known 
+        auto member_node = member_nodes[i];
+        if (member_node->is_expression) 
         {
-            bool has_failed = false;
-            type_wait_for_size_info_to_finish(member.type, dependency_failure_info_make(&has_failed, 0));
-            if (has_failed) {
-                member.type = types.unknown_type;
-                log_semantic_error("Struct contains itself, this can only work with references", upcast(member_node), Parser::Section::IDENTIFIER);
+            auto& member = content->members[member_index];
+            member_index += 1;
+            member.type = semantic_analyser_analyse_expression_type(member_node->options.expression);
+
+            // Wait for member size to be known 
+            {
+                bool has_failed = false;
+                type_wait_for_size_info_to_finish(member.type, dependency_failure_info_make(&has_failed, 0));
+                if (has_failed) {
+                    member.type = types.unknown_type;
+                    log_semantic_error("Struct contains itself, this can only work with references", upcast(member_node), Parser::Section::IDENTIFIER);
+                }
             }
         }
-
-        if (name_available) {
-            dynamic_array_push_back(&parent_type->members, member);
+        else
+        {
+            Struct_Content* subtype = content->subtypes[subtype_index];
+            subtype_index += 1;
+            analyse_structure_member_nodes_recursive(subtype, member_node->options.subtype_members);
         }
     }
-    else
-    {
-        Datatype_Struct* subtype_type = type_system_make_struct_empty(AST::Structure_Type::STRUCT, 0, parent_type->workload); // Not sure about this workload...
-        for (int i = 0; i < member_node->options.subtype_members.size; i++) {
-            analyse_structure_member_node(member_node->options.subtype_members[i], subtype_type, struct_params);
-        }
-        type_system_finish_struct(subtype_type);
-
-        if (parent_type->struct_type == AST::Structure_Type::STRUCT) {
-            if (name_available) {
-                Subtype_Info subtype;
-                subtype.name = member_node->name;
-                subtype.offset = 0;
-                subtype.type = subtype_type;
-                dynamic_array_push_back(&parent_type->subtypes, subtype);
-            }
-        }
-        else {
-            log_semantic_error("Union members cannot contain subtypes", upcast(member_node), Parser::Section::IDENTIFIER);
-        }
-    }
+    assert(member_index == content->members.size, "");
+    assert(subtype_index == content->subtypes.size, "");
 }
 
 void analysis_workload_entry(void* userdata)
@@ -3723,8 +3758,9 @@ void analysis_workload_entry(void* userdata)
         // Create new symbol-table, define symbols and analyse parameters
         Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, Symbol_Access_Level::GLOBAL);
         workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-        assert(workload_poly->body_workload->struct_type->name.available, "Poly structs must have names");
-        auto poly_info_opt = define_parameter_symbols_and_check_for_polymorphism(struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->name.value, 0, 0);
+        auto poly_info_opt = define_parameter_symbols_and_check_for_polymorphism(
+            struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->content.name, 0, 0
+        );
         assert(poly_info_opt.available, "Must be polymorphic");
         auto& info = poly_info_opt.value;
         workload_poly->info = info;
@@ -3742,7 +3778,6 @@ void analysis_workload_entry(void* userdata)
 
         auto& struct_node = workload_structure->struct_node->options.structure;
         Datatype_Struct* struct_signature = workload_structure->struct_type;
-        auto& members = struct_signature->members;
 
         // Check if we are a instance analysis
         if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
@@ -3752,20 +3787,14 @@ void analysis_workload_entry(void* userdata)
 
             // If an error occured in the polymorphic base, set all struct members to error-type
             if (base_struct->base.real_error_count != 0 || base_struct->body_workload->base.real_error_count != 0) {
-                for (int i = 0; i < struct_node.members.size; i++) {
-                    auto member_node = struct_node.members[i];
-                    struct_add_member(struct_signature, member_node->name, types.unknown_type);
-                }
+                // Note: All members/subtypes are already added, but as error type...
                 type_system_finish_struct(struct_signature);
                 break;
             }
         }
 
         // Analyse all members
-        for (int i = 0; i < struct_node.members.size; i++) {
-            analyse_structure_member_node(struct_node.members[i], struct_signature, struct_node.parameters);
-        }
-
+        analyse_structure_member_nodes_recursive(&struct_signature->content, struct_node.members);
         type_system_finish_struct(struct_signature);
         break;
     }
@@ -4113,11 +4142,13 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
 bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods)
 {
     if (cast_info.result_type->mods.pointer_level == expected_mods.pointer_level && 
-        cast_info.result_type->mods.constant_flags == expected_mods.constant_flags) 
+        cast_info.result_type->mods.constant_flags == expected_mods.constant_flags &&
+        cast_info.result_type->mods.subtype_index == expected_mods.subtype_index) 
     {
         return true;
     }
 
+    // Check if pointers are compatible
     if (cast_info.initial_type->mods.pointer_level != expected_mods.pointer_level) 
     {
         int max_pointer_level = cast_info.initial_type->mods.pointer_level;
@@ -4152,18 +4183,27 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
         }
     }
 
-    // 3. Set correct type after cast/dereference op
-    Datatype* result_type = cast_info.initial_type->base_type;
-    if (type_mods_is_constant(expected_mods, 0)) {
-        result_type = type_system_make_constant(result_type);
-    }
-    for (int i = 0; i < expected_mods.pointer_level; i++) {
-        result_type = upcast(type_system_make_pointer(result_type));
-        if (type_mods_is_constant(expected_mods, i+1)) {
-            result_type = type_system_make_constant(result_type);
+    // Check if subtypes are compatible
+    if (expected_mods.subtype_index != cast_info.initial_type->mods.subtype_index)
+    {
+        auto& given = cast_info.initial_type->mods.subtype_index->indices;
+        auto& expected = expected_mods.subtype_index->indices;
+
+        if (given.size <= expected.size) {
+            return false; // Cannot downcast, or switch to other subtype
+        }
+
+        // Check if all subtypes match to given...
+        for (int i = 0; i < expected.size; i++) {
+            if (given[i].index != expected[i].index || given[i].name != expected[i].name) {
+                return false;
+            }
         }
     }
-    cast_info.result_type = result_type;
+
+    // 3. Set correct type after cast/dereference op
+    Datatype* result_type = cast_info.initial_type->base_type;
+    cast_info.result_type = type_system_make_type_with_mods(cast_info.initial_type->base_type, expected_mods);
     cast_info.deref_count = cast_info.initial_type->mods.pointer_level - expected_mods.pointer_level;
     if (cast_info.deref_count > 0) {
         cast_info.result_value_is_temporary = false;
@@ -4372,8 +4412,7 @@ enum Callable_Type
     FUNCTION,
     POLYMORPHIC, // Either struct or function
     HARDCODED,
-    FUNCTION_POINTER,
-    STRUCT_INITIALIZER,
+    FUNCTION_POINTER
 };
 
 struct Callable_Polymorphic_Info
@@ -4399,7 +4438,7 @@ struct Callable
         Callable_Polymorphic_Info polymorphic;
         struct {
             Datatype_Struct* structure; // For struct-intitializer
-            Datatype_Struct_Subtype* subtype;
+            Datatype_Subtype* subtype;
         } struct_initializer;
     } options;
 
@@ -4545,21 +4584,6 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
     return optional_make_success(candidate);
 }
 
-Callable callable_create_struct_initializer(Datatype_Struct* struct_type, Datatype_Struct_Subtype* subtype = 0)
-{
-    Callable result;
-    result.type = Callable_Type::STRUCT_INITIALIZER;
-    result.options.struct_initializer.structure = struct_type;
-    result.options.struct_initializer.subtype = subtype;
-    result.parameter_count = struct_type->members.size;
-    if (subtype != 0) {
-        assert(subtype->valid_subtype, "");
-        result.parameter_count += struct_type->subtypes[subtype->subtype_index].type->members.size;
-    }
-    result.only_named_arguments_after_index = result.parameter_count;
-    return result;
-}
-
 Function_Parameter callable_get_parameter_info(const Callable& callable, int parameter_index)
 {
     Function_Parameter result;
@@ -4589,26 +4613,6 @@ Function_Parameter callable_get_parameter_info(const Callable& callable, int par
         }
 
         return base_info.parameters[parameter_index].infos;
-    }
-    case Callable_Type::STRUCT_INITIALIZER: 
-    {
-        Struct_Member* member = nullptr;
-        auto& base_members = callable.options.struct_initializer.structure->members;
-        if (parameter_index < base_members.size) {
-            member = &base_members[parameter_index];
-        }
-        else {
-            auto subtype = callable.options.struct_initializer.subtype;
-            assert(subtype != 0, "");
-            auto& subtype_members = subtype->structure->subtypes[subtype->subtype_index].type->members;
-            member = &subtype_members[parameter_index - base_members.size];
-        }
-
-        result.default_value_exists = false;
-        result.default_value_opt.available = false;
-        result.name = member->id;
-        result.type = member->type;
-        return result;
     }
     case Callable_Type::FUNCTION: {
         signature = callable.options.function->signature;
@@ -4854,10 +4858,9 @@ struct Matching_Info
     Hashset<Datatype*> already_visited; 
     Array<Polymorphic_Value> implicit_parameter_values;
     Dynamic_Array<Matching_Constraint> constraints;
-    bool strip_struct_subtype;
 };
 
-bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info, bool subtype_upcast_valid)
+bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info)
 {
     if (!polymorphic_type->contains_type_template) {
         return types_are_equal(polymorphic_type, match_against);
@@ -4866,13 +4869,6 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
         return true;
     }
     hashset_insert_element(&info->already_visited, polymorphic_type);
-
-    if (subtype_upcast_valid && (match_against->type != Datatype_Type::POINTER && 
-        match_against->type != Datatype_Type::CONSTANT && match_against->type != Datatype_Type::STRUCT_SUBTYPE && 
-        match_against->type != Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE)) 
-    {
-        subtype_upcast_valid = false;
-    }
 
     // Note: Not sure about this assert, but I think when evaluating poly arguments in correct order this shouldn't happen
     assert(!match_against->contains_type_template, "");
@@ -4902,19 +4898,6 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
         match_polymorphic_type_to_constant(poly_type, pool_result.constant);
         return true; // Don't match references
     }
-    else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE)
-    {
-        auto instance_subtype = downcast<Datatype_Struct_Instance_Template_Subtype>(polymorphic_type);
-        if (match_against->type != Datatype_Type::STRUCT_SUBTYPE) {
-            return false; // Cannot do downcast automatically
-        }
-
-        auto subtype = downcast<Datatype_Struct_Subtype>(match_against);
-        if (subtype->subtype_name != instance_subtype->subtype_name) {
-            return false;
-        }
-        return match_templated_type_internal(upcast(instance_subtype->struct_template), upcast(subtype->structure), info, subtype_upcast_valid);
-    }
     else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE)
     {
         // Check for errors
@@ -4922,19 +4905,6 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
         Datatype_Struct* struct_type = nullptr;
         if (match_against->type == Datatype_Type::STRUCT) {
             struct_type = downcast<Datatype_Struct>(match_against);
-        }
-        else if (match_against->type == Datatype_Type::STRUCT_SUBTYPE) {
-            // In this case we have a struct upcast, which can be simply be done...
-            // foo :: (a: Node($T))
-            // foo(Node(int).Expression)
-            auto subtype = downcast<Datatype_Struct_Subtype>(match_against);
-            struct_type = subtype->structure;
-            if (subtype_upcast_valid) {
-                info->strip_struct_subtype = true;
-            }
-            else {
-                return false;
-            }
         }
         else {
             return false;
@@ -4984,7 +4954,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                     }
                     Datatype* match_against = compiler.type_system.types[handle_value.index];
                     assert(!match_against->contains_type_template, "The instanciated type shouldn't be polymorphic");
-                    bool success = match_templated_type_internal(match_type, match_against, info, subtype_upcast_valid);
+                    bool success = match_templated_type_internal(match_type, match_against, info);
                     if (!success) {
                         return false;
                     }
@@ -5033,48 +5003,45 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
 
         // Continue matching element type
         return match_templated_type_internal(
-            downcast<Datatype_Array>(polymorphic_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, info, subtype_upcast_valid
+            downcast<Datatype_Array>(polymorphic_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, info
         );
     }
     case Datatype_Type::SLICE:
         return match_templated_type_internal(
-            downcast<Datatype_Slice>(polymorphic_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, info, subtype_upcast_valid
+            downcast<Datatype_Slice>(polymorphic_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, info
         );
     case Datatype_Type::POINTER:
         return match_templated_type_internal(
-            downcast<Datatype_Pointer>(polymorphic_type)->element_type, downcast<Datatype_Pointer>(match_against)->element_type, info, subtype_upcast_valid
+            downcast<Datatype_Pointer>(polymorphic_type)->element_type, downcast<Datatype_Pointer>(match_against)->element_type, info
         );
     case Datatype_Type::CONSTANT:
         // Note: Maybe something more sophisticated could be used for constant/subtypes...
         return match_templated_type_internal(
-            downcast<Datatype_Constant>(polymorphic_type)->element_type, downcast<Datatype_Constant>(match_against)->element_type, info, subtype_upcast_valid
+            downcast<Datatype_Constant>(polymorphic_type)->element_type, downcast<Datatype_Constant>(match_against)->element_type, info
         );
-    case Datatype_Type::STRUCT_SUBTYPE: {
-        auto subtype_poly = downcast<Datatype_Struct_Subtype>(polymorphic_type);
-        auto subtype_against = downcast<Datatype_Struct_Subtype>(match_against);
-        if (!subtype_poly->valid_subtype || !subtype_against->valid_subtype) {
+    case Datatype_Type::SUBTYPE: 
+    {
+        auto subtype_poly = downcast<Datatype_Subtype>(polymorphic_type);
+        auto subtype_against = downcast<Datatype_Subtype>(match_against);
+
+        if (subtype_poly->subtype_index != subtype_against->subtype_index || subtype_poly->subtype_name != subtype_against->subtype_name) {
             return false;
         }
-        if (subtype_poly->subtype_index != subtype_against->subtype_index) {
-            return false;
-        }
-        // Note: Maybe something more sophisticated could be used for constant/subtypes...
-        return match_templated_type_internal(
-            upcast(subtype_poly->structure), upcast(subtype_against->structure), info, subtype_upcast_valid
-        );
+        return match_templated_type_internal(subtype_poly->base_type, subtype_against->base_type, info);
     }
     case Datatype_Type::STRUCT: {
         auto a = downcast<Datatype_Struct>(polymorphic_type);
         auto b = downcast<Datatype_Struct>(match_against);
-        if (a->struct_type != b->struct_type || a->members.size != b->members.size) {
-            return false;
-        }
-        for (int i = 0; i < a->members.size; i++) {
-            if (!match_templated_type_internal(a->members[i].type, b->members[i].type, info, subtype_upcast_valid)) {
-                return false;
-            }
-        }
-        return true;
+        // I don't quite understand when this case should happen, but in my mind this is always false
+        // if (a->struct_type != b->struct_type || a->members.size != b->members.size) {
+        //     return false;
+        // }
+        // for (int i = 0; i < a->members.size; i++) {
+        //     if (!match_templated_type_internal(a->members[i].type, b->members[i].type, info)) {
+        //         return false;
+        //     }
+        // }
+        return false;
     }
     case Datatype_Type::FUNCTION: {
         auto a = downcast<Datatype_Function>(polymorphic_type);
@@ -5083,12 +5050,12 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
             return false;
         }
         for (int i = 0; i < a->parameters.size; i++) {
-            if (!match_templated_type_internal(a->parameters[i].type, b->parameters[i].type, info, subtype_upcast_valid)) {
+            if (!match_templated_type_internal(a->parameters[i].type, b->parameters[i].type, info)) {
                 return false;
             }
         }
         if (a->return_type.available) {
-            if (!match_templated_type_internal(a->return_type.value, b->return_type.value, info, subtype_upcast_valid)) {
+            if (!match_templated_type_internal(a->return_type.value, b->return_type.value, info)) {
                 return false;
             }
         }
@@ -5099,7 +5066,6 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
     case Datatype_Type::PRIMITIVE:
     case Datatype_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
     case Datatype_Type::TEMPLATE_PARAMETER: panic("Previous code path should have handled this!");
     default: panic("");
     }
@@ -5108,12 +5074,11 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
     return true;
 }
 
-bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info, bool struct_upcast_valid)
+bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info)
 {
     hashset_reset(&info->already_visited);
     dynamic_array_reset(&info->constraints);
-    info->strip_struct_subtype = false;
-    bool success = match_templated_type_internal(polymorphic_type, match_against, info, struct_upcast_valid);
+    bool success = match_templated_type_internal(polymorphic_type, match_against, info);
     if (!success) {
         return false;
     }
@@ -5136,128 +5101,6 @@ const int MAX_POLYMORPHIC_INSTANCIATION_DEPTH = 10;
 bool check_if_polymorphic_instanciation_limit_reached() {
     int instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth + 1;
     return instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH;
-}
-
-// On successfull instanciation (Not deduplicated) takes ownership of instance-values (If this is the case, instance_values.data is set to null)
-int polymorphic_base_instanciate(
-    Polymorphic_Base_Info& poly_base,
-    Array<Polymorphic_Value>& instance_values,
-    Array<Datatype*> instance_parameter_types,
-    const Callable_Polymorphic_Info& poly_callable)
-{
-    const auto& return_type_index = poly_base.return_type_index;
-
-    // Check if we already have an instance with the given values
-    int instance_index = -1;
-    {
-        for (int i = 0; i < poly_base.instances.size; i++)
-        {
-            auto& test_instance = poly_base.instances[i];
-            bool all_matching = true;
-            for (int j = 0; j < instance_values.size; j++) {
-                auto& value = instance_values[j];
-                auto& compare_to = test_instance.instance_parameter_values[j];
-                assert(!value.only_datatype_known && !compare_to.only_datatype_known, "");
-                if (!upp_constant_is_equal(value.options.value, compare_to.options.value)) {
-                    all_matching = false;
-                    break;
-                }
-            }
-
-            if (all_matching) {
-                instance_index = i;
-                break;
-            }
-        }
-    }
-
-    // Create new instance if necessary
-    if (instance_index == -1)
-    {
-        Polymorphic_Instance_Info instance;
-        instance.base_info = &poly_base;
-        instance.instance_parameter_values = instance_values;
-        instance.is_function_instance = poly_callable.is_function;
-        instance_index = poly_base.instances.size;
-
-        if (poly_callable.is_function)
-        {
-            // Create instance function signature
-            Datatype_Function* instance_function_type = 0;
-            {
-                Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>();
-                for (int i = 0; i < poly_base.parameters.size; i++)
-                {
-                    auto& base_param = poly_base.parameters[i];
-                    if (base_param.is_comptime || i == return_type_index) {
-                        continue;
-                    }
-
-                    Function_Parameter parameter = function_parameter_make_empty();
-                    if (base_param.depends_on.size > 0 || base_param.infos.type->contains_type_template) {
-                        parameter.default_value_exists = false;
-                    }
-                    else {
-                        parameter.default_value_exists = base_param.infos.default_value_exists;
-                        parameter.default_value_opt = base_param.infos.default_value_opt;
-                    }
-                    parameter.name = base_param.infos.name;
-                    parameter.type = instance_parameter_types[i];
-                    assert(!parameter.type->contains_type_template, "");
-                    dynamic_array_push_back(&parameters, parameter);
-                }
-
-                Datatype* return_type = 0;
-                if (return_type_index != -1) {
-                    return_type = instance_parameter_types[return_type_index];
-                }
-
-                instance_function_type = type_system_make_function(parameters, return_type);
-            }
-
-            auto poly_function = poly_callable.options.polymorphic_function;
-            auto poly_progress = polymorphic_function_base_to_function_progress(poly_function);
-
-            // Create new instance progress
-            auto instance_progress = function_progress_create_with_modtree_function(
-                0, poly_progress->header_workload->function_node, instance_function_type, poly_progress);
-            instance_progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-            instance_progress->polymorphic.instance_base = poly_function;
-
-            // Update body workload to use instance values
-            instance_progress->body_workload->base.polymorphic_instanciation_depth += 1;
-            instance_progress->body_workload->base.polymorphic_values = instance_values;
-            instance_progress->body_workload->base.current_symbol_table = poly_base.symbol_table;
-
-            // Store reference in instance_info
-            instance.options.function_instance = instance_progress;
-        }
-        else
-        {
-            auto poly_struct = poly_callable.options.polymorphic_struct;
-
-            // Create new struct instance
-            auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
-            body_workload->struct_type->name = poly_struct->body_workload->struct_type->name;
-            body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-            body_workload->polymorphic.instance.instance_index = instance_index;
-            body_workload->polymorphic.instance.parent = poly_struct;
-
-            body_workload->base.polymorphic_instanciation_depth += 1;
-            body_workload->base.polymorphic_values = instance_values;;
-            body_workload->base.current_symbol_table = poly_base.symbol_table;
-
-            analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_struct->body_workload));
-
-            instance.options.struct_instance = body_workload;
-        }
-
-        dynamic_array_push_back(&poly_base.instances, instance);
-        instance_values.data = 0;
-        instance_values.size = 0;
-    }
-
-    return instance_index;
 }
 
 enum class Instanciation_Result_Type
@@ -5594,7 +5437,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                 }
 
                 // Match types
-                bool match_success = match_templated_type(return_type, context.expected_type.type, &matching_info, false);
+                bool match_success = match_templated_type(return_type, context.expected_type.type, &matching_info);
                 if (!match_success) {
                     log_semantic_error("Could not match return-type with context-type", instanciation_node, Parser::Section::ENCLOSURE);
                     log_error_info_given_type(context.expected_type.type);
@@ -5744,20 +5587,12 @@ Instanciation_Result instanciate_polymorphic_callable(
         if (parameter_type->contains_type_template && success)
         {
             // Match types
-            bool match_success = match_templated_type(parameter_type, argument_type, &matching_info, true);
+            bool match_success = match_templated_type(parameter_type, argument_type, &matching_info);
             if (!match_success) {
                 log_semantic_error("Could not match argument with implicit-polymorphic symbols!", upcast(argument->expression));
                 log_error_info_given_type(argument_type);
                 log_error_info_expected_type(parameter_type);
                 success = false;
-            }
-            if (matching_info.strip_struct_subtype) 
-            {
-                assert(argument_type->base_type->type == Datatype_Type::STRUCT_SUBTYPE, "");
-                auto mods = argument_type->mods;
-                auto subtype = downcast<Datatype_Struct_Subtype>(argument_type->base_type);
-                argument_type = type_system_make_type_with_mods(upcast(subtype->structure), mods);
-                argument->argument_type = argument_type;
             }
         }
     }
@@ -5887,7 +5722,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 
             // Create new struct instance
             auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
-            body_workload->struct_type->name = poly_struct->body_workload->struct_type->name;
+            body_workload->struct_type->content.name = poly_struct->body_workload->struct_type->content.name;
             body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
             body_workload->polymorphic.instance.instance_index = instance_index;
             body_workload->polymorphic.instance.parent = poly_struct;
@@ -6422,9 +6257,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
             panic("invalid code path");
             break;
-        }
-        case Callable_Type::STRUCT_INITIALIZER: {
-            panic("Shouldn't happen in this function!\n");
         }
         default: panic("");
         }
@@ -7039,163 +6871,164 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
     {
         auto& init_node = expr->options.struct_initializer;
         auto& arguments = init_node.arguments;
+        EXIT_ERROR(types.unknown_type);
 
-        // Find struct type
-        Datatype* type = 0;
-        if (init_node.type_expr.available) {
-            type = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
-        }
-        else {
-            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-                type = context.expected_type.type;
-            }
-            else {
-                if (!(context.type == Expression_Context_Type::UNKNOWN && context.unknown_due_to_error)) {
-                    log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
-                }
-                else {
-                    semantic_analyser_set_error_flag(true);
-                }
-                EXIT_ERROR(types.unknown_type);
-            }
-        }
+        // // Find struct type
+        // Datatype* type = 0;
+        // if (init_node.type_expr.available) {
+        //     type = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
+        // }
+        // else {
+        //     if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+        //         type = context.expected_type.type;
+        //     }
+        //     else {
+        //         if (!(context.type == Expression_Context_Type::UNKNOWN && context.unknown_due_to_error)) {
+        //             log_semantic_error("Could not determine struct type from context", expr, Parser::Section::FIRST_TOKEN);
+        //         }
+        //         else {
+        //             semantic_analyser_set_error_flag(true);
+        //         }
+        //         EXIT_ERROR(types.unknown_type);
+        //     }
+        // }
 
-        Datatype* result_type = type;
-        if (type->type == Datatype_Type::CONSTANT) {
-            type = datatype_get_non_const_type(type);
-        }
-        if (datatype_is_unknown(type)) {
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(result_type);
-        }
+        // Datatype* result_type = type;
+        // if (type->type == Datatype_Type::CONSTANT) {
+        //     type = datatype_get_non_const_type(type);
+        // }
+        // if (datatype_is_unknown(type)) {
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(result_type);
+        // }
 
-        // Check type errors
-        if (type->type != Datatype_Type::STRUCT && type->type != Datatype_Type::STRUCT_SUBTYPE) {
-            log_semantic_error("Struct initializer requires structure type", expr);
-            log_error_info_given_type(type);
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(result_type);
-        }
-        type_wait_for_size_info_to_finish(type);
+        // // Check type errors
+        // if (type->type != Datatype_Type::STRUCT && type->type != Datatype_Type::SUBTYPE) {
+        //     log_semantic_error("Struct initializer requires structure type", expr);
+        //     log_error_info_given_type(type);
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(result_type);
+        // }
+        // type_wait_for_size_info_to_finish(type);
 
-        // Find struct subtype (If required/available)
-        Datatype_Struct* struct_signature = 0;
-        Datatype_Struct_Subtype* subtype = 0;
-        if (type->type == Datatype_Type::STRUCT_SUBTYPE) {
-            subtype = downcast<Datatype_Struct_Subtype>(type);
-            struct_signature = subtype->structure;
-        }
-        else {
-            struct_signature = downcast<Datatype_Struct>(type);
-        }
+        // // Find struct subtype (If required/available)
+        // Datatype_Struct* struct_signature = 0;
+        // Datatype_Subtype* subtype = 0;
+        // if (type->type == Datatype_Type::SUBTYPE) {
+        //     subtype = downcast<Datatype_Subtype>(type);
+        //     struct_signature = subtype->structure;
+        // }
+        // else {
+        //     struct_signature = downcast<Datatype_Struct>(type);
+        // }
 
-        if (init_node.subtype_name.available) 
-        {
-            if (subtype == 0) {
-                subtype = type_system_make_struct_subtype(struct_signature, init_node.subtype_name.value);
-                bool is_const = result_type->type == Datatype_Type::CONSTANT;
-                result_type = upcast(subtype);
-                if (is_const) {
-                    result_type = type_system_make_constant(result_type);
-                }
-            }
-            else {
-                log_semantic_error(
-                    "Struct initializer already expects struct-subtype, so no subtype-type should be specified", 
-                    expr, Parser::Section::WHOLE_NO_CHILDREN
-                );
-            }
-        }
-        else if (struct_signature->subtypes.size > 0 && subtype == 0) {
-            log_semantic_error("Struct initializer requires subtype to be specified", expr, Parser::Section::WHOLE_NO_CHILDREN);
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(result_type);
-        }
+        // if (init_node.subtype_name.available) 
+        // {
+        //     if (subtype == 0) {
+        //         subtype = type_system_make_subtype(struct_signature, init_node.subtype_name.value);
+        //         bool is_const = result_type->type == Datatype_Type::CONSTANT;
+        //         result_type = upcast(subtype);
+        //         if (is_const) {
+        //             result_type = type_system_make_constant(result_type);
+        //         }
+        //     }
+        //     else {
+        //         log_semantic_error(
+        //             "Struct initializer already expects struct-subtype, so no subtype-type should be specified", 
+        //             expr, Parser::Section::WHOLE_NO_CHILDREN
+        //         );
+        //     }
+        // }
+        // else if (struct_signature->subtypes.size > 0 && subtype == 0) {
+        //     log_semantic_error("Struct initializer requires subtype to be specified", expr, Parser::Section::WHOLE_NO_CHILDREN);
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(result_type);
+        // }
 
-        if (subtype != 0 && !subtype->valid_subtype) {
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(result_type);
-        }
+        // if (subtype != 0 && !subtype->valid_subtype) {
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(result_type);
+        // }
 
-        auto& members = struct_signature->members;
-        // Handle Unions (One named member must be specified)
-        if (struct_signature->struct_type == AST::Structure_Type::UNION)
-        {
-            if (arguments.size == 1)
-            {
-                auto arg = arguments[0];
-                auto arg_info = get_info(arg, true);
-                arg_info->parameter_index = -1;
-                arg_info->ignore_during_code_generation = false;
+        // auto& members = struct_signature->members;
+        // // Handle Unions (One named member must be specified)
+        // if (struct_signature->struct_type == AST::Structure_Type::UNION)
+        // {
+        //     if (arguments.size == 1)
+        //     {
+        //         auto arg = arguments[0];
+        //         auto arg_info = get_info(arg, true);
+        //         arg_info->parameter_index = -1;
+        //         arg_info->ignore_during_code_generation = false;
 
-                if (!arg->name.available) {
-                    log_semantic_error("Union initializer requires a named argument, not an unnamed one", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
-                    arguments_analyse_in_unknown_context(init_node.arguments);
-                    EXIT_ERROR(result_type);
-                }
+        //         if (!arg->name.available) {
+        //             log_semantic_error("Union initializer requires a named argument, not an unnamed one", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
+        //             arguments_analyse_in_unknown_context(init_node.arguments);
+        //             EXIT_ERROR(result_type);
+        //         }
 
-                // Find corresponding member
-                for (int i = 0; i < members.size; i++) {
-                    if (members[i].id == arg->name.value) {
-                        arg_info->parameter_index = i;
-                        break;
-                    }
-                }
+        //         // Find corresponding member
+        //         for (int i = 0; i < members.size; i++) {
+        //             if (members[i].id == arg->name.value) {
+        //                 arg_info->parameter_index = i;
+        //                 break;
+        //             }
+        //         }
 
-                // Handle errors
-                if (arg_info->parameter_index == -1) {
-                    log_semantic_error("Union does not contain a member with this name", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
-                    arguments_analyse_in_unknown_context(init_node.arguments);
-                    EXIT_ERROR(result_type);
-                }
-                auto& member = members[arg_info->parameter_index];
+        //         // Handle errors
+        //         if (arg_info->parameter_index == -1) {
+        //             log_semantic_error("Union does not contain a member with this name", AST::upcast(arg), Parser::Section::FIRST_TOKEN);
+        //             arguments_analyse_in_unknown_context(init_node.arguments);
+        //             EXIT_ERROR(result_type);
+        //         }
+        //         auto& member = members[arg_info->parameter_index];
 
-                semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(member.type));
-                EXIT_VALUE(result_type, true);
-            }
-            else if (init_node.arguments.size > 1) {
-                log_semantic_error("Only one value must be given for union initializer", expr);
-                arguments_analyse_in_unknown_context(init_node.arguments);
-                EXIT_ERROR(result_type);
-            }
-            else {
-                log_semantic_error("One initializer value is required in union initializer", expr, Parser::Section::ENCLOSURE);
-                EXIT_ERROR(result_type);
-            }
-        }
+        //         semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(member.type));
+        //         EXIT_VALUE(result_type, true);
+        //     }
+        //     else if (init_node.arguments.size > 1) {
+        //         log_semantic_error("Only one value must be given for union initializer", expr);
+        //         arguments_analyse_in_unknown_context(init_node.arguments);
+        //         EXIT_ERROR(result_type);
+        //     }
+        //     else {
+        //         log_semantic_error("One initializer value is required in union initializer", expr, Parser::Section::ENCLOSURE);
+        //         EXIT_ERROR(result_type);
+        //     }
+        // }
 
-        // Match arguments
-        int unnamed_argument_count;
-        bool argument_name_error = arguments_check_for_naming_errors(arguments, &unnamed_argument_count);
-        if (argument_name_error) {
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(upcast(result_type));
-        }
-        bool argument_matching_error = !argument_nodes_match_to_parameters(
-            arguments, callable_create_struct_initializer(struct_signature, subtype), unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE
-        );
-        if (argument_matching_error) {
-            arguments_analyse_in_unknown_context(arguments);
-            EXIT_ERROR(upcast(result_type));
-        }
+        // // Match arguments
+        // int unnamed_argument_count;
+        // bool argument_name_error = arguments_check_for_naming_errors(arguments, &unnamed_argument_count);
+        // if (argument_name_error) {
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(upcast(result_type));
+        // }
+        // bool argument_matching_error = !argument_nodes_match_to_parameters(
+        //     arguments, callable_create_struct_initializer(struct_signature, subtype), unnamed_argument_count, true, upcast(expr), Parser::Section::ENCLOSURE
+        // );
+        // if (argument_matching_error) {
+        //     arguments_analyse_in_unknown_context(arguments);
+        //     EXIT_ERROR(upcast(result_type));
+        // }
 
-        // Analyse arguments
-        for (int i = 0; i < arguments.size; i++) 
-        {
-            auto& arg = arguments[i];
-            auto arg_info = get_info(arg);
-            Datatype* expected_type = nullptr;
-            if (arg_info->parameter_index < members.size) {
-                expected_type = members[arg_info->parameter_index].type;
-            }
-            else {
-                assert(subtype != nullptr, "");
-                expected_type = struct_signature->subtypes[subtype->subtype_index].type->members[arg_info->parameter_index - members.size].type;
-            }
-            semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(expected_type));
-        }
+        // // Analyse arguments
+        // for (int i = 0; i < arguments.size; i++) 
+        // {
+        //     auto& arg = arguments[i];
+        //     auto arg_info = get_info(arg);
+        //     Datatype* expected_type = nullptr;
+        //     if (arg_info->parameter_index < members.size) {
+        //         expected_type = members[arg_info->parameter_index].type;
+        //     }
+        //     else {
+        //         assert(subtype != nullptr, "");
+        //         expected_type = struct_signature->subtypes[subtype->subtype_index].type->members[arg_info->parameter_index - members.size].type;
+        //     }
+        //     semantic_analyser_analyse_expression_value(arg->value, expression_context_make_specific_type(expected_type));
+        // }
 
-        EXIT_VALUE(upcast(result_type), true);
+        // EXIT_VALUE(upcast(result_type), true);
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:
     {
@@ -7416,11 +7249,21 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             bool is_const = access_expr_info->options.type->type == Datatype_Type::CONSTANT;
             Datatype* datatype = datatype_get_non_const_type(access_expr_info->options.type);
 
-            if (datatype->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) 
+            // Handle Struct-Subtypes and polymorphic value access, e.g. Node.Expression / Node(int).T
+            if (datatype->mods.pointer_level == 0 && 
+                (datatype->base_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE || datatype->base_type->type == Datatype_Type::STRUCT))
             {
-                auto instance_template = downcast<Datatype_Struct_Instance_Template>(datatype);
-                // First check polymorphic parameters
-                auto poly_parameter_access = search_struct_type_for_polymorphic_parameter_access(instance_template->struct_base->body_workload->struct_type);
+                auto base_type = datatype->base_type;
+                Datatype_Struct* base_struct;
+                if (base_type->type == Datatype_Type::STRUCT) {
+                    base_struct = downcast<Datatype_Struct>(base_type);
+                }
+                else  {
+                    base_struct = downcast<Datatype_Struct_Instance_Template>(base_type)->struct_base->body_workload->struct_type;
+                }
+
+                // Check if it's a polymorphic parameter access
+                auto poly_parameter_access = search_struct_type_for_polymorphic_parameter_access(base_struct);
                 if (poly_parameter_access.available) {
                     auto value = poly_parameter_access.value;
                     if (value.only_datatype_known) {
@@ -7432,47 +7275,28 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     }
                 }
 
-                // Otherwise create a subtype (Note: We create potentialy false subtypes so that structs can self-reference with subtypes)
-                if (instance_template->struct_base->body_workload->struct_type->struct_type != AST::Structure_Type::UNION) {
-                    Datatype* result_type = upcast(type_system_make_struct_instance_template_subtype(instance_template, member_node.name));
-                    if (is_const) {
-                        result_type = type_system_make_constant(result_type);
+                // Check if it's a valid subtype
+                Struct_Content* content = type_mods_get_subtype(base_struct, datatype->mods);
+                int subtype_index = -1;
+                for (int i = 0; i < content->subtypes.size; i++) {
+                    if (content->subtypes[i]->name == member_node.name) {
+                        subtype_index = i;
                     }
-                    EXIT_TYPE(result_type);
+                }
+
+                if (subtype_index != -1) {
+                    Datatype* result = type_system_make_subtype(datatype, member_node.name, subtype_index);
+                    if (is_const) { // Not sure if this makes sense here...
+                        result = type_system_make_constant(result);
+                    }
+                    info->specifics.member_access.type = Member_Access_Type::STRUCT_SUBTYPE;
+                    EXIT_TYPE(result);
                 }
             }
 
             if (datatype_is_unknown(datatype)) {
                 semantic_analyser_set_error_flag(true);
                 EXIT_ERROR(types.unknown_type);
-            }
-
-            // Handle struct parameter access and union tag access
-            if (datatype->type == Datatype_Type::STRUCT)
-            {
-                auto structure = downcast<Datatype_Struct>(datatype);
-
-                // First check polymorphic parameters
-                auto poly_parameter_access = search_struct_type_for_polymorphic_parameter_access(structure);
-                if (poly_parameter_access.available) {
-                    auto value = poly_parameter_access.value;
-                    if (value.only_datatype_known) {
-                        EXIT_TYPE(value.options.type);
-                    }
-                    else {
-                        expression_info_set_constant(info, value.options.value);
-                        return info;
-                    }
-                }
-
-                // Otherwise create a subtype (Note: We create potentialy false subtypes so that structs can self-reference with subtypes)
-                if (structure->struct_type != AST::Structure_Type::UNION) {
-                    Datatype* result_type = upcast(type_system_make_struct_subtype(structure, member_node.name));
-                    if (is_const) {
-                        result_type = type_system_make_constant(result_type);
-                    }
-                    EXIT_TYPE(result_type);
-                }
             }
 
             if (datatype->type != Datatype_Type::ENUM) {
@@ -7528,6 +7352,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
         case Expression_Result_Type::VALUE:
         case Expression_Result_Type::CONSTANT:
         {
+            auto& access_info = info->specifics.member_access;
             auto datatype = access_expr_info->cast_info.result_type;
             bool is_const = datatype->type == Datatype_Type::CONSTANT;
             datatype = datatype_get_non_const_type(datatype);
@@ -7537,95 +7362,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
             }
 
             // Check for normal member accesses (Struct members + array/slice members) (Not overloads)
-            if (datatype->type == Datatype_Type::STRUCT || datatype->type == Datatype_Type::STRUCT_SUBTYPE)
+            if (datatype->base_type->type == Datatype_Type::STRUCT)
             {
-                type_wait_for_size_info_to_finish(datatype);
-                Datatype_Struct* structure = nullptr;
-                Datatype_Struct_Subtype* subtype = nullptr;
-                if (datatype->type == Datatype_Type::STRUCT) {
-                    structure = downcast<Datatype_Struct>(datatype);
-                }
-                else {
-                    subtype = downcast<Datatype_Struct_Subtype>(datatype);
-                    structure = subtype->structure;
-                }
+                Datatype_Struct* structure = downcast<Datatype_Struct>(datatype->base_type);
 
-                // Try to find member access
-                bool found_member = false;
-                Struct_Member result_member;
-
-                // Check base members
-                auto& members = structure->members;
-                for (int i = 0; i < members.size && !found_member; i++) 
-                {
-                    Struct_Member member = members[i];
-                    if (member.id == member_node.name) {
-                        found_member = true;
-                        result_member = member;
-                        break;
-                    }
-                }
-
-                // Check subtype values
-                if (!found_member)
-                {
-                    if (subtype == 0) 
-                    {
-                        for (int i = 0; i < structure->subtypes.size; i++) 
-                        {
-                            auto& sub = structure->subtypes[i];
-                            if (sub.name == member_node.name) 
-                            {
-                                found_member = true;
-                                result_member.id = sub.name;
-                                result_member.type = upcast(sub.type);
-                                result_member.offset = sub.offset;
-                                break;
-                            }
-                        }
-                    }
-                    else if (subtype->valid_subtype) 
-                    {
-                        // Check subtype members
-                        auto& sub = structure->subtypes[subtype->subtype_index];
-                        auto& sub_members = sub.type->members;
-                        for (int i = 0; i < sub_members.size && !found_member; i++) 
-                        {
-                            Struct_Member member = sub_members[i];
-                            if (member.id == member_node.name) {
-                                found_member = true;
-                                result_member = member;
-                                result_member.offset += sub.offset; // Struct inside struct requires extra offset
-                                break;
-                            }
-                        }
-
-                        // Check subtype access
-                        if (!found_member && member_node.name == subtype->subtype_name)
-                        {
-                            found_member = true;
-                            result_member.id = sub.name;
-                            result_member.type = upcast(sub.type);
-                            result_member.offset = sub.offset;
-                        }
-                    }
-                }
-
-                if (structure->subtypes.size > 0 && member_node.name == ids.tag) {
-                    found_member = true;
-                    result_member = structure->tag_member;
-                }
-
-                if (found_member)
-                {
-                    if (is_const) {
-                        result_member.type = type_system_make_constant(result_member.type);
-                    }
-                    info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
-                    info->specifics.member_access.options.member = result_member;
-                    EXIT_VALUE(result_member.type, result_is_temporary);
-                }
-
+                // Search for poly_parameter access
                 auto poly_parameter_access = search_struct_type_for_polymorphic_parameter_access(structure);
                 if (poly_parameter_access.available) {
                     auto value = poly_parameter_access.value;
@@ -7635,6 +7376,67 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
                     else {
                         expression_info_set_constant(info, value.options.value);
                         return info;
+                    }
+                }
+
+                type_wait_for_size_info_to_finish(datatype);
+                Struct_Content* content = type_mods_get_subtype(structure, datatype->mods);
+
+                // Check tag access
+                if (content->subtypes.size > 0 && member_node.name == ids.tag) 
+                {
+                    access_info.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
+                    access_info.options.member = content->tag_member;
+                    if (is_const) {
+                        access_info.options.member.type = type_system_make_constant(access_info.options.member.type);
+                    }
+                    EXIT_VALUE(access_info.options.member.type, result_is_temporary);
+                }
+
+                // Check member access
+                for (int i = 0; i < content->members.size; i++) 
+                {
+                    auto& member = content->members[i];
+                    if (member.id == member_node.name) 
+                    {
+                        access_info.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
+                        access_info.options.member = member;
+                        if (is_const) {
+                            access_info.options.member.type = type_system_make_constant(access_info.options.member.type);
+                        }
+                        EXIT_VALUE(access_info.options.member.type, result_is_temporary);
+                    }
+                }
+
+                // Check subtype access
+                for (int i = 0; i < content->subtypes.size; i++) 
+                {
+                    auto subtype = content->subtypes[i];
+                    if (subtype->name == member_node.name) 
+                    {
+                        access_info.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
+                        assert(datatype->type == Datatype_Type::STRUCT || datatype->type == Datatype_Type::SUBTYPE, "");
+                        auto result_type = type_system_make_subtype(datatype, subtype->name, i);
+                        if (is_const) {
+                            result_type = type_system_make_constant(result_type);
+                        }
+                        EXIT_VALUE(result_type, result_is_temporary);
+                    }
+                }
+
+                // Check upper-type access
+                if (datatype->mods.subtype_index->indices.size > 0) 
+                {
+                    auto parent_subtype = type_mods_get_subtype(structure, datatype->mods, datatype->mods.subtype_index->indices.size - 1);
+                    if (parent_subtype->name == member_node.name) 
+                    {
+                        access_info.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
+                        assert(datatype->type == Datatype_Type::SUBTYPE, "");
+                        auto result_type = downcast<Datatype_Subtype>(datatype)->base_type;
+                        if (is_const) {
+                            result_type = type_system_make_constant(result_type);
+                        }
+                        EXIT_VALUE(result_type, result_is_temporary);
                     }
                 }
             }
@@ -8301,39 +8103,13 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
         }
     }
 
-    // Check for subtype casts
-    bool is_subtype_cast = false;
-    bool is_to_subtype_cast = false;
-    if (source_type->base_type->type == Datatype_Type::STRUCT_SUBTYPE && destination_type->base_type->type == Datatype_Type::STRUCT) 
-    {
-        auto subtype = downcast<Datatype_Struct_Subtype>(source_type->base_type);
-        auto structure = downcast<Datatype_Struct>(destination_type->base_type);
-        if (subtype->structure == structure) {
-            is_subtype_cast = true;
-        }
-    }
-    else if (destination_type->base_type->type == Datatype_Type::STRUCT_SUBTYPE && source_type->base_type->type == Datatype_Type::STRUCT) 
-    {
-        auto subtype = downcast<Datatype_Struct_Subtype>(destination_type->base_type);
-        auto structure = downcast<Datatype_Struct>(source_type->base_type);
-        if (subtype->structure == structure) 
-        {
-            Cast_Mode allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::TO_SUBTYPE);
-            if ((int)cast_mode <= (int)allowed_mode) {
-                is_subtype_cast = true;
-                is_to_subtype_cast = true;
-            }
-        }
-    }
-
     // Check if auto-address of/dereference works
-    if (types_are_equal(source_type->base_type, destination_type->base_type) || is_subtype_cast) 
+    if (types_are_equal(source_type->base_type, destination_type->base_type)) 
     {
         result.cast_type = Cast_Type::NO_CAST;
         result.result_type = source_type;
         result.deref_count = 0;
         if (try_updating_type_mods(result, destination_type->mods)) {
-            result.check_subtype_tag_on_value = is_to_subtype_cast;
             result.result_type = destination_type;
             return result;
         }
@@ -8638,19 +8414,24 @@ Expression_Cast_Info expression_context_apply(
         result.cast_type = Cast_Type::NO_CAST;
         return result;
     }
-    case Expression_Context_Type::AUTO_DEREFERENCE: {
+    case Expression_Context_Type::AUTO_DEREFERENCE: 
+    {
         // Auto dereference now always forces pointer value to be 0
         result.deref_count = initial_type->mods.pointer_level;
-        result.result_type = initial_type->base_type;
-        if (type_mods_is_constant(initial_type->mods, 0)) {
-            result.result_type = type_system_make_constant(result.result_type);
-        }
         if (result.deref_count > 0) {
             result.result_value_is_temporary = false;
         }
         else {
             result.result_value_is_temporary = result.initial_value_is_temporary;
         }
+
+        // Make result type
+        Type_Mods result_mods = initial_type->mods;
+        result_mods.pointer_level = 0;
+        if (type_mods_is_constant(initial_type->mods, 0)) {
+            result_mods.constant_flags = 1;
+        }
+        result.result_type = type_system_make_type_with_mods(initial_type->base_type, result_mods);
         result.cast_type = Cast_Type::NO_CAST;
         return result;
     }
@@ -10105,10 +9886,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
         auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
         switch_type = datatype_get_non_const_type(switch_type);
-        if (switch_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
-            switch_type = downcast<Datatype_Struct>(switch_type)->tag_member.type;
-        }
-        else if (switch_type->type != Datatype_Type::ENUM)
+        // TODO:
+        // if (switch_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
+        //     switch_type = downcast<Datatype_Struct>(switch_type)->context.tag_member.type;
+        // }
+        if (switch_type->type != Datatype_Type::ENUM)
         {
             log_semantic_error("Switch only works on either enum or union types", switch_node.condition);
             log_error_info_given_type(switch_type);
@@ -10753,16 +10535,22 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 if (!type_exists) 
                 {
                     type_exists = true;
-                    if (definition->is_pointer_definition) {
+                    if (definition->is_pointer_definition) 
+                    {
                         bool is_pointer = datatype_is_pointer(value_type);
                         if (is_pointer) {
                             type = value_type;
                         }
                         else {
                             // Take address of if it isn't a pointer
-                            bool worked = try_updating_expression_type_mods(values[i], type_mods_make(1, value_type->mods.constant_flags));
-                            assert(worked, "Should always work currently");
-                            type = get_info(values[i])->cast_info.result_type;
+                            bool worked = try_updating_expression_type_mods(values[i], type_mods_make(1, value_type->mods.constant_flags, value_type->mods.subtype_index));
+                            if (!worked) {
+                                log_semantic_error("Pointer definition cannot create a pointer to this value", values[i]);
+                                type = compiler.type_system.predefined_types.unknown_type;
+                            }
+                            else {
+                                type = get_info(values[i])->cast_info.result_type;
+                            }
                         }
                     }
                     else {
@@ -11048,9 +10836,6 @@ void semantic_analyser_reset()
             Symbol* result = symbol_table_define_symbol(
                 root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
             result->options.type = type;
-            if (type->type == Datatype_Type::STRUCT) {
-                downcast<Datatype_Struct>(type)->name = optional_make_success(result->id);
-            }
             return result;
         };
         symbols.type_bool = define_type_symbol("bool", upcast(types.bool_type));
@@ -11229,7 +11014,7 @@ void semantic_error_append_to_string(Semantic_Error e, String* string)
         case Error_Information_Type::INVALID_MEMBER: {
             string_append_formated(string, "\n  Accessed member name: %s", info->options.invalid_member.member_id->characters);
             string_append_formated(string, "\n  Available struct members ");
-            auto& members = info->options.invalid_member.struct_signature->members;
+            auto& members = info->options.invalid_member.struct_signature->content.members;
             for (int i = 0; i < members.size; i++) {
                 Struct_Member* member = &members[i];
                 string_append_formated(string, "\n\t\t%s", member->id->characters);

@@ -14,6 +14,16 @@ Function_Parameter function_parameter_make_empty() {
     return result;
 }
 
+void struct_content_destroy(Struct_Content* content)
+{
+    for (int i = 0; i < content->subtypes.size; i++) {
+        struct_content_destroy(content->subtypes[i]);
+        delete content->subtypes[i];
+    }
+    dynamic_array_destroy(&content->subtypes);
+    dynamic_array_destroy(&content->members);
+}
+
 void type_base_destroy(Datatype* base) 
 {
     // Constants types are duplicates of the non-constant versions, and only keep references to arrays/data
@@ -26,9 +36,8 @@ void type_base_destroy(Datatype* base)
     }
     else if (base->type == Datatype_Type::STRUCT) {
         auto st = downcast<Datatype_Struct>(base);
-        dynamic_array_destroy(&st->members);
+        struct_content_destroy(&st->content);
         dynamic_array_destroy(&st->types_waiting_for_size_finish);
-        dynamic_array_destroy(&st->subtypes);
     }
     else if (base->type == Datatype_Type::ENUM) {
         auto enum_type = downcast<Datatype_Enum>(base);
@@ -61,10 +70,6 @@ void type_append_to_string_with_children(String* string, Datatype* signature, bo
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
         string_append_formated(string, "Struct instance template");
-        break;
-    }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE: {
-        string_append_formated(string, "Struct instance template subtype (%s)", downcast<Datatype_Struct_Instance_Template_Subtype>(signature)->subtype_name->characters);
         break;
     }
     case Datatype_Type::ARRAY: {
@@ -132,24 +137,19 @@ void type_append_to_string_with_children(String* string, Datatype* signature, bo
         }
         break;
     }
-    case Datatype_Type::STRUCT_SUBTYPE: {
-        auto subtype = downcast<Datatype_Struct_Subtype>(signature);
+    case Datatype_Type::SUBTYPE: {
+        auto subtype = downcast<Datatype_Subtype>(signature);
         string_append_formated(string, "Subtype \"%s\" ", subtype->subtype_name->characters);
         if (print_child) {
-            type_append_to_string_with_children(string, upcast(subtype->structure), print_child);
+            type_append_to_string_with_children(string, upcast(subtype->base_type), print_child);
         }
         break;
     }
     case Datatype_Type::STRUCT:
     {
         auto struct_type = downcast<Datatype_Struct>(signature);
-        auto& members = struct_type->members;
-        if (struct_type->name.available) {
-            string_append_formated(string, struct_type->name.value->characters);
-        }
-        else {
-            string_append_formated(string, "Struct");
-        }
+        auto& members = struct_type->content.members;
+        string_append_formated(string, struct_type->content.name->characters);
 
         // Append polymorphic instance values
         if (struct_type->workload != 0) {
@@ -228,8 +228,6 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     case Datatype_Type::UNKNOWN_TYPE:
         break;
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-        break;
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE:
         break;
     case Datatype_Type::CONSTANT: {
         auto constant = downcast<Datatype_Constant>(type);
@@ -314,48 +312,51 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         string_append_formated(string, "Type_Handle (#%d)", handle.index);
         break;
     }
-    case Datatype_Type::STRUCT_SUBTYPE: 
+    case Datatype_Type::SUBTYPE: 
     {
-        auto subtype = downcast<Datatype_Struct_Subtype>(type);
-        datatype_append_value_to_string(upcast(subtype->structure), value_ptr, string);
+        auto subtype = downcast<Datatype_Subtype>(type);
+        datatype_append_value_to_string(subtype->base_type, value_ptr, string);
         break;
     }
     case Datatype_Type::STRUCT:
     {
         auto struct_type = downcast<Datatype_Struct>(type);
-        auto& members = struct_type->members;
-        if (struct_type->name.available) {
-            string_append_formated(string, "%s{", struct_type->name.value->characters);
-        }
-        else {
-            string_append_formated(string, "Struct{");
-        }
 
         if (struct_type->struct_type == Structure_Type::UNION) {
             break;
         }
 
-        for (int i = 0; i < members.size; i++)
+        Struct_Content* content = &struct_type->content;
+        int closing_parenthesis_count = 0;
+        while (true)
         {
-            Struct_Member* mem = &members[i];
-            byte* mem_ptr = value_ptr + mem->offset;
-            datatype_append_value_to_string(mem->type, mem_ptr, string);
-            if (i != members.size - 1) {
-                string_append_formated(string, ", ");
+            string_append_formated(string, "%s{", content->name->characters);
+            closing_parenthesis_count += 1;
+            for (int i = 0; i < content->members.size; i++)
+            {
+                Struct_Member* mem = &content->members[i];
+                byte* mem_ptr = value_ptr + mem->offset;
+                datatype_append_value_to_string(mem->type, mem_ptr, string);
+                if (i != content->members.size - 1) {
+                    string_append_formated(string, ", ");
+                }
             }
+
+            // Check if subtype exist
+            if (content->subtypes.size == 0) {
+                break;
+            }
+            int subtype_index = (*(i32*)(value_ptr + struct_type->content.tag_member.offset)) - 1; // Tag is always stored as plus one
+            if (subtype_index = 0 || subtype_index >= content->subtypes.size) {
+                string_append_formated(string, ", INVALID_SUBTYPE #%d", subtype_index + 1);
+                break;
+            }
+            content = content->subtypes[subtype_index];
         }
 
-        if (struct_type->subtypes.size > 0)
-        {
-            int tag = *(i32*)(value_ptr + struct_type->tag_member.offset);
-            if (tag > 0 && tag < members.size) {
-                Subtype_Info* subtype = &struct_type->subtypes[tag - 1];
-                string_append_formated(string, "%s = ", subtype->name->characters);
-                datatype_append_value_to_string(upcast(subtype->type), value_ptr + subtype->offset, string);
-            }
+        for (int i = 0; i < closing_parenthesis_count; i++) {
+            string_append_formated(string, "}");
         }
-
-        string_append_formated(string, "}");
         break;
     }
     case Datatype_Type::ENUM:
@@ -473,7 +474,10 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
         return a.options.non_constant_type == b.options.non_constant_type;
     }
     case Type_Deduplication_Type::SUBTYPE: {
-        return a.options.subtype.base_type == b.options.subtype.base_type && a.options.subtype.name == b.options.subtype.name;
+        return
+            a.options.subtype.base_type == b.options.subtype.base_type &&
+            a.options.subtype.name == b.options.subtype.name &&
+            a.options.subtype.index == b.options.subtype.index;
     }
     case Type_Deduplication_Type::SLICE: {
         return a.options.pointer_element_type == b.options.pointer_element_type;
@@ -538,6 +542,7 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
     case Type_Deduplication_Type::SUBTYPE: {
         hash = hash_combine(hash, hash_pointer(dedup->options.subtype.base_type));
         hash = hash_combine(hash, hash_pointer(dedup->options.subtype.name));
+        hash = hash_combine(hash, hash_i32(&dedup->options.subtype.index));
         break;
     }
     case Type_Deduplication_Type::ARRAY: {
@@ -565,6 +570,17 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
     return hash;
 }
 
+void internal_type_struct_content_destroy(Internal_Type_Struct_Content* content)
+{
+    for (int i = 0; i < content->subtypes.size; i++) {
+        internal_type_struct_content_destroy(&content->subtypes.data_ptr[i]);
+    }
+    delete[] content->subtypes.data_ptr;
+    content->subtypes.data_ptr = 0;
+    delete[] content->members.data_ptr;
+    content->members.data_ptr = 0;
+}
+
 void internal_type_info_destroy(Internal_Type_Information* info)
 {
     switch (info->tag)
@@ -583,19 +599,57 @@ void internal_type_info_destroy(Internal_Type_Information* info)
         }
         break;
     case Datatype_Type::STRUCT: {
-        if (info->options.structure.members.data_ptr != 0) {
-            delete[]info->options.structure.members.data_ptr;
-            info->options.structure.members.data_ptr = 0;
-        }
-        if (info->options.structure.subtypes.data_ptr != 0) {
-            delete[]info->options.structure.subtypes.data_ptr;
-            info->options.structure.subtypes.data_ptr = 0;
-        }
+        internal_type_struct_content_destroy(&info->options.structure.content);
         break;
     }
     default: break;
     }
     delete info;
+}
+
+u64 subtype_index_hash(Subtype_Index** index_ptr) {
+    auto& indices = (*index_ptr)->indices;
+    u64 hash = hash_i32(&indices.size);
+    for (int i = 0; i < indices.size; i++) {
+        hash = hash_combine(hash, hash_i32(&indices[i].index));
+        hash = hash_combine(hash, hash_pointer(indices[i].name));
+    }
+    return hash;
+}
+
+bool subtype_index_equals(Subtype_Index** a_ptr, Subtype_Index** b_ptr)
+{
+    auto& a = (**a_ptr).indices;
+    auto& b = (**b_ptr).indices;
+    if (a.size != b.size) return false;
+    for (int i = 0; i < a.size; i++) {
+        if (a[i].index != b[i].index || a[i].name != b[i].name) return false;
+    }
+    return true;
+}
+
+// Takes ownership of array
+Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices)
+{
+    if (indices.size == 0) {
+        return &compiler.type_system.subtype_base_index;
+    }
+
+    Subtype_Index index;
+    index.indices = indices;
+    Subtype_Index* ptr = &index;
+
+    auto deduplicated = hashset_find(&compiler.type_system.subtype_index_deduplication, ptr);
+    if (deduplicated != 0) {
+        dynamic_array_destroy(&indices);
+        return *deduplicated;
+    }
+    else {
+        Subtype_Index* new_index = new Subtype_Index;
+        new_index->indices = indices;
+        hashset_insert_element(&compiler.type_system.subtype_index_deduplication, new_index);
+        return new_index;
+    }
 }
 
 Type_System type_system_create(Timer* timer)
@@ -604,15 +658,29 @@ Type_System type_system_create(Timer* timer)
     result.deduplication_table = hashtable_create_empty<Type_Deduplication, Datatype*>(32, type_deduplication_hash, type_deduplication_is_equal);
     result.types = dynamic_array_create<Datatype*>(256);
     result.internal_type_infos = dynamic_array_create<Internal_Type_Information*>(256);
+    result.subtype_index_deduplication = hashset_create_empty<Subtype_Index*>(1, subtype_index_hash, subtype_index_equals);
     result.timer = timer;
     result.register_time = 0;
+    result.subtype_base_index.indices = dynamic_array_create<Named_Index>();
     return result;
 }
 
-void type_system_destroy(Type_System* system) {
+void type_system_destroy(Type_System* system) 
+{
     type_system_reset(system);
     dynamic_array_destroy(&system->types);
     hashtable_destroy(&system->deduplication_table);
+
+    {
+        auto iter = hashset_iterator_create(&system->subtype_index_deduplication);
+        while (hashset_iterator_has_next(&iter)) {
+            Subtype_Index* index = *iter.value;
+            dynamic_array_destroy(&index->indices);
+            delete index;
+            hashset_iterator_next(&iter);
+        }
+        hashset_destroy(&system->subtype_index_deduplication);
+    }
 
     for (int i = 0; i < system->internal_type_infos.size; i++) {
         internal_type_info_destroy(system->internal_type_infos[i]);
@@ -634,16 +702,26 @@ void type_system_reset(Type_System* system)
         internal_type_info_destroy(system->internal_type_infos[i]);
     }
     dynamic_array_reset(&system->internal_type_infos);
+
+    auto iter = hashset_iterator_create(&system->subtype_index_deduplication);
+    while (hashset_iterator_has_next(&iter)) {
+        Subtype_Index* index = *iter.value;
+        dynamic_array_destroy(&index->indices);
+        delete index;
+        hashset_iterator_next(&iter);
+    }
+    hashset_reset(&system->subtype_index_deduplication);
 }
 
 
 
-// Type_System takes ownership of datatype pointer afterwards
+// Type_System takes ownership of base_type pointer afterwards
 Internal_Type_Information* type_system_register_type(Datatype* datatype)
 {
     auto& type_system = compiler.type_system;
 
     // Finish type info
+    Dynamic_Array<Named_Index> subtype_indices = dynamic_array_create<Named_Index>();
     datatype->type_handle.index = type_system.types.size;
     datatype->mods.constant_flags = 0;
     datatype->mods.pointer_level = 0;
@@ -661,11 +739,22 @@ Internal_Type_Information* type_system_register_type(Datatype* datatype)
             datatype->mods.constant_flags = datatype->mods.constant_flags | 1;
             datatype->base_type = downcast<Datatype_Constant>(datatype->base_type)->element_type;
         }
+        else if (datatype->base_type->type == Datatype_Type::SUBTYPE) {
+            auto subtype = downcast<Datatype_Subtype>(datatype->base_type);
+            Named_Index index;
+            index.index = subtype->subtype_index;
+            index.name = subtype->subtype_name;
+            dynamic_array_push_back(&subtype_indices, index);
+            datatype->base_type = subtype->base_type;
+        }
         else {
             break;
         }
     }
     assert(datatype->mods.pointer_level < 32, "This is the max value on supported pointer constant flags");
+    dynamic_array_reverse_order(&subtype_indices);
+    datatype->mods.subtype_index = subtype_index_make(subtype_indices);
+
     dynamic_array_push_back(&type_system.types, datatype);
 
     Internal_Type_Information* internal_info = new Internal_Type_Information;
@@ -758,37 +847,6 @@ Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
     auto internal_info = type_system_register_type(upcast(result));
     internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
 
-    return result;
-}
-
-Datatype_Struct_Instance_Template_Subtype* type_system_make_struct_instance_template_subtype(Datatype_Struct_Instance_Template* instance_template, String* name)
-{
-    auto& type_system = compiler.type_system;
-
-    Type_Deduplication dedup;
-    dedup.type = Type_Deduplication_Type::SUBTYPE;
-    dedup.options.subtype.base_type = upcast(instance_template);
-    dedup.options.subtype.name = name;
-    // Check if type was already created
-    {
-        auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
-        if (type_opt != nullptr) {
-            Datatype* type = *type_opt;
-            assert(type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE, "");
-            return downcast<Datatype_Struct_Instance_Template_Subtype>(type);
-        }
-    }
-
-    Datatype_Struct_Instance_Template_Subtype* result = new Datatype_Struct_Instance_Template_Subtype;
-    result->struct_template = instance_template;
-    result->subtype_name = name;
-    result->base = datatype_make_simple_base(Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE, 1, 1);
-    result->base.contains_type_template = true;
-
-    auto internal_info = type_system_register_type(upcast(result));
-    internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
-
-    hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
     return result;
 }
 
@@ -973,68 +1031,69 @@ Datatype* type_system_make_constant(Datatype* datatype)
     return upcast(result);
 }
 
-Datatype_Struct_Subtype* type_system_make_struct_subtype(Datatype_Struct* base_type, String* subtype_name)
+Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, int subtype_index)
 {
     auto& type_system = compiler.type_system;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::SUBTYPE;
-    dedup.options.subtype.base_type = upcast(base_type);
+    dedup.options.subtype.base_type = base_type;
     dedup.options.subtype.name = subtype_name;
+    dedup.options.subtype.index = subtype_index;
     // Check if type was already created
     {
         auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
         if (type_opt != nullptr) {
             Datatype* type = *type_opt;
-            assert(type->type == Datatype_Type::STRUCT_SUBTYPE, "");
-            return downcast<Datatype_Struct_Subtype>(type);
+            assert(type->type == Datatype_Type::SUBTYPE || type->type == Datatype_Type::CONSTANT, "");
+            return type;
         }
     }
 
-    Datatype_Struct_Subtype* result = new Datatype_Struct_Subtype;
-    result->structure = base_type;
-    result->valid_subtype = false;
-    result->subtype_index = -1;
+    bool is_const = false;
+    if (base_type->type == Datatype_Type::CONSTANT) {
+        is_const = true;
+        base_type = downcast<Datatype_Constant>(base_type)->element_type;
+    }
+
+    Datatype_Subtype* result = new Datatype_Subtype;
+    result->base_type = base_type;
     result->subtype_name = subtype_name;
-    result->base = datatype_make_simple_base(Datatype_Type::STRUCT_SUBTYPE, 1, 1);
-    result->base.contains_type_template = base_type->base.contains_type_template;
+    result->subtype_index = subtype_index;
+    result->base = datatype_make_simple_base(Datatype_Type::SUBTYPE, 1, 1);
+    result->base.contains_type_template = base_type->contains_type_template;
 
-    if (base_type->base.memory_info.available) 
+    if (base_type->memory_info.available) 
     {
-        result->base.memory_info = base_type->base.memory_info;
+        result->base.memory_info = base_type->memory_info;
         result->base.memory_info_workload = nullptr;
-
-        int found_index = -1;
-        for (int i = 0; i < base_type->subtypes.size; i++) {
-            if (base_type->subtypes[i].name == subtype_name) {
-                found_index = i;
-                break;
-            }
-        }
-
-        if (found_index != -1) {
-            result->valid_subtype = true;
-            result->subtype_index = found_index;
-        }
     }
     else {
         result->base.memory_info.available = false;
-        result->base.memory_info_workload = base_type->base.memory_info_workload;
-        dynamic_array_push_back(&base_type->types_waiting_for_size_finish, upcast(result));
+        result->base.memory_info_workload = base_type->memory_info_workload;
+        dynamic_array_push_back(&base_type->memory_info_workload->struct_type->types_waiting_for_size_finish, upcast(result));
     }
 
     auto& info_internal = type_system_register_type(upcast(result))->options.struct_subtype;
-    info_internal.subtype_index = result->subtype_index;
-    info_internal.type = base_type->base.type_handle;
-    hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
+    info_internal.type = base_type->type_handle;
+    info_internal.subtype_name.slice.size = subtype_name->size + 1;
+    info_internal.subtype_name.slice.data_ptr = (const u8*) subtype_name->characters;
 
-    return result;
-
+    Datatype* final_type = upcast(result);
+    if (is_const) {
+        final_type = type_system_make_constant(final_type);
+    }
+    hashtable_insert_element(&type_system.deduplication_table, dedup, final_type);
+    return final_type;
 }
 
 Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods)
 {
     base_type = base_type->base_type;
+    for (int i = 0; i < mods.subtype_index->indices.size; i++) {
+        auto index = mods.subtype_index->indices[i];
+        base_type = type_system_make_subtype(base_type, index.name, index.index);
+    }
     if (type_mods_is_constant(mods, 0)) {
         base_type = type_system_make_constant(base_type);
     }
@@ -1126,39 +1185,48 @@ Datatype_Function* type_system_make_function(std::initializer_list<Function_Para
 
 Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload)
 {
+    assert(name != 0, "");
+
     Datatype_Struct* result = new Datatype_Struct;
     result->base = datatype_make_simple_base(Datatype_Type::STRUCT, 0, 0);
     result->base.memory_info.available = false;
     result->base.memory_info_workload = workload;
     result->types_waiting_for_size_finish = dynamic_array_create<Datatype*>();
 
-    if (name != 0) {
-        result->name = optional_make_success(name);
-    }
-    else {
-        result->name.available = false;
-    }
     result->workload = workload;
-    result->tag_member.id = 0;
-    result->tag_member.offset = 0;
-    result->tag_member.type = 0;
     result->struct_type = struct_type;
-    result->members = dynamic_array_create<Struct_Member>();
-    result->subtypes = dynamic_array_create<Subtype_Info>();
+
+    result->content.name = name;
+    result->content.tag_member.id = 0;
+    result->content.tag_member.offset = 0;
+    result->content.tag_member.type = 0;
+    result->content.members = dynamic_array_create<Struct_Member>();
+    result->content.subtypes = dynamic_array_create<Struct_Content*>();
 
     type_system_register_type(upcast(result)); // Is only initialized when memory_info is done
     return result;
 }
 
-void struct_add_member(Datatype_Struct* structure, String* id, Datatype* member_type)
+void struct_add_member(Struct_Content* content, String* id, Datatype* member_type)
 {
-    assert(!structure->base.memory_info.available, "Cannot add members to already finished struct");
-
     Struct_Member member;
     member.id = id;
     member.offset = 0;
     member.type = member_type;
-    dynamic_array_push_back(&structure->members, member);
+    dynamic_array_push_back(&content->members, member);
+}
+
+Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
+{
+    Struct_Content* subtype = new Struct_Content;
+    subtype->members = dynamic_array_create<Struct_Member>();
+    subtype->subtypes = dynamic_array_create<Struct_Content*>();
+    subtype->name = id;
+    subtype->tag_member.id = compiler.predefined_ids.tag;
+    subtype->tag_member.offset = -1;
+    subtype->tag_member.type = compiler.type_system.predefined_types.unknown_type;
+    dynamic_array_push_back(&content->subtypes, subtype);
+    return subtype;
 }
 
 void type_system_finish_array(Datatype_Array* array)
@@ -1186,47 +1254,25 @@ void type_system_finish_array(Datatype_Array* array)
     internal_info->tag = base.type;
 }
 
-
-void type_system_finish_struct(Datatype_Struct* structure)
+// Returns size after offset
+int struct_content_finish_recursive(Struct_Content* content, int memory_offset, int& max_global_alignment, Datatype_Memory_Info& memory)
 {
-    auto& type_system = compiler.type_system;
-    auto& members = structure->members;
-    auto& base = structure->base;
-    assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
-    assert(type_system.internal_type_infos.size == type_system.types.size, "");
-    assert(type_size_is_unfinished(upcast(structure)), "");
-
     // Calculate memory info/layout (Member offsets, alignment, size, contains pointer/others)
-    structure->base.memory_info.available = true;
-    auto& memory = structure->base.memory_info.value;
-    memory.size = 0;
-    memory.alignment = 1;
-    memory.contains_padding_bytes = false;
-    memory.contains_function_pointer = false;
-    memory.contains_reference = false;
-    for (int i = 0; i < members.size; i++)
+    int max_local_alignment = 1;
+    for (int i = 0; i < content->members.size; i++)
     {
-        Struct_Member* member = &members[i];
+        Struct_Member* member = &content->members[i];
         assert(!type_size_is_unfinished(member->type) && member->type->memory_info.available, "");
         auto& member_memory = member->type->memory_info.value;
 
         // Calculate member offsets/padding
-        int prev_size = memory.size;
-        if (structure->struct_type == Structure_Type::STRUCT) {
-            memory.size = math_round_next_multiple(memory.size, member_memory.alignment);
-            if (memory.size != prev_size) {
-                memory.contains_padding_bytes = true;
-            }
-            member->offset = memory.size;
-            memory.size += member_memory.size;
+        int prev_size = memory_offset;
+        memory_offset = math_round_next_multiple(memory_offset, member_memory.alignment);
+        if (memory_offset != prev_size) {
+            memory.contains_padding_bytes = true;
         }
-        else {
-            memory.size = math_maximum(memory.size, member_memory.size); // Unions
-            if (prev_size != 0 && memory.size != prev_size) {
-                memory.contains_padding_bytes = true;
-            }
-            member->offset = 0;
-        }
+        member->offset = memory_offset;
+        memory_offset += member_memory.size;
 
         // Check which types are contained
         if (member_memory.contains_padding_bytes) {
@@ -1240,92 +1286,159 @@ void type_system_finish_struct(Datatype_Struct* structure)
         }
 
         // Update alignment
-        memory.alignment = math_maximum(member_memory.alignment, memory.alignment);
+        max_local_alignment = math_maximum(member_memory.alignment, max_local_alignment);
     }
 
-    // Handle subtype-structs
-    if (structure->subtypes.size > 0)
+    // Handle subtypes
+    if (content->subtypes.size > 0)
     {
         // Create empty tag enum
         Datatype_Enum* tag_type = nullptr;
         {
-            String name;
-            if (structure->name.available) {
-                name = string_copy(*structure->name.value);
-            }
-            else {
-                name = string_create("anon_struct");
-            }
+            String name = string_copy(*content->name);
             string_append_formated(&name, "_tag");
             String* tag_enum_name = identifier_pool_add(&compiler.identifier_pool, name);
             string_destroy(&name);
             tag_type = type_system_make_enum_empty(tag_enum_name);
         }
 
-        // Calculate subtype layout
-        int max_subtype_size = 0;
-        for (int i = 0; i < structure->subtypes.size; i++)
+        // Finish subtypes
+        int subtype_start_offset = memory_offset;
+        int largest_end = memory_offset;
+        for (int i = 0; i < content->subtypes.size; i++) 
         {
-            auto& subtype = structure->subtypes[i];
-            assert(!type_size_is_unfinished(upcast(subtype.type)) && subtype.type->base.memory_info.available, "");
-            auto& subtype_memory = subtype.type->base.memory_info.value;
-
-            // Figure out subtype offset + size
-            subtype.offset = math_round_next_multiple(memory.size, subtype_memory.alignment);
-            int subtype_size = subtype_memory.size;
-            if (subtype.offset != memory.size) {
-                memory.contains_padding_bytes = true;
-                subtype_size += subtype.offset - memory.size;
-            }
-
-            // Keep track of maximum subtype size/alignment
-            int prev_max_size = max_subtype_size;
-            max_subtype_size = math_maximum(max_subtype_size, subtype_size); // Unions
-            if (prev_max_size != 0 && prev_max_size != max_subtype_size) {
-                // If we have two subtypes that don't have the same size, there will be padding
-                memory.contains_padding_bytes = true;
-            }
-            memory.alignment = math_maximum(memory.alignment, subtype_memory.alignment);
-
-            // Update info flags
-            if (subtype_memory.contains_padding_bytes) {
-                memory.contains_padding_bytes = true;
-            }
-            if (subtype_memory.contains_function_pointer) {
-                memory.contains_function_pointer = true;
-            }
-            if (subtype_memory.contains_reference) {
-                memory.contains_reference = true;
+            auto subtype = content->subtypes[i];
+            int end_offset = struct_content_finish_recursive(subtype, subtype_start_offset, max_local_alignment, memory);
+            if (end_offset > largest_end) {
+                largest_end = end_offset;
+                if (i != 0) {
+                    memory.contains_padding_bytes = true;
+                }
             }
 
             // Add to tag enum
             Enum_Member tag_member;
-            tag_member.name = subtype.name;
+            tag_member.name = subtype->name;
             tag_member.value = i + 1; // Note: Enum member values start at 1 by default, if this changes the constant pool serialization also needs change
             dynamic_array_push_back(&tag_type->members, tag_member);
         }
 
-        memory.size += max_subtype_size;
-
-        // Finish tag
+        // Add tag-member
         type_system_finish_enum(tag_type);
-        auto& tag_memory = tag_type->base.memory_info.value;
-
-        Struct_Member tag;
-        tag.id = compiler.predefined_ids.tag;
-        int prev_size = memory.size;
-        memory.size = math_round_next_multiple(memory.size, tag_memory.alignment);
-        if (prev_size != memory.size) {
+        memory_offset = math_round_next_multiple(largest_end, tag_type->base.memory_info.value.size);
+        if (memory_offset != largest_end) {
             memory.contains_padding_bytes = true;
         }
-        tag.offset = memory.size;
-        tag.type = upcast(tag_type);
-        // dynamic_array_push_back(&members, tag);
-        structure->tag_member = tag;
+        content->tag_member.offset = memory_offset;
+        content->tag_member.id = compiler.predefined_ids.tag;
+        content->tag_member.type = upcast(tag_type);
 
-        // Adjust size/alignment for new tag
-        memory.size += tag_memory.size;
-        memory.alignment = math_maximum(memory.alignment, tag_memory.alignment);
+        memory_offset += tag_type->base.memory_info.value.size;
+        memory.alignment = math_maximum(memory.alignment, tag_type->base.memory_info.value.alignment);
+    }
+
+    // As each subtype counts as a small 'struct', align to max alignment
+    int prev_size = memory_offset;
+    memory_offset = math_round_next_multiple(memory_offset, max_local_alignment);
+    if (prev_size != memory_offset) {
+        memory.contains_padding_bytes = true;
+    }
+    max_global_alignment = math_round_next_multiple(max_global_alignment, max_local_alignment);
+
+    return memory_offset;
+}
+
+void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_Struct_Content* internal)
+{
+    internal->name.slice.data_ptr = (const u8*) content->name->characters;
+    internal->name.slice.size = content->name->size + 1;
+
+    if (content->subtypes.size > 0) {
+        internal->tag_member.name.slice.data_ptr = (const u8*)content->tag_member.id->characters;
+        internal->tag_member.name.slice.size = content->tag_member.id->size + 1;
+        internal->tag_member.offset = content->tag_member.offset;
+        internal->tag_member.type = content->tag_member.type->type_handle;
+    }
+    else {
+        internal->tag_member.name.slice.data_ptr = (const u8*) "";
+        internal->tag_member.name.slice.size = 1;
+        internal->tag_member.offset = 0;
+        internal->tag_member.type = compiler.type_system.predefined_types.unknown_type->type_handle;
+    }
+
+    internal->members.data_ptr = new Internal_Type_Struct_Member[content->members.size];
+    internal->members.size = content->members.size;
+    internal->subtypes.data_ptr = new Internal_Type_Struct_Content[content->subtypes.size];
+    internal->subtypes.size = content->subtypes.size;
+
+    // Copy members
+    for (int i = 0; i < content->members.size; i++) 
+    {
+        Internal_Type_Struct_Member* mem_i = &internal->members.data_ptr[i];
+        Struct_Member* mem = &content->members[i];
+        mem_i->name.slice.data_ptr = (const u8*) content->members[i].id->characters;
+        mem_i->name.slice.size = content->members[i].id->size + 1;
+        mem_i->offset = mem->offset;
+        mem_i->type = mem->type->type_handle;
+    }
+
+    // Copy subtypes recursive
+    for (int i = 0; i < content->subtypes.size; i++) {
+        struct_content_mirror_internal_info(content->subtypes[i], &internal->subtypes.data_ptr[i]);
+    }
+}
+
+void type_system_finish_struct(Datatype_Struct* structure)
+{
+    auto& type_system = compiler.type_system;
+    auto& base = structure->base;
+    assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
+    assert(type_system.internal_type_infos.size == type_system.types.size, "");
+    assert(type_size_is_unfinished(upcast(structure)), "");
+
+    // Calculate memory info/layout (Member offsets, alignment, size, contains pointer/others)
+    structure->base.memory_info.available = true;
+    auto& memory = structure->base.memory_info.value;
+    memory.size = 0;
+    memory.alignment = 1;
+    memory.contains_padding_bytes = false;
+    memory.contains_function_pointer = false;
+    memory.contains_reference = false;
+
+    // Handle unions
+    if (structure->struct_type == Structure_Type::STRUCT) {
+        memory.size = struct_content_finish_recursive(&structure->content, 0, memory.alignment, memory);
+    }
+    else
+    {
+        for (int i = 0; i < structure->content.members.size; i++) 
+        {
+            auto member = &structure->content.members[i];
+            assert(!type_size_is_unfinished(member->type) && member->type->memory_info.available, "");
+            auto& member_memory = member->type->memory_info.value;
+
+            // Calculate member offsets/padding
+            int prev_size = memory.size;
+            memory.size = math_maximum(memory.size, member_memory.size); // Unions
+            if (prev_size != 0 && memory.size != prev_size) {
+                memory.contains_padding_bytes = true;
+            }
+            member->offset = 0;
+
+            // Check which types are contained
+            if (member_memory.contains_padding_bytes) {
+                memory.contains_padding_bytes = true;
+            }
+            if (member_memory.contains_function_pointer) {
+                memory.contains_function_pointer = true;
+            }
+            if (member_memory.contains_reference) {
+                memory.contains_reference = true;
+            }
+
+            // Update alignment
+            memory.alignment = math_maximum(member_memory.alignment, memory.alignment);
+        }
     }
 
     // Finalize alignment
@@ -1341,59 +1454,8 @@ void type_system_finish_struct(Datatype_Struct* structure)
     internal_info->type_handle = base.type_handle;
     internal_info->tag = base.type;
 
-    // Update name
-    if (!structure->name.available) {
-        internal_info->options.structure.name.slice.size = 1;
-        internal_info->options.structure.name.slice.data_ptr = (const u8*) "";
-    }
-    else {
-        internal_info->options.structure.name.slice.size = structure->name.value->size;
-        internal_info->options.structure.name.slice.data_ptr = (const u8*) structure->name.value->characters;
-    }
-
-    // Update members
-    int member_count = members.size;
-    internal_info->options.structure.members.size = member_count;
-    if (member_count != 0)
-    {
-        internal_info->options.structure.members.data_ptr = new Internal_Type_Struct_Member[member_count];
-        for (int i = 0; i < member_count; i++)
-        {
-            Internal_Type_Struct_Member* internal_member = &internal_info->options.structure.members.data_ptr[i];
-            Struct_Member* member = &members[i];
-            internal_member->name.slice.size = member->id->size + 1;
-            internal_member->name.slice.data_ptr = (const u8*) member->id->characters;
-            internal_member->offset = member->offset;
-            internal_member->type = member->type->type_handle;
-        }
-    }
-    else {
-        internal_info->options.structure.members.data_ptr = 0;
-        internal_info->options.structure.members.size = 0;
-    }
-
-    // Update subtypes
-    {
-        auto& subtypes = structure->subtypes;
-        if (subtypes.size > 0) 
-        {
-            internal_info->options.structure.subtypes.size = subtypes.size;
-            internal_info->options.structure.subtypes.data_ptr = new Internal_Type_Subtype_Info[subtypes.size];
-            for (int i = 0; i < subtypes.size; i++) {
-                auto& subtype = subtypes[i];
-                auto& sub_intern = internal_info->options.structure.subtypes.data_ptr[i];
-                sub_intern.name.slice.size = subtype.name->size + 1;
-                sub_intern.name.slice.data_ptr = (const u8*)subtype.name->characters;
-                sub_intern.type = subtype.type->base.type_handle;
-                sub_intern.offset = subtype.offset;
-            }
-        }
-        else {
-            internal_info->options.structure.subtypes.data_ptr = nullptr;
-            internal_info->options.structure.subtypes.size = 0;
-        }
-    }
     internal_info->options.structure.is_union = structure->struct_type == AST::Structure_Type::UNION;
+    struct_content_mirror_internal_info(&structure->content, &internal_info->options.structure.content);
 
     // Finish all arrays/constants waiting on this struct 
     for (int i = 0; i < structure->types_waiting_for_size_finish.size; i++) 
@@ -1412,33 +1474,15 @@ void type_system_finish_struct(Datatype_Struct* structure)
             type_system.internal_type_infos[type->type_handle.index]->size = constant->element_type->memory_info.value.size;
             type_system.internal_type_infos[type->type_handle.index]->alignment = constant->element_type->memory_info.value.alignment;
         }
-        else if (type->type == Datatype_Type::STRUCT_SUBTYPE) 
+        else if (type->type == Datatype_Type::SUBTYPE) 
         {
-            auto subtype = downcast<Datatype_Struct_Subtype>(type);
+            auto subtype = downcast<Datatype_Subtype>(type);
             assert(!subtype->base.memory_info.available, ""); 
             subtype->base.memory_info = structure->base.memory_info;
-
-            // Check if subtype is valid subtype
-            subtype->valid_subtype = false;
-            {
-                int found_index = -1;
-                for (int i = 0; i < structure->subtypes.size; i++) {
-                    if (structure->subtypes[i].name == subtype->subtype_name) {
-                        found_index = i;
-                        break;
-                    }
-                }
-
-                if (found_index != -1) {
-                    subtype->valid_subtype = true;
-                    subtype->subtype_index = found_index;
-                }
-            }
 
             auto& info_internal = type_system.internal_type_infos[subtype->base.type_handle.index];
             info_internal->size = structure->base.memory_info.value.size;
             info_internal->alignment = structure->base.memory_info.value.alignment;
-            info_internal->options.struct_subtype.subtype_index = subtype->subtype_index;
         }
     }
 }
@@ -1574,23 +1618,19 @@ void type_system_add_predefined_types(Type_System* system)
 
     using AST::Structure_Type;
     auto make_id = [&](const char* name) -> String* { return identifier_pool_add(&compiler.identifier_pool, string_create_static(name)); };
-    auto add_member_cstr = [&](Datatype_Struct* struct_type, const char* member_name, Datatype* member_type) {
+    auto add_member_cstr = [&](Struct_Content* content, const char* member_name, Datatype* member_type) {
         String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
-        struct_add_member(struct_type, id, member_type);
+        struct_add_member(content, id, member_type);
     };
-    auto add_struct_subtype = [&](Datatype_Struct* struct_type, const char* subtype_name, Datatype_Struct* subtype_type) {
-        Subtype_Info subtype;
-        subtype.name = identifier_pool_add(&compiler.identifier_pool, string_create_static(subtype_name));
-        subtype.offset = 0;
-        subtype.type = subtype_type;
-        assert(!struct_type->base.memory_info.available, "Must not be finished yet");
-        dynamic_array_push_back(&struct_type->subtypes, subtype);
+    auto add_struct_subtype = [&](Struct_Content* content, const char* member_name) -> Struct_Content* {
+        String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
+        return struct_add_subtype(content, id);
     };
     auto make_single_member_struct = [&](const char* struct_name, const char* member_name, Datatype* type) -> Datatype_Struct* 
     {
         String* name_id = identifier_pool_add(&compiler.identifier_pool, string_create_static(struct_name));
         auto result = type_system_make_struct_empty(AST::Structure_Type::STRUCT, name_id, 0);
-        add_member_cstr(result, member_name, type);
+        add_member_cstr(&result->content, member_name, type);
         type_system_finish_struct(result);
         return result;
     };
@@ -1610,130 +1650,112 @@ void type_system_add_predefined_types(Type_System* system)
     // Any
     {
         types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
-        add_member_cstr(types->any_type, "data", upcast(types->byte_pointer));
-        add_member_cstr(types->any_type, "type", types->type_handle);
+        add_member_cstr(&types->any_type->content, "data", upcast(types->byte_pointer));
+        add_member_cstr(&types->any_type->content, "type", types->type_handle);
         type_system_finish_struct(types->any_type);
         test_type_similarity<Upp_Any>(upcast(types->any_type));
     }
 
     // Type Information
     {
+        // Create type_info type
+        Datatype_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Type_Info"), 0);
+        types->type_information_type = type_info_type;
+        add_member_cstr(&type_info_type->content, "type", types->type_handle);
+        add_member_cstr(&type_info_type->content, "size", upcast(types->i32_type));
+        add_member_cstr(&type_info_type->content, "alignment", upcast(types->i32_type));
+
+        // Add subtypes in correct order (See Datatype_Type enum)
+        auto subtype_primitive = add_struct_subtype(&type_info_type->content, "Primitive");
+        auto subtype_array = add_struct_subtype(&type_info_type->content, "Array");
+        auto subtype_slice = add_struct_subtype(&type_info_type->content, "Slice");
+        auto subtype_pointer = add_struct_subtype(&type_info_type->content, "Pointer");
+        auto subtype_struct = add_struct_subtype(&type_info_type->content, "Struct");
+        auto subtype_enum = add_struct_subtype(&type_info_type->content, "Enum");
+        auto subtype_function = add_struct_subtype(&type_info_type->content, "Function");
+        auto subtype_subtype = add_struct_subtype(&type_info_type->content, "Subtype");
+        auto subtype_type_handle = add_struct_subtype(&type_info_type->content, "Type_Handle");
+        auto subtype_byte_pointer = add_struct_subtype(&type_info_type->content, "Byte_Pointer");
+        auto subtype_constant = add_struct_subtype(&type_info_type->content, "Constant");
+        auto subtype_unknown = add_struct_subtype(&type_info_type->content, "Unknown");
+        
+        add_member_cstr(subtype_pointer, "element_type", types->type_handle);
+        add_member_cstr(subtype_constant, "element_type", types->type_handle);
+
         // Primitive
-        Datatype_Struct* primitive_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Primitive_Info"), 0);
         {
-            {
-                Datatype_Struct* integer_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Integer_Info"), 0);
-                add_member_cstr(integer_info_type, "is_signed", upcast(types->bool_type));
-                type_system_finish_struct(integer_info_type);
-                add_struct_subtype(primitive_info, "Int", integer_info_type);
-            }
-            add_struct_subtype(primitive_info, "Float", types->empty_struct_type);
-            add_struct_subtype(primitive_info, "Bool", types->empty_struct_type);
-            type_system_finish_struct(primitive_info);
-            test_type_similarity<Internal_Type_Primitive>(upcast(primitive_info));
+            Struct_Content* integer_info = add_struct_subtype(subtype_primitive, "Integer");
+            add_member_cstr(integer_info, "is_signed", upcast(types->bool_type));
+            add_struct_subtype(subtype_primitive, "Float");
+            add_struct_subtype(subtype_primitive, "Bool");
         }
         // Array
-        Datatype_Struct* array_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Array_Info"), 0);
         {
-            add_member_cstr(array_info, "element_type", types->type_handle);
-            add_member_cstr(array_info, "size", upcast(types->i32_type));
-            type_system_finish_struct(array_info);
-            test_type_similarity<Internal_Type_Array>(upcast(array_info));
+            add_member_cstr(subtype_array, "element_type", types->type_handle);
+            add_member_cstr(subtype_array, "size", upcast(types->i32_type));
         }
         // Slice
-        Datatype_Struct* slice_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Slice_Info"), 0);
         {
-            add_member_cstr(slice_info, "element_type", types->type_handle);
-            type_system_finish_struct(slice_info);
-            test_type_similarity<Internal_Type_Slice>(upcast(slice_info));
+            add_member_cstr(subtype_slice, "element_type", types->type_handle);
         }
         // Struct
-        Datatype_Struct* struct_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Info"), 0);
         {
+            Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
             {
-                Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
-                add_member_cstr(struct_member_type, "name", upcast(types->c_string));
-                add_member_cstr(struct_member_type, "type", types->type_handle);
-                add_member_cstr(struct_member_type, "offset", upcast(types->i32_type));
+                add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
+                add_member_cstr(&struct_member_type->content, "type", types->type_handle);
+                add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
                 type_system_finish_struct(struct_member_type);
-                add_member_cstr(struct_info, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
-                test_type_similarity<Internal_Type_Struct_Member>(upcast(struct_member_type));
             }
+            Datatype_Struct* subtype_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
             {
-                Datatype_Struct* subtype_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Subtype_Info"), 0);
-                add_member_cstr(subtype_type, "name", upcast(types->c_string));
-                add_member_cstr(subtype_type, "type", types->type_handle);
-                add_member_cstr(subtype_type, "offset", upcast(types->i32_type));
+                add_member_cstr(&subtype_type->content, "name", upcast(types->c_string));
+                add_member_cstr(&subtype_type->content, "type", types->type_handle);
+                add_member_cstr(&subtype_type->content, "offset", upcast(types->i32_type));
                 type_system_finish_struct(subtype_type);
-                add_member_cstr(struct_info, "subtypes", upcast(type_system_make_slice(upcast(subtype_type))));
-                test_type_similarity<Internal_Type_Subtype_Info>(upcast(subtype_type));
             }
-            add_member_cstr(struct_info, "name", upcast(types->c_string));
-            add_member_cstr(struct_info, "is_union", upcast(types->bool_type));
-            type_system_finish_struct(struct_info);
-            test_type_similarity<Internal_Type_Struct>(upcast(struct_info));
+
+            Datatype_Struct* internal_content = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
+            {
+                add_member_cstr(&internal_content->content, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
+                add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(subtype_type))));
+                add_member_cstr(&internal_content->content, "tag_member", upcast(struct_member_type));
+                add_member_cstr(&internal_content->content, "name", upcast(types->c_string));
+            }
+            type_system_finish_struct(internal_content);
+            test_type_similarity<Internal_Type_Struct_Content>(upcast(internal_content));
+
+            add_member_cstr(subtype_struct, "content", upcast(internal_content));
+            add_member_cstr(subtype_struct, "is_union", upcast(types->bool_type));
+        }
+        // Subtype
+        {
+            add_member_cstr(subtype_subtype, "base_type", types->type_handle);
+            add_member_cstr(subtype_subtype, "name", upcast(types->c_string));
+            add_member_cstr(subtype_subtype, "index", upcast(types->i32_type));
         }
         // ENUM
-        Datatype_Struct* enum_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Enum_Info"), 0);
         {
             {
-                Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, 0, 0);
-                add_member_cstr(enum_member_type, "name", upcast(types->c_string));
-                add_member_cstr(enum_member_type, "value", upcast(types->i32_type));
+                String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static("Enum_Member"));
+                Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, id, 0);
+                add_member_cstr(&enum_member_type->content, "name", upcast(types->c_string));
+                add_member_cstr(&enum_member_type->content, "value", upcast(types->i32_type));
                 type_system_finish_struct(enum_member_type);
-                add_member_cstr(enum_info, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
-                test_type_similarity<Internal_Type_Enum_Member>(upcast(enum_member_type));
+                add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
             }
-            add_member_cstr(enum_info, "name", upcast(types->c_string));
-            type_system_finish_struct(enum_info);
-            test_type_similarity<Internal_Type_Enum>(upcast(enum_info));
+            add_member_cstr(subtype_enum, "name", upcast(types->c_string));
         }
         // Function
-        Datatype_Struct* function_info = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Function_Info"), 0);
         {
-            add_member_cstr(function_info, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
-            add_member_cstr(function_info, "return_type", types->type_handle);
-            add_member_cstr(function_info, "has_return_type", upcast(types->bool_type));
-            type_system_finish_struct(function_info);
-            test_type_similarity<Internal_Type_Function>(upcast(function_info));
+            add_member_cstr(subtype_function, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
+            add_member_cstr(subtype_function, "return_type", types->type_handle);
+            add_member_cstr(subtype_function, "has_return_type", upcast(types->bool_type));
         }
 
-        // Type Information
-        {
-            Datatype_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Type_Info"), 0);
-            add_member_cstr(type_info_type, "type", types->type_handle);
-            add_member_cstr(type_info_type, "size", upcast(types->i32_type));
-            add_member_cstr(type_info_type, "alignment", upcast(types->i32_type));
-
-            // PRIMITIVE = 1, // Int, float, bool
-            // ARRAY, // Array with compile-time known size, like [5]int
-            // SLICE, // Pointer + size
-            // POINTER,
-            // STRUCT,
-            // ENUM,
-            // FUNCTION,
-            // TYPE_HANDLE,
-            // BYTE_POINTER, // Same as void* in C++
-            // CONSTANT,
-            // UNKNOWN_TYPE, // For error propagation
-
-            // Add subtypes in correct order
-            add_struct_subtype(type_info_type, "Primitive", primitive_info);
-            add_struct_subtype(type_info_type, "Array", array_info);
-            add_struct_subtype(type_info_type, "Slice", slice_info);
-            add_struct_subtype(type_info_type, "Pointer", make_single_member_struct("Pointer_Info", "element_type", types->type_handle));
-            add_struct_subtype(type_info_type, "Struct", struct_info);
-            add_struct_subtype(type_info_type, "Enum", enum_info);
-            add_struct_subtype(type_info_type, "Function", function_info);
-            add_struct_subtype(type_info_type, "Type_Handle", types->empty_struct_type);
-            add_struct_subtype(type_info_type, "Byte_Pointer", types->empty_struct_type);
-            add_struct_subtype(type_info_type, "Constant", make_single_member_struct("Constant_Info", "element_type", types->type_handle));
-            add_struct_subtype(type_info_type, "Unknown", types->empty_struct_type);
-
-            type_system_finish_struct(type_info_type);
-            types->type_information_type = type_info_type;
-            test_type_similarity<Internal_Type_Information>(upcast(type_info_type));
-        }
+        // Finish type-information
+        type_system_finish_struct(type_info_type); 
+        test_type_similarity<Internal_Type_Information>(upcast(type_info_type));
     }
 
     // Hardcoded Functions
@@ -1824,6 +1846,14 @@ void type_system_print(Type_System* system)
 
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value)
 {
+    if (enum_type->values_are_sequential) {
+        int index = value - enum_type->sequence_start_value;
+        if (index < 0 || index >= enum_type->members.size) {
+            return optional_make_failure<Enum_Member>();
+        }
+        return optional_make_success(enum_type->members[index]);
+    }
+
     auto& members = enum_type->members;
     for (int i = 0; i < members.size; i++) {
         Enum_Member member = members[i];
@@ -1840,8 +1870,7 @@ bool datatype_is_unknown(Datatype* a) {
     return 
         a->base_type->type == Datatype_Type::UNKNOWN_TYPE ||
         a->base_type->type == Datatype_Type::TEMPLATE_PARAMETER || 
-        a->base_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE ||
-        a->base_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE_SUBTYPE;
+        a->base_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE;
 }
 
 bool type_size_is_unfinished(Datatype* a) {
@@ -1854,11 +1883,24 @@ bool type_mods_is_constant(Type_Mods mods, int pointer_level)
     return (mods.constant_flags & (1 << pointer_level)) != 0;
 }
 
-Type_Mods type_mods_make(int pointer_level, u32 const_flags)
+Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level)
+{
+    Struct_Content* content = &structure->content;
+    for (int i = 0; i < mods.subtype_index->indices.size && (max_level == -1 || i < max_level); i++) {
+        content = content->subtypes[mods.subtype_index->indices[i].index];
+    }
+    return content;
+}
+
+Type_Mods type_mods_make(int pointer_level, u32 const_flags, Subtype_Index* index)
 {
     Type_Mods result;
     result.pointer_level = pointer_level;
     result.constant_flags = const_flags;
+    result.subtype_index = index;
+    if (index == 0) {
+        result.subtype_index = &compiler.type_system.subtype_base_index;
+    }
     return result;
 }
 

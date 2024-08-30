@@ -471,6 +471,7 @@ enum class Member_Access_Type
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
     DOT_CALL_AS_MEMBER,
     STRUCT_SUBTYPE,
+    STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };
 
 enum class Expression_Result_Type

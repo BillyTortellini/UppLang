@@ -19,9 +19,6 @@
     <Filter Include="Source Files\Datastructures">
       <UniqueIdentifier>{349d9e5d-0d12-4aa0-b610-b6700c5c135a}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Rendering">
-      <UniqueIdentifier>{5cba0240-f303-4cef-974e-d82f904c5b72}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\Rendering">
       <UniqueIdentifier>{3891d975-81f1-4d78-8bdc-202e359c8569}</UniqueIdentifier>
     </Filter>
@@ -64,15 +61,6 @@
     <Filter Include="Resource Files\Shaders">
       <UniqueIdentifier>{c976234c-3ac4-46c7-899d-44bdf1c1587e}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Rendering\Core">
-      <UniqueIdentifier>{46009852-c24f-48ba-a9b5-aee98d4f86c6}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Rendering\Utility">
-      <UniqueIdentifier>{6e8961df-a84d-4de3-a962-9d7bd4102668}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Rendering\2D">
-      <UniqueIdentifier>{bf38fd37-de12-4e4c-af9c-c1f6ec21b7ba}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\Rendering\Core">
       <UniqueIdentifier>{cef1c01e-c2c1-44f9-b16d-e93286da6fdb}</UniqueIdentifier>
     </Filter>
@@ -114,6 +102,18 @@
     </Filter>
     <Filter Include="Source Files\Programs\Bachelor_Thesis">
       <UniqueIdentifier>{045d66cc-4411-4663-b45a-44fc6a765cab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering">
+      <UniqueIdentifier>{5cba0240-f303-4cef-974e-d82f904c5b72}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering\Core">
+      <UniqueIdentifier>{46009852-c24f-48ba-a9b5-aee98d4f86c6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering\Utility">
+      <UniqueIdentifier>{6e8961df-a84d-4de3-a962-9d7bd4102668}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Rendering\2D">
+      <UniqueIdentifier>{bf38fd37-de12-4e4c-af9c-c1f6ec21b7ba}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
