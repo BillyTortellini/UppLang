@@ -56,7 +56,7 @@ enum class Instruction_Type
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
     RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
-    EXIT, // op1 = exit_code
+    EXIT, // op1 = exit_code, op2 + op3 = Encoded pointer to error msg, see 
 
     LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
@@ -160,3 +160,4 @@ void bytecode_generator_set_entry_function(Bytecode_Generator* generator);
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
 int align_offset_next_multiple(int offset, int alignment);
+Exit_Code exit_code_from_exit_instruction(const Bytecode_Instruction& exit_instr);

@@ -89,7 +89,6 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::INSTANCIATE: return string_create_static("#instanciate");
     case Keyword::BREAK: return string_create_static("break");
-    case Keyword::CASE: return string_create_static("case");
     case Keyword::CAST: return string_create_static("cast");
     case Keyword::CAST_POINTER: return string_create_static("cast_pointer");
     case Keyword::CONTINUE: return string_create_static("continue");

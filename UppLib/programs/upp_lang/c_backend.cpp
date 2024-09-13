@@ -153,19 +153,19 @@ void c_compiler_compile(C_Compiler* compiler)
 Exit_Code c_compiler_execute(C_Compiler* compiler)
 {
     if (!compiler->initialized) {
-        return Exit_Code::COMPILATION_FAILED;
+        return exit_code_make(Exit_Code_Type::COMPILATION_FAILED, "Compiler not initialized");
     }
     if (!compiler->last_compile_successfull) {
         logg("C_Compiler did not execute, since last compile was not successfull");
-        return Exit_Code::COMPILATION_FAILED;
+        return exit_code_make(Exit_Code_Type::COMPILATION_FAILED, "Last compilation was not successfull");
     }
 
-    int exit_code = process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
-    if (exit_code_is_valid(exit_code)) {
-        return (Exit_Code)exit_code;
+    int exit_code_value = process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
+    if (exit_code_value <= 0 || exit_code_value >= (int)Exit_Code_Type::MAX_ENUM_VALUE) {
+        return exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Exit code value from program execution was invalid");
     }
 
-    return Exit_Code::CODE_ERROR_OCCURED;
+    return exit_code_make((Exit_Code_Type) exit_code_value);
 }
 
 C_Generator c_generator_create()
@@ -723,7 +723,7 @@ void c_generator_output_code_block(C_Generator* generator, String* output, IR_Co
             switch (return_instr->type)
             {
             case IR_Instruction_Return_Type::EXIT: {
-                string_append_formated(output, "exit(%d);\n", (i32)return_instr->options.exit_code);
+                string_append_formated(output, "exit(%d);\n", (i32)return_instr->options.exit_code.type);
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {

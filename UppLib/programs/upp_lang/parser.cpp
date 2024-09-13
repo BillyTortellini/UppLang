@@ -913,19 +913,31 @@ namespace Parser
 
         Switch_Case* parse_switch_case(Node* parent)
         {
-            if (!test_keyword_offset(Keyword::CASE, 0) && !test_keyword_offset(Keyword::DEFAULT, 0)) {
-                return 0;
-            }
-
             auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
-            bool is_default = test_keyword_offset(Keyword::DEFAULT, 0);
-            advance_token();
-            result->value.available = false;
-            if (!is_default) {
-                result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
-            }
-            result->block = parse_code_block(&result->base, 0);
+            result->value = optional_make_failure<Expression*>();
+            result->variable_definition = optional_make_failure<AST::Definition_Symbol*>();
 
+            // Check for default case
+            if (test_keyword(Keyword::DEFAULT)) {
+                advance_token();
+            }
+            else
+            {
+                result->value.available = true;
+                result->value.value = parse_expression_or_error_expr(upcast(result));
+                if (test_operator(Operator::ARROW)) 
+                {
+                    advance_token();
+                    if (test_token(Token_Type::IDENTIFIER)) {
+                        result->variable_definition = optional_make_success(parse_definition_symbol(upcast(result)));
+                    }
+                    else {
+                        log_error_range_offset("Expected identifier after arrow", 0);
+                    }
+                }
+            }
+
+            result->block = parse_code_block(&result->base, 0);
             // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
             assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
             result->block->block_id = ((Statement*)parent)->options.switch_statement.label;

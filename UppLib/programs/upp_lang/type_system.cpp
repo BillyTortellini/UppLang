@@ -652,6 +652,13 @@ Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices)
     }
 }
 
+Subtype_Index* subtype_index_make_from_other(Subtype_Index* other_index, Named_Index named_index)
+{
+    Dynamic_Array<Named_Index> new_indices = dynamic_array_create_copy(other_index->indices.data, other_index->indices.size);
+    dynamic_array_push_back(&new_indices, named_index);
+    return subtype_index_make(new_indices);
+}
+
 Type_System type_system_create(Timer* timer)
 {
     Type_System result;

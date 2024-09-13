@@ -49,23 +49,26 @@ enum class Hardcoded_Type
 
 void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded);
 
-enum class Exit_Code
+enum class Exit_Code_Type
 {
     SUCCESS,
-    OUT_OF_BOUNDS,
-    STACK_OVERFLOW,
-    RETURN_VALUE_OVERFLOW,
-    EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED,
-    ASSERTION_FAILED,
-    COMPILATION_FAILED,
+    COMPILATION_FAILED, // Code did not because there were compile errors
+    CODE_ERROR,
+    EXECUTION_ERROR, // Stack overflow, return value overflow, instruction limit reached
     INSTRUCTION_LIMIT_REACHED,
-    CODE_ERROR_OCCURED,
-    ANY_CAST_INVALID,
-    INVALID_SWITCH_CASE,
-    TYPE_INFO_WAITING_FOR_TYPE_FINISHED
+    TYPE_INFO_WAITING_FOR_TYPE_FINISHED,
+
+    MAX_ENUM_VALUE
+};
+const char* exit_code_type_as_string(Exit_Code_Type type);
+
+struct Exit_Code
+{
+    Exit_Code_Type type;
+    const char* error_msg; // May be null
 };
 
-bool exit_code_is_valid(int value);
+Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg = 0);
 void exit_code_append_to_string(String* string, Exit_Code code);
 
 

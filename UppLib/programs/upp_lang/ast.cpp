@@ -158,6 +158,7 @@ namespace AST
         case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
+            FILL_OPTIONAL(sw_case->variable_definition);
             FILL(sw_case->block);
             break;
         }
@@ -483,6 +484,7 @@ namespace AST
         case Node_Type::SWITCH_CASE: {
             auto sw_case = (Switch_Case*)node;
             FILL_OPTIONAL(sw_case->value);
+            FILL_OPTIONAL(sw_case->variable_definition);
             FILL(sw_case->block);
             break;
         }

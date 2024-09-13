@@ -459,6 +459,28 @@ const char* bytecode_type_as_string(Bytecode_Type type)
     return "ERROR";
 }
 
+void push_exit_instruction(Bytecode_Generator* generator, IR_Code_Block* code_block, Exit_Code exit_code)
+{
+    const char* msg = exit_code.error_msg;
+    u64 address = (u64)msg;
+    int lower_32bit = (int) (address & 0xFFFFFFFF);
+    int high_32_bit = (int) ((address >> 32) & 0xFFFFFFFF);
+    bytecode_generator_add_instruction(generator,
+        instruction_make_3(Instruction_Type::EXIT, (int)exit_code.type, lower_32bit, high_32_bit)
+    );
+}
+
+Exit_Code exit_code_from_exit_instruction(const Bytecode_Instruction& exit_instr)
+{
+    assert(exit_instr.instruction_type == Instruction_Type::EXIT, "");
+    Exit_Code result;
+    result.type = (Exit_Code_Type)exit_instr.op1;
+
+    u64 address = ((u64)(u32)exit_instr.op2) | (((u64)(u32)exit_instr.op3) << 32);
+    result.error_msg = (const char*)address;
+    return result;
+}
+
 void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Code_Block* code_block)
 {
     // Generate Stack offsets
@@ -597,9 +619,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 );
                 break;
             case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-                bytecode_generator_add_instruction(generator,
-                    instruction_make_1(Instruction_Type::EXIT, (int)Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED)
-                );
+                push_exit_instruction(generator, code_block, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Extern function call not implemented"));
                 break;
             default: panic("Error");
             }
@@ -745,9 +765,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             switch (return_instr->type)
             {
             case IR_Instruction_Return_Type::EXIT: {
-                bytecode_generator_add_instruction(generator,
-                    instruction_make_1(Instruction_Type::EXIT, (int)return_instr->options.exit_code)
-                );
+                push_exit_instruction(generator, code_block, return_instr->options.exit_code);
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
@@ -1126,10 +1144,12 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     case Instruction_Type::RETURN:
         string_append_formated(string, "RETURN                       value-reg: %d, return-size: %d", i.op1, i.op2);
         break;
-    case Instruction_Type::EXIT:
-        string_append_formated(string, "EXIT                         exit-code: ");
-        exit_code_append_to_string(string, (Exit_Code)i.op1);
+    case Instruction_Type::EXIT: {
+        string_append_formated(string, "EXIT                         Code: ");
+        Exit_Code code = exit_code_from_exit_instruction(instruction);
+        exit_code_append_to_string(string, code);
         break;
+    }
     case Instruction_Type::LOAD_RETURN_VALUE:
         string_append_formated(string, "LOAD_RETURN_VALUE            dst: %d, size: %d", i.op1, i.op2);
         break;

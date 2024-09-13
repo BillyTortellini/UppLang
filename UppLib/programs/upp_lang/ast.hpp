@@ -346,6 +346,7 @@ namespace AST
     {
         Node base;
         Optional<Expression*> value; // Default-Case if value not available
+        Optional<Definition_Symbol*> variable_definition; // case .IPv4 -> v4
         Code_Block* block;
     };
 

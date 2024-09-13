@@ -509,8 +509,9 @@ bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_non_const_type(Datatype* datatype);
 bool type_mods_is_constant(Type_Mods mods, int pointer_level);
-Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int level = -1);
+Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level = -1);
 Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
+Subtype_Index* subtype_index_make_from_other(Subtype_Index* other_index, Named_Index named_index);
 Type_Mods type_mods_make(int pointer_level, u32 const_flags, Subtype_Index* subtype = 0);
 
 

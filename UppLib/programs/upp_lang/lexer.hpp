@@ -66,7 +66,6 @@ enum class Keyword
     ELSE,
     WHILE,
     SWITCH,
-    CASE,
     DEFAULT,
     MODULE,
     NEW,

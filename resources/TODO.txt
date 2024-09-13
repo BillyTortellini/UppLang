@@ -1,12 +1,29 @@
 
+- Switch:
+
+switch address
+    case .IPv4 -> ipv4
+
+switch address
+    .IPv4 -> v4
+        something
+        #fallthrough
+    .IPv6 -> v6
+        something
+    default
+        something else
 
 TODO:
 -----
- - Downcast should probably check tag?
  - Switch
  - Struct Initializer
 
 Probably tomorrow:
+
+DONE:
+ - Downcast should probably check tag?
+    Seems reasonable, how does the analyser store this so that the ir-generator knows it?
+    Note: The downcast is currently the node.Statement thing...
 
 
 

@@ -59,8 +59,8 @@ IR_Code_Block* ir_code_block_create(IR_Function* function)
 {
     IR_Code_Block* block = new IR_Code_Block();
     block->function = function;
-    block->instructions = dynamic_array_create<IR_Instruction>(64);
-    block->registers = dynamic_array_create<Datatype*>(32);
+    block->instructions = dynamic_array_create<IR_Instruction>();
+    block->registers = dynamic_array_create<Datatype*>();
     return block;
 }
 
@@ -426,12 +426,11 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     {
         Datatype* value_type = ir_data_access_get_type(&instruction->options.switch_instr.condition_access);
         Datatype_Enum* enum_type = 0;
-        // TODO:
-        // if (value_type->type == Datatype_Type::STRUCT) {
-        //     auto structure = downcast<Datatype_Struct>(value_type);
-        //     assert(structure->struct_type == AST::Structure_Type::UNION, "");
-        //     enum_type = downcast<Datatype_Enum>(structure->tag_member.type);
-        // }
+        if (value_type->base_type->type == Datatype_Type::STRUCT) {
+            auto structure = downcast<Datatype_Struct>(value_type->base_type);
+            enum_type = downcast<Datatype_Enum>(type_mods_get_subtype(structure, value_type->mods)->tag_member.type);
+        }
+        else
         {
             assert(value_type->type == Datatype_Type::ENUM, "If not union, this must be an enum");
             enum_type = downcast<Datatype_Enum>(value_type);
@@ -896,7 +895,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-                exit_instr.options.return_instr.options.exit_code = Exit_Code::ASSERTION_FAILED;
+                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Assertion failed");
                 dynamic_array_push_back(&if_instr.options.if_instr.false_branch->instructions, exit_instr);
 
                 call_instr.options.call.destination = ir_data_access_create_nothing();
@@ -1155,7 +1154,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
         auto src_type = get_info(mem_access.expr)->cast_info.result_type;
 
         // Handle custom member accesses
-        if (info->specifics.member_access.type == Member_Access_Type::DOT_CALL_AS_MEMBER) {
+        if (info->specifics.member_access.type == Member_Access_Type::DOT_CALL_AS_MEMBER) 
+        {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
@@ -1167,7 +1167,41 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
-        else if (info->specifics.member_access.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST) {
+        else if (info->specifics.member_access.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST) 
+        {
+            // Tag-check on downcast
+            auto dst_type = info->cast_info.result_type;
+            assert(types_are_equal(src_type->base_type, dst_type->base_type), "");
+            assert(src_type->base_type->type == Datatype_Type::STRUCT && dst_type->base_type->type == Datatype_Type::STRUCT, "");
+            if (dst_type->mods.subtype_index->indices.size > src_type->mods.subtype_index->indices.size) 
+            {
+                assert(dst_type->mods.subtype_index->indices.size == src_type->mods.subtype_index->indices.size + 1, "Downcast must only be a single level");
+                Struct_Content* base_content = type_mods_get_subtype(downcast<Datatype_Struct>(src_type), src_type->mods);
+                int child_tag_value = dst_type->mods.subtype_index->indices[dst_type->mods.subtype_index->indices.size-1].index + 1; // Tag value == index + 1
+
+                IR_Data_Access condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
+                IR_Instruction condition_instr;
+                condition_instr.type = IR_Instruction_Type::BINARY_OP;
+                condition_instr.options.binary_op.destination = condition_access;
+                condition_instr.options.binary_op.operand_left = ir_data_access_create_member(ir_block, source, base_content->tag_member);
+                condition_instr.options.binary_op.operand_right = ir_data_access_create_constant_i32(child_tag_value);
+                condition_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
+                dynamic_array_push_back(&ir_block->instructions, condition_instr);
+
+                IR_Instruction if_instr;
+                if_instr.type = IR_Instruction_Type::IF;
+                if_instr.options.if_instr.condition = condition_access;
+                if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
+                if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
+                dynamic_array_push_back(&ir_block->instructions, if_instr);
+
+                IR_Instruction exit_instr;
+                exit_instr.type = IR_Instruction_Type::RETURN;
+                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
+                dynamic_array_push_back(&if_instr.options.if_instr.true_branch->instructions, exit_instr);
+            }
+
             return source;
         }
 
@@ -1492,7 +1526,7 @@ IR_Data_Access ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Ex
             IR_Instruction exit_instr;
             exit_instr.type = IR_Instruction_Type::RETURN;
             exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = Exit_Code::ANY_CAST_INVALID;
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Any cast downcast failed, type index was invalid");
             dynamic_array_push_back(&branch_invalid->instructions, exit_instr);
         }
         return access_result;
@@ -1730,21 +1764,19 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     }
     case AST::Statement_Type::SWITCH_STATEMENT:
     {
+        auto& switch_info = get_info(statement)->specifics.switch_statement;
+        IR_Data_Access condition_access = ir_generator_generate_expression(ir_block, statement->options.switch_statement.condition);
+
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::SWITCH;
-        instr.options.switch_instr.condition_access = ir_generator_generate_expression(ir_block, statement->options.switch_statement.condition);
+        instr.options.switch_instr.condition_access = condition_access;
         instr.options.switch_instr.cases = dynamic_array_create<IR_Switch_Case>(statement->options.switch_statement.cases.size);
 
-        // Check for union access
+        // Check for subtype access
         auto cond_type = ir_data_access_get_type(&instr.options.switch_instr.condition_access);
-        // if (cond_type->type == Datatype_Type::STRUCT) {
-        //     auto structure = downcast<Datatype_Struct>(cond_type);
-        //     assert(structure->struct_type == AST::Structure_Type::UNION, "");
-        //     instr.options.switch_instr.condition_access =
-        //         ir_data_access_create_member(ir_block, instr.options.switch_instr.condition_access, structure->tag_member);
-        // }
-        {
-            assert(cond_type->type == Datatype_Type::ENUM, "");
+        if (switch_info.base_content != nullptr) {
+            cond_type = switch_info.base_content->tag_member.type;
+            instr.options.switch_instr.condition_access = ir_data_access_create_member(ir_block, condition_access, switch_info.base_content->tag_member);
         }
 
         AST::Switch_Case* default_case = 0;
@@ -1762,6 +1794,15 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             IR_Switch_Case new_case;
             new_case.value = case_info->case_value;
             new_case.block = ir_code_block_create(ir_block->function);
+
+            // Create case variable if available
+            if (case_info->variable_symbol != 0) {
+                // Generate pointer access to subtype
+                IR_Data_Access pointer_access = ir_data_access_create_address_of(new_case.block, condition_access);
+                new_case.block->registers[pointer_access.index] = case_info->variable_symbol->options.variable_type; // Update type to subtype
+                hashtable_insert_element(&ir_generator.variable_mapping, switch_case->variable_definition.value, pointer_access);
+            }
+
             ir_generator_generate_block(new_case.block, switch_case->block);
             dynamic_array_push_back(&instr.options.switch_instr.cases, new_case);
         }
@@ -1774,7 +1815,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             IR_Instruction exit_instr;
             exit_instr.type = IR_Instruction_Type::RETURN;
             exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = Exit_Code::INVALID_SWITCH_CASE;
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Switch did not contain the correct case");
             dynamic_array_push_back(&instr.options.switch_instr.default_block->instructions, exit_instr);
         }
         dynamic_array_push_back(&ir_block->instructions, instr);
@@ -2382,7 +2423,7 @@ void ir_generator_finish(bool gen_bytecode)
             IR_Instruction exit_instr;
             exit_instr.type = IR_Instruction_Type::RETURN;
             exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = Exit_Code::SUCCESS;
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::SUCCESS);
             dynamic_array_push_back(&entry_function->code->instructions, exit_instr);
         }
 

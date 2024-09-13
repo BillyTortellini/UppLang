@@ -454,7 +454,6 @@ struct Expression_Cast_Info
     Datatype* result_type;
     bool initial_value_is_temporary;
     bool result_value_is_temporary;
-    bool check_subtype_tag_on_value;
 
     int deref_count; // May be negative to indicate take-address of
     Cast_Type cast_type;
@@ -470,7 +469,7 @@ enum class Member_Access_Type
     STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
     DOT_CALL_AS_MEMBER,
-    STRUCT_SUBTYPE,
+    STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
     STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };
 
@@ -580,9 +579,9 @@ struct Context_Change_Info
 
 enum class Control_Flow
 {
-    SEQUENTIAL, // One sequential path exists, but there may be paths that aren't sequential
+    SEQUENTIAL, // One sequential path exists, but there may be paths that stop/return
     STOPS,      // Execution never goes further than the given statement, but there may be paths that return
-    RETURNS,    // All possible code path return
+    RETURNS,    // All possible code paths return
 };
 
 struct Statement_Info
@@ -615,6 +614,9 @@ struct Statement_Info
                 int get_value_pointer_diff;
             } custom_op;
         } foreach_loop;
+        struct {
+            Struct_Content* base_content; // May be null for simple enum switch
+        } switch_statement;
     } specifics;
 };
 
@@ -627,8 +629,9 @@ struct Code_Block_Info
 
 struct Case_Info
 {
-    int is_valid;
+    bool is_valid;
     int case_value; // Currently we only switch over enums/ints
+    Symbol* variable_symbol;
 };
 
 struct Parameter_Info {

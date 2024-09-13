@@ -52,9 +52,6 @@
     <Filter Include="Header Files\Programs\Upp_Lang">
       <UniqueIdentifier>{1de67f4c-8759-4d19-adae-3c007076e502}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\Proc_City">
-      <UniqueIdentifier>{b438c3f2-8a56-409a-8b47-f0fc5e099085}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\Win32">
       <UniqueIdentifier>{f56a672e-dbe3-4a24-8923-c36a332b7330}</UniqueIdentifier>
     </Filter>
@@ -85,9 +82,6 @@
     <Filter Include="Source Files\Programs\Text_Editor">
       <UniqueIdentifier>{bcfac7d7-fac4-4aca-a9f1-d43ca9f108e1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\C_Importer">
-      <UniqueIdentifier>{47028984-d817-4d39-8ee3-bbc51605c838}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\Programs\C_Importer">
       <UniqueIdentifier>{97e19768-b984-4e20-a66d-1d4c80794ef3}</UniqueIdentifier>
     </Filter>
@@ -114,6 +108,12 @@
     </Filter>
     <Filter Include="Header Files\Rendering\2D">
       <UniqueIdentifier>{bf38fd37-de12-4e4c-af9c-c1f6ec21b7ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\C_Importer">
+      <UniqueIdentifier>{47028984-d817-4d39-8ee3-bbc51605c838}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Programs\Proc_City">
+      <UniqueIdentifier>{b438c3f2-8a56-409a-8b47-f0fc5e099085}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -258,9 +258,6 @@
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\c_backend.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -291,12 +288,6 @@
     <ClInclude Include="programs\c_importer\c_importer.hpp">
       <Filter>Header Files\Programs\C_Importer</Filter>
     </ClInclude>
-    <ClInclude Include="programs\text_editor\text.hpp">
-      <Filter>Header Files\Programs\Text_Editor</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\c_importer\c_lexer.hpp">
-      <Filter>Header Files\Programs\C_Importer</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\lexer.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -305,9 +296,6 @@
     </ClInclude>
     <ClInclude Include="programs\upp_lang\symbol_table.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\render_rework\render_rework.hpp">
-      <Filter>Header Files\Programs\Render_Rework</Filter>
     </ClInclude>
     <ClInclude Include="rendering\texture.hpp">
       <Filter>Header Files\Rendering\Core</Filter>
@@ -324,8 +312,20 @@
     <ClInclude Include="programs\bachelor_thesis\bachelor.hpp">
       <Filter>Header Files\Programs\Bachelor_Thesis</Filter>
     </ClInclude>
+    <ClInclude Include="programs\c_importer\c_lexer.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\text_editor\text.hpp">
+      <Filter>Header Files\Programs\Text_Editor</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
     <ClInclude Include="programs\upp_lang\ast.hpp">
-      <Filter>Header Files\Programs\C_Importer</Filter>
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\render_rework\render_rework.hpp">
+      <Filter>Header Files\Programs\Render_Rework</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

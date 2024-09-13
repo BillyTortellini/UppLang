@@ -517,7 +517,7 @@ Exit_Code compiler_execute()
             return thread->exit_code;
         }
     }
-    return Exit_Code::COMPILATION_FAILED;
+    return exit_code_make(Exit_Code_Type::COMPILATION_FAILED);
 }
 
 
@@ -793,12 +793,12 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         SCOPE_EXIT(source_code_destroy(source_code));
         compiler_compile_clean(source_code, Compile_Type::BUILD_CODE, path);
         Exit_Code exit_code = compiler_execute();
-        if (exit_code != Exit_Code::SUCCESS && test_case->should_succeed)
+        if (exit_code.type != Exit_Code_Type::SUCCESS && test_case->should_succeed)
         {
             string_append_formated(&result, "ERROR:   Test %s exited with Code ", test_case->name);
             exit_code_append_to_string(&result, exit_code);
             string_append_formated(&result, "\n");
-            if (exit_code == Exit_Code::COMPILATION_FAILED)
+            if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
                 for (int i = 0; i < compiler.code_sources.size; i++) {
                     auto parser_errors = compiler.code_sources[i]->parsed_code->error_messages;
@@ -820,7 +820,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
             }
             errors_occured = true;
         }
-        else if (exit_code == Exit_Code::SUCCESS && !test_case->should_succeed) {
+        else if (exit_code.type == Exit_Code_Type::SUCCESS && !test_case->should_succeed) {
             string_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", test_case->name);
             errors_occured = true;
         }

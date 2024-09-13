@@ -70,52 +70,34 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
     }
 }
 
-bool exit_code_is_valid(int value)
+Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg)
 {
-    return value >= (int)Exit_Code::SUCCESS && value <= (int)Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED;
+    Exit_Code result;
+    result.type = type;
+    result.error_msg = error_msg;
+    return result;
+}
+
+const char* exit_code_type_as_string(Exit_Code_Type type)
+{
+    switch (type)
+    {
+    case Exit_Code_Type::SUCCESS: return "SUCCESS";
+    case Exit_Code_Type::COMPILATION_FAILED: return "COMPILATION_FAILED";
+    case Exit_Code_Type::CODE_ERROR: return "CODE_ERROR";
+    case Exit_Code_Type::EXECUTION_ERROR: return "EXECUTION_ERROR";
+    case Exit_Code_Type::INSTRUCTION_LIMIT_REACHED: return "INSTRUCTION_LIMIT_REACHED";
+    case Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED: return "TYPE_INFO_WAITING_FOR_TYPE_FINISH";
+    default: panic("");
+    }
+    return "";
 }
 
 void exit_code_append_to_string(String* string, Exit_Code code)
 {
-    switch (code)
-    {
-    case Exit_Code::ASSERTION_FAILED:
-        string_append_formated(string, "ASSERTION_FAILED");
-        break;
-    case Exit_Code::OUT_OF_BOUNDS:
-        string_append_formated(string, "OUT_OF_BOUNDS");
-        break;
-    case Exit_Code::RETURN_VALUE_OVERFLOW:
-        string_append_formated(string, "RETURN_VALUE_OVERFLOW");
-        break;
-    case Exit_Code::STACK_OVERFLOW:
-        string_append_formated(string, "STACK_OVERFLOW");
-        break;
-    case Exit_Code::SUCCESS:
-        string_append_formated(string, "SUCCESS");
-        break;
-    case Exit_Code::COMPILATION_FAILED:
-        string_append_formated(string, "COMPILATION_FAILED");
-        break;
-    case Exit_Code::EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED:
-        string_append_formated(string, "EXTERN_FUNCTION_CALL_NOT_IMPLEMENTED");
-        break;
-    case Exit_Code::ANY_CAST_INVALID:
-        string_append_formated(string, "ANY_CAST_INVALID");
-        break;
-    case Exit_Code::INSTRUCTION_LIMIT_REACHED:
-        string_append_formated(string, "INSTRUCTION_LIMIT_REACHED");
-        break;
-    case Exit_Code::INVALID_SWITCH_CASE:
-        string_append_formated(string, "INVALID_SWITCH_CASE");
-        break;
-    case Exit_Code::CODE_ERROR_OCCURED:
-        string_append_formated(string, "CODE_ERROR_OCCURED");
-        break;
-    case Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED:
-        string_append_formated(string, "TYPE_INFO_WAITING_FOR_TYPE_FINISHED");
-        break;
-    default: panic("Hey");
+    string_append_formated(string, exit_code_type_as_string(code.type));
+    if (code.error_msg != 0) {
+        string_append_formated(string, ", %s", code.error_msg);
     }
 }
 

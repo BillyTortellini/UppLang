@@ -3871,9 +3871,10 @@ void analysis_workload_entry(void* userdata)
         Bytecode_Thread* thread = bytecode_thread_create(10000);
         SCOPE_EXIT(bytecode_thread_destroy(thread));
         bytecode_thread_set_initial_state(thread, func_start_instr_index);
-        while (true) {
+        while (true) 
+        {
             bytecode_thread_execute(thread);
-            if (thread->exit_code == Exit_Code::TYPE_INFO_WAITING_FOR_TYPE_FINISHED)
+            if (thread->exit_code.type == Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED)
             {
                 bool cyclic_dependency_occured = false;
                 type_wait_for_size_info_to_finish(thread->waiting_for_type_finish_type, dependency_failure_info_make(&cyclic_dependency_occured));
@@ -3883,7 +3884,7 @@ void analysis_workload_entry(void* userdata)
                     return;
                 }
             }
-            else if (thread->exit_code == Exit_Code::SUCCESS) {
+            else if (thread->exit_code.type == Exit_Code_Type::SUCCESS) {
                 break;
             }
             else {
@@ -4132,7 +4133,6 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
     cast_info.deref_count = 0;
     cast_info.initial_type = initial_type;
     cast_info.result_type = initial_type;
-    cast_info.check_subtype_tag_on_value = false;
     cast_info.initial_value_is_temporary = is_temporary_value;
     cast_info.result_value_is_temporary = is_temporary_value;
     cast_info.options.error_msg = nullptr;
@@ -7996,7 +7996,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
     result.initial_value_is_temporary = is_temporary_value;
     result.result_value_is_temporary = true;
 
-    // Check for simple cases 
+    // Check for simple cases (Equality, const-equality or unknown)
     if (types_are_equal(destination_type, source_type)) {
         result.cast_type = Cast_Type::NO_CAST;
         result.result_value_is_temporary = is_temporary_value;
@@ -8103,7 +8103,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
         }
     }
 
-    // Check if auto-address of/dereference works
+    // Check if type-mods update works
     if (types_are_equal(source_type->base_type, destination_type->base_type)) 
     {
         result.cast_type = Cast_Type::NO_CAST;
@@ -8403,7 +8403,6 @@ Expression_Cast_Info expression_context_apply(
     result.result_type = initial_type;
     result.initial_value_is_temporary = semantic_analyser.current_workload->current_expression->cast_info.initial_value_is_temporary;
     result.result_value_is_temporary = result.initial_value_is_temporary;
-    result.check_subtype_tag_on_value = false;
     result.deref_count = 0;
     result.cast_type = Cast_Type::INVALID;
     result.options.error_msg = "";
@@ -9886,13 +9885,29 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
         auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
         switch_type = datatype_get_non_const_type(switch_type);
-        // TODO:
-        // if (switch_type->type == Datatype_Type::STRUCT && downcast<Datatype_Struct>(switch_type)->struct_type == AST::Structure_Type::UNION) {
-        //     switch_type = downcast<Datatype_Struct>(switch_type)->context.tag_member.type;
-        // }
-        if (switch_type->type != Datatype_Type::ENUM)
+        auto& switch_info = get_info(statement)->specifics.switch_statement;
+        switch_info.base_content = nullptr;
+
+        // Check switch value
+        Struct_Content* struct_content = nullptr;
+        Datatype* condition_type = switch_type;
+        if (switch_type->type == Datatype_Type::STRUCT) 
         {
-            log_semantic_error("Switch only works on either enum or union types", switch_node.condition);
+            type_wait_for_size_info_to_finish(switch_type);
+            struct_content = type_mods_get_subtype(downcast<Datatype_Struct>(switch_type->base_type), switch_type->mods);
+            if (struct_content->subtypes.size != 0) {
+                switch_type = struct_content->tag_member.type;
+                switch_info.base_content = struct_content;
+            }
+            else {
+                log_semantic_error("Switch value must be a struct with subtypes or an enum!", switch_node.condition);
+                switch_type = types.unknown_type;
+                struct_content = nullptr;
+            }
+        }
+        else if (switch_type->type != Datatype_Type::ENUM)
+        {
+            log_semantic_error("Switch only works on either enum or struct subtypes", switch_node.condition);
             log_error_info_given_type(switch_type);
         }
 
@@ -9905,23 +9920,9 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             auto& case_node = switch_node.cases[i];
             auto case_info = get_info(case_node, true);
             case_info->is_valid = false;
-            auto case_flow = semantic_analyser_analyse_block(case_node->block);
-            if (i == 0) {
-                switch_flow = case_flow;
-            }
-            else
-            {
-                // Combine flows according to the Conditional Branch rules
-                if (switch_flow != case_flow) {
-                    if (switch_flow == Control_Flow::SEQUENTIAL || case_flow == Control_Flow::SEQUENTIAL) {
-                        switch_flow = Control_Flow::SEQUENTIAL;
-                    }
-                    else {
-                        switch_flow = Control_Flow::STOPS;
-                    }
-                }
-            }
+            case_info->variable_symbol = 0;
 
+            // Analyse case value
             if (case_node->value.available)
             {
                 auto case_type = semantic_analyser_analyse_expression_value(case_node->value.value, case_context);
@@ -9944,6 +9945,58 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     log_semantic_error("Only one default section allowed in switch", statement);
                 }
                 default_found = true;
+            }
+
+            // If a variable name is given, create a new symbol for it
+            Symbol_Table* restore_table = semantic_analyser.current_workload->current_symbol_table;
+            SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table = restore_table);
+            if (case_node->variable_definition.available && case_info->is_valid)
+            {
+                Symbol_Table* case_table = symbol_table_create_with_parent(restore_table, Symbol_Access_Level::INTERNAL);
+                semantic_analyser.current_workload->current_symbol_table = case_table;
+                Symbol* var_symbol = symbol_table_define_symbol(
+                    case_table, case_node->variable_definition.value->name, Symbol_Type::VARIABLE, upcast(case_node->variable_definition.value), 
+                    Symbol_Access_Level::INTERNAL
+                );
+                var_symbol->options.variable_type = types.unknown_type;
+                case_info->variable_symbol = var_symbol;
+
+                if (struct_content != nullptr) 
+                {
+                    // Variable is a pointer to the subtype
+                    Named_Index named_index;
+                    named_index.index = case_info->case_value - 1;
+                    named_index.name = struct_content->subtypes[named_index.index]->name;
+                    auto result_subtype = type_system_make_type_with_mods(
+                        condition_type->base_type, 
+                        type_mods_make(
+                            1,
+                            (type_mods_is_constant(condition_type->mods, 0) ? 1 : 0),
+                            subtype_index_make_from_other(condition_type->mods.subtype_index, named_index))
+                    );
+                    var_symbol->options.variable_type = result_subtype;
+                }
+                else {
+                    log_semantic_error("Case variables are only valid if the switch value is a struct with subtypes", upcast(case_node), Parser::Section::END_TOKEN);
+                }
+            }
+
+            // Analyse block and block flow
+            auto case_flow = semantic_analyser_analyse_block(case_node->block);
+            if (i == 0) {
+                switch_flow = case_flow;
+            }
+            else
+            {
+                // Combine flows according to the Conditional Branch rules
+                if (switch_flow != case_flow) {
+                    if (switch_flow == Control_Flow::SEQUENTIAL || case_flow == Control_Flow::SEQUENTIAL) {
+                        switch_flow = Control_Flow::SEQUENTIAL;
+                    }
+                    else {
+                        switch_flow = Control_Flow::STOPS;
+                    }
+                }
             }
         }
 
@@ -9975,7 +10028,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         // Check if all possible cases are handled
         if (!default_found && switch_type->type == Datatype_Type::ENUM) {
             if (unique_count < downcast<Datatype_Enum>(switch_type)->members.size) {
-                log_semantic_error("Not all cases are handled by switch", statement);
+                log_semantic_error("Not all cases are handled by switch", statement, Parser::Section::KEYWORD);
             }
         }
         return switch_flow;
