@@ -56,6 +56,7 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::ASSIGN_MULT: return operator_info_make("*=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_POINTER: return operator_info_make("=*", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_MODULO: return operator_info_make("=%", Operator_Type::BINOP, true, true);
+    case Operator::UNINITIALIZED: return operator_info_make("_", Operator_Type::UNOP, true, false);
     default: panic("");
     }
 

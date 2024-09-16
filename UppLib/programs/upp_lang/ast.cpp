@@ -31,6 +31,13 @@ namespace AST
             dynamic_array_destroy(&change->options.setting.arguments);
             break;
         }
+        case Node_Type::MEMBER_INITIALIZER: {
+            auto init = (Member_Initializer*)node;
+            if (init->type == Member_Initializer_Type::SUBTYPE_INITIALIZER) {
+                dynamic_array_destroy(&init->options.subtype_initializers);
+            }
+            break;
+        }
         case Node_Type::DEFINITION: {
             auto def = (Definition*)node;
             dynamic_array_destroy(&def->values);
@@ -72,7 +79,7 @@ namespace AST
             {
             case Expression_Type::STRUCT_INITIALIZER: {
                 auto& init = expr->options.struct_initializer;
-                dynamic_array_destroy(&init.arguments);
+                dynamic_array_destroy(&init.member_initializers);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -222,6 +229,17 @@ namespace AST
             }
             break;
         }
+        case Node_Type::MEMBER_INITIALIZER: {
+            auto init = (Member_Initializer*)node;
+            switch (init->type)
+            {
+            case Member_Initializer_Type::NORMAL: FILL(init->options.value); break;
+            case Member_Initializer_Type::SUBTYPE_INITIALIZER: FILL_ARRAY(init->options.subtype_initializers); break;
+            case Member_Initializer_Type::UNINITIALIZED: break;
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)node;
             if (import->type != Import_Type::FILE) {
@@ -293,7 +311,7 @@ namespace AST
             case Expression_Type::STRUCT_INITIALIZER: {
                 auto& init = expr->options.struct_initializer;
                 FILL_OPTIONAL(init.type_expr);
-                FILL_ARRAY(init.arguments);
+                FILL_ARRAY(init.member_initializers);
                 break;
             }
             case Expression_Type::BAKE_BLOCK: {
@@ -516,6 +534,17 @@ namespace AST
             }
             break;
         }
+        case Node_Type::MEMBER_INITIALIZER: {
+            auto init = (Member_Initializer*)node;
+            switch (init->type)
+            {
+            case Member_Initializer_Type::NORMAL: FILL(init->options.value); break;
+            case Member_Initializer_Type::SUBTYPE_INITIALIZER: FILL_ARRAY(init->options.subtype_initializers); break;
+            case Member_Initializer_Type::UNINITIALIZED: break;
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)node;
             if (import->type != Import_Type::FILE) {
@@ -619,7 +648,7 @@ namespace AST
             case Expression_Type::STRUCT_INITIALIZER: {
                 auto& init = expr->options.struct_initializer;
                 FILL_OPTIONAL(init.type_expr);
-                FILL_ARRAY(init.arguments);
+                FILL_ARRAY(init.member_initializers);
                 break;
             }
             case Expression_Type::BAKE_BLOCK: {
@@ -838,6 +867,35 @@ namespace AST
             }
             break;
         }
+        case Node_Type::MEMBER_INITIALIZER: {
+            auto init = (Member_Initializer*)base;
+            switch (init->type)
+            {
+            case Member_Initializer_Type::NORMAL: {
+                string_append_formated(str, "MEMBER_INIT");
+                if (init->name.available) {
+                    string_append_formated(str, ", %s", init->name.value->characters);
+                }
+                break;
+            }
+            case Member_Initializer_Type::SUBTYPE_INITIALIZER: {
+                string_append_formated(str, "SUBTYPE_INIT, .");
+                if (init->name.available) {
+                    string_append_formated(str, "%s", init->name.value->characters);
+                }
+                break;
+            }
+            case Member_Initializer_Type::UNINITIALIZED: {
+                string_append_formated(str, "UNINITIALIZED, _");
+                if (init->name.available) {
+                    string_append_formated(str, "%s", init->name.value->characters);
+                }
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
         case Node_Type::PATH_LOOKUP:
             string_append_formated(str, "PATH_LOOKUP ");
             break;
@@ -1023,6 +1081,9 @@ namespace AST
 
     namespace Helpers
     {
+        bool type_correct(Member_Initializer* base) {
+            return base->base.type == Node_Type::MEMBER_INITIALIZER;
+        }
         bool type_correct(Context_Change* base) {
             return base->base.type == Node_Type::CONTEXT_CHANGE;
         }

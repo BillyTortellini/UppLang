@@ -294,6 +294,9 @@ namespace Parser
             }
             else if (node->type == AST::Node_Type::STATEMENT && AST::downcast<Statement>(node)->type == AST::Statement_Type::BLOCK) {
             }
+            else if (node->type == AST::Node_Type::MEMBER_INITIALIZER) {
+                // Member initializers may just compromise a single error expression
+            }
             else if (node->type == AST::Node_Type::STATEMENT && 
                      AST::downcast<Statement>(node)->type == AST::Statement_Type::EXPRESSION_STATEMENT &&
                      AST::downcast<Statement>(node)->options.expression->type == AST::Expression_Type::ERROR_EXPR) 
@@ -1645,6 +1648,59 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
+    Member_Initializer* parse_member_initializer(Node* parent)
+    {
+        CHECKPOINT_SETUP;
+        auto result = allocate_base<Member_Initializer>(parent, Node_Type::MEMBER_INITIALIZER);
+        result->name.available = false;
+
+        // Figure out type of member initializer
+        if (test_operator(Operator::UNINITIALIZED)) {
+            result->type = Member_Initializer_Type::UNINITIALIZED;
+            advance_token();
+            PARSE_SUCCESS(result);
+        }
+        else if (test_operator(Operator::DOT) && 
+                 ((test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Operator::ASSIGN, 2)) ||
+                 (test_operator_offset(Operator::ASSIGN, 1)))) 
+        {
+            result->type = Member_Initializer_Type::SUBTYPE_INITIALIZER;
+            result->options.subtype_initializers = dynamic_array_create<Member_Initializer*>();
+            advance_token();
+
+            // Parser name if available
+            if (test_token(Token_Type::IDENTIFIER)) {
+                result->name = optional_make_success(get_token(0)->options.identifier);
+                advance_token();
+            }
+
+            assert(test_operator(Operator::ASSIGN), "Should be true after previous if"); 
+            advance_token();  // Skip =
+
+            if (!test_parenthesis('{')) {
+                log_error_range_offset("Expected { for subtype initializer", 0);
+            }
+            else {
+                parse_parenthesis_comma_seperated(&result->base, &result->options.subtype_initializers, parse_member_initializer, Parenthesis_Type::BRACES);
+            }
+            PARSE_SUCCESS(result);
+        }
+        else 
+        {
+            result->type = Member_Initializer_Type::NORMAL;
+            if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::ASSIGN, 1)) {
+                result->name = optional_make_success(get_token(0)->options.identifier);
+                advance_token();
+                advance_token();
+            }
+            result->options.value = parse_expression_or_error_expr(&result->base);
+            PARSE_SUCCESS(result);
+        }
+
+        panic("Invalid code path");
+        PARSE_SUCCESS(result);
+    }
+
     Parameter* parse_parameter(Node* parent)
     {
         CHECKPOINT_SETUP;
@@ -1839,26 +1895,13 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_token(Token_Type::IDENTIFIER) && test_parenthesis_offset('{', 1)) // Struct subtype initializer
+            if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
-                init.subtype_name.available = true;
-                init.subtype_name.value = get_token()->options.identifier;
-                advance_token();
-                init.arguments = dynamic_array_create<Argument*>();
-                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
-            {
-                result->type = Expression_Type::STRUCT_INITIALIZER;
-                auto& init = result->options.struct_initializer;
-                init.type_expr = optional_make_failure<Expression*>();
-                init.subtype_name.available = false;
-                init.arguments = dynamic_array_create<Argument*>();
-                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                init.member_initializers = dynamic_array_create<Member_Initializer*>();
+                parse_parenthesis_comma_seperated(&result->base, &init.member_initializers, parse_member_initializer, Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
             else if (test_parenthesis_offset('[', 0)) // Array Initializer
@@ -2012,25 +2055,13 @@ namespace Parser
         if (test_operator(Operator::DOT))
         {
             advance_token();
-            if (test_token(Token_Type::IDENTIFIER) && test_parenthesis_offset('{', 1)) // Struct subtype initializer
+            if (test_parenthesis_offset('{', 0)) // Struct Initializer
             {
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_success(child);
-                init.subtype_name.available = true;
-                init.subtype_name.value = get_token()->options.identifier;
-                advance_token();
-                init.arguments = dynamic_array_create<Argument*>();
-                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('{', 0)) // Struct Initializer
-            {
-                result->type = Expression_Type::STRUCT_INITIALIZER;
-                auto& init = result->options.struct_initializer;
-                init.type_expr = optional_make_success(child);
-                init.arguments = dynamic_array_create<Argument*>(1);
-                parse_parenthesis_comma_seperated(&result->base, &init.arguments, parse_argument, Parenthesis_Type::BRACES);
+                init.member_initializers = dynamic_array_create<Member_Initializer*>(1);
+                parse_parenthesis_comma_seperated(&result->base, &init.member_initializers, parse_member_initializer, Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
             else if (test_parenthesis_offset('[', 0)) // Array Initializer

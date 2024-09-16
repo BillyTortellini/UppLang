@@ -1,0 +1,63 @@
+
+c_str::[]const u8
+
+Node::struct
+	name:c_str
+	Expression:
+		Binop:
+			a:int
+			b:int
+		Unop:
+			a:int
+	Statement:
+		Assignment:
+			left:int
+			right:int
+		For:
+			condition:bool
+
+node_test::(a:*const Node)
+	print_string(a.name)
+	print_line()
+
+stat_test::(a:Node.Statement)
+	if a.tag==.For
+		loop:=*a.For
+		print_string("For condition: ")
+		print_bool(loop.condition)
+	else
+		ass:=*a.Assignment
+		print_string("Assignment ")
+		print_i32(ass.left+ass.right)
+	print_line()
+
+assign_test::(a:Node.Statement.Assignment)
+	print_string("Assign sum: ")
+	print_i32(a.left+a.right)
+	print_line()
+
+main::()
+	node:Node
+	node.name="Frank"
+	node.tag=.Statement
+	node.Statement.tag=.Assignment
+	node.Statement.Assignment.right=5
+	node.Statement.Assignment.left=4
+	
+	stat:=*node.Statement
+	assign:=*stat.Assignment
+	
+	node_test(node)
+	node_test(stat)
+	node_test(assign)
+	
+	stat_test(stat)
+	stat_test(assign)
+	stat_test(node.Statement)
+	
+	assign_test(assign)
+	assign_test(stat.Assignment)
+	assign_test(node.Statement.Assignment)
+	
+	print_i32(node.Statement.Assignment.right)
+	

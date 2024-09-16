@@ -1207,6 +1207,7 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
     result->content.tag_member.id = 0;
     result->content.tag_member.offset = 0;
     result->content.tag_member.type = 0;
+    result->content.parent_content = 0;
     result->content.members = dynamic_array_create<Struct_Member>();
     result->content.subtypes = dynamic_array_create<Struct_Content*>();
 
@@ -1232,6 +1233,7 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
     subtype->tag_member.id = compiler.predefined_ids.tag;
     subtype->tag_member.offset = -1;
     subtype->tag_member.type = compiler.type_system.predefined_types.unknown_type;
+    subtype->parent_content = content;
     dynamic_array_push_back(&content->subtypes, subtype);
     return subtype;
 }

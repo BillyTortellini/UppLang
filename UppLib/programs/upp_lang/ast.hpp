@@ -98,6 +98,7 @@ namespace AST
         STRUCT_MEMBER,     // Either a normal member or a struct-subtype
         SWITCH_CASE,       // Expression 
         CONTEXT_CHANGE,    // Changing some operator context
+        MEMBER_INITIALIZER,
     };
 
     struct Node
@@ -192,6 +193,24 @@ namespace AST
         Node base;
         Optional<String*> name;
         Expression* value;
+    };
+
+    enum class Member_Initializer_Type
+    {
+        NORMAL, // e.g. Player.{name = "Frank"}
+        SUBTYPE_INITIALIZER, // e.g. Node.{.Expression = .{15, true, "ID"}}
+        UNINITIALIZED, // e.g. Player.{_}
+    };
+    
+    struct Member_Initializer
+    {
+        Node base;
+        Optional<String*> name; 
+        Member_Initializer_Type type;
+        union {
+            Expression* value;
+            Dynamic_Array<Member_Initializer*> subtype_initializers;
+        } options;
     };
 
     struct Parameter
@@ -316,9 +335,8 @@ namespace AST
                 Optional<Expression*> return_value;
             } function_signature;
             struct {
-                Optional<String*> subtype_name;
                 Optional<Expression*> type_expr;
-                Dynamic_Array<Argument*> arguments;
+                Dynamic_Array<Member_Initializer*> member_initializers;
             } struct_initializer;
             struct {
                 Optional<Expression*> type_expr;
@@ -453,6 +471,7 @@ namespace AST
         bool type_correct(Code_Block* base);
         bool type_correct(Context_Change* base);
         bool type_correct(Structure_Member_Node* base);
+        bool type_correct(Member_Initializer* base);
     }
 
     template<typename T>

@@ -535,6 +535,10 @@ struct Expression_Info
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;
         } overload;
+        struct {
+            Datatype_Struct* structure_type;
+            Subtype_Index* subtype_index; // Contains info which tag members should be set during instanciation
+        } struct_initializer;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
@@ -558,6 +562,12 @@ struct Argument_Info
     int parameter_index; // -1 Indicates that argument hasn't been matched yet or a failure to match
     bool reanalyse_param_type_flag;
     bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
+};
+
+struct Member_Initializer_Info
+{
+    bool valid;
+    Struct_Member member; // For a normal member initializer this is the member to be initialized, otherwise this is the tag member to be initialized
 };
 
 enum class Context_Change_Info_Type
@@ -667,6 +677,7 @@ union Analysis_Info
     Path_Lookup_Info path_info;
     Module_Info module_info;
     Context_Change_Info context_info;
+    Member_Initializer_Info member_init_info;
 };
 
 enum class Info_Query
@@ -688,6 +699,7 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query);
+Member_Initializer_Info* pass_get_node_info(Analysis_Pass* pass, AST::Member_Initializer* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 

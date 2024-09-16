@@ -180,6 +180,7 @@ struct Datatype_Subtype
 struct Struct_Content
 {
     String* name; // For base struct this is the name, otherwise subtype names/ids
+    Struct_Content* parent_content; // May be 0 if we are at root
     Dynamic_Array<Struct_Member> members;
     Dynamic_Array<Struct_Content*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty

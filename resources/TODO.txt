@@ -1,24 +1,47 @@
 
-- Switch:
-
-switch address
-    case .IPv4 -> ipv4
-
-switch address
-    .IPv4 -> v4
-        something
-        #fallthrough
-    .IPv6 -> v6
-        something
-    default
-        something else
-
 TODO:
 -----
- - Switch
- - Struct Initializer
+ - Auto-Enum should return subtypes when parent is auto-enum or struct-initializer
 
-Probably tomorrow:
+
+
+
+Struct Initializer Design
+-------------------------
+Used for simple struct initialization, when more complex initializiation is required, functions should be used
+    Player.{"Frank", 15, true}
+    vs.
+    Player~create("Frank", 15, true)
+One advantage over initialization from uninitialized (C-like), is that the compiler checks if all members are specified
+        p: Player
+        p.name = "Frank"
+        p.age = 15
+        p.alive = false
+    vs
+        p := Player.{"Frank", 15} // Error: alive is not specified
+But I think there should be the option to not fill out all members
+    p := Player.{"Frank", _}
+
+For Struct-Subtypes, initialization is more complicated, as we also need to specify the active subtype
+    a := Address.{index=15, .IPv4 = {.[12, 20, 30]}}
+Should the struct-initializer also work on subtypes, and if yes, what members do you specify
+    a := Address.Ipv4.{bytes=.[127, 0, 0, 1], .Address = {something}}
+This would also work for multi-level structures
+    expr := Node.Expression.{.Node={something}, priority=7, .Binop={Whatever}}
+Maybe we would need to think about order here, but I guess the base-and-subtypes are either first or last initialized, and the members are in one order
+
+How does the parser handle subtype specifiers:
+ x: Address = .IPv4.{Something}
+I'm assuming I have to change auto enum a little bit... --> If a subtyped-struct is expected, we can return the subtype here...
+
+
+
+Should still work for simple structs...
+For subtypes the base type needs to be specified,
+
+Player.{"Frank", 15, true}
+a: Address
+a = Address.Ipv4.{something soemthing}
 
 DONE:
  - Downcast should probably check tag?
@@ -139,13 +162,13 @@ Don't think so
 
 TODO:
 -----
- * Subtype hierarchy
- * Switch
  * Fix testcases
  * Probably add testcases for a lot of shit...
  * Maybe do assignment where we just move the given type, e.g. no pointer/other for templates...
 
 DONE:
+ * Subtype hierarchy
+ * Switch
  * Polymorphic subtypes (Struct instance templates) + matching
  * Check upcast to base type
  * Update Struct-Initializer
@@ -176,7 +199,7 @@ TODO:
 --------------------
 Core: (Required for programming)
     * Union rework, e.g. Addressable sub-types + better switch 
-    * C-Function calling rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
+    * C-Compiler rework (C-Function calls rework) (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
 
     * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
     * Incremental compiler

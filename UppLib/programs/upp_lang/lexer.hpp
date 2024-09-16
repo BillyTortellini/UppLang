@@ -46,6 +46,7 @@ enum class Operator
     ASSIGN_MULT,
     ASSIGN_DIV,
     ASSIGN_MODULO,
+    UNINITIALIZED, // _
 
     MAX_ENUM_VALUE
 };
