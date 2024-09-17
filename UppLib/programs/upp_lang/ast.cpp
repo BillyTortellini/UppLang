@@ -987,9 +987,20 @@ namespace AST
             case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
             case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
             case Statement_Type::ASSIGNMENT: {
-                if (stat->options.assignment.is_pointer_assign) {
+                switch (stat->options.assignment.type)
+                {
+                case Assignment_Type::DEREFERENCE: break;
+                case Assignment_Type::POINTER: {
                     string_append_formated(str, "POINTER-");
+                    break;
                 }
+                case Assignment_Type::RAW: {
+                    string_append_formated(str, "RAW-");
+                    break;
+                }
+                default: panic("");
+                }
+
                 string_append_formated(str, "ASSIGNMENT"); 
                 break;
             }

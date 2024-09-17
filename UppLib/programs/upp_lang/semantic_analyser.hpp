@@ -221,8 +221,9 @@ struct Workload_Definition
     Workload_Base base;
     Symbol* symbol;
     bool is_comptime;
-    AST::Expression* value_node;
-    AST::Expression* type_node;
+    AST::Assignment_Type assignment_type;
+    AST::Expression* value_node; // May be null
+    AST::Expression* type_node; // May be null
 };
 
 struct Workload_Bake_Analysis

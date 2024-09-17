@@ -782,10 +782,6 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     bool is_local_variable = !definition->is_comptime && definition->base.parent->type == AST::Node_Type::STATEMENT;
     bool is_global_variable = !definition->is_comptime && !is_local_variable;
 
-    if (!is_local_variable && definition->is_pointer_definition) {
-        log_semantic_error("Pointer definition is only allowed on local variables", upcast(definition), Parser::Section::WHOLE_NO_CHILDREN);
-    }
-
     // Figure out initial symbol type
     Symbol_Type initial_symbol_type = is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL;
     if (definition->is_comptime && definition->values.size == 1) {
@@ -807,7 +803,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         );
     }
 
-    // Only define symbols for local variables, analysis will happen when the statement is reached
+    // For local variables only symbol is defined, and analysis happens when the statement is processed
     if (is_local_variable) {
         return;
     }
@@ -913,6 +909,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
     definition_workload->symbol = symbol;
     definition_workload->is_comptime = definition->is_comptime;
+    definition_workload->assignment_type = definition->assignment_type;
     definition_workload->type_node = 0;
     if (is_global_variable && definition->types.size != 0) {
         definition_workload->type_node = definition->types[0];
@@ -3535,13 +3532,39 @@ void analysis_workload_entry(void* userdata)
             Datatype* type = 0;
             if (definition->type_node != 0) {
                 type = semantic_analyser_analyse_expression_type(definition->type_node);
+                if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
+                    log_semantic_error("Type must not be a pointer-type with normal value definition ': foo ='", definition->type_node);
+                    type = type_system_make_type_with_mods(
+                        type->base_type, type_mods_make(0, (type_mods_is_constant(type->mods, 0) ? 1 : 0), type->mods.subtype_index)
+                    );
+                }
+                else if (definition->assignment_type == AST::Assignment_Type::POINTER && type->mods.pointer_level == 0) {
+                    log_semantic_error("Type must be a pointer-type with pointer definition ': foo =*'", definition->type_node);
+                    type = upcast(type_system_make_pointer(type));
+                }
             }
-            if (definition->value_node != 0) {
+            if (definition->value_node != 0) 
+            {
                 if (type != 0) {
                     semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_specific_type(type));
                 }
-                else {
-                    type = semantic_analyser_analyse_expression_value(definition->value_node, expression_context_make_unknown());
+                else 
+                {
+                    Expression_Context context = expression_context_make_unknown();
+                    if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE) {
+                        context = expression_context_make_auto_dereference();
+                    }
+                    type = semantic_analyser_analyse_expression_value(definition->value_node, context);
+
+                    if (definition->assignment_type == AST::Assignment_Type::POINTER && type->mods.pointer_level == 0) {
+                        if (try_updating_expression_type_mods(definition->value_node, type_mods_make(1, type->mods.constant_flags, type->mods.subtype_index))) {
+                            type = get_info(definition->value_node)->cast_info.result_type;
+                        }
+                        else {
+                            log_semantic_error("Pointer assignment ':=*' expected a value that is a pointer!", definition->value_node);
+                            type = upcast(type_system_make_pointer(type));
+                        }
+                    }
                 }
             }
 
@@ -7722,13 +7745,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
             EXIT_ERROR(types.unknown_type);
         }
-        if (context.expected_type.type->type != Datatype_Type::ENUM) {
+        Datatype* expected = context.expected_type.type;
+
+        if (expected->type != Datatype_Type::ENUM) {
             log_semantic_error("Context requires a type that is not an enum, so .NAME syntax is not valid", expr);
             log_error_info_given_type(context.expected_type.type);
             EXIT_ERROR(types.unknown_type);
         }
 
-        auto& members = downcast<Datatype_Enum>(context.expected_type.type)->members;
+        auto& members = downcast<Datatype_Enum>(expected)->members;
         Enum_Member* found = 0;
         for (int i = 0; i < members.size; i++) {
             auto member = &members[i];
@@ -7747,7 +7772,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             value = found->value;
         }
 
-        expression_info_set_constant_enum(info, context.expected_type.type, value);
+        expression_info_set_constant_enum(info, expected, value);
         return info;
     }
     case AST::Expression_Type::UNARY_OPERATION:
@@ -10609,20 +10634,23 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         for (int i = 0; i < assignment_node.left_side.size; i++)
         {
             auto expr = assignment_node.left_side[i];
-            auto left_type = semantic_analyser_analyse_expression_value(
-                expr, assignment_node.is_pointer_assign ? expression_context_make_unknown() : expression_context_make_auto_dereference()
-            );
+            Expression_Context context = expression_context_make_unknown();
+            if (assignment_node.type == AST::Assignment_Type::DEREFERENCE) {
+                context = expression_context_make_auto_dereference();
+            }
+            auto left_type = semantic_analyser_analyse_expression_value(expr, context);
+
+            // Check for errors
             if (!expression_has_memory_address(expr)) {
                 log_semantic_error("Cannot assign to a temporary value", upcast(expr));
             }
-            Datatype_Type type_type = datatype_get_non_const_type(left_type)->type;
-            bool is_pointer = type_type == Datatype_Type::POINTER || type_type == Datatype_Type::BYTE_POINTER;
-            if (assignment_node.is_pointer_assign && !is_pointer && !datatype_is_unknown(left_type)) {
-                log_semantic_error("Pointer assignment requires left-side to be a pointer!", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
-            }
-
             if (left_type->type == Datatype_Type::CONSTANT) {
                 log_semantic_error("Trying to assign to a constant value", expr);
+            }
+            bool is_pointer = datatype_is_pointer(left_type);
+            if (assignment_node.type == AST::Assignment_Type::POINTER && !is_pointer && !datatype_is_unknown(left_type)) {
+                log_semantic_error("Pointer assignment requires left-side to be a pointer!", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
+                left_type = upcast(type_system_make_pointer(left_type));
             }
 
             if (all_left_types == 0) {
@@ -10635,7 +10663,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
         if (assignment_node.right_side.size == 1 && left_side_all_same_type) {
             // Broadcast
-            Datatype* right_type = semantic_analyser_analyse_expression_value(
+            semantic_analyser_analyse_expression_value(
                 assignment_node.right_side[0], expression_context_make_specific_type(all_left_types)
             );
         }
@@ -10680,114 +10708,149 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             EXIT(Control_Flow::SEQUENTIAL);
         }
 
-        for (int i = 0; i < symbol_nodes.size; i++)
+        // Initialize symbols
+        for (int i = 0; i < symbol_nodes.size; i++) {
+            auto symbol = get_info(symbol_nodes[i])->symbol;
+            symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
+            symbol->options.variable_type = compiler.type_system.predefined_types.unknown_type;
+        }
+
+        // Analyse types
+        bool all_types_are_equal = true;
+        Datatype* equal_type = 0;
+        for (int i = 0; i < types.size; i++)
         {
-            // Get type of variable
-            bool type_exists = false;
-            Datatype* type = nullptr;
-            if (i < types.size) {
-                type = semantic_analyser_analyse_expression_type(types[i]);
-                type_exists = true;
-                bool is_pointer = datatype_is_pointer(type);
-                if (values.size > 0) {
-                    if (is_pointer && !definition->is_pointer_definition) {
-                        log_semantic_error("Pointer definition (=*/:=*) is required if the type should be a pointer type!", upcast(types[i]));
-                    }
-                    else if (!is_pointer && definition->is_pointer_definition) {
-                        log_semantic_error("For pointer definition (=*/:=*) the type must be a pointer type!", upcast(types[i]));
-                    }
+            // Analyse type
+            auto type_node = types[i];
+            Datatype* type = semantic_analyser_analyse_expression_type(type_node);
+
+            // Check for errors
+            bool is_pointer = datatype_is_pointer(type);
+            if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
+                log_semantic_error("Type must not be a pointer-type with normal value definition 'x: foo ='", type_node);
+                type = type_system_make_type_with_mods(
+                    type->base_type, type_mods_make(0, (type_mods_is_constant(type->mods, 0) ? 1 : 0), type->mods.subtype_index)
+                );
+            }
+            else if (definition->assignment_type == AST::Assignment_Type::POINTER && !is_pointer) {
+                log_semantic_error("Type must be a pointer-type with pointer definition ': foo =*'", type_node);
+                type = upcast(type_system_make_pointer(type));
+            }
+
+            // Check if all types are the same
+            if (equal_type == 0) {
+                equal_type = type;
+            }
+            else if (!types_are_equal(equal_type, type)){
+                all_types_are_equal = false;
+            }
+            
+            // Set types of variables
+            if (types.size == 1) // Type broadcast
+            {
+                for (int j = 0; j < symbol_nodes.size; j++) {
+                    auto symbol = get_info(symbol_nodes[j])->symbol;
+                    symbol->options.variable_type = type;
+                }
+            }
+            else 
+            {
+                if (i < symbol_nodes.size) {
+                    auto symbol = get_info(symbol_nodes[i])->symbol;
+                    symbol->options.variable_type = type;
+                }
+                else {
+                    log_semantic_error("No symbol exists on the left side of definition for this type", type_node);
+                }
+            }
+        }
+
+        // Analyse values
+        for (int i = 0; i < values.size; i++)
+        {
+            // Figure out context
+            Expression_Context context;
+            if (types.size == 0) 
+            {
+                if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE) {
+                    context = expression_context_make_auto_dereference();
+                }
+                else {
+                    context = expression_context_make_unknown();
                 }
             }
             else if (types.size == 1) {
-                type_exists = true;
-                auto info = get_info(types[0]);
-                if (info->result_type == Expression_Result_Type::TYPE) {
-                    type = info->options.type;
-                }
-                else {
-                    type = predefined_types.unknown_type;
-                }
+                context = expression_context_make_specific_type(get_info(types[0])->cast_info.result_type);
             }
-            else if (types.size == 0) {
-                type = predefined_types.unknown_type;
-            }
-            else {
-                type = predefined_types.unknown_type;
-                log_semantic_error("No type-expression exists for symbol", upcast(symbol_nodes[i]));
+            else { // types.size > 1
+                if (values.size == 1) { // Value broadcast
+                    if (all_types_are_equal) {
+                        context = expression_context_make_specific_type(equal_type);
+                    }
+                    else {
+                        log_semantic_error("For value broadcast all specified types must be equal", values[i]);
+                        context = expression_context_make_unknown(true);
+                    }
+                }
+                else 
+                {
+                    if (i < types.size) {
+                        context = expression_context_make_specific_type(get_info(types[i])->cast_info.result_type);
+                    }
+                    else {
+                        log_semantic_error("No type is specified in the definition for this value", values[i]);
+                        context = expression_context_make_unknown(true);
+                    }
+                }
             }
 
             // Analyse value
-            if (i < values.size)
-            {
-                Expression_Context context;
-                if (type_exists) {
-                    context = expression_context_make_specific_type(type);
-                }
-                else {
-                    if (definition->is_pointer_definition) {
-                        context = expression_context_make_unknown();
-                    }
-                    else {
-                        context = expression_context_make_auto_dereference();
-                    }
-                }
-                auto value_type = semantic_analyser_analyse_expression_value(values[i], context);
-                if (!type_exists)
-                {
-                    type_exists = true;
-                    if (definition->is_pointer_definition)
-                    {
-                        bool is_pointer = datatype_is_pointer(value_type);
-                        if (is_pointer) {
-                            type = value_type;
-                        }
-                        else {
-                            // Take address of if it isn't a pointer
-                            bool worked = try_updating_expression_type_mods(values[i], type_mods_make(1, value_type->mods.constant_flags, value_type->mods.subtype_index));
-                            if (!worked) {
-                                log_semantic_error("Pointer definition cannot create a pointer to this value", values[i]);
-                                type = compiler.type_system.predefined_types.unknown_type;
-                            }
-                            else {
-                                type = get_info(values[i])->cast_info.result_type;
-                            }
-                        }
-                    }
-                    else {
-                        type = datatype_get_non_const_type(value_type); // Note: Constant tag gets removed when infering the type, e.g. x := 15
-                    }
-                }
-            }
-            else if (values.size == 1) {
-                auto broadcast_value_type = expression_info_get_type(get_info(values[0]), false);
-                if (!types_are_equal(broadcast_value_type, type) && !datatype_is_unknown(type) && !datatype_is_unknown(broadcast_value_type)) {
-                    log_semantic_error("Type does not match right-side type", upcast(symbol_nodes[i]));
-                    type = predefined_types.unknown_type;
-                }
-                else {
-                    type = broadcast_value_type;
-                }
-            }
-            else if (values.size != 0) {
-                log_semantic_error("No value on right side exists for symbol", upcast(symbol_nodes[i]));
+            Datatype* value_type = semantic_analyser_analyse_expression_value(values[i], context);
+
+            // Note: Constant tag gets removed when infering the type, e.g. x := 15
+            if (types.size == 0) {
+                value_type = datatype_get_non_const_type(value_type);
             }
 
-            auto symbol = get_info(symbol_nodes[i])->symbol;
-            symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
-            symbol->options.variable_type = type;
+            // If no types are given, check if value matches the definition type
+            if (types.size == 0) 
+            {
+                bool value_is_pointer = datatype_is_pointer(value_type);
+                if (definition->assignment_type == AST::Assignment_Type::POINTER && !value_is_pointer) {
+                    if (try_updating_expression_type_mods(values[i], type_mods_make(1, value_type->mods.constant_flags, value_type->mods.subtype_index))) {
+                        value_type = get_info(values[i])->cast_info.result_type;
+                    }
+                    else {
+                        log_semantic_error("Pointer assignment ':=*' expected a value that is a pointer!", values[i]);
+                        value_type = upcast(type_system_make_pointer(value_type));
+                    }
+                }
+            }
+
+            // Update symbol type
+            if (values.size == 1) { // Value broadcast
+                for (int j = 0; j < symbol_nodes.size; j++) {
+                    auto symbol = get_info(symbol_nodes[j])->symbol;
+                    symbol->options.variable_type = value_type;
+                }
+            }
+            else
+            {
+                if (i < symbol_nodes.size) {
+                    if (types.size == 0) {
+                        auto symbol = get_info(symbol_nodes[i])->symbol;
+                        symbol->options.variable_type = value_type;
+                    }
+                }
+                else {
+                    log_semantic_error("No symbol/variable exists for this value", values[i]);
+                }
+            }
         }
 
         // Set symbols to defined
         for (int i = 0; i < symbol_nodes.size; i++) {
             get_info(symbol_nodes[i])->symbol->type = Symbol_Type::VARIABLE;
-        }
-
-        // Analyse overflowing types/values
-        for (int i = symbol_nodes.size; i < types.size; i++) {
-            log_semantic_error("No symbol on left side exists for this type", upcast(types[i]));
-        }
-        for (int i = symbol_nodes.size; i < values.size; i++) {
-            log_semantic_error("No symbol on left side exists for this type", upcast(values[i]));
         }
 
         EXIT(Control_Flow::SEQUENTIAL);

@@ -45,11 +45,13 @@ Operator_Info syntax_operator_info(Operator op)
     case Operator::DEFINE_COMPTIME: return operator_info_make("::", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER: return operator_info_make(":=", Operator_Type::BINOP, true, true);
     case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
+    case Operator::DEFINE_INFER_RAW: return operator_info_make(":=~", Operator_Type::BINOP, true, true);
     case Operator::AND: return operator_info_make("&&", Operator_Type::BOTH, true, true); // Could also be double dereference &&int_pointer_pointer
     case Operator::OR: return operator_info_make("||", Operator_Type::BINOP, true, true);
     case Operator::ARROW: return operator_info_make("->", Operator_Type::BINOP, true, true);
     case Operator::DOLLAR: return operator_info_make("$", Operator_Type::UNOP, false, false);
     case Operator::ASSIGN: return operator_info_make("=", Operator_Type::BINOP, true, true);
+    case Operator::ASSIGN_RAW: return operator_info_make("=~", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_ADD: return operator_info_make("+=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_SUB: return operator_info_make("-=", Operator_Type::BINOP, true, true);
     case Operator::ASSIGN_DIV: return operator_info_make("/=", Operator_Type::BINOP, true, true);

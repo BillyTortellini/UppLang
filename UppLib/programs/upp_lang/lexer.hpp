@@ -35,12 +35,14 @@ enum class Operator
     DEFINE_COMPTIME, // ::
     DEFINE_INFER, // :=
     DEFINE_INFER_POINTER, // :=*
+    DEFINE_INFER_RAW, // :=~
     AND,
     OR,
     ARROW,
     DOLLAR,
     ASSIGN,
     ASSIGN_POINTER, // =*
+    ASSIGN_RAW, // =~
     ASSIGN_ADD,
     ASSIGN_SUB,
     ASSIGN_MULT,

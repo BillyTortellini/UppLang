@@ -1,7 +1,107 @@
 
+Assignment Types
+----------------
+Currently we have two assignments,
+    * Value assignment
+        x = 15
+    * Pointer assignment
+        ip =* x
+But I guess I also want a normal assignment, as templates will kinda suck otherwise 
+        ip =? x
+We also have these types as definitions
+    x := 5
+    ip :=* x
+
+What should the symbol be?
+How should this be treated?
+    The left type determines the context, simple as that.
+    :=*
+    :=
+    =
+    =*
+    
+
+
+
+
+
 TODO:
 -----
- - Auto-Enum should return subtypes when parent is auto-enum or struct-initializer
+ * Raw-Assignment where we just move the given type, e.g. no pointer/other for templates...
+ * Fix testcases
+ * Probably add testcases for a lot of shit...
+
+
+
+
+Polymorphic Subtypes and polymorphic Matching with constants should be thought about...
+What about polymorphic sub-types (e.g. Subtypes of struct instance templates?)
+foo :: (a: *Address(int).IPv4)
+
+
+
+
+
+
+TODO:
+ * Add testcases for constant, auto-address of and others
+
+
+
+
+
+--------------------
+- MISSING FEATURES -
+--------------------
+Core: (Required for programming)
+    * C-Compiler rework (C-Function calls rework) (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
+
+    * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
+    * Incremental compiler
+
+Additional:
+    * Allocator system
+    * Better C-Importer
+    * Code-Editor features
+    * Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
+    * Annotations (For automatization of print or serialization)
+    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
+    * Auto function? .-> e.g. search(array, .-> x.name == "What")
+    * Block-Expressions?
+    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
+    * Macros?
+    * Backtick defer, backtick variable definition
+    * Varargs (Other syntax for pass as slice...)
+    * Debugger
+    * Optional pointer types (e.g. ?*)
+    * Using on structs
+    * Location information (Mostly for logging)
+
+-----------------
+Code improvements:
+    * Deduplication of comptime instances when the generated ir-code is the same
+    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+    * Symbol table lookups could be combined into a single hashtable?
+    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
+    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
+    * Remove polymorphic base-analysis (Could make lot's of things a lot easier, e.g. conditional compilation...)
+    * Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
+        --> This also means we could do dot-calls on a whole module? --> Maybe not
+    * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
+    * Code Editor non-hierarchical
+    * Change how indentation works, maybe both {, , , } and indentation could work together?
+
+-----------------
+Missing Test-Cases:
+    * Struct unpacking
+    * Function overloading
+-----------------
+
+
+
+
+
+
 
 
 
@@ -29,225 +129,6 @@ Should the struct-initializer also work on subtypes, and if yes, what members do
 This would also work for multi-level structures
     expr := Node.Expression.{.Node={something}, priority=7, .Binop={Whatever}}
 Maybe we would need to think about order here, but I guess the base-and-subtypes are either first or last initialized, and the members are in one order
-
-How does the parser handle subtype specifiers:
- x: Address = .IPv4.{Something}
-I'm assuming I have to change auto enum a little bit... --> If a subtyped-struct is expected, we can return the subtype here...
-
-
-
-Should still work for simple structs...
-For subtypes the base type needs to be specified,
-
-Player.{"Frank", 15, true}
-a: Address
-a = Address.Ipv4.{something soemthing}
-
-DONE:
- - Downcast should probably check tag?
-    Seems reasonable, how does the analyser store this so that the ir-generator knows it?
-    Note: The downcast is currently the node.Statement thing...
-
-
-
-How do I store the subtype hierarchy?
-
-The questions the type mods presents are:
-What do the type-mods need to fullfill:
- * Is equal would be nice
- * Is a subtype of b? (Has to look in the )
-
-
-Ideas I would like to try out:
- * Parser checks if subtypes have the same name, and if so, changes it to some error-name...
- * When analysing a struct, we pre-determine the struct-hierarchy based on the node, so subtype-creation doesn't have to wait for type_size to finish
- * Type_Mods containing subtype-hierarchy (Only names of subtypes)
- * Base_Type of type points to structure
- * Subtype Type can contain general datatype (E.g. struct_template_instance or error_type (If hierarchy is false))
- * When checking member access searching the type takes a bit longer...
-
-
-Questions: Should struct subtype members be allowed to have same names as base-type?
-    Node :: struct
-        index: int
-        Expression: 
-            index: bool
-No...
-
-How to deal with subtypes/members having the same names?
- * Parser cannot check it (As it's a multi line thing, also not parsers job)
- * Could check on workload-creation..., could be fine...
-
-What if the subtype name isn't valid...
-
-
-Thinking a little bit more about subtypes...
-What if... and hear me out... if... fuck... bitches...
-
-So arguably maybe type_mods and type_base aren't the worst idea overall...
-E.g. type_base is still struct, but mods contain the given subtype
-Also maybe it's possible to have subtype-info for normal structs, which just gives you the base info...,
-and then you can check is_subtype_of()
-
-Also we can analyse the subtype-structure of a struct without having to look at anything else currently
-
-What if the type mods contain the structure of the subtype, e.g. 
-the ID-Hierarchy
-
-What about something like
-Datatype_Struct*
-    
-
-So what are the type-mods used for:
-They are used so that both the id of a type has to match (base-type) + the type_mods have to match...
-
-
-Type_Mods :: struct
-    pointer_level: int
-    const_flags: int
-    subtype_info: *Subtype_Info
-
-Currently we have a lot of:
-
-Datatype_Struct* structure
-Datatype_Struct_Subtype* subtype;
-if (type->base_type->type == Datatype_Type::STRUCTURE) {
-}
-else if (type->base_type->type == Datatype_Type::STRUCT_SUBTYPE) {
-}
-
-And the combination would be:
-if (type->base_type->type == Datatype_Type::STRUCTURE) {
-    do something
-    type->mods.subtype
-}
-
-Where the subtype contains:
- sheet
-But then we could have subtypes on non-struct types, e.g.
-Subtype of Struct_Instance_Template, and this would also work fine...
-
-And for member access it would be enough to have
-Should array/Slice/Function have subtype upcasts?
-
-// Definitly not by default, but I think casting could be supported here...
-[]*Node.Expression -> []*Node
-
-Subtype_Info:
-    int hierarchy_level;
-    Subtype_Info* subtype_of; // Only 0 if base...
-    String* name;
-
-switch Color
-    case .RED
-    case .GREEN
-    case .BLUE
-
-switch Color
-    .RED
-        What
-    .GREEN
-        The
-    .BLUE   
-        Fuck
-
-
-switches are exhaustive without break
-switches only work on enums and struct-subtypes
-
-Do I want the case-keyword?
-Don't think so
-
-
-
-TODO:
------
- * Fix testcases
- * Probably add testcases for a lot of shit...
- * Maybe do assignment where we just move the given type, e.g. no pointer/other for templates...
-
-DONE:
- * Subtype hierarchy
- * Switch
- * Polymorphic subtypes (Struct instance templates) + matching
- * Check upcast to base type
- * Update Struct-Initializer
- * Struct initializer comptime calculation
- * IR-Code needs to set tag correctly
-
-
-
-
-Polymorphic Subtypes and polymorphic Matching with constants should be thought about...
-What about polymorphic sub-types (e.g. Subtypes of struct instance templates?)
-foo :: (a: *Address(int).IPv4)
-
-
-
-
-
-
-TODO:
- * Add testcases for constant, auto-address of and others
-
-
-
-
-
---------------------
-- MISSING FEATURES -
---------------------
-Core: (Required for programming)
-    * Union rework, e.g. Addressable sub-types + better switch 
-    * C-Compiler rework (C-Function calls rework) (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
-
-    * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
-    * Incremental compiler
-
-Additional:
-    * Allocator system
-    * Better C-Importer
-    * Code-Editor features
-    * Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
-    * Annotations (For automatization of print or serialization)
-    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
-    * Auto function? .-> e.g. search(array, .-> x.name == "What")
-    * Block-Expressions?
-    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
-    * Macros?
-    * Backtick defer, backtick variable definition
-    * Varargs (Other syntax for pass as slice...)
-    * Literal overhaul
-    * Using on structs
-    * Location information (Mostly for logging)
-    * Debugger
-    * Optional pointer types (e.g. ?*)
-    * Const define infer
-
------------------
-Code improvements:
-    * Deduplication of comptime instances when the generated ir-code is the same
-    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
-    * Symbol table lookups could be combined into a single hashtable?
-    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
-    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
-    * Remove polymorphic base-analysis (Could make lot's of things a lot easier, e.g. conditional compilation...)
-
------------------
-Missing Test-Cases:
-    * Struct unpacking
-    * Function overloading
-    * Function polymorphism/implicit polymorphism
-    * Imports
-
------------------
-
-
-
-
-
-
-
 
 
 

@@ -44,6 +44,13 @@ namespace AST
         DEREFERENCE, // &
     };
 
+    enum class Assignment_Type
+    {
+        DEREFERENCE, // Dereferences pointers on the left side (e.g. writes to the pointer-value), ip = 15
+        POINTER, // Writes to the pointer on the left side, ip =* x
+        RAW, // Expects the exact type on the left, ip =~
+    };
+
     enum class Node_Position_Type
     {
         TOKEN_INDEX,
@@ -182,7 +189,7 @@ namespace AST
     {
         Node base;
         bool is_comptime; // :: instead of :=
-        bool is_pointer_definition; // :=* or x: *int =*
+        Assignment_Type assignment_type; // :=, :=* or :=~
         Dynamic_Array<Definition_Symbol*> symbols;
         Dynamic_Array<Expression*> types;
         Dynamic_Array<Expression*> values;
@@ -401,7 +408,7 @@ namespace AST
             struct {
                 Dynamic_Array<Expression*> left_side;
                 Dynamic_Array<Expression*> right_side;
-                bool is_pointer_assign;
+                Assignment_Type type;
             } assignment;
             struct {
                 Definition_Symbol* loop_variable_definition;

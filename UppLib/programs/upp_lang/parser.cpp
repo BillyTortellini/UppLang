@@ -796,7 +796,7 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
-            result->is_pointer_definition = false;
+            result->assignment_type = AST::Assignment_Type::DEREFERENCE;
             result->symbols = dynamic_array_create<Definition_Symbol*>(1);
             result->types = dynamic_array_create<AST::Expression*>(1);
             result->values = dynamic_array_create<AST::Expression*>(1);
@@ -806,7 +806,9 @@ namespace Parser
                 return token.type == Token_Type::OPERATOR &&
                     (token.options.op == Operator::COLON ||
                      token.options.op == Operator::DEFINE_COMPTIME ||
-                     token.options.op == Operator::DEFINE_INFER);
+                     token.options.op == Operator::DEFINE_INFER ||
+                     token.options.op == Operator::DEFINE_INFER_POINTER ||
+                     token.options.op == Operator::DEFINE_INFER_RAW);
             };
             parse_comma_seperated_items(upcast(result), &result->symbols, parse_definition_symbol, found_definition_operator);
 
@@ -819,39 +821,52 @@ namespace Parser
                     return token.type == Token_Type::OPERATOR &&
                         (token.options.op == Operator::COLON ||
                          token.options.op == Operator::ASSIGN ||
-                         token.options.op == Operator::ASSIGN_POINTER);
+                         token.options.op == Operator::ASSIGN_POINTER ||
+                         token.options.op == Operator::ASSIGN_RAW);
                 };
                 parse_comma_seperated_items(upcast(result), &result->types, parse_expression_or_error_expr, found_value_start);
 
-                if (test_operator(Operator::ASSIGN)) {
+                if (test_operator(Operator::ASSIGN)) { // : ... =
                     result->is_comptime = false;
                     advance_token();
                 }
-                else if (test_operator(Operator::COLON)) {
+                else if (test_operator(Operator::COLON)) { // : ... :
                     result->is_comptime = true;
                     advance_token();
                 }
-                else if (test_operator(Operator::ASSIGN_POINTER)) {
+                else if (test_operator(Operator::ASSIGN_POINTER)) { // : ... =*
                     result->is_comptime = false;
-                    result->is_pointer_definition = true;
+                    result->assignment_type = Assignment_Type::POINTER;
+                    advance_token();
+                }
+                else if (test_operator(Operator::ASSIGN_RAW)) { // : ... =~
+                    result->is_comptime = false;
+                    result->assignment_type = Assignment_Type::RAW;
                     advance_token();
                 }
                 else {
                     PARSE_SUCCESS(result);
                 }
             }
-            else if (test_operator(Operator::DEFINE_COMPTIME)) {
+            else if (test_operator(Operator::DEFINE_COMPTIME)) { // x :: 
                 advance_token();
                 result->is_comptime = true;
+                result->assignment_type = Assignment_Type::DEREFERENCE;
             }
-            else if (test_operator(Operator::DEFINE_INFER)) {
+            else if (test_operator(Operator::DEFINE_INFER)) { // x :=
                 advance_token();
                 result->is_comptime = false;
+                result->assignment_type = Assignment_Type::DEREFERENCE;
             }
-            else if (test_operator(Operator::DEFINE_INFER_POINTER)) {
+            else if (test_operator(Operator::DEFINE_INFER_POINTER)) { // x:=*
                 advance_token();
                 result->is_comptime = false;
-                result->is_pointer_definition = true;
+                result->assignment_type = Assignment_Type::POINTER;
+            }
+            else if (test_operator(Operator::DEFINE_INFER_RAW)) { // x:=-
+                advance_token();
+                result->is_comptime = false;
+                result->assignment_type = Assignment_Type::RAW;
             }
             else {
                 CHECKPOINT_EXIT;
@@ -964,21 +979,29 @@ namespace Parser
                 result->type = Statement_Type::ASSIGNMENT;
                 result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                result->options.assignment.is_pointer_assign = false;
+                result->options.assignment.type = Assignment_Type::DEREFERENCE;
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
 
                 // Parse remaining left_side expressions
-                auto is_assign = [](Token& token) -> bool
-                {return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER); };
+                auto is_assign = [](Token& token) -> bool {
+                    return token.type == Token_Type::OPERATOR && 
+                        (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER || token.options.op == Operator::ASSIGN_RAW); 
+                };
                 parse_comma_seperated_items(upcast(result), &result->options.assignment.left_side, parse_expression_or_error_expr, is_assign);
 
                 // Check if assignment found, otherwise error
-                if (!test_operator(Operator::ASSIGN) && !test_operator(Operator::ASSIGN_POINTER)) {
-                    CHECKPOINT_EXIT;
+                if (test_operator(Operator::ASSIGN)) {
+                    result->options.assignment.type = Assignment_Type::DEREFERENCE;
                 }
-                if (test_operator(Operator::ASSIGN_POINTER)) {
-                    result->options.assignment.is_pointer_assign = true;
+                else if (test_operator(Operator::ASSIGN_POINTER)) {
+                    result->options.assignment.type = Assignment_Type::POINTER;
+                }
+                else if (test_operator(Operator::ASSIGN_RAW)) {
+                    result->options.assignment.type = Assignment_Type::RAW;
+                }
+                else {
+                    CHECKPOINT_EXIT;
                 }
                 advance_token();
 
@@ -986,12 +1009,23 @@ namespace Parser
                 parse_comma_seperated_items(upcast(result), &result->options.assignment.right_side, parse_expression_or_error_expr, 0);
                 PARSE_SUCCESS(result);
             }
-            else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER))
+            else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER) || test_operator(Operator::ASSIGN_RAW))
             {
                 result->type = Statement_Type::ASSIGNMENT;
                 result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                result->options.assignment.is_pointer_assign = test_operator(Operator::ASSIGN_POINTER);
+                if (test_operator(Operator::ASSIGN)) {
+                    result->options.assignment.type = Assignment_Type::DEREFERENCE;
+                }
+                else if (test_operator(Operator::ASSIGN_POINTER)) {
+                    result->options.assignment.type = Assignment_Type::POINTER;
+                }
+                else if (test_operator(Operator::ASSIGN_RAW)) {
+                    result->options.assignment.type = Assignment_Type::RAW;
+                }
+                else {
+                    panic("If should have handled this case");
+                }
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
 
