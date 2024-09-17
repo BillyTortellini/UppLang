@@ -11,3 +11,4 @@ main::()
 	value:int=15
 	boolean:bool=value
 	assert(!boolean)
+	assert(cast{bool}12)

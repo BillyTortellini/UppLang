@@ -1,11 +1,11 @@
-Color :: enum
+Color::enum
 	RED
 	GREEN
 	BLUE
 
-main :: ()
+main::()
 	switch Color.RED
-	case Color.GREEN
-		
-	case Color.RED
-		
+		Color.GREEN
+			
+		Color.RED
+			

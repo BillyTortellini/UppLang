@@ -42,13 +42,14 @@ main::()
 		bake,which will prevent the names from being invalid
 
 member_offset::(type:Type_Handle,name:c_str)->int
-	offset:=-1
-	info:=type_info(type)
-	if info.options.tag!=.structure
-		return offset
 	
-	members:=info.options.structure.members
+	info:=type_info(type)
+	if info.tag!=.Struct
+		return-1
+	
+	members:=info.Struct.content.members
 	i:=0
+	offset:=-1
 	while i<members.size search_loop:
 		if string_compare(members[i].name,name)
 			offset=members[i].offset

@@ -1,25 +1,4 @@
 
-Assignment Types
-----------------
-Currently we have two assignments,
-    * Value assignment
-        x = 15
-    * Pointer assignment
-        ip =* x
-But I guess I also want a normal assignment, as templates will kinda suck otherwise 
-        ip =? x
-We also have these types as definitions
-    x := 5
-    ip :=* x
-
-What should the symbol be?
-How should this be treated?
-    The left type determines the context, simple as that.
-    :=*
-    :=
-    =
-    =*
-    
 
 
 
@@ -27,9 +6,13 @@ How should this be treated?
 
 TODO:
 -----
- * Raw-Assignment where we just move the given type, e.g. no pointer/other for templates...
  * Fix testcases
- * Probably add testcases for a lot of shit...
+ * Struct initializer for unions ?
+ * Testcases for constant, context, subtypes, switches, struct-init...
+
+DONE:
+-----
+ * Raw-Assignment where we just move the given type, e.g. no pointer/other for templates...
 
 
 
@@ -37,14 +20,6 @@ TODO:
 Polymorphic Subtypes and polymorphic Matching with constants should be thought about...
 What about polymorphic sub-types (e.g. Subtypes of struct instance templates?)
 foo :: (a: *Address(int).IPv4)
-
-
-
-
-
-
-TODO:
- * Add testcases for constant, auto-address of and others
 
 
 

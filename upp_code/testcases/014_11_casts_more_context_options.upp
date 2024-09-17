@@ -26,11 +26,11 @@ main::()
 	// For example, pointers can be converted to bool for simple null checks
 		context set_cast_option(.POINTER_NULL_CHECK,.IMPLICIT)
 		ip:*int=*null
-		assert(ip==*null)
+		assert(ip*==null)
 		assert(!cast{bool}ip)
 		
 		ip=*i
-		assert(ip!=*null)
+		assert(ip*!=null)
 		assert(ip)
 	
 	// Arrays can be automatically-cast to slices

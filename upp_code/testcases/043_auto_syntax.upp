@@ -39,11 +39,11 @@ main::()
 	
 	value:=0
 	switch color
-		case.GREEN
+		.GREEN
 			value=2
-		case.BLUE
+		.BLUE
 			value=3
-		case.RED
+		.RED
 			value=1
 	assert(value==1)
 

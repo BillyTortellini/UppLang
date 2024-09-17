@@ -16,8 +16,8 @@ string_equals::(a:c_str,b:c_str)->bool
 offset_off::(a:$T,$name:c_str)->int
 	offset:=#bake
 		info:=type_info(T)
-		if info.options.tag==.structure
-			members:=info.options.structure.members
+		if info.tag==.Struct
+			members:=info.Struct.content.members
 			i:=0
 			while i<members.size
 				member:=members[i]

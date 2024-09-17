@@ -7165,8 +7165,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
                 type_for_init = context.expected_type.type;
             }
-            else if (!context.unknown_due_to_error) {
-                log_semantic_error("Could not determine type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
+            else {
+                if (!context.unknown_due_to_error) {
+                    log_semantic_error("Could not determine type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
+                }
                 type_for_init = types.unknown_type;
             }
         }
@@ -8509,6 +8511,8 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* e
                 auto function = custom_cast.options.function;
                 result.cast_type = Cast_Type::CUSTOM_CAST;
                 result.options.custom_cast_function = function;
+                result.result_type = destination_type;
+                result.result_value_is_temporary = true;
                 semantic_analyser_register_function_call(function);
                 return result;
             }
@@ -8901,7 +8905,7 @@ Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol
     {
         context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
         for (int i = 0; i < (int)Cast_Option::MAX_ENUM_VALUE; i++) {
-            context->cast_options[i] = Cast_Mode::INFERRED;
+            context->cast_options[i] = Cast_Mode::INFERRED; // Default is now inferred for all casts except pointer null checks
         }
         context->cast_options[(int)Cast_Option::POINTER_NULL_CHECK] = Cast_Mode::EXPLICIT;
     }
@@ -10780,7 +10784,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 }
             }
             else if (types.size == 1) {
-                context = expression_context_make_specific_type(get_info(types[0])->cast_info.result_type);
+                auto type_info = get_info(types[0]);
+                if (type_info->result_type == Expression_Result_Type::TYPE) {
+                    context = expression_context_make_specific_type(type_info->options.type);
+                }
+                else {
+                    context = expression_context_make_unknown(true);
+                }
             }
             else { // types.size > 1
                 if (values.size == 1) { // Value broadcast
@@ -10795,7 +10805,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 else 
                 {
                     if (i < types.size) {
-                        context = expression_context_make_specific_type(get_info(types[i])->cast_info.result_type);
+                        auto type_info = get_info(types[i]);
+                        if (type_info->result_type == Expression_Result_Type::TYPE) {
+                            context = expression_context_make_specific_type(type_info->options.type);
+                        }
+                        else {
+                            context = expression_context_make_unknown(true);
+                        }
                     }
                     else {
                         log_semantic_error("No type is specified in the definition for this value", values[i]);
@@ -10829,9 +10845,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
             // Update symbol type
             if (values.size == 1) { // Value broadcast
-                for (int j = 0; j < symbol_nodes.size; j++) {
-                    auto symbol = get_info(symbol_nodes[j])->symbol;
-                    symbol->options.variable_type = value_type;
+                if (types.size == 0) {
+                    for (int j = 0; j < symbol_nodes.size; j++) {
+                        auto symbol = get_info(symbol_nodes[j])->symbol;
+                        symbol->options.variable_type = value_type;
+                    }
                 }
             }
             else

@@ -1,17 +1,17 @@
-Color :: enum
+Color::enum
 	RED
 	GREEN
 	BLUE
 
-ret_col :: () -> Color 
+ret_col::()->Color
 	return Color.RED
 
-main :: ()
+main::()
 	switch Color.RED
-	case Color.RED
-		
-	case Color.GREEN
-		
-	case ret_col()
-		
+		Color.BLUE
+			
+		Color.GREEN
+			
+		ret_col()
+			
 	

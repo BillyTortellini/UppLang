@@ -1,6 +1,6 @@
 
 main::()
-	// Requires cast mode implicit
+	// Requires cast mode inferred
 	i:=15
-	context set_cast_option(.INTEGER_SIZE_UPCAST,.INFERRED)
-	y:i64=i
+	context set_cast_option(.INTEGER_SIZE_UPCAST,.EXPLICIT)
+	y:i64=cast i

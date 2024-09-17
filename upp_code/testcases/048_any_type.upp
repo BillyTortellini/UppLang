@@ -31,8 +31,8 @@ main::()
 	any_player2:Any=Player.{name="Dude",age=69,alive=false}
 	
 	// As mentioned before, the any type contains a data member (*void) to the data
-	assert(any_int.data==*cast{byte_pointer}*val_int)
-	assert(any_player.data==*cast{byte_pointer}*val_player)
+	assert(any_int.data*==cast{byte_pointer}*val_int)
+	assert(any_player.data*==cast{byte_pointer}*val_player)
 	
 	// And also the type value, which can be used in type_info
 	assert(any_player.type==Player)
@@ -101,11 +101,11 @@ mini_calc::(ops:[]Any)->struct
 	while i<ops.size
 		if ops[i].type==int
 			switch status
-				case.ADD
+				.ADD
 					result=result+cast{int}ops[i]
-				case.SUB
+				.SUB
 					result=result-cast{int}ops[i]
-				case.MULT
+				.MULT
 					result=result*cast{int}ops[i]
 		else if ops[i].type==c_str
 			if string_compare(cast ops[i],"+")

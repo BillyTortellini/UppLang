@@ -513,7 +513,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = downcast<Datatype_Function>(ir_data_access_get_type(&call->options.pointer_access));
+                function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(ir_data_access_get_type(&call->options.pointer_access)));
                 function_pointer_stack_offset = bytecode_generator_data_access_to_stack_offset(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:

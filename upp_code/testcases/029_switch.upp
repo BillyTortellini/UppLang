@@ -12,13 +12,13 @@ main::()
 	value:int=15
 	color=Color.RED
 	switch color
-		case Color.RED
+		Color.RED
 			// Every switch case has a unique scope, and there is no fall_through
 			a:int
 			value=20
-		case Color.GREEN
+		Color.GREEN
 			a:int=120
-		case Color.BLUE
+		Color.BLUE
 			a:int=130
 	
 	assert(value==20)
@@ -26,11 +26,11 @@ main::()
 	// Switch cases work just like normal blocks
 	color=Color.GREEN
 	switch color
-		case Color.RED
+		Color.RED
 			
-		case Color.GREEN
+		Color.GREEN
 			value=1
-		case Color.BLUE
+		Color.BLUE
 			
 	
 	assert(value==1)
@@ -40,21 +40,21 @@ main::()
 		color=Color.GREEN
 		value=1000
 		switch color color_switch:
-			case Color.RED
+			Color.RED
 				
-			case Color.GREEN
+			Color.GREEN
 				value=15
 				if true
 					break color_switch
 				
 				value=1
-			case Color.BLUE
+			Color.BLUE
 				
 		assert(value==15)
 	
 	// When not all cases are specified, a default statement is needed
 	switch color
-		case Color.RED
+		Color.RED
 			value=100
 		default
 			value=12

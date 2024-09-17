@@ -816,6 +816,7 @@ namespace Parser
             if (test_operator(Operator::COLON))
             {
                 advance_token();
+
                 // Note: Parse types (At least one value is guaranteed by parse_expression or error)
                 auto found_value_start = [](Token& token) -> bool {
                     return token.type == Token_Type::OPERATOR &&
@@ -845,6 +846,7 @@ namespace Parser
                     advance_token();
                 }
                 else {
+                    result->assignment_type = Assignment_Type::RAW; // If no values exist, then the definition is raw, e.g. x: *int
                     PARSE_SUCCESS(result);
                 }
             }

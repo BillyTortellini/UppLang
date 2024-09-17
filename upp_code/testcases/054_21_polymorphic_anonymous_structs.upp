@@ -5,7 +5,7 @@ Node::struct($T:Type_Handle)
 		x:bool
 		y:T
 	
-	type:union
+	type:struct
 		z:enum
 			RED
 			GREEN
@@ -18,8 +18,8 @@ main::()
 	a:Node(int)
 	a.b.x=false
 	a.b.y=15
-	a.type=.{z=.RED}
-	a.type=.{w=21}
+	a.type.z=.RED
+	a.type.w=21
 	
 	assert(a.b.x==false)
 	assert(a.b.y==15)

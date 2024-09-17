@@ -11,14 +11,14 @@ C_Style::module
 		IPV5
 		IPV6
 	
-	C_Address::c_union
+	C_Address::union
 		ipv4:[4]byte
 		ipv5:bool
 		ipv6:c_str
 		tag:C_Address_Tag
 
 //
-	This is exactly how Unions in Upp are implemented internally.
+	This is exactly how Struct-Subtypes (Name may change) in Upp are implemented internally.
 	It may not seem very significant to add this to a language,
 	because it'only'removes some typing,but it brings good consequences:
 	1.It signals the intent of the programmer more clearly(1 concept instead of struct+enum)
@@ -26,62 +26,63 @@ C_Style::module
 	3.Probably the most important:The compiler/other tools(e.g.debugger)now knows what the tag is supposed to represent
 	4.Because the use of the tag value is clear,metaprogramming can now automatically create print or serialize procedures
 
-Address::union
-	ipv4:[4]byte
-	ipv5:bool
-	ipv6:c_str
+Address::struct
+	IPv4:
+		bytes:[4]byte
+	IPv5:
+		normalized:bool
+	IPv6:
+		name:c_str
 
-// The tag is just a normal enum, and can be used inside an if
+// The tag member is automatically added to a struct if it contains subtypes
 address_version_if::(addr:Address)->int
-	if addr.tag==.ipv4
+	if addr.tag==.IPv4
 		return 4
-	else if addr.tag==Address.ipv5
+	else if addr.tag==.IPv5
 		return 5
-	else if addr.tag==Address.ipv6
+	else if addr.tag==.IPv6
 		return 6
 	return 0
 
 // Logically we can switch over the tag, but we can also switch over the union, which does the same
 address_version_switch::(addr:Address)->int
 	switch addr
-		case.ipv4
+		.IPv4
 			return 4
-		case.ipv5
+		.IPv5
 			return 5
-		case.ipv6
+		.IPv6
 			return 6
 
 main::()
 	// The tag is now just an enum member, and can be accessed like other members
 		addr_v4:Address
-		addr_v4.tag=Address.ipv4
+		addr_v4.tag=.IPv4
 		value:u8=cast{u8}cast{u32}0
-		addr_v4.ipv4=byte.[value,value,value,value]
+		addr_v4.IPv4.bytes=.[value,value,value,value]
 		
 		addr_v5:Address
-		addr_v5.tag=Address.ipv5
-		addr_v5.ipv5=false
+		addr_v5.tag=.IPv5
+		addr_v5.IPv5.normalized=false
 		
 		addr_v6:Address
-		addr_v6.tag=Address.ipv6
-		addr_v6.ipv6="COFFEF"
-		
+		addr_v6.tag=.IPv6
+		addr_v6.IPv6.name="COFFEF"
 		
 			assert(address_version_if(addr_v4)==4)
-			//assert(address_version_if(addr_v5)==5)
-			//assert(address_version_if(addr_v6)==6)
+			assert(address_version_if(addr_v5)==5)
+			assert(address_version_if(addr_v6)==6)
 	
 	// Struct initialization syntax also works with unions, but only one member can be specified
 		val1:=cast{u8}cast{u32}1
-		addr_v4:=Address.{ipv4=byte.[val1,val1,val1,val1]}
-		addr_v5:=Address.{ipv5=false}
-		addr_v6:=Address.{ipv6="COFFEF"}
+		addr_v4:Address=.{.IPv4={byte.[val1,val1,val1,val1]}}
+		addr_v5:Address=.{.IPv5={false}}
+		addr_v6:Address=.{.IPv6={"COFFEF"}}
 		
 		// Union initializer automatically set the correct tag
-		
-		assert(addr_v4.tag==.ipv4)
-		assert(addr_v5.tag==.ipv5)
-		assert(addr_v6.tag==.ipv6)
+		assert(addr_v4.tag==.IPv4)
+		assert(addr_v5.tag==.IPv5)
+		assert(addr_v6.tag==.IPv6)
 		
 		assert(address_version_switch(addr_v4)==4)
 		assert(address_version_switch(addr_v5)==5)

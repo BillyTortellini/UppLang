@@ -5,14 +5,14 @@ Color::enum
 
 main::()
 	color:Color
-	&cast{*i32}*color=0
+	color=cast 0
 	
 	// The reason that enums start with 1 is that
 	// we want to error if they werent initialized correctly
 	switch color
-	case Color.RED
-		
-	case Color.GREEN
-		
-	case Color.BLUE
-		
+		Color.RED
+			
+		Color.GREEN
+			
+		Color.BLUE
+			

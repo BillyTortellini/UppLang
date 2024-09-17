@@ -1,4 +1,4 @@
 
 main::()
 	i:int=15
-	y:u32=cast i
+	y:u32=i
