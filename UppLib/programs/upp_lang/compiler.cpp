@@ -19,7 +19,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
+bool enable_c_generation = true;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -40,7 +40,7 @@ bool run_testcases_compiled = false;
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = false;
+bool execute_binary = true;
 
 
 // This variable gets written to in compiler_compile

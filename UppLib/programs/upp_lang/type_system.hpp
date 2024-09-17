@@ -184,6 +184,7 @@ struct Struct_Content
     Dynamic_Array<Struct_Member> members;
     Dynamic_Array<Struct_Content*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty
+    int max_alignment; // Largest alignment of all members/subtype-members
 };
 
 struct Datatype_Struct 

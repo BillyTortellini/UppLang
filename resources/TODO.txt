@@ -1,29 +1,32 @@
 
 
+C-Compiler Update:
+------------------
+ * C-Generator needs to be able to deal with Struct-Subtypes and constant types
+ * Make all testcases work again for C-Compiler...
+ * Add testcases with struct subtypes, and make them work
 
 
 
 
-TODO:
------
- * Fix testcases
- * Struct initializer for unions ?
- * Testcases for constant, context, subtypes, switches, struct-init...
-
-DONE:
------
- * Raw-Assignment where we just move the given type, e.g. no pointer/other for templates...
 
 
 
 
-Polymorphic Subtypes and polymorphic Matching with constants should be thought about...
-What about polymorphic sub-types (e.g. Subtypes of struct instance templates?)
-foo :: (a: *Address(int).IPv4)
 
 
 
 
+Missing-Testcases:
+------------------
+ * Struct Subtypes
+ * Struct Switch
+ * Struct inititalizer with subtypes
+ * Subtype Hierarchies
+ * Constant pointers, constants, type-mods auto updates
+ * New assignment and definition syntax
+ * Multi assignments and definitions
+ * Subtypes and polymorphism
 
 --------------------
 - MISSING FEATURES -
@@ -51,6 +54,7 @@ Additional:
     * Optional pointer types (e.g. ?*)
     * Using on structs
     * Location information (Mostly for logging)
+    * Struct initializer for unions ?
 
 -----------------
 Code improvements:

@@ -575,10 +575,14 @@ void internal_type_struct_content_destroy(Internal_Type_Struct_Content* content)
     for (int i = 0; i < content->subtypes.size; i++) {
         internal_type_struct_content_destroy(&content->subtypes.data_ptr[i]);
     }
-    delete[] content->subtypes.data_ptr;
-    content->subtypes.data_ptr = 0;
-    delete[] content->members.data_ptr;
-    content->members.data_ptr = 0;
+    if (content->subtypes.data_ptr != nullptr) {
+        delete[] content->subtypes.data_ptr;
+        content->subtypes.data_ptr = 0;
+    }
+    if (content->members.data_ptr != nullptr) {
+        delete[] content->members.data_ptr;
+        content->members.data_ptr = 0;
+    }
 }
 
 void internal_type_info_destroy(Internal_Type_Information* info)
@@ -1234,6 +1238,7 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
     subtype->tag_member.offset = -1;
     subtype->tag_member.type = compiler.type_system.predefined_types.unknown_type;
     subtype->parent_content = content;
+    subtype->max_alignment = 0;
     dynamic_array_push_back(&content->subtypes, subtype);
     return subtype;
 }
@@ -1266,7 +1271,7 @@ void type_system_finish_array(Datatype_Array* array)
 // Returns size after offset
 int struct_content_finish_recursive(Struct_Content* content, int memory_offset, int& max_global_alignment, Datatype_Memory_Info& memory)
 {
-    // Calculate memory info/layout (Member offsets, alignment, size, contains pointer/others)
+    // Calculate memory info/layout (Member offsets, alignment, size, contains pointers/others)
     int max_local_alignment = 1;
     for (int i = 0; i < content->members.size; i++)
     {
@@ -1312,7 +1317,11 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
         }
 
         // Finish subtypes
-        int subtype_start_offset = memory_offset;
+        int subtype_start_offset = math_round_next_multiple(memory_offset, content->max_alignment); // All subtypes are handled as a single union
+        if (subtype_start_offset != memory_offset) {
+            memory.contains_padding_bytes = true;
+        }
+        memory_offset = subtype_start_offset;
         int largest_end = memory_offset;
         for (int i = 0; i < content->subtypes.size; i++) 
         {
@@ -1334,7 +1343,7 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
 
         // Add tag-member
         type_system_finish_enum(tag_type);
-        memory_offset = math_round_next_multiple(largest_end, tag_type->base.memory_info.value.size);
+        memory_offset = math_round_next_multiple(largest_end, tag_type->base.memory_info.value.alignment);
         if (memory_offset != largest_end) {
             memory.contains_padding_bytes = true;
         }
@@ -1375,26 +1384,56 @@ void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_
         internal->tag_member.type = compiler.type_system.predefined_types.unknown_type->type_handle;
     }
 
-    internal->members.data_ptr = new Internal_Type_Struct_Member[content->members.size];
-    internal->members.size = content->members.size;
-    internal->subtypes.data_ptr = new Internal_Type_Struct_Content[content->subtypes.size];
-    internal->subtypes.size = content->subtypes.size;
-
     // Copy members
-    for (int i = 0; i < content->members.size; i++) 
+    if (content->members.size > 0) 
     {
-        Internal_Type_Struct_Member* mem_i = &internal->members.data_ptr[i];
-        Struct_Member* mem = &content->members[i];
-        mem_i->name.slice.data_ptr = (const u8*) content->members[i].id->characters;
-        mem_i->name.slice.size = content->members[i].id->size + 1;
-        mem_i->offset = mem->offset;
-        mem_i->type = mem->type->type_handle;
+        internal->members.data_ptr = new Internal_Type_Struct_Member[content->members.size];
+        internal->members.size = content->members.size;
+        for (int i = 0; i < content->members.size; i++) 
+        {
+            Internal_Type_Struct_Member* mem_i = &internal->members.data_ptr[i];
+            Struct_Member& mem = content->members[i];
+            mem_i->name.slice.data_ptr = (const u8*) mem.id->characters;
+            mem_i->name.slice.size = mem.id->size + 1;
+            mem_i->offset = mem.offset;
+            mem_i->type = mem.type->type_handle;
+        }
+    }
+    else {
+        internal->members.data_ptr = nullptr;
+        internal->members.size = 0;
     }
 
-    // Copy subtypes recursive
-    for (int i = 0; i < content->subtypes.size; i++) {
-        struct_content_mirror_internal_info(content->subtypes[i], &internal->subtypes.data_ptr[i]);
+    // Copy Subtypes recursive
+    if (content->subtypes.size > 0) 
+    {
+        internal->subtypes.data_ptr = new Internal_Type_Struct_Content[content->subtypes.size];
+        internal->subtypes.size = content->subtypes.size;
+        // Copy subtypes recursive
+        for (int i = 0; i < content->subtypes.size; i++) {
+            struct_content_mirror_internal_info(content->subtypes[i], &internal->subtypes.data_ptr[i]);
+        }
     }
+    else {
+        internal->subtypes.data_ptr = nullptr;
+        internal->subtypes.size = 0;
+    }
+}
+
+int struct_content_find_max_alignment_recursive(Struct_Content* content)
+{
+    int max_alignment = 1;
+    for (int i = 0; i < content->members.size; i++) {
+        auto& member = content->members[i];
+        assert(!type_size_is_unfinished(member.type), "");
+        max_alignment = math_maximum(max_alignment, member.type->memory_info.value.alignment);
+    }
+
+    for (int i = 0; i < content->subtypes.size; i++) {
+        max_alignment = math_maximum(max_alignment, struct_content_find_max_alignment_recursive(content->subtypes[i]));
+    }
+    content->max_alignment = max_alignment;
+    return max_alignment;
 }
 
 void type_system_finish_struct(Datatype_Struct* structure)
@@ -1413,9 +1452,11 @@ void type_system_finish_struct(Datatype_Struct* structure)
     memory.contains_padding_bytes = false;
     memory.contains_function_pointer = false;
     memory.contains_reference = false;
+    
 
     // Handle unions
     if (structure->struct_type == Structure_Type::STRUCT) {
+        struct_content_find_max_alignment_recursive(&structure->content); // First figure out subtype alignments (Required)
         memory.size = struct_content_finish_recursive(&structure->content, 0, memory.alignment, memory);
     }
     else
@@ -1560,8 +1601,8 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
     {
         Enum_Member* member = &members[i];
         Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data_ptr[i];
-        internal_info->options.enumeration.name.slice.size = member->name->size + 1;
-        internal_info->options.enumeration.name.slice.data_ptr = (const u8*) member->name->characters;
+        internal_member->name.slice.size = member->name->size + 1;
+        internal_member->name.slice.data_ptr = (const u8*)member->name->characters;
         internal_member->value = member->value;
     }
 }
@@ -1716,18 +1757,11 @@ void type_system_add_predefined_types(Type_System* system)
                 add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
                 type_system_finish_struct(struct_member_type);
             }
-            Datatype_Struct* subtype_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
-            {
-                add_member_cstr(&subtype_type->content, "name", upcast(types->c_string));
-                add_member_cstr(&subtype_type->content, "type", types->type_handle);
-                add_member_cstr(&subtype_type->content, "offset", upcast(types->i32_type));
-                type_system_finish_struct(subtype_type);
-            }
 
             Datatype_Struct* internal_content = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
             {
                 add_member_cstr(&internal_content->content, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
-                add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(subtype_type))));
+                add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(internal_content))));
                 add_member_cstr(&internal_content->content, "tag_member", upcast(struct_member_type));
                 add_member_cstr(&internal_content->content, "name", upcast(types->c_string));
             }

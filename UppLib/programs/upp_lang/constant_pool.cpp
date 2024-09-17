@@ -97,29 +97,18 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
     Datatype* signature, int array_size, Array<byte> bytes, int start_offset, int offset_per_element,
     Dynamic_Array<Pointer_Info>& pointer_infos, Dynamic_Array<Upp_Constant_Function_Reference>& function_references);
 
-// Note: Start offset is the start of the struct in the bytes array, whereas subtype_offset is relative to struct_start_offset
+
 bool struct_content_record_pointer_and_padding_recursive(
     Struct_Content* content, int array_size, Array<byte> bytes, int struct_start_offset, int offset_per_element,
     Dynamic_Array<Pointer_Info>& pointer_infos, Dynamic_Array<Upp_Constant_Function_Reference>& function_references,
-    Subtype_Index* subtype_index, int index_level, int subtype_start_offset)
+    Subtype_Index* subtype_index, int index_level, int offset_in_struct, int subtype_end_offset)
 {
     // Handle members
-    int next_member_offset = subtype_start_offset;
-    for (int i = 0; i < content->members.size + 1; i++)
+    int next_member_offset = offset_in_struct;
+    for (int i = 0; i < content->members.size; i++)
     {
-        Struct_Member* member;
-        if (i != content->members.size) {
-             member = &content->members[i];
-        }
-        else {
-            if (content->subtypes.size > 0) {
-                member = &content->tag_member;
-            }
-            else {
-                break;
-            }
-        }
-
+        Struct_Member* member = &content->members[i];
+        // Fill out padding until member
         if (member->offset != next_member_offset) {
             assert(member->offset > next_member_offset, "");
             for (int i = 0; i < array_size; i++) {
@@ -138,14 +127,25 @@ bool struct_content_record_pointer_and_padding_recursive(
         }
     }
 
-    // Handle subtypes
-    if (content->subtypes.size == 0) {
+    // Early exit if no subtypes exist
+    if (content->subtypes.size == 0) 
+    {
+        // Fill empty bytes till subtype-end
+        if (next_member_offset != subtype_end_offset) {
+            assert(next_member_offset < subtype_end_offset, "");
+            for (int i = 0; i < array_size; i++) {
+                int element_offset = struct_start_offset + offset_per_element * i;
+                int gap_offset = element_offset + next_member_offset;
+                memory_set_bytes(bytes.data + gap_offset, subtype_end_offset - next_member_offset, 0);
+            }
+        }
         return true;
     }
 
-    // Check if the tag is correct if we are on known subtype
+    // Handle tag and subtypes 
     if (index_level < subtype_index->indices.size) 
     {
+        // Here we know the subtype
         int expected_index = subtype_index->indices[index_level].index;
         Struct_Content* child_content = content->subtypes[expected_index];
         for (int i = 0; i < array_size; i++) {
@@ -154,24 +154,28 @@ bool struct_content_record_pointer_and_padding_recursive(
                 return false;
             }
         }
-        return struct_content_record_pointer_and_padding_recursive(
+        bool success = struct_content_record_pointer_and_padding_recursive(
             child_content, array_size, bytes, struct_start_offset, offset_per_element, pointer_infos, function_references,
-            subtype_index, index_level + 1, next_member_offset
+            subtype_index, index_level + 1, next_member_offset, content->tag_member.offset
         );
+        if (!success) {
+            return false;
+        }
     }
     else 
     {
         // Here we don't know the subtypes, so we have to handle all tags separatly
         for (int i = 0; i < array_size; i++) 
         {
-            int sub_index = (*(int*)(bytes.data + struct_start_offset + offset_per_element * i + content->tag_member.offset)) - 1;
+            int* tag_ptr = (int*)(bytes.data + struct_start_offset + offset_per_element * i + content->tag_member.offset);
+            int sub_index = *tag_ptr - 1;
             if (sub_index < 0 || sub_index >= content->subtypes.size) {
                 return false;
             }
             Struct_Content* child_content = content->subtypes[sub_index];
             bool success = struct_content_record_pointer_and_padding_recursive(
                 child_content, 1, bytes, struct_start_offset + i * offset_per_element, 0, pointer_infos, function_references,
-                subtype_index, index_level + 1, next_member_offset
+                subtype_index, index_level + 1, next_member_offset, content->tag_member.offset
             );
             if (!success) {
                 return false;
@@ -329,7 +333,7 @@ bool record_pointers_and_set_padding_bytes_zero_recursive(
 
         return struct_content_record_pointer_and_padding_recursive(
             &structure->content, array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references,
-            signature->mods.subtype_index, 0, 0
+            signature->mods.subtype_index, 0, 0, structure->base.memory_info.value.size
         );
     }
     default: panic("");
