@@ -58,6 +58,8 @@ struct Predefined_IDs
     String* size;
     String* tag;
     String* anon_struct;
+    String* string;
+    String* bytes;
 
     // Context members 
     String* id_import;

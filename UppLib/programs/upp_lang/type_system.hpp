@@ -248,8 +248,8 @@ struct Upp_Slice_Base
 // A string as it is currently defined in the upp-language
 // Note: The size of the slice includes the 0 character, so it should be always > 0
 //       This is done because delete on slices should be able to work with the size of the slice (e.g. memory size should match)
-struct Upp_C_String {
-    Upp_Slice<const u8> slice;
+struct Upp_String {
+    Upp_Slice<const u8> bytes;
 };
 
 struct Upp_Any
@@ -301,7 +301,7 @@ struct Internal_Type_Function
 
 struct Internal_Type_Struct_Member
 {
-    Upp_C_String name;
+    Upp_String name;
     Upp_Type_Handle type;
     int offset;
 };
@@ -309,7 +309,7 @@ struct Internal_Type_Struct_Member
 struct Internal_Type_Subtype
 {
     Upp_Type_Handle type;
-    Upp_C_String subtype_name;
+    Upp_String subtype_name;
     int subtype_index;
 };
 
@@ -318,7 +318,7 @@ struct Internal_Type_Struct_Content
     Upp_Slice<Internal_Type_Struct_Member> members;
     Upp_Slice<Internal_Type_Struct_Content> subtypes;
     Internal_Type_Struct_Member tag_member;
-    Upp_C_String name;
+    Upp_String name;
 };
 
 struct Internal_Type_Struct
@@ -329,7 +329,7 @@ struct Internal_Type_Struct
 
 struct Internal_Type_Enum_Member
 {
-    Upp_C_String name;
+    Upp_String name;
     int value;
 };
 
@@ -347,7 +347,7 @@ struct Internal_Type_Slice
 struct Internal_Type_Enum
 {
     Upp_Slice<Internal_Type_Enum_Member> members;
-    Upp_C_String name;
+    Upp_String name;
 };
 
 struct Internal_Type_Information
@@ -424,10 +424,10 @@ struct Predefined_Types
     Datatype_Primitive* f64_type;
 
     // Prebuilt structs/types used by compiler
+    Datatype* string;
     Datatype* unknown_type;
     Datatype* type_handle;
     Datatype* byte_pointer;
-    Datatype_Slice* c_string;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* empty_struct_type; // Required for now 

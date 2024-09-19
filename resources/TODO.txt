@@ -1,11 +1,49 @@
 
 
-C-Compiler Update:
+
+Constant Handling in C:
+-----------------------
+ * Generate only on Demand
+ * Type_Informations still needs to contain everything
+ * Constant_Pool should only accept pointers to constant values from now on, otherwise error
+ * Constants are implemented as C++ const globals
+ * Initializiation is done with a function for each 'complex' constant (Structs, slices, arrays)
+    
+
+TODO:
+ * Constants need to work
+ * Type_Info needs to work
+ * Constant variables can probably only be initialized once, maybe add variable-definition instruction to ir-code
+ * Strings need an update in C-Generator
+ * Casts should only be applied if the type changes
+ * Subtype-Member Access in C-Generator
+ * C-Readability could be improved a lot by just using better names + putting things into namespaces so we don't have name-clashes
+ * Maybe constant pool shouldn't allow pointers at all, and just have special treatment for Strings (And Type-Info can also be handled seperately)
+
+DONE:
+ * Check if this works in C++
+ * Figure out how dependencies work in C-Generator
+ * Struct generation with Struct-Content + Subtypes
+ * Constant + Subtypes need to work for code-generation in C-Generator
+
+
+
+Rework Plan:
+------------
+ * Let's not handle extern things (extern functions and others) for now, as it will be reworked
+ * I would like to generate type-signatures and constant accesses on the fly, so only the ones used by the functions are generated...
+ * Casts should only add C-Style casts when the source/destination type differs
+ * Constant accesses shouldn't do the pointer thing, but rather something else.
+
+
+C-Compiler Rework:
 ------------------
  * C-Generator needs to be able to deal with Struct-Subtypes and constant types
+ -> Maybe IR-Code needs to track constant values better...
  * Make all testcases work again for C-Compiler...
  * Add testcases with struct subtypes, and make them work
 
+Let's check out again what C-Compiler is doing
 
 
 
@@ -47,14 +85,14 @@ Additional:
     * Auto function? .-> e.g. search(array, .-> x.name == "What")
     * Block-Expressions?
     * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
-    * Macros?
+    * Macros (Simple way to define variables, add defer blocks, ...)
     * Backtick defer, backtick variable definition
     * Varargs (Other syntax for pass as slice...)
     * Debugger
     * Optional pointer types (e.g. ?*)
     * Using on structs
     * Location information (Mostly for logging)
-    * Struct initializer for unions ?
+    * Struct initializer for unions
 
 -----------------
 Code improvements:
@@ -63,12 +101,12 @@ Code improvements:
     * Symbol table lookups could be combined into a single hashtable?
     * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
     * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
-    * Remove polymorphic base-analysis (Could make lot's of things a lot easier, e.g. conditional compilation...)
     * Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
         --> This also means we could do dot-calls on a whole module? --> Maybe not
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
     * Code Editor non-hierarchical
     * Change how indentation works, maybe both {, , , } and indentation could work together?
+    * IR-Code Data-Access could be a Tree-Structure with pointer-accesses, dereferences, member_access and other things to not have as many temporary values
 
 -----------------
 Missing Test-Cases:
@@ -78,6 +116,121 @@ Missing Test-Cases:
 
 
 
+
+
+
+
+
+
+
+
+OLD Code for C-Generator things:
+--------------------------------
+    // Create extern function prototypes
+    for (int i = 0; i < generator->compiler->extern_sources.extern_functions.size; i++)
+    {
+        Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
+        Datatype_Function* function_signature = downcast<Datatype_Function>(function->function_signature);
+        auto& parameters = function_signature->parameters;
+        if (function_signature->return_type.available) {
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
+        }
+        else {
+            string_append_formated(&generator->section_function_prototypes, "void");
+        }
+        string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
+        for (int j = 0; j < parameters.size; j++) {
+            Datatype* param_type = parameters[j].type;
+            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
+            if (j != parameters.size - 1) {
+                string_append_formated(&generator->section_function_prototypes, ", ");
+            }
+        }
+        string_append_formated(&generator->section_function_prototypes, ");\n");
+    }
+
+
+
+    // Note: All _new_ types should be created (in type_system) before adding the type_info global
+    auto& types = generator->compiler->type_system.predefined_types;
+    auto type_info_slice_type = type_system_make_slice(upcast(type_system_make_pointer(upcast(types.type_information_type))));
+    auto const_u8_slice = type_system_make_slice(type_system_make_constant(upcast((types.u8_type))));
+
+    // Insert hardcoded type-signatures (Cannot be auto-generated, as these need to be usable in hardcoded_functions.h)
+    {
+        String str = string_create("Slice_U8_");
+        hashtable_insert_element(&generator->translation_type_to_name, upcast(const_u8_slice), str);
+        String str_str = string_create("Upp_String_");
+        hashtable_insert_element(&generator->translation_type_to_name, upcast(types.string), str_str);
+    }
+
+    // Create type_info global
+    {
+        auto& type_system = compiler->type_system;
+
+        Upp_Slice<Internal_Type_Information*> type_info_slice;
+        type_info_slice.data_ptr = type_system.internal_type_infos.data;
+        type_info_slice.size = type_system.internal_type_infos.size;
+        Array<byte> bytes = array_create_static_as_bytes(&type_info_slice, 1);
+
+        auto result = constant_pool_add_constant(upcast(type_info_slice_type), bytes);
+
+        assert(result.success, "Type information must be valid/serializable");
+        assert(type_system.types.size == type_system.internal_type_infos.size, "");
+        generator->global_type_informations = result.constant;
+    }
+
+    // Create all Type_Signatures
+    for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
+        Datatype* type = generator->compiler->type_system.types[i];
+        c_generator_register_type_name(generator, type);
+    }
+
+    // Handle extern data
+    String section_extern_includes = string_create_empty(2048);
+    SCOPE_EXIT(string_destroy(&section_extern_includes));
+    {
+        for (int i = 0; i < generator->compiler->extern_sources.headers_to_include.size; i++) {
+            string_append_formated(&section_extern_includes, "#include <%s>\n", generator->compiler->extern_sources.headers_to_include[i]->characters);
+        }
+        string_append_formated(&section_extern_includes, "\n");
+    }
+    for (int i = 0; i < generator->compiler->extern_sources.lib_files.size; i++) {
+        c_compiler_add_lib_file(generator->compiler->c_compiler, *generator->compiler->extern_sources.lib_files[i]);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+String type in Upp:
+-------------------
+Create custom c_str type, which is:
+Maybe I can just call it a string, and be done with it...
+So then I can expect a string to be
+name: string
+Strings are problematic, as all strings fucking suck in c++, lol
+
+Some Problems with C-Interface:
+In C/C++ char, signed char and unsigned char are all different types...
+Can I just assume that all const char* are const unsigned char* --> Maybe, and if that's the case, then we don't have any problems.
+But when including headers I also have to consider that shit sucks mayor ass. I guess it's fine as long as the ABI allows it.
+then we will have something like glSetName(const unsigned char* name) instead of (const char*)
+This is something to consider when doing the importer, but should be fine otherwise
+x: string = "Frank"
+
+c_str // --> Implies null termination
+x: c_str = "Frank"
+x: []const u8 = ""
+x.characters[0]
+print_string(x)
 
 
 

@@ -55,8 +55,9 @@ struct Constant_Pool
     Dynamic_Array<Upp_Constant_Reference> references; // Required for serialization
     Dynamic_Array<Upp_Constant_Function_Reference> function_references; // Required for serialization
     Stack_Allocator constant_memory;
-    Hashtable<void*, Upp_Constant> saved_pointers;
+
     Hashtable<Deduplication_Info, Upp_Constant> deduplication_table; 
+    Hashtable<void*, Upp_Constant> userdata_pointer_deduplication;
     
     // Statistics tracking
     int deepcopy_counts;

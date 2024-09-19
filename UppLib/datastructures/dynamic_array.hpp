@@ -252,3 +252,10 @@ template<typename T, typename Comparator>
 void dynamic_array_stable_sort(Dynamic_Array<T>* array, Comparator comparator) {
     std::stable_sort(&array->data[0], &array->data[array->size], comparator);
 }
+
+template <typename T>
+void dynamic_array_for_each(Dynamic_Array<T> table, void (*function)(T*)) {
+    for (int i = 0; i < table.size; i++) {
+        function(&table.data[i]);
+    }
+}

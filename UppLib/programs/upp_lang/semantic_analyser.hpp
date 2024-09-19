@@ -724,6 +724,7 @@ struct Predefined_Symbols
     Symbol* type_f32;
     Symbol* type_f64;
     Symbol* type_byte;
+    Symbol* type_string;
 
     // Symbols for 'compiler' provided structs
     Symbol* type_type;

@@ -29,7 +29,7 @@ Constant_Pool constant_pool_create()
     result.constants = dynamic_array_create<Upp_Constant>(2048);
     result.references = dynamic_array_create<Upp_Constant_Reference>(128);
     result.function_references = dynamic_array_create<Upp_Constant_Function_Reference>(32);
-    result.saved_pointers = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
+    result.userdata_pointer_deduplication = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
     result.deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
     return result;
 }
@@ -40,7 +40,7 @@ void constant_pool_destroy(Constant_Pool* pool)
     dynamic_array_destroy(&pool->constants);
     dynamic_array_destroy(&pool->references);
     dynamic_array_destroy(&pool->function_references);
-    hashtable_destroy(&pool->saved_pointers);
+    hashtable_destroy(&pool->userdata_pointer_deduplication);
     hashtable_destroy(&pool->deduplication_table);
 }
 
@@ -360,7 +360,7 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
 
     // Handle cyclic references (Stop adding to pool once same pointer was found)
     {
-        Upp_Constant* already_saved_index = hashtable_find_element(&pool->saved_pointers, (void*)bytes.data);
+        Upp_Constant* already_saved_index = hashtable_find_element(&pool->userdata_pointer_deduplication, (void*)bytes.data);
         if (already_saved_index != 0) {
             return constant_pool_result_make_success(*already_saved_index);
         }
@@ -468,7 +468,7 @@ Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, in
 
     // Add constant to table
     dynamic_array_push_back(&pool->constants, constant);
-    hashtable_insert_element(&pool->saved_pointers, (void*)bytes.data, constant);
+    hashtable_insert_element(&pool->userdata_pointer_deduplication, (void*)bytes.data, constant);
 
     // Store references
     for (int i = 0; i < pointer_infos.size; i++)
@@ -510,7 +510,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
     pool->deepcopy_counts = 0;
     pool->time_in_comparison = 0;
     pool->time_in_hash = 0;
-    hashtable_reset(&pool->saved_pointers);
+    hashtable_reset(&pool->userdata_pointer_deduplication);
     return constant_pool_add_constant_internal(signature, 1, bytes);
 }
 

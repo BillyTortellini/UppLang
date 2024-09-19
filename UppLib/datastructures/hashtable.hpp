@@ -121,6 +121,15 @@ void hashtable_for_each(Hashtable<K, V>* table, void (*function)(K*, V*)) {
 }
 
 template <typename K, typename V>
+void hashtable_for_each_value(Hashtable<K, V>* table, void (*function)(V*)) {
+    Hashtable_Iterator<K, V> it = hashtable_iterator_create(table);
+    while (hashtable_iterator_has_next(&it)) {
+        function(it.value);
+        hashtable_iterator_next(&it);
+    }
+}
+
+template <typename K, typename V>
 void hashtable_reset(Hashtable<K, V>* table)
 {
     table->element_count = 0;

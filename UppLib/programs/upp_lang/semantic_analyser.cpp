@@ -6771,7 +6771,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Variables which can hold the specified values
         void* value_nullptr = 0;
-        Upp_C_String value_string;
+        Upp_String value_string;
         u8 value_u8;
         u16 value_u16;
         u32 value_u32;
@@ -6938,10 +6938,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Literal_Type::STRING: {
             String* string = read.options.string;
-            value_string.slice.size = string->size + 1;
-            value_string.slice.data_ptr = (const u8*)string->characters;
+            value_string.bytes.size = string->size + 1;
+            value_string.bytes.data_ptr = (const u8*)string->characters;
 
-            literal_type = upcast(types.c_string);
+            literal_type = upcast(types.string);
             value_ptr = &value_string;
             break;
         }
@@ -9236,8 +9236,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 if (binop_node->value->type == AST::Expression_Type::LITERAL_READ && binop_node->value->options.literal_read.type == Literal_Type::STRING)
                 {
                     auto expr_info = get_info(binop_node->value, true);
-                    expression_info_set_value(expr_info, upcast(types.c_string), true);
-                    argument_set_analysed(binop_node, upcast(types.c_string));
+                    expression_info_set_value(expr_info, upcast(types.string), true);
+                    argument_set_analysed(binop_node, upcast(types.string));
 
                     auto binop_str = binop_node->value->options.literal_read.options.string;
                     if (binop_str->size == 1)
@@ -9332,8 +9332,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 if (unop_node->value->type == AST::Expression_Type::LITERAL_READ && unop_node->value->options.literal_read.type == Literal_Type::STRING)
                 {
                     auto expr_info = get_info(unop_node->value, true);
-                    expression_info_set_value(expr_info, upcast(types.c_string), true);
-                    argument_set_analysed(unop_node, upcast(types.c_string));
+                    expression_info_set_value(expr_info, upcast(types.string), true);
+                    argument_set_analysed(unop_node, upcast(types.string));
 
                     auto unop_str = unop_node->value->options.literal_read.options.string;
                     if (unop_str->size == 1)
@@ -9586,8 +9586,8 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                 if (name_node->value->type == AST::Expression_Type::LITERAL_READ && name_node->value->options.literal_read.type == Literal_Type::STRING) {
                     key.options.dot_call.id = name_node->value->options.literal_read.options.string;
                     auto expr_info = get_info(name_node->value, true);
-                    expression_info_set_value(expr_info, upcast(types.c_string), true);
-                    argument_set_analysed(name_node, upcast(types.c_string));
+                    expression_info_set_value(expr_info, upcast(types.string), true);
+                    argument_set_analysed(name_node, upcast(types.string));
                 }
                 else {
                     log_semantic_error("Dotcall name must be a string literal", upcast(name_node));
@@ -11133,6 +11133,7 @@ void semantic_analyser_reset()
         symbols.type_f32 = define_type_symbol("f32", upcast(types.f32_type));
         symbols.type_f64 = define_type_symbol("f64", upcast(types.f64_type));
         symbols.type_byte = define_type_symbol("byte", upcast(types.u8_type));
+        symbols.type_string = define_type_symbol("string", types.string);
         symbols.type_type = define_type_symbol("Type_Handle", types.type_handle);
         symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
         symbols.type_any = define_type_symbol("Any", upcast(types.any_type));

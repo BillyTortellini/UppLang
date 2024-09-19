@@ -20,7 +20,7 @@ bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = true;
-bool enable_c_compilation = true;
+bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
@@ -39,8 +39,8 @@ bool run_testcases_compiled = false;
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
-bool enable_execution = true;
-bool execute_binary = true;
+bool enable_execution = false;
+bool execute_binary = false;
 
 
 // This variable gets written to in compiler_compile
@@ -98,10 +98,8 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.ir_generator = ir_generator_initialize();
     compiler.bytecode_generator = new Bytecode_Generator;
     *compiler.bytecode_generator = bytecode_generator_create();
-    compiler.c_generator = new C_Generator;
-    *compiler.c_generator = c_generator_create();
-    compiler.c_compiler = new C_Compiler;
-    *compiler.c_compiler = c_compiler_create();
+    compiler.c_generator = c_generator_initialize();
+    compiler.c_compiler = c_compiler_initialize();
 
     compiler.code_sources = dynamic_array_create<Code_Source*>(1);
     return &compiler;
@@ -130,10 +128,8 @@ void compiler_destroy()
     ir_generator_destroy();
     bytecode_generator_destroy(compiler.bytecode_generator);
     delete compiler.bytecode_generator;
-    c_generator_destroy(compiler.c_generator);
-    delete compiler.c_generator;
-    c_compiler_destroy(compiler.c_compiler);
-    delete compiler.c_compiler;
+    c_generator_shutdown();
+    c_compiler_shutdown();
 }
 
 
@@ -220,6 +216,8 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.id_struct =           add_id("Struct");
             ids.byte =                add_id("byte");
             ids.value =               add_id("value");
+            ids.string =              add_id("string");
+            ids.bytes =               add_id("bytes");
 
             ids.cast_mode =          add_id("Cast_Mode");
             ids.cast_mode_none =     add_id("NONE");
@@ -328,13 +326,13 @@ void compiler_execute_analysis_workloads_and_code_generation()
         bytecode_generator_set_entry_function(compiler.bytecode_generator);
     }
     if (do_c_generation) {
-        c_generator_generate(compiler.c_generator, &compiler);
+        c_generator_generate();
     }
     if (do_c_compilation) {
-        c_compiler_add_source_file(compiler.c_compiler, string_create_static("backend/src/main.cpp"));
-        c_compiler_add_source_file(compiler.c_compiler, string_create_static("backend/src/hello_world.cpp"));
-        c_compiler_add_source_file(compiler.c_compiler, string_create_static("backend/hardcoded/hardcoded_functions.cpp"));
-        c_compiler_compile(compiler.c_compiler);
+        c_compiler_add_source_file(string_create_static("backend/src/main.cpp"));
+        c_compiler_add_source_file(string_create_static("backend/src/hello_world.cpp"));
+        c_compiler_add_source_file(string_create_static("backend/hardcoded/hardcoded_functions.cpp"));
+        c_compiler_compile();
     }
 
     // OUTPUT
@@ -506,7 +504,7 @@ Exit_Code compiler_execute()
     if (!compiler_errors_occured() && do_execution)
     {
         if (execute_binary) {
-            return c_compiler_execute(compiler.c_compiler);
+            return c_compiler_execute();
         }
         else
         {
