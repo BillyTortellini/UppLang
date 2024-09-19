@@ -4,7 +4,7 @@ double::(n:int)->int
 	return n*2
 
 Player::struct
-	name:[]const u8
+	name:string
 	age:int
 
 main::()

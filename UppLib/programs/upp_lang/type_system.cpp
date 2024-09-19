@@ -288,22 +288,22 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     }
     case Datatype_Type::POINTER:
     {
-        byte* data_ptr = *((byte**)value_ptr);
-        if (data_ptr == 0) {
+        byte* data = *((byte**)value_ptr);
+        if (data == 0) {
             string_append_formated(string, "nullptr");
             return;
         }
-        string_append_formated(string, "Ptr %p", data_ptr);
+        string_append_formated(string, "Ptr %p", data);
         break;
     }
     case Datatype_Type::BYTE_POINTER:
     {
         string_append_formated(string, "byte_pointer");
-        byte* data_ptr = *((byte**)value_ptr);
-        if (data_ptr == 0) {
+        byte* data = *((byte**)value_ptr);
+        if (data == 0) {
             return;
         }
-        string_append_formated(string, "Ptr %p", data_ptr);
+        string_append_formated(string, "Ptr %p", data);
         break;
     }
     case Datatype_Type::TYPE_HANDLE: 
@@ -573,15 +573,15 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 void internal_type_struct_content_destroy(Internal_Type_Struct_Content* content)
 {
     for (int i = 0; i < content->subtypes.size; i++) {
-        internal_type_struct_content_destroy(&content->subtypes.data_ptr[i]);
+        internal_type_struct_content_destroy(&content->subtypes.data[i]);
     }
-    if (content->subtypes.data_ptr != nullptr) {
-        delete[] content->subtypes.data_ptr;
-        content->subtypes.data_ptr = 0;
+    if (content->subtypes.data != nullptr) {
+        delete[] content->subtypes.data;
+        content->subtypes.data = 0;
     }
-    if (content->members.data_ptr != nullptr) {
-        delete[] content->members.data_ptr;
-        content->members.data_ptr = 0;
+    if (content->members.data != nullptr) {
+        delete[] content->members.data;
+        content->members.data = 0;
     }
 }
 
@@ -590,16 +590,16 @@ void internal_type_info_destroy(Internal_Type_Information* info)
     switch (info->tag)
     {
     case Datatype_Type::ENUM: {
-        if (info->options.enumeration.members.data_ptr != 0) {
-            delete[]info->options.enumeration.members.data_ptr;
-            info->options.enumeration.members.data_ptr = 0;
+        if (info->options.enumeration.members.data != 0) {
+            delete[]info->options.enumeration.members.data;
+            info->options.enumeration.members.data = 0;
         }
         break;
     }
     case Datatype_Type::FUNCTION:
-        if (info->options.function.parameters.data_ptr != 0) {
-            delete[]info->options.function.parameters.data_ptr;
-            info->options.function.parameters.data_ptr = 0;
+        if (info->options.function.parameters.data != 0) {
+            delete[]info->options.function.parameters.data;
+            info->options.function.parameters.data = 0;
         }
         break;
     case Datatype_Type::STRUCT: {
@@ -1089,7 +1089,7 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
     auto& info_internal = type_system_register_type(upcast(result))->options.struct_subtype;
     info_internal.type = base_type->type_handle;
     info_internal.subtype_name.bytes.size = subtype_name->size + 1;
-    info_internal.subtype_name.bytes.data_ptr = (const u8*) subtype_name->characters;
+    info_internal.subtype_name.bytes.data = (const u8*) subtype_name->characters;
 
     Datatype* final_type = upcast(result);
     if (is_const) {
@@ -1172,13 +1172,13 @@ Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> p
 
         internal_info.parameters.size = parameters.size;
         if (parameters.size > 0) {
-            internal_info.parameters.data_ptr = new Upp_Type_Handle[parameters.size];
+            internal_info.parameters.data = new Upp_Type_Handle[parameters.size];
             for (int i = 0; i < parameters.size; i++) {
-                internal_info.parameters.data_ptr[i] = parameters[i].type->type_handle;
+                internal_info.parameters.data[i] = parameters[i].type->type_handle;
             }
         }
         else {
-            internal_info.parameters.data_ptr = nullptr;
+            internal_info.parameters.data = nullptr;
         }
     }
 
@@ -1369,17 +1369,17 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
 
 void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_Struct_Content* internal)
 {
-    internal->name.bytes.data_ptr = (const u8*) content->name->characters;
+    internal->name.bytes.data = (const u8*) content->name->characters;
     internal->name.bytes.size = content->name->size + 1;
 
     if (content->subtypes.size > 0) {
-        internal->tag_member.name.bytes.data_ptr = (const u8*)content->tag_member.id->characters;
+        internal->tag_member.name.bytes.data = (const u8*)content->tag_member.id->characters;
         internal->tag_member.name.bytes.size = content->tag_member.id->size + 1;
         internal->tag_member.offset = content->tag_member.offset;
         internal->tag_member.type = content->tag_member.type->type_handle;
     }
     else {
-        internal->tag_member.name.bytes.data_ptr = (const u8*) "";
+        internal->tag_member.name.bytes.data = (const u8*) "";
         internal->tag_member.name.bytes.size = 1;
         internal->tag_member.offset = 0;
         internal->tag_member.type = compiler.type_system.predefined_types.unknown_type->type_handle;
@@ -1388,35 +1388,35 @@ void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_
     // Copy members
     if (content->members.size > 0) 
     {
-        internal->members.data_ptr = new Internal_Type_Struct_Member[content->members.size];
+        internal->members.data = new Internal_Type_Struct_Member[content->members.size];
         internal->members.size = content->members.size;
         for (int i = 0; i < content->members.size; i++) 
         {
-            Internal_Type_Struct_Member* mem_i = &internal->members.data_ptr[i];
+            Internal_Type_Struct_Member* mem_i = &internal->members.data[i];
             Struct_Member& mem = content->members[i];
-            mem_i->name.bytes.data_ptr = (const u8*) mem.id->characters;
+            mem_i->name.bytes.data = (const u8*) mem.id->characters;
             mem_i->name.bytes.size = mem.id->size + 1;
             mem_i->offset = mem.offset;
             mem_i->type = mem.type->type_handle;
         }
     }
     else {
-        internal->members.data_ptr = nullptr;
+        internal->members.data = nullptr;
         internal->members.size = 0;
     }
 
     // Copy Subtypes recursive
     if (content->subtypes.size > 0) 
     {
-        internal->subtypes.data_ptr = new Internal_Type_Struct_Content[content->subtypes.size];
+        internal->subtypes.data = new Internal_Type_Struct_Content[content->subtypes.size];
         internal->subtypes.size = content->subtypes.size;
         // Copy subtypes recursive
         for (int i = 0; i < content->subtypes.size; i++) {
-            struct_content_mirror_internal_info(content->subtypes[i], &internal->subtypes.data_ptr[i]);
+            struct_content_mirror_internal_info(content->subtypes[i], &internal->subtypes.data[i]);
         }
     }
     else {
-        internal->subtypes.data_ptr = nullptr;
+        internal->subtypes.data = nullptr;
         internal->subtypes.size = 0;
     }
 }
@@ -1591,21 +1591,21 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
     // Make mirroring internal info
     if (enum_type->name == 0) {
         internal_info->options.enumeration.name.bytes.size = 1;
-        internal_info->options.enumeration.name.bytes.data_ptr = (const u8*) "";
+        internal_info->options.enumeration.name.bytes.data = (const u8*) "";
     }
     else {
         internal_info->options.enumeration.name.bytes.size = enum_type->name->size + 1;
-        internal_info->options.enumeration.name.bytes.data_ptr = (const u8*) enum_type->name->characters;
+        internal_info->options.enumeration.name.bytes.data = (const u8*) enum_type->name->characters;
     }
     int member_count = members.size;
     internal_info->options.enumeration.members.size = member_count;
-    internal_info->options.enumeration.members.data_ptr = new Internal_Type_Enum_Member[member_count];
+    internal_info->options.enumeration.members.data = new Internal_Type_Enum_Member[member_count];
     for (int i = 0; i < member_count; i++)
     {
         Enum_Member* member = &members[i];
-        Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data_ptr[i];
+        Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data[i];
         internal_member->name.bytes.size = member->name->size + 1;
-        internal_member->name.bytes.data_ptr = (const u8*)member->name->characters;
+        internal_member->name.bytes.data = (const u8*)member->name->characters;
         internal_member->value = member->value;
     }
 }

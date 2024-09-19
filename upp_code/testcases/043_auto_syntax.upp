@@ -1,5 +1,5 @@
 Player::struct
-	name:[]const u8
+	name:string
 	age:int
 	alive:bool
 

@@ -1,8 +1,6 @@
 
-c_str::[]const u8
-
 Player::struct
-	name:c_str
+	name:string
 	hp:int
 
 is_alive::(player:Player)->bool

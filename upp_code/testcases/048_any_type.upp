@@ -1,9 +1,8 @@
 
-c_str::[]const u8
 
 Player::struct
 	age:int
-	name:c_str
+	name:string
 	alive:bool
 
 main::()
@@ -75,12 +74,12 @@ any_adder::(val:Any)
 	else if val.type==u32
 		&cast{*u32}val.data=cast{u32}val+cast{u32}2
 
-string_compare::(str1:c_str,str2:c_str)->bool
-	if str1.size!=str2.size
+string_compare::(str1:string,str2:string)->bool
+	if str1.bytes.size!=str2.bytes.size
 		return false
 	i:=0
-	while i<str1.size
-		if str1[i]!=str2[i]
+	while i<str1.bytes.size
+		if str1.bytes[i]!=str2.bytes[i]
 			return false
 		i=i+1
 	return true
@@ -107,7 +106,7 @@ mini_calc::(ops:[]Any)->struct
 					result=result-cast{int}ops[i]
 				.MULT
 					result=result*cast{int}ops[i]
-		else if ops[i].type==c_str
+		else if ops[i].type==string
 			if string_compare(cast ops[i],"+")
 				status=.ADD
 			else if string_compare(cast ops[i],"*")

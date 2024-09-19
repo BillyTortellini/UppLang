@@ -4,17 +4,11 @@
 #include "semantic_analyser.hpp"
 
 bool deduplication_info_is_equal(Deduplication_Info* a, Deduplication_Info* b) {
-    double start = timer_current_time_in_seconds(compiler.timer);
-    SCOPE_EXIT(compiler.constant_pool.time_in_comparison += timer_current_time_in_seconds(compiler.timer) - start;);
-
     if (!types_are_equal(a->type, b->type) || a->memory.size != b->memory.size) return false;
     return memory_compare(a->memory.data, b->memory.data, a->memory.size);
 }
 
 u64 hash_deduplication(Deduplication_Info* info) {
-    double start = timer_current_time_in_seconds(compiler.timer);
-    SCOPE_EXIT(compiler.constant_pool.time_in_comparison += timer_current_time_in_seconds(compiler.timer) - start;);
-
     u64 hash = hash_memory(info->memory);
     hash = hash_combine(hash, hash_i32(&info->memory.size));
     hash = hash_combine(hash, hash_pointer(info->type));
@@ -27,9 +21,6 @@ Constant_Pool constant_pool_create()
     Constant_Pool result;
     result.constant_memory = stack_allocator_create_empty(2048);
     result.constants = dynamic_array_create<Upp_Constant>(2048);
-    result.references = dynamic_array_create<Upp_Constant_Reference>(128);
-    result.function_references = dynamic_array_create<Upp_Constant_Function_Reference>(32);
-    result.userdata_pointer_deduplication = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
     result.deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
     return result;
 }
@@ -38,9 +29,6 @@ void constant_pool_destroy(Constant_Pool* pool)
 {
     stack_allocator_destroy(&pool->constant_memory);
     dynamic_array_destroy(&pool->constants);
-    dynamic_array_destroy(&pool->references);
-    dynamic_array_destroy(&pool->function_references);
-    hashtable_destroy(&pool->userdata_pointer_deduplication);
     hashtable_destroy(&pool->deduplication_table);
 }
 
@@ -53,55 +41,23 @@ bool upp_constant_is_equal(Upp_Constant a, Upp_Constant b) {
 Constant_Pool_Result constant_pool_result_make_success(Upp_Constant constant) {
     Constant_Pool_Result result;
     result.success = true;
-    result.error_message = "";
-    result.constant = constant;
+    result.options.constant = constant;
     return result;
 }
 
 Constant_Pool_Result constant_pool_result_make_error(const char* error) {
     Constant_Pool_Result result;
     result.success = false;
-    result.error_message = error;
-    return result;
-}
-
-struct Pointer_Info
-{
-    void** pointer_address;
-    void* pointer_value;
-    Datatype* points_to_type;
-    int array_size; // For normal pointers 1, for slices >= 1
-    Upp_Constant added_internal_constant;
-};
-
-Pointer_Info pointer_info_make(void** pointer_address, Datatype* points_to_type, int array_size) {
-    Pointer_Info result;
-    result.pointer_address = pointer_address;
-    result.pointer_value = *pointer_address;
-    result.points_to_type = points_to_type;
-    result.array_size = array_size;
-    result.added_internal_constant.constant_index = -1;
-    return result;
-}
-
-Upp_Constant_Function_Reference function_reference_make(int offset, ModTree_Function* function)
-{
-    Upp_Constant_Function_Reference result;
-    result.offset_from_constant_start = offset;
-    result.points_to = function;
+    result.options.error_message = error;
     return result;
 }
 
 // prototype
-bool record_pointers_and_set_padding_bytes_zero_recursive(
-    Datatype* signature, int array_size, Array<byte> bytes, int start_offset, int offset_per_element,
-    Dynamic_Array<Pointer_Info>& pointer_infos, Dynamic_Array<Upp_Constant_Function_Reference>& function_references);
+void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, byte* memory, Constant_Pool_Result& result);
 
-
-bool struct_content_record_pointer_and_padding_recursive(
-    Struct_Content* content, int array_size, Array<byte> bytes, int struct_start_offset, int offset_per_element,
-    Dynamic_Array<Pointer_Info>& pointer_infos, Dynamic_Array<Upp_Constant_Function_Reference>& function_references,
-    Subtype_Index* subtype_index, int index_level, int offset_in_struct, int subtype_end_offset)
+void struct_memory_set_padding_to_zero_recursive(
+    Struct_Content* content, byte* struct_memory_start, Subtype_Index* subtype_index, 
+    int index_level, int offset_in_struct, int subtype_end_offset, Constant_Pool_Result& result)
 {
     // Handle members
     int next_member_offset = offset_in_struct;
@@ -111,20 +67,13 @@ bool struct_content_record_pointer_and_padding_recursive(
         // Fill out padding until member
         if (member->offset != next_member_offset) {
             assert(member->offset > next_member_offset, "");
-            for (int i = 0; i < array_size; i++) {
-                int element_offset = struct_start_offset + offset_per_element * i;
-                int gap_offset = element_offset + next_member_offset;
-                memory_set_bytes(bytes.data + gap_offset, member->offset - next_member_offset, 0);
-            }
+            memory_set_bytes(struct_memory_start + next_member_offset, member->offset - next_member_offset, 0);
         }
         next_member_offset = member->offset + member->type->memory_info.value.size;
 
         // Handle member types
-        bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-            member->type, array_size, bytes, struct_start_offset + member->offset, offset_per_element, pointer_infos, function_references);
-        if (!success) {
-            return false;
-        }
+        datatype_memory_set_padding_bytes_to_zero_recursive(member->type, struct_memory_start + member->offset, result);
+        if (!result.success) return;
     }
 
     // Early exit if no subtypes exist
@@ -133,385 +82,236 @@ bool struct_content_record_pointer_and_padding_recursive(
         // Fill empty bytes till subtype-end
         if (next_member_offset != subtype_end_offset) {
             assert(next_member_offset < subtype_end_offset, "");
-            for (int i = 0; i < array_size; i++) {
-                int element_offset = struct_start_offset + offset_per_element * i;
-                int gap_offset = element_offset + next_member_offset;
-                memory_set_bytes(bytes.data + gap_offset, subtype_end_offset - next_member_offset, 0);
-            }
-        }
-        return true;
-    }
-
-    // Handle tag and subtypes 
-    if (index_level < subtype_index->indices.size) 
-    {
-        // Here we know the subtype
-        int expected_index = subtype_index->indices[index_level].index;
-        Struct_Content* child_content = content->subtypes[expected_index];
-        for (int i = 0; i < array_size; i++) {
-            int sub_index = (*(int*)(bytes.data + struct_start_offset + offset_per_element * i + content->tag_member.offset)) - 1;
-            if (sub_index != expected_index) {
-                return false;
-            }
-        }
-        bool success = struct_content_record_pointer_and_padding_recursive(
-            child_content, array_size, bytes, struct_start_offset, offset_per_element, pointer_infos, function_references,
-            subtype_index, index_level + 1, next_member_offset, content->tag_member.offset
-        );
-        if (!success) {
-            return false;
+            memory_set_bytes(struct_memory_start + next_member_offset, subtype_end_offset - next_member_offset, 0);
         }
     }
     else 
     {
-        // Here we don't know the subtypes, so we have to handle all tags separatly
-        for (int i = 0; i < array_size; i++) 
+        // Handle tag and subtypes 
+        Struct_Content* child_content;
+        if (index_level < subtype_index->indices.size)
         {
-            int* tag_ptr = (int*)(bytes.data + struct_start_offset + offset_per_element * i + content->tag_member.offset);
-            int sub_index = *tag_ptr - 1;
-            if (sub_index < 0 || sub_index >= content->subtypes.size) {
-                return false;
+            // Here we know the subtype
+            int expected_index = subtype_index->indices[index_level].index;
+            int sub_index = (*(int*)(struct_memory_start + content->tag_member.offset)) - 1;
+            if (sub_index != expected_index) {
+                result = constant_pool_result_make_error("Found struct subtype where tag doesn't match expected subtype");
+                return;
             }
-            Struct_Content* child_content = content->subtypes[sub_index];
-            bool success = struct_content_record_pointer_and_padding_recursive(
-                child_content, 1, bytes, struct_start_offset + i * offset_per_element, 0, pointer_infos, function_references,
-                subtype_index, index_level + 1, next_member_offset, content->tag_member.offset
-            );
-            if (!success) {
-                return false;
-            }
+            child_content = content->subtypes[expected_index];
         }
-    }
+        else
+        {
+            int sub_index = (*(int*)(struct_memory_start + content->tag_member.offset)) - 1;
+            if (sub_index < 0 || sub_index >= content->subtypes.size) {
+                result = constant_pool_result_make_error("Found struct subtype where tag value is invalid");
+                return;
+            }
+            child_content = content->subtypes[sub_index];
+        }
 
-    return true;
+        struct_memory_set_padding_to_zero_recursive(
+            child_content, struct_memory_start, subtype_index, index_level + 1, next_member_offset, content->tag_member.offset, result
+        );
+    }
+    return;
 }
 
-// Doesn't record null-pointers, as those aren't necessary, returns false if a void-pointer isn't set null
-// Checks slice size and checks any type
-// Also checks if function pointers are present
-bool record_pointers_and_set_padding_bytes_zero_recursive(
-    Datatype* signature, int array_size, Array<byte> bytes, int start_offset, int offset_per_element, 
-    Dynamic_Array<Pointer_Info>& pointer_infos, Dynamic_Array<Upp_Constant_Function_Reference>& function_references)
+void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
     auto& types = compiler.type_system.predefined_types;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
-    
+
     // Early exit if there's nothing to do
-    if (!memory_info.contains_padding_bytes && !memory_info.contains_reference && !memory_info.contains_function_pointer) {
-        return true;
+    if (!memory_info.contains_padding_bytes) {
+        return;
     }
 
+    signature = datatype_get_non_const_type(signature); // We don't care for constants here
     switch (signature->type)
     {
-    case Datatype_Type::TYPE_HANDLE:
-    case Datatype_Type::UNKNOWN_TYPE:
-    case Datatype_Type::ENUM:
     case Datatype_Type::TEMPLATE_PARAMETER:
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+    case Datatype_Type::UNKNOWN_TYPE: {
+        panic("Shouldn't happen");
+        return;
+    }
+    case Datatype_Type::TYPE_HANDLE:
+    case Datatype_Type::ENUM:
     case Datatype_Type::PRIMITIVE: {
-        return true;
+        return;
     }
     case Datatype_Type::CONSTANT: {
-        return record_pointers_and_set_padding_bytes_zero_recursive(
-            downcast<Datatype_Constant>(signature)->element_type, array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references
-        );
+        panic("Shouldn't happen after previous call");
+        return;
     }
     case Datatype_Type::FUNCTION: {
+        // Check if function index is correct
         auto& functions = compiler.semantic_analyser->program->functions;
-        for (int i = 0; i < array_size; i++) {
-            int function_pointer_offset = start_offset + i * offset_per_element;
-            i64 function_index = *(i64*)(bytes.data + function_pointer_offset) - 1;
-            if (function_index == -1) {
-                continue; // Note: Function indices are stored + 1 so that 0 equals nullpointer
-            }
-            if (function_index < 0 || function_index >= functions.size) {
-                return false;
-            }
-            dynamic_array_push_back(&function_references, function_reference_make(function_pointer_offset, functions[function_index]));
+        i64 function_index = ((int)*(i64*)memory) - 1;
+        if (function_index < -1 || function_index >= functions.size) { // Note: -1 would mean nullptr in this context
+            result = constant_pool_result_make_error("Found function pointer with invalid value");
+            return;
         }
-        return true;
+        return;
     }
+    case Datatype_Type::BYTE_POINTER:
     case Datatype_Type::POINTER:
     {
-        Datatype* points_to = downcast<Datatype_Pointer>(signature)->element_type;
-        for (int i = 0; i < array_size; i++) {
-            void** pointer_address = (void**)(bytes.data + start_offset + offset_per_element * i);
-            if (*pointer_address != nullptr) { // Dont record null-pointers
-                dynamic_array_push_back(&pointer_infos, pointer_info_make(pointer_address, points_to, 1));
-            }
+        void* pointer = *(void**)memory;
+        if (pointer != nullptr) {
+            result = constant_pool_result_make_error("Found pointer that isn't nullptr");
+            return;
         }
-        return true;
+        return;
     }
     case Datatype_Type::SLICE:
     {
         Datatype* points_to = downcast<Datatype_Slice>(signature)->element_type;
-        for (int i = 0; i < array_size; i++) {
-            Upp_Slice_Base* slice = (Upp_Slice_Base*)(bytes.data + start_offset + offset_per_element * i);
+        Upp_Slice_Base slice = *(Upp_Slice_Base*)memory;
 
-            // Fill padding
-            assert(sizeof(Upp_Slice_Base) == 16 && sizeof(slice->size) == 4, "Setting the padding to zero is only required when slices have i32 as size");
-            memory_set_bytes(((byte*)slice) + 12, 4, 0);
-
-            // Record pointer
-            if (slice->size == 0) { // Sanitize slice
-                slice->data = 0;
-            }
-            else if (slice->size < 0) { 
-                return false;
-            }
-            if (slice->data == 0) {
-                continue;
-            }
-            dynamic_array_push_back(&pointer_infos, pointer_info_make(&slice->data, points_to, slice->size)); // Note: Slice size check is done later
+        if (slice.data != nullptr || slice.size != 0) {
+            result = constant_pool_result_make_error("Found non-empty slice");
+            return;
         }
 
-        return true;
+        memory_set_bytes(memory, sizeof(Upp_Slice_Base), 0);
+        return;
     }
-    case Datatype_Type::BYTE_POINTER: {
-        for (int i = 0; i < array_size; i++) {
-            void** pointer_address = (void**) (bytes.data + start_offset + offset_per_element * i);
-            if (*pointer_address != nullptr) {
-                return false;
-            }
-        }
-        return true;
-    }
-    case Datatype_Type::ARRAY: {
+    case Datatype_Type::ARRAY:
+    {
         auto array = downcast<Datatype_Array>(signature);
         if (!array->count_known) {
-            return true;
-        }
-        // Handle arrays of arrays efficiently
-        if (array_size == 1 || offset_per_element == memory_info.size) {
-            return record_pointers_and_set_padding_bytes_zero_recursive(
-                array->element_type, array->element_count * array_size, bytes, start_offset, 
-                array->element_type->memory_info.value.size, pointer_infos, function_references);
+            result = constant_pool_result_make_error("Value contains array with unknown-count");
+            return;
         }
 
-        // Search all arrays seperately
-        for (int i = 0; i < array_size; i++) {
-            int element_offset = start_offset + offset_per_element * i;
-            bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-                array->element_type, array->element_count, bytes, element_offset, 
-                array->element_type->memory_info.value.size, pointer_infos, function_references);
-            if (!success) {
-                return false;
-            }
+        // Handle all elements
+        for (int i = 0; i < array->element_count; i++) {
+            byte* element_memory = memory + array->element_type->memory_info.value.size * i;
+            datatype_memory_set_padding_bytes_to_zero_recursive(array->element_type, element_memory, result);
+            if (!result.success) return;
         }
-        return true;
+        return;
     }
-    case Datatype_Type::SUBTYPE: 
+    case Datatype_Type::SUBTYPE:
     case Datatype_Type::STRUCT:
     {
-        // Check if it's any type
+        // Check if it's Any-type or string
         if (types_are_equal(signature, upcast(types.any_type)))
         {
-            for (int i = 0; i < array_size; i++) {
-                Upp_Any* any = (Upp_Any*) (bytes.data + start_offset + offset_per_element * i);
-                if (any->type.index >= (u32)compiler.type_system.types.size) {
-                    return false;
-                }
-
-                // Fill padding to 0
-                assert(sizeof(Upp_Any) == 16 && sizeof(any->type) == 4, "Setting the padding to zero is only required when slices have i32 as size");
-                memory_set_bytes(((byte*)any) + 12, 4, 0);
-
-                if (any->data == 0) {
-                    continue;
-                }
-                Datatype* pointed_to_type = compiler.type_system.types[any->type.index];
-                dynamic_array_push_back(&pointer_infos, pointer_info_make(&any->data, pointed_to_type, 1)); // Note: Slice size check is done later
+            Upp_Any any = *(Upp_Any*)memory;
+            if (any.type.index >= (u32)compiler.type_system.types.size) {
+                result = constant_pool_result_make_error("Found any type with invalid type-handle index");
+                return;
             }
-            return true;
+            result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
+            return;
+        }
+        else if (types_are_equal(signature, types.string))
+        {
+            Upp_String string = *(Upp_String*)memory;
+            if (string.bytes.size < 0) {
+                result = constant_pool_result_make_error("Value contains string with negative size");
+                return;
+            }
+            else if (string.bytes.size == 0) {
+                if (string.bytes.data == nullptr) {
+                    memory_set_bytes(memory, sizeof(Upp_String), 0);
+                }
+                else {
+                    result = constant_pool_result_make_error("Value contains string with size 0 and non-null pointer");
+                    return;
+                }
+            }
+            else
+            {
+                // Check if memory is readable
+                if (!memory_is_readable((void*)string.bytes.data, string.bytes.size)) {
+                    result = constant_pool_result_make_error("Value contains string with unreadable memory");
+                    return;
+                }
+
+                auto& id_pool = compiler.identifier_pool;
+                auto id = identifier_pool_add(&id_pool, string_create_static((const char*)string.bytes.data));
+
+                // Create string value pointing to identifier pool
+                memory_set_bytes(&string, sizeof(Upp_String), 0);
+                string.bytes.data = (const u8*)id->characters;
+                string.bytes.size = id->size + 1;
+                *(Upp_String*)memory = string;
+            }
+
+            return;
         }
 
         if (signature->base_type->type != Datatype_Type::STRUCT) {
-            return false; // I guess this would only happen for struct instance template, which should be polymorphic and doesn't get to pool
+            // I guess this would only happen for struct instance template, which should be polymorphic and doesn't get to pool (e.g. fails at calculate comptime)
+            panic("I dont think this should happen");
+            return;
         }
-        Datatype_Struct* structure = downcast<Datatype_Struct>(signature->base_type);
 
-        return struct_content_record_pointer_and_padding_recursive(
-            &structure->content, array_size, bytes, start_offset, offset_per_element, pointer_infos, function_references,
-            signature->mods.subtype_index, 0, 0, structure->base.memory_info.value.size
+        Datatype_Struct* structure = downcast<Datatype_Struct>(signature->base_type);
+        if (structure->struct_type == AST::Structure_Type::UNION) {
+            result = constant_pool_result_make_error("Found Union");
+            return;
+        }
+        struct_memory_set_padding_to_zero_recursive(
+            &structure->content, memory, signature->mods.subtype_index, 0, 0, memory_info.size, result
         );
+        return;
     }
     default: panic("");
     }
 
     panic("");
-    return true;
+    return;
 }
 
-Constant_Pool_Result constant_pool_add_constant_internal(Datatype* signature, int array_size, Array<byte> bytes)
+Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes)
 {
+    Constant_Pool& pool = compiler.constant_pool;
     signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
-
-    Constant_Pool* pool = &compiler.constant_pool;
-    pool->added_internal_constants += 1;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
-    assert(memory_info.size * array_size == bytes.size, "Array/data must fit into buffer!");
+    assert(memory_info.size == bytes.size, "Array/data must fit into buffer!");
 
     // Check if memory is readable
     if (!memory_is_readable(bytes.data, bytes.size)) {
-        return constant_pool_result_make_error("Constant data contains invalid pointer that isn't null");
+        return constant_pool_result_make_error("Constant data contains invalid pointer");
     }
 
-    // Handle cyclic references (Stop adding to pool once same pointer was found)
-    {
-        Upp_Constant* already_saved_index = hashtable_find_element(&pool->userdata_pointer_deduplication, (void*)bytes.data);
-        if (already_saved_index != 0) {
-            return constant_pool_result_make_success(*already_saved_index);
-        }
+    // Set padding to zero
+    Constant_Pool_Result result;
+    result.success = true;
+    datatype_memory_set_padding_bytes_to_zero_recursive(signature, bytes.data, result);
+    if (!result.success) {
+        return result;
     }
 
-    // Record all pointers (Which are in 'shallow' memory of this constant)
-    Dynamic_Array<Pointer_Info> pointer_infos;
-    Dynamic_Array<Upp_Constant_Function_Reference> function_references;
-    SCOPE_EXIT(
-        if (pointer_infos.data != 0) { dynamic_array_destroy(&pointer_infos); }
-        if (function_references.data != 0) { dynamic_array_destroy(&function_references); }
-    );
-    {
-        // Create pointers array if necessary
-        if (memory_info.contains_reference) {
-            pointer_infos = dynamic_array_create<Pointer_Info>(1);
-        }
-        else {
-            pointer_infos.data = 0;
-            pointer_infos.size = 0;
-            pointer_infos.capacity = 0;
-        }
-        if (memory_info.contains_function_pointer) {
-            function_references = dynamic_array_create<Upp_Constant_Function_Reference>(1);
-        }
-        else {
-            function_references.data = 0;
-            function_references.size = 0;
-            function_references.capacity = 0;
-        }
-
-        bool success = record_pointers_and_set_padding_bytes_zero_recursive(
-            signature, array_size, bytes, 0, memory_info.size, pointer_infos, function_references);
-        if (!success) {
-            return constant_pool_result_make_error(
-                "Constant serialization failed because either non-null void pointers, c-unions, invalid any-type or invalid union tag");
-        }
+    // Check for deduplication
+    Deduplication_Info deduplication_info;
+    deduplication_info.memory = bytes;
+    deduplication_info.type = signature;
+    Upp_Constant* deduplicated = hashtable_find_element(&pool.deduplication_table, deduplication_info);
+    if (deduplicated != 0) {
+        return constant_pool_result_make_success(*deduplicated);
     }
 
-    // Create rewind checkpoint
-    auto checkpoint = stack_checkpoint_make(&pool->constant_memory);
-    int rewind_constant_count = pool->constants.size;
-    int rewind_reference_count = pool->references.size;
-    int rewind_function_reference_count = pool->function_references.size;
-    bool finished_successfully = false;
-    SCOPE_EXIT({
-        if (!finished_successfully) {
-            stack_checkpoint_rewind(checkpoint);
-            dynamic_array_rollback_to_size(&pool->constants, rewind_constant_count);
-            dynamic_array_rollback_to_size(&pool->references, rewind_reference_count);
-            dynamic_array_rollback_to_size(&pool->function_references, rewind_function_reference_count);
-        }
-    });
-
-    // For all pointers, add another upp_constant internally, and change the pointer to the internal memory
-    for (int i = 0; i < pointer_infos.size; i++) {
-        auto& pointer_info = pointer_infos[i];
-        assert(pointer_info.pointer_value != nullptr, "Should have been checked beforehand");
-
-        // Create new constant
-        Constant_Pool_Result referenced_constant = constant_pool_add_constant_internal(
-            pointer_info.points_to_type, pointer_info.array_size, 
-            array_create_static_as_bytes((byte*)pointer_info.pointer_value, pointer_info.points_to_type->memory_info.value.size * pointer_info.array_size)
-        );
-        if (!referenced_constant.success) {
-            return referenced_constant;
-        }
-        pointer_info.added_internal_constant = referenced_constant.constant;
-
-        // Update pointer
-        *pointer_info.pointer_address = referenced_constant.constant.memory;
-    }
-    SCOPE_EXIT( // Restore original pointer values
-        for (int i = 0; i < pointer_infos.size; i++) {
-            auto& pointer_info = pointer_infos[i];
-            *pointer_info.pointer_address = pointer_info.pointer_value;
-        }
-    );
-
-    // Start creating constant
+    // Create new constant
     Upp_Constant constant;
-    constant.constant_index = pool->constants.size;
-    constant.array_size = array_size;
+    constant.constant_index = pool.constants.size;
     constant.type = signature;
-    constant.memory = 0;
-
-    // Check if deduplication possible (Memory hash + memory equals of shallow copy with updated pointers)
-    {
-        pool->duplication_checks += 1;
-        Deduplication_Info deduplication_info;
-        deduplication_info.memory = bytes;
-        deduplication_info.type = signature;
-        Upp_Constant* deduplicated = hashtable_find_element(&pool->deduplication_table, deduplication_info);
-        // Note: Currently only the memory is hashed, so we have to make an extra type check here...
-        if (deduplicated != 0) {
-            return constant_pool_result_make_success(*deduplicated);
-        }
-        else {
-            constant.memory = (byte*)stack_allocator_allocate_size(&pool->constant_memory, bytes.size, memory_info.alignment);
-            memory_copy(constant.memory, bytes.data, bytes.size);
-            deduplication_info.memory = array_create_static(constant.memory, bytes.size);
-            hashtable_insert_element(&pool->deduplication_table, deduplication_info, constant);
-        }
-    }
+    constant.memory = (byte*)stack_allocator_allocate_size(&pool.constant_memory, bytes.size, memory_info.alignment);
+    memory_copy(constant.memory, bytes.data, bytes.size);
 
     // Add constant to table
-    dynamic_array_push_back(&pool->constants, constant);
-    hashtable_insert_element(&pool->userdata_pointer_deduplication, (void*)bytes.data, constant);
+    dynamic_array_push_back(&pool.constants, constant);
+    deduplication_info.memory.data = constant.memory;
+    hashtable_insert_element(&pool.deduplication_table, deduplication_info, constant);
 
-    // Store references
-    for (int i = 0; i < pointer_infos.size; i++)
-    {
-        auto& pointer_info = pointer_infos[i];
-
-        Upp_Constant_Reference reference;
-        reference.constant = constant;
-        reference.pointer_member_byte_offset = (byte*)pointer_info.pointer_address - (byte*)bytes.data;
-        assert(reference.pointer_member_byte_offset >= 0 && reference.pointer_member_byte_offset <= bytes.size, "");
-        reference.points_to = pointer_info.added_internal_constant;
-        dynamic_array_push_back(&pool->references, reference);
-    }
-    // Store function pointers
-    for (int i = 0; i < function_references.size; i++) {
-        auto& function_ref = function_references[i];
-        function_ref.constant = constant;
-        dynamic_array_push_back(&pool->function_references, function_ref);
-    }
-
-    // Return success
-    finished_successfully = true;
     return constant_pool_result_make_success(constant);
-}
-
-/*
-    Things that currently aren't correctly handled by constant pool:
-     - Graphs     
-     - Pointers into arrays (Also recursive structures
-    These will be serialized, but can possible consume more memory (pointers inside array will be duplicated),
-    and they won't be de-duplicated, meaning that instancing of polymorphic structs/functions may create more unnecessary instances
-*/
-Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes)
-{
-    Constant_Pool* pool = &compiler.constant_pool;
-    pool->added_internal_constants = 0;
-    pool->duplication_checks = 0;
-    pool->time_contains_reference = 0;
-    pool->deepcopy_counts = 0;
-    pool->time_in_comparison = 0;
-    pool->time_in_hash = 0;
-    hashtable_reset(&pool->userdata_pointer_deduplication);
-    return constant_pool_add_constant_internal(signature, 1, bytes);
 }
 
 

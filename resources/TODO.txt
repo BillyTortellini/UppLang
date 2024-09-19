@@ -1,49 +1,28 @@
 
 
 
-Constant Handling in C:
------------------------
- * Generate only on Demand
- * Type_Informations still needs to contain everything
- * Constant_Pool should only accept pointers to constant values from now on, otherwise error
- * Constants are implemented as C++ const globals
- * Initializiation is done with a function for each 'complex' constant (Structs, slices, arrays)
-    
+Next up:
+--------
+ * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
+ * Const variable definitions need an IR_Command, as they need to be initialialized at once in C-Generator... (Frick)
+ * Make type_info work again
 
-TODO:
- * Constants need to work
- * Type_Info needs to work
- * Constant variables can probably only be initialized once, maybe add variable-definition instruction to ir-code
- * Strings need an update in C-Generator
- * Casts should only be applied if the type changes
- * Subtype-Member Access in C-Generator
- * C-Readability could be improved a lot by just using better names + putting things into namespaces so we don't have name-clashes
- * Maybe constant pool shouldn't allow pointers at all, and just have special treatment for Strings (And Type-Info can also be handled seperately)
+ * IR_Data Access could be more structured like a tree (e.g. With member accesses, array-access, pointer-access, not having to be pointer loads and stores)
+ * C-Readability could be improved a lot by just using better names + putting things into namespaces so we don't have name-clashes (Would be nice for debuggin at the start)
+
+ * Fix testcases
+
 
 DONE:
+ * Check if things are working with new constant-pool --> Done
+ * Maybe constant pool shouldn't allow pointers at all, and just have special treatment for Strings (And Type-Info can also be handled seperately)
+ * Casts should only be applied if the type changes
  * Check if this works in C++
+ * Constants need to work
  * Figure out how dependencies work in C-Generator
  * Struct generation with Struct-Content + Subtypes
  * Constant + Subtypes need to work for code-generation in C-Generator
 
-
-
-Rework Plan:
-------------
- * Let's not handle extern things (extern functions and others) for now, as it will be reworked
- * I would like to generate type-signatures and constant accesses on the fly, so only the ones used by the functions are generated...
- * Casts should only add C-Style casts when the source/destination type differs
- * Constant accesses shouldn't do the pointer thing, but rather something else.
-
-
-C-Compiler Rework:
-------------------
- * C-Generator needs to be able to deal with Struct-Subtypes and constant types
- -> Maybe IR-Code needs to track constant values better...
- * Make all testcases work again for C-Compiler...
- * Add testcases with struct subtypes, and make them work
-
-Let's check out again what C-Compiler is doing
 
 
 
@@ -118,6 +97,26 @@ Missing Test-Cases:
 
 
 
+
+
+
+Constant-Pool Rework:
+---------------------
+Don't allow constants with pointers, with the exception of string.
+We can still do constant deduplication by setting padding-bytes to zero and hashing the memory
+
+Why?
+ * Generally storing pointers in constants is ill-adviced, as the pointers will change when compiling in C (So things like hashmaps won't work)
+ * It makes the constant-pool more complicated than it has to be (And slow)
+ * It also makes C-generation more complicated 
+ * Circular references will currently crash, and there aren't any good options to implement that..implement that...
+ * It's also not a feature that's used often, and for compile-time shenaniganes we probably want another mechanism anyway
+ * There is some weird behavior where pointers in constant-pool also need to be constant, so we would have to change types somehow?
+ * I also don't have to check if the memory is readable for most things, as this can be done once at the start...
+
+Disadvantages:
+ * Other mechanisms are needed in the language if this doesn't work...
+ * Type_Information needs special treatment in the C-Generator
 
 
 

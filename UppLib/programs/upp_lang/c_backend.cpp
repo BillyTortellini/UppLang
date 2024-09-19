@@ -306,7 +306,6 @@ struct C_Generator
 
     Hashtable<C_Translation, String> translations;
     Upp_Constant global_type_informations;
-    Hashtable<void*, Upp_Constant> constant_addresses;
 };
 
 static C_Generator c_generator;
@@ -321,7 +320,6 @@ C_Generator* c_generator_initialize()
     result.translations = hashtable_create_empty<C_Translation, String>(64, c_translation_hash, c_translation_is_equal);
     result.type_dependencies = dynamic_array_create<C_Type_Dependency*>();
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Datatype*, C_Type_Dependency*>(32);
-    result.constant_addresses = hashtable_create_pointer_empty<void*, Upp_Constant>(32);
     result.name_counter = 0;
     result.text = 0;
 
@@ -335,7 +333,6 @@ void c_generator_shutdown()
         string_destroy(&gen.sections[i]);
     }
     hashtable_destroy(&gen.translations);
-    hashtable_destroy(&gen.constant_addresses);
     hashtable_destroy(&gen.type_to_dependency_mapping);
     for (int i = 0; i < gen.type_dependencies.size; i++) {
         type_dependency_destroy(&gen.type_dependencies[i]);
@@ -442,8 +439,11 @@ void c_generator_output_type_reference(Datatype* type)
     }
 
     // Otherwise generate the type reference
-    String tmp = string_create_empty(256); // Is probably needed, as types may write other types?
-    SCOPE_EXIT(string_destroy(&tmp));
+    String constant_string;
+    constant_string.size = 0;
+    constant_string.capacity = 0;
+    SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
+
     String access_name = string_create_empty(32);
     String* backup_text = gen.text;
 
@@ -529,10 +529,19 @@ void c_generator_output_type_reference(Datatype* type)
         String* section_structs = &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS];
         string_append_formated(section_prototypes, "struct %s;\n", access_name.characters);
 
-        string_append_formated(section_structs, "struct %s {\n    ", access_name.characters);
-        gen.text = section_structs;
+        // Temporary string is required when calling this function recursively
+        String tmp = string_create_empty(32);
+        SCOPE_EXIT(string_destroy(&tmp));
+
+        gen.text = &tmp;
+        string_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
         c_generator_output_type_reference(slice_type->element_type);
-        string_append_formated(section_structs, "* data;\n    i32 size;\n    i32 padding;\n};\n\n");
+        string_append_formated(gen.text, "* data;\n    i32 size;\n    i32 padding;\n};\n\n");
+
+        // Now we write to struct section
+        gen.text = section_structs;
+        string_append(gen.text, tmp.characters);
+
         break;
     }
     case Datatype_Type::FUNCTION: 
@@ -541,27 +550,33 @@ void c_generator_output_type_reference(Datatype* type)
         auto& parameters = function->parameters;
         string_append_formated(&access_name, "fptr_%d", gen.name_counter);
         gen.name_counter++;
-        String* section_types = &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS];
-        gen.text = section_types;
 
-        string_append(section_types, "typedef ");
+        // Temporary string is required when calling this function recursively
+        String tmp = string_create_empty(32);
+        SCOPE_EXIT(string_destroy(&tmp));
+
+        gen.text = &tmp;
+        string_append(gen.text, "typedef ");
         if (function->return_type.available) {
             c_generator_output_type_reference(function->return_type.value);
         }
         else {
-            string_append(section_types, "void");
+            string_append(gen.text, "void");
         }
 
-        string_append_formated(section_types, " (*%s)(", access_name.characters);
+        string_append_formated(gen.text, " (*%s)(", access_name.characters);
         for (int i = 0; i < parameters.size; i++) {
             auto& param = parameters[i];
             c_generator_output_type_reference(param.type);
-            string_append_formated(&tmp, " %s", param.name->characters);
+            string_append_formated(gen.text, " %s", param.name->characters);
             if (i != parameters.size - 1) {
-                string_append_formated(&tmp, ", ");
+                string_append_formated(gen.text, ", ");
             }
         }
-        string_append_formated(section_types, ");\n\n");
+        string_append_formated(gen.text, ");\n\n");
+
+        gen.text = &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS];
+        string_append(gen.text, tmp.characters);
         break;
     }
     case Datatype_Type::STRUCT:
@@ -658,7 +673,6 @@ void c_generator_generate()
             string_reset(&gen.sections[i]);
         }
         hashtable_reset(&gen.translations);
-        hashtable_reset(&gen.constant_addresses);
         hashtable_reset(&gen.type_to_dependency_mapping);
         for (int i = 0; i < gen.type_dependencies.size; i++) {
             type_dependency_destroy(&gen.type_dependencies[i]);
@@ -709,16 +723,6 @@ void c_generator_generate()
             translation.options.datatype = upcast(types.any_type);
             String name = string_create("Upp_Any_"); // See hardcoded_functions.h
             hashtable_insert_element(&gen.translations, translation, name);
-        }
-    }
-
-    // Collect constant memory addresses
-    {
-        auto& pool = compiler.constant_pool;
-        for (int i = 0; i < pool.references.size; i++) {
-            auto& reference = pool.references[i];
-            void* pointer = *((void**)(reference.constant.memory + reference.pointer_member_byte_offset));
-            hashtable_insert_element(&gen.constant_addresses, pointer, reference.constant);
         }
     }
 
@@ -912,7 +916,7 @@ void c_generator_generate()
 
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level);
 
-void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array_size, bool requires_memory_address, int indentation_level)
+void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int indentation_level)
 {
     auto& types = compiler.type_system.predefined_types;
     auto& gen = c_generator;
@@ -924,45 +928,21 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array
         type->type != Datatype_Type::ENUM && type->type != Datatype_Type::FUNCTION) {
         requires_memory_address = true;
     }
-    if (array_size > 1) {
-        requires_memory_address = true;  // Just in case, so we don't have duplication
-    }
 
     String constant_string;
     constant_string.size = 0;
     constant_string.capacity = 0;
     SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
 
-    if (array_size > 1) 
+    if (requires_memory_address) 
     {
-        // Since arrays 100% suck in C, we need to create a holder for the values
-        // Also note: If the array_size > 1, this means we only ever want a pointer, as this is only used for slices
-        int holder_struct_index = gen.name_counter;
-        gen.name_counter += 1;
-        gen.text = &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS];
-        string_append_formated(gen.text, "struct array_holder_%d_ {\n    ", holder_struct_index);
-        c_generator_output_type_reference(base_type);
-        string_append_formated(gen.text, " values[%d];\n}\n\n", array_size);
-
-        gen.text = &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES];
-        string_append_formated(gen.text, "struct array_holder_%d_;\n", holder_struct_index);
-
         constant_string = string_create_empty(32);
         gen.text = &constant_string;
-        string_append_formated(gen.text, "const array_holder_%d_ const_%d = {{\n    ", holder_struct_index, gen.name_counter);
-        string_append_formated(backup_text, "const_%d.values[0]", gen.name_counter);
-        gen.name_counter += 1;
-    }
-    else if (requires_memory_address) {
-        constant_string = string_create_empty(32);
-        gen.text = &constant_string;
+
         c_generator_output_type_reference(base_type);
         string_append_formated(gen.text, " const_%d = ", gen.name_counter);
         string_append_formated(backup_text, "const_%d", gen.name_counter);
         gen.name_counter += 1;
-    }
-    else {
-        // Just generate the access string, e.g. 5, 10, or something like that
     }
 
     // Generate constant access
@@ -974,243 +954,121 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array
     {
         auto primitive = downcast<Datatype_Primitive>(type);
         int type_size = type->memory_info.value.size;
-        for (int i = 0; i < array_size; i++)
+        byte* memory = base_memory;
+        switch (primitive->primitive_type)
         {
-            byte* memory = base_memory + i * type_size;
-            switch (primitive->primitive_type)
-            {
-            case Primitive_Type::BOOLEAN: {
-                bool* value_ptr = (bool*)memory;
-                string_append(gen.text, *value_ptr ? "true" : "false");
-                break;
-            }
-            case Primitive_Type::INTEGER: {
-                if (primitive->is_signed) {
-                    switch (type_size)
-                    {
-                    case 1: string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
-                    case 2: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
-                    case 4: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
-                    case 8: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
-                    default: panic("HEY");
-                    }
-                }
-                else {
-                    switch (type_size)
-                    {
-                    case 1: string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
-                    case 2: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
-                    case 4: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
-                    case 8: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
-                    default: panic("HEY");
-                    }
-                }
-                break;
-            }
-            case Primitive_Type::FLOAT:
+        case Primitive_Type::BOOLEAN: {
+            bool* value_ptr = (bool*)memory;
+            string_append(gen.text, *value_ptr ? "true" : "false");
+            break;
+        }
+        case Primitive_Type::INTEGER: {
+            if (primitive->is_signed) {
                 switch (type_size)
                 {
-                case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
-                case 8: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
+                case 1: string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
+                case 2: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
+                case 4: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
+                case 8: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
                 default: panic("HEY");
                 }
-                break;
-            default: panic("What");
             }
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
+            else {
+                switch (type_size)
+                {
+                case 1: string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
+                case 2: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
+                case 4: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
+                case 8: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
+                default: panic("HEY");
+                }
             }
+            break;
+        }
+        case Primitive_Type::FLOAT:
+            switch (type_size)
+            {
+            case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
+            case 8: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
+            default: panic("HEY");
+            }
+            break;
+        default: panic("What");
         }
         break;
-
     }
     case Datatype_Type::TYPE_HANDLE: {
-        for (int i = 0; i < array_size; i++)
-        {
-            byte* memory = base_memory + i * type_size;
-            string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
-            }
-        }
+        byte* memory = base_memory;
+        string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
         break;
     }
     case Datatype_Type::ENUM:
     {
-        for (int i = 0; i < array_size; i++)
-        {
-            byte* memory = base_memory + i * type_size;
+        byte* memory = base_memory;
 
-            int enum_value = *(int*)memory;
-            Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
-            int member_index = -1;
-            for (int i = 0; i < enum_type->members.size; i++) {
-                auto& member = enum_type->members[i];
-                if (member.value == enum_value) {
-                    member_index = i;
-                    break;
-                }
-            }
-            assert(member_index != -1, "");
-
-            auto member = enum_type->members[member_index];
-            c_generator_output_type_reference(type);
-            string_append_formated(gen.text, ".%s", member.name->characters);
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
+        int enum_value = *(int*)memory;
+        Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
+        int member_index = -1;
+        for (int i = 0; i < enum_type->members.size; i++) {
+            auto& member = enum_type->members[i];
+            if (member.value == enum_value) {
+                member_index = i;
+                break;
             }
         }
+        assert(member_index != -1, "");
+
+        auto member = enum_type->members[member_index];
+        c_generator_output_type_reference(type);
+        string_append_formated(gen.text, ".%s", member.name->characters);
         break;
     }
-    case Datatype_Type::FUNCTION: 
+    case Datatype_Type::FUNCTION:
     {
-        for (int i = 0; i < array_size; i++)
-        {
-            byte* memory = base_memory + i * type_size;
+        byte* memory = base_memory;
 
-            int function_index = *(int*)memory;
-            if (function_index == 0) { // Function index 0 == nullptr, otherwise add -1 to get index in functions array
-                string_append(gen.text, "nullptr");
-            }
-            else {
-                C_Translation function_translation;
-                function_translation.type = C_Translation_Type::FUNCTION;
-                function_translation.options.function = compiler.ir_generator->program->functions[function_index - 1];
-                String* fn_name = hashtable_find_element(&gen.translations, function_translation);
-                assert(fn_name != 0, "");
-                string_append_formated(gen.text, "&%s", fn_name->characters);
-            }
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
-            }
+        int function_index = (int)*(i64*)memory;
+        if (function_index == 0) { // Function index 0 == nullptr, otherwise add -1 to get index in functions array
+            string_append(gen.text, "nullptr");
+        }
+        else {
+            C_Translation function_translation;
+            function_translation.type = C_Translation_Type::FUNCTION;
+            function_translation.options.function = compiler.ir_generator->program->functions[function_index - 1];
+            String* fn_name = hashtable_find_element(&gen.translations, function_translation);
+            assert(fn_name != 0, "");
+            string_append_formated(gen.text, "&%s", fn_name->characters);
         }
         break;
     }
-    case Datatype_Type::POINTER: 
-    {
-        for (int i = 0; i < array_size; i++) 
-        {
-            byte* memory = base_memory + i * type_size;
-            byte* pointer = *(byte**)memory;
-
-            if (pointer == nullptr) {
-                string_append(gen.text, "nullptr");
-            }
-            else 
-            {
-                Upp_Constant* pointed_to = hashtable_find_element(&gen.constant_addresses, (void*)pointer);
-                assert(pointed_to != 0, "");
-                string_append(gen.text, "&");
-                c_generator_output_constant_access(*pointed_to, true, 0);
-            }
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
-            }
-        }
-        break;
-    }
+    case Datatype_Type::POINTER:
     case Datatype_Type::BYTE_POINTER:
     {
-        for (int i = 0; i < array_size; i++) 
-        {
-            byte* memory = base_memory + i * type_size;
-            byte* pointer = *(byte**)memory;
-
-            if (pointer == nullptr) {
-                string_append(gen.text, "nullptr");
-            }
-            else {
-                panic("Byte pointer must be null to even get added to constant pool!");
-            }
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
-            }
-        }
+        byte* memory = base_memory;
+        byte* pointer = *(byte**)memory;
+        assert(pointer == 0, "Pointers must be null in constant memory");
+        string_append(gen.text, "nullptr");
         break;
     }
     case Datatype_Type::SLICE:
     {
         Datatype* element_type = downcast<Datatype_Slice>(type)->element_type;
-
-        // Since slices are structs, we need to create a function for initialization
-        int make_function_index = gen.name_counter;
-        {
-            gen.name_counter += 1;
-            String* before_text = gen.text;
-
-            // Generate function
-            gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
-            c_generator_output_type_reference(base_type);
-            string_append_formated(gen.text, " make_slice_%d_(");
-            c_generator_output_type_reference(element_type);
-            string_append_formated(gen.text, "* data, int size) {\n    ");
-            c_generator_output_type_reference(type);
-            string_append_formated(gen.text, " result;\n    result.data = data;\n    result.size = size;\n}\n\n");
-
-            // Generate prototype
-            gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
-            c_generator_output_type_reference(base_type);
-            string_append_formated(gen.text, " make_slice_%d_(");
-            c_generator_output_type_reference(element_type);
-            string_append_formated(gen.text, "* data, int size); \n");
-
-            gen.text = before_text;
-        }
-
-        for (int i = 0; i < array_size; i++) 
-        {
-            byte* memory = base_memory + i * type_size;
-            Upp_Slice_Base slice = *(Upp_Slice_Base*)memory;
-
-            if (slice.data == nullptr || slice.size == 0) {
-                string_append_formated(gen.text, "make_slice_%d_(nullptr, 0)", make_function_index);
-            }
-            else {
-                Upp_Constant* pointed_to = hashtable_find_element(&gen.constant_addresses, (void*)slice.data);
-                assert(pointed_to != 0, "");
-                string_append_formated(gen.text, "make_slice_%d_(&", make_function_index);
-                c_generator_output_constant_access(*pointed_to, true, 0);
-                string_append_formated(gen.text, ", %d)", slice.size);
-            }
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n    ");
-            }
-        }
+        Upp_Slice_Base slice = *(Upp_Slice_Base*)base_memory;
+        assert(slice.size == 0 && slice.data == nullptr, "");
+        string_append_formated(gen.text, "{.data = nullptr, .size = 0}");
         break;
     }
     case Datatype_Type::STRUCT:
     case Datatype_Type::SUBTYPE:
     {
-        // Handle any type
-        if (types_are_equal(type->base_type, upcast(compiler.type_system.predefined_types.any_type))) 
+        // Handle string
+        if (types_are_equal(type, types.string)) 
         {
-            for (int i = 0; i < array_size; i++) 
-            {
-                byte* memory = base_memory + i * type_size;
-                Upp_Any any = *(Upp_Any*)memory;
-
-                if (any.data == 0) {
-                    string_append_formated(gen.text, "upp_any_make_(nullptr, %d)", any.type.index);
-                }
-                else {
-                    Upp_Constant* pointed_to = hashtable_find_element(&gen.constant_addresses, (void*)any.data);
-                    assert(pointed_to != 0, "");
-                    string_append(gen.text, "upp_any_make_(&");
-                    c_generator_output_constant_access(*pointed_to, true, 0);
-                    string_append_formated(gen.text, ", %d)", any.type.index);
-                }
-
-                if (i != array_size - 1) {
-                    string_append_formated(gen.text, ",\n    ");
-                }
-            }
-
+            // Note: Maybe we need something smarter in the future to handle multi-line strings 
+            Upp_String string = *(Upp_String*)base_memory;
+            string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
+            string_append(gen.text, (const char*)string.bytes.data);
+            string_append_formated(gen.text, "\", .size = %d} }", string.bytes.size);
             break;
         }
 
@@ -1223,19 +1081,18 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array
         auto& members = structure->content.members;
         assert(structure->content.subtypes.size == 0, "Not implemented yet");
 
-        for (int i = 0; i < array_size; i++)
         {
             string_append(gen.text, "{\n");
             string_add_indentation(gen.text, indentation_level + 1);
             for (int j = 0; j < members.size; j++)
             {
                 auto& member = members[j];
-                byte* member_memory = base_memory + i * type_size + member.offset;
+                byte* member_memory = base_memory + member.offset;
 
                 // Generate designator
                 string_append_formated(gen.text, ".%s = ", member.id->characters);
                 // Note: We cannot work through members in array-style, as string output is sequential, in contrast to constant-pool
-                output_memory_as_constant(member_memory, member.type, 1, false, 0);
+                output_memory_as_constant(member_memory, member.type, false, indentation_level + 1);
                 if (j != members.size - 1) {
                     string_append(gen.text, ", \n");
                     string_add_indentation(gen.text, indentation_level + 1);
@@ -1244,16 +1101,10 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array
             string_append(gen.text, "\n");
             string_add_indentation(gen.text, indentation_level);
             string_append(gen.text, "}");
-
-            if (i != array_size - 1) {
-                string_append_formated(gen.text, ",\n");
-                string_add_indentation(gen.text, indentation_level);
-            }
         }
-        
+
         break;
     }
-
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
     case Datatype_Type::TEMPLATE_PARAMETER:
     case Datatype_Type::UNKNOWN_TYPE: {
@@ -1268,20 +1119,11 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, int array
     }
 
     // Finish declaration
-    if (array_size > 1) {
-        string_append(gen.text, "}};\n");
-        gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
-        string_append(gen.text, constant_string.characters);
-    }
-    else if (requires_memory_address) {
+    if (requires_memory_address) {
         string_append(gen.text, ";\n");
         gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
         string_append(gen.text, constant_string.characters);
     }
-    else {
-        // Nothing to finish for 'literal' accesses
-    }
-
 }
 
 // If we have a pointer to a int, we need to treat this seperately
@@ -1295,9 +1137,6 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     if (type->type != Datatype_Type::PRIMITIVE && type->type != Datatype_Type::TYPE_HANDLE &&
         type->type != Datatype_Type::ENUM && type->type != Datatype_Type::FUNCTION) {
         requires_memory_address = true;
-    }
-    if (constant.array_size > 1) {
-        requires_memory_address = true;  // Just in case, so we don't have duplication
     }
 
     C_Translation constant_translation;
@@ -1315,7 +1154,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     // Create access
     String access_name = string_create_empty(12);
     gen.text = &access_name;
-    output_memory_as_constant(constant.memory, constant.type, constant.array_size, requires_memory_address, 0);
+    output_memory_as_constant(constant.memory, constant.type, requires_memory_address, 0);
 
     // Store translation
     hashtable_insert_element(&gen.translations, constant_translation, access_name);
@@ -1386,16 +1225,16 @@ void c_generator_output_data_access(IR_Data_Access access)
     return;
 }
 
-void c_generator_output_cast_with_type(Datatype* type)
+void c_generator_output_cast_if_necessary(IR_Data_Access write_to_access, Datatype* value_type)
 {
     auto& gen = c_generator;
-    string_append_formated(gen.text, "(");
-    c_generator_output_type_reference(type);
-    string_append_formated(gen.text, ") ");
-}
 
-void c_generator_output_cast(IR_Data_Access access) {
-    c_generator_output_cast_with_type(ir_data_access_get_type(&access));
+    Datatype* write_to_type = ir_data_access_get_type(&write_to_access);
+    if (types_are_equal(write_to_type, value_type)) return;
+
+    string_append_formated(gen.text, "(");
+    c_generator_output_type_reference(write_to_type);
+    string_append_formated(gen.text, ") ");
 }
 
 // registers_in_same_scope is used for e.g. the while loop condition-block, as this may contain registers
@@ -1466,7 +1305,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             if (function_sig->return_type.available) {
                 c_generator_output_data_access(call->destination);
                 string_append_formated(gen.text, " = ");
-                c_generator_output_cast(call->destination);
+                c_generator_output_cast_if_necessary(call->destination, function_sig->return_type.value);
             }
 
             bool call_handled = false;
@@ -1634,7 +1473,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
                 string_append_formated(gen.text, "return ");
-                c_generator_output_cast(return_instr->options.return_value);
+                c_generator_output_cast_if_necessary(return_instr->options.return_value, code_block->function->function_type->return_type.value);
                 c_generator_output_data_access(return_instr->options.return_value);
                 string_append_formated(gen.text, ";\n");
                 break;
@@ -1650,7 +1489,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
         case IR_Instruction_Type::MOVE: {
             c_generator_output_data_access(instr->options.move.destination);
             string_append_formated(gen.text, " = ");
-            c_generator_output_cast(instr->options.move.destination);
+            c_generator_output_cast_if_necessary(instr->options.move.destination, ir_data_access_get_type(&instr->options.move.source));
             c_generator_output_data_access(instr->options.move.source);
             string_append_formated(gen.text, ";\n");
             break;
@@ -1660,7 +1499,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             IR_Instruction_Cast* cast = &instr->options.cast;
             c_generator_output_data_access(cast->destination);
             string_append_formated(gen.text, " = ");
-            c_generator_output_cast(cast->destination);
+            c_generator_output_cast_if_necessary(cast->destination, ir_data_access_get_type(&cast->source));
             c_generator_output_data_access(cast->source);
             string_append_formated(gen.text, ";\n");
             break;
@@ -1670,7 +1509,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             IR_Instruction_Address_Of* addr_of = &instr->options.address_of;
             c_generator_output_data_access(addr_of->destination);
             string_append_formated(gen.text, " = ");
-            c_generator_output_cast(addr_of->destination);
+            // c_generator_output_cast_if_necessary(addr_of->destination, ); // Not sure if this is even needed here...
             switch (addr_of->type)
             {
             case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT: {

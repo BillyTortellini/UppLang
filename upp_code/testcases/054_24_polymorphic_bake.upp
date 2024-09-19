@@ -1,19 +1,17 @@
 
-c_str::[]const u8
-
-string_equals::(a:c_str,b:c_str)->bool
-	if a.size!=b.size
+string_equals::(a:string,b:string)->bool
+	if a.bytes.size!=b.bytes.size
 		return false
 	
 	i:=0
-	while i<a.size
-		if a[i]!=b[i]
+	while i<a.bytes.size
+		if a.bytes[i]!=b.bytes[i]
 			return false
 		i=i+1
 	
 	return true
 
-offset_off::(a:$T,$name:c_str)->int
+offset_off::(a:$T,$name:string)->int
 	offset:=#bake
 		info:=type_info(T)
 		if info.tag==.Struct

@@ -1,9 +1,7 @@
 
-c_str::[]const u8
-
 Player::struct
 	age:int
-	name:c_str
+	name:string
 	alive:bool
 
 main::()
@@ -41,7 +39,7 @@ main::()
 		Macros.There will also be the possiblility to report errors inside
 		bake,which will prevent the names from being invalid
 
-member_offset::(type:Type_Handle,name:c_str)->int
+member_offset::(type:Type_Handle,name:string)->int
 	
 	info:=type_info(type)
 	if info.tag!=.Struct
@@ -57,12 +55,13 @@ member_offset::(type:Type_Handle,name:c_str)->int
 		i=i+1
 	return offset
 
-string_compare::(str1:c_str,str2:c_str)->bool
-	if str1.size!=str2.size
+string_compare::(str1:string,str2:string)->bool
+	if str1.bytes.size!=str2.bytes.size
 		return false
 	i:=0
-	while i<str1.size
-		if str1[i]!=str2[i]
+	while i<str1.bytes.size
+		if str1.bytes[i]!=str2.bytes[i]
 			return false
 		i=i+1
 	return true
+	

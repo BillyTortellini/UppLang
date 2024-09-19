@@ -235,7 +235,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
 template<typename T>
 struct Upp_Slice
 {
-    T* data_ptr;
+    T* data;
     i32 size;
 };
 

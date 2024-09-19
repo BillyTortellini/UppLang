@@ -1,8 +1,6 @@
 
-c_str::[]const u8
-
 Player::struct
-	name:c_str
+	name:string
 	age:int
 
 Holder::struct(T:Type_Handle,C:int)

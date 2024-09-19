@@ -803,7 +803,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 return true;
             }
             // Check if pointer data is correct
-            if (!memory_is_readable((void*)string.bytes.data_ptr, string.bytes.size)) {
+            if (!memory_is_readable((void*)string.bytes.data, string.bytes.size)) {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
@@ -811,7 +811,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 return true;
             }
             // Check if string is correctly null-terminated
-            if (!string.bytes.data_ptr[string.bytes.size - 1] == '\0') {
+            if (!string.bytes.data[string.bytes.size - 1] == '\0') {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
@@ -819,7 +819,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 return true;
             }
 
-            logg("%s", (const char*) string.bytes.data_ptr);
+            logg("%s", (const char*) string.bytes.data);
             break;
         }
         case Hardcoded_Type::PRINT_LINE: {

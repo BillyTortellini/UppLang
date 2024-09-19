@@ -1,10 +1,10 @@
 
 Player::struct
-	name:[]const u8
+	name:string
 	age:int
 	alive:bool
 
-player_make::(name:[]const u8,age:int,alive:bool)->Player
+player_make::(name:string,age:int,alive:bool)->Player
 	p:Player
 	p.name=name
 	p.age=age

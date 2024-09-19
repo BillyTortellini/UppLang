@@ -1542,11 +1542,11 @@ Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr
     Constant_Pool_Result result = constant_pool_add_constant(comptime_result.data_type, bytes);
     if (!result.success) {
         log_semantic_error(error_message_on_failure, expr);
-        log_error_info_constant_status(result.error_message);
+        log_error_info_constant_status(result.options.error_message);
         return optional_make_failure<Upp_Constant>();
     }
 
-    return optional_make_success(result.constant);
+    return optional_make_success(result.options.constant);
 }
 
 bool expression_has_memory_address(AST::Expression* expr) {
@@ -1699,11 +1699,11 @@ void expression_info_set_constant(Expression_Info* info, Datatype* signature, Ar
     {
         assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
         log_semantic_error("Value cannot be converted to constant value (Not serializable)", error_report_node);
-        log_error_info_constant_status(result.error_message);
+        log_error_info_constant_status(result.options.error_message);
         expression_info_set_error(info, signature);
         return;
     }
-    expression_info_set_constant(info, result.constant);
+    expression_info_set_constant(info, result.options.constant);
 }
 
 void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_type, i32 value) {
@@ -3940,11 +3940,11 @@ void analysis_workload_entry(void* userdata)
             result_type, array_create_static<byte>((byte*)value_ptr, result_type->memory_info.value.size));
         if (!pool_result.success) {
             log_semantic_error("Couldn't serialize bake result", execute->bake_node, Parser::Section::KEYWORD);
-            log_error_info_constant_status(pool_result.error_message);
+            log_error_info_constant_status(pool_result.options.error_message);
             progress->result = optional_make_failure<Upp_Constant>();
             return;
         }
-        progress->result = optional_make_success(pool_result.constant);
+        progress->result = optional_make_success(pool_result.options.constant);
         return;
     }
     default: panic("");
@@ -4933,7 +4933,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
         auto pool_result = constant_pool_add_constant(
             compiler.type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
         assert(pool_result.success, "Type handle must work as constant!");
-        match_polymorphic_type_to_constant(poly_type, pool_result.constant);
+        match_polymorphic_type_to_constant(poly_type, pool_result.options.constant);
         return true; // Don't match references
     }
     else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE)
@@ -5028,7 +5028,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
             auto pool_result = constant_pool_add_constant(
                 upcast(compiler.type_system.predefined_types.i32_type), array_create_static_as_bytes(&other_array->element_count, 1));
             assert(pool_result.success, "I32 type must work as constant");
-            match_polymorphic_type_to_constant(this_array->polymorphic_count_variable, pool_result.constant);
+            match_polymorphic_type_to_constant(this_array->polymorphic_count_variable, pool_result.options.constant);
         }
         else {
             if (!this_array->count_known) { // We should know our own size
@@ -6939,7 +6939,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Literal_Type::STRING: {
             String* string = read.options.string;
             value_string.bytes.size = string->size + 1;
-            value_string.bytes.data_ptr = (const u8*)string->characters;
+            value_string.bytes.data = (const u8*)string->characters;
 
             literal_type = upcast(types.string);
             value_ptr = &value_string;
@@ -6968,7 +6968,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::ENUM_TYPE:
     {
         auto& members = expr->options.enum_members;
-        Datatype_Enum* enum_type = type_system_make_enum_empty(0);
+
+        String* enum_name = compiler.predefined_ids.anon_enum;
+        if (expr->base.parent->type == AST::Node_Type::DEFINITION) {
+            AST::Definition* definition = downcast<AST::Definition>(expr->base.parent);
+            if (definition->is_comptime && definition->symbols.size == 1) {
+                enum_name = definition->symbols[0]->name;
+            }
+        }
+
+        Datatype_Enum* enum_type = type_system_make_enum_empty(enum_name);
         int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
         for (int i = 0; i < members.size; i++)
         {

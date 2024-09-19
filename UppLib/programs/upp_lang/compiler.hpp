@@ -58,6 +58,7 @@ struct Predefined_IDs
     String* size;
     String* tag;
     String* anon_struct;
+    String* anon_enum;
     String* string;
     String* bytes;
 

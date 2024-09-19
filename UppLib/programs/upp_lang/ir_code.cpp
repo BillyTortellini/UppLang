@@ -672,7 +672,7 @@ IR_Data_Access ir_data_access_create_constant(Datatype* signature, Array<byte> b
     access.type = IR_Data_Access_Type::CONSTANT;
     auto result = constant_pool_add_constant(signature, bytes);
     assert(result.success, "Must always work");
-    access.index = result.constant.constant_index;
+    access.index = result.options.constant.constant_index;
     return access;
 }
 
@@ -1094,7 +1094,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             IR_Instruction move;
             move.type = IR_Instruction_Type::MOVE;
             move.options.move.destination = array_access;
-            move.options.move.source = ir_data_access_create_constant(slice_constant.constant);
+            move.options.move.source = ir_data_access_create_constant(slice_constant.options.constant);
             dynamic_array_push_back(&ir_block->instructions, move);
         }
         else

@@ -19,7 +19,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
+bool enable_c_generation = false;
 bool enable_c_compilation = false;
 
 // Output stages
@@ -39,7 +39,7 @@ bool run_testcases_compiled = false;
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
-bool enable_execution = false;
+bool enable_execution = true;
 bool execute_binary = false;
 
 
@@ -208,6 +208,7 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.data =                add_id("data");
             ids.tag =                 add_id("tag");
             ids.anon_struct =         add_id("Anonymous");
+            ids.anon_enum =           add_id("Anon_Enum");
             ids.main =                add_id("main");
             ids.type_of =             add_id("type_of");
             ids.type_info =           add_id("type_info");

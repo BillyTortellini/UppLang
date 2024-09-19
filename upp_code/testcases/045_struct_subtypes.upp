@@ -3,8 +3,6 @@
 	because we do not know which union-value is currently active/valid.
 	To achieve a tagged union similar to C,we would need something like this:
 
-c_str::[]const u8
-
 C_Style::module
 	C_Address_Tag::enum
 		IPV4
@@ -14,11 +12,11 @@ C_Style::module
 	C_Address::union
 		ipv4:[4]byte
 		ipv5:bool
-		ipv6:c_str
+		ipv6:string
 		tag:C_Address_Tag
 
 //
-	This is exactly how Struct-Subtypes (Name may change) in Upp are implemented internally.
+	This is exactly how Struct-Subtypes(Name may change)in Upp are implemented internally.
 	It may not seem very significant to add this to a language,
 	because it'only'removes some typing,but it brings good consequences:
 	1.It signals the intent of the programmer more clearly(1 concept instead of struct+enum)
@@ -32,7 +30,7 @@ Address::struct
 	IPv5:
 		normalized:bool
 	IPv6:
-		name:c_str
+		name:string
 
 // The tag member is automatically added to a struct if it contains subtypes
 address_version_if::(addr:Address)->int
