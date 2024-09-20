@@ -20,7 +20,7 @@ bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
 bool enable_c_generation = false;
-bool enable_c_compilation = false;
+bool enable_c_compilation = true;
 
 // Output stages
 bool output_identifiers = false;

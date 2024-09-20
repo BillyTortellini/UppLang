@@ -128,7 +128,7 @@ void c_compiler_compile()
     String command = string_create_empty(128);
     SCOPE_EXIT(string_destroy(&command));
     {
-        const char* compiler_options = "/EHsc /Zi /Fdbackend/build /Fobackend/build/";
+        const char* compiler_options = "/EHsc /Zi /Fdbackend/build /Fobackend/build/ /std:c++latest"; // /std:c++latest is used for designated struct inititalizers
         const char* linker_options = "/OUT:backend/build/main.exe /PDB:backend/build/main.pdb";
         string_append_formated(&command, "\"cl\" ");
         string_append_formated(&command, compiler_options);
@@ -170,7 +170,7 @@ Exit_Code c_compiler_execute()
     }
 
     int exit_code_value = process_start_no_pipes(string_create_static("backend/build/main.exe"), true);
-    if (exit_code_value <= 0 || exit_code_value >= (int)Exit_Code_Type::MAX_ENUM_VALUE) {
+    if (exit_code_value < 0 || exit_code_value >= (int)Exit_Code_Type::MAX_ENUM_VALUE) {
         return exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Exit code value from program execution was invalid");
     }
 
@@ -384,15 +384,24 @@ void c_generator_generate_struct_content(Struct_Content* content, C_Type_Depende
     }
 
     // Generate subtypes + tag if existing
-    for (int i = 0; i < content->subtypes.size; i++) {
-        Struct_Content* child_content = content->subtypes[i];
+    if (content->subtypes.size > 0) 
+    {
+        string_add_indentation(gen.text, indentation_level);
         string_append(gen.text, "union {\n");
-        c_generator_generate_struct_content(child_content, type_dependency, indentation_level + 1);
+        for (int i = 0; i < content->subtypes.size; i++) 
+        {
+            Struct_Content* child_content = content->subtypes[i];
+            string_add_indentation(gen.text, indentation_level + 1);
+            string_append(gen.text, "struct {\n");
+            c_generator_generate_struct_content(child_content, type_dependency, indentation_level + 2);
+            string_add_indentation(gen.text, indentation_level + 1);
+            string_append_formated(gen.text, "} %s;", child_content->name->characters);
+            string_append(gen.text, "\n");
+        }
         string_add_indentation(gen.text, indentation_level);
         string_append(gen.text, "} subtypes_;\n");
-    }
-    // Add tag member if available
-    if (content->subtypes.size != 0) {
+
+        // Add tag member
         string_add_indentation(gen.text, indentation_level);
         c_generator_output_type_reference(content->tag_member.type);
         string_append(gen.text, " tag_;\n");
@@ -876,7 +885,7 @@ void c_generator_generate()
         assert(main_fn_name != 0, "HEY");
         string_append_formated(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
-            "\nint main(int argc, char** argv) {init_const_references();random_initialize(); %s(); return 0;}\n",
+            "\nint main(int argc, char** argv) {random_initialize(); %s(); return 0;}\n",
             main_fn_name->characters
         );
 
@@ -916,7 +925,53 @@ void c_generator_generate()
 
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level);
 
-void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int indentation_level)
+void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
+
+// Outputs "{" + the struct content on indentation level + 1 and "}"
+void output_struct_content_block_recursive(Struct_Content* content, byte* struct_start_memory, int current_indentation_level)
+{
+    auto& gen = c_generator;
+    auto& members = content->members;
+    int block_indentation = current_indentation_level + 1;
+    string_append(gen.text, "{\n");
+    string_add_indentation(gen.text, block_indentation);
+    for (int i = 0; i < members.size; i++)
+    {
+        auto& member = members[i];
+        byte* member_memory = struct_start_memory + member.offset;
+
+        // Generate designator
+        string_append_formated(gen.text, ".%s = ", member.id->characters);
+        output_memory_as_constant(member_memory, member.type, false, block_indentation);
+        if (i != members.size - 1) {
+            string_append(gen.text, ", \n");
+            string_add_indentation(gen.text, block_indentation);
+        }
+    }
+
+    if (content->subtypes.size > 0)
+    {
+        int subtype_index = (*(int*)(struct_start_memory + content->tag_member.offset)) - 1;
+        assert(subtype_index >= 0 && subtype_index < content->subtypes.size, "");
+        Struct_Content* child_content = content->subtypes[subtype_index];
+        string_append_formated(gen.text, ".subtypes_ = { .%s = ", child_content->name->characters);
+        output_struct_content_block_recursive(child_content, struct_start_memory, block_indentation);
+        string_append(gen.text, "}, \n");
+
+        // Set tag
+        string_add_indentation(gen.text, block_indentation);
+        string_append(gen.text, "tag_ = ");
+        byte* tag_memory = struct_start_memory + content->tag_member.offset;
+        output_memory_as_constant(tag_memory, content->tag_member.type, false, block_indentation);
+    }
+
+    string_append(gen.text, "\n");
+    string_add_indentation(gen.text, current_indentation_level);
+    string_append(gen.text, "}");
+}
+
+// If it's a literal, then it's printed on the same line. If the initialzer requires mutliple lines, a block "{ ... }" is created  over multiple lines
+void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level)
 {
     auto& types = compiler.type_system.predefined_types;
     auto& gen = c_generator;
@@ -1020,7 +1075,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
 
         auto member = enum_type->members[member_index];
         c_generator_output_type_reference(type);
-        string_append_formated(gen.text, ".%s", member.name->characters);
+        string_append_formated(gen.text, "::%s", member.name->characters);
         break;
     }
     case Datatype_Type::FUNCTION:
@@ -1075,33 +1130,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
         // Handle structure
         Datatype_Struct* structure = downcast<Datatype_Struct>(type->base_type);
         assert(structure->struct_type != AST::Structure_Type::UNION, "Must not happen, as normal unions cannot get serialized in constant pool");
-
-        // If I use C-struct initializers, this could be done quite reasonably I guess
-        // Let's just not support subtypes for now, so we can check if it at least works...
-        auto& members = structure->content.members;
-        assert(structure->content.subtypes.size == 0, "Not implemented yet");
-
-        {
-            string_append(gen.text, "{\n");
-            string_add_indentation(gen.text, indentation_level + 1);
-            for (int j = 0; j < members.size; j++)
-            {
-                auto& member = members[j];
-                byte* member_memory = base_memory + member.offset;
-
-                // Generate designator
-                string_append_formated(gen.text, ".%s = ", member.id->characters);
-                // Note: We cannot work through members in array-style, as string output is sequential, in contrast to constant-pool
-                output_memory_as_constant(member_memory, member.type, false, indentation_level + 1);
-                if (j != members.size - 1) {
-                    string_append(gen.text, ", \n");
-                    string_add_indentation(gen.text, indentation_level + 1);
-                }
-            }
-            string_append(gen.text, "\n");
-            string_add_indentation(gen.text, indentation_level);
-            string_append(gen.text, "}");
-        }
+        output_struct_content_block_recursive(&structure->content, base_memory, current_indentation_level);
 
         break;
     }
@@ -1126,7 +1155,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
     }
 }
 
-// If we have a pointer to a int, we need to treat this seperately
+// If we have a pointer to an int, we need to treat this seperately
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level)
 {
     auto& gen = c_generator;
@@ -1430,9 +1459,11 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             c_generator_output_data_access(if_instr->condition);
             string_append_formated(gen.text, ")\n");
             c_generator_output_code_block(if_instr->true_branch, indentation_level + 1, false);
-            string_add_indentation(gen.text, indentation_level + 1);
-            string_append_formated(gen.text, "else\n");
-            c_generator_output_code_block(if_instr->false_branch, indentation_level + 1, false);
+            if (if_instr->false_branch->instructions.size != 0) {
+                string_add_indentation(gen.text, indentation_level + 1);
+                string_append_formated(gen.text, "else\n");
+                c_generator_output_code_block(if_instr->false_branch, indentation_level + 1, false);
+            }
             break;
         }
         case IR_Instruction_Type::WHILE:
@@ -1535,11 +1566,42 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 string_append_formated(gen.text, "&%s;\n", fn_name->characters);
                 break;
             }
-            case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: {
-                // panic("TODO: Here we need to know the struct-type and the subtype-index");
-                string_append_formated(gen.text, "&(");
+            case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: 
+            {
+                const Struct_Member& member = addr_of->options.member;
+
+                string_append(gen.text, "&("); // Note: The Parenthesis are necessary if there was a pointer access, e.g. (*value).member
                 c_generator_output_data_access(addr_of->source);
-                string_append_formated(gen.text, ").%s;\n", addr_of->options.member.id->characters);
+                string_append(gen.text, ")");
+
+                // Handle members of struct subtypes
+                Datatype* access_type = ir_data_access_get_type(&addr_of->source);
+                assert(!datatype_is_pointer(access_type), "");
+                if (access_type->base_type->type == Datatype_Type::STRUCT) 
+                {
+                    Datatype_Struct* structure = downcast<Datatype_Struct>(access_type->base_type);
+                    Struct_Content* subtype = member.content;
+                    assert(structure == member.content->structure, "");
+                    {
+                        Struct_Content* content = &structure->content;
+                        for (int i = 0; i < subtype->index->indices.size; i++) {
+                            auto index = subtype->index->indices[i].index;
+                            string_append_formated(gen.text, ".subtypes_.%s", content->subtypes[index]->name->characters);
+                            content = content->subtypes[index];
+                        }
+                    }
+
+                    if (member.content->subtypes.size > 0) {
+                        if (member.offset == member.content->tag_member.offset) {
+                            string_append_formated(gen.text, ".tag_;\n", member.id->characters);
+                            break;
+                        }
+                    }
+                }
+
+                // Append member access
+                string_append_formated(gen.text, ".%s;\n", member.id->characters);
+
                 break;
             }
             case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {

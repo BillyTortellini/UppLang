@@ -3,12 +3,13 @@
 
 Next up:
 --------
- * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
- * Const variable definitions need an IR_Command, as they need to be initialialized at once in C-Generator... (Frick)
- * Make type_info work again
-
  * IR_Data Access could be more structured like a tree (e.g. With member accesses, array-access, pointer-access, not having to be pointer loads and stores)
  * C-Readability could be improved a lot by just using better names + putting things into namespaces so we don't have name-clashes (Would be nice for debuggin at the start)
+ * Const variable definitions need an IR_Command, as they need to be initialialized at once in C-Generator... (Frick)
+
+ * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
+ * Type_info needs to work in C-Generator
+
 
  * Fix testcases
 

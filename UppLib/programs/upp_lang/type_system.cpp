@@ -656,9 +656,12 @@ Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices)
     }
 }
 
-Subtype_Index* subtype_index_make_from_other(Subtype_Index* other_index, Named_Index named_index)
+Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int index)
 {
-    Dynamic_Array<Named_Index> new_indices = dynamic_array_create_copy(other_index->indices.data, other_index->indices.size);
+    Dynamic_Array<Named_Index> new_indices = dynamic_array_create_copy(base_index->indices.data, base_index->indices.size);
+    Named_Index named_index;
+    named_index.name = name;
+    named_index.index = index;
     dynamic_array_push_back(&new_indices, named_index);
     return subtype_index_make(new_indices);
 }
@@ -1211,8 +1214,9 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
     result->content.name = name;
     result->content.tag_member.id = 0;
     result->content.tag_member.offset = 0;
-    result->content.tag_member.type = 0;
-    result->content.parent_content = 0;
+    result->content.tag_member.content = &result->content;
+    result->content.structure = result;
+    result->content.index = &compiler.type_system.subtype_base_index;
     result->content.members = dynamic_array_create<Struct_Member>();
     result->content.subtypes = dynamic_array_create<Struct_Content*>();
 
@@ -1226,6 +1230,7 @@ void struct_add_member(Struct_Content* content, String* id, Datatype* member_typ
     member.id = id;
     member.offset = 0;
     member.type = member_type;
+    member.content = content;
     dynamic_array_push_back(&content->members, member);
 }
 
@@ -1238,10 +1243,26 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
     subtype->tag_member.id = compiler.predefined_ids.tag;
     subtype->tag_member.offset = -1;
     subtype->tag_member.type = compiler.type_system.predefined_types.unknown_type;
-    subtype->parent_content = content;
+    subtype->tag_member.content = subtype;
     subtype->max_alignment = 0;
+    subtype->structure = content->structure;
+    subtype->index = subtype_index_make_subtype(content->index, id, content->subtypes.size);
     dynamic_array_push_back(&content->subtypes, subtype);
     return subtype;
+}
+
+Struct_Content* struct_content_get_parent(Struct_Content* content) 
+{
+    if (content->index->indices.size == 0) {
+        return nullptr;
+    }
+
+    Struct_Content* base = &content->structure->content;
+    for (int i = 0; i < content->index->indices.size - 1; i++) { // Note: We only go to 
+        int next_index = content->index->indices[i].index;
+        base = base->subtypes[next_index];
+    }
+    return base;
 }
 
 void type_system_finish_array(Datatype_Array* array)
@@ -1961,3 +1982,8 @@ Datatype* datatype_get_non_const_type(Datatype* datatype)
     }
     return datatype;
 }
+
+bool datatype_is_pointer(Datatype* datatype) {
+    return datatype->mods.pointer_level > 0 || datatype->base_type->type == Datatype_Type::FUNCTION || datatype->base_type->type == Datatype_Type::BYTE_POINTER;
+}
+

@@ -17,6 +17,7 @@ struct Workload_Structure_Polymorphic;
 struct Function_Progress;
 struct Polymorphic_Value;
 struct Datatype_Template_Parameter;
+struct Struct_Content;
 
 // Helpers
 struct Function_Parameter
@@ -33,8 +34,9 @@ Function_Parameter function_parameter_make_empty();
 struct Struct_Member
 {
     Datatype* type;
-    int offset;
     String* id;
+    int offset; // Offset from base struct
+    Struct_Content* content; // In which struct-content this member is defined
 };
 
 struct Enum_Member
@@ -179,8 +181,12 @@ struct Datatype_Subtype
 
 struct Struct_Content
 {
-    String* name; // For base struct this is the name, otherwise subtype names/ids
-    Struct_Content* parent_content; // May be 0 if we are at root
+    // Info
+    Datatype_Struct* structure;
+    Subtype_Index* index; // Contains name + index in parent
+    String* name; // For base struct this is the struct-name, otherwise subtype names/ids
+
+    // Content
     Dynamic_Array<Struct_Member> members;
     Dynamic_Array<Struct_Content*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty
@@ -499,6 +505,7 @@ Datatype_Enum* type_system_make_enum_empty(String* name);
 Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload = 0);
 void struct_add_member(Struct_Content* content, String* id, Datatype* member_type);
 Struct_Content* struct_add_subtype(Struct_Content* content, String* id);
+Struct_Content* struct_content_get_parent(Struct_Content* content); // Returns 0 if it's base-content
 void type_system_finish_struct(Datatype_Struct* structure);
 void type_system_finish_enum(Datatype_Enum* enum_type);
 void type_system_finish_array(Datatype_Array* array);
@@ -513,8 +520,9 @@ Datatype* datatype_get_non_const_type(Datatype* datatype);
 bool type_mods_is_constant(Type_Mods mods, int pointer_level);
 Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level = -1);
 Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
-Subtype_Index* subtype_index_make_from_other(Subtype_Index* other_index, Named_Index named_index);
+Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int subtype_index);
 Type_Mods type_mods_make(int pointer_level, u32 const_flags, Subtype_Index* subtype = 0);
+bool datatype_is_pointer(Datatype* datatype);
 
 
 // Casting functions

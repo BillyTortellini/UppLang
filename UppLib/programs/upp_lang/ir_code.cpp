@@ -1069,7 +1069,9 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 IR_Instruction move_instr;
                 move_instr.type = IR_Instruction_Type::MOVE;
                 move_instr.options.move.destination = ir_data_access_create_member(ir_block, struct_access, content->tag_member);
-                move_instr.options.move.source = ir_data_access_create_constant_i32(tag_value);
+                move_instr.options.move.source = 
+                    ir_data_access_create_constant(content->tag_member.type, array_create_static_as_bytes<int>(&tag_value, 1));
+                    
                 dynamic_array_push_back(&ir_block->instructions, move_instr);
             }
         }
@@ -1185,7 +1187,7 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
             if (dst_type->mods.subtype_index->indices.size > src_type->mods.subtype_index->indices.size) 
             {
                 assert(dst_type->mods.subtype_index->indices.size == src_type->mods.subtype_index->indices.size + 1, "Downcast must only be a single level");
-                Struct_Content* base_content = type_mods_get_subtype(downcast<Datatype_Struct>(src_type), src_type->mods);
+                Struct_Content* base_content = type_mods_get_subtype(downcast<Datatype_Struct>(datatype_get_non_const_type(src_type)), src_type->mods);
                 int child_tag_value = dst_type->mods.subtype_index->indices[dst_type->mods.subtype_index->indices.size-1].index + 1; // Tag value == index + 1
 
                 IR_Data_Access condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
@@ -1193,7 +1195,8 @@ IR_Data_Access ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block,
                 condition_instr.type = IR_Instruction_Type::BINARY_OP;
                 condition_instr.options.binary_op.destination = condition_access;
                 condition_instr.options.binary_op.operand_left = ir_data_access_create_member(ir_block, source, base_content->tag_member);
-                condition_instr.options.binary_op.operand_right = ir_data_access_create_constant_i32(child_tag_value);
+                condition_instr.options.binary_op.operand_right = 
+                    ir_data_access_create_constant(base_content->tag_member.type, array_create_static_as_bytes<int>(&child_tag_value, 1));
                 condition_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
                 dynamic_array_push_back(&ir_block->instructions, condition_instr);
 

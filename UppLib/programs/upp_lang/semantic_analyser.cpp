@@ -631,11 +631,7 @@ void add_struct_members_empty_recursive(
     {
         auto member_node = member_nodes[i];
         if (member_node->is_expression) {
-            Struct_Member member;
-            member.id = member_node->name;
-            member.offset = -1;
-            member.type = compiler.type_system.predefined_types.unknown_type;
-            dynamic_array_push_back(&content->members, member);
+            struct_add_member(content, member_node->name, compiler.type_system.predefined_types.unknown_type);
         }
         else {
             auto subtype = struct_add_subtype(content, member_node->name);
@@ -5862,6 +5858,7 @@ void analyse_member_initializer_recursive(
 
     bool subtype_initializer_found = false;
     bool supertype_initializer_found = false;
+    auto parent_content = struct_content_get_parent(content);
 
     for (int i = 0; i < initializers.size; i++)
     {
@@ -5976,8 +5973,8 @@ void analyse_member_initializer_recursive(
                 }
 
                 // Check if it's supertype name
-                if (subtype_index == -1 && content->parent_content != 0) {
-                    if (content->parent_content->name == init_node->name.value) {
+                if (subtype_index == -1 && parent_content != 0) {
+                    if (parent_content->name == init_node->name.value) {
                         is_supertype_init = true;
                     }
                 }
@@ -5988,7 +5985,7 @@ void analyse_member_initializer_recursive(
             
             if (is_supertype_init) 
             {
-                if (content->parent_content == 0) 
+                if (parent_content == 0) 
                 {
                     log_semantic_error(
                         "Base-Type initializer invalid in this context, struct type is already the base type", upcast(init_node), Parser::Section::FIRST_TOKEN);
@@ -6003,7 +6000,7 @@ void analyse_member_initializer_recursive(
                 }
                 else {
                     analyse_member_initializer_recursive(
-                        init_node->options.subtype_initializers, structure, content->parent_content, -1, 
+                        init_node->options.subtype_initializers, structure, parent_content, -1, 
                         upcast(init_node), Parser::Section::ENCLOSURE, final_subtype_index
                     );
                     supertype_initializer_found = true;
@@ -6029,11 +6026,7 @@ void analyse_member_initializer_recursive(
                 {
                     init_info->valid = true;
                     init_info->member = content->tag_member;
-
-                    Named_Index named_index;
-                    named_index.index = subtype_index;
-                    named_index.name = content->subtypes[subtype_index]->name;
-                    *final_subtype_index = subtype_index_make_from_other(*final_subtype_index, named_index);
+                    *final_subtype_index = content->subtypes[subtype_index]->index;
 
                     analyse_member_initializer_recursive(
                         init_node->options.subtype_initializers, structure, content->subtypes[subtype_index], 1,
@@ -6063,7 +6056,7 @@ void analyse_member_initializer_recursive(
         if (!argument_error_occured && unique_members_found != content->members.size) {
             log_semantic_error("Not all struct members were specified", error_report_node, error_report_section);
         }
-        if (content->parent_content != 0 && !supertype_initializer_found && allowed_direction == 0) {
+        if (parent_content != 0 && !supertype_initializer_found && allowed_direction == 0) {
             log_semantic_error("Base-Type members were not specified, use base-type initializer '. = {}' for this!", error_report_node, error_report_section);
         }
         if (content->subtypes.size > 0 && !subtype_initializer_found && allowed_direction == 0) {
@@ -8160,10 +8153,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_FUNCTION
 }
 
-bool datatype_is_pointer(Datatype* datatype) {
-    return datatype->mods.pointer_level > 0 || datatype->base_type->type == Datatype_Type::FUNCTION || datatype->base_type->type == Datatype_Type::BYTE_POINTER;
-}
-
 Expression_Cast_Info semantic_analyser_check_if_cast_possible(AST::Expression* expr, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
 {
     auto& analyser = semantic_analyser;
@@ -10149,15 +10138,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 if (struct_content != nullptr)
                 {
                     // Variable is a pointer to the subtype
-                    Named_Index named_index;
-                    named_index.index = case_info->case_value - 1;
-                    named_index.name = struct_content->subtypes[named_index.index]->name;
+                    Struct_Content* subtype = struct_content->subtypes[case_info->case_value - 1];
                     auto result_subtype = type_system_make_type_with_mods(
                         condition_type->base_type,
-                        type_mods_make(
-                            1,
-                            (type_mods_is_constant(condition_type->mods, 0) ? 1 : 0),
-                            subtype_index_make_from_other(condition_type->mods.subtype_index, named_index))
+                        type_mods_make(1, (type_mods_is_constant(condition_type->mods, 0) ? 1 : 0), subtype->index)
                     );
                     var_symbol->options.variable_type = result_subtype;
                 }
