@@ -995,9 +995,11 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->data_member.id = compiler.predefined_ids.data;
     result->data_member.type = upcast(type_system_make_pointer(element_type));
     result->data_member.offset = 0;
+    result->data_member.content = 0;
     result->size_member.id = compiler.predefined_ids.size;
     result->size_member.type = upcast(compiler.type_system.predefined_types.i32_type);
     result->size_member.offset = 8;
+    result->size_member.content = 0;
 
     auto& internal_info = type_system_register_type(upcast(result))->options.slice;
     internal_info.element_type = element_type->type_handle;

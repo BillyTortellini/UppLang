@@ -69,6 +69,8 @@ struct ModTree_Global
     Datatype* type;
     int index;
 
+    Symbol* symbol; // May be null?
+
     bool has_initial_value;
     AST::Expression* init_expr;
     Workload_Definition* definition_workload; // For code generation

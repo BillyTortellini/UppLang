@@ -43,6 +43,6 @@ main::()
 		i:=7
 		x:=i+true
 		y:=false+i
-		print_i32(y.x)
+		
 		assert(x.x==8&&x.y==8)
 		assert(y.x==7&&y.y==7)

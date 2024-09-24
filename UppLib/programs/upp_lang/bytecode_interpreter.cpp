@@ -682,6 +682,14 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             return false;
         }
         break;
+    case Instruction_Type::JUMP_ON_INT_EQUAL: {
+        int value = *(int*)(thread->stack_pointer + i->op2);
+        if (value == i->op3) {
+            thread->instruction_index = i->op1;
+            return false;
+        }
+        break;
+    }
     case Instruction_Type::CALL_FUNCTION: {
         if (&thread->stack[INTERPRETER_STACK_SIZE - 1] - thread->stack_pointer <= generator->maximum_function_stack_depth) {
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Stack overflow on normal function call");
@@ -760,7 +768,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         switch (hardcoded_type)
         {
         case Hardcoded_Type::MALLOC_SIZE_I32: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             i32 size = *(i32*)argument_start;
             assert(size != 0, "");
             void* alloc_data = malloc(size);
@@ -769,7 +777,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             break;
         }
         case Hardcoded_Type::FREE_POINTER: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             void* free_data = *(void**)argument_start;
             // logg("Interpreter Free pointer: %p\n", free_data);
             free(free_data);
@@ -777,20 +785,20 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             break;
         }
         case Hardcoded_Type::PRINT_I32: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             i32 value = *(i32*)(argument_start);
             logg("%d", value); break;
         }
         case Hardcoded_Type::PRINT_F32: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             logg("%3.2f", *(f32*)(argument_start)); break;
         }
         case Hardcoded_Type::PRINT_BOOL: {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
         case Hardcoded_Type::PRINT_STRING: {
-            byte* argument_start = thread->stack_pointer + i->op2 - sizeof(Upp_String);
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             Upp_String string = *(Upp_String*)argument_start;
 
             // Check if string size is correct
@@ -873,7 +881,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         }
         case Hardcoded_Type::TYPE_INFO: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 - 8;
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
             int type_index = *(int*)(argument_start);
             if (type_index > compiler.type_system.types.size || type_index < 0) {
                 thread->error_occured = true;

@@ -14,35 +14,58 @@ struct Analysis_Pass;
 
 enum class IR_Data_Access_Type
 {
+    // Value Accesses
     GLOBAL_DATA,
+    CONSTANT,
     PARAMETER,
     REGISTER,
-    CONSTANT,
     NOTHING, // Placeholder for function that return nothing
+
+    // Operation Accesses
+    MEMBER_ACCESS,
+    ARRAY_ELEMENT_ACCESS, // Either on a slice or on an array
+    POINTER_DEREFERENCE, // &ip
+    ADDRESS_OF_VALUE, // &ip
 };
 
 struct IR_Data_Access
 {
     IR_Data_Access_Type type;
-    bool is_memory_access; // If true, access the memory through the pointer
+    Datatype* datatype;
     union
     {
-        IR_Function* function; // For parameters
-        IR_Code_Block* definition_block; // For variables
+        int global_index;
+        int constant_index;
+        struct {
+            IR_Function* function; // For parameters
+            int index;
+        } parameter;
+        struct {
+            IR_Code_Block* definition_block; // For variables
+            int index;
+        } register_access;
+        struct {
+            IR_Data_Access* struct_access;
+            Struct_Member member;
+        } member_access;
+        struct {
+            IR_Data_Access* array_access;
+            IR_Data_Access* index_access;
+        } array_access;
+        IR_Data_Access* pointer_value; // For pointer dereferences
+        IR_Data_Access* address_of_value;
     } option;
-    int index;
 };
-Datatype* ir_data_access_get_type(IR_Data_Access* access);
 
 struct IR_Instruction_Move
 {
-    IR_Data_Access destination;
-    IR_Data_Access source;
+    IR_Data_Access* destination;
+    IR_Data_Access* source;
 };
 
 struct IR_Instruction_If
 {
-    IR_Data_Access condition;
+    IR_Data_Access* condition;
     IR_Code_Block* true_branch;
     IR_Code_Block* false_branch;
 };
@@ -50,7 +73,7 @@ struct IR_Instruction_If
 struct IR_Instruction_While
 {
     IR_Code_Block* condition_code;
-    IR_Data_Access condition_access;
+    IR_Data_Access* condition_access;
     IR_Code_Block* code;
 };
 
@@ -69,15 +92,15 @@ struct IR_Instruction_Call
     union
     {
         IR_Function* function;
-        IR_Data_Access pointer_access;
+        IR_Data_Access* pointer_access;
         struct {
             Datatype_Function* signature;
             Hardcoded_Type type;
         } hardcoded;
         Extern_Function_Identifier extern_function;
     } options;
-    Dynamic_Array<IR_Data_Access> arguments;
-    IR_Data_Access destination;
+    Dynamic_Array<IR_Data_Access*> arguments;
+    IR_Data_Access* destination;
 };
 
 enum class IR_Instruction_Return_Type
@@ -93,16 +116,16 @@ struct IR_Instruction_Return
     union
     {
         Exit_Code exit_code;
-        IR_Data_Access return_value;
+        IR_Data_Access* return_value;
     } options;
 };
 
 struct IR_Instruction_Binary_OP
 {
     AST::Binop type;
-    IR_Data_Access destination;
-    IR_Data_Access operand_left;
-    IR_Data_Access operand_right;
+    IR_Data_Access* destination;
+    IR_Data_Access* operand_left;
+    IR_Data_Access* operand_right;
 };
 
 enum class IR_Instruction_Unary_OP_Type
@@ -114,8 +137,8 @@ enum class IR_Instruction_Unary_OP_Type
 struct IR_Instruction_Unary_OP
 {
     IR_Instruction_Unary_OP_Type type;
-    IR_Data_Access destination;
-    IR_Data_Access source;
+    IR_Data_Access* destination;
+    IR_Data_Access* source;
 };
 
 enum class IR_Cast_Type
@@ -134,37 +157,38 @@ enum class IR_Cast_Type
 struct IR_Instruction_Cast
 {
     IR_Cast_Type type;
-    IR_Data_Access destination;
-    IR_Data_Access source;
+    IR_Data_Access* destination;
+    IR_Data_Access* source;
 };
 
 enum class IR_Instruction_Address_Of_Type
 {
-    DATA,
     FUNCTION,
     EXTERN_FUNCTION,
-    STRUCT_MEMBER,
-    ARRAY_ELEMENT // Source can be both array or slice, and the result is always a pointer
 };
 
 struct IR_Instruction_Address_Of
 {
     IR_Instruction_Address_Of_Type type;
-    IR_Data_Access destination;
-    IR_Data_Access source;
+    IR_Data_Access* destination;
     union {
         IR_Function* function;
         Extern_Function_Identifier extern_function;
-        Struct_Member member;
-        IR_Data_Access index_access;
     } options;
 };
 
 struct IR_Instruction;
+
+struct IR_Register
+{
+    Datatype* type;
+    Optional<String*> name; // If it's a variable
+};
+
 struct IR_Code_Block
 {
     IR_Function* function;
-    Dynamic_Array<Datatype*> registers;
+    Dynamic_Array<IR_Register> registers;
     Dynamic_Array<IR_Instruction> instructions;
 };
 
@@ -176,7 +200,7 @@ struct IR_Switch_Case
 
 struct IR_Instruction_Switch
 {
-    IR_Data_Access condition_access;
+    IR_Data_Access* condition_access;
     Dynamic_Array<IR_Switch_Case> cases;
     IR_Code_Block* default_block;
 };
@@ -267,13 +291,13 @@ struct Loop_Increment
     {
         AST::Statement* increment_statement; // Valid for normal for loops
         struct {
-            IR_Data_Access index_access;
-            IR_Data_Access iterable_access;
-            IR_Data_Access loop_variable_access;
+            IR_Data_Access* index_access;
+            IR_Data_Access* iterable_access;
+            IR_Data_Access* loop_variable_access;
 
             bool is_custom_iterator;
             // Only valid for custom iterators
-            IR_Data_Access iterator_access;
+            IR_Data_Access* iterator_access;
             IR_Function* next_function;
             int iterator_deref_value;
         } foreach_loop;
@@ -286,7 +310,10 @@ struct IR_Generator
     ModTree_Program* modtree;
 
     // Stuff needed for compilation
-    Hashtable<AST::Definition_Symbol*, IR_Data_Access> variable_mapping; 
+    Dynamic_Array<IR_Data_Access*> data_accesses;
+    IR_Data_Access nothing_access;
+
+    Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping; 
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
     Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
 
@@ -318,7 +345,6 @@ IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
 void ir_program_append_to_string(IR_Program* program, String* string);
-Datatype* ir_data_access_get_type(IR_Data_Access* access);
 
 
 

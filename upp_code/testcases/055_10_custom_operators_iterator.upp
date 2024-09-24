@@ -26,5 +26,4 @@ main::()
 	for i in 10
 		sum+=i
 	
-	print_i32(sum)
 	assert(sum==45)

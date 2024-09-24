@@ -145,7 +145,7 @@ struct Datatype_Array
 struct Datatype_Slice {
     Datatype base;
     Datatype* element_type;
-    Struct_Member data_member;
+    Struct_Member data_member; // This may be problematic, as struct member doesn't have pointer to constant
     Struct_Member size_member;
 };
 

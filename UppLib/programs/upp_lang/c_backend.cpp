@@ -193,7 +193,7 @@ enum class C_Translation_Type
 {
     FUNCTION,
     DATATYPE,
-    CODE_BLOCK,
+    REGISTER,
     CONSTANT
 };
 
@@ -202,7 +202,10 @@ struct C_Translation
     C_Translation_Type type;
     union {
         IR_Function* function;
-        IR_Code_Block* code_block;
+        struct {
+            IR_Code_Block* code_block;
+            int index;
+        } register_translation;
         Datatype* datatype;
         struct {
             int index; // Index in constant pool
@@ -218,8 +221,9 @@ bool c_translation_is_equal(C_Translation* ap, C_Translation* bp)
     if (a.type != b.type) return false;
     switch (a.type)
     {
-    case C_Translation_Type::CODE_BLOCK: 
-        return a.options.code_block == b.options.code_block;
+    case C_Translation_Type::REGISTER: 
+        return a.options.register_translation.code_block == b.options.register_translation.code_block &&
+            a.options.register_translation.index == b.options.register_translation.index;
     case C_Translation_Type::DATATYPE:
         return types_are_equal(a.options.datatype, b.options.datatype);
     case C_Translation_Type::FUNCTION:
@@ -240,8 +244,9 @@ u64 c_translation_hash(C_Translation* tp)
     u64 hash = hash_i32(&type_value);
     switch (t.type)
     {
-    case C_Translation_Type::CODE_BLOCK: 
-        hash = hash_combine(hash, hash_pointer(t.options.code_block));
+    case C_Translation_Type::REGISTER: 
+        hash = hash_combine(hash, hash_pointer(t.options.register_translation.code_block));
+        hash = hash_combine(hash, hash_i32(&t.options.register_translation.index));
         break;
     case C_Translation_Type::DATATYPE:
         hash = hash_combine(hash, hash_pointer(t.options.datatype));
@@ -345,7 +350,7 @@ void c_generator_shutdown()
 // IMPLEMENTATION
 void c_generator_output_type_reference(Datatype* type);
 void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope);
-void c_generator_output_data_access(IR_Data_Access access);
+void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops = false);
 C_Type_Dependency* get_type_dependency(Datatype* datatype);
 
 void string_add_indentation(String* str, int indentation)
@@ -760,16 +765,16 @@ void c_generator_generate()
         auto& parameters = signature->parameters;
         for (int j = 0; j < parameters.size; j++)
         {
-            Datatype* param_type = parameters[j].type;
-            c_generator_output_type_reference(param_type);
+            auto& param = parameters[j];
 
-            string_append_formated(gen.text, " ");
+            c_generator_output_type_reference(param.type);
+
             IR_Data_Access access;
-            access.is_memory_access = false;
             access.type = IR_Data_Access_Type::PARAMETER;
-            access.index = j;
-            access.option.function = function;
-            c_generator_output_data_access(access);
+            access.option.parameter.function = function;
+            access.option.parameter.index = j;
+            c_generator_output_data_access(&access);
+
             if (j != parameters.size - 1) {
                 string_append(gen.text, ", ");
             }
@@ -1193,49 +1198,144 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     string_append(gen.text, access_name.characters);
 }
 
-void c_generator_output_data_access(IR_Data_Access access)
+void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops)
 {
     auto& gen = c_generator;
-    if (access.is_memory_access) {
-        string_append_formated(gen.text, "(*(");
-    }
 
-    switch (access.type)
+    switch (access->type)
     {
     case IR_Data_Access_Type::REGISTER:
     {
         C_Translation translation;
-        translation.type = C_Translation_Type::CODE_BLOCK;
-        translation.options.code_block = access.option.definition_block;
+        translation.type = C_Translation_Type::REGISTER;
+        translation.options.register_translation.code_block = access->option.register_access.definition_block;
+        translation.options.register_translation.index = access->option.register_access.index;
         {
             String* name = hashtable_find_element(&gen.translations, translation);
             if (name != 0) {
-                string_append_formated(gen.text, "%s_%d", name->characters, access.index);
+                string_append(gen.text, name->characters);
                 break;
             }
         }
 
+        auto& reg = access->option.register_access.definition_block->registers[access->option.register_access.index];
         String new_name = string_create_empty(16);
-        string_append_formated(&new_name, "code_block_%d", gen.name_counter);
+        if (reg.name.available) {
+            string_append(&new_name, reg.name.value->characters);
+        }
+        else {
+            string_append(&new_name, "tmp");
+        }
+        string_append_formated(&new_name, "%_%d", gen.name_counter);
         gen.name_counter++;
+
         hashtable_insert_element(&gen.translations, translation, new_name);
-        string_append_formated(gen.text, "%s_%d", new_name.characters, access.index);
+        string_append(gen.text, new_name.characters);
         break;
     }
     case IR_Data_Access_Type::PARAMETER:
     {
-        string_append_formated(gen.text, "param_%d", access.index);
+        auto& param_access = access->option.parameter;
+        auto& param = param_access.function->function_type->parameters[param_access.index];
+        string_append_formated(gen.text, "%s_p%d", param.name->characters, param_access.index);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA:
     {
-        string_append_formated(gen.text, "global_%d", access.index);
+        auto global = compiler.semantic_analyser->program->globals[access->option.global_index];
+        if (global->symbol != 0) {
+            string_append_formated(gen.text, "%s_g%d", global->symbol->id->characters, access->option.global_index);
+        }
+        else {
+            string_append_formated(gen.text, "global_%d", access->option.global_index);
+        }
         break;
     }
     case IR_Data_Access_Type::CONSTANT:
     {
-        Upp_Constant* constant = &compiler.constant_pool.constants[access.index];
+        Upp_Constant* constant = &compiler.constant_pool.constants[access->option.constant_index];
         c_generator_output_constant_access(*constant, false, 0);
+        break;
+    }
+    case IR_Data_Access_Type::POINTER_DEREFERENCE: {
+        if (add_parenthesis_on_pointer_ops) {
+            string_append(gen.text, "(");
+        }
+
+        string_append(gen.text, "*");
+        c_generator_output_data_access(access->option.pointer_value, false);
+
+        if (add_parenthesis_on_pointer_ops) {
+            string_append(gen.text, ")");
+        }
+        break;
+    }
+    case IR_Data_Access_Type::ADDRESS_OF_VALUE: {
+        if (add_parenthesis_on_pointer_ops) {
+            string_append(gen.text, "(");
+        }
+
+        string_append(gen.text, "&");
+        c_generator_output_data_access(access->option.pointer_value);
+
+        if (add_parenthesis_on_pointer_ops) {
+            string_append(gen.text, ")");
+        }
+        break;
+    }
+    case IR_Data_Access_Type::MEMBER_ACCESS: 
+    {
+        const Struct_Member& member = access->option.member_access.member;
+
+        c_generator_output_data_access(access->option.member_access.struct_access, true);
+
+        // Handle members of struct subtypes
+        Datatype* access_type = access->option.member_access.struct_access->datatype;
+        assert(!datatype_is_pointer(access_type), "");
+        if (access_type->base_type->type == Datatype_Type::STRUCT) 
+        {
+            Datatype_Struct* structure = downcast<Datatype_Struct>(access_type->base_type);
+            Struct_Content* subtype = member.content;
+            assert(structure == member.content->structure, "");
+            {
+                Struct_Content* content = &structure->content;
+                for (int i = 0; i < subtype->index->indices.size; i++) {
+                    auto index = subtype->index->indices[i].index;
+                    string_append_formated(gen.text, ".subtypes_.%s", content->subtypes[index]->name->characters);
+                    content = content->subtypes[index];
+                }
+            }
+
+            if (member.content->subtypes.size > 0) {
+                if (member.offset == member.content->tag_member.offset) {
+                    string_append_formated(gen.text, ".tag_", member.id->characters);
+                    break;
+                }
+            }
+        }
+
+        // Append member access
+        string_append_formated(gen.text, ".%s", member.id->characters);
+
+        break;
+    }
+    case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS: 
+    {
+        auto array_type = datatype_get_non_const_type(access->option.array_access.array_access->datatype);
+        if (array_type->type == Datatype_Type::SLICE) 
+        {
+            c_generator_output_data_access(access->option.array_access.array_access, true);
+            string_append(gen.text, ".data[");
+            c_generator_output_data_access(access->option.array_access.index_access);
+            string_append(gen.text, "]");
+        }
+        else {
+            assert(array_type->type == Datatype_Type::ARRAY, "");
+            c_generator_output_data_access(access->option.array_access.array_access, true);
+            string_append(gen.text, ".values[");
+            c_generator_output_data_access(access->option.array_access.index_access);
+            string_append(gen.text, "]");
+        }
         break;
     }
     case IR_Data_Access_Type::NOTHING:
@@ -1247,18 +1347,14 @@ void c_generator_output_data_access(IR_Data_Access access)
         panic("");
     }
 
-    if (access.is_memory_access) {
-        string_append_formated(gen.text, "))");
-    }
-
     return;
 }
 
-void c_generator_output_cast_if_necessary(IR_Data_Access write_to_access, Datatype* value_type)
+void c_generator_output_cast_if_necessary(IR_Data_Access* write_to_access, Datatype* value_type)
 {
     auto& gen = c_generator;
 
-    Datatype* write_to_type = ir_data_access_get_type(&write_to_access);
+    Datatype* write_to_type = write_to_access->datatype;
     if (types_are_equal(write_to_type, value_type)) return;
 
     string_append_formated(gen.text, "(");
@@ -1286,15 +1382,15 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             else {
                 string_add_indentation(gen.text, indentation_level + 1);
             }
-            Datatype* sig = code_block->registers[i];
+            Datatype* sig = code_block->registers[i].type;
             c_generator_output_type_reference(sig);
             string_append_formated(gen.text, " ");
+
             IR_Data_Access access;
-            access.index = i;
-            access.is_memory_access = false;
             access.type = IR_Data_Access_Type::REGISTER;
-            access.option.definition_block = code_block;
-            c_generator_output_data_access(access);
+            access.option.register_access.definition_block = code_block;
+            access.option.register_access.index = i;
+            c_generator_output_data_access(&access);
             string_append_formated(gen.text, ";\n");
         }
         if (registers_in_same_scope) {
@@ -1321,7 +1417,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = downcast<Datatype_Function>(ir_data_access_get_type(&call->options.pointer_access));
+                function_sig = downcast<Datatype_Function>(call->options.pointer_access->datatype);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
@@ -1520,7 +1616,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
         case IR_Instruction_Type::MOVE: {
             c_generator_output_data_access(instr->options.move.destination);
             string_append_formated(gen.text, " = ");
-            c_generator_output_cast_if_necessary(instr->options.move.destination, ir_data_access_get_type(&instr->options.move.source));
+            c_generator_output_cast_if_necessary(instr->options.move.destination, instr->options.move.source->datatype);
             c_generator_output_data_access(instr->options.move.source);
             string_append_formated(gen.text, ";\n");
             break;
@@ -1530,7 +1626,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             IR_Instruction_Cast* cast = &instr->options.cast;
             c_generator_output_data_access(cast->destination);
             string_append_formated(gen.text, " = ");
-            c_generator_output_cast_if_necessary(cast->destination, ir_data_access_get_type(&cast->source));
+            c_generator_output_cast_if_necessary(cast->destination, cast->source->datatype);
             c_generator_output_data_access(cast->source);
             string_append_formated(gen.text, ";\n");
             break;
@@ -1543,20 +1639,6 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             // c_generator_output_cast_if_necessary(addr_of->destination, ); // Not sure if this is even needed here...
             switch (addr_of->type)
             {
-            case IR_Instruction_Address_Of_Type::ARRAY_ELEMENT: {
-                string_append_formated(gen.text, "&(");
-                c_generator_output_data_access(addr_of->source);
-                string_append_formated(gen.text, ").data[");
-                c_generator_output_data_access(addr_of->options.index_access);
-                string_append_formated(gen.text, "];\n");
-                break;
-            }
-            case IR_Instruction_Address_Of_Type::DATA: {
-                string_append_formated(gen.text, "&(");
-                c_generator_output_data_access(addr_of->source);
-                string_append_formated(gen.text, ");\n");
-                break;
-            }
             case IR_Instruction_Address_Of_Type::FUNCTION: {
                 C_Translation fn_translation;
                 fn_translation.type = C_Translation_Type::FUNCTION;
@@ -1564,44 +1646,6 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
                 assert(fn_name != 0, "HEY");
                 string_append_formated(gen.text, "&%s;\n", fn_name->characters);
-                break;
-            }
-            case IR_Instruction_Address_Of_Type::STRUCT_MEMBER: 
-            {
-                const Struct_Member& member = addr_of->options.member;
-
-                string_append(gen.text, "&("); // Note: The Parenthesis are necessary if there was a pointer access, e.g. (*value).member
-                c_generator_output_data_access(addr_of->source);
-                string_append(gen.text, ")");
-
-                // Handle members of struct subtypes
-                Datatype* access_type = ir_data_access_get_type(&addr_of->source);
-                assert(!datatype_is_pointer(access_type), "");
-                if (access_type->base_type->type == Datatype_Type::STRUCT) 
-                {
-                    Datatype_Struct* structure = downcast<Datatype_Struct>(access_type->base_type);
-                    Struct_Content* subtype = member.content;
-                    assert(structure == member.content->structure, "");
-                    {
-                        Struct_Content* content = &structure->content;
-                        for (int i = 0; i < subtype->index->indices.size; i++) {
-                            auto index = subtype->index->indices[i].index;
-                            string_append_formated(gen.text, ".subtypes_.%s", content->subtypes[index]->name->characters);
-                            content = content->subtypes[index];
-                        }
-                    }
-
-                    if (member.content->subtypes.size > 0) {
-                        if (member.offset == member.content->tag_member.offset) {
-                            string_append_formated(gen.text, ".tag_;\n", member.id->characters);
-                            break;
-                        }
-                    }
-                }
-
-                // Append member access
-                string_append_formated(gen.text, ".%s;\n", member.id->characters);
-
                 break;
             }
             case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {

@@ -28,7 +28,7 @@ bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = true;
-bool output_bytecode = false;
+bool output_bytecode = true;
 bool output_timing = true;
 
 // Testcases

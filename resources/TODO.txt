@@ -1,20 +1,27 @@
 
 
+Jmp_On_Int_Equal append_to_string + bytecode interpreter
+
+
 
 Next up:
 --------
- * IR_Data Access could be more structured like a tree (e.g. With member accesses, array-access, pointer-access, not having to be pointer loads and stores)
- * C-Readability could be improved a lot by just using better names + putting things into namespaces so we don't have name-clashes (Would be nice for debuggin at the start)
- * Const variable definitions need an IR_Command, as they need to be initialialized at once in C-Generator... (Frick)
+ * Finish Data_Access Rework or rollback, I don't even care anymore
+    --> Bytecode_Generator needs to differentiate between IR_Data_Access "Read", "Write" and "Get pointer to"
 
- * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
+ * Use Register names in C-Generator
+ * Globals should have names
+
+ * Const variable definitions need an IR_Instruction, as they need to be initialialized at once in C-Generator
  * Type_info needs to work in C-Generator
-
+ 
+ * How do Arrays deal with constants, e.g. a constant array should create constant accesses to members? How is this done in C?
 
  * Fix testcases
 
 
 DONE:
+ * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
  * Check if things are working with new constant-pool --> Done
  * Maybe constant pool shouldn't allow pointers at all, and just have special treatment for Strings (And Type-Info can also be handled seperately)
  * Casts should only be applied if the type changes

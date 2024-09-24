@@ -18,7 +18,11 @@ struct IR_Program;
         - Return_Register (s, when we have multiple return values)
 
     A Stack-Frame looks like this:
+    OLD:
     [Param0] [Param1] [ParamX...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
+
+    NEW:
+    [Return_Address] [Old_Stack_Pointer] [Param0] [Param1] [Param N...] [Reg0] [Reg1] [Reg2] [Regs...]
 */
 
 enum class Bytecode_Type
@@ -52,7 +56,8 @@ enum class Instruction_Type
     JUMP, // op1 = instruction_index
     JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
     JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
-    CALL_FUNCTION, // Pushes return address, op1 = instruction_index, op2 = stack_offset for new frame
+    JUMP_ON_INT_EQUAL, // op1 = instruction_index, op2 = cnd_reg, op3 = int_value
+    CALL_FUNCTION, // Pushes return address, op1 = goto_instruction_index, op2 = stack_offset for new frame
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
     RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
@@ -117,7 +122,7 @@ struct Bytecode_Generator
     Hashtable<IR_Function*, int> function_locations;
 
     // Program Information
-    Dynamic_Array<Dynamic_Array<int>> stack_offsets;
+    Dynamic_Array<Array<int>> stack_offsets; // For both registers and functions
     Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
     Hashtable<IR_Function*, int> function_parameter_stack_offset_index;
 

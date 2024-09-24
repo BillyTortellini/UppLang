@@ -954,11 +954,12 @@ void modtree_function_destroy(ModTree_Function* function)
     delete function;
 }
 
-ModTree_Global* modtree_program_add_global(Datatype* type)
+ModTree_Global* modtree_program_add_global(Datatype* type, Symbol* symbol)
 {
     auto type_size = type_wait_for_size_info_to_finish(type);
 
     auto global = new ModTree_Global;
+    global->symbol = symbol;
     global->type = type;
     global->has_initial_value = false;
     global->init_expr = 0;
@@ -3564,7 +3565,7 @@ void analysis_workload_entry(void* userdata)
                 }
             }
 
-            auto global = modtree_program_add_global(type);
+            auto global = modtree_program_add_global(type, symbol);
             if (definition->value_node != 0) {
                 global->has_initial_value = true;
                 global->init_expr = definition->value_node;
@@ -7264,14 +7265,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         Type_Mods expected_mods = type_mods_make(0, 1);
         if (array_type->type == Datatype_Type::ARRAY || array_type->type == Datatype_Type::SLICE)
         {
-            result_is_temporary = get_info(access_node.array_expr)->cast_info.result_value_is_temporary;
             type_is_valid = true;
             if (array_type->type == Datatype_Type::ARRAY) {
                 result_type = downcast<Datatype_Array>(array_type)->element_type;
+                result_is_temporary = get_info(access_node.array_expr)->cast_info.result_value_is_temporary;
             }
             else {
                 result_type = downcast<Datatype_Slice>(array_type)->element_type;
+                result_is_temporary = false;
             }
+
             semantic_analyser_analyse_expression_value(
                 access_node.index_expr, expression_context_make_specific_type(upcast(types.i32_type))
             );
