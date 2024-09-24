@@ -18,10 +18,6 @@ struct IR_Program;
         - Return_Register (s, when we have multiple return values)
 
     A Stack-Frame looks like this:
-    OLD:
-    [Param0] [Param1] [ParamX...] [Return_Address] [Old_Stack_Pointer] [Reg0] [Reg1] [Reg2] [Regs...]
-
-    NEW:
     [Return_Address] [Old_Stack_Pointer] [Param0] [Param1] [Param N...] [Reg0] [Reg1] [Reg2] [Regs...]
 */
 

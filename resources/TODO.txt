@@ -1,35 +1,11 @@
 
 
-Jmp_On_Int_Equal append_to_string + bytecode interpreter
-
-
-
 Next up:
 --------
- * Finish Data_Access Rework or rollback, I don't even care anymore
-    --> Bytecode_Generator needs to differentiate between IR_Data_Access "Read", "Write" and "Get pointer to"
-
- * Use Register names in C-Generator
- * Globals should have names
-
- * Const variable definitions need an IR_Instruction, as they need to be initialialized at once in C-Generator
  * Type_info needs to work in C-Generator
- 
  * How do Arrays deal with constants, e.g. a constant array should create constant accesses to members? How is this done in C?
+ * All testcases should work with C-Generator!
 
- * Fix testcases
-
-
-DONE:
- * Subtype-Member Access in C-Generator + General struct behavior (Constant initialization)
- * Check if things are working with new constant-pool --> Done
- * Maybe constant pool shouldn't allow pointers at all, and just have special treatment for Strings (And Type-Info can also be handled seperately)
- * Casts should only be applied if the type changes
- * Check if this works in C++
- * Constants need to work
- * Figure out how dependencies work in C-Generator
- * Struct generation with Struct-Content + Subtypes
- * Constant + Subtypes need to work for code-generation in C-Generator
 
 
 

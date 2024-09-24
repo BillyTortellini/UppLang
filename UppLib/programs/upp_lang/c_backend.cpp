@@ -647,7 +647,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(gen.text, "struct %s {\n", access_name.characters);
         string_add_indentation(gen.text, 1);
         c_generator_output_type_reference(array_type->element_type);
-        string_append_formated(gen.text, " values[%d];\n};\n");
+        string_append_formated(gen.text, " values[%d];\n};\n", array_type->element_count);
 
         // Add dependency if necessary
         auto member_type = datatype_get_non_const_type(array_type->element_type);
@@ -768,6 +768,7 @@ void c_generator_generate()
             auto& param = parameters[j];
 
             c_generator_output_type_reference(param.type);
+            string_append(gen.text, " ");
 
             IR_Data_Access access;
             access.type = IR_Data_Access_Type::PARAMETER;
@@ -1376,6 +1377,9 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
         }
         for (int i = 0; i < code_block->registers.size; i++)
         {
+            auto& reg = code_block->registers[i];
+            if (reg.has_initializer_instruction) continue;
+
             if (registers_in_same_scope) {
                 string_add_indentation(gen.text, indentation_level);
             }
@@ -1619,6 +1623,21 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             c_generator_output_cast_if_necessary(instr->options.move.destination, instr->options.move.source->datatype);
             c_generator_output_data_access(instr->options.move.source);
             string_append_formated(gen.text, ";\n");
+            break;
+        }
+        case IR_Instruction_Type::VARIABLE_DEFINITION: 
+        {
+            auto& def = instr->options.variable_definition;
+
+            c_generator_output_type_reference(def.variable_access->datatype);
+            string_append_formated(gen.text, " ");
+            c_generator_output_data_access(def.variable_access);
+
+            if (def.initial_value.available) {
+                string_append(gen.text, " = ");
+                c_generator_output_data_access(def.initial_value.value);
+            }
+            string_append(gen.text, "; \n");
             break;
         }
         case IR_Instruction_Type::CAST:

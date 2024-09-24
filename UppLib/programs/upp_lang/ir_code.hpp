@@ -182,6 +182,7 @@ struct IR_Instruction;
 struct IR_Register
 {
     Datatype* type;
+    bool has_initializer_instruction;
     Optional<String*> name; // If it's a variable
 };
 
@@ -205,6 +206,13 @@ struct IR_Instruction_Switch
     IR_Code_Block* default_block;
 };
 
+struct IR_Instruction_Variable_Definition
+{
+    Symbol* symbol;
+    IR_Data_Access* variable_access;
+    Optional<IR_Data_Access*> initial_value;
+};
+
 enum class IR_Instruction_Type
 {
     FUNCTION_CALL,
@@ -222,6 +230,10 @@ enum class IR_Instruction_Type
     ADDRESS_OF,
     UNARY_OP,
     BINARY_OP,
+
+    // Required for const variable initialization in C-Code
+    // Note: not all registers have a variable definition instruction, as temporary register don't have Statements for these...
+    VARIABLE_DEFINITION,
 };
 
 struct IR_Instruction
@@ -239,6 +251,7 @@ struct IR_Instruction
         IR_Instruction_Address_Of address_of;
         IR_Instruction_Unary_OP unary_op;
         IR_Instruction_Binary_OP binary_op;
+        IR_Instruction_Variable_Definition variable_definition;
         IR_Code_Block* block;
         int label_index;
     } options;

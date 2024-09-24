@@ -865,6 +865,13 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             bytecode_generator_move_accesses(generator, instr->options.move.destination, instr->options.move.source);
             break;
         }
+        case IR_Instruction_Type::VARIABLE_DEFINITION: {
+            auto& var = instr->options.variable_definition;
+            if (var.initial_value.available) {
+                bytecode_generator_move_accesses(generator, var.variable_access, var.initial_value.value);
+            }
+            break;
+        }
         case IR_Instruction_Type::CAST:
         {
             IR_Instruction_Cast* cast = &instr->options.cast;

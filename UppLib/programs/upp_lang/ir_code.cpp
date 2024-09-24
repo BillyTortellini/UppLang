@@ -50,6 +50,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
     case IR_Instruction_Type::BINARY_OP:
     case IR_Instruction_Type::LABEL:
     case IR_Instruction_Type::GOTO:
+    case IR_Instruction_Type::VARIABLE_DEFINITION:
         break;
     default: panic("Lul");
     }
@@ -300,6 +301,14 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     case IR_Instruction_Type::BLOCK: {
         string_append_formated(string, "BLOCK\n");
         ir_code_block_append_to_string(instruction->options.block, string, indentation + 1);
+        break;
+    }
+    case IR_Instruction_Type::VARIABLE_DEFINITION: {
+        string_append_formated(string, "VARIABLE_DEFINITION %s", instruction->options.variable_definition.symbol->id->characters);
+        if (instruction->options.variable_definition.initial_value.available) {
+            ir_data_access_append_to_string(instruction->options.variable_definition.initial_value.value, string, code_block);
+        }
+        string_append(string, "\n");
         break;
     }
     case IR_Instruction_Type::GOTO: {
@@ -633,6 +642,7 @@ IR_Data_Access* ir_data_access_create_intermediate(IR_Code_Block* block, Datatyp
     IR_Register reg;
     reg.type = signature;
     reg.name.available = false;
+    reg.has_initializer_instruction = false;
     dynamic_array_push_back(&block->registers, reg);
 
     return access;
@@ -1706,29 +1716,40 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             IR_Register reg;
             reg.name = optional_make_success<String*>(symbol->id);
             reg.type = var_type;
+            reg.has_initializer_instruction = definition->values.size > 0;
             dynamic_array_push_back(&ir_block->registers, reg);
 
             IR_Data_Access* access = ir_data_access_create_register(ir_block, ir_block->registers.size - 1);
             hashtable_insert_element(&ir_generator.variable_mapping, definition->symbols[i], access);
 
+            IR_Instruction definition_instr;
+            definition_instr.type = IR_Instruction_Type::VARIABLE_DEFINITION;
+            definition_instr.options.variable_definition.symbol = symbol;
+            definition_instr.options.variable_definition.variable_access = access;
+            definition_instr.options.variable_definition.initial_value.available = false;
+
             if (definition->values.size == 1 && definition->symbols.size > 1) {
                 // I guess this is still struct split, which currently isn't supported anymore
-                IR_Instruction move;
-                move.type = IR_Instruction_Type::MOVE;
-                move.options.move.destination = access;
-                move.options.move.source = broadcast_value;
                 if (is_split) {
                     assert(broadcast_type->type == Datatype_Type::STRUCT, "");
-                    move.options.move.source = ir_data_access_create_member(
-                        broadcast_value, downcast<Datatype_Struct>(broadcast_type)->content.members[i]
+                    definition_instr.options.variable_definition.initial_value = optional_make_success(
+                        ir_data_access_create_member(
+                            broadcast_value, downcast<Datatype_Struct>(broadcast_type)->content.members[i]
+                        )
                     );
                 }
-                dynamic_array_push_back(&ir_block->instructions, move);
+                else {
+                    definition_instr.options.variable_definition.initial_value = optional_make_success(broadcast_value);
+                }
             }
             else if (definition->values.size != 0) {
                 assert(i < definition->values.size, "Must be guaranteed by semantic analyser!");
-                ir_generator_generate_expression(ir_block, definition->values[i], access);
+                definition_instr.options.variable_definition.initial_value = optional_make_success(
+                    ir_generator_generate_expression(ir_block, definition->values[i])
+                );
             }
+
+            dynamic_array_push_back(&ir_block->instructions, definition_instr);
         }
 
         break;
