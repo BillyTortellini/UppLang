@@ -1157,7 +1157,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     {
         auto& array_init = expression->options.array_initializer;
         IR_Data_Access* array_access = make_destination_access_on_demand(result_type);
-        if (result_type->type == Datatype_Type::SLICE)
+        auto array_type = datatype_get_non_const_type(result_type);
+        if (array_type->type == Datatype_Type::SLICE)
         {
             assert(array_init.values.size == 0, "");
             Upp_Slice_Base slice_base;
@@ -1174,8 +1175,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         }
         else
         {
-            assert(result_type->type == Datatype_Type::ARRAY, "");
-            auto array = downcast<Datatype_Array>(result_type);
+            assert(array_type->type == Datatype_Type::ARRAY, "");
+            auto array = downcast<Datatype_Array>(array_type);
             assert(array->element_count == array_init.values.size, "");
             for (int i = 0; i < array_init.values.size; i++)
             {

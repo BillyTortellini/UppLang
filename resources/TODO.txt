@@ -1,17 +1,4 @@
 
-054_15:
-Seems weird because the c-generator seems to call the wrong polymorphic instanciated functions???
-Check if the bytecode is ok, 
-
-Next up:
---------
- * All testcases should work with C-Generator!
- * Check if constant deduplication works for strings!
- * How do Arrays deal with constants, e.g. a constant array should create constant accesses to members? How is this done in C?
-
-
-
-
 
 
 

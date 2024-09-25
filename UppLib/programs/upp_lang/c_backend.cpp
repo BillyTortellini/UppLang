@@ -353,7 +353,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops = false);
 C_Type_Dependency* get_type_dependency(Datatype* datatype);
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level);
-void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
+void output_memory_as_new_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
 
 
 void string_add_indentation(String* str, int indentation)
@@ -687,7 +687,11 @@ void c_generator_output_type_reference(Datatype* type)
         gen.text = &dependency->type_definition;
         string_append_formated(gen.text, "struct %s {\n", access_name.characters);
         string_add_indentation(gen.text, 1);
-        c_generator_output_type_reference(array_type->element_type);
+        // Note: Here we use the non-const type, because:
+        //      In type_system, if the element_type is constant, the array_type is also constant
+        //      In C, if a struct is constant, the array in the struct is also automatically constant
+        //      By not making the values constant, array_initializers will still work by using a temporary, non-const array
+        c_generator_output_type_reference(datatype_get_non_const_type(array_type->element_type));
         string_append_formated(gen.text, " values[%d];\n};\n", array_type->element_count);
 
         // Add dependency if necessary
@@ -732,7 +736,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
 
     string_add_indentation(gen.text, indentation_level);
     string_append_formated(gen.text, "content->name = ");
-    output_memory_as_constant((byte*)&content->name, types.string, false, 1);
+    output_memory_as_new_constant((byte*)&content->name, types.string, false, 1);
     string_append(gen.text, ";\n");
 
     // Generate tag member
@@ -740,7 +744,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
     {
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.name = ");
-        output_memory_as_constant((byte*)&content->tag_member.name, types.string, false, 1);
+        output_memory_as_new_constant((byte*)&content->tag_member.name, types.string, false, 1);
         string_append(gen.text, ";\n");
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.type = %d;\n", content->tag_member.type.index);
@@ -761,7 +765,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
             auto& member = content->members.data[i];
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "content->members.data[%d].name = ", i);
-            output_memory_as_constant((byte*)&member.name, types.string, false, 1);
+            output_memory_as_new_constant((byte*)&member.name, types.string, false, 1);
             string_append(gen.text, ";\n");
 
             string_add_indentation(gen.text, indentation_level);
@@ -1015,7 +1019,7 @@ void c_generator_generate()
             string_append_formated(gen.text, "info->alignment = %d;\n", memory.alignment);
             string_add_indentation(gen.text, 1);
             string_append(gen.text,          "info->tag_      = ");
-            output_memory_as_constant((byte*)&type_system.internal_type_infos[i]->tag, types.type_information_type->content.tag_member.type, false, 1);
+            output_memory_as_new_constant((byte*)&type_system.internal_type_infos[i]->tag, types.type_information_type->content.tag_member.type, false, 1);
             string_append(gen.text, ";\n");
 
             // Set type-specific infos
@@ -1026,7 +1030,7 @@ void c_generator_generate()
                 auto primitive = downcast<Datatype_Primitive>(type);
                 Struct_Content* primitive_info = types.type_information_type->content.subtypes[(int)Datatype_Type::PRIMITIVE - 1];
                 string_append(gen.text, "info->subtypes_.Primitive.tag_ = ");
-                output_memory_as_constant((byte*)&primitive->primitive_type, primitive_info->tag_member.type, false, 1);
+                output_memory_as_new_constant((byte*)&primitive->primitive_type, primitive_info->tag_member.type, false, 1);
                 string_append(gen.text, ";\n");
                 if (primitive->primitive_type == Primitive_Type::INTEGER) {
                     string_add_indentation(gen.text, 1);
@@ -1053,7 +1057,7 @@ void c_generator_generate()
                 string_append_formated(gen.text, "info->subtypes_.Subtype.base_type = %d;\n", subtype->base_type->type_handle.index);
                 string_add_indentation(gen.text, 1);
                 string_append(gen.text, "info->subtypes_.Subtype.name = ");
-                output_memory_as_constant((byte*)&internal_info.subtype_name, types.string, false, 1);
+                output_memory_as_new_constant((byte*)&internal_info.subtype_name, types.string, false, 1);
                 string_append(gen.text, ";\n");
                 string_add_indentation(gen.text, 1);
                 string_append_formated(gen.text, "info->subtypes_.Subtype.index = %d;\n", subtype->subtype_index);
@@ -1076,7 +1080,7 @@ void c_generator_generate()
                 Struct_Content* enum_subtype = types.type_information_type->content.subtypes[(int)Datatype_Type::ENUM - 1];
                 auto& internal_info = type_system.internal_type_infos[i]->options.enumeration;
                 string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
-                output_memory_as_constant((byte*)&internal_info.name, types.string, false, 1);
+                output_memory_as_new_constant((byte*)&internal_info.name, types.string, false, 1);
                 string_append(gen.text, ";\n");
 
                 string_add_indentation(gen.text, 1);
@@ -1092,7 +1096,7 @@ void c_generator_generate()
                         auto& member = internal_info.members.data[j];
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
-                        output_memory_as_constant((byte*)&member.name, types.string, false, 1);
+                        output_memory_as_new_constant((byte*)&member.name, types.string, false, 1);
                         string_append(gen.text, ";\n");
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
@@ -1260,7 +1264,7 @@ void output_struct_content_block_recursive(Struct_Content* content, byte* struct
 
         // Generate designator
         string_append_formated(gen.text, ".%s = ", member.id->characters);
-        output_memory_as_constant(member_memory, member.type, false, block_indentation);
+        output_memory_as_new_constant(member_memory, member.type, false, block_indentation);
         if (i != members.size - 1) {
             string_append(gen.text, ", \n");
             string_add_indentation(gen.text, block_indentation);
@@ -1280,7 +1284,7 @@ void output_struct_content_block_recursive(Struct_Content* content, byte* struct
         string_add_indentation(gen.text, block_indentation);
         string_append(gen.text, "tag_ = ");
         byte* tag_memory = struct_start_memory + content->tag_member.offset;
-        output_memory_as_constant(tag_memory, content->tag_member.type, false, block_indentation);
+        output_memory_as_new_constant(tag_memory, content->tag_member.type, false, block_indentation);
     }
 
     string_append(gen.text, "\n");
@@ -1288,197 +1292,9 @@ void output_struct_content_block_recursive(Struct_Content* content, byte* struct
     string_append(gen.text, "}");
 }
 
-// If it's a literal, then it's printed on the same line. If the initialzer requires mutliple lines, a block "{ ... }" is created  over multiple lines
-void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level)
-{
-    auto& types = compiler.type_system.predefined_types;
-    auto& gen = c_generator;
-    String* backup_text = gen.text;
-    SCOPE_EXIT(gen.text = backup_text);
-
-    Datatype* type = datatype_get_non_const_type(base_type);
-    if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
-        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::SUBTYPE) {
-        requires_memory_address = true;
-    }
-
-    String constant_string;
-    constant_string.size = 0;
-    constant_string.capacity = 0;
-    SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
-
-    if (requires_memory_address)
-    {
-        constant_string = string_create_empty(32);
-        gen.text = &constant_string;
-
-        c_generator_output_type_reference(base_type);
-        string_append_formated(gen.text, " const_%d = ", gen.name_counter);
-        string_append_formated(backup_text, "const_%d", gen.name_counter);
-        gen.name_counter += 1;
-    }
-
-    // Generate constant access
-    int type_size = type->memory_info.value.size;
-    switch (type->type)
-    {
-    // Simple cases first
-    case Datatype_Type::PRIMITIVE:
-    {
-        auto primitive = downcast<Datatype_Primitive>(type);
-        int type_size = type->memory_info.value.size;
-        byte* memory = base_memory;
-        switch (primitive->primitive_type)
-        {
-        case Primitive_Type::BOOLEAN: {
-            bool* value_ptr = (bool*)memory;
-            string_append(gen.text, *value_ptr ? "true" : "false");
-            break;
-        }
-        case Primitive_Type::INTEGER: {
-            if (primitive->is_signed) {
-                switch (type_size)
-                {
-                case 1: string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
-                case 2: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
-                case 4: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
-                case 8: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
-                default: panic("HEY");
-                }
-            }
-            else {
-                switch (type_size)
-                {
-                case 1: string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
-                case 2: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
-                case 4: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
-                case 8: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
-                default: panic("HEY");
-                }
-            }
-            break;
-        }
-        case Primitive_Type::FLOAT:
-            switch (type_size)
-            {
-            case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
-            case 8: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
-            default: panic("HEY");
-            }
-            break;
-        default: panic("What");
-        }
-        break;
-    }
-    case Datatype_Type::TYPE_HANDLE: {
-        byte* memory = base_memory;
-        string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
-        break;
-    }
-    case Datatype_Type::ENUM:
-    {
-        byte* memory = base_memory;
-
-        int enum_value = *(int*)memory;
-        Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
-        int member_index = -1;
-        for (int i = 0; i < enum_type->members.size; i++) {
-            auto& member = enum_type->members[i];
-            if (member.value == enum_value) {
-                member_index = i;
-                break;
-            }
-        }
-        assert(member_index != -1, "");
-
-        auto member = enum_type->members[member_index];
-        c_generator_output_type_reference(type);
-        string_append_formated(gen.text, "::%s", member.name->characters);
-        break;
-    }
-    case Datatype_Type::FUNCTION:
-    {
-        byte* memory = base_memory;
-
-        int function_index = (int)*(i64*)memory;
-        if (function_index == 0) { // Function index 0 == nullptr, otherwise add -1 to get index in functions array
-            string_append(gen.text, "nullptr");
-        }
-        else {
-            ModTree_Function* mod_function = compiler.semantic_analyser->program->functions[function_index - 1];
-            IR_Function* ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, mod_function);
-
-            C_Translation function_translation;
-            function_translation.type = C_Translation_Type::FUNCTION;
-            function_translation.options.function = ir_function;
-            String* fn_name = hashtable_find_element(&gen.translations, function_translation);
-            assert(fn_name != 0, "");
-            string_append_formated(gen.text, "(&%s)", fn_name->characters);
-        }
-        break;
-    }
-    case Datatype_Type::POINTER:
-    case Datatype_Type::BYTE_POINTER:
-    {
-        byte* memory = base_memory;
-        byte* pointer = *(byte**)memory;
-        assert(pointer == 0, "Pointers must be null in constant memory");
-        string_append(gen.text, "nullptr");
-        break;
-    }
-    case Datatype_Type::SLICE:
-    {
-        Datatype* element_type = downcast<Datatype_Slice>(type)->element_type;
-        Upp_Slice_Base slice = *(Upp_Slice_Base*)base_memory;
-        assert(slice.size == 0 && slice.data == nullptr, "");
-        string_append_formated(gen.text, "{.data = nullptr, .size = 0}");
-        break;
-    }
-    case Datatype_Type::STRUCT:
-    case Datatype_Type::SUBTYPE:
-    {
-        // Handle string
-        if (types_are_equal(type, types.string))
-        {
-            // Note: Maybe we need something smarter in the future to handle multi-line strings 
-            Upp_String string = *(Upp_String*)base_memory;
-            string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
-            string_append(gen.text, (const char*)string.bytes.data);
-            string_append_formated(gen.text, "\", .size = %d} }", string.bytes.size);
-            break;
-        }
-
-        // Handle structure
-        Datatype_Struct* structure = downcast<Datatype_Struct>(type->base_type);
-        assert(structure->struct_type != AST::Structure_Type::UNION, "Must not happen, as normal unions cannot get serialized in constant pool");
-        output_struct_content_block_recursive(&structure->content, base_memory, current_indentation_level);
-
-        break;
-    }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-    case Datatype_Type::TEMPLATE_PARAMETER:
-    case Datatype_Type::UNKNOWN_TYPE: {
-        panic("Should not happen, this should generate an error beforehand");
-        break;
-    }
-    case Datatype_Type::CONSTANT: {
-        panic("Should not happen as we stripped the constant before");
-        break;
-    }
-    default: panic("");
-    }
-
-    // Finish declaration
-    if (requires_memory_address) {
-        string_append(gen.text, ";\n");
-        gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
-        string_append(gen.text, constant_string.characters);
-    }
-}
-
-// If we have a pointer to an int, we need to treat this seperately
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level)
 {
+    auto& types = compiler.type_system.predefined_types;
     auto& gen = c_generator;
     String* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
@@ -1504,7 +1320,187 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     // Create access
     String access_name = string_create_empty(12);
     gen.text = &access_name;
-    output_memory_as_constant(constant.memory, constant.type, requires_memory_address, 0);
+    {
+        auto& gen = c_generator;
+        String* backup_text = gen.text;
+        SCOPE_EXIT(gen.text = backup_text);
+
+        Datatype* base_type = type;
+        byte* base_memory = constant.memory;
+
+        String constant_string;
+        constant_string.size = 0;
+        constant_string.capacity = 0;
+        SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
+
+        if (requires_memory_address)
+        {
+            constant_string = string_create_empty(32);
+            gen.text = &constant_string;
+
+            c_generator_output_type_reference(base_type);
+            string_append_formated(gen.text, " const_%d = ", gen.name_counter);
+            string_append_formated(backup_text, "const_%d", gen.name_counter);
+            gen.name_counter += 1;
+        }
+
+        // Generate constant access
+        int type_size = type->memory_info.value.size;
+        switch (type->type)
+        {
+        // Simple cases first
+        case Datatype_Type::PRIMITIVE:
+        {
+            auto primitive = downcast<Datatype_Primitive>(type);
+            int type_size = type->memory_info.value.size;
+            byte* memory = base_memory;
+            switch (primitive->primitive_type)
+            {
+            case Primitive_Type::BOOLEAN: {
+                bool* value_ptr = (bool*)memory;
+                string_append(gen.text, *value_ptr ? "true" : "false");
+                break;
+            }
+            case Primitive_Type::INTEGER: {
+                if (primitive->is_signed) {
+                    switch (type_size)
+                    {
+                    case 1: string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
+                    case 2: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
+                    case 4: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
+                    case 8: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
+                    default: panic("HEY");
+                    }
+                }
+                else {
+                    switch (type_size)
+                    {
+                    case 1: string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
+                    case 2: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
+                    case 4: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
+                    case 8: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
+                    default: panic("HEY");
+                    }
+                }
+                break;
+            }
+            case Primitive_Type::FLOAT:
+                switch (type_size)
+                {
+                case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
+                case 8: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
+                default: panic("HEY");
+                }
+                break;
+            default: panic("What");
+            }
+            break;
+        }
+        case Datatype_Type::TYPE_HANDLE: {
+            byte* memory = base_memory;
+            string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
+            break;
+        }
+        case Datatype_Type::ENUM:
+        {
+            byte* memory = base_memory;
+
+            int enum_value = *(int*)memory;
+            Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
+            int member_index = -1;
+            for (int i = 0; i < enum_type->members.size; i++) {
+                auto& member = enum_type->members[i];
+                if (member.value == enum_value) {
+                    member_index = i;
+                    break;
+                }
+            }
+            assert(member_index != -1, "");
+
+            auto member = enum_type->members[member_index];
+            c_generator_output_type_reference(type);
+            string_append_formated(gen.text, "::%s", member.name->characters);
+            break;
+        }
+        case Datatype_Type::FUNCTION:
+        {
+            byte* memory = base_memory;
+
+            int function_index = (int)*(i64*)memory;
+            if (function_index == 0) { // Function index 0 == nullptr, otherwise add -1 to get index in functions array
+                string_append(gen.text, "nullptr");
+            }
+            else {
+                ModTree_Function* mod_function = compiler.semantic_analyser->program->functions[function_index - 1];
+                IR_Function* ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, mod_function);
+
+                C_Translation function_translation;
+                function_translation.type = C_Translation_Type::FUNCTION;
+                function_translation.options.function = ir_function;
+                String* fn_name = hashtable_find_element(&gen.translations, function_translation);
+                assert(fn_name != 0, "");
+                string_append_formated(gen.text, "(&%s)", fn_name->characters);
+            }
+            break;
+        }
+        case Datatype_Type::POINTER:
+        case Datatype_Type::BYTE_POINTER:
+        {
+            byte* memory = base_memory;
+            byte* pointer = *(byte**)memory;
+            assert(pointer == 0, "Pointers must be null in constant memory");
+            string_append(gen.text, "nullptr");
+            break;
+        }
+        case Datatype_Type::SLICE:
+        {
+            Datatype* element_type = downcast<Datatype_Slice>(type)->element_type;
+            Upp_Slice_Base slice = *(Upp_Slice_Base*)base_memory;
+            assert(slice.size == 0 && slice.data == nullptr, "");
+            string_append_formated(gen.text, "{.data = nullptr, .size = 0}");
+            break;
+        }
+        case Datatype_Type::STRUCT:
+        case Datatype_Type::SUBTYPE:
+        {
+            // Handle string
+            if (types_are_equal(type, types.string))
+            {
+                // Note: Maybe we need something smarter in the future to handle multi-line strings 
+                Upp_String string = *(Upp_String*)base_memory;
+                string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
+                string_append(gen.text, (const char*)string.bytes.data);
+                string_append_formated(gen.text, "\", .size = %d} }", string.bytes.size);
+                break;
+            }
+
+            // Handle structure
+            Datatype_Struct* structure = downcast<Datatype_Struct>(type->base_type);
+            assert(structure->struct_type != AST::Structure_Type::UNION, "Must not happen, as normal unions cannot get serialized in constant pool");
+            output_struct_content_block_recursive(&structure->content, base_memory, indentation_level);
+
+            break;
+        }
+        case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+        case Datatype_Type::TEMPLATE_PARAMETER:
+        case Datatype_Type::UNKNOWN_TYPE: {
+            panic("Should not happen, this should generate an error beforehand");
+            break;
+        }
+        case Datatype_Type::CONSTANT: {
+            panic("Should not happen as we stripped the constant before");
+            break;
+        }
+        default: panic("");
+        }
+
+        // Finish declaration
+        if (requires_memory_address) {
+            string_append(gen.text, ";\n");
+            gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
+            string_append(gen.text, constant_string.characters);
+        }
+    }
 
     // Store translation
     hashtable_insert_element(&gen.translations, constant_translation, access_name);
@@ -1512,6 +1508,13 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     // Append constant access
     gen.text = backup_text;
     string_append(gen.text, access_name.characters);
+}
+
+void output_memory_as_new_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level)
+{
+    auto result = constant_pool_add_constant(base_type, array_create_static<byte>(base_memory, base_type->memory_info.value.size));
+    assert(result.success, "Should always work");
+    c_generator_output_constant_access(result.options.constant, requires_memory_address, current_indentation_level);
 }
 
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops)

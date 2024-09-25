@@ -493,7 +493,8 @@ Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol,
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
-Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
+// If the element_type is constant, the array type + the element_type will be const
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
 Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
 Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);

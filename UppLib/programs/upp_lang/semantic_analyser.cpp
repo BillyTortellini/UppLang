@@ -7132,8 +7132,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Handle implicit polymorphic symbols for array size, e.g. foo :: (a: [$C]int)
         if (polymorphic_count != 0) {
-            result->polymorphic_count_variable = polymorphic_count;
-            result->base.contains_type_template = true;
+            auto array_type = downcast<Datatype_Array>(datatype_get_non_const_type(result));
+            array_type->polymorphic_count_variable = polymorphic_count;
+            array_type->base.contains_type_template = true;
         }
 
         EXIT_TYPE(upcast(result));
@@ -7259,6 +7260,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         auto& access_node = expr->options.array_access;
         Datatype* array_type = semantic_analyser_analyse_expression_value(access_node.array_expr, expression_context_make_auto_dereference());
+        bool array_is_const = type_mods_is_constant(array_type->mods, 0);
         array_type = array_type->base_type; // Remove const modifier
         if (datatype_is_unknown(array_type)) {
             EXIT_ERROR(types.unknown_type);
@@ -7274,6 +7276,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (array_type->type == Datatype_Type::ARRAY) {
                 result_type = downcast<Datatype_Array>(array_type)->element_type;
                 result_is_temporary = get_info(access_node.array_expr)->cast_info.result_value_is_temporary;
+                if (array_is_const) {
+                    result_type = type_system_make_constant(result_type); // If the array is const, the values are also const
+                }
             }
             else {
                 result_type = downcast<Datatype_Slice>(array_type)->element_type;

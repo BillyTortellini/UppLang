@@ -896,7 +896,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type)
     return result;
 }
 
-Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable)
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable)
 {
     auto& type_system = compiler.type_system;
     assert(!(count_known && element_count <= 0), "Hey");
@@ -917,8 +917,8 @@ Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known,
         auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
         if (type_opt != nullptr) {
             Datatype* type = *type_opt;
-            assert(type->type == Datatype_Type::ARRAY, "");
-            return downcast<Datatype_Array>(type);
+            assert(datatype_get_non_const_type(type)->type == Datatype_Type::ARRAY, "");
+            return type;
         }
     }
 
@@ -962,9 +962,15 @@ Datatype_Array* type_system_make_array(Datatype* element_type, bool count_known,
     internal_info.element_type = element_type->type_handle;
     internal_info.size = result->element_count;
 
-    hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
+    // If element type is const, then the array will also get the constant modifier
+    Datatype* final_type = upcast(result);
+    bool element_type_is_const = element_type->type == Datatype_Type::CONSTANT;
+    if (element_type_is_const) {
+        final_type = type_system_make_constant(upcast(result));
+    }
 
-    return result;
+    hashtable_insert_element(&type_system.deduplication_table, dedup, final_type);
+    return final_type;
 }
 
 Datatype_Slice* type_system_make_slice(Datatype* element_type)

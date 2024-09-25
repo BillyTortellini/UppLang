@@ -219,6 +219,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
             else if (string.bytes.size == 0) {
                 if (string.bytes.data == nullptr) {
                     memory_set_bytes(memory, sizeof(Upp_String), 0);
+                    return;
                 }
                 else {
                     result = constant_pool_result_make_error("Value contains string with size 0 and non-null pointer");
