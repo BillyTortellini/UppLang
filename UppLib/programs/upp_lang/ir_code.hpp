@@ -182,7 +182,7 @@ struct IR_Instruction;
 struct IR_Register
 {
     Datatype* type;
-    bool has_initializer_instruction;
+    bool has_definition_instruction;
     Optional<String*> name; // If it's a variable
 };
 

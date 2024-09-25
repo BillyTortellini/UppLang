@@ -3565,6 +3565,11 @@ void analysis_workload_entry(void* userdata)
                 }
             }
 
+            // Note: Constant tag gets removed when infering the type, e.g. x := 15
+            if (definition->type_node == 0) {
+                type = datatype_get_non_const_type(type);
+            }
+
             auto global = modtree_program_add_global(type, symbol);
             if (definition->value_node != 0) {
                 global->has_initial_value = true;

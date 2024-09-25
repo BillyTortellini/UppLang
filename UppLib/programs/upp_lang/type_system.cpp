@@ -1787,6 +1787,7 @@ void type_system_add_predefined_types(Type_System* system)
                 add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
                 type_system_finish_struct(struct_member_type);
             }
+            types->internal_member_info_type = struct_member_type;
 
             Datatype_Struct* internal_content = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
             {
@@ -1797,6 +1798,7 @@ void type_system_add_predefined_types(Type_System* system)
             }
             type_system_finish_struct(internal_content);
             test_type_similarity<Internal_Type_Struct_Content>(upcast(internal_content));
+            types->internal_struct_content_type = internal_content;
 
             add_member_cstr(subtype_struct, "content", upcast(internal_content));
             add_member_cstr(subtype_struct, "is_union", upcast(types->bool_type));

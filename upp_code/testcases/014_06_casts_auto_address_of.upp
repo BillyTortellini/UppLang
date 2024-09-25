@@ -7,7 +7,4 @@ main::()
 	// the pointer level of the expected value is higher then the given value
 	value:int=15
 	foo(value)
-	return
-	print_i32(value)
-	return
 	assert(value==16)

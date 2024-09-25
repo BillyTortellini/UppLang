@@ -9,7 +9,7 @@ bar::(foo:Foo($T,$C,$unop),b:T)->T
 
 negate::(a:int)->int
 	return-a
-	
+
 fnegate::(a:f32)->f32
 	return-a
 

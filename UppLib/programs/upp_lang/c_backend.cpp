@@ -352,6 +352,9 @@ void c_generator_output_type_reference(Datatype* type);
 void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope);
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops = false);
 C_Type_Dependency* get_type_dependency(Datatype* datatype);
+void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level);
+void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
+
 
 void string_add_indentation(String* str, int indentation)
 {
@@ -460,6 +463,43 @@ void c_generator_output_type_reference(Datatype* type)
 
     String access_name = string_create_empty(32);
     String* backup_text = gen.text;
+    SCOPE_EXIT(gen.text = backup_text);
+
+    // Handle pointers and const combinations
+    if (type->mods.pointer_level > 0 || type->mods.constant_flags != 0)
+    {
+        // In C, it makes a difference where the const is places...
+        // e.g. const int* is not the same as int* const 
+
+        // Get base-type 
+        Type_Mods mods = type->mods;
+        while (type->type == Datatype_Type::CONSTANT || type->type == Datatype_Type::POINTER) {
+            if (type->type == Datatype_Type::CONSTANT) {
+                type = downcast<Datatype_Constant>(type)->element_type;
+            }
+            else {
+                type = downcast<Datatype_Pointer>(type)->element_type;
+            }
+        }
+
+        // Append type
+        gen.text = &access_name;
+        if (type_mods_is_constant(mods, 0)) {
+            string_append(gen.text, "const ");
+        }
+        c_generator_output_type_reference(type);
+        for (int i = 0; i < mods.pointer_level; i++) {
+            string_append(gen.text, "*");
+            if (type_mods_is_constant(mods, i + 1)) {
+                string_append(gen.text, " const");
+            }
+        }
+
+        hashtable_insert_element(&gen.translations, translation, access_name);
+        gen.text = backup_text;
+        string_append(gen.text, access_name.characters);
+        return;
+    }
 
     switch (type->type)
     {
@@ -520,13 +560,6 @@ void c_generator_output_type_reference(Datatype* type)
             string_append_formated(enum_section, "    %s = %d,\n", member->name->characters, member->value);
         }
         string_append_formated(enum_section, "};\n");
-        break;
-    }
-    case Datatype_Type::POINTER:
-    {
-        gen.text = &access_name;
-        c_generator_output_type_reference(downcast<Datatype_Pointer>(type)->element_type);
-        string_append_formated(&access_name, "*");
         break;
     }
     case Datatype_Type::BYTE_POINTER: {
@@ -597,17 +630,32 @@ void c_generator_output_type_reference(Datatype* type)
     {
         auto structure = downcast<Datatype_Struct>(type);
         auto& members = structure->content.members;
-        string_append_formated(&access_name, "%s_Struct_%d", structure->content.name->characters, gen.name_counter);
+        if (structure->struct_type == AST::Structure_Type::STRUCT) {
+            string_append_formated(&access_name, "%s_Struct_%d", structure->content.name->characters, gen.name_counter);
+        }
+        else {
+            string_append_formated(&access_name, "%s_Union_%d", structure->content.name->characters, gen.name_counter);
+        }
         gen.name_counter += 1;
 
         // Because structs can contain references to themselves, we need to register the access name before generating the members
         hashtable_insert_element(&gen.translations, translation, access_name);
-        string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+        if (structure->struct_type == AST::Structure_Type::STRUCT) {
+            string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+        }
+        else {
+            string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "union %s;\n", access_name.characters);
+        }
 
         // Generate struct content
         C_Type_Dependency* dependency = get_type_dependency(type);
         gen.text = &dependency->type_definition;
-        string_append_formated(gen.text, "struct %s {\n", access_name.characters);
+        if (structure->struct_type == AST::Structure_Type::STRUCT) {
+            string_append_formated(gen.text, "struct %s {\n", access_name.characters);
+        }
+        else {
+            string_append_formated(gen.text, "union %s {\n", access_name.characters);
+        }
         c_generator_generate_struct_content(&structure->content, dependency, 1);
         string_append(gen.text, "};\n\n");
 
@@ -621,13 +669,6 @@ void c_generator_output_type_reference(Datatype* type)
         // In C-Compilation struct subtypes are treated as the struct base type
         gen.text = &access_name;
         c_generator_output_type_reference(downcast<Datatype_Subtype>(type)->base_type);
-        break;
-    }
-    case Datatype_Type::CONSTANT:
-    {
-        string_append_formated(&access_name, "const "); 
-        gen.text = &access_name;
-        c_generator_output_type_reference(downcast<Datatype_Constant>(type)->element_type);
         break;
     }
     case Datatype_Type::ARRAY: 
@@ -665,6 +706,11 @@ void c_generator_output_type_reference(Datatype* type)
         string_append(gen.text, access_name.characters);
         return;
     }
+    case Datatype_Type::POINTER:
+    case Datatype_Type::CONSTANT: {
+        panic("Should be handled by pointer/constant handling");
+        break;
+    }
     default: panic("Hey");
     }
 
@@ -672,6 +718,88 @@ void c_generator_output_type_reference(Datatype* type)
     hashtable_insert_element(&gen.translations, translation, access_name);
     gen.text = backup_text;
     string_append(gen.text, access_name.characters);
+}
+
+void type_info_append_struct_content(Internal_Type_Struct_Content* content, int indentation_level)
+{
+    auto& gen = c_generator;
+    auto& types = compiler.type_system.predefined_types;
+
+    // Create a new block, because we need to keep the content pointer available to avoid having to use recursive functions for this
+    string_add_indentation(gen.text, indentation_level);
+    string_append_formated(gen.text, "{\n");
+    indentation_level = indentation_level + 1;
+
+    string_add_indentation(gen.text, indentation_level);
+    string_append_formated(gen.text, "content->name = ");
+    output_memory_as_constant((byte*)&content->name, types.string, false, 1);
+    string_append(gen.text, ";\n");
+
+    // Generate tag member
+    if (content->subtypes.size > 0)
+    {
+        string_add_indentation(gen.text, indentation_level);
+        string_append_formated(gen.text, "content->tag_member.name = ");
+        output_memory_as_constant((byte*)&content->tag_member.name, types.string, false, 1);
+        string_append(gen.text, ";\n");
+        string_add_indentation(gen.text, indentation_level);
+        string_append_formated(gen.text, "content->tag_member.type = %d;\n", content->tag_member.type.index);
+        string_add_indentation(gen.text, indentation_level);
+        string_append_formated(gen.text, "content->tag_member.offset = %d;\n", content->tag_member.offset);
+    }
+
+    // Generate members
+    string_add_indentation(gen.text, indentation_level);
+    string_append_formated(gen.text, "content->members.size = %d;\n", content->members.size);
+    if (content->members.size != 0) 
+    {
+        string_add_indentation(gen.text, indentation_level);
+        string_append(gen.text, "content->members.data = new ");
+        c_generator_output_type_reference(upcast(types.internal_member_info_type));
+        string_append_formated(gen.text, "[%d];\n", content->members.size);
+        for (int i = 0; i < content->members.size; i++) {
+            auto& member = content->members.data[i];
+            string_add_indentation(gen.text, indentation_level);
+            string_append_formated(gen.text, "content->members.data[%d].name = ", i);
+            output_memory_as_constant((byte*)&member.name, types.string, false, 1);
+            string_append(gen.text, ";\n");
+
+            string_add_indentation(gen.text, indentation_level);
+            string_append_formated(gen.text, "content->members.data[%d].type = %d;\n", i, member.type.index);
+            string_add_indentation(gen.text, indentation_level);
+            string_append_formated(gen.text, "content->members.data[%d].offset = %d;\n", i, member.offset);
+        }
+    }
+    else {
+        string_add_indentation(gen.text, indentation_level);
+        string_append_formated(gen.text, "content->members.data = nullptr;\n");
+    }
+
+    // Generate subtypes
+    string_add_indentation(gen.text, indentation_level);
+    string_append_formated(gen.text, "content->subtypes.size = %d;\n", content->subtypes.size);
+    if (content->subtypes.size > 0)
+    {
+        string_add_indentation(gen.text, indentation_level);
+        c_generator_output_type_reference(upcast(types.internal_struct_content_type));
+        string_append(gen.text, "* base_content = content;\n");
+        string_add_indentation(gen.text, indentation_level);
+        string_append(gen.text, "content->subtypes.data = new ");
+        c_generator_output_type_reference(upcast(types.internal_struct_content_type));
+        string_append_formated(gen.text, "[%d];\n", content->subtypes.size);
+        for (int i = 0; i < content->subtypes.size; i++) {
+            string_add_indentation(gen.text, indentation_level);
+            string_append_formated(gen.text, "content = &base_content->subtypes.data[%d];\n", i);
+            type_info_append_struct_content(&content->subtypes.data[i], indentation_level);
+        }
+    }
+    else {
+        string_add_indentation(gen.text, indentation_level);
+        string_append_formated(gen.text, "content->subtypes.data = nullptr;\n", content->subtypes.size);
+    }
+
+    string_add_indentation(gen.text, indentation_level - 1);
+    string_append_formated(gen.text, "}\n");
 }
 
 void c_generator_generate()
@@ -746,8 +874,14 @@ void c_generator_generate()
         auto& globals = compiler.semantic_analyser->program->globals;
         for (int i = 0; i < globals.size; i++) {
             auto type = globals[i]->type;
+
             c_generator_output_type_reference(type);
-            string_append_formated(gen.text, " global_%d;\n", i);
+            string_append(gen.text, " ");
+            IR_Data_Access access;
+            access.type = IR_Data_Access_Type::GLOBAL_DATA;
+            access.option.global_index = i;
+            c_generator_output_data_access(&access);
+            string_append(gen.text, ";\n");
         }
     }
 
@@ -834,7 +968,189 @@ void c_generator_generate()
             // Generate function body
             string_append(gen.text, "\n");
             c_generator_output_code_block(function->code, 0, false);
+            string_append(gen.text, "\n");
         }
+    }
+
+    // Create type_info function
+    {
+        // Create Holder struct
+        gen.text = &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS];
+        string_append(gen.text, "struct Type_Information_Holder_ {\n    ");
+        c_generator_output_type_reference(upcast(types.type_information_type));
+        string_append_formated(gen.text, " infos[%d];\n};\n", compiler.type_system.types.size);
+
+        // Create constant
+        gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
+        string_append(gen.text, "Type_Information_Holder_ type_infos_;\n");
+
+        // Create initialization function
+        gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
+        string_append(gen.text, "void inititalize_type_infos_global_();\n");
+        gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
+        string_append(gen.text, "void inititalize_type_infos_global_() {\n");
+        string_add_indentation(gen.text, 1);
+        c_generator_output_type_reference(upcast(types.type_information_type));
+        string_append(gen.text, "* info = nullptr;\n");
+        string_add_indentation(gen.text, 1);
+        c_generator_output_type_reference(upcast(types.internal_struct_content_type));
+        string_append(gen.text, "* content = nullptr;\n\n");
+
+
+        auto& type_system = compiler.type_system;
+        for (int i = 0; i < type_system.types.size; i++) 
+        {
+            auto type = type_system.types[i];
+            assert(type->memory_info.available, "Should be the case at this point");
+            auto& memory = type->memory_info.value;
+
+            // Set base info
+            string_add_indentation(gen.text, 1);
+            string_append_formated(gen.text, "info = &type_infos_.infos[%d];\n", i);
+            string_add_indentation(gen.text, 1);
+            string_append_formated(gen.text, "info->type      = %d;\n", type->type_handle.index);
+            string_add_indentation(gen.text, 1);
+            string_append_formated(gen.text, "info->size      = %d;\n", memory.size);
+            string_add_indentation(gen.text, 1);
+            string_append_formated(gen.text, "info->alignment = %d;\n", memory.alignment);
+            string_add_indentation(gen.text, 1);
+            string_append(gen.text,          "info->tag_      = ");
+            output_memory_as_constant((byte*)&type_system.internal_type_infos[i]->tag, types.type_information_type->content.tag_member.type, false, 1);
+            string_append(gen.text, ";\n");
+
+            // Set type-specific infos
+            string_add_indentation(gen.text, 1);
+            switch (type->type)
+            {
+            case Datatype_Type::PRIMITIVE: {
+                auto primitive = downcast<Datatype_Primitive>(type);
+                Struct_Content* primitive_info = types.type_information_type->content.subtypes[(int)Datatype_Type::PRIMITIVE - 1];
+                string_append(gen.text, "info->subtypes_.Primitive.tag_ = ");
+                output_memory_as_constant((byte*)&primitive->primitive_type, primitive_info->tag_member.type, false, 1);
+                string_append(gen.text, ";\n");
+                if (primitive->primitive_type == Primitive_Type::INTEGER) {
+                    string_add_indentation(gen.text, 1);
+                    string_append_formated(gen.text, "info->subtypes_.Primitive.subtypes_.Integer.is_signed = %s;\n", primitive->is_signed ? "true" : "false");
+                }
+                break;
+            }
+            case Datatype_Type::ARRAY: {
+                auto array_type = downcast<Datatype_Array>(type);
+                Struct_Content* array_info = types.type_information_type->content.subtypes[(int)Datatype_Type::ARRAY - 1];
+                string_append_formated(gen.text, "info->subtypes_.Array.element_type = %d;\n", array_type->element_type->type_handle.index);
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Array.size         = %d;\n", array_type->element_count);
+                break;
+            }
+            case Datatype_Type::POINTER: {
+                auto pointer = downcast<Datatype_Pointer>(type);
+                string_append_formated(gen.text, "info->subtypes_.Pointer.element_type = %d;\n", pointer->element_type->type_handle.index);
+                break;
+            }
+            case Datatype_Type::SUBTYPE: {
+                auto subtype = downcast<Datatype_Subtype>(type);
+                auto& internal_info = type_system.internal_type_infos[i]->options.struct_subtype;
+                string_append_formated(gen.text, "info->subtypes_.Subtype.base_type = %d;\n", subtype->base_type->type_handle.index);
+                string_add_indentation(gen.text, 1);
+                string_append(gen.text, "info->subtypes_.Subtype.name = ");
+                output_memory_as_constant((byte*)&internal_info.subtype_name, types.string, false, 1);
+                string_append(gen.text, ";\n");
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Subtype.index = %d;\n", subtype->subtype_index);
+                break;
+            }
+            case Datatype_Type::CONSTANT: {
+                auto constant = downcast<Datatype_Constant>(type);
+                string_append_formated(gen.text, "info->subtypes_.Constant.element_type = %d;\n", constant->element_type->type_handle.index);
+                break;
+            }
+
+            case Datatype_Type::SLICE: {
+                auto slice = downcast<Datatype_Slice>(type);
+                string_append_formated(gen.text, "info->subtypes_.Slice.element_type = %d;\n", slice->element_type->type_handle.index);
+                break;
+            }
+            case Datatype_Type::ENUM: 
+            {
+                auto enumeration = downcast<Datatype_Enum>(type);
+                Struct_Content* enum_subtype = types.type_information_type->content.subtypes[(int)Datatype_Type::ENUM - 1];
+                auto& internal_info = type_system.internal_type_infos[i]->options.enumeration;
+                string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
+                output_memory_as_constant((byte*)&internal_info.name, types.string, false, 1);
+                string_append(gen.text, ";\n");
+
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Enum.members.size = %d;\n", internal_info.members.size);
+                string_add_indentation(gen.text, 1);
+                if (internal_info.members.size > 0)
+                {
+                    string_append_formated(gen.text, "info->subtypes_.Enum.members.data = new ");
+                    Datatype* member_info_type = downcast<Datatype_Slice>(enum_subtype->members[0].type)->element_type;
+                    c_generator_output_type_reference(member_info_type); // Check if this works
+                    string_append_formated(gen.text, "[%d];\n", internal_info.members.size);
+                    for (int j = 0; j < internal_info.members.size; j++) {
+                        auto& member = internal_info.members.data[j];
+                        string_add_indentation(gen.text, 1);
+                        string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
+                        output_memory_as_constant((byte*)&member.name, types.string, false, 1);
+                        string_append(gen.text, ";\n");
+                        string_add_indentation(gen.text, 1);
+                        string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
+                    }
+                }
+                else {
+                    string_append_formated(gen.text, "info->subtypes_.Enum.members.data = nullptr;\n");
+                }
+                break;
+            }
+            case Datatype_Type::FUNCTION: 
+            {
+                auto function = downcast<Datatype_Function>(type);
+
+                string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", function->return_type.available ? function->return_type.value->type_handle.index : -1);
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Function.has_return_type = %s;\n", function->return_type.available ? "true" : "false");
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.size = %d;\n", function->parameters.size);
+                if (function->parameters.size != 0) {
+                    string_add_indentation(gen.text, 1);
+                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = new ", function->parameters.size);
+                    c_generator_output_type_reference(types.type_handle); // Check if this works
+                    string_append_formated(gen.text, "[%d];\n", function->parameters.size);
+                    for (int j = 0; j < function->parameters.size; j++) {
+                        string_add_indentation(gen.text, 1);
+                        string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, function->parameters[j].type->type_handle.index);
+                    }
+                }
+                else {
+                    string_add_indentation(gen.text, 1);
+                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = nullptr;\n", function->parameters.size);
+                }
+                break;
+            }
+            case Datatype_Type::STRUCT: 
+            {
+                auto structure = downcast<Datatype_Struct>(type);
+                string_append_formated(gen.text, "info->subtypes_.Struct.is_union = %s;\n", structure->struct_type == AST::Structure_Type::UNION ? "true" : "false");
+                string_add_indentation(gen.text, 1);
+                string_append(gen.text, "content = &info->subtypes_.Struct.content;\n");
+                type_info_append_struct_content(&type_system.internal_type_infos[i]->options.structure.content, 1);
+                break;
+            }
+
+            case Datatype_Type::TYPE_HANDLE:
+            case Datatype_Type::BYTE_POINTER:
+            case Datatype_Type::UNKNOWN_TYPE:
+            case Datatype_Type::TEMPLATE_PARAMETER:
+            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+                break; // Nothing to do on these types
+            default: panic("");
+            }
+
+            string_append(gen.text, "\n");
+        }
+
+        string_append(gen.text, "}\n");
     }
 
     // Resolve Type Dependencies
@@ -891,7 +1207,7 @@ void c_generator_generate()
         assert(main_fn_name != 0, "HEY");
         string_append_formated(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
-            "\nint main(int argc, char** argv) {random_initialize(); %s(); return 0;}\n",
+            "\nint main(int argc, char** argv) {random_initialize(); inititalize_type_infos_global_(); %s(); return 0;}\n",
             main_fn_name->characters
         );
 
@@ -915,12 +1231,12 @@ void c_generator_generate()
             string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS]);
             string_append_formated(&source_code, "\n/* ARRAY_HOLDER_SECTION\n----------------*/\n");
             string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS]);
+            string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n"); // Need to be declared before constants for function pointers constants to work
+            string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES]);
             string_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
             string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANTS]);
             string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
             string_append_string(&source_code, &gen.sections[(int)Generator_Section::GLOBALS]);
-            string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES]);
             string_append_formated(&source_code, "\n/* FUNCTIONS\n------------------*/\n");
             string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]);
         }
@@ -928,10 +1244,6 @@ void c_generator_generate()
         file_io_write_file("backend/src/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
     }
 }
-
-void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level);
-
-void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requires_memory_address, int current_indentation_level);
 
 // Outputs "{" + the struct content on indentation level + 1 and "}"
 void output_struct_content_block_recursive(Struct_Content* content, byte* struct_start_memory, int current_indentation_level)
@@ -985,8 +1297,8 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
     SCOPE_EXIT(gen.text = backup_text);
 
     Datatype* type = datatype_get_non_const_type(base_type);
-    if (type->type != Datatype_Type::PRIMITIVE && type->type != Datatype_Type::TYPE_HANDLE &&
-        type->type != Datatype_Type::ENUM && type->type != Datatype_Type::FUNCTION) {
+    if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
+        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::SUBTYPE) {
         requires_memory_address = true;
     }
 
@@ -995,7 +1307,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
     constant_string.capacity = 0;
     SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
 
-    if (requires_memory_address) 
+    if (requires_memory_address)
     {
         constant_string = string_create_empty(32);
         gen.text = &constant_string;
@@ -1010,7 +1322,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
     int type_size = type->memory_info.value.size;
     switch (type->type)
     {
-        // Simple cases first
+    // Simple cases first
     case Datatype_Type::PRIMITIVE:
     {
         auto primitive = downcast<Datatype_Primitive>(type);
@@ -1093,12 +1405,15 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
             string_append(gen.text, "nullptr");
         }
         else {
+            ModTree_Function* mod_function = compiler.semantic_analyser->program->functions[function_index - 1];
+            IR_Function* ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, mod_function);
+
             C_Translation function_translation;
             function_translation.type = C_Translation_Type::FUNCTION;
-            function_translation.options.function = compiler.ir_generator->program->functions[function_index - 1];
+            function_translation.options.function = ir_function;
             String* fn_name = hashtable_find_element(&gen.translations, function_translation);
             assert(fn_name != 0, "");
-            string_append_formated(gen.text, "&%s", fn_name->characters);
+            string_append_formated(gen.text, "(&%s)", fn_name->characters);
         }
         break;
     }
@@ -1123,7 +1438,7 @@ void output_memory_as_constant(byte* base_memory, Datatype* base_type, bool requ
     case Datatype_Type::SUBTYPE:
     {
         // Handle string
-        if (types_are_equal(type, types.string)) 
+        if (types_are_equal(type, types.string))
         {
             // Note: Maybe we need something smarter in the future to handle multi-line strings 
             Upp_String string = *(Upp_String*)base_memory;
@@ -1169,8 +1484,8 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     SCOPE_EXIT(gen.text = backup_text);
 
     Datatype* type = datatype_get_non_const_type(constant.type);
-    if (type->type != Datatype_Type::PRIMITIVE && type->type != Datatype_Type::TYPE_HANDLE &&
-        type->type != Datatype_Type::ENUM && type->type != Datatype_Type::FUNCTION) {
+    if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
+        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::SUBTYPE) {
         requires_memory_address = true;
     }
 
@@ -1284,7 +1599,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         }
         break;
     }
-    case IR_Data_Access_Type::MEMBER_ACCESS: 
+    case IR_Data_Access_Type::MEMBER_ACCESS:
     {
         const Struct_Member& member = access->option.member_access.member;
 
@@ -1293,7 +1608,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         // Handle members of struct subtypes
         Datatype* access_type = access->option.member_access.struct_access->datatype;
         assert(!datatype_is_pointer(access_type), "");
-        if (access_type->base_type->type == Datatype_Type::STRUCT) 
+        if (access_type->base_type->type == Datatype_Type::STRUCT)
         {
             Datatype_Struct* structure = downcast<Datatype_Struct>(access_type->base_type);
             Struct_Content* subtype = member.content;
@@ -1320,10 +1635,10 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
 
         break;
     }
-    case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS: 
+    case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS:
     {
         auto array_type = datatype_get_non_const_type(access->option.array_access.array_access->datatype);
-        if (array_type->type == Datatype_Type::SLICE) 
+        if (array_type->type == Datatype_Type::SLICE)
         {
             c_generator_output_data_access(access->option.array_access.array_access, true);
             string_append(gen.text, ".data[");
@@ -1378,7 +1693,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
         for (int i = 0; i < code_block->registers.size; i++)
         {
             auto& reg = code_block->registers[i];
-            if (reg.has_initializer_instruction) continue;
+            if (reg.has_definition_instruction) continue;
 
             if (registers_in_same_scope) {
                 string_add_indentation(gen.text, indentation_level);
@@ -1421,7 +1736,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 function_sig = call->options.function->function_type;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = downcast<Datatype_Function>(call->options.pointer_access->datatype);
+                function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(call->options.pointer_access->datatype));
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
@@ -1495,14 +1810,10 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                     break;
                 case Hardcoded_Type::TYPE_INFO:
                 {
-                    panic("Type info not implemented yet!");
-                    auto& global_infos = gen.global_type_informations;
-                    string_append(gen.text, "((");
-                    c_generator_output_constant_access(gen.global_type_informations, false, 0);
-                    string_append_formated(gen.text, ").data[");
+                    string_append(gen.text, "&type_infos_.infos[");
                     assert(call->arguments.size == 1, "");
                     c_generator_output_data_access(call->arguments[0]);
-                    string_append_formated(gen.text, "]);\n");
+                    string_append_formated(gen.text, "];\n");
                     call_handled = true;
                     break;
                 }
@@ -1625,7 +1936,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             string_append_formated(gen.text, ";\n");
             break;
         }
-        case IR_Instruction_Type::VARIABLE_DEFINITION: 
+        case IR_Instruction_Type::VARIABLE_DEFINITION:
         {
             auto& def = instr->options.variable_definition;
 

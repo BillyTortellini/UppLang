@@ -436,6 +436,8 @@ struct Predefined_Types
     Datatype* byte_pointer;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
+    Datatype_Struct* internal_struct_content_type;
+    Datatype_Struct* internal_member_info_type;
     Datatype_Struct* empty_struct_type; // Required for now 
 
     Datatype_Enum* cast_mode;

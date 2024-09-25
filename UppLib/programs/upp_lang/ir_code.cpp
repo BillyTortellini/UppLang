@@ -378,7 +378,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             function_sig = call->options.function->function_type;
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
-            auto type = call->options.pointer_access->datatype;
+            auto type = datatype_get_non_const_type(call->options.pointer_access->datatype);
             assert(type->type == Datatype_Type::FUNCTION, "Function pointer call must be of function type!");
             function_sig = downcast<Datatype_Function>(type);
             break;
@@ -632,6 +632,10 @@ IR_Data_Access* ir_data_access_create_intermediate(IR_Code_Block* block, Datatyp
     assert(signature->type != Datatype_Type::UNKNOWN_TYPE, "Cannot have register with unknown type");
     assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
 
+    // Note: I don't think there is ever the need to have constant intermediates...
+    // This is here to make the C-Generator work 
+    signature = datatype_get_non_const_type(signature);
+
     IR_Data_Access* access = new IR_Data_Access;
     access->datatype = signature;
     access->type = IR_Data_Access_Type::REGISTER;
@@ -642,7 +646,7 @@ IR_Data_Access* ir_data_access_create_intermediate(IR_Code_Block* block, Datatyp
     IR_Register reg;
     reg.type = signature;
     reg.name.available = false;
-    reg.has_initializer_instruction = false;
+    reg.has_definition_instruction = false;
     dynamic_array_push_back(&block->registers, reg);
 
     return access;
@@ -1716,7 +1720,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             IR_Register reg;
             reg.name = optional_make_success<String*>(symbol->id);
             reg.type = var_type;
-            reg.has_initializer_instruction = definition->values.size > 0;
+            reg.has_definition_instruction = true;
             dynamic_array_push_back(&ir_block->registers, reg);
 
             IR_Data_Access* access = ir_data_access_create_register(ir_block, ir_block->registers.size - 1);
