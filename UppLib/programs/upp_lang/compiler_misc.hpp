@@ -12,6 +12,8 @@ struct Datatype;
 struct String;
 struct Type_System;
 struct Module_Progress;
+struct ModTree_Function;
+struct Datatype_Struct;
 
 enum class Timing_Task
 {
@@ -98,26 +100,23 @@ struct Code_Source
 };
 
 
-
-// Extern Sources
-struct Extern_Function_Identifier
+struct Extern_Struct_Type
 {
-    Datatype* function_signature;
-    String* id;
+    Datatype_Struct* datatype;
+    String* name;
+    int alignment;
+    int size;
 };
 
+// Extern Sources
 struct Extern_Sources
 {
-    /*
-    TODO:
-        - DLLs
-        - LIBs
-    */
-    Dynamic_Array<String*> headers_to_include;
+    Dynamic_Array<ModTree_Function*> extern_functions;
+    Dynamic_Array<Extern_Struct_Type> extern_structs;
+
     Dynamic_Array<String*> source_files_to_compile;
     Dynamic_Array<String*> lib_files;
-    Dynamic_Array<Extern_Function_Identifier> extern_functions;
-    Hashtable<Datatype*, String*> extern_type_signatures; // Extern types to base_name id, e.g. HWND should not create its own structure, but use base_name HWND as type
+    Dynamic_Array<String*> lib_include_diretories;
 };
 
 Extern_Sources extern_sources_create();

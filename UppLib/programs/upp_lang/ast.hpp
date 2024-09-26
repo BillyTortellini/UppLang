@@ -15,6 +15,7 @@ namespace AST
     struct Statement;
     struct Code_Block;
     struct Definition;
+    struct Extern_Import;
     struct Path_Lookup;
     enum class Binop
     {
@@ -106,6 +107,7 @@ namespace AST
         SWITCH_CASE,       // Expression 
         CONTEXT_CHANGE,    // Changing some operator context
         MEMBER_INITIALIZER,
+        EXTERN_IMPORT,
     };
 
     struct Node
@@ -168,8 +170,9 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Definition*> definitions;
-        Dynamic_Array<Import*> import_nodes;
         Dynamic_Array<Context_Change*> context_changes;
+        Dynamic_Array<Import*> import_nodes;
+        Dynamic_Array<Extern_Import*> extern_imports;
     };
 
     struct Enum_Member_Node
@@ -217,6 +220,41 @@ namespace AST
         union {
             Expression* value;
             Dynamic_Array<Member_Initializer*> subtype_initializers;
+        } options;
+    };
+
+    enum class Extern_Type
+    {
+        FUNCTION,
+        GLOBAL,
+        STRUCT,
+        LIBRARY,
+        LIBRARY_DIRECTORY, // Search path for lib files
+        SOURCE_FILE,
+        INVALID, // If there was an error during parsing
+    };
+
+    struct Extern_Import
+    {
+        Node base;
+        Extern_Type type;
+        union {
+            struct {
+                String* id;
+                Expression* type_expr;
+            } function;
+            struct {
+                String* id;
+                Expression* type_expr;
+            } global;
+            struct {
+                String* id;
+                Expression* size_expression;
+                Expression* alignment_expression;
+            } structure;
+            String* lib_path;
+            String* lib_dir_path;
+            String* source_path;
         } options;
     };
 
@@ -479,6 +517,7 @@ namespace AST
         bool type_correct(Context_Change* base);
         bool type_correct(Structure_Member_Node* base);
         bool type_correct(Member_Initializer* base);
+        bool type_correct(Extern_Import* base);
     }
 
     template<typename T>

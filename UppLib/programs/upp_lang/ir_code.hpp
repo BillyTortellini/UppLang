@@ -82,7 +82,6 @@ enum class IR_Instruction_Call_Type
     FUNCTION_CALL,
     FUNCTION_POINTER_CALL,
     HARDCODED_FUNCTION_CALL,
-    EXTERN_FUNCTION_CALL,
 };
 
 struct IR_Function;
@@ -91,13 +90,12 @@ struct IR_Instruction_Call
     IR_Instruction_Call_Type call_type;
     union
     {
-        IR_Function* function;
+        ModTree_Function* function;
         IR_Data_Access* pointer_access;
         struct {
             Datatype_Function* signature;
             Hardcoded_Type type;
         } hardcoded;
-        Extern_Function_Identifier extern_function;
     } options;
     Dynamic_Array<IR_Data_Access*> arguments;
     IR_Data_Access* destination;
@@ -161,20 +159,10 @@ struct IR_Instruction_Cast
     IR_Data_Access* source;
 };
 
-enum class IR_Instruction_Address_Of_Type
+struct IR_Instruction_Function_Address
 {
-    FUNCTION,
-    EXTERN_FUNCTION,
-};
-
-struct IR_Instruction_Address_Of
-{
-    IR_Instruction_Address_Of_Type type;
     IR_Data_Access* destination;
-    union {
-        IR_Function* function;
-        Extern_Function_Identifier extern_function;
-    } options;
+    ModTree_Function* function; // This is a modtree function because it could be an extern function
 };
 
 struct IR_Instruction;
@@ -227,7 +215,7 @@ enum class IR_Instruction_Type
 
     MOVE,
     CAST,
-    ADDRESS_OF,
+    FUNCTION_ADDRESS,
     UNARY_OP,
     BINARY_OP,
 
@@ -248,7 +236,7 @@ struct IR_Instruction
         IR_Instruction_Switch switch_instr;
         IR_Instruction_Move move;
         IR_Instruction_Cast cast;
-        IR_Instruction_Address_Of address_of;
+        IR_Instruction_Function_Address function_address;
         IR_Instruction_Unary_OP unary_op;
         IR_Instruction_Binary_OP binary_op;
         IR_Instruction_Variable_Definition variable_definition;
@@ -311,7 +299,7 @@ struct Loop_Increment
             bool is_custom_iterator;
             // Only valid for custom iterators
             IR_Data_Access* iterator_access;
-            IR_Function* next_function;
+            ModTree_Function* next_function;
             int iterator_deref_value;
         } foreach_loop;
     } options;

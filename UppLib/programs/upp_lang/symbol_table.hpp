@@ -202,7 +202,7 @@ struct Symbol
     {
         Datatype* variable_type;
         Module_Progress* module_progress;
-        Function_Progress* function;
+        ModTree_Function* function;
         Polymorphic_Function_Base* polymorphic_function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;

@@ -644,7 +644,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
-                function_sig = call->options.function->function_type;
+                function_sig = call->options.function->signature;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
                 function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(call->options.pointer_access->datatype));
@@ -652,9 +652,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
-                break;
-            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-                function_sig = downcast<Datatype_Function>(call->options.extern_function.function_signature);
                 break;
             default: panic("Error");
             }
@@ -682,9 +679,16 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             // Generate call instruction
             switch (call->call_type)
             {
-            case IR_Instruction_Call_Type::FUNCTION_CALL: {
+            case IR_Instruction_Call_Type::FUNCTION_CALL: 
+            {
+                // Handle extern functions
+                if (call->options.function->function_type == ModTree_Function_Type::EXTERN) {
+                    push_exit_instruction(generator, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot call extern functions in bytecode"));
+                    break;
+                }
+                
                 Function_Reference call_ref;
-                call_ref.function = call->options.function;
+                call_ref.function = *hashtable_find_element(&compiler.ir_generator->function_mapping, call->options.function);
                 call_ref.instruction_index = bytecode_generator_add_instruction(generator,
                     instruction_make_2(Instruction_Type::CALL_FUNCTION, 0, stack_frame_start_offset)
                 );
@@ -703,9 +707,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 bytecode_generator_add_instruction(generator,
                     instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)call->options.hardcoded.type, stack_frame_start_offset)
                 );
-                break;
-            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-                push_exit_instruction(generator, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Extern function call not implemented"));
                 break;
             default: panic("Error");
             }
@@ -921,24 +922,18 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             break;
         }
-        case IR_Instruction_Type::ADDRESS_OF:
+        case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
-            IR_Instruction_Address_Of* address_of = &instr->options.address_of;
-            switch (address_of->type)
-            {
-            case IR_Instruction_Address_Of_Type::FUNCTION: {
-                bytecode_generator_add_instruction_and_set_destination(generator,
-                    address_of->destination, instruction_make_2(
-                        Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, (int)address_of->options.function->origin->function_index_plus_one)
-                );
+            IR_Instruction_Function_Address* function_address = &instr->options.function_address;
+            if (function_address->function->function_type == ModTree_Function_Type::EXTERN) {
+                push_exit_instruction(generator, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot take address of extern function"));
                 break;
             }
-            case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {
-                // Note: Bytecode generator cannot deal with extern functions
-                push_exit_instruction(generator, exit_code_make(Exit_Code_Type::CODE_ERROR, "Cannot access extern functions in bytecode interpreter"));
-                break;
-            }
-            }
+
+            bytecode_generator_add_instruction_and_set_destination(generator,
+                function_address->destination, instruction_make_2(
+                    Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, (int)function_address->function->function_index_plus_one)
+            );
             break;
         }
         case IR_Instruction_Type::BINARY_OP:

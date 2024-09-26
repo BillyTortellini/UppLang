@@ -108,21 +108,21 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 Extern_Sources extern_sources_create()
 {
     Extern_Sources result;
-    result.extern_functions = dynamic_array_create<Extern_Function_Identifier>(8);
-    result.headers_to_include = dynamic_array_create<String*>(8);
+    result.extern_functions = dynamic_array_create<ModTree_Function*>(8);
+    result.extern_structs = dynamic_array_create<Extern_Struct_Type>(8);
     result.source_files_to_compile = dynamic_array_create<String*>(8);
     result.lib_files = dynamic_array_create<String*>(8);
-    result.extern_type_signatures = hashtable_create_pointer_empty<Datatype*, String*>(8);
+    result.lib_include_diretories = dynamic_array_create<String*>(8);
     return result;
 }
 
 void extern_sources_destroy(Extern_Sources* sources)
 {
+    dynamic_array_destroy(&sources->extern_structs);
     dynamic_array_destroy(&sources->extern_functions);
-    dynamic_array_destroy(&sources->headers_to_include);
+    dynamic_array_destroy(&sources->lib_include_diretories);
     dynamic_array_destroy(&sources->source_files_to_compile);
     dynamic_array_destroy(&sources->lib_files);
-    hashtable_destroy(&sources->extern_type_signatures);
 }
 
 

@@ -635,12 +635,26 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::MOVE_STACK_DATA:
         interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, thread->stack_pointer + i->op2, i->op3);
         break;
-    case Instruction_Type::READ_GLOBAL:
+    case Instruction_Type::READ_GLOBAL: {
+        auto global = globals[i->op2];
+        if (global->is_extern) {
+            thread->error_occured = true;
+            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot read extern global");
+            return true;
+        }
         interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, globals[i->op2]->memory, i->op3);
         break;
-    case Instruction_Type::WRITE_GLOBAL:
+    }
+    case Instruction_Type::WRITE_GLOBAL: {
+        auto global = globals[i->op2];
+        if (global->is_extern) {
+            thread->error_occured = true;
+            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot write to extern global");
+            return true;
+        }
         interpreter_safe_memcopy(thread, globals[i->op1]->memory, thread->stack_pointer + i->op2, i->op3);
         break;
+    }
     case Instruction_Type::WRITE_MEMORY:
         interpreter_safe_memcopy(thread, *(void**)(thread->stack_pointer + i->op1), thread->stack_pointer + i->op2, i->op3);
         break;
@@ -716,6 +730,11 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             auto& functions = compiler.semantic_analyser->program->functions;
             if (function_index < 0 || function_index >= functions.size) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, pointer does not point to valid function");
+                return true;
+            }
+            auto function = functions[function_index];
+            if (function->function_type == ModTree_Function_Type::EXTERN) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to extern function not handelable by bytecode-interpreter");
                 return true;
             }
 
@@ -909,9 +928,16 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         *(void**)(thread->stack_pointer + i->op1) = (void*)(thread->stack_pointer + i->op2);
         break;
-    case Instruction_Type::LOAD_GLOBAL_ADDRESS:
+    case Instruction_Type::LOAD_GLOBAL_ADDRESS: {
+        auto global = globals[i->op2];
+        if (global->is_extern) {
+            thread->error_occured = true;
+            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot load extern global address");
+            return true;
+        }
         *(void**)(thread->stack_pointer + i->op1) = (void*)(globals[i->op2]->memory);
         break;
+    }
     case Instruction_Type::LOAD_CONSTANT_ADDRESS:
         *(void**)(thread->stack_pointer + i->op1) = (void*)(constant_pool.constants[i->op2].memory);
         break;

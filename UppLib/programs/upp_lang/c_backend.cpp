@@ -17,8 +17,6 @@
 
 struct C_Compiler
 {
-    Dynamic_Array<String> source_filepaths;
-    Dynamic_Array<String> lib_files;
     bool initialized;
     bool last_compile_successfull;
 };
@@ -28,8 +26,6 @@ static C_Compiler c_compiler;
 C_Compiler* c_compiler_initialize()
 {
     C_Compiler& result = c_compiler;
-    result.source_filepaths = dynamic_array_create<String>();
-    result.lib_files = dynamic_array_create<String>();
     result.initialized = true;
     result.last_compile_successfull = false;
 
@@ -86,22 +82,6 @@ C_Compiler* c_compiler_initialize()
 
 void c_compiler_shutdown()
 {
-    dynamic_array_for_each(c_compiler.source_filepaths, string_destroy);
-    dynamic_array_destroy(&c_compiler.source_filepaths);
-    dynamic_array_for_each(c_compiler.lib_files, string_destroy);
-    dynamic_array_destroy(&c_compiler.lib_files);
-}
-
-void c_compiler_add_source_file(String file_name)
-{
-    String str = string_create(file_name.characters);
-    dynamic_array_push_back(&c_compiler.source_filepaths, str);
-}
-
-void c_compiler_add_lib_file(String file_name)
-{
-    String str = string_create(file_name.characters);
-    dynamic_array_push_back(&c_compiler.lib_files, str);
 }
 
 void c_compiler_compile()
@@ -113,16 +93,6 @@ void c_compiler_compile()
         logg("Compiler initialization failed!\n");
         return;
     }
-    if (comp.source_filepaths.size == 0) {
-        return;
-    }
-
-    SCOPE_EXIT(
-        dynamic_array_for_each(comp.source_filepaths, string_destroy);
-        dynamic_array_reset(&comp.source_filepaths);
-        dynamic_array_for_each(comp.lib_files, string_destroy);
-        dynamic_array_reset(&comp.lib_files);
-    );
 
     // Create compilation command
     String command = string_create_empty(128);
@@ -133,17 +103,29 @@ void c_compiler_compile()
         string_append_formated(&command, "\"cl\" ");
         string_append_formated(&command, compiler_options);
         string_append_formated(&command, " ");
-        for (int i = 0; i < comp.source_filepaths.size; i++) {
-            string_append_formated(&command, comp.source_filepaths[i].characters);
-            string_append_formated(&command, " ");
+
+        // Add source files
+        string_append(&command, "backend/src/main.cpp backend/hardcoded/hardcoded_functions.cpp");
+        for (int i = 0; i < compiler.extern_sources.source_files_to_compile.size; i++) {
+            String* file_path = compiler.extern_sources.source_files_to_compile[i];
+            string_append_formated(&command, " \"%s\"", file_path->characters);
         }
+        string_append_formated(&command, " ");
+
         string_append_formated(&command, "/link ");
         string_append_formated(&command, linker_options);
-        string_append_formated(&command, " ");
-        for (int i = 0; i < comp.lib_files.size; i++) {
-            string_append_formated(&command, comp.lib_files[i].characters);
-            string_append_formated(&command, " ");
+
+        for (int i = 0; i < compiler.extern_sources.lib_include_diretories.size; i++) {
+            String* lib_dir = compiler.extern_sources.lib_include_diretories[i];
+            string_append_formated(&command, " /LIBPATH:\"%s\"", lib_dir->characters);
         }
+        string_append_formated(&command, " ");
+
+        for (int i = 0; i < compiler.extern_sources.lib_files.size; i++) {
+            String* lib_path = compiler.extern_sources.lib_files[i];
+            string_append_formated(&command, " \"%s\"", lib_path->characters);
+        }
+        string_append_formated(&command, " ");
     }
 
     Optional<Process_Result> result = process_start(command);
@@ -188,6 +170,7 @@ struct Datatype;
 struct IR_Function;
 struct IR_Code_Block;
 struct Upp_Constant;
+struct ModTree_Function;
 
 enum class C_Translation_Type
 {
@@ -201,7 +184,7 @@ struct C_Translation
 {
     C_Translation_Type type;
     union {
-        IR_Function* function;
+        ModTree_Function* function;
         struct {
             IR_Code_Block* code_block;
             int index;
@@ -650,14 +633,21 @@ void c_generator_output_type_reference(Datatype* type)
         // Generate struct content
         C_Type_Dependency* dependency = get_type_dependency(type);
         gen.text = &dependency->type_definition;
-        if (structure->struct_type == AST::Structure_Type::STRUCT) {
-            string_append_formated(gen.text, "struct %s {\n", access_name.characters);
+        string_append(gen.text, structure->struct_type == AST::Structure_Type::STRUCT ? "struct " : "union ");
+
+        // Handle extern structs (No members, but size and alignment can be different
+        if (structure->content.members.size == 0 && structure->content.subtypes.size == 0) {
+            string_append_formated(
+                gen.text, "alignas(%d) %s {\n    u8 values[%d];\n};\n", 
+                structure->base.memory_info.value.alignment, access_name.characters, structure->base.memory_info.value.size
+            );
         }
-        else {
-            string_append_formated(gen.text, "union %s {\n", access_name.characters);
+        else
+        {
+            string_append_formated(gen.text, "%s {\n", access_name.characters);
+            c_generator_generate_struct_content(&structure->content, dependency, 1);
+            string_append(gen.text, "};\n\n");
         }
-        c_generator_generate_struct_content(&structure->content, dependency, 1);
-        string_append(gen.text, "};\n\n");
 
         // We return early because we don't want to insert into the translation table twice
         gen.text = backup_text;
@@ -877,7 +867,15 @@ void c_generator_generate()
         gen.text = &gen.sections[(int)Generator_Section::GLOBALS];
         auto& globals = compiler.semantic_analyser->program->globals;
         for (int i = 0; i < globals.size; i++) {
-            auto type = globals[i]->type;
+            auto global = globals[i];
+            auto type = global->type;
+
+            if (global->is_extern) {
+                string_append(gen.text, "extern ");
+                c_generator_output_type_reference(type);
+                string_append_formated(gen.text, " %s;\n", global->symbol->id->characters);
+                continue;
+            }
 
             c_generator_output_type_reference(type);
             string_append(gen.text, " ");
@@ -889,9 +887,8 @@ void c_generator_generate()
         }
     }
 
-    auto append_function_signature = [&](String* function_access_name, IR_Function* function)
+    auto append_function_signature = [&](String* function_access_name, Datatype_Function* signature)
     {
-        auto signature = function->function_type;
         if (signature->return_type.available) {
             c_generator_output_type_reference(signature->return_type.value);
         }
@@ -908,11 +905,8 @@ void c_generator_generate()
             c_generator_output_type_reference(param.type);
             string_append(gen.text, " ");
 
-            IR_Data_Access access;
-            access.type = IR_Data_Access_Type::PARAMETER;
-            access.option.parameter.function = function;
-            access.option.parameter.index = j;
-            c_generator_output_data_access(&access);
+            // Note: This has to be the same name as in output_data_access for parameter access
+            string_append_formated(gen.text, "%s_p%d", param.name->characters, j);
 
             if (j != parameters.size - 1) {
                 string_append(gen.text, ", ");
@@ -926,24 +920,45 @@ void c_generator_generate()
         for (int i = 0; i < program->functions.size; i++)
         {
             auto function = program->functions[i];
+
+            // Special case for entry-function
+            if (function->origin == 0) {
+                continue;
+            }
+
             String access_name = string_create_empty(16);
-            if (function->origin != 0 && function->origin->symbol != 0) {
-                string_append(&access_name, function->origin->symbol->id->characters);
-                string_append_formated(&access_name, "_%d", gen.name_counter);
-            }
-            else {
-                string_append_formated(&access_name, "function_%d", gen.name_counter);
-            }
+            string_append(&access_name, function->origin->name->characters);
+            string_append_formated(&access_name, "_%d", gen.name_counter);
             gen.name_counter++;
 
             C_Translation translation;
             translation.type = C_Translation_Type::FUNCTION;
-            translation.options.function = function;
+            translation.options.function = function->origin;
             hashtable_insert_element(&gen.translations, translation, access_name);
 
             // Generate prototype
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
-            append_function_signature(&access_name, function);
+            append_function_signature(&access_name, function->function_type);
+            string_append(gen.text, ";\n");
+        }
+
+        // Generate extern function prototypes (Aren't included in ir functions)
+        for (int i = 0; i < compiler.extern_sources.extern_functions.size; i++) 
+        {
+            auto extern_function = compiler.extern_sources.extern_functions[i];
+
+            String access_name = string_create_empty(16);
+            string_append(&access_name, extern_function->name->characters);
+            gen.name_counter++;
+
+            C_Translation translation;
+            translation.type = C_Translation_Type::FUNCTION;
+            translation.options.function = extern_function;
+            hashtable_insert_element(&gen.translations, translation, access_name);
+
+            // Generate prototype
+            gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
+            append_function_signature(&access_name, extern_function->signature);
             string_append(gen.text, ";\n");
         }
 
@@ -960,13 +975,20 @@ void c_generator_generate()
             // Generate function signature into tmp string
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
             {
-                C_Translation fn_translation;
-                fn_translation.type = C_Translation_Type::FUNCTION;
-                fn_translation.options.function = function;
-                String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
-                assert(fn_name != 0, "");
+                if (function->origin != 0) 
+                {
+                    C_Translation fn_translation;
+                    fn_translation.type = C_Translation_Type::FUNCTION;
+                    fn_translation.options.function = function->origin;
+                    String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
+                    assert(fn_name != 0, "");
 
-                append_function_signature(fn_name, function);
+                    append_function_signature(fn_name, function->function_type);
+                }
+                else {
+                    String name = string_create_static("upp_entry_");
+                    append_function_signature(&name, function->function_type);
+                }
             }
 
             // Generate function body
@@ -1204,15 +1226,9 @@ void c_generator_generate()
 
     // Finish (Add entry and combine + write all sections to file)
     {
-        C_Translation main_translation;
-        main_translation.type = C_Translation_Type::FUNCTION;
-        main_translation.options.function = program->entry_function;
-        String* main_fn_name = hashtable_find_element(&gen.translations, main_translation);
-        assert(main_fn_name != 0, "HEY");
-        string_append_formated(
+        string_append(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
-            "\nint main(int argc, char** argv) {random_initialize(); inititalize_type_infos_global_(); %s(); return 0;}\n",
-            main_fn_name->characters
+            "\nint main(int argc, char** argv) {random_initialize(); inititalize_type_infos_global_(); upp_entry_(); return 0;}\n"
         );
 
         // Combine sections into one program
@@ -1432,11 +1448,9 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             }
             else {
                 ModTree_Function* mod_function = compiler.semantic_analyser->program->functions[function_index - 1];
-                IR_Function* ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, mod_function);
-
                 C_Translation function_translation;
                 function_translation.type = C_Translation_Type::FUNCTION;
-                function_translation.options.function = ir_function;
+                function_translation.options.function = mod_function;
                 String* fn_name = hashtable_find_element(&gen.translations, function_translation);
                 assert(fn_name != 0, "");
                 string_append_formated(gen.text, "(&%s)", fn_name->characters);
@@ -1562,11 +1576,17 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
     case IR_Data_Access_Type::GLOBAL_DATA:
     {
         auto global = compiler.semantic_analyser->program->globals[access->option.global_index];
-        if (global->symbol != 0) {
-            string_append_formated(gen.text, "%s_g%d", global->symbol->id->characters, access->option.global_index);
+
+        if (global->is_extern) {
+            string_append(gen.text, global->symbol->id->characters);
         }
         else {
-            string_append_formated(gen.text, "global_%d", access->option.global_index);
+            if (global->symbol != 0) {
+                string_append_formated(gen.text, "%s_g%d", global->symbol->id->characters, access->option.global_index);
+            }
+            else {
+                string_append_formated(gen.text, "global_%d", access->option.global_index);
+            }
         }
         break;
     }
@@ -1736,16 +1756,13 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             Datatype_Function* function_sig = 0;
             switch (call->call_type) {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
-                function_sig = call->options.function->function_type;
+                function_sig = call->options.function->signature;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
                 function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(call->options.pointer_access->datatype));
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 function_sig = call->options.hardcoded.signature;
-                break;
-            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-                function_sig = downcast<Datatype_Function>(call->options.extern_function.function_signature);
                 break;
             default: panic("hey");
             }
@@ -1769,10 +1786,6 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
                 c_generator_output_data_access(call->options.pointer_access);
-                break;
-            }
-            case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
-                string_append_formated(gen.text, call->options.extern_function.id->characters);
                 break;
             }
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
@@ -1964,29 +1977,18 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             string_append_formated(gen.text, ";\n");
             break;
         }
-        case IR_Instruction_Type::ADDRESS_OF:
+        case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
-            IR_Instruction_Address_Of* addr_of = &instr->options.address_of;
+            IR_Instruction_Function_Address* addr_of = &instr->options.function_address;
             c_generator_output_data_access(addr_of->destination);
             string_append_formated(gen.text, " = ");
-            // c_generator_output_cast_if_necessary(addr_of->destination, ); // Not sure if this is even needed here...
-            switch (addr_of->type)
-            {
-            case IR_Instruction_Address_Of_Type::FUNCTION: {
-                C_Translation fn_translation;
-                fn_translation.type = C_Translation_Type::FUNCTION;
-                fn_translation.options.function = addr_of->options.function;
-                String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
-                assert(fn_name != 0, "HEY");
-                string_append_formated(gen.text, "&%s;\n", fn_name->characters);
-                break;
-            }
-            case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION: {
-                string_append_formated(gen.text, "&%s;\n", addr_of->options.extern_function.id->characters);
-                break;
-            }
-            default: panic("What");
-            }
+
+            C_Translation fn_translation;
+            fn_translation.type = C_Translation_Type::FUNCTION;
+            fn_translation.options.function = addr_of->function;
+            String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
+            assert(fn_name != 0, "HEY");
+            string_append_formated(gen.text, "&%s;\n", fn_name->characters);
             break;
         }
         case IR_Instruction_Type::UNARY_OP:

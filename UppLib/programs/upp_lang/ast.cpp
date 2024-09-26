@@ -15,6 +15,7 @@ namespace AST
         case Node_Type::ARGUMENT: 
         case Node_Type::DEFINITION_SYMBOL: 
         case Node_Type::ENUM_MEMBER: 
+        case Node_Type::EXTERN_IMPORT:
             break;
         case Node_Type::STRUCT_MEMBER: {
             auto member = (Structure_Member_Node*)node;
@@ -66,6 +67,9 @@ namespace AST
             }
             if (module->import_nodes.data != 0) {
                 dynamic_array_destroy(&module->import_nodes);
+            }
+            if (module->extern_imports.data != 0) {
+                dynamic_array_destroy(&module->extern_imports);
             }
             if (module->context_changes.data != 0) {
                 dynamic_array_destroy(&module->context_changes);
@@ -247,9 +251,36 @@ namespace AST
             }
             break;
         }
+        case Node_Type::EXTERN_IMPORT: {
+            auto import = (Extern_Import*)node;
+            switch (import->type)
+            {
+            case Extern_Type::FUNCTION: {
+                FILL(import->options.function.type_expr);
+                break;
+            }
+            case Extern_Type::GLOBAL: {
+                FILL(import->options.global.type_expr);
+                break;
+            }
+            case Extern_Type::STRUCT: {
+                FILL(import->options.structure.alignment_expression);
+                FILL(import->options.structure.size_expression);
+                break;
+            }
+            case Extern_Type::INVALID: {
+                FILL(import->options.structure.alignment_expression);
+                FILL(import->options.structure.size_expression);
+                break;
+            }
+            default: break;
+            }
+            break;
+        }
         case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->import_nodes);
+            FILL_ARRAY(module->extern_imports);
             FILL_ARRAY(module->context_changes);
             FILL_ARRAY(module->definitions);
             break;
@@ -552,6 +583,27 @@ namespace AST
             }
             break;
         }
+        case Node_Type::EXTERN_IMPORT: {
+            auto import = (Extern_Import*)node;
+            switch (import->type)
+            {
+            case Extern_Type::FUNCTION: {
+                FILL(import->options.function.type_expr);
+                break;
+            }
+            case Extern_Type::GLOBAL: {
+                FILL(import->options.global.type_expr);
+                break;
+            }
+            case Extern_Type::STRUCT: {
+                FILL(import->options.structure.alignment_expression);
+                FILL(import->options.structure.size_expression);
+                break;
+            }
+            default: break;
+            }
+            break;
+        }
         case Node_Type::PARAMETER: {
             auto param = (Parameter*)node;
             FILL(param->type);
@@ -587,6 +639,7 @@ namespace AST
         case Node_Type::MODULE: {
             auto module = (Module*)node;
             FILL_ARRAY(module->import_nodes);
+            FILL_ARRAY(module->extern_imports);
             FILL_ARRAY(module->context_changes);
             FILL_ARRAY(module->definitions);
             break;
@@ -854,6 +907,37 @@ namespace AST
             }
             if (import->alias_name != 0) {
                 string_append_formated(str, "as %s ", import->alias_name->characters);
+            }
+            break;
+        }
+        case Node_Type::EXTERN_IMPORT: 
+        {
+            auto import = (Extern_Import*)base;
+            string_append(str, "EXTERN ");
+            switch (import->type)
+            {
+            case Extern_Type::FUNCTION:
+                string_append_formated(str, "function %s", import->options.function.id->characters);
+                break;
+            case Extern_Type::GLOBAL:
+                string_append_formated(str, "global %s", import->options.global.id->characters);
+                break;
+            case Extern_Type::STRUCT:
+                string_append_formated(str, "struct %s", import->options.structure.id->characters);
+                break;
+            case Extern_Type::SOURCE_FILE:
+                string_append_formated(str, "source %s", import->options.source_path->characters);
+                break;
+            case Extern_Type::LIBRARY:
+                string_append_formated(str, "lib %s", import->options.lib_path->characters);
+                break;
+            case Extern_Type::LIBRARY_DIRECTORY:
+                string_append_formated(str, "lib_dir %s", import->options.lib_dir_path->characters);
+                break;
+            case Extern_Type::INVALID:
+                string_append_formated(str, "Invalid");
+                break;
+            default: panic("");
             }
             break;
         }
@@ -1139,6 +1223,9 @@ namespace AST
         }
         bool type_correct(Code_Block* base) {
             return base->base.type == Node_Type::CODE_BLOCK;
+        }
+        bool type_correct(Extern_Import* base) {
+            return base->base.type == Node_Type::EXTERN_IMPORT;
         }
     }
 

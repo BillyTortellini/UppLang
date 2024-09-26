@@ -88,6 +88,7 @@ enum class Keyword
     IN_KEYWORD,
     CONST_KEYWORD,
     MUTABLE, // mut
+    EXTERN,
 
     MAX_ENUM_VALUE
 };

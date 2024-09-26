@@ -19,28 +19,28 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
-bool enable_c_compilation = true;
+bool enable_c_generation = false;
+bool enable_c_compilation = false;
 
 // Output stages
 bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
 bool enable_testcases = false;
 bool enable_stresstest = false;
-bool run_testcases_compiled = true;
+bool run_testcases_compiled = false;
 
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = true;
+bool execute_binary = false;
 
 
 // This variable gets written to in compiler_compile
@@ -219,6 +219,14 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.value =               add_id("value");
             ids.string =              add_id("string");
             ids.bytes =               add_id("bytes");
+            ids.lambda_function =     add_id("lambda_function");
+            ids.bake_function =       add_id("bake_function");
+
+            ids.function =           add_id("function");
+            ids.global =             add_id("global");
+            ids.lib =                add_id("lib");
+            ids.lib_dir =            add_id("lib_dir");
+            ids.source =             add_id("source");
 
             ids.cast_mode =          add_id("Cast_Mode");
             ids.cast_mode_none =     add_id("NONE");
@@ -330,9 +338,6 @@ void compiler_execute_analysis_workloads_and_code_generation()
         c_generator_generate();
     }
     if (do_c_compilation) {
-        c_compiler_add_source_file(string_create_static("backend/src/main.cpp"));
-        c_compiler_add_source_file(string_create_static("backend/src/hello_world.cpp"));
-        c_compiler_add_source_file(string_create_static("backend/hardcoded/hardcoded_functions.cpp"));
         c_compiler_compile();
     }
 

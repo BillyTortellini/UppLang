@@ -537,7 +537,7 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
             auto expr = AST::downcast<AST::Expression>(base);
             if (expr->type == AST::Expression_Type::FUNCTION) {
                 if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                    return ((Workload_Function_Header*)(pass->origin_workload))->progress->function->parameter_table;
+                    return ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
                 }
             }
             break;

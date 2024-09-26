@@ -13,9 +13,6 @@ struct C_Compiler;
 
 C_Compiler* c_compiler_initialize();
 void c_compiler_shutdown();
-
-void c_compiler_add_source_file(String file_name); // Copies string
-void c_compiler_add_lib_file(String file_name); // Copies string
 void c_compiler_compile();
 Exit_Code c_compiler_execute();
 

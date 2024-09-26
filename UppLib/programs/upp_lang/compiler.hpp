@@ -49,6 +49,15 @@ struct Predefined_IDs
     String* byte;
     String* value;
 
+    String* lambda_function;
+    String* bake_function;
+
+    String* function;
+    String* global;
+    String* lib;
+    String* lib_dir;
+    String* source;
+
     // Hardcoded functions
     String* type_of;
     String* type_info;

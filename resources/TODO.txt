@@ -1,6 +1,64 @@
 
+TODO:
+-----
+ * Libraries and library directories in C-Compiler
+ * Maybe check when to use extern "C" vs normal function prototype
+ * Figure out if name-mangeling is something I have to worry about...
+
+DONE:
+ * Add additional source files to c-compiler
+ * C-Generator: Empty structs should be handled differently, so that size/alignment matches
+ * C-Generator: Extern function translations at the start?
+ * C-Generator: Extern globals at some point
+ * Bytecode should exit on extern global access
+ * IR-Code should not compile extern functions, and Bytecode should generate exit instruction on extern function call
+ * Interpreter must not jump to extern functions...
+ * Globals get origin
+ * Definition workload should handle extern functions, structs and globals
+ * Lexer and parser
+ * Module analysis needs to add symbols + extern things
+ * Functions have origin
+
+ * Check out current extern function code...
+    - Extern sources in Compiler
+    - Function Calls have extern fn type
+
+What does the AST need?
+extern function Diddlydo: (a: int, b: int) -> int
+extern global What: int
+extern struct HWND(15, 23)
+extern lib "What"
+extern lib_dir "What"
+extern source "What"
+
+What does the semantic analyser need?
+    --> ModTree_Function should have origin --> NORMAL, BAKE, EXTERN
+    --> Extern functions won't be compiled by ir-code
+    --> ModTree_Globals should also have origin
 
 
+C-Interface:
+------------
+Goal:
+    * Calling C-Functions
+    * Using C-Datatypes
+How is this specified in Upp?
+    * Functions:
+        extern glOpen :: (program: u32, filename: *const u8) -> int
+    * Datatypes: (With custom size + alignment)
+        HWND :: struct[106, 4]
+    * Globals
+        extern value: int
+    * Libraries, no headers (Headers may be used by C-Importer)
+        extern lib "opengl64.lib"
+        extern lib_path "P:/Whatever/Libs/foo"  // Where libs are searched
+    * Maybe just straight C code for compilation
+        extern source "test.c"
+
+C-Importer:
+-----------
+New program, which takes a header-file and outputs an Upp-File containing all required imports.
+Maybe create GUI for this, where you can specifically select which functions/datatypes we want to import.
 
 
 
@@ -23,12 +81,11 @@ Missing-Testcases:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * C-Compiler rework (C-Function calls rework) (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
-
+    * C-Interface rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
     * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
-    * Incremental compiler
 
 Additional:
+    * Incremental compiler
     * Allocator system
     * Better C-Importer
     * Code-Editor features
@@ -96,6 +153,159 @@ Disadvantages:
 
 
 
+    // OLD EXTERN IMPORTS
+    /*
+case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
+{
+    AST_Node* extern_node = workload.options.extern_header.node;
+    String* header_name_id = extern_node->id;
+    Optional<C_Import_Package> package = c_importer_import_header(&compiler.c_importer, *header_name_id, &compiler.identifier_pool);
+    if (package.available)
+    {
+        logg("Importing header successfull: %s\n", header_name_id->characters);
+        dynamic_array_push_back(&compiler.extern_sources.headers_to_include, header_name_id);
+        Hashtable<C_Import_Type*, Datatype*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Datatype*>(256);
+        SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
+
+        AST_Node* import_id_node = extern_node->child_start;
+        while (import_id_node != 0)
+        {
+            SCOPE_EXIT(import_id_node = import_id_node->neighbor);
+            String* import_id = import_id_node->id;
+            C_Import_Symbol* import_symbol = hashtable_find_element(&package.value.symbol_table.symbols, import_id);
+            if (import_symbol == 0) {
+                Semantic_Error error;
+                error.type = Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL;
+                error.id = import_id;
+                error.error_node = import_id_node;
+                log_semantic_error(analyser, error);
+                continue;
+            }
+
+            switch (import_symbol->type)
+            {
+            case C_Import_Symbol_Type::TYPE:
+            {
+                Datatype* type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
+                if (type->type == Datatype_Type::STRUCT) {
+                    hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, import_id);
+                }
+                symbol_table_define_symbol(
+                    analyser, workload.options.extern_header.parent_module->symbol_table, import_id,
+                    symbol_data_make_type(type), import_id_node
+                );
+                break;
+            }
+            case C_Import_Symbol_Type::FUNCTION:
+            {
+                ModTree_Function* extern_fn = new ModTree_Function;
+                extern_fn->parent_module = workload.options.extern_header.parent_module;
+                extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
+                extern_fn->options.extern_function.id = import_id;
+                extern_fn->signature = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
+                extern_fn->options.extern_function.function_signature = extern_fn->signature;
+                assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
+
+                dynamic_array_push_back(&workload.options.extern_header.parent_module->functions, extern_fn);
+                extern_fn->symbol = symbol_table_define_symbol(
+                    analyser, workload.options.extern_header.parent_module->symbol_table, import_id,
+                    symbol_data_make_function(extern_fn), import_id_node
+                );
+                break;
+            }
+            case C_Import_Symbol_Type::GLOBAL_VARIABLE: {
+                Semantic_Error error;
+                error.type = Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT;
+                error.error_node = import_id_node;
+                log_semantic_error(analyser, error);
+                break;
+            }
+            default: panic("hey");
+            }
+        }
+
+        // Import all used type names
+        auto iter = hashtable_iterator_create(&package.value.symbol_table.symbols);
+        while (hashtable_iterator_has_next(&iter))
+        {
+            String* id = *iter.key;
+            if (symbol_table_find_symbol(workload.options.extern_header.parent_module->symbol_table, id, true, symbol_reference_make_ignore(), analyser) != 0) {
+                hashtable_iterator_next(&iter);
+                continue;
+            }
+            C_Import_Symbol* import_sym = iter.value;
+            if (import_sym->type == C_Import_Symbol_Type::TYPE)
+            {
+                Datatype** signature = hashtable_find_element(&type_conversion_table, import_sym->data_type);
+                if (signature != 0)
+                {
+                    Datatype* type = *signature;
+                    if (type->type == Datatype_Type::STRUCT) {
+                        hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, id);
+                    }
+                    symbol_table_define_symbol(
+                        analyser, workload.options.extern_header.parent_module->symbol_table, id,
+                        symbol_data_make_type(type), workload.options.extern_header.node
+                    );
+                }
+            }
+            hashtable_iterator_next(&iter);
+        }
+    }
+    else {
+        Semantic_Error error;
+        error.type = Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED;
+        error.error_node = workload.options.extern_header.node;
+        log_semantic_error(analyser, error);
+    }
+    break;
+}
+case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
+{
+    Analysis_Workload_Extern_Function* work = &workload.options.extern_function;
+    Symbol_Table* symbol_table = work->parent_module->symbol_table;
+    AST_Node* extern_node = work->node;
+    Expression_Result_Type result = semantic_analyser_analyse_expression_type(
+        analyser, work->parent_module->symbol_table, extern_node->child_start
+    );
+    switch (result.type)
+    {
+    case Analysis_Result_Type::SUCCESS:
+    {
+        if (result.options.type->type != Datatype_Type::FUNCTION) {
+            Semantic_Error error;
+            error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER;
+            error.error_node = extern_node->child_start;
+            log_semantic_error(analyser, error);
+            break;
+        }
+
+        ModTree_Function* extern_fn = new ModTree_Function;
+        extern_fn->parent_module = work->parent_module;
+        extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
+        extern_fn->options.extern_function.id = extern_node->id;
+        extern_fn->signature = result.options.type;
+        extern_fn->options.extern_function.function_signature = extern_fn->signature;
+        assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
+        dynamic_array_push_back(&extern_fn->parent_module->functions, extern_fn);
+        dynamic_array_push_back(&compiler.extern_sources.extern_functions, extern_fn->options.extern_function);
+
+        extern_fn->symbol = symbol_table_define_symbol(
+            analyser, work->parent_module->symbol_table, extern_fn->options.extern_function.id,
+            symbol_data_make_function(extern_fn), work->node
+        );
+        break;
+    }
+    case Analysis_Result_Type::DEPENDENCY:
+        found_workload_dependency = true;
+        found_dependency = result.options.dependency;
+        break;
+    case Analysis_Result_Type::ERROR_OCCURED:
+        break;
+    }
+    break;
+}
+*/
 
 OLD Code for C-Generator things:
 --------------------------------

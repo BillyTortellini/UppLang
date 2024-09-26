@@ -118,7 +118,11 @@ namespace Parser
         log_error(msg, node_range_make(start, token_index_advance(start, token_offset)));
     }
 
+    int remaining_line_tokens();
     void log_error_range_offset(const char* msg, int token_offset) {
+        if (remaining_line_tokens() <= 1) {
+            token_offset = 0;
+        }
         log_error_range_offset_with_start(msg, parser.state.pos, token_offset);
     }
 
@@ -693,6 +697,154 @@ namespace Parser
             PARSE_SUCCESS(node);
         }
 
+        AST::Extern_Import* parse_extern_import(AST::Node* parent)
+        {
+            auto start = parser.state.pos;
+            if (!test_keyword(Keyword::EXTERN)) {
+                return 0;
+            }
+
+            CHECKPOINT_SETUP;
+            auto result = allocate_base<Extern_Import>(parent, Node_Type::EXTERN_IMPORT);
+            advance_token();
+
+            if (test_token(Token_Type::IDENTIFIER))
+            {
+                auto& ids = compiler.predefined_ids;
+                String* id = get_token()->options.identifier;
+                if (id == ids.function) {
+                    result->type = Extern_Type::FUNCTION;
+                }
+                else if (id == ids.global) {
+                    result->type = Extern_Type::GLOBAL;
+                }
+                else if (id == ids.lib) {
+                    result->type = Extern_Type::LIBRARY;
+                }
+                else if (id == ids.lib_dir) {
+                    result->type = Extern_Type::LIBRARY_DIRECTORY;
+                }
+                else if (id == ids.source) {
+                    result->type = Extern_Type::SOURCE_FILE;
+                }
+                else {
+                    log_error_range_offset("Identifier after extern must be one of: function, global, source, lib, lib_dir", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+            }
+            else if (test_keyword(Keyword::STRUCT)) {
+                result->type = Extern_Type::STRUCT;
+            }
+            else {
+                log_error_range_offset_with_start("Expected extern-type after extern keyword!", start, 1);
+                result->type = Extern_Type::INVALID;
+                return result;
+            }
+            advance_token();
+
+            switch (result->type)
+            {
+            case Extern_Type::FUNCTION: 
+            case Extern_Type::GLOBAL: 
+            {
+                if (!test_token(Token_Type::IDENTIFIER)) {
+                    log_error_range_offset("Expected identifier", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                String* id = get_token()->options.identifier;
+                advance_token();
+
+                if (!test_operator(Operator::COLON)) {
+                    log_error_range_offset("Expected : after identifier", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                advance_token();
+
+                AST::Expression* expr = parse_expression_or_error_expr(upcast(result));
+
+                if (result->type == Extern_Type::FUNCTION) {
+                    result->options.function.id = id;
+                    result->options.function.type_expr = expr;
+                }
+                else {
+                    result->options.global.id = id;
+                    result->options.global.type_expr = expr;
+                }
+                break;
+            }
+            case Extern_Type::STRUCT: {
+                if (!test_token(Token_Type::IDENTIFIER)) {
+                    log_error_range_offset("Expected identifier", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                result->options.structure.id = get_token()->options.identifier;
+                advance_token();
+
+                if (!test_parenthesis('(')) {
+                    log_error_range_offset("Expected parenthesis '('", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                advance_token();
+
+                result->options.structure.size_expression = parse_expression_or_error_expr(upcast(result));
+
+                if (!test_operator(Operator::COMMA)) {
+                    log_error_range_offset("Expected comma ','", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                advance_token();
+
+                result->options.structure.alignment_expression = parse_expression_or_error_expr(upcast(result));
+
+                if (!test_parenthesis(')')) {
+                    log_error_range_offset("Expected parenthesis ')'", 1);
+                }
+                advance_token();
+                break;
+            }
+            case Extern_Type::SOURCE_FILE:
+            case Extern_Type::LIBRARY:
+            case Extern_Type::LIBRARY_DIRECTORY: 
+            {
+                if (!test_token(Token_Type::LITERAL)) {
+                    log_error_range_offset("Expected literal", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                if (get_token()->options.literal_value.type != Literal_Type::STRING) {
+                    log_error_range_offset("Expected string_literal", 1);
+                    result->type = Extern_Type::INVALID;
+                    return result;
+                }
+                String* path = get_token()->options.literal_value.options.string;
+                advance_token();
+
+                if (result->type == Extern_Type::SOURCE_FILE) {
+                    result->options.source_path = path;
+                }
+                else if (result->type == Extern_Type::LIBRARY) {
+                    result->options.lib_dir_path = path;
+                }
+                else if (result->type == Extern_Type::LIBRARY_DIRECTORY) {
+                    result->options.lib_dir_path = path;
+                }
+                else {
+                    panic("");
+                }
+                break;
+            }
+            default: panic("");
+            }
+
+            return result;
+        }
+
         // Block Item functions
         Import* parse_import(Node* parent)
         {
@@ -927,6 +1079,10 @@ namespace Parser
             auto context_change = parse_context_change(parent);
             if (context_change != 0) {
                 return AST::upcast(context_change);
+            }
+            auto extern_import = parse_extern_import(parent);
+            if (extern_import != 0) {
+                return AST::upcast(extern_import);
             }
             return nullptr;
         }
@@ -2326,6 +2482,7 @@ namespace Parser
             dynamic_array_reset(&module->definitions);
             dynamic_array_reset(&module->import_nodes);
             dynamic_array_reset(&module->context_changes);
+            dynamic_array_reset(&module->extern_imports);
             break;
         }
         case Block_Context::ENUM: {
@@ -2401,6 +2558,9 @@ namespace Parser
                 }
                 else if (item->type == AST::Node_Type::CONTEXT_CHANGE) {
                     dynamic_array_push_back(&module->context_changes, AST::downcast<AST::Context_Change>(item));
+                }
+                else if (item->type == AST::Node_Type::EXTERN_IMPORT) {
+                    dynamic_array_push_back(&module->extern_imports, AST::downcast<AST::Extern_Import>(item));
                 }
                 else {
                     panic("HEY");

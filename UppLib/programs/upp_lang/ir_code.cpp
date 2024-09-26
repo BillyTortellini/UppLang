@@ -45,7 +45,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
     case IR_Instruction_Type::RETURN:
     case IR_Instruction_Type::MOVE:
     case IR_Instruction_Type::CAST:
-    case IR_Instruction_Type::ADDRESS_OF:
+    case IR_Instruction_Type::FUNCTION_ADDRESS:
     case IR_Instruction_Type::UNARY_OP:
     case IR_Instruction_Type::BINARY_OP:
     case IR_Instruction_Type::LABEL:
@@ -204,31 +204,12 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     indent_string(string, indentation);
     switch (instruction->type)
     {
-    case IR_Instruction_Type::ADDRESS_OF:
+    case IR_Instruction_Type::FUNCTION_ADDRESS:
     {
-        IR_Instruction_Address_Of* address_of = &instruction->options.address_of;
-        string_append_formated(string, "ADDRESS_OF\n");
-        indent_string(string, indentation + 1);
-        switch (address_of->type)
-        {
-        case IR_Instruction_Address_Of_Type::FUNCTION: {
-            const char* fn_name = "anonymous";
-            if (address_of->options.function->origin != nullptr) {
-                if (address_of->options.function->origin->symbol != nullptr) {
-                    fn_name = address_of->options.function->origin->symbol->id->characters;
-                }
-            }
-            string_append_formated(string, "FUNCTION: %s", fn_name);
-            break;
-        }
-        case IR_Instruction_Address_Of_Type::EXTERN_FUNCTION:
-            string_append_formated(string, "EXTERN_FUNCTION %s", address_of->options.extern_function.id->characters);
-            break;
-        default: panic("");
-        }
-
+        IR_Instruction_Function_Address* function_address = &instruction->options.function_address;
+        string_append_formated(string, "FUNCTION_ADDRESS of %s\n", function_address->function->name->characters);
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(address_of->destination, string, code_block);
+        ir_data_access_append_to_string(function_address->destination, string, code_block);
         break;
     }
     case IR_Instruction_Type::BINARY_OP:
@@ -375,7 +356,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         switch (call->call_type)
         {
         case IR_Instruction_Call_Type::FUNCTION_CALL:
-            function_sig = call->options.function->function_type;
+            function_sig = call->options.function->signature;
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
             auto type = datatype_get_non_const_type(call->options.pointer_access->datatype);
@@ -386,12 +367,6 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             function_sig = 0;
             break;
-        case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL: {
-            auto type = call->options.extern_function.function_signature;
-            assert(type->type == Datatype_Type::FUNCTION, "External function type must be of function type!");
-            function_sig = downcast<Datatype_Function>(type);
-            break;
-        }
         default:
             panic("Hey");
             return;
@@ -425,10 +400,6 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
             hardcoded_type_append_to_string(string, call->options.hardcoded.type);
-            break;
-        case IR_Instruction_Call_Type::EXTERN_FUNCTION_CALL:
-            string_append_formated(string, "EXTERN_FUNCTION_CALL, type: ");
-            datatype_append_to_string(string, call->options.extern_function.function_signature);
             break;
         }
         break;
@@ -849,10 +820,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     case Expression_Result_Type::FUNCTION: {
         // Function pointer read
         IR_Instruction load_instr;
-        load_instr.type = IR_Instruction_Type::ADDRESS_OF;
-        load_instr.options.address_of.type = IR_Instruction_Address_Of_Type::FUNCTION;
-        load_instr.options.address_of.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->options.function);
-        load_instr.options.address_of.destination = make_destination_access_on_demand(result_type);
+        load_instr.type = IR_Instruction_Type::FUNCTION_ADDRESS;
+        load_instr.options.function_address.function = info->options.function;
+        load_instr.options.function_address.destination = make_destination_access_on_demand(result_type);
         dynamic_array_push_back(&ir_block->instructions, load_instr);
         return destination;
     }
@@ -890,7 +860,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 dynamic_array_push_back(&instr.options.call.arguments, right);
             }
             instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
@@ -922,7 +892,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&instr.options.call.arguments, access);
             instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
@@ -973,8 +943,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         {
         case Expression_Result_Type::FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, call_info->options.function);
-            signature = call_instr.options.call.options.function->function_type;
+            call_instr.options.call.options.function = call_info->options.function;
+            signature = call_info->options.function->signature;
             break;
         }
         case Expression_Result_Type::VALUE: {
@@ -1029,7 +999,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             assert(function != nullptr, "Must be instanciated at ir_code");
             assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+            call_instr.options.call.options.function = function;
             signature = function->signature;
             break;
         }
@@ -1041,13 +1011,13 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 assert(function != nullptr, "Must be instanciated at ir_code");
                 assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
                 call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, function);
+                call_instr.options.call.options.function = function;
                 signature = function->signature;
             }
             else
             {
                 call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, dot_call.options.function);
+                call_instr.options.call.options.function = dot_call.options.function;
                 signature = dot_call.options.function->signature;
             }
             break;
@@ -1207,7 +1177,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.array_expr));
             dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.index_expr));
             instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
@@ -1230,7 +1200,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::FUNCTION_CALL;
             instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.member_access.options.dot_call_function);
+            instr.options.call.options.function = info->specifics.member_access.options.dot_call_function;
             instr.options.call.destination = make_destination_access_on_demand(result_type);
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&instr.options.call.arguments, source);
@@ -1496,7 +1466,7 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
         instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
         dynamic_array_push_back(&instr.options.call.arguments, source);
         instr.options.call.destination = make_destination_access_on_demand(cast_info.result_type);
-        instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, cast_info.options.custom_cast_function);
+        instr.options.call.options.function = cast_info.options.custom_cast_function;
         dynamic_array_push_back(&ir_block->instructions, instr);
         return instr.options.call.destination;
     }
@@ -1964,7 +1934,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 iter_create_instr.type = IR_Instruction_Type::FUNCTION_CALL;
                 iter_create_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                 iter_create_instr.options.call.destination = iterator_access;
-                iter_create_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_create);
+                iter_create_instr.options.call.options.function = loop_info.custom_op.fn_create;
                 iter_create_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
                 dynamic_array_push_back(&iter_create_instr.options.call.arguments, iterable_access);
                 dynamic_array_push_back(&ir_block->instructions, iter_create_instr);
@@ -1991,7 +1961,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             increment.options.foreach_loop.is_custom_iterator = loop_info.is_custom_op;
             if (loop_info.is_custom_op) {
                 increment.options.foreach_loop.iterator_access = iterator_access;
-                increment.options.foreach_loop.next_function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_next);
+                increment.options.foreach_loop.next_function = loop_info.custom_op.fn_next;
                 increment.options.foreach_loop.iterator_deref_value = loop_info.custom_op.next_pointer_diff;
             }
             hashtable_insert_element(&ir_generator.loop_increment_instructions, foreach_loop.body_block, increment);
@@ -2020,7 +1990,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     has_next_call.type = IR_Instruction_Type::FUNCTION_CALL;
                     has_next_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                     has_next_call.options.call.destination = condition_access;
-                    has_next_call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_has_next);
+                    has_next_call.options.call.options.function = loop_info.custom_op.fn_has_next;
                     has_next_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
                     IR_Data_Access* argument_access = iterator_access;
                     for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
@@ -2067,7 +2037,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     get_value_call.type = IR_Instruction_Type::FUNCTION_CALL;
                     get_value_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                     get_value_call.options.call.destination = loop_variable_access;
-                    get_value_call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, loop_info.custom_op.fn_get_value);
+                    get_value_call.options.call.options.function = loop_info.custom_op.fn_get_value;
                     get_value_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
                     IR_Data_Access* argument_access = iterator_access;
                     for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
@@ -2208,7 +2178,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             call.type = IR_Instruction_Type::FUNCTION_CALL;
             call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call.options.call.destination = left_access;
-            call.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, info->specifics.overload.function);
+            call.options.call.options.function = info->specifics.overload.function;
             call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(2);
             if (info->specifics.overload.switch_arguments) {
                 dynamic_array_push_back(&call.options.call.arguments, right_access);
@@ -2319,34 +2289,33 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
             }
             continue;
         }
-        ir_generator.current_pass = mod_func->code_workload->current_pass;
 
         // Generate function code
+        if (mod_func->function_type == ModTree_Function_Type::NORMAL) 
         {
-            assert(mod_func->code_workload != 0, "");
-            if (mod_func->code_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
-            {
-                auto bake_node = ((Workload_Bake_Analysis*)mod_func->code_workload)->bake_node;
-                if (bake_node->type == AST::Expression_Type::BAKE_EXPR) {
-                    IR_Instruction return_instr;
-                    return_instr.type = IR_Instruction_Type::RETURN;
-                    return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-                    return_instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_func->code, bake_node->options.bake_expr);
-                    dynamic_array_push_back(&ir_func->code->instructions, return_instr);
-                }
-                else if (bake_node->type == AST::Expression_Type::BAKE_BLOCK) {
-                    ir_generator_generate_block(ir_func->code, bake_node->options.bake_block);
-                }
-                else {
-                    panic("Shoudn't happen!");
-                }
+            ir_generator.current_pass = mod_func->options.normal.progress->body_workload->base.current_pass;
+            ir_generator_generate_block(ir_func->code, mod_func->options.normal.progress->body_workload->body_node);
+        }
+        else if (mod_func->function_type == ModTree_Function_Type::BAKE) 
+        {
+            ir_generator.current_pass = mod_func->options.bake->analysis_workload->base.current_pass;
+            auto bake_node = mod_func->options.bake->analysis_workload->bake_node;
+            if (bake_node->type == AST::Expression_Type::BAKE_EXPR) {
+                IR_Instruction return_instr;
+                return_instr.type = IR_Instruction_Type::RETURN;
+                return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+                return_instr.options.return_instr.options.return_value = ir_generator_generate_expression(ir_func->code, bake_node->options.bake_expr);
+                dynamic_array_push_back(&ir_func->code->instructions, return_instr);
             }
-            else if (mod_func->code_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-                ir_generator_generate_block(ir_func->code, ((Workload_Function_Body*)mod_func->code_workload)->body_node);
+            else if (bake_node->type == AST::Expression_Type::BAKE_BLOCK) {
+                ir_generator_generate_block(ir_func->code, bake_node->options.bake_block);
             }
             else {
-                panic("");
+                panic("Shoudn't happen!");
             }
+        }
+        else {
+            panic("Extern functions should have been filtered out by here");
         }
 
         // Add empty return
@@ -2394,9 +2363,14 @@ void ir_generator_queue_function(ModTree_Function* function) {
     if (!function->is_runnable) {
         return;
     }
-    if (function->progress != 0) {
-        assert((function->progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
+
+    if (function->function_type == ModTree_Function_Type::EXTERN) {
+        return;
     }
+    else if (function->function_type == ModTree_Function_Type::NORMAL) {
+        assert((function->options.normal.progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
+    }
+
     if (hashtable_find_element(&ir_generator.function_mapping, function) != 0) return;
     ir_function_create(function->signature, function);
 }
@@ -2436,7 +2410,7 @@ void ir_generator_finish(bool gen_bytecode)
             call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            call_instr.options.call.options.function = *hashtable_find_element(&ir_generator.function_mapping, ir_generator.modtree->main_function);
+            call_instr.options.call.options.function = ir_generator.modtree->main_function;
             dynamic_array_push_back(&entry_function->code->instructions, call_instr);
         }
 
