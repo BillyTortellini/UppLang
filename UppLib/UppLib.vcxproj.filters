@@ -312,9 +312,6 @@
     <ClInclude Include="programs\bachelor_thesis\bachelor.hpp">
       <Filter>Header Files\Programs\Bachelor_Thesis</Filter>
     </ClInclude>
-    <ClInclude Include="programs\c_importer\c_lexer.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\text_editor\text.hpp">
       <Filter>Header Files\Programs\Text_Editor</Filter>
     </ClInclude>
@@ -326,6 +323,15 @@
     </ClInclude>
     <ClInclude Include="programs\render_rework\render_rework.hpp">
       <Filter>Header Files\Programs\Render_Rework</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\c_importer\c_lexer.hpp">
+      <Filter>Header Files\Programs\C_Importer</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\c_importer\import_gui.hpp">
+      <Filter>Header Files\Programs\C_Importer</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\fuzzy_search.hpp">
+      <Filter>Header Files\Utility</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -523,6 +529,12 @@
     </ClCompile>
     <ClCompile Include="programs\bachelor_thesis\bachelor.cpp">
       <Filter>Source Files\Programs\Bachelor_Thesis</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\c_importer\import_gui.cpp">
+      <Filter>Source Files\Programs\C_Importer</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\fuzzy_search.cpp">
+      <Filter>Source Files\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

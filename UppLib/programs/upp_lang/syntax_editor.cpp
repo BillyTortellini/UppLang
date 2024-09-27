@@ -8,6 +8,7 @@
 #include "../../rendering/renderer_2d.hpp"
 #include "../../utility/file_io.hpp"
 #include "../../utility/character_info.hpp"
+#include "../../utility/fuzzy_search.hpp"
 
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
@@ -20,16 +21,6 @@
 #include "code_history.hpp"
 
 // Editor
-struct Fuzzy_Search
-{
-    String option;
-    int preamble_length;
-    bool is_longer;
-    bool substrings_in_order;
-    bool all_characters_contained;
-    int substring_count;
-};
-
 struct Error_Display
 {
     String message;
@@ -79,7 +70,7 @@ struct Syntax_Editor
     bool space_before_cursor;
     bool space_after_cursor;
 
-    Dynamic_Array<Fuzzy_Search> code_completion_suggestions;
+    Dynamic_Array<String> code_completion_suggestions;
     Input_Replay input_replay;
 
     // Rendering
@@ -662,89 +653,6 @@ String code_completion_get_partially_typed_word()
     return result;
 }
 
-bool code_completion_fuzzy_in_order(Fuzzy_Search* a, Fuzzy_Search* b)
-{
-    if (a->is_longer != b->is_longer) {
-        return b->is_longer;
-    }
-    if (a->all_characters_contained != b->all_characters_contained) {
-        return a->all_characters_contained;
-    }
-    if (a->preamble_length != b->preamble_length) {
-        return a->preamble_length > b->preamble_length;
-    }
-    if (a->substring_count != b->substring_count) {
-        return a->substring_count < b->substring_count;
-    }
-    if (a->substrings_in_order != b->substrings_in_order) {
-        return a->substrings_in_order;
-    }
-    return string_in_order(&a->option, &b->option);
-}
-
-void code_completion_add_and_rank(String option, String typed)
-{
-    Fuzzy_Search result;
-    result.option = option;
-    result.is_longer = typed.size > option.size;
-    result.substring_count = 0;
-    result.substrings_in_order = true;
-    result.preamble_length = 0;
-    result.all_characters_contained = true;
-    if (option.size == 0) {
-        return;
-    }
-    if (typed.size == 0) {
-        dynamic_array_push_back(&syntax_editor.code_completion_suggestions, result);
-        return;
-    }
-
-    int last_sub_start = -1;
-    int typed_index = 0;
-    while (typed_index < typed.size)
-    {
-        // Find maximum substring
-        int max_length = 0;
-        int max_start_index = 0;
-        for (int start = 0; start < option.size; start++)
-        {
-            int length = 0;
-            while (start + length < option.size && typed_index + length < typed.size)
-            {
-                auto char_o = option[start + length];
-                auto char_t = typed[typed_index + length];
-                if (char_o != char_t) {
-                    break;
-                }
-                length += 1;
-            }
-            if (length > max_length) {
-                max_length = length;
-                max_start_index = start;
-            }
-        }
-
-        // Add to statistic
-        result.substring_count += 1;
-        if (max_start_index == 0 && typed_index == 0) {
-            result.preamble_length = max_length;
-        }
-        if (max_length == 0) {
-            result.all_characters_contained = false;
-            typed_index += 1;
-            continue;
-        }
-        if (max_start_index <= last_sub_start) {
-            result.substrings_in_order = false;
-        }
-        last_sub_start = max_start_index;
-        typed_index += max_length;
-    }
-
-    dynamic_array_push_back(&syntax_editor.code_completion_suggestions, result);
-    return;
-}
-
 void code_completion_find_suggestions()
 {
     auto& editor = syntax_editor;
@@ -767,6 +675,7 @@ void code_completion_find_suggestions()
         }
     }
     auto partially_typed = code_completion_get_partially_typed_word();
+    fuzzy_search_start_search(partially_typed);
 
     // Check if we are on special node
     syntax_editor_synchronize_with_compiler(false);
@@ -805,8 +714,8 @@ void code_completion_find_suggestions()
             {
             case Datatype_Type::ARRAY:
             case Datatype_Type::SLICE: {
-                code_completion_add_and_rank(string_create_static("data"), partially_typed);
-                code_completion_add_and_rank(string_create_static("size"), partially_typed);
+                fuzzy_search_add_item(string_create_static("data"));
+                fuzzy_search_add_item(string_create_static("size"));
                 break;
             }
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
@@ -824,19 +733,19 @@ void code_completion_find_suggestions()
                 auto& members = content->members;
                 for (int i = 0; i < members.size; i++) {
                     auto& mem = members[i];
-                    code_completion_add_and_rank(*mem.id, partially_typed);
+                    fuzzy_search_add_item(*mem.id);
                 }
                 if (content->subtypes.size > 0) {
-                    code_completion_add_and_rank(*compiler.predefined_ids.tag, partially_typed);
+                    fuzzy_search_add_item(*compiler.predefined_ids.tag);
                 }
                 for (int i = 0; i < content->subtypes.size; i++) {
                     auto sub = content->subtypes[i];
-                    code_completion_add_and_rank(*sub->name, partially_typed);
+                    fuzzy_search_add_item(*sub->name);
                 }
                 // Add base name if available
                 if (original->mods.subtype_index->indices.size > 0) {
                     Struct_Content* content = type_mods_get_subtype(structure, type->mods, type->mods.subtype_index->indices.size - 1);
-                    code_completion_add_and_rank(*content->name, partially_typed);
+                    fuzzy_search_add_item(*content->name);
                 }
                 break;
             }
@@ -844,7 +753,7 @@ void code_completion_find_suggestions()
                 auto& members = downcast<Datatype_Enum>(type)->members;
                 for (int i = 0; i < members.size; i++) {
                     auto& mem = members[i];
-                    code_completion_add_and_rank(*mem.name, partially_typed);
+                    fuzzy_search_add_item(*mem.name);
                 }
                 break;
             }
@@ -873,7 +782,7 @@ void code_completion_find_suggestions()
                 if (!(types_are_equal(type, key.options.dot_call.datatype) || types_are_equal(poly_base_type, key.options.dot_call.datatype))) {
                     continue;
                 }
-                code_completion_add_and_rank(*key.options.dot_call.id, partially_typed);
+                fuzzy_search_add_item(*key.options.dot_call.id);
             }
         }
     }
@@ -938,14 +847,14 @@ void code_completion_find_suggestions()
 
         if (fill_context_options) {
             auto& ids = compiler.predefined_ids;
-            code_completion_add_and_rank(*ids.set_cast_option, partially_typed);
-            code_completion_add_and_rank(*ids.id_import, partially_typed);
-            code_completion_add_and_rank(*ids.add_binop, partially_typed);
-            code_completion_add_and_rank(*ids.add_unop, partially_typed);
-            code_completion_add_and_rank(*ids.add_cast, partially_typed);
-            code_completion_add_and_rank(*ids.add_dot_call, partially_typed);
-            code_completion_add_and_rank(*ids.add_array_access, partially_typed);
-            code_completion_add_and_rank(*ids.add_iterator, partially_typed);
+            fuzzy_search_add_item(*ids.set_cast_option);
+            fuzzy_search_add_item(*ids.id_import);
+            fuzzy_search_add_item(*ids.add_binop);
+            fuzzy_search_add_item(*ids.add_unop);
+            fuzzy_search_add_item(*ids.add_cast);
+            fuzzy_search_add_item(*ids.add_dot_call);
+            fuzzy_search_add_item(*ids.add_array_access);
+            fuzzy_search_add_item(*ids.add_iterator);
         }
     }
 
@@ -965,33 +874,14 @@ void code_completion_find_suggestions()
             SCOPE_EXIT(dynamic_array_destroy(&results));
             symbol_table_query_id(specific_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &results);
             for (int i = 0; i < results.size; i++) {
-                code_completion_add_and_rank(*results[i]->id, partially_typed);
+                fuzzy_search_add_item(*results[i]->id);
             }
         }
     }
 
-    // Exit if no suggestions are available
-    if (suggestions.size == 0) return;
-
-    // Sort by ranking
-    dynamic_array_bubble_sort(suggestions, code_completion_fuzzy_in_order);
-    // Cut off at appropriate point
-    int last_cutoff = 1;
-    auto& last_sug = suggestions[0];
-    const int MIN_CUTTOFF_VALUE = 3;
-    for (int i = 1; i < suggestions.size; i++)
-    {
-        auto& sug = suggestions[i];
-        bool valid_cutoff = false;
-        if (last_sug.is_longer != sug.is_longer) valid_cutoff = true;
-        if (last_sug.substrings_in_order != sug.substrings_in_order) valid_cutoff = true;
-        if (last_sug.preamble_length != sug.preamble_length) valid_cutoff = true;
-        if (last_sug.all_characters_contained != sug.all_characters_contained) valid_cutoff = true;
-        if (last_sug.substring_count != sug.substring_count) valid_cutoff = true;
-        if (valid_cutoff && i >= MIN_CUTTOFF_VALUE) {
-            dynamic_array_rollback_to_size(&suggestions, i);
-            return;
-        }
+    auto results = fuzzy_search_rank_results(true, 3);
+    for (int i = 0; i < results.size; i++) {
+        dynamic_array_push_back(&syntax_editor.code_completion_suggestions, results[i].item_name);
     }
 }
 
@@ -1001,7 +891,7 @@ void code_completion_insert_suggestion()
     auto& suggestions = editor.code_completion_suggestions;
     if (suggestions.size == 0) return;
     if (editor.cursor.pos == 0) return;
-    String replace_string = suggestions[0].option;
+    String replace_string = suggestions[0];
     auto line = index_value(editor.cursor.line_index);
     // Remove current token
     int token_index = get_cursor_token_index(false);
@@ -1621,7 +1511,7 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.context_text = string_create_empty(256);
     syntax_editor.errors = dynamic_array_create<Error_Display>(1);
     syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
-    syntax_editor.code_completion_suggestions = dynamic_array_create<Fuzzy_Search>(1);
+    syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);
@@ -2232,7 +2122,7 @@ void syntax_editor_render()
         for (int i = 0; i < editor.code_completion_suggestions.size; i++)
         {
             auto sugg = editor.code_completion_suggestions[i];
-            string_append_string(&context, &sugg.option);
+            string_append_string(&context, &sugg);
             if (i != editor.code_completion_suggestions.size - 1) {
                 string_append_formated(&context, "\n");
             }

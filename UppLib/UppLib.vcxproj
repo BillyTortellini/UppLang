@@ -37,6 +37,7 @@
     <ClInclude Include="programs\bachelor_thesis\bachelor.hpp" />
     <ClInclude Include="programs\c_importer\c_importer.hpp" />
     <ClInclude Include="programs\c_importer\c_lexer.hpp" />
+    <ClInclude Include="programs\c_importer\import_gui.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
     <ClInclude Include="programs\render_rework\render_rework.hpp" />
     <ClInclude Include="programs\text_editor\text.hpp" />
@@ -80,6 +81,7 @@
     <ClInclude Include="utility\directory_crawler.hpp" />
     <ClInclude Include="utility\file_io.hpp" />
     <ClInclude Include="utility\file_listener.hpp" />
+    <ClInclude Include="utility\fuzzy_search.hpp" />
     <ClInclude Include="utility\gui.hpp" />
     <ClInclude Include="utility\hash_functions.hpp" />
     <ClInclude Include="utility\random.hpp" />
@@ -106,6 +108,7 @@
     <ClCompile Include="programs\bachelor_thesis\bachelor.cpp" />
     <ClCompile Include="programs\c_importer\c_importer.cpp" />
     <ClCompile Include="programs\c_importer\c_lexer.cpp" />
+    <ClCompile Include="programs\c_importer\import_gui.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
     <ClCompile Include="programs\render_rework\render_rework.cpp" />
     <ClCompile Include="programs\text_editor\text.cpp" />
@@ -147,6 +150,7 @@
     <ClCompile Include="utility\directory_crawler.cpp" />
     <ClCompile Include="utility\file_io.cpp" />
     <ClCompile Include="utility\file_listener.cpp" />
+    <ClCompile Include="utility\fuzzy_search.cpp" />
     <ClCompile Include="utility\gui.cpp" />
     <ClCompile Include="utility\hash_functions.cpp" />
     <ClCompile Include="utility\random.cpp" />

@@ -162,14 +162,20 @@ String* gui_store_string(GUI_Handle parent_handle, const char* initial_string);
 
 
 
+struct Text_Edit_Input
+{
+    bool text_changed;
+    bool enter_pressed;
+};
+
 // PREDEFINED OBJECTS
 GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
 GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y);
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
 bool gui_push_button(GUI_Handle parent_handle, String text);
-void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);
 bool gui_push_toggle(GUI_Handle parent_handle, bool* value);
 GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text);
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);
 
 void gui_push_example_gui();
 

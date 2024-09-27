@@ -149,6 +149,7 @@ C_Importer c_importer_create();
 void c_importer_destroy(C_Importer* importer);
 Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name, Identifier_Pool* identifier_pool);
 Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*>* type_conversions);
+void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members);
 
 
 

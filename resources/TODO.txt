@@ -1,40 +1,112 @@
 
 TODO:
 -----
- * Libraries and library directories in C-Compiler
- * Maybe check when to use extern "C" vs normal function prototype
- * Figure out if name-mangeling is something I have to worry about...
+ * Output Upp-Interface file for the selected header
+ * Check that this works
+ * Implement selecting symbols/functions with fuzzy-find search bar
 
-DONE:
- * Add additional source files to c-compiler
- * C-Generator: Empty structs should be handled differently, so that size/alignment matches
- * C-Generator: Extern function translations at the start?
- * C-Generator: Extern globals at some point
- * Bytecode should exit on extern global access
- * IR-Code should not compile extern functions, and Bytecode should generate exit instruction on extern function call
- * Interpreter must not jump to extern functions...
- * Globals get origin
- * Definition workload should handle extern functions, structs and globals
- * Lexer and parser
- * Module analysis needs to add symbols + extern things
- * Functions have origin
+Problems:
+ * Include directories need to be specified for preprocessor to work on advanced headers (Also maybe #defines)
+ * Big files seem to lagg the gui? --> E.g. windows.h
+ * C-Macros will not work, which may be annoying for OpenGL
+ * Adding source, libs and lib_dirs may be a little bit wacky, no?
+ * What about libraries with multiple headers --> Here I probably want to include all...
 
- * Check out current extern function code...
-    - Extern sources in Compiler
-    - Function Calls have extern fn type
 
-What does the AST need?
-extern function Diddlydo: (a: int, b: int) -> int
-extern global What: int
-extern struct HWND(15, 23)
-extern lib "What"
-extern lib_dir "What"
-extern source "What"
+C-Importer:
+-----------
+What I expect from C-Importer:
+ * Input: Header-File + source (Either source file, lib or dll)
+    - The C-Importer uses msvc to run the Preprocessor on the Headers
+    - The output is analysed to find all function + datatype symbols (Functions + structs + other types)
+    - The importer may call the compiler multiple times to figure out type-sizes and other things
+ * Interactive Input from user decides which functions should be imported (Which also imports all dependencies (e.g. Parameter types)) 
+ * Output: An Upp-File containing the required C-Interface specification
 
-What does the semantic analyser need?
-    --> ModTree_Function should have origin --> NORMAL, BAKE, EXTERN
-    --> Extern functions won't be compiled by ir-code
-    --> ModTree_Globals should also have origin
+Bonus: Mode where it can be run as script, and just imports all found symbols...
+
+GOAL:
+ - Opening/running a window with GLFW
+ - Executing OpenGL commands
+ - Being able to call functions from <Windows.h> (Processes, File-Loading and schtuff), 
+     but maybe I want to do that somewhere else
+
+
+
+
+
+
+Missing-Testcases:
+------------------
+ * Struct Subtypes
+ * Struct Switch
+ * Struct inititalizer with subtypes
+ * Subtype Hierarchies
+ * Constant pointers, constants, type-mods auto updates
+ * New assignment and definition syntax
+ * Multi assignments and definitions
+ * Subtypes and polymorphism
+ * Struct unpacking
+ * Function overloading
+
+--------------------
+- MISSING FEATURES -
+--------------------
+Core: (Required for programming)
+    * C-Importer rework
+        - Interactive selection of imported symbols
+        - Outputs upp-interface file
+    * Editor-Update 
+        - Remove block-hierarchy (Lines + indentation may be enough, with history ast-mapping can be updated incrementally/on demand?)
+        - Back to 'normal', non-token-based editor (Just lines of strings)
+        - Motions + more vim commands
+        - Search-and-replace
+        - Multiple-file handling, goto definition (Over files)
+        - Code-Folding
+        - Auto-Formating (For lines, maybe also interactively while typing?)
+    * Language Features:
+        - Parser block/list update (All Blocks/Lists may be followed by an indentation block or parenthesis with seperators)
+        - Optional Pointers ?* ( + Context-option to disable behavior)
+        - Struct initializer for unions (If it isn't already done?)
+        - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
+        - Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
+        - Bitwise operators as functions (and, or, xor, not, nand, nor)
+        - Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
+            --> This also means we could do dot-calls on a whole module? --> Maybe not
+
+Additional:
+    * Debugger
+    * Incremental compiler (Hot-code reloading?)
+    * Metaprogramming
+        - Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
+        - Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
+        - Macros (Simple way to define variables, add defer blocks, ...)
+        - Backtick defer, backtick variable definition
+        - Some way to communicate between bakes
+        - Annotations (For automatization of print or serialization)
+    * QoL Features
+        - Block-Expressions (Expressions which may include statements + return)
+        - Auto function? .-> e.g. search(array, .-> x.name == "What")
+        - Varargs (Other syntax for pass as slice...)
+        - Using on structs
+        - Location information (Mostly for logging)
+
+-----------------
+Code improvements:
+    * Deduplication of comptime instances when the generated ir-code is the same
+    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+    * Symbol table lookups could be combined into a single hashtable?
+    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
+    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
+    * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
+
+
+
+
+
+
+
+
 
 
 C-Interface:
@@ -54,82 +126,7 @@ How is this specified in Upp?
         extern lib_path "P:/Whatever/Libs/foo"  // Where libs are searched
     * Maybe just straight C code for compilation
         extern source "test.c"
-
-C-Importer:
------------
-New program, which takes a header-file and outputs an Upp-File containing all required imports.
-Maybe create GUI for this, where you can specifically select which functions/datatypes we want to import.
-
-
-
-
-
-
-
-Missing-Testcases:
-------------------
- * Struct Subtypes
- * Struct Switch
- * Struct inititalizer with subtypes
- * Subtype Hierarchies
- * Constant pointers, constants, type-mods auto updates
- * New assignment and definition syntax
- * Multi assignments and definitions
- * Subtypes and polymorphism
-
---------------------
-- MISSING FEATURES -
---------------------
-Core: (Required for programming)
-    * C-Interface rework (Making it work again + being able to define the interfaces to c-functions/globals inside Upp)
-    * Editor-Update (Remove token-based editor, motions + more vim commands, multiple-files, auto formating, goto definition, search-and-replace, ...)
-
-Additional:
-    * Incremental compiler
-    * Allocator system
-    * Better C-Importer
-    * Code-Editor features
-    * Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
-    * Annotations (For automatization of print or serialization)
-    * Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
-    * Auto function? .-> e.g. search(array, .-> x.name == "What")
-    * Block-Expressions?
-    * Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
-    * Macros (Simple way to define variables, add defer blocks, ...)
-    * Backtick defer, backtick variable definition
-    * Varargs (Other syntax for pass as slice...)
-    * Debugger
-    * Optional pointer types (e.g. ?*)
-    * Using on structs
-    * Location information (Mostly for logging)
-    * Struct initializer for unions
-
------------------
-Code improvements:
-    * Deduplication of comptime instances when the generated ir-code is the same
-    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
-    * Symbol table lookups could be combined into a single hashtable?
-    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
-    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
-    * Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
-        --> This also means we could do dot-calls on a whole module? --> Maybe not
-    * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
-    * Code Editor non-hierarchical
-    * Change how indentation works, maybe both {, , , } and indentation could work together?
-    * IR-Code Data-Access could be a Tree-Structure with pointer-accesses, dereferences, member_access and other things to not have as many temporary values
-
------------------
-Missing Test-Cases:
-    * Struct unpacking
-    * Function overloading
------------------
-
-
-
-
-
-
-
+        
 
 Constant-Pool Rework:
 ---------------------
@@ -151,236 +148,6 @@ Disadvantages:
 
 
 
-
-
-    // OLD EXTERN IMPORTS
-    /*
-case Analysis_Workload_Type::EXTERN_HEADER_IMPORT:
-{
-    AST_Node* extern_node = workload.options.extern_header.node;
-    String* header_name_id = extern_node->id;
-    Optional<C_Import_Package> package = c_importer_import_header(&compiler.c_importer, *header_name_id, &compiler.identifier_pool);
-    if (package.available)
-    {
-        logg("Importing header successfull: %s\n", header_name_id->characters);
-        dynamic_array_push_back(&compiler.extern_sources.headers_to_include, header_name_id);
-        Hashtable<C_Import_Type*, Datatype*> type_conversion_table = hashtable_create_pointer_empty<C_Import_Type*, Datatype*>(256);
-        SCOPE_EXIT(hashtable_destroy(&type_conversion_table));
-
-        AST_Node* import_id_node = extern_node->child_start;
-        while (import_id_node != 0)
-        {
-            SCOPE_EXIT(import_id_node = import_id_node->neighbor);
-            String* import_id = import_id_node->id;
-            C_Import_Symbol* import_symbol = hashtable_find_element(&package.value.symbol_table.symbols, import_id);
-            if (import_symbol == 0) {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::EXTERN_HEADER_DOES_NOT_CONTAIN_SYMBOL;
-                error.id = import_id;
-                error.error_node = import_id_node;
-                log_semantic_error(analyser, error);
-                continue;
-            }
-
-            switch (import_symbol->type)
-            {
-            case C_Import_Symbol_Type::TYPE:
-            {
-                Datatype* type = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
-                if (type->type == Datatype_Type::STRUCT) {
-                    hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, import_id);
-                }
-                symbol_table_define_symbol(
-                    analyser, workload.options.extern_header.parent_module->symbol_table, import_id,
-                    symbol_data_make_type(type), import_id_node
-                );
-                break;
-            }
-            case C_Import_Symbol_Type::FUNCTION:
-            {
-                ModTree_Function* extern_fn = new ModTree_Function;
-                extern_fn->parent_module = workload.options.extern_header.parent_module;
-                extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
-                extern_fn->options.extern_function.id = import_id;
-                extern_fn->signature = import_c_type(analyser, import_symbol->data_type, &type_conversion_table);
-                extern_fn->options.extern_function.function_signature = extern_fn->signature;
-                assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
-
-                dynamic_array_push_back(&workload.options.extern_header.parent_module->functions, extern_fn);
-                extern_fn->symbol = symbol_table_define_symbol(
-                    analyser, workload.options.extern_header.parent_module->symbol_table, import_id,
-                    symbol_data_make_function(extern_fn), import_id_node
-                );
-                break;
-            }
-            case C_Import_Symbol_Type::GLOBAL_VARIABLE: {
-                Semantic_Error error;
-                error.type = Semantic_Error_Type::MISSING_FEATURE_EXTERN_GLOBAL_IMPORT;
-                error.error_node = import_id_node;
-                log_semantic_error(analyser, error);
-                break;
-            }
-            default: panic("hey");
-            }
-        }
-
-        // Import all used type names
-        auto iter = hashtable_iterator_create(&package.value.symbol_table.symbols);
-        while (hashtable_iterator_has_next(&iter))
-        {
-            String* id = *iter.key;
-            if (symbol_table_find_symbol(workload.options.extern_header.parent_module->symbol_table, id, true, symbol_reference_make_ignore(), analyser) != 0) {
-                hashtable_iterator_next(&iter);
-                continue;
-            }
-            C_Import_Symbol* import_sym = iter.value;
-            if (import_sym->type == C_Import_Symbol_Type::TYPE)
-            {
-                Datatype** signature = hashtable_find_element(&type_conversion_table, import_sym->data_type);
-                if (signature != 0)
-                {
-                    Datatype* type = *signature;
-                    if (type->type == Datatype_Type::STRUCT) {
-                        hashtable_insert_element(&compiler.extern_sources.extern_type_signatures, type, id);
-                    }
-                    symbol_table_define_symbol(
-                        analyser, workload.options.extern_header.parent_module->symbol_table, id,
-                        symbol_data_make_type(type), workload.options.extern_header.node
-                    );
-                }
-            }
-            hashtable_iterator_next(&iter);
-        }
-    }
-    else {
-        Semantic_Error error;
-        error.type = Semantic_Error_Type::EXTERN_HEADER_PARSING_FAILED;
-        error.error_node = workload.options.extern_header.node;
-        log_semantic_error(analyser, error);
-    }
-    break;
-}
-case Analysis_Workload_Type::EXTERN_FUNCTION_DECLARATION:
-{
-    Analysis_Workload_Extern_Function* work = &workload.options.extern_function;
-    Symbol_Table* symbol_table = work->parent_module->symbol_table;
-    AST_Node* extern_node = work->node;
-    Expression_Result_Type result = semantic_analyser_analyse_expression_type(
-        analyser, work->parent_module->symbol_table, extern_node->child_start
-    );
-    switch (result.type)
-    {
-    case Analysis_Result_Type::SUCCESS:
-    {
-        if (result.options.type->type != Datatype_Type::FUNCTION) {
-            Semantic_Error error;
-            error.type = Semantic_Error_Type::INVALID_TYPE_FUNCTION_IMPORT_EXPECTED_FUNCTION_POINTER;
-            error.error_node = extern_node->child_start;
-            log_semantic_error(analyser, error);
-            break;
-        }
-
-        ModTree_Function* extern_fn = new ModTree_Function;
-        extern_fn->parent_module = work->parent_module;
-        extern_fn->function_type = ModTree_Function_Type::EXTERN_FUNCTION;
-        extern_fn->options.extern_function.id = extern_node->id;
-        extern_fn->signature = result.options.type;
-        extern_fn->options.extern_function.function_signature = extern_fn->signature;
-        assert(extern_fn->signature->type == Datatype_Type::FUNCTION, "HEY");
-        dynamic_array_push_back(&extern_fn->parent_module->functions, extern_fn);
-        dynamic_array_push_back(&compiler.extern_sources.extern_functions, extern_fn->options.extern_function);
-
-        extern_fn->symbol = symbol_table_define_symbol(
-            analyser, work->parent_module->symbol_table, extern_fn->options.extern_function.id,
-            symbol_data_make_function(extern_fn), work->node
-        );
-        break;
-    }
-    case Analysis_Result_Type::DEPENDENCY:
-        found_workload_dependency = true;
-        found_dependency = result.options.dependency;
-        break;
-    case Analysis_Result_Type::ERROR_OCCURED:
-        break;
-    }
-    break;
-}
-*/
-
-OLD Code for C-Generator things:
---------------------------------
-    // Create extern function prototypes
-    for (int i = 0; i < generator->compiler->extern_sources.extern_functions.size; i++)
-    {
-        Extern_Function_Identifier* function = &generator->compiler->extern_sources.extern_functions[i];
-        Datatype_Function* function_signature = downcast<Datatype_Function>(function->function_signature);
-        auto& parameters = function_signature->parameters;
-        if (function_signature->return_type.available) {
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, function_signature->return_type.value);
-        }
-        else {
-            string_append_formated(&generator->section_function_prototypes, "void");
-        }
-        string_append_formated(&generator->section_function_prototypes, " %s(", function->id->characters);
-        for (int j = 0; j < parameters.size; j++) {
-            Datatype* param_type = parameters[j].type;
-            c_generator_output_type_reference(generator, &generator->section_function_prototypes, param_type);
-            if (j != parameters.size - 1) {
-                string_append_formated(&generator->section_function_prototypes, ", ");
-            }
-        }
-        string_append_formated(&generator->section_function_prototypes, ");\n");
-    }
-
-
-
-    // Note: All _new_ types should be created (in type_system) before adding the type_info global
-    auto& types = generator->compiler->type_system.predefined_types;
-    auto type_info_slice_type = type_system_make_slice(upcast(type_system_make_pointer(upcast(types.type_information_type))));
-    auto const_u8_slice = type_system_make_slice(type_system_make_constant(upcast((types.u8_type))));
-
-    // Insert hardcoded type-signatures (Cannot be auto-generated, as these need to be usable in hardcoded_functions.h)
-    {
-        String str = string_create("Slice_U8_");
-        hashtable_insert_element(&generator->translation_type_to_name, upcast(const_u8_slice), str);
-        String str_str = string_create("Upp_String_");
-        hashtable_insert_element(&generator->translation_type_to_name, upcast(types.string), str_str);
-    }
-
-    // Create type_info global
-    {
-        auto& type_system = compiler->type_system;
-
-        Upp_Slice<Internal_Type_Information*> type_info_slice;
-        type_info_slice.data_ptr = type_system.internal_type_infos.data;
-        type_info_slice.size = type_system.internal_type_infos.size;
-        Array<byte> bytes = array_create_static_as_bytes(&type_info_slice, 1);
-
-        auto result = constant_pool_add_constant(upcast(type_info_slice_type), bytes);
-
-        assert(result.success, "Type information must be valid/serializable");
-        assert(type_system.types.size == type_system.internal_type_infos.size, "");
-        generator->global_type_informations = result.constant;
-    }
-
-    // Create all Type_Signatures
-    for (int i = 0; i < generator->compiler->type_system.types.size; i++) {
-        Datatype* type = generator->compiler->type_system.types[i];
-        c_generator_register_type_name(generator, type);
-    }
-
-    // Handle extern data
-    String section_extern_includes = string_create_empty(2048);
-    SCOPE_EXIT(string_destroy(&section_extern_includes));
-    {
-        for (int i = 0; i < generator->compiler->extern_sources.headers_to_include.size; i++) {
-            string_append_formated(&section_extern_includes, "#include <%s>\n", generator->compiler->extern_sources.headers_to_include[i]->characters);
-        }
-        string_append_formated(&section_extern_includes, "\n");
-    }
-    for (int i = 0; i < generator->compiler->extern_sources.lib_files.size; i++) {
-        c_compiler_add_lib_file(generator->compiler->c_compiler, *generator->compiler->extern_sources.lib_files[i]);
-    }
 
 
 

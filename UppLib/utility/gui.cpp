@@ -1912,8 +1912,12 @@ GUI_Handle gui_push_focusable(GUI_Handle parent_handle, GUI_Size size_x, GUI_Siz
     return container;
 }
 
-void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm)
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm)
 {
+    Text_Edit_Input result;
+    result.enter_pressed = false;
+    result.text_changed = false;
+
     auto input = gui.input;
     auto container = gui_push_focusable(parent_handle, gui_size_make_fill(), gui_size_make_fit());
     gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
@@ -1925,17 +1929,21 @@ void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_hei
             if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
                 if (string->size > 0) {
                     string_remove_character(string, string->size - 1);
+                    result.text_changed = true;
                 }
             }
             if (msg.key_code == Key_Code::U && msg.key_down && msg.ctrl_down) {
                 string_reset(string);
+                result.text_changed = true;
             }
             else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
                 gui_node_remove_focus(container);
+                result.enter_pressed = true;
                 break;
             }
             else if (msg.character != 0) {
                 string_append_character(string, msg.character);
+                result.text_changed = true;
             }
         }
     }
@@ -1947,6 +1955,8 @@ void gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_hei
     if (gui_node_has_focus(container)) { // Add cursor
         gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
     }
+
+    return result;
 }
 
 // Returns true if the value was toggled

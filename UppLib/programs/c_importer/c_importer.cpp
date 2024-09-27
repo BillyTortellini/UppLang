@@ -409,7 +409,7 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
     printf("%s", t2_content.characters);
 }
 
-void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, Header_Parser* parser, bool print_array_members);
+void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members);
 
 C_Type_Qualifiers header_parser_parse_type_qualifiers(Header_Parser* parser)
 {
@@ -1252,7 +1252,7 @@ void c_type_qualifier_append_to_string(String* string, C_Type_Qualifiers qualifi
     }
 }
 
-void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, Header_Parser* parser, bool print_array_members)
+void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members)
 {
     string_indent(string, indentation);
     if (type->type != C_Import_Type_Type::POINTER && type->type != C_Import_Type_Type::ARRAY) {
@@ -1302,12 +1302,12 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
         break;
     }
     case C_Import_Type_Type::ARRAY: {
-        c_import_type_append_to_string(type->array.element_type, string, indentation, parser, print_array_members);
+        c_import_type_append_to_string(type->array.element_type, string, indentation, print_array_members);
         string_append_formated(string, "[%d]", type->array.array_size);
         break;
     }
     case C_Import_Type_Type::POINTER: {
-        c_import_type_append_to_string(type->pointer_child_type, string, indentation, parser, print_array_members);
+        c_import_type_append_to_string(type->pointer_child_type, string, indentation, print_array_members);
         c_type_qualifier_append_to_string(string, type->qualifiers);
         string_append_formated(string, "*");
         break;
@@ -1332,7 +1332,7 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
             for (int i = 0; i < type->structure.members.size; i++)
             {
                 C_Import_Structure_Member* member = &type->structure.members[i];
-                c_import_type_append_to_string(member->type, string, indentation + 1, parser, false);
+                c_import_type_append_to_string(member->type, string, indentation + 1, false);
                 string_append_formated(string, "%s\n",  member->id->characters);
             }
             string_indent(string, indentation);
@@ -1354,15 +1354,18 @@ void c_import_type_append_to_string(C_Import_Type* type, String* string, int ind
         break;
     }
     case C_Import_Type_Type::FUNCTION_SIGNATURE: {
-        string_append_formated(string, "Function \n");
-        c_import_type_append_to_string(type->function_signature.return_type, string, indentation + 1, parser, print_array_members);
+        string_append_formated(string, "Function ");
+        c_import_type_append_to_string(type->function_signature.return_type, string, 0, false);
         string_append_formated(string, "(");
         for (int i = 0; i < type->function_signature.parameters.size; i++) {
             C_Import_Parameter* parameter = &type->function_signature.parameters[i];
+            c_import_type_append_to_string(parameter->type, string, 0, false);
             if (parameter->has_name) {
-                string_append_formated(string, "%s: ", parameter->id->characters);
+                string_append_formated(string, " %s", parameter->id->characters);
             }
-            c_import_type_append_to_string(parameter->type, string, indentation + 2, parser, print_array_members);
+            if (i != type->function_signature.parameters.size - 1) {
+                string_append(string, ", ");
+            }
         }
         string_append_formated(string, ")");
         break;
@@ -1668,7 +1671,7 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     logg("Parsing header file: %s\n---------------------\n", file_name);
     // Run preprocessor on file_name
     {
-        String command = string_create("cl /P /EP /FI ");
+        String command = string_create("cl /P /EP /FI");
         SCOPE_EXIT(string_destroy(&command));
         string_append_formated(&command, file_name);
         string_append_formated(&command, " backend/c_importer/empty.cpp /Fibackend/c_importer/preprocessed.txt");
@@ -1685,10 +1688,6 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
         }
     }
 
-    if (!file_io_check_if_file_exists("backend/c_importer/preprocessed.txt")) {
-        return optional_make_failure<C_Import_Package>();
-    }
-
     // Load preprocessed file
     Optional<String> text_file_opt = file_io_load_text_file("backend/c_importer/preprocessed.txt");
     SCOPE_EXIT(file_io_unload_text_file(&text_file_opt));
@@ -1697,7 +1696,7 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     }
     String source_code = text_file_opt.value;
 
-    // Run code_source over file
+    // Run lexer over file
     C_Lexer lexer = c_lexer_create();
     SCOPE_EXIT(c_lexer_destroy(&lexer));
     c_lexer_lex(&lexer, &source_code, pool);
@@ -1717,9 +1716,10 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     // Get alignment and size of each file
     {
         String found_symbols = string_create_empty(4096);
-        SCOPE_EXIT(string_destroy(&found_symbols));
         String output_program = string_create_empty(4096);
+        SCOPE_EXIT(string_destroy(&found_symbols));
         SCOPE_EXIT(string_destroy(&output_program));
+
         string_append_formated(&output_program, "#include <cstdio>\n#include <%s>\n#define myoffsetof(s,m) ((size_t)&(((s*)0)->m))\n\nint main(int argc, char** argv) {\n", file_name);
         auto iter = hashtable_iterator_create(&package.symbol_table.symbols);
         int count = 0;
