@@ -25,12 +25,6 @@
 #include <cstdio>
 #include <iostream>
 
-/*
-Idea of translation:
- 2. Figure out which types need to be translated (Are used by imports)
- 3. 
-*/
-
 struct Symbol_Import
 {
     String* name;
@@ -38,13 +32,25 @@ struct Symbol_Import
     bool enabled;
 };
 
+const int LIST_COUNT = 5;
+
 struct Importer
 {
     C_Import_Package* package;
     Dynamic_Array<Symbol_Import> symbols_to_import;
     Hashtable<C_Import_Type*, String> type_translations; // Type access string in upp
     String* text; // Text that's beeing currently worked on
+    String header_filepath;
     String struct_definitions;
+
+    Dynamic_Array<String> lists[LIST_COUNT];
+    Dynamic_Array<String>* include_dirs;
+    Dynamic_Array<String>* libs;
+    Dynamic_Array<String>* sources;
+    Dynamic_Array<String>* lib_dirs;
+    Dynamic_Array<String>* defines;
+
+    int name_counter;
 };
 
 Importer importer;
@@ -56,18 +62,21 @@ void importer_initialize()
     importer.text = 0;
     importer.package = 0;
     importer.struct_definitions = string_create_empty(16);
-}
+    importer.name_counter = 0;
+    importer.header_filepath = string_create_empty(16);
 
-void importer_reset()
-{
-    dynamic_array_reset(&importer.symbols_to_import);
-    hashtable_for_each_value(&importer.type_translations, string_destroy);
-    hashtable_reset(&importer.type_translations);
-    string_reset(&importer.struct_definitions);
+    for (int i = 0; i < LIST_COUNT; i++) {
+        importer.lists[i] = dynamic_array_create<String>();
+    }
+    importer.include_dirs = &importer.lists[0];
+    importer.sources = &importer.lists[1];
+    importer.lib_dirs = &importer.lists[2];
+    importer.libs = &importer.lists[3];
+    importer.defines = &importer.lists[4];
 }
 
 // Writes to importer.text
-void output_c_import_type(C_Import_Type* type)
+void output_c_import_type(C_Import_Type* type, bool decay_array_type)
 {
     {
         String* generated = hashtable_find_element(&importer.type_translations, type);
@@ -86,11 +95,6 @@ void output_c_import_type(C_Import_Type* type)
     bool is_const = ((int)type->qualifiers & (int)C_Type_Qualifiers::CONST_QUAL) != 0;
     bool is_signed = ((int)type->qualifiers & (int)C_Type_Qualifiers::SIGNED) != 0;
     bool is_unsigned = ((int)type->qualifiers & (int)C_Type_Qualifiers::UNSIGNED) != 0;
-    if (type->type != C_Import_Type_Type::POINTER) {
-        if (is_const) {
-            string_append(&access_name, "const ");
-        }
-    }
     // Note: Not sure how to handle the other modifiers...
 
     switch (type->type)
@@ -106,63 +110,272 @@ void output_c_import_type(C_Import_Type* type)
         {
             switch (type->primitive)
             {
-            case C_Import_Primitive::CHAR:        string_append(&access_name, "i8"); break; // Not sure if this is the best way because of char/unsiged char differences
-            case C_Import_Primitive::SHORT:       string_append(&access_name, "i16"); break;
-            case C_Import_Primitive::INT:         string_append(&access_name, "int"); break;
-            case C_Import_Primitive::LONG:        string_append(&access_name, "i64"); assert(type->byte_size == 8, ""); break;
-            case C_Import_Primitive::LONG_LONG:   string_append(&access_name, "i64"); assert(type->byte_size == 8, ""); break;
             case C_Import_Primitive::FLOAT:       string_append(&access_name, "float"); break;
             case C_Import_Primitive::DOUBLE:      string_append(&access_name, "f64"); break; 
             case C_Import_Primitive::LONG_DOUBLE: string_append(&access_name, "f64"); assert(type->byte_size == 8, "");  break;
-            default: panic("");
+            default:  // Integer types
+            {
+                switch (type->byte_size)
+                {
+                case 1: string_append(&access_name, "i8"); break; // Not sure if this is the best way because of char/unsiged char differences
+                case 2: string_append(&access_name, "i16"); break;
+                case 4: string_append(&access_name, "int"); break;
+                case 8: string_append(&access_name, "i64"); break;
+                default: panic("Unknown byte size");
+                }
+                break;
+            }
             }
         }
         else
         {
             switch (type->primitive)
             {
-            case C_Import_Primitive::CHAR:        string_append(&access_name, "u8"); break; // Not sure if this is the best way because of char/unsiged char differences
-            case C_Import_Primitive::SHORT:       string_append(&access_name, "u16"); break;
-            case C_Import_Primitive::INT:         string_append(&access_name, "u32"); break;
-            case C_Import_Primitive::LONG:        string_append(&access_name, "u64"); assert(type->byte_size == 8, ""); break;
-            case C_Import_Primitive::LONG_LONG:   string_append(&access_name, "u64"); assert(type->byte_size == 8, ""); break;
             case C_Import_Primitive::FLOAT:       string_append(&access_name, "float"); break;
             case C_Import_Primitive::DOUBLE:      string_append(&access_name, "f64"); break; 
             case C_Import_Primitive::LONG_DOUBLE: string_append(&access_name, "f64"); assert(type->byte_size == 8, "");  break;
-            default: panic("");
+            default:  // Integer types
+            {
+                switch (type->byte_size)
+                {
+                case 1: string_append(&access_name, "u8"); break; // Not sure if this is the best way because of char/unsiged char differences
+                case 2: string_append(&access_name, "u16"); break;
+                case 4: string_append(&access_name, "u32"); break;
+                case 8: string_append(&access_name, "u64"); break;
+                default: panic("Unknown byte size");
+                }
+                break;
+            }
             }
         }
         break;
     }
-    case C_Import_Type_Type::POINTER: {
-        output_c_import_type(type->pointer_child_type);
-        string_append(&access_name, "*");
-        if (is_const) {
-            string_append(&access_name, "const");
+    case C_Import_Type_Type::POINTER: 
+    {
+        // Check for void pointer...
+        if (type->pointer_child_type->type == C_Import_Type_Type::PRIMITIVE) {
+            if (type->pointer_child_type->primitive == C_Import_Primitive::VOID_TYPE) {
+                string_append(&access_name, "byte_pointer");
+                break;
+            }
         }
+
+        // Check for function pointer...
+        if (type->pointer_child_type->type == C_Import_Type_Type::FUNCTION_SIGNATURE) {
+            // In Upp function pointers don't have a *
+            output_c_import_type(type->pointer_child_type, true);
+            break;
+        }
+
+        string_append(&access_name, "*");
+        output_c_import_type(type->pointer_child_type, true);
         break;
     }
     case C_Import_Type_Type::UNKNOWN_TYPE: {
+        // Note: I don't think that the size of unknown types is correctly set by importer, but we'll try anyway
+        string_append_formated(
+            &importer.struct_definitions, "extern struct Unknown_Import_Type_%d(%d, %d)\n", importer.name_counter, type->byte_size, type->alignment);
+        string_append_formated(&access_name, "Unknown_Import_Type_%d", importer.name_counter);
+        importer.name_counter += 1;
         break;
     }
-    case C_Import_Type_Type::ARRAY:
-    case C_Import_Type_Type::ENUM:
+    case C_Import_Type_Type::ARRAY: {
+        // Problem: We now translate from C to Upp, the question here becomes: When are arrays downgraded to pointers?
+        // Note: If the array size isn't given, the type is automatically degraded to pointer in C-Importer, e.g. int values[];
+        if (decay_array_type) {
+            output_c_import_type(type->pointer_child_type, true);
+            string_append(&access_name, "*");
+        }
+        else {
+            string_append_formated(&access_name, "[%d]", type->array.array_size);
+            output_c_import_type(type->array.element_type, false);
+        }
+        break;
+    }
+    case C_Import_Type_Type::ENUM: {
+        // I'm assuming that most enums have a name, and if not, we generate one
+        if (type->enumeration.is_anonymous) {
+            string_append_formated(&access_name, "Anon_Import_Enum_%d");
+            importer.name_counter += 1;
+        }
+        else {
+            string_append(&access_name, type->enumeration.id->characters);
+        }
+
+        string_append_formated(&importer.struct_definitions, "%s :: enum\n", access_name.characters);
+        for (int i = 0; i < type->enumeration.members.size; i++) {
+            auto& member = type->enumeration.members[i];
+            string_append_formated(&importer.struct_definitions, "    %s :: %d\n", member.id->characters, member.value);
+        }
+        string_append(&importer.struct_definitions, "\n");
+        break;
+    }
     case C_Import_Type_Type::FUNCTION_SIGNATURE:
+    {
+        auto& sig = type->function_signature;
+        string_append(&access_name, "(");
+        for (int i = 0; i < sig.parameters.size; i++) 
+        {
+            auto& param = sig.parameters[i];
+
+            if (((int)param.type->qualifiers & (int)C_Type_Qualifiers::CONST_QUAL) == 0) {
+                // In Upp all parameters are constant by default, but in C they are mutable by default
+                string_append(&access_name, "mut ");
+            }
+
+            if (param.has_name) {
+                string_append(&access_name, param.id->characters);
+            }
+            else {
+                string_append_formated(&access_name, "param_%d", i);
+            }
+
+            string_append(&access_name, ": ");
+            output_c_import_type(param.type, true);
+
+            if (i != sig.parameters.size - 1) {
+                string_append(&access_name, ", ");
+            }
+        }
+        string_append(&access_name, ")");
+
+        if (!(sig.return_type->type == C_Import_Type_Type::PRIMITIVE && sig.return_type->primitive == C_Import_Primitive::VOID_TYPE)) {
+            string_append(&access_name, " -> ");
+            output_c_import_type(sig.return_type, true);
+        }
+
+        break;
+    }
     case C_Import_Type_Type::STRUCTURE:
+    {
+        auto& structure = type->structure;
+        // Generate name
+        if (structure.is_anonymous) {
+            string_append_formated(&access_name, "Anon_Import_Struct_%d", importer.name_counter);
+            importer.name_counter += 1;
+        }
+        else {
+            string_append(&access_name, structure.id->characters);
+        }
+
+        // Struct can contain pointers to themselves, so we need to store the access_name before generating members
+        hashtable_insert_element(&importer.type_translations, type, access_name);
+
+        // Note: Since this function is called recursively, we cannot just append to struct_definitions here, but we have to write to intermediate string
+        String definition = string_create_empty(8);
+        SCOPE_EXIT(string_destroy(&definition));
+        string_append_formated(&definition, "%s :: %s\n", access_name.characters, structure.is_union ? "union" : "struct");
+
+        // Note: From headers we sometimes only know the forward definition, but not the content, in this case the c-generator return 0/0 as size
+        //      There is probably a better way to handle these cases
+        if (structure.contains_bitfield || (type->byte_size == 0 && type->alignment == 0)) {
+            string_append_formated(&definition, "\tpadding__: [%d]u8\n\n", type->byte_size == 0 ? 1 : type->byte_size);
+        }
+        else
+        {
+            // Note: There could be some translation problems with anonymous structs here, 
+            //       as it is not possible to create a variable of an anonymous struct in C, but in Upp it is.
+            for (int i = 0; i < structure.members.size; i++)
+            {
+                auto& member = structure.members[i];
+                string_append(&definition, "\t");
+                string_append(&definition, member.id->characters);
+                string_append(&definition, ": ");
+                importer.text = &definition;
+                output_c_import_type(member.type, false);
+                string_append(&definition, "\n");
+            }
+            string_append(&definition, "\n");
+        }
+        string_append_formated(&definition, "extern struct %s\n", access_name.characters);
+
+        string_append(&importer.struct_definitions, definition.characters);
+        string_append(backup, access_name.characters);
+        return;
+    }
     default: panic("");
     }
+
+    // Cache access name, so types don't get duplicated
+    hashtable_insert_element(&importer.type_translations, type, access_name);
+
+    // Output access name
+    string_append(backup, access_name.characters);
+    return;
 }
 
-void output_c_import_package_interface(C_Import_Package& package, String* output_filename)
+void output_import_interface(String* output_filename)
 {
+    string_reset(&importer.struct_definitions);
+    hashtable_for_each_value(&importer.type_translations, string_destroy);
+    hashtable_reset(&importer.type_translations);
+    importer.text = 0;
+    importer.name_counter = 0;
+
     String result = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&result));
 
-    // Generate all types
-    for (int i = 0; i < package.type_system.registered_types.size; i++)
+    // Append sources
     {
-        C_Import_Type* c_type = package.type_system.registered_types[i];
+        for (int i = 0; i < importer.libs->size; i++) {
+            string_append_formated(&result, "extern lib \"%s\"\n", importer.libs->data[i].characters);
+        }
+        for (int i = 0; i < importer.lib_dirs->size; i++) {
+            string_append_formated(&result, "extern lib_dir \"%s\"\n", importer.lib_dirs->data[i].characters);
+        }
+        for (int i = 0; i < importer.sources->size; i++) {
+            string_append_formated(&result, "extern source \"%s\"\n", importer.sources->data[i].characters);
+        }
+        for (int i = 0; i < importer.include_dirs->size; i++) {
+            string_append_formated(&result, "extern header_dir \"%s\"\n", importer.include_dirs->data[i].characters);
+        }
+        string_append_formated(&result, "extern header \"%s\"\n", importer.header_filepath.characters);
+        for (int i = 0; i < importer.defines->size; i++) {
+            string_append_formated(&result, "extern definition \"%s\"\n", importer.defines->data[i].characters);
+        }
+        string_append(&result, "\n");
     }
+
+    String tmp = string_create_empty(16);
+    SCOPE_EXIT(string_destroy(&tmp));
+    for (int i = 0; i < importer.symbols_to_import.size; i++)
+    {
+        auto& symbol = importer.symbols_to_import[i];
+        if (!symbol.enabled) continue;
+
+        switch (symbol.c_symbol->type)
+        {
+        case C_Import_Symbol_Type::FUNCTION: {
+            importer.text = &result;
+            string_append_formated(importer.text, "extern function %s: ", symbol.name->characters);
+            output_c_import_type(symbol.c_symbol->data_type, false);
+            string_append(importer.text, "\n");
+            break;
+        }
+        case C_Import_Symbol_Type::GLOBAL_VARIABLE: {
+            importer.text = &result;
+            string_append_formated(importer.text, "extern global %s: ", symbol.name->characters);
+            output_c_import_type(symbol.c_symbol->data_type, false);
+            string_append(importer.text, "\n");
+            break;
+        }
+        case C_Import_Symbol_Type::TYPE: {
+            // Write access to tmp
+            string_reset(&tmp);
+            importer.text = &tmp;
+            output_c_import_type(symbol.c_symbol->data_type, false);
+            break;
+        }
+        default: panic("");
+        }
+    }
+
+    // Append struct definitions
+    string_append(&result, "\n\n");
+    string_append_string(&result, &importer.struct_definitions);
+
+    // Write to file
+    file_io_write_file(output_filename->characters, array_create_static<byte>((byte*)result.characters, result.size));
 }
 
 int run_import_gui()
@@ -175,6 +388,7 @@ int run_import_gui()
     SCOPE_EXIT(rendering_core_destroy());
 
     Timer timer = timer_make();
+    importer_initialize();
 
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file("resources/fonts/glyph_atlas.atlas");
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
@@ -201,8 +415,6 @@ int run_import_gui()
 
 
     // Application Data
-    String header_filepath = string_create_empty(32);
-    SCOPE_EXIT(string_destroy(&header_filepath));
     C_Importer c_importer = c_importer_create();
     SCOPE_EXIT(c_importer_destroy(&c_importer));
     Identifier_Pool identifier_pool = identifier_pool_create();
@@ -248,20 +460,21 @@ int run_import_gui()
             auto file_dialog = gui_add_node(window, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
             gui_node_set_layout(file_dialog, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
             gui_push_text_description(file_dialog, "Header filepath: ");
-            gui_push_text_edit(file_dialog, &header_filepath);
+            gui_push_text_edit(file_dialog, &importer.header_filepath);
 
             if (gui_push_button(file_dialog, string_create_static("Open file")))
             {
                 auto result = file_io_open_file_selection_dialog();
                 if (result.available) {
-                    string_reset(&header_filepath);
-                    string_append_string(&header_filepath, &result.value);
+                    string_reset(&importer.header_filepath);
+                    string_append_string(&importer.header_filepath, &result.value);
+                    string_replace_character(&importer.header_filepath, '\\', '/');
                 }
             }
 
-            if (gui_push_button(file_dialog, string_create_static("Parse")) && header_filepath.size != 0) 
+            if (gui_push_button(file_dialog, string_create_static("Parse")) && importer.header_filepath.size != 0) 
             {
-                import_package = c_importer_import_header(&c_importer, header_filepath, &identifier_pool);
+                import_package = c_importer_import_header(&c_importer, importer.header_filepath, &identifier_pool, *importer.include_dirs, *importer.defines);
                 if (import_package.available) {
                     importer.package = &import_package.value;
                     dynamic_array_reset(&importer.symbols_to_import);
@@ -281,8 +494,102 @@ int run_import_gui()
                     }
                 }
             }
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
 
-            // Show a list of symbols or something
+            // Options
+            {
+                auto desc = gui_push_text_description(window, "Options: ");
+                if (gui_push_button(desc, string_create_static("Select all"))) {
+                    for (int i = 0; i < importer.symbols_to_import.size; i++) {
+                        importer.symbols_to_import[i].enabled = true;
+                    }
+                }
+                if (gui_push_button(desc, string_create_static("Deselect all"))) {
+                    for (int i = 0; i < importer.symbols_to_import.size; i++) {
+                        importer.symbols_to_import[i].enabled = false;
+                    }
+                }
+
+
+                static const char* last_open_name = "";
+                Dynamic_Array<String>** active_list_ptr = gui_store_primitive<Dynamic_Array<String>*>(desc, nullptr);
+                if (gui_push_button(desc, string_create_static("Include dirs"))) {
+                    *active_list_ptr = importer.include_dirs;
+                    last_open_name = "Include dirs";
+                }
+                if (gui_push_button(desc, string_create_static("Libs"))) {
+                    last_open_name = "Libs";
+                    *active_list_ptr = importer.libs;
+                }
+                if (gui_push_button(desc, string_create_static("Lib-Dirs"))) {
+                    last_open_name = "Lib-Dirs";
+                    *active_list_ptr = importer.lib_dirs;
+                }
+                if (gui_push_button(desc, string_create_static("Sources"))) {
+                    last_open_name = "Sources";
+                    *active_list_ptr = importer.sources;
+                }
+                if (gui_push_button(desc, string_create_static("Defines"))) {
+                    last_open_name = "Defines";
+                    *active_list_ptr = importer.defines;
+                }
+
+                // Edit active list
+                if (*active_list_ptr != nullptr)
+                {
+                    Dynamic_Array<String>* active_list = *active_list_ptr;
+                    auto window = gui_add_node(
+                        gui_root_handle(), gui_size_make(400, true, false, false, 0), gui_size_make(300, true, false, false, 0), gui_drawable_make_rect(vec4(1.0f), 1)
+                    );
+                    gui_node_set_position_fixed(window, vec2(0.0f), Anchor::CENTER_CENTER, true);
+                    gui_push_text(window, string_create_static(last_open_name));
+
+                    bool should_close = gui_push_button(window, string_create_static("Close"));
+
+                    // Show a text edit + a remove button for each entry
+                    for (int i = 0; i < active_list->size; i++) {
+                        String& string = active_list->data[i];
+                        auto node = gui_add_node(window, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
+                        gui_node_set_layout(node, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
+                        bool should_remove = gui_push_button(node, string_create_static("Remove"));
+
+                        if (gui_push_button(node, string_create_static("Open")))
+                        {
+                            auto result = file_io_open_file_selection_dialog();
+                            if (result.available) {
+                                string_reset(&string);
+                                string_append_string(&string, &result.value);
+                                string_replace_character(&string, '\\', '/');
+                            }
+                        }
+
+                        gui_push_text_edit(node, &string);
+
+
+                        if (should_remove) {
+                            dynamic_array_swap_remove(active_list, i);
+                            i = i - 1;
+                            continue;
+                        }
+                    }
+                    
+                    if (gui_push_button(window, string_create_static("Add Entry"))) {
+                        String new_string = string_create_empty(8);
+                        dynamic_array_push_back(active_list, new_string);
+                    }
+
+                    if (should_close) {
+                        *active_list_ptr = nullptr;
+                    }
+                }
+            }
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
+            gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
+
+            // Import section
             gui_push_text(window, string_create_static("Available Imports:"));
             gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
             gui_add_node(window, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
@@ -307,7 +614,7 @@ int run_import_gui()
             auto horizontal = gui_add_node(window, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
             gui_node_set_layout(horizontal, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MAX);
             auto import_area = gui_push_scroll_area(horizontal, gui_size_make_fill(), gui_size_make_fill());
-            auto selected_area = gui_add_node(horizontal, gui_size_make_preferred(200), gui_size_make_fill(), gui_drawable_make_rect(vec4(0.8f)));
+            auto selected_area = gui_push_scroll_area(horizontal, gui_size_make_preferred(200), gui_size_make_fill());
             gui_push_text(selected_area, string_create_static("Selected: "));
             gui_add_node(selected_area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
             gui_add_node(selected_area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
@@ -371,6 +678,7 @@ int run_import_gui()
             if (gui_push_button(bottom, string_create_static("Create file")) && import_package.available && out_filename->size > 0) 
             {
                 printf("Generating output\n");
+                output_import_interface(out_filename);
             }
         }
 

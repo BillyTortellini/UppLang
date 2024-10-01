@@ -3459,7 +3459,7 @@ void analysis_workload_entry(void* userdata)
             Workload_Definition* definition_workload = nullptr;
             switch (extern_import->type)
             {
-            case AST::Extern_Type::STRUCT:
+            case AST::Extern_Type::STRUCT: 
             case AST::Extern_Type::GLOBAL:
             case AST::Extern_Type::FUNCTION: 
             {
@@ -3468,8 +3468,7 @@ void analysis_workload_entry(void* userdata)
                 {
                     String* id;
                     if (extern_import->type == AST::Extern_Type::STRUCT) {
-                        id = extern_import->options.structure.id;
-                        break;
+                        id = 0;
                     }
                     else if (extern_import->type == AST::Extern_Type::FUNCTION) {
                         id = extern_import->options.function.id;
@@ -3480,9 +3479,11 @@ void analysis_workload_entry(void* userdata)
                     else {
                         panic("");
                     }
-                    symbol = symbol_table_define_symbol(
-                        symbol_table, id, Symbol_Type::DEFINITION_UNFINISHED, upcast(extern_import), Symbol_Access_Level::GLOBAL
-                    );
+                    if (id != 0) {
+                        symbol = symbol_table_define_symbol(
+                            symbol_table, id, Symbol_Type::DEFINITION_UNFINISHED, upcast(extern_import), Symbol_Access_Level::GLOBAL
+                        );
+                    }
                 }
 
                 // Create workload
@@ -3496,42 +3497,27 @@ void analysis_workload_entry(void* userdata)
                 if (context_change != 0) {
                     analysis_workload_add_dependency_internal(upcast(definition_workload), upcast(context_change));
                 }
-                symbol->options.definition_workload = definition_workload;
+                if (symbol != 0) {
+                    symbol->options.definition_workload = definition_workload;
+                }
                 break;
             }
-            case AST::Extern_Type::SOURCE_FILE: 
-            case AST::Extern_Type::LIBRARY:
-            case AST::Extern_Type::LIBRARY_DIRECTORY: 
+            case AST::Extern_Type::COMPILER_SETTING: 
             {
-                Dynamic_Array<String*>* string_array;
-                String* id;
-                if (extern_import->type == AST::Extern_Type::SOURCE_FILE) {
-                    id = extern_import->options.source_path;
-                    string_array = &compiler.extern_sources.source_files_to_compile;
-                }
-                else if (extern_import->type == AST::Extern_Type::LIBRARY) {
-                    id = extern_import->options.lib_path;
-                    string_array = &compiler.extern_sources.lib_files;
-                }
-                else if (extern_import->type == AST::Extern_Type::LIBRARY_DIRECTORY) {
-                    id = extern_import->options.lib_dir_path;
-                    string_array = &compiler.extern_sources.lib_include_diretories;
-                }
-                else {
-                    panic("");
-                }
+                Dynamic_Array<String*>& values = compiler.extern_sources.compiler_settings[(int) extern_import->options.setting.type];
+                String* id = extern_import->options.setting.value;
 
                 // Check if unique
                 bool found = false;
-                for (int i = 0; i < string_array->size; i++) {
-                    if ((*string_array)[i] == id) {
+                for (int i = 0; i < values.size; i++) {
+                    if (values[i] == id) {
                         found = true;
                         break;
                     }
                 }
 
                 if (!found) {
-                    dynamic_array_push_back(string_array, id);
+                    dynamic_array_push_back(&values, id);
                 }
                 break;
             }
@@ -3850,65 +3836,17 @@ void analysis_workload_entry(void* userdata)
             }
             case AST::Extern_Type::STRUCT:
             {
-                int size = 1;
-                int alignment = 1;
-
-                // Calculate size and alignment
-                {
-                    semantic_analyser_analyse_expression_value(
-                        import->options.structure.size_expression, expression_context_make_specific_type(upcast(types.i32_type))
-                    );
-                    auto result = expression_calculate_comptime_value(import->options.structure.size_expression, "Size of extern struct must be comptime");
-                    if (result.available) {
-                        size = upp_constant_to_value<int>(result.value);
-                    }
-
-                    semantic_analyser_analyse_expression_value(
-                        import->options.structure.alignment_expression, expression_context_make_specific_type(upcast(types.i32_type))
-                    );
-                    result = expression_calculate_comptime_value(import->options.structure.alignment_expression, "Alignment of extern struct must be comptime");
-                    if (result.available) {
-                        alignment = upp_constant_to_value<int>(result.value);
-                    }
+                Datatype* type = semantic_analyser_analyse_expression_type(import->options.struct_type_expr);
+                if (datatype_is_unknown(type)) {
+                    break;
                 }
 
-                // Check if this extern struct was already generated...
-                auto& extern_structs = compiler.extern_sources.extern_structs;
-                {
-                    bool found = false;
-                    for (int i = 0; i < extern_structs.size; i++) {
-                        auto& str = extern_structs[i];
-                        if (str.alignment == alignment && str.size == size && str.name == import->options.structure.id) {
-                            symbol->type = Symbol_Type::TYPE;
-                            symbol->options.type = upcast(str.datatype);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (found) {
-                        break;
-                    }
+                if (type->type != Datatype_Type::STRUCT) {
+                    log_semantic_error("extern struct must be followed by a struct type", import->options.struct_type_expr);
+                    break;
                 }
 
-                Datatype_Struct* result_type = type_system_make_struct_empty(AST::Structure_Type::STRUCT, import->options.structure.id);
-                type_system_finish_struct(result_type);
-
-                // Alter size and alignment afterwards
-                result_type->base.memory_info.value.size = size;
-                result_type->base.memory_info.value.alignment = alignment;
-                compiler.type_system.internal_type_infos[result_type->base.type_handle.index]->size = size;
-                compiler.type_system.internal_type_infos[result_type->base.type_handle.index]->alignment = alignment;
-
-                symbol->type = Symbol_Type::TYPE;
-                symbol->options.type = upcast(result_type);
-
-                Extern_Struct_Type extern_type;
-                extern_type.alignment = alignment;
-                extern_type.size = size;
-                extern_type.datatype = result_type;
-                extern_type.name = symbol->id;
-                dynamic_array_push_back(&extern_structs, extern_type);
-
+                downcast<Datatype_Struct>(type)->is_extern_struct = true;
                 break;
             }
             default: panic("The other options shouldn't generate a definition workload");
@@ -7922,7 +7860,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 context.expected_type.type->type == Datatype_Type::PRIMITIVE && context.expected_type.cast_mode == Cast_Mode::IMPLICIT)
             {
                 auto primitive = downcast<Datatype_Primitive>(context.expected_type.type);
-                if (primitive->primitive_type == Primitive_Type::INTEGER || primitive->primitive_type == Primitive_Type::FLOAT) {
+                if (primitive->primitive_type != Primitive_Type::BOOLEAN) {
                     operand_context = context;
                 }
             }
@@ -11246,6 +11184,7 @@ void semantic_analyser_reset()
             result->options.type = type;
             return result;
         };
+        symbols.type_c_char = define_type_symbol("c_char", upcast(types.c_char_type));
         symbols.type_bool = define_type_symbol("bool", upcast(types.bool_type));
         symbols.type_int = define_type_symbol("int", upcast(types.i32_type));
         symbols.type_float = define_type_symbol("float", upcast(types.f32_type));

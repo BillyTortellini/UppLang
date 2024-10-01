@@ -29,6 +29,18 @@ enum class Timing_Task
 
 const char* timing_task_to_string(Timing_Task task);
 
+enum class Extern_Compiler_Setting
+{
+    LIBRARY,           // .lib filename
+    LIBRARY_DIRECTORY, // Search path for lib files
+    HEADER_FILE,       // Header file to include (should contain extern function + extern struct definitions)
+    INCLUDE_DIRECTORY, // Directory for C-Compiler to search for header files
+    SOURCE_FILE,       // .cpp file for compiler
+    DEFINITION,        // Definitions to use before any header includes (e.g. #define _DEBUG)
+
+    MAX_ENUM_VALUE
+};
+
 enum class Hardcoded_Type
 {
     TYPE_OF,
@@ -100,23 +112,11 @@ struct Code_Source
 };
 
 
-struct Extern_Struct_Type
-{
-    Datatype_Struct* datatype;
-    String* name;
-    int alignment;
-    int size;
-};
-
 // Extern Sources
 struct Extern_Sources
 {
     Dynamic_Array<ModTree_Function*> extern_functions;
-    Dynamic_Array<Extern_Struct_Type> extern_structs;
-
-    Dynamic_Array<String*> source_files_to_compile;
-    Dynamic_Array<String*> lib_files;
-    Dynamic_Array<String*> lib_include_diretories;
+    Dynamic_Array<String*> compiler_settings[(int)Extern_Compiler_Setting::MAX_ENUM_VALUE];
 };
 
 Extern_Sources extern_sources_create();

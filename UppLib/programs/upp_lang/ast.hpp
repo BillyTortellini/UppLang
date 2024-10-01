@@ -228,9 +228,7 @@ namespace AST
         FUNCTION,
         GLOBAL,
         STRUCT,
-        LIBRARY,
-        LIBRARY_DIRECTORY, // Search path for lib files
-        SOURCE_FILE,
+        COMPILER_SETTING,
         INVALID, // If there was an error during parsing
     };
 
@@ -247,14 +245,11 @@ namespace AST
                 String* id;
                 Expression* type_expr;
             } global;
+            AST::Expression* struct_type_expr; // This should normally be a path_lookup to an existing struct.
             struct {
-                String* id;
-                Expression* size_expression;
-                Expression* alignment_expression;
-            } structure;
-            String* lib_path;
-            String* lib_dir_path;
-            String* source_path;
+                Extern_Compiler_Setting type;
+                String* value;
+            } setting;
         } options;
     };
 

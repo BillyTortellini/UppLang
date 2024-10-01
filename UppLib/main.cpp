@@ -10,8 +10,8 @@ int main(int argc, char** argv)
 {
     //render_rework();
     //bachelor_thesis();
-    // upp_lang_main();
-    return run_import_gui();
+    // return run_import_gui();
+    upp_lang_main();
     //proc_city_main();
     return 0;
 }

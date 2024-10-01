@@ -57,6 +57,9 @@ struct Predefined_IDs
     String* lib;
     String* lib_dir;
     String* source;
+    String* header;
+    String* header_dir;
+    String* definition;
 
     // Hardcoded functions
     String* type_of;

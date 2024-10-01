@@ -736,6 +736,7 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 struct Predefined_Symbols
 {
     // Symbols for primitive types
+    Symbol* type_c_char;
     Symbol* type_bool;
     Symbol* type_int;
     Symbol* type_float;

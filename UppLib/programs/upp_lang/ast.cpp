@@ -264,16 +264,13 @@ namespace AST
                 break;
             }
             case Extern_Type::STRUCT: {
-                FILL(import->options.structure.alignment_expression);
-                FILL(import->options.structure.size_expression);
+                FILL(import->options.struct_type_expr);
                 break;
             }
-            case Extern_Type::INVALID: {
-                FILL(import->options.structure.alignment_expression);
-                FILL(import->options.structure.size_expression);
+            case Extern_Type::COMPILER_SETTING:
+            case Extern_Type::INVALID:
                 break;
-            }
-            default: break;
+            default: panic("");
             }
             break;
         }
@@ -596,11 +593,13 @@ namespace AST
                 break;
             }
             case Extern_Type::STRUCT: {
-                FILL(import->options.structure.alignment_expression);
-                FILL(import->options.structure.size_expression);
+                FILL(import->options.struct_type_expr);
                 break;
             }
-            default: break;
+            case Extern_Type::COMPILER_SETTING:
+            case Extern_Type::INVALID:
+                break;
+            default: panic("");
             }
             break;
         }
@@ -923,17 +922,22 @@ namespace AST
                 string_append_formated(str, "global %s", import->options.global.id->characters);
                 break;
             case Extern_Type::STRUCT:
-                string_append_formated(str, "struct %s", import->options.structure.id->characters);
+                string_append_formated(str, "struct");
                 break;
-            case Extern_Type::SOURCE_FILE:
-                string_append_formated(str, "source %s", import->options.source_path->characters);
+            case Extern_Type::COMPILER_SETTING: {
+                switch (import->options.setting.type)
+                {
+                case Extern_Compiler_Setting::DEFINITION: string_append(str, "Macro/Definition");
+                case Extern_Compiler_Setting::HEADER_FILE: string_append(str, "Header file");
+                case Extern_Compiler_Setting::LIBRARY: string_append(str, "Library");
+                case Extern_Compiler_Setting::LIBRARY_DIRECTORY: string_append(str, "Lib-Directory");
+                case Extern_Compiler_Setting::INCLUDE_DIRECTORY: string_append(str, "Include-Directory");
+                case Extern_Compiler_Setting::SOURCE_FILE: string_append(str, "Source-File");
+                default: panic("");
+                }
+                string_append_formated(str, " %s", import->options.setting.value->characters);
                 break;
-            case Extern_Type::LIBRARY:
-                string_append_formated(str, "lib %s", import->options.lib_path->characters);
-                break;
-            case Extern_Type::LIBRARY_DIRECTORY:
-                string_append_formated(str, "lib_dir %s", import->options.lib_dir_path->characters);
-                break;
+            }
             case Extern_Type::INVALID:
                 string_append_formated(str, "Invalid");
                 break;

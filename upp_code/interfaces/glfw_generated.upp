@@ -1,0 +1,161 @@
+extern lib "P:/Martin/Projects/UppLib/external_libraries/binaries/glfw3d.lib"
+
+extern function glfwSetWindowUserPointer: (mut window: *GLFWwindow, mut pointer: byte_pointer)
+extern function glfwFocusWindow: (mut window: *GLFWwindow)
+extern function glfwInitAllocator: (mut allocator: *GLFWallocator)
+extern function glfwGetTime: () -> f64
+extern function glfwSetWindowIcon: (mut window: *GLFWwindow, mut count: int, mut images: *GLFWimage)
+extern function glfwGetMouseButton: (mut window: *GLFWwindow, mut attrib: int) -> int
+extern function glfwWindowHint: (mut jid: int, mut event: int)
+extern function glfwGetJoystickAxes: (mut jid: int, mut count: *int) -> *float
+extern function __report_gsfailure: (mut _StackCookie: u64)
+extern function glfwGetGamepadName: (mut jid: int) -> *i8
+extern function glfwPlatformSupported: (mut _Value: int) -> int
+extern function glfwHideWindow: (mut window: *GLFWwindow)
+extern function glfwGetWindowTitle: (mut window: *GLFWwindow) -> *i8
+extern function glfwGetJoystickButtons: (mut jid: int, mut count: *int) -> *u8
+extern function glfwSetWindowSize: (mut window: *GLFWwindow, mut xpos: int, mut ypos: int)
+extern function glfwGetTimerFrequency: () -> u64
+extern function glfwGetWindowOpacity: (mut window: *GLFWwindow) -> float
+extern function _errno: () -> *int
+extern function glfwSetCursor: (mut window: *GLFWwindow, mut cursor: *GLFWcursor)
+extern function _invalid_parameter_noinfo_noreturn: ()
+extern function glfwGetWindowSize: (mut window: *GLFWwindow, mut xpos: *int, mut ypos: *int)
+extern function glfwDefaultWindowHints: ()
+extern function _set_errno: (mut _Value: int) -> int
+extern function glfwGetMonitorContentScale: (mut monitor: *GLFWmonitor, mut xscale: *float, mut yscale: *float)
+extern function glfwGetCurrentContext: () -> *GLFWwindow
+extern function glfwGetWindowPos: (mut window: *GLFWwindow, mut xpos: *int, mut ypos: *int)
+extern function glfwTerminate: ()
+extern function glfwMakeContextCurrent: (mut window: *GLFWwindow)
+extern function __security_init_cookie: ()
+extern function glfwIconifyWindow: (mut window: *GLFWwindow)
+extern function glfwWindowShouldClose: (mut window: *GLFWwindow) -> int
+extern function glfwMaximizeWindow: (mut window: *GLFWwindow)
+extern global __security_cookie: u64
+extern function glfwGetInputMode: (mut window: *GLFWwindow, mut attrib: int) -> int
+extern function glfwInitHint: (mut jid: int, mut event: int)
+extern function glfwSetGamma: (mut monitor: *GLFWmonitor, mut gamma: float)
+extern function glfwSetWindowPos: (mut window: *GLFWwindow, mut xpos: int, mut ypos: int)
+extern function glfwGetFramebufferSize: (mut window: *GLFWwindow, mut xpos: *int, mut ypos: *int)
+extern function glfwGetWindowContentScale: (mut window: *GLFWwindow, mut xscale: *float, mut yscale: *float)
+extern function glfwGetJoystickName: (mut jid: int) -> *i8
+extern function glfwGetVideoMode: (mut monitor: *GLFWmonitor) -> *GLFWvidmode
+extern function glfwGetVersionString: () -> *i8
+extern function glfwSetWindowOpacity: (mut window: *GLFWwindow, mut opacity: float)
+extern function glfwSetTime: (mut timeout: f64)
+extern function glfwSetWindowShouldClose: (mut window: *GLFWwindow, mut focused: int)
+extern function glfwSetGammaRamp: (mut monitor: *GLFWmonitor, mut ramp: *GLFWgammaramp)
+extern function glfwPostEmptyEvent: ()
+extern function glfwGetCursorPos: (mut window: *GLFWwindow, mut xpos: *f64, mut ypos: *f64)
+extern function glfwSetWindowAspectRatio: (mut window: *GLFWwindow, mut xpos: int, mut ypos: int)
+extern function glfwJoystickIsGamepad: (mut _Value: int) -> int
+extern function glfwWaitEventsTimeout: (mut timeout: f64)
+extern function _invalid_parameter_noinfo: ()
+extern function glfwGetWindowMonitor: (mut window: *GLFWwindow) -> *GLFWmonitor
+extern function glfwGetPrimaryMonitor: () -> *GLFWmonitor
+extern function glfwShowWindow: (mut window: *GLFWwindow)
+extern function glfwSetWindowAttrib: (mut window: *GLFWwindow, mut xpos: int, mut ypos: int)
+extern function glfwVulkanSupported: () -> int
+extern function glfwGetMonitorPhysicalSize: (mut monitor: *GLFWmonitor, mut xpos: *int, mut ypos: *int)
+extern function glfwGetKeyScancode: (mut _Value: int) -> int
+extern function glfwSetJoystickUserPointer: (mut jid: int, mut pointer: byte_pointer)
+extern function glfwRawMouseMotionSupported: () -> int
+extern function glfwGetError: (mut description: **i8) -> int
+extern function glfwGetJoystickUserPointer: (mut jid: int) -> byte_pointer
+extern function glfwCreateWindow: (mut width: int, mut height: int, mut title: *i8, mut monitor: *GLFWmonitor, mut share: *GLFWwindow) -> *GLFWwindow
+extern function glfwGetPlatform: () -> int
+extern function glfwSetClipboardString: (mut window: *GLFWwindow, mut title: *i8)
+extern function glfwSetCursorPos: (mut window: *GLFWwindow, mut xpos: f64, mut ypos: f64)
+extern function glfwGetTimerValue: () -> u64
+extern function glfwSetWindowSizeLimits: (mut window: *GLFWwindow, mut key: int, mut scancode: int, mut action: int, mut mods: int)
+extern function glfwGetWindowAttrib: (mut window: *GLFWwindow, mut attrib: int) -> int
+extern function glfwGetJoystickGUID: (mut jid: int) -> *i8
+extern function glfwGetMonitorWorkarea: (mut monitor: *GLFWmonitor, mut xpos: *int, mut ypos: *int, mut width: *int, mut height: *int)
+extern function glfwGetGamepadState: (mut jid: int, mut state: *GLFWgamepadstate) -> int
+extern function glfwSetInputMode: (mut window: *GLFWwindow, mut xpos: int, mut ypos: int)
+extern function glfwJoystickPresent: (mut _Value: int) -> int
+extern function glfwGetVideoModes: (mut monitor: *GLFWmonitor, mut count: *int) -> *GLFWvidmode
+extern function glfwRequestWindowAttention: (mut window: *GLFWwindow)
+extern function glfwSwapBuffers: (mut window: *GLFWwindow)
+extern function glfwGetKeyName: (mut key: int, mut scancode: int) -> *i8
+extern function glfwSetWindowTitle: (mut window: *GLFWwindow, mut title: *i8)
+extern function glfwSetMonitorUserPointer: (mut monitor: *GLFWmonitor, mut pointer: byte_pointer)
+extern function glfwGetMonitorName: (mut monitor: *GLFWmonitor) -> *i8
+extern function glfwDestroyCursor: (mut cursor: *GLFWcursor)
+extern function glfwExtensionSupported: (mut string: *i8) -> int
+extern function _get_errno: (mut _Value: *int) -> int
+extern function glfwSetWindowMonitor: (mut window: *GLFWwindow, mut monitor: *GLFWmonitor, mut xpos: int, mut ypos: int, mut width: int, mut height: int, mut refreshRate: int)
+extern function glfwGetMonitors: (mut count: *int) -> **GLFWmonitor
+extern function glfwGetWindowFrameSize: (mut window: *GLFWwindow, mut left: *int, mut top: *int, mut right: *int, mut bottom: *int)
+extern function glfwGetWindowUserPointer: (mut window: *GLFWwindow) -> byte_pointer
+extern function glfwGetClipboardString: (mut window: *GLFWwindow) -> *i8
+extern function glfwGetGammaRamp: (mut monitor: *GLFWmonitor) -> *GLFWgammaramp
+extern function glfwGetVersion: (mut major: *int, mut minor: *int, mut rev: *int)
+extern function glfwInit: () -> int
+extern function glfwRestoreWindow: (mut window: *GLFWwindow)
+extern function glfwGetMonitorPos: (mut monitor: *GLFWmonitor, mut xpos: *int, mut ypos: *int)
+extern function glfwWaitEvents: ()
+extern function glfwCreateCursor: (mut image: *GLFWimage, mut xhot: int, mut yhot: int) -> *GLFWcursor
+extern function __security_check_cookie: (mut _StackCookie: u64)
+extern function _invoke_watson: (mut _Expression: *i16, mut _FunctionName: *i16, mut _FileName: *i16, mut _LineNo: u32, mut _Reserved: u64)
+extern function glfwUpdateGamepadMappings: (mut string: *i8) -> int
+extern function glfwDestroyWindow: (mut window: *GLFWwindow)
+extern function glfwGetJoystickHats: (mut jid: int, mut count: *int) -> *u8
+extern function glfwPollEvents: ()
+extern function glfwWindowHintString: (mut error_code: int, mut description: *i8)
+extern function glfwGetMonitorUserPointer: (mut monitor: *GLFWmonitor) -> byte_pointer
+extern function glfwGetKey: (mut window: *GLFWwindow, mut attrib: int) -> int
+extern function glfwCreateStandardCursor: (mut shape: int) -> *GLFWcursor
+extern function glfwSwapInterval: (mut interval: int)
+extern function glfwGetRequiredInstanceExtensions: (mut count: *u32) -> **i8
+
+
+extern struct GLFWwindow(1, 1)
+GLFWallocator :: struct
+    allocate: *(mut size: u64, mut user: byte_pointer) -> byte_pointer
+    reallocate: *(mut block: byte_pointer, mut size: u64, mut user: byte_pointer) -> byte_pointer
+    deallocate: *(mut block: byte_pointer, mut user: byte_pointer)
+    user: byte_pointer
+
+extern struct GLFWmonitor(1, 1)
+GLFWgammaramp :: struct
+    red: *u16
+    green: *u16
+    blue: *u16
+    size: u32
+
+GLFWimage :: struct
+    width: int
+    height: int
+    pixels: *u8
+
+extern struct GLFWcursor(1, 1)
+_Mbstatet :: struct
+    _Wchar: u32
+    _Byte: u16
+    _State: u16
+
+GLFWvidmode :: struct
+    width: int
+    height: int
+    redBits: int
+    greenBits: int
+    blueBits: int
+    refreshRate: int
+
+__crt_locale_data_public :: struct
+    _locale_pctype: *i16
+    _locale_mb_cur_max: int
+    _locale_lc_codepage: u32
+
+GLFWgamepadstate :: struct
+    buttons: [15]u8
+    axes: [6]float
+
+extern struct __crt_locale_data(1, 1)
+extern struct __crt_multibyte_data(1, 1)
+__crt_locale_pointers :: struct
+    locinfo: *__crt_locale_data
+    mbcinfo: *__crt_multibyte_data
+

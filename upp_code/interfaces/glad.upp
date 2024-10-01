@@ -1,0 +1,21 @@
+
+// Note: Debug lib
+extern lib"gladd.lib"
+extern lib_dir"P:/Martin/Projects/UppLib/external_libraries/binaries"
+
+extern header_dir"P:/Martin/Projects/UppLib/external_libraries/includes"
+extern header"glad/gl.h"
+
+// Windows Dependencies of glfw
+extern lib"user32.lib"
+extern lib"kernel32.lib"
+extern lib"gdi32.lib"
+extern lib"shell32.lib"
+
+GL_COLOR_BUFFER_BIT::0x00004000
+
+// Functions
+extern function gladLoadGL:(load:(name:*const c_char) -> ())->int
+extern global glad_glClearColor:(mut red:float,mut green:float,mut blue:float,mut alpha:float)
+extern global glad_glClear:(mut texture:u32)
+

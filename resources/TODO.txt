@@ -1,17 +1,58 @@
 
 TODO:
 -----
- * Output Upp-Interface file for the selected header
- * Check that this works
- * Implement selecting symbols/functions with fuzzy-find search bar
+ * C-Importer: Function pointers aren't actually pointers to functions in upp...
+ * Make glad + Opengl calls work...
+    - Set clear color + clear
+    - Simple opengl window with triangle?
+
+DONE:
+ * Extern globals should also not be translated by c-backend
+ * C-Backend must not translate extern functions and extern structs
+ * C-Compiler must include the new compiler options
+ * Import_Gui must use new extern struct syntax + store include dirs and header + definitions
+
+Problem:
+ * Name Mangling
+ * Extern structs and 
+
+Problem:
+With name mangling, I'm not allowed to change any types in headers...
+This is problematic for:
+ * Structs --> As I'm changing struct names...
+ * Char vs u8* --> There is a difference between char, unsigned char and signed char...
+
+extern definition GLFW_NO_HEADERS --> Should this be compiler enforced or in cpp file?
+extern include_dir "some directory"
+extern header "some_header.hpp" <-- Header to include during compilation
+extern struct Node
+    x: int 
+    y: int
+    z: *Something
+extern struct Something // Empty structs should be possible, then we only need forward definition
+extern function add: (asfd: type, fasdf: type)
+
+Alternatives:
+-------------
+Maybe getting the types so correct that name mangling works, but this would probably suck a lot of ass.
+
+How to deal with char signed-ness?
+    Maybe I'll just add a Primitive_Type c_char, which can be cast from/to other integers
+
+
+
+TODO:
+-----
+ * Test extern structs with adder lib
+ * GLFW + Glad running
+ * Sizeof_program.obj now appears in main folder...
 
 Problems:
- * Include directories need to be specified for preprocessor to work on advanced headers (Also maybe #defines)
- * Big files seem to lagg the gui? --> E.g. windows.h
- * C-Macros will not work, which may be annoying for OpenGL
- * Adding source, libs and lib_dirs may be a little bit wacky, no?
- * What about libraries with multiple headers --> Here I probably want to include all...
+ * C-Macros will not work, which may be annoying for OpenGL (Maybe have extern macros in headers?)
 
+Done:
+ * Button to select all symbols
+ * Implement selecting symbols/functions with fuzzy-find search bar
 
 C-Importer:
 -----------
@@ -99,6 +140,7 @@ Code improvements:
     * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
     * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
+    * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
 
 
 

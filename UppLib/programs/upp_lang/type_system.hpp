@@ -129,6 +129,7 @@ struct Datatype_Primitive
     // Note: Size of primitive (e.g. 16 or 32 bit) is determined by type size, e.g. base.size
     Primitive_Type primitive_type;
     bool is_signed; // Only valid for integers
+    bool is_c_char; // Required for C-Generation as C differentiates between signed, unsigned and normal char.
 };
 
 struct Datatype_Array
@@ -201,6 +202,7 @@ struct Datatype_Struct
 
     Workload_Structure_Body* workload; // May be null if it's a predefined struct
     Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays, constant types or struct_subtypes
+    bool is_extern_struct; // C-Generator needs to know if the type is already defined in a header
 };
 
 struct Datatype_Enum
@@ -417,6 +419,7 @@ struct Type_Deduplication
 struct Predefined_Types
 {
     // Primitive types
+    Datatype_Primitive* c_char_type;
     Datatype_Primitive* bool_type;
     Datatype_Primitive* i8_type;
     Datatype_Primitive* i16_type;

@@ -1,0 +1,113 @@
+
+extern lib_dir"P:/Martin/Projects/UppLib/external_libraries/binaries"
+extern header_dir"P:/Martin/Projects/UppLib/external_libraries/includes"
+
+// Note: Debug lib
+extern lib"glfw3d.lib"
+
+// Windows Dependencies of glfw
+extern lib"user32.lib"
+extern lib"kernel32.lib"
+extern lib"gdi32.lib"
+extern lib"shell32.lib"
+
+extern header"GLFW/glfw3.h"
+extern definition"GLFW_INCLUDE_NONE"
+
+extern function glfwGetProcAddress:(procname:*const c_char)->()
+extern function glfwSetWindowUserPointer:(mut window:*GLFWwindow,mut pointer:byte_pointer)
+extern function glfwFocusWindow:(mut window:*GLFWwindow)
+extern function glfwGetTime:()->f64
+extern function glfwGetMouseButton:(mut window:*GLFWwindow,mut attrib:int)->int
+extern function glfwWindowHint:(mut jid:int,mut event:int)
+extern function glfwPlatformSupported:(mut value:int)->int
+extern function glfwHideWindow:(mut window:*GLFWwindow)
+extern function glfwGetWindowTitle:(mut window:*GLFWwindow)->*c_char
+extern function glfwSetWindowSize:(mut window:*GLFWwindow,mut xpos:int,mut ypos:int)
+extern function glfwGetTimerFrequency:()->u64
+extern function glfwGetWindowOpacity:(mut window:*GLFWwindow)->float
+extern function glfwGetWindowSize:(mut window:*GLFWwindow,mut xpos:*int,mut ypos:*int)
+extern function glfwDefaultWindowHints:()
+extern function glfwGetCurrentContext:()->*GLFWwindow
+extern function glfwGetWindowPos:(mut window:*GLFWwindow,mut xpos:*int,mut ypos:*int)
+extern function glfwTerminate:()
+extern function glfwMakeContextCurrent:(mut window:*GLFWwindow)
+extern function glfwIconifyWindow:(mut window:*GLFWwindow)
+extern function glfwWindowShouldClose:(mut window:*GLFWwindow)->int
+extern function glfwMaximizeWindow:(mut window:*GLFWwindow)
+extern function glfwGetInputMode:(mut window:*GLFWwindow,mut attrib:int)->int
+extern function glfwInitHint:(mut jid:int,mut event:int)
+extern function glfwSetWindowPos:(mut window:*GLFWwindow,mut xpos:int,mut ypos:int)
+extern function glfwGetFramebufferSize:(mut window:*GLFWwindow,mut xpos:*int,mut ypos:*int)
+extern function glfwGetVideoMode:(mut monitor:*GLFWmonitor)->*GLFWvidmode
+extern function glfwGetVersionString:()->*c_char
+extern function glfwSetTime:(mut timeout:f64)
+extern function glfwSetWindowShouldClose:(mut window:*GLFWwindow,mut focused:int)
+extern function glfwPostEmptyEvent:()
+extern function glfwGetCursorPos:(mut window:*GLFWwindow,mut xpos:*f64,mut ypos:*f64)
+extern function glfwSetWindowAspectRatio:(mut window:*GLFWwindow,mut xpos:int,mut ypos:int)
+extern function glfwWaitEventsTimeout:(mut timeout:f64)
+extern function glfwGetWindowMonitor:(mut window:*GLFWwindow)->*GLFWmonitor
+extern function glfwGetPrimaryMonitor:()->*GLFWmonitor
+extern function glfwShowWindow:(mut window:*GLFWwindow)
+extern function glfwSetWindowAttrib:(mut window:*GLFWwindow,mut xpos:int,mut ypos:int)
+extern function glfwGetMonitorPhysicalSize:(mut monitor:*GLFWmonitor,mut xpos:*int,mut ypos:*int)
+extern function glfwGetKeyScancode:(mut Value:int)->int
+extern function glfwRawMouseMotionSupported:()->int
+extern function glfwGetError:(mut description:**c_char)->int
+extern function glfwCreateWindow:(mut width:int,mut height:int,mut title:*c_char,mut monitor:*GLFWmonitor,mut share:*GLFWwindow)->*GLFWwindow
+extern function glfwGetPlatform:()->int
+extern function glfwSetClipboardString:(mut window:*GLFWwindow,mut title:*i8)
+extern function glfwSetCursorPos:(mut window:*GLFWwindow,mut xpos:f64,mut ypos:f64)
+extern function glfwGetTimerValue:()->u64
+extern function glfwSetWindowSizeLimits:(mut window:*GLFWwindow,mut key:int,mut scancode:int,mut action:int,mut mods:int)
+extern function glfwGetWindowAttrib:(mut window:*GLFWwindow,mut attrib:int)->int
+extern function glfwSetInputMode:(mut window:*GLFWwindow,mut xpos:int,mut ypos:int)
+extern function glfwGetVideoModes:(mut monitor:*GLFWmonitor,mut count:*int)->*GLFWvidmode
+extern function glfwRequestWindowAttention:(mut window:*GLFWwindow)
+extern function glfwSwapBuffers:(mut window:*GLFWwindow)
+extern function glfwGetKeyName:(mut key:int,mut scancode:int)->*c_char
+extern function glfwSetWindowTitle:(mut window:*GLFWwindow,mut title:*c_char)
+extern function glfwSetMonitorUserPointer:(mut monitor:*GLFWmonitor,mut pointer:byte_pointer)
+extern function glfwGetMonitorName:(mut monitor:*GLFWmonitor)->*c_char
+extern function glfwExtensionSupported:(mut string:*c_char)->int
+extern function glfwSetWindowMonitor:(mut window:*GLFWwindow,mut monitor:*GLFWmonitor,mut xpos:int,mut ypos:int,mut width:int,mut height:int,mut refreshRate:int)
+extern function glfwGetMonitors:(mut count:*int)->**GLFWmonitor
+extern function glfwGetWindowUserPointer:(mut window:*GLFWwindow)->byte_pointer
+extern function glfwGetClipboardString:(mut window:*GLFWwindow)->*c_char
+extern function glfwGetVersion:(mut major:*int,mut minor:*int,mut rev:*int)
+extern function glfwInit:()->int
+extern function glfwRestoreWindow:(mut window:*GLFWwindow)
+extern function glfwGetMonitorPos:(mut monitor:*GLFWmonitor,mut xpos:*int,mut ypos:*int)
+extern function glfwWaitEvents:()
+extern function glfwDestroyWindow:(mut window:*GLFWwindow)
+extern function glfwPollEvents:()
+extern function glfwWindowHintString:(mut error_code:int,mut description:*c_char)
+extern function glfwGetMonitorUserPointer:(mut monitor:*GLFWmonitor)->byte_pointer
+extern function glfwGetKey:(mut window:*GLFWwindow,mut attrib:int)->int
+extern function glfwSwapInterval:(mut interval:int)
+extern function glfwGetRequiredInstanceExtensions:(mut count:*u32)->**i8
+
+GLFWwindow::struct
+	padding:u8
+
+GLFWmonitor::struct
+	padding:u8
+
+GLFWvidmode::struct
+	width:int
+	height:int
+	redBits:int
+	greenBits:int
+	blueBits:int
+	refreshRate:int
+	
+extern struct GLFWwindow
+extern struct GLFWmonitor
+extern struct GLFWvidmode
+
+
+
+
+
+

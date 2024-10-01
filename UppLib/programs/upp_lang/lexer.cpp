@@ -150,6 +150,30 @@ Parenthesis char_to_parenthesis(char c)
     return parenthesis;
 }
 
+int char_get_hexadecimal_value(char c) // Returns -1 if not hexadecimal
+{
+    if (char_is_digit(c)) {
+        return (c - '0');
+    }
+    switch (c)
+    {
+    case 'A': 
+    case 'a': return 10;
+    case 'B': 
+    case 'b': return 11;
+    case 'C': 
+    case 'c': return 12;
+    case 'D': 
+    case 'd': return 13;
+    case 'E': 
+    case 'e': return 14;
+    case 'F': 
+    case 'f': return 15;
+    default: return -1;
+    }
+    return -1;
+}
+
 bool char_is_space_critical(char c) {
     return (c >= 'a' && c <= 'z') ||
         (c >= 'A' && c <= 'Z') ||
@@ -359,18 +383,43 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
 
             // We require char_is_valid_identifier because token stringify would put a space between 5a, which cannot be deleted
             bool is_valid_number = true;
+            bool is_hexadecimal = false;
             bool is_float_val = false;
             i64 int_val = 0;
             double float_val = 0;
+
             // Pre comma digits
             while (index < text.size)
             {
-                if (char_is_valid_identifier(text[index]) && !char_is_digit(text[index])) {
+                char c = text[index];
+                if (c == 'x' && int_val == 0 && !is_hexadecimal) {
+                    is_hexadecimal = true;
+                    index += 1;
+                    continue;
+                }
+
+                // Hexadecimal handling
+                if (is_hexadecimal) {
+                    int value = char_get_hexadecimal_value(c);
+                    if (value == -1) {
+                        if (char_is_valid_identifier(c)) {
+                            is_valid_number = false;
+                        }
+                        break;
+                    }
+                    int_val = int_val * 16;
+                    int_val += value;
+                    index += 1;
+                    continue;
+                }
+
+                // Decimal handling
+                if (char_is_valid_identifier(c) && !char_is_digit(c)) {
                     is_valid_number = false;
                 }
-                else if (char_is_digit(text[index])) {
+                else if (char_is_digit(c)) {
                     int_val = int_val * 10;
-                    int_val += (text[index] - '0');
+                    int_val += (c - '0');
                 }
                 else {
                     break;
@@ -378,7 +427,7 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
                 index += 1;
             }
 
-            if (string_test_char(text, index, '.') && is_valid_number)
+            if (string_test_char(text, index, '.') && is_valid_number && !is_hexadecimal)
             {
                 index += 1;
                 // After comma digits

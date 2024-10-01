@@ -719,13 +719,28 @@ namespace Parser
                     result->type = Extern_Type::GLOBAL;
                 }
                 else if (id == ids.lib) {
-                    result->type = Extern_Type::LIBRARY;
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::LIBRARY;
                 }
                 else if (id == ids.lib_dir) {
-                    result->type = Extern_Type::LIBRARY_DIRECTORY;
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::LIBRARY_DIRECTORY;
                 }
                 else if (id == ids.source) {
-                    result->type = Extern_Type::SOURCE_FILE;
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::SOURCE_FILE;
+                }
+                else if (id == ids.header) {
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::HEADER_FILE;
+                }
+                else if (id == ids.header_dir) {
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::INCLUDE_DIRECTORY;
+                }
+                else if (id == ids.definition) {
+                    result->type = Extern_Type::COMPILER_SETTING;
+                    result->options.setting.type = Extern_Compiler_Setting::DEFINITION;
                 }
                 else {
                     log_error_range_offset("Identifier after extern must be one of: function, global, source, lib, lib_dir", 1);
@@ -776,41 +791,10 @@ namespace Parser
                 break;
             }
             case Extern_Type::STRUCT: {
-                if (!test_token(Token_Type::IDENTIFIER)) {
-                    log_error_range_offset("Expected identifier", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                result->options.structure.id = get_token()->options.identifier;
-                advance_token();
-
-                if (!test_parenthesis('(')) {
-                    log_error_range_offset("Expected parenthesis '('", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                advance_token();
-
-                result->options.structure.size_expression = parse_expression_or_error_expr(upcast(result));
-
-                if (!test_operator(Operator::COMMA)) {
-                    log_error_range_offset("Expected comma ','", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                advance_token();
-
-                result->options.structure.alignment_expression = parse_expression_or_error_expr(upcast(result));
-
-                if (!test_parenthesis(')')) {
-                    log_error_range_offset("Expected parenthesis ')'", 1);
-                }
-                advance_token();
+                result->options.struct_type_expr = parse_expression_or_error_expr(upcast(result));
                 break;
             }
-            case Extern_Type::SOURCE_FILE:
-            case Extern_Type::LIBRARY:
-            case Extern_Type::LIBRARY_DIRECTORY: 
+            case Extern_Type::COMPILER_SETTING:
             {
                 if (!test_token(Token_Type::LITERAL)) {
                     log_error_range_offset("Expected literal", 1);
@@ -824,19 +808,7 @@ namespace Parser
                 }
                 String* path = get_token()->options.literal_value.options.string;
                 advance_token();
-
-                if (result->type == Extern_Type::SOURCE_FILE) {
-                    result->options.source_path = path;
-                }
-                else if (result->type == Extern_Type::LIBRARY) {
-                    result->options.lib_dir_path = path;
-                }
-                else if (result->type == Extern_Type::LIBRARY_DIRECTORY) {
-                    result->options.lib_dir_path = path;
-                }
-                else {
-                    panic("");
-                }
+                result->options.setting.value = path;
                 break;
             }
             default: panic("");

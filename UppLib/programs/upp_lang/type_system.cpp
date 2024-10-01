@@ -812,6 +812,7 @@ Datatype_Primitive* type_system_make_primitive(Primitive_Type type, int size, bo
     Datatype_Primitive* result = new Datatype_Primitive;
     result->base = datatype_make_simple_base(Datatype_Type::PRIMITIVE, size, size);
     result->is_signed = is_signed;
+    result->is_c_char = false;
     result->primitive_type = type;
 
     auto& internal_info = type_system_register_type(upcast(result))->options.primitive;
@@ -1218,6 +1219,7 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
 
     result->workload = workload;
     result->struct_type = struct_type;
+    result->is_extern_struct = false;
 
     result->content.name = name;
     result->content.tag_member.id = 0;
@@ -1650,6 +1652,8 @@ void type_system_add_predefined_types(Type_System* system)
     auto& ids = compiler.predefined_ids;
     Predefined_Types* types = &system->predefined_types;
 
+    types->c_char_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, false);
+    types->c_char_type->is_c_char = true;
     types->bool_type = type_system_make_primitive(Primitive_Type::BOOLEAN, 1, false);
     types->i8_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, true);
     types->i16_type = type_system_make_primitive(Primitive_Type::INTEGER, 2, true);

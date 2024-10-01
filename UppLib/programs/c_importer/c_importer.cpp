@@ -1666,15 +1666,31 @@ Print_Destination print_destination_make(bool is_sizeof, bool is_alignof, bool i
     return dest;
 }
 
-Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identifier_Pool* pool)
+Optional<C_Import_Package> c_importer_parse_header(
+    const char* file_name, Identifier_Pool* pool, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
+)
 {
     logg("Parsing header file: %s\n---------------------\n", file_name);
     // Run preprocessor on file_name
     {
-        String command = string_create("cl /P /EP /FI");
-        SCOPE_EXIT(string_destroy(&command));
-        string_append_formated(&command, file_name);
+        String command = string_create("cl /P /EP");
         string_append_formated(&command, " backend/c_importer/empty.cpp /Fibackend/c_importer/preprocessed.txt");
+        SCOPE_EXIT(string_destroy(&command));
+        for (int i = 0; i < include_dirs.size; i++) {
+            String str = include_dirs[i];
+            if (str.size > 0 && str.characters[0] == '\"') {
+                string_append_formated(&command, " /I%s", str.characters);
+            }
+            else {
+                string_append_formated(&command, " /I\"%s\"", str.characters);
+            }
+        }
+        for (int i = 0; i < defines.size; i++) {
+            String str = defines[i];
+            string_append_formated(&command, " /D%s", str.characters);
+        }
+        string_append(&command, " /FI");
+        string_append_formated(&command, file_name);
         logg("Compiling with %s\n", command.characters);
 
         Optional<Process_Result> result = process_start(command);
@@ -1781,14 +1797,35 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
         file_io_write_file("backend/c_importer/sizeof_program.cpp", array_create_static((byte*)output_program.characters, output_program.size));
         file_io_write_file("backend/c_importer/found_symbols.txt", array_create_static((byte*)found_symbols.characters, found_symbols.size));
 
-        Optional<Process_Result> sizeof_comp = process_start(string_create_static("cl backend/c_importer/sizeof_program.cpp /link /OUT:backend/c_importer/sizeof_program.exe"));
+        
+        String command = string_create("cl");
+        string_append(&command, " backend/c_importer/sizeof_program.cpp");
+        SCOPE_EXIT(string_destroy(&command));
+        for (int i = 0; i < include_dirs.size; i++) {
+            String str = include_dirs[i];
+            if (str.size > 0 && str.characters[0] == '\"') {
+                string_append_formated(&command, " /I %s", str.characters);
+            }
+            else {
+                string_append_formated(&command, " /I \"%s\"", str.characters);
+            }
+        }
+        for (int i = 0; i < defines.size; i++) {
+            String str = defines[i];
+            string_append_formated(&command, " /D%s", str.characters);
+        }
+        string_append(&command, " /link /OUT:backend/c_importer/sizeof_program.exe");
+        logg("Size-of Programm Command: %s\n", command.characters);
+        Optional<Process_Result> sizeof_comp = process_start(command);
         SCOPE_EXIT(process_result_destroy(&sizeof_comp));
+
         if (!sizeof_comp.available) {
             c_import_package_destroy(&package);
             return optional_make_failure<C_Import_Package>();
         }
         if (sizeof_comp.value.exit_code != 0) {
-            logg("Sizeof program compilation failed, output:\n%s\n", sizeof_comp.value.output.characters);
+            logg("Sizeof program compilation failed\n");
+            logg("C-Compiler output:\n%s\n", sizeof_comp.value.output.characters);
             c_import_package_destroy(&package);
             return optional_make_failure<C_Import_Package>();
         }
@@ -1844,17 +1881,21 @@ Optional<C_Import_Package> c_importer_parse_header(const char* file_name, Identi
     return optional_make_success(package);
 }
 
-Optional<C_Import_Package> c_importer_import_header(C_Importer* importer, String header_name, Identifier_Pool* pool)
+Optional<C_Import_Package> c_importer_import_header(
+    C_Importer* importer, String header_name, Identifier_Pool* identifier_pool, 
+    Dynamic_Array<String> include_directories, Dynamic_Array<String> defines
+)
 {
-    importer->identifier_pool = pool;
-    // Look in cache for file
-    auto cache_elem = hashtable_find_element(&importer->cache, header_name);
-    if (cache_elem != 0) {
-        return optional_make_success(*cache_elem);
-    }
+    importer->identifier_pool = identifier_pool;
+
+    // Look in cache for file (Not supported anymore because the include-gui doesn't need it)
+    // auto cache_elem = hashtable_find_element(&importer->cache, header_name);
+    // if (cache_elem != 0) {
+    //     return optional_make_success(*cache_elem);
+    // }
 
     // Parse header if not in cache
-    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, importer->identifier_pool);
+    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, importer->identifier_pool, include_directories, defines);
     if (parsed_package.available)
     {
         String cache_file_name = string_create(header_name.characters);
@@ -1906,174 +1947,5 @@ void c_importer_destroy(C_Importer* importer)
 
     hashtable_for_each(&importer->cache, c_package_cache_destroy);
     hashtable_destroy(&importer->cache);
-}
-
-Datatype* import_c_type(C_Import_Type* type, Hashtable<C_Import_Type*, Datatype*>* type_conversions)
-{
-    /*
-    auto& type_system = semantic_analyser.compiler->type_system;
-    {
-        Datatype** converted = hashtable_find_element(type_conversions, type);
-        if (converted != 0) {
-            return *converted;
-        }
-    }
-    Type_Signature signature;
-    signature.size = type->byte_size;
-    signature.alignment = type->alignment;
-    Datatype* result_type = 0;
-    switch (type->type)
-    {
-    case C_Import_Type_Type::ARRAY: {
-        signature.type = Datatype_Type::ARRAY;
-        signature.options.array.element_count = type->array.array_size;
-        signature.options.array.base_type = import_c_type(type->array.base_type, type_conversions);
-        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
-        break;
-    }
-    case C_Import_Type_Type::POINTER: {
-        signature.type = Datatype_Type::POINTER;
-        signature.options.pointer_child = import_c_type(type->array.base_type, type_conversions);
-        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
-        break;
-    }
-    case C_Import_Type_Type::PRIMITIVE: {
-        switch (type->primitive)
-        {
-        case C_Import_Primitive::VOID_TYPE:
-            result_type = type_system.void_type;
-            break;
-        case C_Import_Primitive::BOOL:
-            result_type = type_system.bool_type;
-            break;
-        case C_Import_Primitive::CHAR: {
-            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-                result_type = type_system.u8_type;
-            }
-            else {
-                result_type = type_system.i8_type;
-            }
-            break;
-        }
-        case C_Import_Primitive::DOUBLE:
-            result_type = type_system.f64_type;
-            break;
-        case C_Import_Primitive::FLOAT:
-            result_type = type_system.f32_type;
-            break;
-        case C_Import_Primitive::INT:
-            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-                result_type = type_system.u32_type;
-            }
-            else {
-                result_type = type_system.i32_type;
-            }
-            break;
-        case C_Import_Primitive::LONG:
-            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-                result_type = type_system.u32_type;
-            }
-            else {
-                result_type = type_system.i32_type;
-            }
-            break;
-        case C_Import_Primitive::LONG_DOUBLE:
-            result_type = type_system.f64_type;
-            break;
-        case C_Import_Primitive::LONG_LONG:
-            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-                result_type = type_system.u64_type;
-            }
-            else {
-                result_type = type_system.i64_type;
-            }
-            break;
-        case C_Import_Primitive::SHORT:
-            if (((u8)type->qualifiers & (u8)C_Type_Qualifiers::UNSIGNED) != 0) {
-                result_type = type_system.u16_type;
-            }
-            else {
-                result_type = type_system.i16_type;
-            }
-            break;
-        default: panic("WHAT");
-        }
-        break;
-    }
-    case C_Import_Type_Type::ENUM:
-    {
-        String* enum_id;
-        if (type->enumeration.is_anonymous) {
-            enum_id = identifier_pool_add(&semantic_analyser.compiler->identifier_pool, string_create_static("__c_anon_enum"));
-        }
-        else {
-            enum_id = type->enumeration.id;
-        }
-        result_type = type_system_make_enum_empty(&type_system, enum_id);
-        result_type->size = type->byte_size;
-        result_type->alignment = type->alignment;
-        for (int i = 0; i < type->enumeration.members.size; i++) {
-            Enum_Member new_member;
-            new_member.id = type->enumeration.members[i].id;
-            new_member.value = type->enumeration.members[i].value;
-            dynamic_array_push_back(&result_type->options.enum_type.members, new_member);
-        }
-        break;
-    }
-    case C_Import_Type_Type::ERROR_TYPE: {
-        signature.type = Datatype_Type::ARRAY;
-        signature.options.array.base_type = type_system.u8_type;
-        signature.options.array.element_count = type->byte_size;
-        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
-        break;
-    }
-    case C_Import_Type_Type::STRUCTURE:
-    {
-        signature.type = Datatype_Type::STRUCT;
-        //if (type->structure.is_anonymous) {
-            //signature.options.structure.id = identifier_pool_add(&analyser->compiler->identifier_pool, string_create_static("__c_anon"));
-        //}
-        //else {
-            //signature.options.structure.id = type->structure.id;
-        //}
-        signature.options.structure.symbol = 0;
-        signature.options.structure.struct_type = Structure_Type::C_UNION;
-        signature.options.structure.members = dynamic_array_create<Struct_Member>(type->structure.members.size);
-        if (!type->structure.contains_bitfield)
-        {
-            for (int i = 0; i < type->structure.members.size; i++) {
-                C_Import_Structure_Member* mem = &type->structure.members[i];
-                Struct_Member member;
-                member.id = mem->id;
-                member.offset = mem->offset;
-                member.type = import_c_type(mem->type, type_conversions);
-                dynamic_array_push_back(&signature.options.structure.members, member);
-            }
-        }
-        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
-        break;
-    }
-    case C_Import_Type_Type::FUNCTION_SIGNATURE:
-    {
-        signature.type = Datatype_Type::FUNCTION;
-        signature.options.function.return_type = import_c_type(type->function_signature.return_type, type_conversions);
-        signature.options.function.parameter_types = dynamic_array_create<Datatype*>(type->function_signature.parameters.size);
-        for (int i = 0; i < type->function_signature.parameters.size; i++) {
-            dynamic_array_push_back(
-                &signature.options.function.parameter_types,
-                import_c_type(type->function_signature.parameters[i].type, type_conversions)
-            );
-        }
-        result_type = type_system_deduplicate_and_create_internal_info_for_type(&type_system, signature);
-        break;
-    }
-    default: panic("WHAT");
-    }
-
-    assert(result_type != 0, "HEY");
-    hashtable_insert_element(type_conversions, type, result_type);
-    return result_type;
-    */
-    return 0;
 }
 

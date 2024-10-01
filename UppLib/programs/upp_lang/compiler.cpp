@@ -227,6 +227,9 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.lib =                add_id("lib");
             ids.lib_dir =            add_id("lib_dir");
             ids.source =             add_id("source");
+            ids.header =             add_id("header");
+            ids.header_dir =         add_id("header_dir");
+            ids.definition =         add_id("definition");
 
             ids.cast_mode =          add_id("Cast_Mode");
             ids.cast_mode_none =     add_id("NONE");

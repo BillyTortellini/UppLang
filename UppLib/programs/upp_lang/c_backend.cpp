@@ -98,36 +98,55 @@ void c_compiler_compile()
     String command = string_create_empty(128);
     SCOPE_EXIT(string_destroy(&command));
     {
-        const char* compiler_options = "/EHsc /Zi /Fdbackend/build /Fobackend/build/ /std:c++latest"; // /std:c++latest is used for designated struct inititalizers
+        // Note: MDd should be replaced between debug and optimized build
+        const char* compiler_options = "/MDd /EHsc /Zi /Fdbackend/build /Fobackend/build/ /std:c++latest"; // /std:c++latest is used for designated struct inititalizers
         const char* linker_options = "/OUT:backend/build/main.exe /PDB:backend/build/main.pdb";
         string_append_formated(&command, "\"cl\" ");
         string_append_formated(&command, compiler_options);
-        string_append_formated(&command, " ");
 
-        // Add source files
-        string_append(&command, "backend/src/main.cpp backend/hardcoded/hardcoded_functions.cpp");
-        for (int i = 0; i < compiler.extern_sources.source_files_to_compile.size; i++) {
-            String* file_path = compiler.extern_sources.source_files_to_compile[i];
-            string_append_formated(&command, " \"%s\"", file_path->characters);
+        // Defines
+        Dynamic_Array<String*> defines = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::DEFINITION];
+        for (int i = 0; i < defines.size; i++) {
+            string_append_formated(&command, " /D \"%s\"", defines[i]->characters);
         }
-        string_append_formated(&command, " ");
 
-        string_append_formated(&command, "/link ");
-        string_append_formated(&command, linker_options);
-
-        for (int i = 0; i < compiler.extern_sources.lib_include_diretories.size; i++) {
-            String* lib_dir = compiler.extern_sources.lib_include_diretories[i];
-            string_append_formated(&command, " /LIBPATH:\"%s\"", lib_dir->characters);
+        // Include directories
+        Dynamic_Array<String*> includes = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::INCLUDE_DIRECTORY];
+        for (int i = 0; i < includes.size; i++) {
+            string_append_formated(&command, " /I \"%s\"", includes[i]->characters);
         }
-        string_append_formated(&command, " ");
 
-        for (int i = 0; i < compiler.extern_sources.lib_files.size; i++) {
-            String* lib_path = compiler.extern_sources.lib_files[i];
-            string_append_formated(&command, " \"%s\"", lib_path->characters);
+        // Forced includes (Header files)
+        Dynamic_Array<String*> header_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::HEADER_FILE];
+        for (int i = 0; i < header_files.size; i++) {
+            string_append_formated(&command, " /FI \"%s\"", header_files[i]->characters);
         }
-        string_append_formated(&command, " ");
+
+        // Source files
+        string_append(&command, " backend/src/main.cpp backend/hardcoded/hardcoded_functions.cpp");
+        Dynamic_Array<String*> source_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::SOURCE_FILE];
+        for (int i = 0; i < source_files.size; i++) {
+            string_append_formated(&command, " \"%s\"", source_files[i]->characters);
+        }
+
+        // LINKER
+        string_append_formated(&command, " /link %s", linker_options);
+
+        // Library directories
+        auto lib_dirs = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY_DIRECTORY];
+        for (int i = 0; i < lib_dirs.size; i++) {
+            string_append_formated(&command, " /LIBPATH:\"%s\"", lib_dirs[i]->characters);
+        }
+
+        // Libraries 
+        Dynamic_Array<String*> lib_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY];
+        for (int i = 0; i < lib_files.size; i++) {
+            string_append_formated(&command, " \"%s\"", lib_files[i]->characters);
+        }
+
     }
 
+    logg("Compile command:\n%s\n", command.characters);
     Optional<Process_Result> result = process_start(command);
     SCOPE_EXIT(process_result_destroy(&result));
     if (result.available) {
@@ -490,6 +509,11 @@ void c_generator_output_type_reference(Datatype* type)
     {
         auto primitive = downcast<Datatype_Primitive>(type);
         int type_size = type->memory_info.value.size;
+        if (primitive->is_c_char) {
+            string_append(&access_name, "char");
+            break;
+        }
+
         switch (primitive->primitive_type)
         {
         case Primitive_Type::BOOLEAN:
@@ -613,6 +637,13 @@ void c_generator_output_type_reference(Datatype* type)
     {
         auto structure = downcast<Datatype_Struct>(type);
         auto& members = structure->content.members;
+
+        // Extern structs should be accessible by name alone (And forward definition/definition should be in an included header)
+        if (structure->is_extern_struct) {
+            string_append_formated(&access_name, structure->content.name->characters);
+            break;
+        }
+
         if (structure->struct_type == AST::Structure_Type::STRUCT) {
             string_append_formated(&access_name, "%s_Struct_%d", structure->content.name->characters, gen.name_counter);
         }
@@ -862,18 +893,17 @@ void c_generator_generate()
         }
     }
 
-    // Create globals Definitions
+    // Create globals Translations
     {
         gen.text = &gen.sections[(int)Generator_Section::GLOBALS];
         auto& globals = compiler.semantic_analyser->program->globals;
-        for (int i = 0; i < globals.size; i++) {
+        for (int i = 0; i < globals.size; i++) 
+        {
             auto global = globals[i];
             auto type = global->type;
 
             if (global->is_extern) {
-                string_append(gen.text, "extern ");
-                c_generator_output_type_reference(type);
-                string_append_formated(gen.text, " %s;\n", global->symbol->id->characters);
+                // Extern globals should be defined in included headers
                 continue;
             }
 
@@ -921,10 +951,11 @@ void c_generator_generate()
         {
             auto function = program->functions[i];
 
-            // Special case for entry-function
+            // Special case for entry-function (Is not called, does not require forward definition)
             if (function->origin == 0) {
                 continue;
             }
+            assert(function->origin->function_type != ModTree_Function_Type::EXTERN, "Extern functions should not be generated by ir_code");
 
             String access_name = string_create_empty(16);
             string_append(&access_name, function->origin->name->characters);
@@ -942,26 +973,20 @@ void c_generator_generate()
             string_append(gen.text, ";\n");
         }
 
-        // Generate extern function prototypes (Aren't included in ir functions)
+        // Generate extern function translations (Aren't included in ir functions)
         for (int i = 0; i < compiler.extern_sources.extern_functions.size; i++) 
         {
             auto extern_function = compiler.extern_sources.extern_functions[i];
+            assert(extern_function->function_type == ModTree_Function_Type::EXTERN, "Should be extern");
 
             String access_name = string_create_empty(16);
             string_append(&access_name, extern_function->name->characters);
-            gen.name_counter++;
 
             C_Translation translation;
             translation.type = C_Translation_Type::FUNCTION;
             translation.options.function = extern_function;
             hashtable_insert_element(&gen.translations, translation, access_name);
-
-            // Generate prototype
-            gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
-            append_function_signature(&access_name, extern_function->signature);
-            string_append(gen.text, ";\n");
         }
-
     }
 
     // Create functions
@@ -1483,7 +1508,25 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 // Note: Maybe we need something smarter in the future to handle multi-line strings 
                 Upp_String string = *(Upp_String*)base_memory;
                 string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
-                string_append(gen.text, (const char*)string.bytes.data);
+
+                // Note: I need to escape escape sequences, so this is what i'm doing now...
+                String escaped = string_create_empty(16);
+                SCOPE_EXIT(string_destroy(&escaped));
+                for (int i = 0; i < string.bytes.size; i++) {
+                    char c = (char) string.bytes.data[i];
+                    switch (c)
+                    {
+                    case '\n': string_append(&escaped, "\\n"); break;
+                    case '\r': string_append(&escaped, "\\r"); break;
+                    case '\t': string_append(&escaped, "\\t"); break;
+                    case '\\': string_append(&escaped, "\\\\"); break;
+                    case '\"': string_append(&escaped, "\\\""); break;
+                    case '\'': string_append(&escaped, "\\\'"); break;
+                    default: string_append_character(&escaped, c); break;
+                    }
+                }
+
+                string_append(gen.text, escaped.characters);
                 string_append_formated(gen.text, "\", .size = %d} }", string.bytes.size);
                 break;
             }

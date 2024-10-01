@@ -1299,12 +1299,12 @@ void gui_update_and_render(Render_Pass* render_pass)
     }
 
     // Print UI if requested
-    if (input->key_pressed[(int)Key_Code::P]) {
-        String str = string_create_empty(1);
-        SCOPE_EXIT(string_destroy(&str));
-        gui_append_to_string(&str, 0, 0);
-        logg("%s\n\n", str.characters);
-    }
+    // if (input->key_pressed[(int)Key_Code::P]) {
+    //     String str = string_create_empty(1);
+    //     SCOPE_EXIT(string_destroy(&str));
+    //     gui_append_to_string(&str, 0, 0);
+    //     logg("%s\n\n", str.characters);
+    // }
 }
 
 
