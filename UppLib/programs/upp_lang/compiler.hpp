@@ -93,10 +93,10 @@ struct Predefined_IDs
 struct Compiler
 {
     // Compiler internals
-    Dynamic_Array<Code_Source*> code_sources;
-    Code_Source* main_source;
+    Dynamic_Array<Program_Source*> program_sources;
+    Program_Source* main_source;
     bool generate_code; // This indicates if we want to compile (E.g. user pressed CTRL-B or F5)
-    Hashtable<String, Code_Source*> cached_imports;
+    Hashtable<String, Program_Source*> cached_imports;
 
     // Helpers
     Identifier_Pool identifier_pool;
@@ -136,12 +136,11 @@ Compiler* compiler_initialize(Timer* timer);
 void compiler_destroy();
 
 void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file); // Takes ownership of project file
-void compiler_compile_incremental(Code_History* history, Compile_Type compile_type);
 Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node); // Returns 0 if file couldn't be read
 Exit_Code compiler_execute();
 
 bool compiler_errors_occured();
 Source_Code* compiler_find_ast_source_code(AST::Node* base);
-Code_Source* compiler_find_ast_code_source(AST::Node* base);
+Program_Source* compiler_find_ast_program_source(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
 void compiler_run_testcases(Timer* timer, bool force_run);

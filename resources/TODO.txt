@@ -1,77 +1,138 @@
 
+
+Bugs with new editor:
+ * Syntax color is a applied for a little too long...
+ * Test that parsing/error recovery still works
+
+
+Currently on indentation:
+ * Module
+ * Code-Block Statements/Definitions
+ * Struct/Enum Members
+ * Switch cases
+
+Currently with Seperators:
+ * Parameters
+ * Arguments
+ * Struct-Inititalzer
+ * Array-Initializer
+ * Definition Symbols?
+
+Stuff inbetween (Other, non-seperator symbols)
+ * Binary operations
+ * Pre-Post Expressions
+ * Path-Lookup
+
+
+To differentiate items in a list, seperators are usually used
+    foo a, b, 100, 12
+Nested/Hierarchical lists need to have parenthesis to differentiate the levels
+    foo (a, b, bar(100, 12))
+    foo a, b, bar 100, 12
+
+Now, Syntax for lists in most programming languages can look like:
+ * Parenthesis and Seperators, e.g. foo(a, b, c), function { x = 15; y = 10; z = 100*3; }
+    Parenthesis types: (), {}, [], maybe <>
+    Seperators types: ',' ';' '.' ' '
+ * Pros of indentation and new-line:
+    + More WYSIWYG, gives visual feedback about the structure
+    + Parenthesis Influence is kept minimal
+    + No seperators at end of line --> Less to worry about while typing
+    - Compact structures are more complicated, e.g. lambdas or even "for i" loops
+
+
+How do I usually format code when I do some things?
+x := foo(
+    a, b, c, 100
+    bar(100, 12, 200)
+    12, 12, 4
+)
+    
+Node.{
+    a = 100
+    b = 15
+    z = 10
+}
+
+x := 100 + 10 +
+    5 + 20
+else if SOMETHING == 100 ||
+   SOMETHING == 200 ||
+   SOMETHING == 300 ||
+   SOMETHING == 400
+    
+Some principles:
+    * When a Parenthesis is openend, it should also be closed (For vim motions and just for sanity in other editors)
+    * Some structures require parenthesis (Function-Calls and initializers)
+    * If parenthesis are used, then there must be nothing else on the line,
+        and items start on the next (indented) line, and a single line may contain multiple items seperated by the seperator
+        But lines should not be seperated by seperator? (Otherwise we would expect another item on this line)
+    * After a seperator, I expect another list-item (This means that the last item is never terminated with ',' or ';')
+    * Binops should be continuable over lines (e.g. if some token is expected, this should be possible)
+
+So how far can we search for tokens? When can we search over to the next line?
+
+
+What this means for the code:
+    * Function-Calls and the like
+    
+
+
+
+
+
+Currently Implementing:
+-----------------------
+Parsing:
+ * Is Incremental Parsing currently necessary to be implemented?
+ * We don't have block-structure in history anymore, what does this mean for the parser, do we need to know this?
+ * Maybe re-learn how incremental parsing previously worked...
+
+
+
+Indices:
+ * Text-Index
+ * Token-Index
+ * Line-Index --> Number...
+
+Idea:
+ * Line-Index
+
+
+
+Multi-Line Comments in source code:
+Problem: Lexing is usually done line by line, but block-comments can be multiline.
+Idea:
+    * Every line stores informations about being a comment or not.
+    * On line inserts/deletes, the follow lines need to be rechecked if they are comments
+    * On tokenize, we also need to check if we removed a comment or not.
+
+
 TODO:
 -----
- * C-Importer: Function pointers aren't actually pointers to functions in upp...
- * Make glad + Opengl calls work...
-    - Set clear color + clear
-    - Simple opengl window with triangle?
-
-DONE:
- * Extern globals should also not be translated by c-backend
- * C-Backend must not translate extern functions and extern structs
- * C-Compiler must include the new compiler options
- * Import_Gui must use new extern struct syntax + store include dirs and header + definitions
-
-Problem:
- * Name Mangling
- * Extern structs and 
-
-Problem:
-With name mangling, I'm not allowed to change any types in headers...
-This is problematic for:
- * Structs --> As I'm changing struct names...
- * Char vs u8* --> There is a difference between char, unsigned char and signed char...
-
-extern definition GLFW_NO_HEADERS --> Should this be compiler enforced or in cpp file?
-extern include_dir "some directory"
-extern header "some_header.hpp" <-- Header to include during compilation
-extern struct Node
-    x: int 
-    y: int
-    z: *Something
-extern struct Something // Empty structs should be possible, then we only need forward definition
-extern function add: (asfd: type, fasdf: type)
-
-Alternatives:
--------------
-Maybe getting the types so correct that name mangling works, but this would probably suck a lot of ass.
-
-How to deal with char signed-ness?
-    Maybe I'll just add a Primitive_Type c_char, which can be cast from/to other integers
+ * Parser-Update with new structure
+ * Editor update with new structure
+ * Test multi-line comments
+ * Test bundle structure...
+ * Test code-history
+ * Test parsing
+ * New block parsing at some point
+ * Maybe re-implement incremental parsing
 
 
 
-TODO:
------
- * Test extern structs with adder lib
- * GLFW + Glad running
- * Sizeof_program.obj now appears in main folder...
+Editor-Update:
+--------------
+Pros/Cons of Block-Hierarchy
+ - Hierarchy makes history complicated (e.g. block fusion and other weird stuff)
+ - Token/Line/Block Index + Ranges also cause confusion + crashes (e.g. end of lines)
+ - Block Index isn't a real index, but rather a handle
+ + Updating indices (Parser) is fast, as only line-indices in block need to be adjusted
+ + Incremental parsing can use the block-structure/history pretty well
 
-Problems:
- * C-Macros will not work, which may be annoying for OpenGL (Maybe have extern macros in headers?)
-
-Done:
- * Button to select all symbols
- * Implement selecting symbols/functions with fuzzy-find search bar
-
-C-Importer:
------------
-What I expect from C-Importer:
- * Input: Header-File + source (Either source file, lib or dll)
-    - The C-Importer uses msvc to run the Preprocessor on the Headers
-    - The output is analysed to find all function + datatype symbols (Functions + structs + other types)
-    - The importer may call the compiler multiple times to figure out type-sizes and other things
- * Interactive Input from user decides which functions should be imported (Which also imports all dependencies (e.g. Parameter types)) 
- * Output: An Upp-File containing the required C-Interface specification
-
-Bonus: Mode where it can be run as script, and just imports all found symbols...
-
-GOAL:
- - Opening/running a window with GLFW
- - Executing OpenGL commands
- - Being able to call functions from <Windows.h> (Processes, File-Loading and schtuff), 
-     but maybe I want to do that somewhere else
-
+Alternative:
+ - Just a dynamic_array of lines?
+    Line insertion/deletion could be a slow with thousands of lines
 
 
 
@@ -94,9 +155,6 @@ Missing-Testcases:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * C-Importer rework
-        - Interactive selection of imported symbols
-        - Outputs upp-interface file
     * Editor-Update 
         - Remove block-hierarchy (Lines + indentation may be enough, with history ast-mapping can be updated incrementally/on demand?)
         - Back to 'normal', non-token-based editor (Just lines of strings)
@@ -141,6 +199,7 @@ Code improvements:
     * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
     * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
+    * Sizeof_program.obj now appears in main folder...
 
 
 
@@ -169,6 +228,42 @@ How is this specified in Upp?
     * Maybe just straight C code for compilation
         extern source "test.c"
         
+DONE:
+ * C-Importer: Function pointers aren't actually pointers to functions in upp...
+ * Extern globals should also not be translated by c-backend
+ * C-Backend must not translate extern functions and extern structs
+ * C-Compiler must include the new compiler options
+ * Import_Gui must use new extern struct syntax + store include dirs and header + definitions
+
+Problem:
+ * Name Mangling
+ * Extern anonymous structs will suck... 
+
+Problem:
+With name mangling, I'm not allowed to change any types in headers...
+This is problematic for:
+ * Structs --> As I'm changing struct names...
+ * Char vs u8* --> There is a difference between char, unsigned char and signed char...
+
+extern definition GLFW_NO_HEADERS --> Should this be compiler enforced or in cpp file?
+extern include_dir "some directory"
+extern header "some_header.hpp" <-- Header to include during compilation
+extern struct Node
+    x: int 
+    y: int
+    z: *Something
+extern struct Something // Empty structs should be possible, then we only need forward definition
+extern function add: (asfd: type, fasdf: type)
+
+Alternatives:
+-------------
+Maybe getting the types so correct that name mangling works, but this would probably suck a lot of ass.
+
+How to deal with char signed-ness?
+    Maybe I'll just add a Primitive_Type c_char, which can be cast from/to other integers
+
+
+
 
 Constant-Pool Rework:
 ---------------------

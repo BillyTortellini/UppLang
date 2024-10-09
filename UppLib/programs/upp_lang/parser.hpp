@@ -4,7 +4,6 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/array.hpp"
 #include "source_code.hpp"
-#include "code_history.hpp"
 #include "lexer.hpp"
 #include "ast.hpp"
 
@@ -23,40 +22,10 @@ namespace Parser
     void destroy();
 
     // Parse Items (Incremental Parsing)
-    struct Block_Parse;
     struct Error_Message
     {
         const char* msg;
-        AST::Node_Range range;
-        Block_Parse* block_parse;
-        int origin_line_index; // May not be the same as the line index of token_range. Required for incremental parsing
-    };
-
-    struct Line_Item
-    {
-        int line_start;
-        int line_count; 
-        AST::Node* node;
-    };
-
-    enum class Block_Context
-    {
-        STATEMENTS,
-        STRUCT,
-        SWITCH,
-        MODULE,
-        ENUM,
-    };
-
-    struct Block_Parse
-    {
-        Block_Context context;
-        Block_Index index;
-        Dynamic_Array<Line_Item> items;
-        Dynamic_Array<Block_Parse*> child_block_parses;
-        Block_Parse* parent_parse;
-        AST::Node* parent;
-        int line_count;
+        Token_Range range;
     };
 
     struct Parsed_Code
@@ -64,12 +33,9 @@ namespace Parser
         Source_Code* code;
         AST::Module* root;
         Dynamic_Array<Error_Message> error_messages;
-        Hashtable<Block_Index, Block_Parse*> block_parses;
-        History_Timestamp timestamp;
     };
 
     Parsed_Code* execute_clean(Source_Code* code);
-    void execute_incremental(Parsed_Code* parsed_code, Code_History* history);
     void source_parse_destroy(Parsed_Code* parsed_code);
 
 
@@ -87,6 +53,6 @@ namespace Parser
         END_TOKEN,         // To display that something is missing
     };
 
-    void ast_base_get_section_token_range(AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
+    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
     AST::Node* find_smallest_enclosing_node(AST::Node* base, Token_Index index);
 }

@@ -1885,7 +1885,7 @@ GUI_Handle gui_push_focusable(GUI_Handle parent_handle, GUI_Size size_x, GUI_Siz
     vec4 normal_bg_color = vec4(vec3(0.8f), 1);
     vec4 highlight_bg_color = vec4(vec3(0.88f), 1);
     vec4 border_color = vec4(0, 0, 0, 1);
-    vec4 focus_border_color = vec4(0.7, 0.3, 0.3, 1.0);
+    vec4 focus_border_color = vec4(0.7f, 0.3f, 0.3f, 1.0f);
 
     auto container = gui_add_node(parent_handle, size_x, size_y, gui_drawable_make_rect(normal_bg_color, 1, border_color, 3));
     gui_node_set_padding(container, 2, 2, false);

@@ -19,12 +19,12 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
+bool enable_c_generation = false;
 bool enable_c_compilation = true;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
@@ -40,7 +40,7 @@ bool run_testcases_compiled = false;
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = true;
+bool execute_binary = false;
 
 
 // This variable gets written to in compiler_compile
@@ -51,21 +51,21 @@ Compiler compiler;
 
 
 
-// Code_Source
-Code_Source* code_source_create_empty(Code_Origin origin, Source_Code* code, String file_path)
+// Program_Source
+Program_Source* code_source_create_empty(Code_Origin origin, Source_Code* code, String file_path)
 {
-    Code_Source* result = new Code_Source;
+    Program_Source* result = new Program_Source;
     result->origin = origin;
     result->code = code;
     result->parsed_code = nullptr;
     result->module_progress = nullptr;
     result->file_path = file_path;
-    dynamic_array_push_back(&compiler.code_sources, result);
+    dynamic_array_push_back(&compiler.program_sources, result);
     hashtable_insert_element(&compiler.cached_imports, file_path, result);
     return result;
 }
 
-void code_source_destroy(Code_Source* source)
+void code_source_destroy(Program_Source* source)
 {
     if (source->origin != Code_Origin::MAIN_PROJECT) { // Main project code gets destroyed by syntax_editor_destroy
         source_code_destroy(source->code);
@@ -86,7 +86,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.identifier_pool = identifier_pool_create();
     compiler.constant_pool = constant_pool_create();
     compiler.extern_sources = extern_sources_create();
-    compiler.cached_imports = hashtable_create_empty<String, Code_Source*>(1, hash_string, string_equals);
+    compiler.cached_imports = hashtable_create_empty<String, Program_Source*>(1, hash_string, string_equals);
     compiler.fiber_pool = fiber_pool_create();
     compiler.random = random_make_time_initalized();
 
@@ -101,7 +101,7 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.c_generator = c_generator_initialize();
     compiler.c_compiler = c_compiler_initialize();
 
-    compiler.code_sources = dynamic_array_create<Code_Source*>(1);
+    compiler.program_sources = dynamic_array_create<Program_Source*>(1);
     return &compiler;
 }
 
@@ -117,11 +117,11 @@ void compiler_destroy()
     extern_sources_destroy(&compiler.extern_sources);
     constant_pool_destroy(&compiler.constant_pool);
 
-    for (int i = 0; i < compiler.code_sources.size; i++) {
-        code_source_destroy(compiler.code_sources[i]);
-        compiler.code_sources[i] = 0;
+    for (int i = 0; i < compiler.program_sources.size; i++) {
+        code_source_destroy(compiler.program_sources[i]);
+        compiler.program_sources[i] = 0;
     }
-    dynamic_array_destroy(&compiler.code_sources);
+    dynamic_array_destroy(&compiler.program_sources);
     hashtable_destroy(&compiler.cached_imports);
 
     semantic_analyser_destroy();
@@ -135,7 +135,7 @@ void compiler_destroy()
 
 
 // Compiling
-void compiler_lex_parse_and_add_workload_for_code_source(Code_Source* source, Code_History* history_for_incremental, bool is_root_module)
+void compiler_lex_parse_and_add_workload_for_code_source(Program_Source* source, bool is_root_module)
 {
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
@@ -145,23 +145,16 @@ void compiler_lex_parse_and_add_workload_for_code_source(Code_Source* source, Co
     if (!enable_lexing) {
         return;
     }
-    if (history_for_incremental == 0) {
-        source_code_tokenize(source->code);
-    }
+    source_code_tokenize(source->code);
 
     // Parse code
     compiler_switch_timing_task(Timing_Task::PARSING);
     if (!enable_parsing) {
         return;
     }
-    if (history_for_incremental != 0) {
-        assert(source->parsed_code != 0, "Not quite sure about this condition yet");
-        Parser::execute_incremental(source->parsed_code, history_for_incremental);
-    }
-    else {
-        assert(source->parsed_code == 0, "Hey");
-        source->parsed_code = Parser::execute_clean(source->code);
-    }
+
+    assert(source->parsed_code == 0, "Hey");
+    source->parsed_code = Parser::execute_clean(source->code);
 
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
     if (!enable_analysis) {
@@ -280,18 +273,18 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
         if (!keep_data_for_incremental_compile) {
             compiler.main_source = 0;
         }
-        for (int i = 0; i < compiler.code_sources.size; i++) {
-            auto source = compiler.code_sources[i];
+        for (int i = 0; i < compiler.program_sources.size; i++) {
+            auto source = compiler.program_sources[i];
             if (keep_data_for_incremental_compile) {
                 source->module_progress = 0;
             }
             else {
-                code_source_destroy(compiler.code_sources[i]);
-                compiler.code_sources[i] = 0;
+                code_source_destroy(compiler.program_sources[i]);
+                compiler.program_sources[i] = 0;
             }
         }
         if (!keep_data_for_incremental_compile) {
-            dynamic_array_reset(&compiler.code_sources);
+            dynamic_array_reset(&compiler.program_sources);
             hashtable_reset(&compiler.cached_imports);
         }
 
@@ -427,26 +420,14 @@ void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type,
 
     file_io_relative_to_full_path(&project_file);
     compiler.main_source = code_source_create_empty(Code_Origin::MAIN_PROJECT, source_code, project_file);
-    compiler_lex_parse_and_add_workload_for_code_source(compiler.main_source, nullptr, true);
-    compiler_execute_analysis_workloads_and_code_generation();
-}
-
-void compiler_compile_incremental(Code_History* history, Compile_Type compile_type)
-{
-    compiler_reset_data(true, compile_type);
-    auto source = compiler.main_source;
-    assert(source != 0, "");
-    assert(source->parsed_code != 0, "");
-    assert(source->module_progress == 0, "Should be after reset");
-
-    compiler_lex_parse_and_add_workload_for_code_source(compiler.main_source, history, true);
+    compiler_lex_parse_and_add_workload_for_code_source(compiler.main_source, true);
     compiler_execute_analysis_workloads_and_code_generation();
 }
 
 Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node)
 {
     assert(import_node->type == AST::Import_Type::FILE, "");
-    auto src = compiler_find_ast_code_source(&import_node->base);
+    auto src = compiler_find_ast_program_source(&import_node->base);
     
     String path = string_create(src->file_path.characters);
     file_io_relative_to_full_path(&path);
@@ -468,7 +449,7 @@ Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import
     
     // Check cache
     {
-        Code_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
+        Program_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
         if (cached_code != 0) {
             auto code = *cached_code;
             // Source was imported before (So already lexed and parsed)
@@ -486,8 +467,8 @@ Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import
         auto source_code = source_code_create();
         source_code_fill_from_string(source_code, file_content.value);
     
-        Code_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
-        compiler_lex_parse_and_add_workload_for_code_source(code_source, nullptr, false);
+        Program_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
+        compiler_lex_parse_and_add_workload_for_code_source(code_source, false);
         success = true;
         return code_source->module_progress;
     }
@@ -560,30 +541,31 @@ void compiler_switch_timing_task(Timing_Task task)
 
 bool compiler_errors_occured() {
     if (compiler.semantic_analyser->errors.size > 0) return true;
-    for (int i = 0; i < compiler.code_sources.size; i++) {
-        if (compiler.code_sources[i]->parsed_code->error_messages.size > 0) return true;
+    for (int i = 0; i < compiler.program_sources.size; i++) {
+        if (compiler.program_sources[i]->parsed_code->error_messages.size > 0) return true;
     }
     return false;
 }
 
-Source_Code* compiler_find_ast_source_code(AST::Node* base) {
-    if (base->range.start.type == AST::Node_Position_Type::TOKEN_INDEX) {
-        return base->range.start.options.block_index.code;
-    }
-    return base->range.start.options.token_index.line_index.block_index.code;
-}
-
-Code_Source* compiler_find_ast_code_source(AST::Node* base)
+Program_Source* compiler_find_ast_program_source(AST::Node* base)
 {
-    auto code = compiler_find_ast_source_code(base);
-    for (int i = 0; i < compiler.code_sources.size; i++) {
-        auto src = compiler.code_sources[i];
-        if (src->code == code) {
+    while (base->parent != 0) {
+        base = base->parent;
+    }
+    for (int i = 0; i < compiler.program_sources.size; i++) {
+        auto src = compiler.program_sources[i];
+        if (upcast(src->parsed_code->root) == base) {
             return src;
         }
     }
     return 0;
 }
+
+Source_Code* compiler_find_ast_source_code(AST::Node* base) {
+    auto src = compiler_find_ast_program_source(base);
+    return src->parsed_code->code;
+}
+
 
 
 
@@ -807,8 +789,8 @@ void compiler_run_testcases(Timer* timer, bool force_run)
             string_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
-                for (int i = 0; i < compiler.code_sources.size; i++) {
-                    auto parser_errors = compiler.code_sources[i]->parsed_code->error_messages;
+                for (int i = 0; i < compiler.program_sources.size; i++) {
+                    auto parser_errors = compiler.program_sources[i]->parsed_code->error_messages;
                     for (int j = 0; j < parser_errors.size; j++) {
                         auto& e = parser_errors[i];
                         string_append_formated(&result, "    Parse Error: %s\n", e.msg);

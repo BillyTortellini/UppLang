@@ -455,7 +455,7 @@ int run_import_gui()
 
         // Generate GUI
         {
-            auto window = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(vec4(0.6, 0.8f, 0.6f, 1.0f)));
+            auto window = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_rect(vec4(0.6f, 0.8f, 0.6f, 1.0f)));
             gui_node_set_position_fixed(window, vec2(0), Anchor::CENTER_CENTER, true);
             auto file_dialog = gui_add_node(window, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
             gui_node_set_layout(file_dialog, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);

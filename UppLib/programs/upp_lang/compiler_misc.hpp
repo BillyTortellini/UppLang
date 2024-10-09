@@ -101,7 +101,7 @@ enum class Code_Origin
     LOADED_FILE,
 };
 
-struct Code_Source
+struct Program_Source
 {
     Code_Origin origin;
     String file_path;
@@ -151,6 +151,3 @@ bool fiber_pool_switch_to_handel(Fiber_Pool_Handle handle); // Returns true if f
 void fiber_pool_switch_to_main_fiber(Fiber_Pool* pool);
 void fiber_pool_check_all_handles_completed(Fiber_Pool* pool);
 void fiber_pool_test(); // Just tests the fiber pool if everything works correctly
-
-
-

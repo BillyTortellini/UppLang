@@ -12,10 +12,10 @@ struct Source_Code;
 // Code History
 enum class Code_Change_Type
 {
-    BLOCK_INSERT,
-    BLOCK_MERGE,
     LINE_INSERT,
-    TEXT_INSERT,
+    CHAR_INSERT,
+    TEXT_INSERT, // Note: Text insert on a single line, so no \n
+    LINE_INDENTATION_CHANGE,
 };
 
 struct Code_Change
@@ -25,16 +25,18 @@ struct Code_Change
     union
     {
         struct {
-            Line_Index line_index;
-            Block_Index new_block_index; // Filled by apply change forward
-        } block_insert;
+            int line_index;
+            int indentation;
+        } line_insert;
         struct {
-            Block_Index into_block_index;
-            Block_Index from_block_index;
-            Line_Index from_line_index;
-            int into_line_count;
-        } block_merge;
-        Line_Index line_insert;
+            int line_index;
+            int old_indentation;
+            int new_indentation;
+        } indentation_change;
+        struct {
+            Text_Index index;
+            char c;
+        } char_insert;
         struct {
             Text_Index index;
             String text;
@@ -97,11 +99,10 @@ void history_delete_text(Code_History* history, Text_Index index, int char_end);
 void history_insert_char(Code_History* history, Text_Index index, char c);
 void history_delete_char(Code_History* history, Text_Index index);
 
-void history_insert_line(Code_History* history, Line_Index line_index);
-void history_insert_line_with_text(Code_History* history, Line_Index line_index, String string);
-void history_remove_line(Code_History* history, Line_Index line_index);
-Line_Index history_add_line_indent(Code_History* history, Line_Index line_index);
-Line_Index history_remove_line_indent(Code_History* history, Line_Index line_index);
+void history_insert_line(Code_History* history, int line_index, int indentation);
+void history_insert_line_with_text(Code_History* history, int line_index, int indentation, String string);
+void history_remove_line(Code_History* history, int line_index);
+void history_change_indent(Code_History* history, int line_index, int new_indent);
 
 
 

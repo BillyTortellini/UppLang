@@ -15,13 +15,13 @@ enum class Operator
     DIVISON,
     MULTIPLY,
     MODULO,
-    COMMA,
-    DOT,
+    COMMA,           // ,
+    DOT,             // .
     TILDE,           // ~    Used in Path-lookup A~B~c
     TILDE_STAR,      // ~*   Import all
     TILDE_STAR_STAR, // ~**  Transitive import all
-    COLON,
-    SEMI_COLON,
+    COLON,           // :
+    SEMI_COLON,      // ;
     NOT,
     AMPERSAND,
     LESS_THAN,

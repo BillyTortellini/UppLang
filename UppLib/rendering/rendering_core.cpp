@@ -691,7 +691,7 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
 }
 
 void mesh_push_indices(Mesh* mesh, std::initializer_list<uint32> indices, bool add_offset) {
-    auto index_data = mesh_push_attribute_slice(mesh, rendering_core.predefined.index, indices.size());
+    auto index_data = mesh_push_attribute_slice(mesh, rendering_core.predefined.index, (int) indices.size());
     int i = 0;
     for (auto index : indices) {
         index_data[i] = index + (add_offset ? mesh->vertex_count : 0);

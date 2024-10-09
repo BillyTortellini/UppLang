@@ -14,22 +14,26 @@ struct String
     }
 };
 
+void string_destroy(String* string);
+
+String string_create(int capacity = 0);
+String string_create(const char* content);
+String string_create_empty(int capacity);
+String string_copy(String other);
+String string_create_from_string_with_extra_capacity(String* other, int extra_capacity);
+String string_create_formated(const char* format, ...);
+String string_create_substring(String* string, int start_index, int end_index);
+void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath);
+
 String string_create_static(const char* content);
 String string_create_static_with_size(const char* content, int length);
-String string_create(const char* content);
-String string_copy(String other);
-String string_create_formated(const char* format, ...);
-String string_create_empty(int capacity);
-String string_create_from_string_with_extra_capacity(String* other, int extra_capacity);
-String string_create_substring(String* string, int start_index, int end_index);
 String string_create_substring_static(String* string, int start_pos, int end_pos);
+
 bool string_equals(String* s1, String* s2);
 bool string_equals_cstring(String* string, const char* compare);
 bool string_in_order(String* s1, String* s2);
 void string_clear(String* string);
 void string_set_characters(String* string, const char* characters);
-void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath);
-void string_destroy(String* string);
 
 void string_remove_substring(String* string, int start_index, int end_index);
 bool string_compare_substring(String* string, int start_index, String* other);

@@ -4,7 +4,7 @@
 #include "../../utility/utils.hpp"
 #include "../../datastructures/string.hpp"
 #include "compiler_misc.hpp"
-#include "source_code.hpp"
+#include "code_history.hpp"
 
 
 struct String;
@@ -52,41 +52,6 @@ namespace AST
         RAW, // Expects the exact type on the left, ip =~
     };
 
-    enum class Node_Position_Type
-    {
-        TOKEN_INDEX,
-        BLOCK_START,
-        BLOCK_END
-    };
-
-    struct Node_Position
-    {
-        Node_Position_Type type;
-        union {
-            Block_Index block_index;
-            Token_Index token_index;
-        } options;
-    };
-
-    struct Node_Range
-    {
-        Node_Position start;
-        Node_Position end;
-    };
-
-    Token_Index node_position_to_token_index(Node_Position pos);
-    int node_position_compare(Node_Position a, Node_Position b);
-    Node_Position node_position_make_token_index(Token_Index index);
-    Node_Position node_position_make_block_end(Block_Index block_index);
-    Node_Position node_position_make_block_start(Block_Index block_index);
-    Node_Position node_position_make_end_of_line(Line_Index line_index);
-    Node_Position node_position_make_start_of_line(Line_Index line_index);
-
-    Node_Range node_range_make(Node_Position a, Node_Position b);
-    Node_Range node_range_make(Token_Index a, Token_Index b);
-    Node_Range node_range_make_block(Block_Index index);
-    Token_Range node_range_to_token_range(Node_Range range);
-
     enum class Node_Type
     {
         EXPRESSION,
@@ -114,8 +79,8 @@ namespace AST
     {
         Node_Type type;
         Node* parent;
-        Node_Range range; // Note: It would be more memory efficient to just have a line-span + token-span or something along those lines...
-        Node_Range bounding_range;
+        Token_Range range;
+        Token_Range bounding_range;
     };
 
     enum class Import_Type

@@ -9,84 +9,55 @@
 #include "../math/scalars.hpp"
 #include "../utility/utils.hpp"
 
-String string_create_static_with_size(const char* content, int length)
+
+
+void string_destroy(String* string) {
+    if (string->capacity != 0) {
+        delete[] string->characters;
+    }
+}
+
+
+
+// CREATE FUNCTIONS
+String string_create(int capacity)
 {
     String result;
-    result.size = length;
-    result.characters = const_cast<char*>(content);
-    result.capacity = 0;
+    result.size = 0;
+    if (capacity <= 0) {
+        result.characters = 0;
+        result.capacity = 0;
+        result.characters = "";
+    }
+    else {
+        result.capacity = capacity;
+        result.characters = new char[capacity];
+        result.characters[0] = '\0';
+    }
     return result;
 }
 
-String string_create_substring_static(String* string, int start_pos, int end_pos) {
-    if (start_pos >= end_pos) {
-        return string_create_static("");
-    }
-    start_pos = math_clamp(start_pos, 0, string->size);
-    end_pos = math_clamp(end_pos, 0, string->size);
-
-    String result;
-    result.characters = string->characters + start_pos;
-    result.size = end_pos - start_pos;
-    result.capacity = 0;
-    return result;
+String string_create_empty(int capacity) {
+    return string_create(capacity);
 }
 
 String string_create_substring(String* string, int start_index, int end_index)
 {
     if (start_index > end_index) {
-        return string_create_empty(32);
+        return string_create();
     }
     start_index = math_clamp(start_index, 0, string->size-1);
     end_index = math_clamp(end_index, 0, string->size);
 
-    String result;
-    result.capacity = end_index - start_index + 1;
-    result.characters = new char[result.capacity];
+    String result = string_create(end_index - start_index + 1);
     result.size = end_index - start_index;
     memory_copy(result.characters, &string->characters[start_index], result.size);
     result.characters[result.size] = 0;
     return result;
 }
 
-bool string_equals(String* s1, String* s2)
-{
-    if (s1->size != s2->size) { return false; }
-    return memcmp(s1->characters, s2->characters, s1->size) == 0;
-}
-
-bool string_in_order(String* s1, String* s2)
-{
-    int res = strncmp(s1->characters, s2->characters, math_minimum(s1->size, s2->size));
-    if (res == 0) {
-        return s1->size < s2->size;
-    }
-    return res >= 0;
-}
-
-String string_create_static(const char* content)
-{
-    String result;
-    result.characters = const_cast<char*>(content);
-    result.size = (int)strlen(content);
-    result.capacity = 0;
-    return result;
-}
-
-String string_create_empty(int capacity) {
-    capacity = math_maximum(capacity, 1);
-    String result;
-    result.characters = new char[capacity];
-    result.characters[0] = 0;
-    result.size = 0;
-    result.capacity = capacity;
-    return result;
-}
-
 String string_create_from_string_with_extra_capacity(String* other, int extra_capacity) {
-    String result;
-    result.capacity = other->size + 1 + extra_capacity;
-    result.characters = new char[result.capacity];
+    String result = string_create(other->size + 1 + extra_capacity);
     strcpy_s(result.characters, result.capacity, other->characters);
     result.size = other->size;
     return result;
@@ -102,6 +73,9 @@ String string_create(const char* content) {
 }
 
 String string_copy(String other) {
+    if (other.size == 0) {
+        return string_create();
+    }
     String result;
     result.size = other.size;
     result.characters = new char[result.size + 1];
@@ -139,13 +113,61 @@ void string_create_from_filepath_to_path_and_filename(String* path, String* file
     }
 }
 
-void string_destroy(String* string) {
-    if (string->capacity != 0) {
-        delete[] string->characters;
-    }
+
+
+// STATIC CREATORS
+String string_create_static(const char* content)
+{
+    String result;
+    result.characters = const_cast<char*>(content);
+    result.size = (int)strlen(content);
+    result.capacity = 0;
+    return result;
 }
 
-void string_reserve(String* string, int new_capacity) {
+String string_create_static_with_size(const char* content, int length)
+{
+    String result;
+    result.size = length;
+    result.characters = const_cast<char*>(content);
+    result.capacity = 0;
+    return result;
+}
+
+String string_create_substring_static(String* string, int start_pos, int end_pos) {
+    if (start_pos >= end_pos) {
+        return string_create_static("");
+    }
+    start_pos = math_clamp(start_pos, 0, string->size);
+    end_pos = math_clamp(end_pos, 0, string->size);
+
+    String result;
+    result.characters = string->characters + start_pos;
+    result.size = end_pos - start_pos;
+    result.capacity = 0;
+    return result;
+}
+
+
+
+// OTHER FUNCTIONS
+bool string_equals(String* s1, String* s2)
+{
+    if (s1->size != s2->size) { return false; }
+    return memcmp(s1->characters, s2->characters, s1->size) == 0;
+}
+
+bool string_in_order(String* s1, String* s2)
+{
+    int res = strncmp(s1->characters, s2->characters, math_minimum(s1->size, s2->size));
+    if (res == 0) {
+        return s1->size < s2->size;
+    }
+    return res >= 0;
+}
+
+void string_reserve(String* string, int new_capacity) 
+{
     if (string->capacity >= new_capacity) {
         return;
     }
@@ -156,22 +178,30 @@ void string_reserve(String* string, int new_capacity) {
         }
         new_capacity = cap;
     }
-    char* resized_buffer = new char[new_capacity];
-    memory_copy(resized_buffer, string->characters, string->size);
-    if (string->size < string->capacity && string->characters[string->size] == 0) {
-        resized_buffer[string->size] = 0;
+
+    if (string->capacity == 0) {
+        string->capacity = new_capacity;
+        string->characters = new char[new_capacity];
+        string->characters[0] = '\0';
     }
-    delete[] string->characters;
-    string->characters = resized_buffer;
-    string->capacity = new_capacity;
+    else
+    {
+        char* resized_buffer = new char[new_capacity];
+        memory_copy(resized_buffer, string->characters, string->size);
+        if (string->size < string->capacity && string->characters[string->size] == 0) { // Copy 0 terminator if existing?
+            resized_buffer[string->size] = 0;
+        }
+
+        delete[] string->characters;
+        string->characters = resized_buffer;
+        string->capacity = new_capacity;
+    }
 }
 
 void string_append(String* string, const char* appendix) {
     int appendix_length = (int)strlen(appendix);
     int required_capacity = string->size + appendix_length + 1;
-    if (string->capacity < required_capacity) {
-        string_reserve(string, required_capacity);
-    }
+    string_reserve(string, required_capacity);
     strcpy_s(string->characters + string->size, appendix_length+1, appendix);
     string->size += appendix_length;
 }
@@ -258,9 +288,7 @@ void string_append_formated(String* string, const char* format, ...)
 
 void string_append_character(String* string, char c)
 {
-    if (string->size + 2 > string->capacity) {
-        string_reserve(string, string->capacity * 2);
-    }
+    string_reserve(string, string->size + 2);
     string->characters[string->size] = c; // Overwrite 0 terminator
     string->characters[string->size+1] = 0; // Set 0 terminator again
     string->size += 1;
@@ -284,7 +312,12 @@ void string_remove_substring(String* string, int start_index, int end_index)
 void string_reset(String* string)
 {
     string->size = 0;
-    string->characters[0] = 0;
+    if (string->capacity == 0) {
+        string->characters = "";
+    }
+    else {
+        string->characters[0] = 0;
+    }
 }
 
 void string_append_string(String* string, String* appendix)
@@ -309,9 +342,7 @@ void string_remove_character(String* string, int index)
 void string_insert_character_before(String* string, byte character, int index)
 {
     // Check if enough space is available
-    if (string->size + 2 >= string->capacity) {
-        string_reserve(string, string->capacity*2);
-    }
+    string_reserve(string, string->size + 2);
     // Move all character after index one forward (Overwriting the 0 terminator)
     for (int i = string->size; i - 1 >= index; i--) {
         string->characters[i] = string->characters[i-1];
