@@ -6,66 +6,6 @@
 #include "source_code.hpp"
 
 // Helpers
-Operator_Info operator_info_make(const char* str, Operator_Type type, bool space_before, bool space_after)
-{
-    Operator_Info result;
-    result.string = string_create_static(str);
-    result.type = type;
-    result.space_after = space_after;
-    result.space_before = space_before;
-    return result;
-}
-
-Operator_Info syntax_operator_info(Operator op)
-{
-    switch (op)
-    {
-    case Operator::ADDITION: return operator_info_make("+", Operator_Type::BINOP, true, true);
-    case Operator::SUBTRACTION: return operator_info_make("-", Operator_Type::BOTH, true, true);
-    case Operator::DIVISON: return operator_info_make("/", Operator_Type::BINOP, true, true);
-    case Operator::MULTIPLY: return operator_info_make("*", Operator_Type::BOTH, true, true);
-    case Operator::MODULO: return operator_info_make("%", Operator_Type::BINOP, true, true);
-    case Operator::COMMA: return operator_info_make(",", Operator_Type::BINOP, false, true);
-    case Operator::DOT: return operator_info_make(".", Operator_Type::BINOP, false, false);
-    case Operator::TILDE: return operator_info_make("~", Operator_Type::BINOP, false, false);
-    case Operator::TILDE_STAR: return operator_info_make("~*", Operator_Type::BINOP, false, true);
-    case Operator::TILDE_STAR_STAR: return operator_info_make("~**", Operator_Type::BINOP, false, true);
-    case Operator::COLON: return operator_info_make(":", Operator_Type::BINOP, false, true);
-    case Operator::SEMI_COLON: return operator_info_make(";", Operator_Type::BINOP, false, true);
-    case Operator::NOT: return operator_info_make("!", Operator_Type::BINOP, false, false);
-    case Operator::AMPERSAND: return operator_info_make("&", Operator_Type::UNOP, false, false);
-    case Operator::LESS_THAN: return operator_info_make("<", Operator_Type::BINOP, true, true);
-    case Operator::GREATER_THAN: return operator_info_make(">", Operator_Type::BINOP, true, true);
-    case Operator::LESS_EQUAL: return operator_info_make("<=", Operator_Type::BINOP, true, true);
-    case Operator::GREATER_EQUAL: return operator_info_make(">=", Operator_Type::BINOP, true, true);
-    case Operator::EQUALS: return operator_info_make("==", Operator_Type::BINOP, true, true);
-    case Operator::NOT_EQUALS: return operator_info_make("!=", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_EQUALS: return operator_info_make("*==", Operator_Type::BINOP, true, true);
-    case Operator::POINTER_NOT_EQUALS: return operator_info_make("*!=", Operator_Type::BINOP, true, true);
-    case Operator::DEFINE_COMPTIME: return operator_info_make("::", Operator_Type::BINOP, true, true);
-    case Operator::DEFINE_INFER: return operator_info_make(":=", Operator_Type::BINOP, true, true);
-    case Operator::DEFINE_INFER_POINTER: return operator_info_make(":=*", Operator_Type::BINOP, true, true);
-    case Operator::DEFINE_INFER_RAW: return operator_info_make(":=~", Operator_Type::BINOP, true, true);
-    case Operator::AND: return operator_info_make("&&", Operator_Type::BOTH, true, true); // Could also be double dereference &&int_pointer_pointer
-    case Operator::OR: return operator_info_make("||", Operator_Type::BINOP, true, true);
-    case Operator::ARROW: return operator_info_make("->", Operator_Type::BINOP, true, true);
-    case Operator::DOLLAR: return operator_info_make("$", Operator_Type::UNOP, false, false);
-    case Operator::ASSIGN: return operator_info_make("=", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_RAW: return operator_info_make("=~", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_ADD: return operator_info_make("+=", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_SUB: return operator_info_make("-=", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_DIV: return operator_info_make("/=", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_MULT: return operator_info_make("*=", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_POINTER: return operator_info_make("=*", Operator_Type::BINOP, true, true);
-    case Operator::ASSIGN_MODULO: return operator_info_make("=%", Operator_Type::BINOP, true, true);
-    case Operator::UNINITIALIZED: return operator_info_make("_", Operator_Type::UNOP, true, false);
-    default: panic("");
-    }
-
-    panic("");
-    return operator_info_make("what", Operator_Type::BINOP, true, true);
-}
-
 int character_index_to_token(Dynamic_Array<Token>* tokens, int char_index, bool after_cursor)
 {
     for (int i = tokens->size - 1; i >= 0; i--) {
@@ -197,22 +137,11 @@ String token_type_as_string(Token_Type type)
     return string_create_static("Hey");
 }
 
-String token_get_string(Token token, String text)
-{
-    if (token.type == Token_Type::OPERATOR) {
-        return syntax_operator_info(token.options.op).string;
-    }
-    else {
-        return string_create_substring_static(&text, token.start_index, token.end_index);
-    }
-}
-
-
-
 // Lexer
 struct Source_Lexer
 {
     Hashtable<String, Keyword> keyword_table;
+    String operator_strings[(int)Operator::MAX_ENUM_VALUE];
     Identifier_Pool* identifier_pool;
     String line_buffer;
     int line_index;
@@ -228,6 +157,50 @@ void lexer_initialize(Identifier_Pool* pool)
     keyword_table = hashtable_create_empty<String, Keyword>(8, hash_string, string_equals);
     for (int i = 0; i < (int)Keyword::MAX_ENUM_VALUE; i++) {
         hashtable_insert_element(&keyword_table, syntax_keyword_as_string((Keyword)i), (Keyword)i);
+    }
+
+    // Initialize Operator strings
+    {
+        lexer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
+        lexer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
+        lexer.operator_strings[(int)Operator::SUBTRACTION] = string_create_static("-");
+        lexer.operator_strings[(int)Operator::DIVISON] = string_create_static("/");
+        lexer.operator_strings[(int)Operator::MULTIPLY] = string_create_static("*");
+        lexer.operator_strings[(int)Operator::MODULO] = string_create_static("%");
+        lexer.operator_strings[(int)Operator::COMMA] = string_create_static(",");
+        lexer.operator_strings[(int)Operator::DOT] = string_create_static(".");
+        lexer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
+        lexer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
+        lexer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
+        lexer.operator_strings[(int)Operator::COLON] = string_create_static(":");
+        lexer.operator_strings[(int)Operator::SEMI_COLON] = string_create_static(";");
+        lexer.operator_strings[(int)Operator::NOT] = string_create_static("!");
+        lexer.operator_strings[(int)Operator::AMPERSAND] = string_create_static("&");
+        lexer.operator_strings[(int)Operator::LESS_THAN] = string_create_static("<");
+        lexer.operator_strings[(int)Operator::GREATER_THAN] = string_create_static(">");
+        lexer.operator_strings[(int)Operator::LESS_EQUAL] = string_create_static("<=");
+        lexer.operator_strings[(int)Operator::GREATER_EQUAL] = string_create_static(">=");
+        lexer.operator_strings[(int)Operator::EQUALS] = string_create_static("==");
+        lexer.operator_strings[(int)Operator::NOT_EQUALS] = string_create_static("!=");
+        lexer.operator_strings[(int)Operator::POINTER_EQUALS] = string_create_static("*==");
+        lexer.operator_strings[(int)Operator::POINTER_NOT_EQUALS] = string_create_static("*!=");
+        lexer.operator_strings[(int)Operator::DEFINE_COMPTIME] = string_create_static("::");
+        lexer.operator_strings[(int)Operator::DEFINE_INFER] = string_create_static(":=");
+        lexer.operator_strings[(int)Operator::DEFINE_INFER_POINTER] = string_create_static(":=*");
+        lexer.operator_strings[(int)Operator::DEFINE_INFER_RAW] = string_create_static(":=~");
+        lexer.operator_strings[(int)Operator::AND] = string_create_static("&&");
+        lexer.operator_strings[(int)Operator::OR] = string_create_static("||");
+        lexer.operator_strings[(int)Operator::ARROW] = string_create_static("->");
+        lexer.operator_strings[(int)Operator::DOLLAR] = string_create_static("$");
+        lexer.operator_strings[(int)Operator::ASSIGN] = string_create_static("=");
+        lexer.operator_strings[(int)Operator::ASSIGN_RAW] = string_create_static("=~");
+        lexer.operator_strings[(int)Operator::ASSIGN_ADD] = string_create_static("+=");
+        lexer.operator_strings[(int)Operator::ASSIGN_SUB] = string_create_static("-=");
+        lexer.operator_strings[(int)Operator::ASSIGN_DIV] = string_create_static("/=");
+        lexer.operator_strings[(int)Operator::ASSIGN_MULT] = string_create_static("*=");
+        lexer.operator_strings[(int)Operator::ASSIGN_POINTER] = string_create_static("=*");
+        lexer.operator_strings[(int)Operator::ASSIGN_MODULO] = string_create_static("=%");
+        lexer.operator_strings[(int)Operator::UNINITIALIZED] = string_create_static("_");
     }
 }
 
@@ -484,7 +457,7 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
             // Check all operators
             for (int i = 0; i < (int)Operator::MAX_ENUM_VALUE; i++)
             {
-                auto op_str = syntax_operator_info((Operator)i).string;
+                auto op_str = lexer.operator_strings[i];
                 bool matches = true;
 
                 int end = index;
@@ -523,3 +496,20 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
         dynamic_array_push_back(tokens, token);
     }
 }
+
+String token_get_string(Token token, String text)
+{
+    if (token.type == Token_Type::OPERATOR) {
+        return lexer.operator_strings[(int)token.options.op];
+    }
+    else {
+        return string_create_substring_static(&text, token.start_index, token.end_index);
+    }
+}
+
+String operator_get_string(Operator op)
+{
+    return lexer.operator_strings[(int)op];
+}
+
+

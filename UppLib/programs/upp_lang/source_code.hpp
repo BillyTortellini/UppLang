@@ -8,8 +8,6 @@
 // Source Code
 struct Render_Info
 {
-    int pos;  // x position in line_index including line_index indentation
-    int size; // length of token
     vec3 color;
     vec3 bg_color;
 };

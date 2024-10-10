@@ -345,6 +345,11 @@ void history_insert_text(Code_History* history, Text_Index index, String string)
     if (string.size == 0) {
         return;
     }
+    else if (string.size == 1) {
+        history_insert_char(history, index, string.characters[0]);
+        return;
+    }
+
     auto change = code_change_create_empty(Code_Change_Type::TEXT_INSERT, true);
     change.options.text_insert.index = index;
     change.options.text_insert.text = string_copy(string);
@@ -356,6 +361,12 @@ void history_delete_text(Code_History* history, Text_Index index, int char_end)
     if (index.character == char_end) {
         return;
     }
+    else if (index.character + 1 == char_end) {
+        // Special case of single character deletion
+        history_delete_char(history, index);
+        return;
+    }
+
     auto& text = source_code_get_line(history->code, index.line)->text;
     assert(index.character >= 0 && index.character <= text.size, "");
     assert(char_end >= 0 && char_end <= text.size, "");

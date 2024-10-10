@@ -439,49 +439,12 @@ void source_code_append_to_string(Source_Code* code, String* text)
 // Utils
 void source_text_remove_invalid_whitespaces(String& text)
 {
-    // NOTE: This is a copy paste from syntax-editor
     int index = 0;
-    bool inside_comment = false;
     while (index < text.size)
     {
         char curr = text[index];
-        char next = index + 1 < text.size ? text[index + 1] : '!'; // Any non-space critical chars will do
-        char prev = index - 1 >= 0 ? text[index - 1] : '!';
-
         // Remove control characters from line, like \n, \t, \r and others
         if (curr < ' '){
-            string_remove_character(&text, index);
-        }
-
-        // Handle comments
-        if ((prev == '/' && curr == '/') || inside_comment) {
-            index += 1;
-            inside_comment = true;
-            continue;
-        }
-
-        // Skip strings
-        if (curr == '"')
-        {
-            index += 1;
-            while (index < text.size)
-            {
-                curr = text[index];
-                if (curr == '\\') {
-                    index += 2;
-                    continue;
-                }
-                if (curr == '"') {
-                    index += 1;
-                    break;
-                }
-                index += 1;
-            }
-            continue;
-        }
-
-        // Remove unnecessary whitespaces
-        if (curr == ' ' && !(char_is_space_critical(prev) && char_is_space_critical(next))) {
             string_remove_character(&text, index);
         }
         else {

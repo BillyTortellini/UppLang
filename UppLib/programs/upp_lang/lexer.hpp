@@ -53,13 +53,6 @@ enum class Operator
     MAX_ENUM_VALUE
 };
 
-enum class Operator_Type
-{
-    BINOP,
-    UNOP,
-    BOTH,
-};
-
 enum class Keyword
 {
     RETURN,
@@ -127,14 +120,6 @@ struct Literal_Value
     } options;
 };
 
-struct Operator_Info
-{
-    String string;
-    Operator_Type type;
-    bool space_before;
-    bool space_after;
-};
-
 enum class Token_Type
 {
     IDENTIFIER,
@@ -150,7 +135,7 @@ struct Token
 {
     Token_Type type;
     int start_index;
-    int end_index; // In theory I can remove the end index since it is given by start of next token
+    int end_index;
     union {
         Operator op;
         String* identifier;
@@ -169,7 +154,7 @@ char parenthesis_to_char(Parenthesis p);
 String token_type_as_string(Token_Type type);
 String syntax_keyword_as_string(Keyword keyword);
 String token_get_string(Token token, String text);
-Operator_Info syntax_operator_info(Operator op);
+String operator_get_string(Operator op);
 
 
 

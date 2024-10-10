@@ -1,10 +1,88 @@
 
 
-Bugs with new editor:
- * Check that parses doesn't expect line start for line items
- * Check that anonymous block things work
- * Check test-cases
- * Testing line parsing/error recorvery
+Updating Editor:
+ * Handling spaces, auto-formating while typing
+ * Normal character movement
+ * Movements
+ * Delete with Motions
+
+
+
+
+
+
+
+
+Missing-Testcases:
+------------------
+ * Struct Subtypes
+ * Struct Switch
+ * Struct inititalizer with subtypes
+ * Subtype Hierarchies
+ * Constant pointers, constants, type-mods auto updates
+ * New assignment and definition syntax
+ * Multi assignments and definitions
+ * Subtypes and polymorphism
+ * Struct unpacking
+ * Function overloading
+ * C-Backend + C-Imports
+ * New block parsing/line parsing
+
+--------------------
+- MISSING FEATURES -
+--------------------
+Core: (Required for programming)
+    * Editor-Update 
+        - Auto-Formating (For lines, maybe also interactively while typing?)
+        - Back to 'normal', non-token-based editor (Normal cursor movement)
+        - Motions + Vim commands
+        - More Code-Information (Functions, parameter-types, current parameter, ...)
+        - Search-and-replace
+        - Multiple-file handling, goto definition (Over files)
+        - Code-Folding
+    * Language Features:
+        - Optional Pointers ?* ( + Context-option to disable behavior)
+        - Struct initializer for unions (If it isn't already done?)
+        - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
+        - Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
+        - Bitwise operators as functions (and, or, xor, not, nand, nor)
+        - Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
+            --> This also means we could do dot-calls on a whole module? --> Maybe not
+
+Additional:
+    * Debugger
+    * Incremental compiler (Hot-code reloading?)
+    * Metaprogramming
+        - Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
+        - Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
+        - Macros (Simple way to define variables, add defer blocks, ...)
+        - Backtick defer, backtick variable definition
+        - Some way to communicate between bakes
+        - Annotations (For automatization of print or serialization)
+    * QoL Features
+        - Default parameter values calculated on demand
+        - Template-Types could be detected if used without parenthesis, e.g. foo(array: Dynamic_Array, value: array.T)
+        - Block-Expressions (Expressions which may include statements + return)
+        - Auto function? .-> e.g. search(array, .-> x.name == "What")
+        - Varargs (Other syntax for pass as slice...)
+        - Using on structs
+        - Location information (Mostly for logging)
+
+-----------------
+Code improvements:
+    * Deduplication of comptime instances when the generated ir-code is the same
+    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
+    * Symbol table lookups could be combined into a single hashtable?
+    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
+    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
+    * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
+    * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
+    * Sizeof_program.obj now appears in main folder...
+
+
+
+
+
 
 
 Currently on indentation:
@@ -24,7 +102,6 @@ Stuff inbetween (Other, non-seperator symbols)
  * Binary operations
  * Pre-Post Expressions
  * Path-Lookup
-
 
 To differentiate items in a list, seperators are usually used
     foo a, b, 100, 12
@@ -135,80 +212,6 @@ Pros/Cons of Block-Hierarchy
 Alternative:
  - Just a dynamic_array of lines?
     Line insertion/deletion could be a slow with thousands of lines
-
-
-
-
-
-Missing-Testcases:
-------------------
- * Struct Subtypes
- * Struct Switch
- * Struct inititalizer with subtypes
- * Subtype Hierarchies
- * Constant pointers, constants, type-mods auto updates
- * New assignment and definition syntax
- * Multi assignments and definitions
- * Subtypes and polymorphism
- * Struct unpacking
- * Function overloading
- * C-Backend + C-Imports
- * New block parsing/line parsing
-
---------------------
-- MISSING FEATURES -
---------------------
-Core: (Required for programming)
-    * Editor-Update 
-        - Remove block-hierarchy (Lines + indentation may be enough, with history ast-mapping can be updated incrementally/on demand?)
-        - Back to 'normal', non-token-based editor (Just lines of strings)
-        - Motions + more vim commands
-        - Search-and-replace
-        - Multiple-file handling, goto definition (Over files)
-        - Code-Folding
-        - Auto-Formating (For lines, maybe also interactively while typing?)
-    * Language Features:
-        - Parser block/list update (All Blocks/Lists may be followed by an indentation block or parenthesis with seperators)
-        - Optional Pointers ?* ( + Context-option to disable behavior)
-        - Struct initializer for unions (If it isn't already done?)
-        - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
-        - Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
-        - Bitwise operators as functions (and, or, xor, not, nand, nor)
-        - Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
-            --> This also means we could do dot-calls on a whole module? --> Maybe not
-
-Additional:
-    * Debugger
-    * Incremental compiler (Hot-code reloading?)
-    * Metaprogramming
-        - Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
-        - Conditional compilation (#if), probably only for multiple operating systems, maybe also for datastructures?
-        - Macros (Simple way to define variables, add defer blocks, ...)
-        - Backtick defer, backtick variable definition
-        - Some way to communicate between bakes
-        - Annotations (For automatization of print or serialization)
-    * QoL Features
-        - Block-Expressions (Expressions which may include statements + return)
-        - Auto function? .-> e.g. search(array, .-> x.name == "What")
-        - Varargs (Other syntax for pass as slice...)
-        - Using on structs
-        - Location information (Mostly for logging)
-
------------------
-Code improvements:
-    * Deduplication of comptime instances when the generated ir-code is the same
-    * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
-    * Symbol table lookups could be combined into a single hashtable?
-    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
-    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
-    * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
-    * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
-    * Sizeof_program.obj now appears in main folder...
-
-
-
-
-
 
 
 
