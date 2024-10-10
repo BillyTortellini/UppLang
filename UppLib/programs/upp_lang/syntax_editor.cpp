@@ -574,6 +574,7 @@ void editor_split_line_at_cursor(int indentation_offset)
     if (cursor.character != line_size) {
         history_insert_text(&syntax_editor.history, text_index_make(new_line_index, 0), cutout);
         history_delete_text(&syntax_editor.history, cursor, line_size);
+        syntax_editor_sanitize_line(cursor.line);
     }
     syntax_editor_sanitize_line(new_line_index);
     cursor = text_index_make(new_line_index, 0);
@@ -1701,7 +1702,7 @@ void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section
             Source_Line* line = source_code_get_line(syntax_editor.code, line_index);
 
             int start_index = line_index == range.start.line ? range.start.token : 0;
-            int end_index = line_index == range.end.line ? range.end.token + 1 : line->tokens.size;
+            int end_index = line_index == range.end.line ? range.end.token : line->tokens.size;
             for (int token = start_index; token < end_index && token < line->tokens.size; token += 1) {
                 line->infos[token].color = color;
             }
@@ -1913,6 +1914,17 @@ void syntax_editor_render()
     editor.character_size.x = text_renderer_character_width(editor.text_renderer, editor.character_size.y);
     syntax_editor_sanitize_cursor();
 
+    auto state_2D = pipeline_state_make_default();
+    state_2D.blending_state.blending_enabled = true;
+    state_2D.blending_state.source = Blend_Operand::SOURCE_ALPHA;
+    state_2D.blending_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
+    state_2D.blending_state.equation = Blend_Equation::ADDITION;
+    state_2D.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    auto pass_context = rendering_core_query_renderpass("Context pass", state_2D, 0);
+    auto pass_2D = rendering_core_query_renderpass("2D state", state_2D, 0);
+    render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
+    render_pass_add_dependency(pass_context, pass_2D);
+
     // Calculate camera start
     {
         int line_count = rendering_core.render_information.backbuffer_height / editor.character_size.y;
@@ -2015,6 +2027,83 @@ void syntax_editor_render()
             }
         }
     }
+
+    // Render Source Code
+    syntax_editor_draw_block_outlines_recursive(0, 0);
+
+    for (int i = 0; i < code->line_count; i++)
+    {
+        Source_Line* line = source_code_get_line(code, i);
+        for (int j = 0; j < line->tokens.size; j++)
+        {
+            auto& token = line->tokens[j];
+            auto& info = line->infos[j];
+            auto str = token_get_string(token, line->text);
+            syntax_editor_draw_string(str, info.color, line->screen_index, info.pos);
+        }
+    }
+
+    // Draw Cursor
+    if (true)
+    {
+        auto line = source_code_get_line(editor.code, cursor.line);
+        auto& text = line->text;
+        auto& tokens = line->tokens;
+        auto& infos = line->infos;
+        auto& pos = cursor.character;
+        auto token_index = get_cursor_token_index(true);
+
+        Render_Info info;
+        if (token_index < infos.size) {
+            info = infos[token_index];
+        }
+        else {
+            info.pos = line->indentation * 4;
+            info.size = 1;
+        }
+
+        if (editor.mode == Editor_Mode::NORMAL)
+        {
+            int box_start = info.pos;
+            int box_end = math_maximum(info.pos + info.size, box_start + 1);
+            syntax_editor_draw_text_background(line->screen_index, box_start, box_end - box_start, vec3(0.2f));
+            syntax_editor_draw_cursor_line(line->screen_index, box_start, Syntax_Color::COMMENT);
+            syntax_editor_draw_cursor_line(line->screen_index, box_end, Syntax_Color::COMMENT);
+        }
+        else
+        {
+            // Adjust token index if we are inbetween tokens
+            if (pos > 0 && pos < text.size)
+            {
+                Token* token = &tokens[token_index];
+                if (pos == token->start_index && token_index > 0) {
+                    if (char_is_space_critical(text[pos - 1]) && !char_is_space_critical(text[pos])) {
+                        token_index -= 1;
+                        info = infos[token_index];
+                    }
+                }
+            }
+
+            int cursor_pos = line->indentation * 4;
+            if (tokens.size != 0)
+            {
+                auto tok_start = tokens[token_index].start_index;
+                int cursor_offset = cursor.character - tok_start;
+                cursor_pos = info.pos + cursor_offset;
+
+                if (editor.space_after_cursor && cursor_offset == 0) {
+                    cursor_pos = info.pos - 1;
+                }
+            }
+            if (editor.space_before_cursor && !editor.space_after_cursor) {
+                cursor_pos += 1;
+            }
+            syntax_editor_draw_cursor_line(line->screen_index, cursor_pos, Syntax_Color::COMMENT);
+        }
+    }
+
+    renderer_2D_draw(editor.renderer_2D, pass_2D);
+    text_renderer_draw(editor.text_renderer, pass_2D);
 
     // Calculate context string
     if (true)
@@ -2131,98 +2220,9 @@ void syntax_editor_render()
         }
     }
 
-    // Draw Cursor
-    if (true)
-    {
-        auto line = source_code_get_line(editor.code, cursor.line);
-        auto& text = line->text;
-        auto& tokens = line->tokens;
-        auto& infos = line->infos;
-        auto& pos = cursor.character;
-        auto token_index = get_cursor_token_index(true);
-
-        Render_Info info;
-        if (token_index < infos.size) {
-            info = infos[token_index];
-        }
-        else {
-            info.pos = line->indentation * 4;
-            info.size = 1;
-        }
-
-        if (editor.mode == Editor_Mode::NORMAL)
-        {
-            int box_start = info.pos;
-            int box_end = math_maximum(info.pos + info.size, box_start + 1);
-            syntax_editor_draw_text_background(line->screen_index, box_start, box_end - box_start, vec3(0.2f));
-            syntax_editor_draw_cursor_line(line->screen_index, box_start, Syntax_Color::COMMENT);
-            syntax_editor_draw_cursor_line(line->screen_index, box_end, Syntax_Color::COMMENT);
-        }
-        else
-        {
-            // Adjust token index if we are inbetween tokens
-            if (pos > 0 && pos < text.size)
-            {
-                Token* token = &tokens[token_index];
-                if (pos == token->start_index && token_index > 0) {
-                    if (char_is_space_critical(text[pos - 1]) && !char_is_space_critical(text[pos])) {
-                        token_index -= 1;
-                        info = infos[token_index];
-                    }
-                }
-            }
-
-            int cursor_pos = line->indentation * 4;
-            if (tokens.size != 0)
-            {
-                auto tok_start = tokens[token_index].start_index;
-                int cursor_offset = cursor.character - tok_start;
-                cursor_pos = info.pos + cursor_offset;
-
-                if (editor.space_after_cursor && cursor_offset == 0) {
-                    cursor_pos = info.pos - 1;
-                }
-            }
-            if (editor.space_before_cursor && !editor.space_after_cursor) {
-                cursor_pos += 1;
-            }
-            syntax_editor_draw_cursor_line(line->screen_index, cursor_pos, Syntax_Color::COMMENT);
-        }
-    }
-
-    // Render Source Code
-    syntax_editor_draw_block_outlines_recursive(0, 0);
-
-    for (int i = 0; i < code->line_count; i++)
-    {
-        Source_Line* line = source_code_get_line(code, i);
-        for (int j = 0; j < line->tokens.size; j++)
-        {
-            auto& token = line->tokens[j];
-            auto& info = line->infos[j];
-            auto str = token_get_string(token, line->text);
-            syntax_editor_draw_string(str, info.color, line->screen_index, info.pos);
-        }
-    }
-
-    // Prepare 2D renderpass
-    auto state_2D = pipeline_state_make_default();
-    state_2D.blending_state.blending_enabled = true;
-    state_2D.blending_state.source = Blend_Operand::SOURCE_ALPHA;
-    state_2D.blending_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
-    state_2D.blending_state.equation = Blend_Equation::ADDITION;
-    state_2D.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
-    auto pass_2D = rendering_core_query_renderpass("2D state", state_2D, 0);
-    render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
-
     // Render Primitives
-    renderer_2D_draw(editor.renderer_2D, pass_2D);
-    text_renderer_draw(editor.text_renderer, pass_2D);
-
-    // Render Primitives (2nd Pass so context is above all else)
-    // PERF: This is garbage rendering, since this will probably require a GPU/CPU synchronization
-    renderer_2D_draw(editor.renderer_2D, pass_2D);
-    text_renderer_draw(editor.text_renderer, pass_2D);
+    renderer_2D_draw(editor.renderer_2D, pass_context);
+    text_renderer_draw(editor.text_renderer, pass_context);
 }
 
 

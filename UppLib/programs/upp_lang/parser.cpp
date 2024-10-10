@@ -133,6 +133,7 @@ namespace Parser
     }
 
     int remaining_line_tokens() {
+        if (parser.state.line == 0) return 0;
         auto& tokens = parser.state.line->tokens;
         int remaining = tokens.size - parser.state.pos.token;
         if (tokens.size != 0 && tokens[tokens.size - 1].type == Token_Type::COMMENT) {
@@ -148,6 +149,7 @@ namespace Parser
 
         if (test_parenthesis('{')) return true;
         if (pos.line + 1 >= code->line_count) return false;
+        if (remaining_line_tokens() > 0) return false;
         auto next_line = source_code_get_line(code, pos.line + 1);
         return next_line->indentation > parser.state.line->indentation;
     }
@@ -244,12 +246,15 @@ namespace Parser
         auto code = parser.state.parsed_code->code;
 
         // Set end of node
-        node->range.end = parser.state.pos;
-        if (node->range.end.line > code->line_count) {
-            node->range.end.line = code->line_count - 1;
-            node->range.end.token = source_code_get_line(code, code->line_count - 1)->tokens.size;
-        }
         auto& range = node->range;
+        range.end = parser.state.pos;
+        if (range.end.line > code->line_count) {
+            range.end = token_index_make_line_end(code, code->line_count - 1);
+        }
+        else if (range.start.line != range.end.line && range.end.token == 0 && range.end.line > 0) {
+            // Here we have the difference between next line token zero or end of line last token
+            range.end = token_index_make_line_end(code, range.end.line - 1);
+        }
         
         // Calculate bounding range
         node_calculate_bounding_range(node);
@@ -264,7 +269,7 @@ namespace Parser
 
     // Parsing Helpers
 #define CHECKPOINT_SETUP \
-        if (parser.state.pos.line > parser.state.parsed_code->code->line_count) {return 0;}\
+        if (parser.state.pos.line >= parser.state.parsed_code->code->line_count) {return 0;}\
         if (remaining_line_tokens() == 0 && !on_follow_block()) {return 0;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
@@ -347,7 +352,7 @@ namespace Parser
             pos.line = pos.line + 2;
             while (true)
             {
-                if (pos.line > code->line_count) {
+                if (pos.line >= code->line_count) {
                     return optional_make_failure<Token_Index>(); // Ran out of lines
                 }
                 next_line = source_code_get_line(code, pos.line);
@@ -387,7 +392,7 @@ namespace Parser
         // Parse Items
         while (true)
         {
-            auto pos_before_item = parser.state.pos;
+            auto line_before_item = parser.state.pos.line;
             auto item = parse_fn(parent);
             if (item != 0)
             {
@@ -398,6 +403,9 @@ namespace Parser
                 }
 
                 // Check if we are finished with item parsing
+                if (parser.state.pos.line >= parser.state.parsed_code->code->line_count) {
+                    return;
+                }
                 if (remaining_line_tokens() == 0) { // Reached end of line
                     return;
                 }
@@ -407,11 +415,11 @@ namespace Parser
                     }
                 }
 
-                // // If we are at the start of a new line, we also want to quit here (E.g. defining a struct)
-                // auto& pos = parser.state.pos;
-                // if (pos.token == 0 && pos.line_index.line_index != pos_before_item.line_index.line_index) {
-                //     return;
-                // }
+                // If we are at the start of a new line, we also want to quit here (As this function only parses one line) (E.g. defining a struct)
+                auto& pos = parser.state.pos;
+                if (pos.token == 0 && pos.line != line_before_item) {
+                    return;
+                }
             }
             
             // Otherwise try to find next comma or stop
@@ -464,9 +472,16 @@ namespace Parser
         Source_Line* line = parser.state.line;
         while (true)
         {
+            if (pos.line >= code->line_count) {
+                return;
+            }
+
             line = parser.state.line;
             // Break if we exit the block
-            if (line->indentation < block_indent) {
+            if (line->is_comment) {
+                // Skip line if it's a comment...
+            }
+            else if (line->indentation < block_indent) {
                 assert(parser.state.pos.token == 0, "");
                 return;
             }
@@ -509,15 +524,31 @@ namespace Parser
                         }
                         pos.line += 1;
                     }
+                    if (pos.line >= code->line_count) {
+                        parser.state.line = 0;
+                        return;
+                    }
                     continue;
                 }
             }
             else
             {
                 // Otherwise parse line item if line isn't a comment or empty
-                if (!line->is_comment && !line->tokens.size == 0)
+                if (!line->tokens.size == 0)
                 {
+                    int line_before_index = pos.line;
                     parse_list_single_line(parent, parse_fn, add_to_parent_fn, nullptr, nullptr, seperator);
+
+                    if (pos.line != line_before_index) {
+                        if (pos.line >= code->line_count) {
+                            parser.state.line = nullptr;
+                            return;
+                        }
+                        if (pos.token == 0) { // Don't advance line if it has already been done
+                            continue; 
+                        }
+                    }
+
                     if (remaining_line_tokens() > 0) {
                         log_error_to_pos("Cannot parse remaining line items", token_index_make(pos.line, line->tokens.size - 1));
                         pos.token = line->tokens.size;
@@ -526,11 +557,13 @@ namespace Parser
             }
 
             // Advance line
-            pos.line += 1;
-            pos.token = 0;
-            if (pos.line >= code->line_count) {
+            if (pos.line + 1 >= code->line_count) {
+                pos.line = code->line_count;
+                parser.state.line = nullptr;
                 return;
             }
+            pos.line += 1;
+            pos.token = 0;
             parser.state.line = source_code_get_line(code, pos.line);
         }
     }
@@ -590,7 +623,7 @@ namespace Parser
                     return;
                 }
                 Source_Line* next_line = source_code_get_line(code, pos.line + 1);
-                if (next_line->indentation != parser.state.line->indentation + 1) {
+                if (next_line->indentation < parser.state.line->indentation + 1) {
                     log_error_range_offset("Expected follow block", 0);
                     return;
                 }
@@ -746,6 +779,11 @@ namespace Parser
             panic("");
         }
     }
+
+    bool stop_at_semicolon(Token& token, void* unused) {
+        return token.type == Token_Type::OPERATOR && token.options.op == Operator::SEMI_COLON;
+    }
+    
 
 
 
@@ -983,9 +1021,7 @@ namespace Parser
 
         Definition* parse_definition(Node* parent)
         {
-            // INFO: Definitions, like all line items, cannot start in the middle of a line
             CHECKPOINT_SETUP;
-            if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
             if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
@@ -999,10 +1035,11 @@ namespace Parser
             auto found_definition_operator = [](Token& token, void* unused) -> bool {
                 return token.type == Token_Type::OPERATOR &&
                     (token.options.op == Operator::COLON ||
-                     token.options.op == Operator::DEFINE_COMPTIME ||
-                     token.options.op == Operator::DEFINE_INFER ||
-                     token.options.op == Operator::DEFINE_INFER_POINTER ||
-                     token.options.op == Operator::DEFINE_INFER_RAW);
+                        token.options.op == Operator::DEFINE_COMPTIME ||
+                        token.options.op == Operator::DEFINE_INFER ||
+                        token.options.op == Operator::DEFINE_INFER_POINTER ||
+                        token.options.op == Operator::DEFINE_INFER_RAW ||
+                        token.options.op == Operator::SEMI_COLON);
             };
             auto definition_add_symbol = [](Node* parent, Node* child) {
                 dynamic_array_push_back(&downcast<Definition>(parent)->symbols, downcast<Definition_Symbol>(child));
@@ -1026,7 +1063,8 @@ namespace Parser
                         (token.options.op == Operator::COLON ||
                          token.options.op == Operator::ASSIGN ||
                          token.options.op == Operator::ASSIGN_POINTER ||
-                         token.options.op == Operator::ASSIGN_RAW);
+                         token.options.op == Operator::ASSIGN_RAW ||
+                         token.options.op == Operator::SEMI_COLON);
                 };
                 parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_type, found_value_start, nullptr, Operator::COMMA);
 
@@ -1077,17 +1115,16 @@ namespace Parser
                 CHECKPOINT_EXIT;
             }
             
-            // Parse values (Or add at least one error expression)
-            parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_value, nullptr, nullptr, Operator::COMMA);
+            // Parse values (Or add at least one error expression) 
+            // Note: Not sure if I want to stop on semicolon, but I think I usually want to stop there
+            parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_value, stop_at_semicolon, nullptr, Operator::COMMA);
 
             PARSE_SUCCESS(result);
         }
 
         Structure_Member_Node* parse_struct_member(Node* parent)
         {
-            // INFO: Definitions, like all line items, cannot start in the middle of a line
             CHECKPOINT_SETUP;
-            if (parser.state.pos.token != 0) CHECKPOINT_EXIT;
             if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
 
             auto result = allocate_base<Structure_Member_Node>(parent, AST::Node_Type::STRUCT_MEMBER);
@@ -1205,7 +1242,7 @@ namespace Parser
                 // Parse remaining left_side expressions
                 auto is_assign = [](Token& token, void* userdata) -> bool {
                     return token.type == Token_Type::OPERATOR && 
-                        (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER || token.options.op == Operator::ASSIGN_RAW); 
+                        (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER || token.options.op == Operator::ASSIGN_RAW || token.options.op == Operator::SEMI_COLON); 
                 };
                 parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_left_side, is_assign, nullptr, Operator::COMMA);
 
@@ -1225,7 +1262,7 @@ namespace Parser
                 advance_token();
 
                 // Parse right side
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, nullptr, nullptr, Operator::COMMA);
+                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, stop_at_semicolon, nullptr, Operator::COMMA);
                 PARSE_SUCCESS(result);
             }
             else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER) || test_operator(Operator::ASSIGN_RAW))
@@ -1249,7 +1286,7 @@ namespace Parser
                 advance_token();
 
                 // Parse right side
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, nullptr, nullptr, Operator::COMMA);
+                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, stop_at_semicolon, nullptr, Operator::COMMA);
                 PARSE_SUCCESS(result);
             }
             else if (test_operator(Operator::ASSIGN_ADD) || test_operator(Operator::ASSIGN_SUB) ||
@@ -1304,22 +1341,34 @@ namespace Parser
             }
 
             {
-                // Check for Anonymous Blocks
+                // Check for Anonymous Blocks with identifiers
                 // INFO: This needs to be done before definition
-                // This is still required for blocks that have a identifier
-                int remaining = remaining_line_tokens();
-                if ((remaining == 1 && test_token(Token_Type::COMMENT)) ||
-                    (remaining == 2 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1)) ||
-                    (remaining == 3 && test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && test_token_offset(Token_Type::COMMENT, 3)))
+                auto code = parser.state.parsed_code->code;
+                auto& pos = parser.state.pos;
+
+                bool next_line_has_indent = false;
+                if (pos.line + 1 < code->line_count) {
+                    if (source_code_get_line(code, pos.line + 1)->indentation > parser.state.line->indentation) {
+                        next_line_has_indent = true;
+                    }
+                }
+
+                if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && next_line_has_indent)
                 {
-                    if (on_follow_block())
-                    {
-                        auto block_id = optional_make_failure<String*>();
-                        if (test_token(Token_Type::IDENTIFIER)) {
-                            block_id = optional_make_success(get_token()->options.identifier);
-                        }
+                    auto block_id = optional_make_success(get_token()->options.identifier);
+                    Code_Block* block = nullptr;
+                    if (remaining_line_tokens() == 2) {
+                        block = parse_code_block(&result->base, 0);
+                    }
+                    else if (test_parenthesis_offset('{', 2)) {
+                        advance_token();
+                        advance_token();
+                        block = parse_code_block(&result->base, 0);
+                    }
+
+                    if (block != nullptr) {
                         result->type = Statement_Type::BLOCK;
-                        result->options.block = parse_code_block(&result->base, 0);
+                        result->options.block = block;
                         result->options.block->block_id = block_id;
                         PARSE_SUCCESS(result);
                     }
@@ -1654,10 +1703,9 @@ namespace Parser
 
             CHECKPOINT_SETUP;
             auto result = allocate_base<Enum_Member_Node>(parent, Node_Type::ENUM_MEMBER);
-            result->name = get_token(0)->options.identifier;
+            result->name = get_token()->options.identifier;
             advance_token();
-            if (test_operator(Operator::DEFINE_COMPTIME))
-            {
+            if (test_operator(Operator::DEFINE_COMPTIME)) {
                 advance_token();
                 result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
             }
@@ -1703,7 +1751,7 @@ namespace Parser
         CHECKPOINT_SETUP;
         auto result = allocate_base<Argument>(parent, Node_Type::ARGUMENT);
         if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::ASSIGN, 1)) {
-            result->name = optional_make_success(get_token(0)->options.identifier);
+            result->name = optional_make_success(get_token()->options.identifier);
             advance_token();
             advance_token();
             result->value = parse_expression_or_error_expr(&result->base);
@@ -1973,7 +2021,7 @@ namespace Parser
                 init.type_expr = optional_make_failure<Expression*>();
                 init.member_initializers = dynamic_array_create<Member_Initializer*>();
                 auto add_to_subtype_init = [](Node* parent, Node* child) {
-                    dynamic_array_push_back(&downcast<Member_Initializer>(parent)->options.subtype_initializers, downcast<Member_Initializer>(child));
+                    dynamic_array_push_back(&downcast<Expression>(parent)->options.struct_initializer.member_initializers, downcast<Member_Initializer>(child));
                 };
                 parse_list_of_items(upcast(result), wrapper_parse_member_initializer, add_to_subtype_init, Parenthesis_Type::BRACES, Operator::COMMA, false, false);
                 PARSE_SUCCESS(result);
@@ -1987,7 +2035,7 @@ namespace Parser
                 auto add_to_values = [](Node* parent, Node* child) {
                     dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
                 };
-                parse_list_of_items(upcast(result), wrapper_parse_expression_or_error, add_to_values, Parenthesis_Type::BRACES, Operator::COMMA, false, false);
+                parse_list_of_items(upcast(result), wrapper_parse_expression_or_error, add_to_values, Parenthesis_Type::BRACKETS, Operator::COMMA, false, false);
                 PARSE_SUCCESS(result);
             }
             else
@@ -2133,7 +2181,7 @@ namespace Parser
             module->context_changes = dynamic_array_create<Context_Change*>(1);
             advance_token();
             parse_list_of_items(
-                upcast(result), wrapper_parse_module_item, module_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
+                upcast(module), wrapper_parse_module_item, module_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
             );
             node_finalize_range(AST::upcast(module));
 
@@ -2177,7 +2225,7 @@ namespace Parser
                 auto add_to_values = [](Node* parent, Node* child) {
                     dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
                 };
-                parse_list_of_items(upcast(result), wrapper_parse_member_initializer, add_to_values, Parenthesis_Type::BRACKETS, Operator::COMMA, false, false);
+                parse_list_of_items(upcast(result), wrapper_parse_expression_or_error, add_to_values, Parenthesis_Type::BRACKETS, Operator::COMMA, false, false);
                 PARSE_SUCCESS(result);
             }
             else

@@ -1,0 +1,34 @@
+
+import"interfaces/glfw.upp"as glfw
+import"interfaces/glad.upp"as glad
+
+main::()
+	result:=glfw~glfwInit()
+	if result==0
+		print_string("glfwInit failed\n")
+		return
+	defer
+		glfw~glfwTerminate()
+	
+	str:string="Hello"
+	
+	window:=*glfw~glfwCreateWindow(800,600,cast_pointer str.bytes.data,null,null)
+	if window*==null
+		print_string("Window creation failed!")
+	else
+		print_string("SUCCESS")
+	
+	glfw~glfwMakeContextCurrent(window)
+	
+	version:=glad~gladLoadGL(glfw~glfwGetProcAddress)
+	if version==0
+		print_string("Glad loading failed, i should shoot myself!")
+		return
+	else
+		print_string("GLAD loading success!")
+	
+	glad~glad_glClearColor(1,1,1,1)
+	while glfw~glfwWindowShouldClose(window)==0
+		glad~glad_glClear(cast glad~GL_COLOR_BUFFER_BIT)
+		glfw~glfwSwapBuffers(window)
+		glfw~glfwWaitEvents()

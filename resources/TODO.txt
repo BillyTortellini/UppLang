@@ -1,8 +1,10 @@
 
 
 Bugs with new editor:
- * Syntax color is a applied for a little too long...
- * Test that parsing/error recovery still works
+ * Check that parses doesn't expect line start for line items
+ * Check that anonymous block things work
+ * Check test-cases
+ * Testing line parsing/error recorvery
 
 
 Currently on indentation:
@@ -150,6 +152,8 @@ Missing-Testcases:
  * Subtypes and polymorphism
  * Struct unpacking
  * Function overloading
+ * C-Backend + C-Imports
+ * New block parsing/line parsing
 
 --------------------
 - MISSING FEATURES -
