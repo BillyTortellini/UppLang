@@ -314,7 +314,7 @@ void history_stop_complex_command(Code_History* history)
 void history_set_cursor_pos(Code_History* history, Text_Index cursor)
 {
     auto& node = history->nodes[history->current];
-    if (node.cursor_index.available) return;
+    //if (node.cursor_index.available) return;
     node.cursor_index = optional_make_success(cursor);
 }
 

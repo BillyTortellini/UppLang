@@ -20,27 +20,165 @@
 #include "source_code.hpp"
 #include "code_history.hpp"
 
+const int MIN_CURSOR_DISTANCE = 3;
+
 // Prototypes
 bool auto_format_line(int line_index);
 void syntax_editor_load_text_file(const char* filename);
 
 
 
-// Editor
+// Structures/Enums
+
+// Motions/Movements and Commands
+enum class Movement_Type
+{
+    SEARCH_FORWARDS_TO, // t
+    SEARCH_FORWARDS_FOR, // f
+    SEARCH_BACKWARDS_TO, // T
+    SEARCH_BACKWARDS_FOR, // F
+    REPEAT_LAST_SEARCH, // ;
+    REPEAT_LAST_SEARCH_REVERSE_DIRECTION, // ,
+    MOVE_LEFT, // h
+    MOVE_RIGHT, // l
+    MOVE_UP, // k
+    MOVE_DOWN, //j
+    TO_END_OF_LINE, // $
+    TO_START_OF_LINE, // 0
+    NEXT_WORD, // w
+    NEXT_SPACE, // W
+    PREVIOUS_WORD, // b
+    PREVIOUS_SPACE, // B
+    END_OF_WORD, // e
+    END_OF_WORD_AFTER_SPACE, // E
+    JUMP_ENCLOSURE, // %
+    BLOCK_END, // }
+    BLOCK_START, // {
+    GOTO_END_OF_TEXT, // G
+    GOTO_START_OF_TEXT, // gg
+    GOTO_LINE_NUMBER, // g43
+};
+
+struct Movement
+{
+    Movement_Type type;
+    int repeat_count;
+    char search_char;
+};
+
+// Missing: <> ''
+enum class Motion_Type
+{
+    MOVEMENT, // motion is a movement 
+    WORD, // w
+    SPACES, // W
+    PARENTHESES, // ()
+    BRACES, // {}
+    BRACKETS, // []
+    QUOTATION_MARKS, // ""
+    // PARAGRAPH_WITH_INDENT, // p
+    // PARAGRAPH_WITHOUT_INDENT, // P
+    BLOCK, // b or B
+    // 'Custom' motion used for dd, yy, Y, cc and also line-up/down movement motions
+    // This is because yank/put handles lines different than other motions
+    // Also deletes with up-down movement turn into line delets in Vim
+    // The repeat count for this motion gives the line offset to the next line
+    // E.g. repeat_count 0 means just this line, repeat count -1 this and previous line...
+    LINE,
+};
+
+struct Motion
+{
+    Motion_Type motion_type;
+    int repeat_count;
+    Movement movement; // If type == MOVEMENT
+    bool contains_edges; // In vim, this would be inner or around motions (iw or aw)
+};
+
+enum class Insert_Command_Type
+{
+    IDENTIFIER_LETTER,
+    NUMBER_LETTER,
+    DELIMITER_LETTER,
+    SPACE,
+    BACKSPACE,
+    ENTER,
+    ENTER_REMOVE_ONE_INDENT,
+
+    EXIT_INSERT_MODE,
+    ADD_INDENTATION,
+    REMOVE_INDENTATION,
+    MOVE_LEFT,
+    MOVE_RIGHT,
+    INSERT_CODE_COMPLETION,
+
+    DELETE_LAST_WORD, // Ctrl-W or Ctrl-Backspace
+    DELETE_TO_LINE_START, // Ctrl-U
+};
+
+struct Insert_Command
+{
+    Insert_Command_Type type;
+    char letter;
+};
+
+enum class Normal_Mode_Command_Type
+{
+    MOVEMENT,
+    ENTER_INSERT_MODE_AFTER_MOVEMENT, // i, a, I, A
+    ENTER_INSERT_MODE_NEW_LINE_BELOW, // o
+    ENTER_INSERT_MODE_NEW_LINE_ABOVE, // O
+    DELETE_MOTION, // d [m] or D/dd
+    CHANGE_MOTION, // c [m] or C/cc
+    REPLACE_CHAR, // r
+    REPLACE_MOTION_WITH_YANK, // R
+
+    // Yank/Put
+    YANK_MOTION,   // y [m] or Y
+    PUT_AFTER_CURSOR,
+    PUT_BEFORE_CURSOR,
+
+    // History
+    UNDO, // u
+    REDO, // Ctrl-R
+    REPEAT_LAST_COMMAND, // .
+
+    // Camera
+    SCROLL_DOWNWARDS_HALF_PAGE, // Ctrl-D
+    SCROLL_UPWARDS_HALF_PAGE, // Ctrl-U
+    MOVE_VIEWPORT_CURSOR_TOP, // zt
+    MOVE_VIEWPORT_CURSOR_CENTER, // zz
+    MOVE_VIEWPORT_CURSOR_BOTTOM, // zb
+    MOVE_CURSOR_VIEWPORT_TOP, // 'Shift-H'
+    MOVE_CURSOR_VIEWPORT_CENTER, // 'Shift-M'
+    MOVE_CURSOR_VIEWPORT_BOTTOM, // 'Shift-L'
+
+    // Others
+    VISUALIZE_MOTION, // not sure
+    GOTO_LAST_JUMP, // Ctrl-O
+    GOTO_NEXT_JUMP, // Ctrl-I
+
+    MAX_ENUM_VALUE
+};
+
+struct Normal_Mode_Command
+{
+    Normal_Mode_Command_Type type;
+    int repeat_count;
+    union {
+        Motion motion;
+        Movement movement;
+        char character;
+    } options;
+};
+
 struct Error_Display
 {
     String message;
     Token_Range range;
     bool from_main_source;
 };
-
-Error_Display error_display_make(String msg, Token_Range range, bool from_main_source) {
-    Error_Display result;
-    result.message = msg;
-    result.range = range;
-    result.from_main_source = from_main_source;
-    return result;
-}
+Error_Display error_display_make(String msg, Token_Range range, bool from_main_source);
 
 enum class Editor_Mode
 {
@@ -74,62 +212,34 @@ struct Syntax_Editor
 
     Dynamic_Array<String> code_completion_suggestions;
     Input_Replay input_replay;
+    String yank_string;
+    bool yank_was_line;
+    
+    // Command repeating
+    Normal_Mode_Command last_normal_command;
+    Dynamic_Array<Insert_Command> last_insert_commands;
+    bool record_insert_commands;
+    String last_recorded_code_completion;
+
+    // Movement
+    String command_buffer;
+    int last_line_x_pos; // Position with indentation * 4 for up/down movements
+    char last_search_char;
+    bool last_search_was_forward;
+    bool last_search_was_to;
 
     // Rendering
     String context_text;
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
     int camera_start_line;
+    int last_visible_line;
 
     Input* input;
     Rendering_Core* rendering_core;
     Renderer_2D* renderer_2D;
     Text_Renderer* text_renderer;
     vec2 character_size;
-};
-
-enum class Insert_Command_Type
-{
-    IDENTIFIER_LETTER,
-    NUMBER_LETTER,
-    DELIMITER_LETTER,
-    SPACE,
-    BACKSPACE,
-
-    EXIT_INSERT_MODE,
-    ENTER,
-    ENTER_REMOVE_ONE_INDENT,
-    ADD_INDENTATION,
-    REMOVE_INDENTATION,
-    MOVE_LEFT,
-    MOVE_RIGHT,
-    INSERT_CODE_COMPLETION,
-};
-
-struct Insert_Command
-{
-    Insert_Command_Type type;
-    char letter;
-};
-
-enum class Normal_Command
-{
-    MOVE_LEFT,
-    MOVE_RIGHT,
-    MOVE_UP,
-    MOVE_DOWN,
-    MOVE_LINE_START,
-    MOVE_LINE_END,
-    ADD_LINE_ABOVE,
-    ADD_LINE_BELOW,
-    INSERT_BEFORE,
-    INSERT_AFTER,
-    INSERT_AT_LINE_START,
-    INSERT_AT_LINE_END,
-    CHANGE_CHARACTER,
-    DELETE_CHARACTER,
-    UNDO,
-    REDO,
 };
 
 
@@ -144,6 +254,17 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.errors = dynamic_array_create<Error_Display>(1);
     syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
     syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
+    syntax_editor.command_buffer = string_create();
+
+    syntax_editor.yank_string = string_create();
+    syntax_editor.yank_was_line = false;
+
+    syntax_editor.last_normal_command.type = Normal_Mode_Command_Type::MOVEMENT;
+    syntax_editor.last_normal_command.options.movement.type = Movement_Type::MOVE_LEFT;
+    syntax_editor.last_normal_command.options.movement.repeat_count = 0;
+    syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
+    syntax_editor.record_insert_commands = true;
+    syntax_editor.last_recorded_code_completion = string_create();
 
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);
@@ -156,7 +277,13 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.input = input;
     syntax_editor.mode = Editor_Mode::NORMAL;
     syntax_editor.cursor = text_index_make(0, 0);
+    syntax_editor.last_line_x_pos = 0;
     syntax_editor.camera_start_line = 0;
+    syntax_editor.last_visible_line = 0;
+
+    syntax_editor.last_search_char = '\0';
+    syntax_editor.last_search_was_forward = false;
+    syntax_editor.last_search_was_to = false;
 
     // Init input replay
     {
@@ -180,12 +307,17 @@ void syntax_editor_destroy()
     code_history_destroy(&editor.history);
     dynamic_array_destroy(&editor.code_completion_suggestions);
     string_destroy(&syntax_editor.context_text);
+    string_destroy(&syntax_editor.command_buffer);
+    string_destroy(&syntax_editor.yank_string);
     compiler_destroy();
     for (int i = 0; i < editor.errors.size; i++) {
         string_destroy(&editor.errors[i].message);
     }
     dynamic_array_destroy(&editor.errors);
     dynamic_array_destroy(&editor.token_range_buffer);
+
+    dynamic_array_destroy(&editor.last_insert_commands);
+    string_destroy(&editor.last_recorded_code_completion);
 
     {
         auto& replay = editor.input_replay;
@@ -317,9 +449,10 @@ void syntax_editor_synchronize_tokens()
     {
         auto& index = line_changes[i];
         bool changed = auto_format_line(index);
-        assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
+        //assert(!changed, "Syntax editor has to make sure that lines are sanitized after edits!");
 
-        source_code_tokenize_line(syntax_editor.code, line_changes[i]);
+        // Tokenization is done by auto_format_line
+        //source_code_tokenize_line(syntax_editor.code, line_changes[i]);
         //logg("Synchronized: %d/%d\n", index.block_index.block_index, index.line_index);
     }
 }
@@ -389,6 +522,14 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 
 // Helpers
+Error_Display error_display_make(String msg, Token_Range range, bool from_main_source) {
+    Error_Display result;
+    result.message = msg;
+    result.range = range;
+    result.from_main_source = from_main_source;
+    return result;
+}
+
 Token token_make_dummy() {
     Token t;
     t.type = Token_Type::INVALID;
@@ -420,17 +561,29 @@ char get_cursor_char(char dummy_char)
     return line->text.characters[c.character];
 }
 
-void syntax_editor_sanitize_cursor()
-{
+Text_Index sanitize_index(Text_Index index) {
     auto& editor = syntax_editor;
-    auto& cursor = editor.cursor;
     auto& code = editor.code;
-    if (cursor.line < 0) cursor.line = 0;
-    if (cursor.line >= code->line_count) {
-        cursor.line = code->line_count - 1;
+    if (index.line < 0) index.line = 0;
+    if (index.line >= code->line_count) {
+        index.line = code->line_count - 1;
     }
-    auto& text = source_code_get_line(code, cursor.line)->text;
-    cursor.character = math_clamp(cursor.character, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
+    auto& text = source_code_get_line(code, index.line)->text;
+    index.character = math_clamp(index.character, 0, text.size);
+    return index;
+}
+
+void syntax_editor_sanitize_cursor() {
+    auto& editor = syntax_editor;
+    auto& code = editor.code;
+    auto& index = editor.cursor;
+
+    if (index.line < 0) index.line = 0;
+    if (index.line >= code->line_count) {
+        index.line = code->line_count - 1;
+    }
+    auto& text = source_code_get_line(code, index.line)->text;
+    index.character = math_clamp(index.character, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
 }
 
 
@@ -443,7 +596,7 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
     if (token_index >= line->tokens.size) return;
 
     // Handle different token types
-    auto token = line->tokens[token_index];
+    const auto& token = line->tokens[token_index];
     switch (token.type)
     {
     case Token_Type::COMMENT: {
@@ -461,13 +614,6 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
         // Rest of this function
         break;
     }
-    // Not sure about this anymore
-    // case Token_Type::PARENTHESIS: {
-    //     // Closed parnenthesis should have a space after if it isn't used as an array type
-    //     if (!token.options.parenthesis.is_open && char_is_space_critical(text[b.start_index]) && a.options.parenthesis.type != Parenthesis_Type::BRACKETS) {
-    //         return true;
-    //     }
-    // }
     default: {
         out_space_before = false;
         out_space_after = false;
@@ -600,11 +746,14 @@ bool auto_format_line(int line_index)
     }
 
     auto& text = line->text;
+    bool cursor_on_line = editor.cursor.line == line_index;
+    bool respect_cursor_space = editor.mode == Editor_Mode::INSERT && cursor_on_line;
     auto& pos = editor.cursor.character;
 
     // The auto-formater does the following things
     //  * Removes whitespaces between non-space critical characters, e.g. x : int  -->  x: int
     //  * Adds whitespaces between specific tokens,                  e.g. 5+15     -->  5 + 15
+    //  * For writing, spaces before/after cursor aren't removed or added
     bool line_changed = false;
 
     // Delete whitespaces before first token
@@ -617,6 +766,11 @@ bool auto_format_line(int line_index)
             history_delete_char(&editor.history, text_index_make(line_index, 0));
             line_changed = true;
             pos = math_maximum(0, pos - 1);
+        }
+        // Update token ranges
+        for (int i = 0; i < line->tokens.size; i++) {
+            line->tokens[i].start_index -= delete_until;
+            line->tokens[i].end_index -= delete_until;
         }
     }
 
@@ -634,6 +788,12 @@ bool auto_format_line(int line_index)
             if (space_after) space_between_tokens_expected = true;
             token_expects_space_before_or_after(line, i + 1, space_before, space_after);
             if (space_before) space_between_tokens_expected = true;
+
+            // Special handling for closing parenthesis, as I want a space there
+            if (curr.type == Token_Type::PARENTHESIS && !curr.options.parenthesis.is_open && curr.options.parenthesis.type != Parenthesis_Type::BRACKETS &&
+                next.type != Token_Type::OPERATOR && next.type != Token_Type::PARENTHESIS) {
+                space_between_tokens_expected = true;
+            }
         }
 
         // Check if spacing is as expected
@@ -652,16 +812,28 @@ bool auto_format_line(int line_index)
             char start = line->text.characters[next.start_index];
 
             // Remove excessive spaces (More than 1 space)
-            for (int i = 0; i < next.start_index - curr.end_index - 1; i++) {
-                history_delete_char(&editor.history, text_index_make(line_index, curr.end_index));
-                index_shift_for_tokens_after_current -= 1;
+            {
+                int space_count = next.start_index - curr.end_index;
+                int delete_count = space_count - 1;
+                if (respect_cursor_space && pos == curr.end_index + 1) {
+                    delete_count = 0;
+                }
+                for (int i = 0; i < delete_count; i++) {
+                    history_delete_char(&editor.history, text_index_make(line_index, curr.end_index));
+                    index_shift_for_tokens_after_current -= 1;
+                }
             }
 
             // Check if the final space should be removed
             bool remove_space = !space_between_tokens_expected;
 
             // Don't remove space if it's critical
-            if (!remove_space && char_is_space_critical(start) && char_is_space_critical(end)) {
+            if (remove_space && char_is_space_critical(start) && char_is_space_critical(end)) {
+                remove_space = false;
+            }
+
+            // Don't remove space if it's just before the cursor token
+            if (curr.end_index + 1 == pos && respect_cursor_space) {
                 remove_space = false;
             }
 
@@ -688,7 +860,7 @@ bool auto_format_line(int line_index)
         if (index_shift_for_tokens_after_current != 0) 
         {
             line_changed = true;
-            if (pos > curr.end_index && editor.cursor.line == line_index) {
+            if (pos > curr.end_index && cursor_on_line) {
                 pos = math_maximum(curr.end_index, pos + index_shift_for_tokens_after_current);
                 syntax_editor_sanitize_cursor();
             }
@@ -708,12 +880,15 @@ bool auto_format_line(int line_index)
         }
 
         int delete_count = line->text.size - last.end_index; // Line text size changes, so store this first
+        bool keep_cursor_space = cursor_on_line && pos > last.end_index;
+        if (keep_cursor_space) delete_count -= 1;
         for (int i = 0; i < delete_count; i++) {
-            history_delete_char(&editor.history, text_index_make(line_index, last.end_index));
+            history_delete_char(&editor.history, text_index_make(line_index, line->text.size - 1));
             line_changed = true;
-            if (pos >= last.end_index) {
-                pos -= 1;
-            }
+        }
+
+        if (keep_cursor_space) {
+            pos = last.end_index + 1;
         }
     }
 
@@ -1067,10 +1242,15 @@ void code_completion_insert_suggestion()
 {
     auto& editor = syntax_editor;
     auto& suggestions = editor.code_completion_suggestions;
+
+    string_reset(&editor.last_recorded_code_completion);
+
     if (suggestions.size == 0) return;
     if (editor.cursor.character == 0) return;
     String replace_string = suggestions[0];
     auto line = source_code_get_line(editor.code, editor.cursor.line);
+
+    string_append_string(&editor.last_recorded_code_completion, &replace_string);
 
     // Remove current token
     int token_index = get_cursor_token_index(false);
@@ -1088,16 +1268,26 @@ void code_completion_insert_suggestion()
 // Editor update
 void editor_enter_insert_mode()
 {
+    if (syntax_editor.mode == Editor_Mode::INSERT) {
+        return;
+    }
+    if (syntax_editor.record_insert_commands) {
+        dynamic_array_reset(&syntax_editor.last_insert_commands);
+    }
     syntax_editor.mode = Editor_Mode::INSERT;
     history_start_complex_command(&syntax_editor.history);
 }
 
 void editor_leave_insert_mode()
 {
+    if (syntax_editor.mode != Editor_Mode::INSERT) {
+        return;
+    }
     syntax_editor.mode = Editor_Mode::NORMAL;
     history_stop_complex_command(&syntax_editor.history);
     history_set_cursor_pos(&syntax_editor.history, syntax_editor.cursor);
     dynamic_array_reset(&syntax_editor.code_completion_suggestions);
+    auto_format_line(syntax_editor.cursor.line);
 }
 
 void editor_split_line_at_cursor(int indentation_offset)
@@ -1118,52 +1308,1564 @@ void editor_split_line_at_cursor(int indentation_offset)
     if (cursor.character != line_size) {
         history_insert_text(&syntax_editor.history, text_index_make(new_line_index, 0), cutout);
         history_delete_text(&syntax_editor.history, cursor, line_size);
-        auto_format_line(cursor.line);
     }
-    auto_format_line(new_line_index);
     cursor = text_index_make(new_line_index, 0);
 }
 
-void normal_command_execute(Normal_Command command)
+namespace Motions
+{
+    Source_Line* get_line(const Text_Index& pos) {
+        auto code = syntax_editor.code;
+        if (pos.line >= code->line_count || pos.line < 0) return nullptr;
+        auto line = source_code_get_line(code, pos.line);
+        if (pos.character > line->text.size || pos.character < 0) return nullptr;
+        return line;
+    }
+
+    // Advances horizontally in current line. Returns true if index has changed
+    bool move(Text_Index& pos, int value) {
+        auto line = get_line(pos);
+        if (line == nullptr) return false;
+        int prev = pos.character;
+        pos.character += value;
+        if (pos.character < 0) pos.character = 0;
+        if (pos.character > line->text.size) pos.character = line->text.size;
+        return prev != pos.character;
+    }
+
+    void move_forwards_over_line(Text_Index& pos) {
+        auto line = get_line(pos);
+        if (line == nullptr) return;
+
+        if (pos.character < line->text.size) {
+            pos.character += 1;
+            return;
+        }
+
+        if (pos.line + 1 >= syntax_editor.code->line_count) {
+            return;
+        }
+
+        pos.character = 0;
+        pos.line += 1;
+    }
+
+    void move_backwards_over_line(Text_Index& pos) 
+    {
+        if (pos.character > 0) {
+            pos.character -= 1;
+            return;
+        }
+
+        if (pos.line == 0) return;
+        pos = text_index_make_line_end(syntax_editor.code, pos.line - 1);
+    }
+    
+    char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
+        Source_Line* line = get_line(pos);
+        if (line == nullptr) return invalid_char;
+        int p = pos.character + offset;
+        if (p < 0 || p >= line->text.size) return invalid_char;
+        return line->text.characters[p];
+    }
+
+    // Returns true if a character was found that matched the test_fn
+    bool goto_next_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool forward = true, bool skip_current_char = false) 
+    {
+        Source_Line* line = get_line(pos);
+        if (line == nullptr) return false;
+
+        int dir = forward ? 1 : -1;
+        for (int i = pos.character + (skip_current_char ? dir : 0); i < line->text.size && i >= 0; i += dir)
+        {
+            char c = line->text.characters[i];
+            if (test_fn(c, userdata)) {
+                pos.character = i;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool move_while_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true) 
+    {
+        Source_Line* line = get_line(pos);
+        if (line == nullptr) return false;
+
+        int dir = forward ? 1 : -1;
+        int last_valid = pos.character;
+        for (int i = last_valid; i < line->text.size && i >= 0; i += dir)
+        {
+            char c = line->text.characters[i];
+            bool result = test_fn(c, userdata);
+            if (invert_set) result = !result;
+            if (result) {
+                last_valid = i;
+            }
+            else {
+                break;
+            }
+        }
+
+        pos.character = last_valid;
+        return false;
+    }
+
+    void skip_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true)
+    {
+        Source_Line* line = get_line(pos);
+        if (line == nullptr) return;
+
+        int dir = forward ? 1 : -1;
+        int index = pos.character;
+        while (index >= 0 && index < line->text.size) {
+            char c = line->text.characters[index];
+            bool result = test_fn(c, userdata);
+            if (invert_set) result = !result;
+            if (!result) break;
+            index += dir;
+        }
+
+        pos.character = math_maximum(0, index);
+    }
+
+    Text_Range text_range_get_island(Text_Index pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false)
+    {
+        Text_Index start = pos;
+        move_while_in_set(start, test_fn, userdata, invert_set, false); // Go back to island start
+        Text_Index end = pos;
+        skip_in_set(end, test_fn, userdata, invert_set);
+        return text_range_make(start, end);
+    }
+
+    Text_Range text_range_get_word(Text_Index pos)
+    {
+        auto line = get_line(pos);
+        if (line == nullptr) return text_range_make(pos, pos);
+        auto text = line->text;
+
+        // If char is whitespace, return the whole whitespace as the word
+        char c = get_char(pos);
+        if (char_is_whitespace(c)) {
+            return text_range_get_island(pos, char_is_whitespace);
+        }
+        
+        // If we are on a identifier word
+        if (char_is_valid_identifier(c)) {
+            return text_range_get_island(pos, char_is_valid_identifier);
+        }
+        return text_range_get_island(pos, char_is_operator);
+    }
+
+    Text_Range text_range_get_parenthesis(Text_Index pos, char start_char, char end_char)
+    {
+        auto code = syntax_editor.code;
+
+        // 1. Go back to previous occurance of text...
+        Text_Index start = pos;
+        Source_Line* line = source_code_get_line(code, start.line);
+
+        // Special handling for string literals ""
+        if (start_char == '\"' && end_char == '\"') 
+        {
+            int index = 0;
+            bool inside_string = false;
+            int string_start = -1;
+            while (index < line->text.size)
+            {
+                char c = line->text.characters[index];
+                if (c == '\"') {
+                    inside_string = !inside_string;
+                    if (!inside_string && pos.character >= string_start && pos.character <= index) {
+                        return text_range_make(text_index_make(pos.line, string_start), text_index_make(pos.line, index + 1));
+                    }
+                    string_start = index;
+                }
+                else if (c == '\\') {
+                    index += 2; // Skip this + escaped 
+                    continue;
+                }
+                index += 1;
+            }
+
+            if (inside_string && pos.character >= string_start) {
+                return text_range_make(text_index_make(pos.line, string_start), text_index_make(pos.line, line->text.size));
+            }
+        }
+
+        bool found = false;
+        bool is_block_parenthesis = false;
+        // Try to find start parenthesis on current line
+        {
+            auto text = line->text;
+            int depth = 0;
+            for (int i = start.character; i >= 0; i -= 1) {
+                char c = text.characters[i];
+                if (c == start_char) {
+                    if (depth == 0) {
+                        found = true;
+                        start.character = i;
+                        is_block_parenthesis = i == text.size - 1;
+                        break;
+                    }
+                    else {
+                        depth -= 1;
+                    }
+                }
+                else if (c == end_char && i != start.character) {
+                    depth += 1;
+                }
+            }
+        }
+
+        // Try to find start parenthesis on previous block end...
+        if (!found)
+        {
+            int start_indent = line->indentation;
+            for (int i = start.line - 1; i >= 0; i -= 1) 
+            {
+                line = source_code_get_line(code, i);
+                if (line->indentation == start_indent - 1) 
+                {
+                    if (line->text.size != 0 && line->text.characters[line->text.size-1] == start_char) {
+                        found = true;
+                        start.line = i;
+                        start.character = line->text.size - 1;
+                        is_block_parenthesis = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (!found) {
+            return text_range_make(pos, pos);
+        }
+
+        // Now find parenthesis end...
+        Text_Index end = start;
+        found = false;
+        if (!is_block_parenthesis)
+        {
+            // Try to find end parenthesis on current line...
+            int depth = 0;
+            for (int i = end.character + 1; i < line->text.size; i++) 
+            {
+                char c = line->text.characters[i];
+                if (c == end_char) {
+                    if (depth == 0) {
+                        end.character = i + 1;
+                        found = true;
+                        break;
+                    }
+                    else {
+                        depth -= 1;
+                    }
+                }
+                else if (c == start_char) {
+                    depth += 1;
+                }
+            }
+        }
+        else
+        {
+            // Find end parenthesis at end of block
+            int start_indent = line->indentation;
+            for (int i = start.line + 1; i < code->line_count; i++) 
+            {
+                line = source_code_get_line(code, i);
+                if (line->indentation == start_indent) {
+                    if (line->text.size != 0 && line->text.characters[0] == end_char) {
+                        end.character = 1;
+                        end.line = i;
+                        found = true;
+                        break;
+                    }
+                    break;
+                }
+                else if (line->indentation < start_indent) {
+                    break;
+                }
+            }
+        }
+
+        // Return result if available
+        if (!found) {
+            return text_range_make(pos, pos);
+        }
+        return text_range_make(start, end);
+    }
+}
+
+namespace Parsing
+{
+    Movement movement_make(Movement_Type movement_type, int repeat_count, char search_char = '\0') {
+        Movement result;
+        result.type = movement_type;
+        result.repeat_count = repeat_count;
+        result.search_char = search_char;
+        return result;
+    }
+
+    Motion motion_make(Motion_Type motion_type, int repeat_count, bool contains_edges) {
+        Motion result;
+        result.motion_type = motion_type;
+        result.repeat_count = repeat_count;
+        result.contains_edges = contains_edges;
+        return result;
+    }
+    
+    Motion motion_make_from_movement(Movement movement) 
+    {
+        Motion result;
+        result.motion_type = Motion_Type::MOVEMENT;
+        result.movement = movement;
+        result.repeat_count = 1;
+        result.contains_edges = false;
+
+        // Handle up/down movements as whole line movements, like vim does
+        if (movement.type == Movement_Type::MOVE_UP || movement.type == Movement_Type::MOVE_DOWN) {
+            int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
+            int repeat_count = movement.repeat_count;
+            return Parsing::motion_make(Motion_Type::LINE, movement.repeat_count * dir, true);
+        }
+
+        return result;
+    }
+
+    Normal_Mode_Command normal_mode_command_make(Normal_Mode_Command_Type command_type, int repeat_count) {
+        Normal_Mode_Command result;
+        result.type = command_type;
+        result.repeat_count = repeat_count;
+        return result;
+    }
+
+    Normal_Mode_Command normal_mode_command_make_char(Normal_Mode_Command_Type command_type, int repeat_count, char character) {
+        Normal_Mode_Command result;
+        result.type = command_type;
+        result.repeat_count = repeat_count;
+        result.options.character = character;
+        return result;
+    }
+    
+    Normal_Mode_Command normal_mode_command_make_motion(Normal_Mode_Command_Type command_type, int repeat_count, Motion motion) {
+        Normal_Mode_Command result;
+        result.type = command_type;
+        result.repeat_count = repeat_count;
+        result.options.motion = motion;
+        return result;
+    }
+    
+    Normal_Mode_Command normal_mode_command_make_movement(Normal_Mode_Command_Type command_type, int repeat_count, Movement movement) {
+        Normal_Mode_Command result;
+        result.type = command_type;
+        result.repeat_count = 1;
+        result.options.movement = movement;
+        return result;
+    }
+
+    enum class Parse_Result_Type
+    {
+        SUCCESS,
+        COMPLETABLE,
+        FAILURE
+    };
+
+    template<typename T>
+    struct Parse_Result
+    {
+        Parse_Result_Type type;
+        T result;
+    };
+
+    template<typename T>
+    Parse_Result<T> parse_result_success(T t) {
+        Parse_Result<T> result;
+        result.type = Parse_Result_Type::SUCCESS;
+        result.result = t;
+        return result;
+    }
+
+    template<typename T>
+    Parse_Result<T> parse_result_failure() {
+        Parse_Result<T> result;
+        result.type = Parse_Result_Type::FAILURE;
+        return result;
+    }
+
+    template<typename T>
+    Parse_Result<T> parse_result_completable() {
+        Parse_Result<T> result;
+        result.type = Parse_Result_Type::COMPLETABLE;
+        return result;
+    }
+
+    // Note: Parses a repeat-count, so 0 is not counted here, as this is a movement
+    int parse_repeat_count(int& index, int return_value_if_invalid)
+    {
+        auto& buffer = syntax_editor.command_buffer;
+        int result = 0;
+        // Parse repeat count if existing
+        if (index >= buffer.size) return return_value_if_invalid;
+    
+        int start_index = index;
+    
+        char c = buffer[index];
+        if (c == '0') return return_value_if_invalid;
+        while (char_is_digit(c) && index < buffer.size) {
+            result = result * 10 + char_digit_value(c);
+            index += 1;
+            c = buffer[index];
+        }
+    
+        if (index != start_index) return result;
+        return return_value_if_invalid;
+    }
+
+    Parse_Result<Movement> parse_movement(int& index, int prev_repeat_count_parse = -1)
+    {
+        auto cmd = syntax_editor.command_buffer;
+
+        bool repeat_count_exists = true;
+        int repeat_count = prev_repeat_count_parse;
+        if (repeat_count == -1) {
+            int prev_index = index;
+            repeat_count = parse_repeat_count(index, 1);
+            repeat_count_exists = prev_index != index;
+        }
+
+        if (index >= cmd.size) return parse_result_completable<Movement>();
+
+        switch (cmd.characters[index])
+        {
+        // Single character movements
+        case 'h': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_LEFT, repeat_count));
+        case 'l': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_RIGHT, repeat_count));
+        case 'j': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_DOWN, repeat_count));
+        case 'k': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_UP, repeat_count));
+        case '0': index += 1; return parse_result_success(movement_make(Movement_Type::TO_START_OF_LINE, repeat_count));
+        case '$': index += 1; return parse_result_success(movement_make(Movement_Type::TO_END_OF_LINE, repeat_count));
+        case 'w': index += 1; return parse_result_success(movement_make(Movement_Type::NEXT_WORD, repeat_count));
+        case 'W': index += 1; return parse_result_success(movement_make(Movement_Type::NEXT_SPACE, repeat_count));
+        case 'b': index += 1; return parse_result_success(movement_make(Movement_Type::PREVIOUS_WORD, repeat_count));
+        case 'B': index += 1; return parse_result_success(movement_make(Movement_Type::PREVIOUS_SPACE, repeat_count));
+        case 'e': index += 1; return parse_result_success(movement_make(Movement_Type::END_OF_WORD, repeat_count));
+        case 'E': index += 1; return parse_result_success(movement_make(Movement_Type::END_OF_WORD_AFTER_SPACE, repeat_count));
+        case '%': index += 1; return parse_result_success(movement_make(Movement_Type::JUMP_ENCLOSURE, repeat_count));
+        case ';': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH , repeat_count));
+        case ',': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count));
+        case '}': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_END, repeat_count));
+        case '{': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_START, repeat_count));
+
+        // Character search movements:
+        case 'f':
+        case 'F':
+        case 't':
+        case 'T': {
+            Movement_Type type;
+            if (cmd.characters[index] == 'f') {
+                type = Movement_Type::SEARCH_FORWARDS_FOR;
+            }
+            else if (cmd.characters[index] == 'F') {
+                type = Movement_Type::SEARCH_BACKWARDS_FOR;
+            }
+            else if (cmd.characters[index] == 't') {
+                type = Movement_Type::SEARCH_FORWARDS_TO;
+            }
+            else if (cmd.characters[index] == 'T') {
+                type = Movement_Type::SEARCH_BACKWARDS_TO;
+            }
+            else {
+                type = (Movement_Type)-1;
+                panic("");
+            }
+
+            if (index + 1 >= cmd.size) {
+                return parse_result_completable<Movement>();
+            }
+
+            auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1]));
+            index += 2;
+            return result;
+        }
+
+        // Line index movements
+        case 'G': {
+                if (repeat_count_exists) {
+                    index += 1;
+                    return parse_result_success(movement_make(Movement_Type::GOTO_LINE_NUMBER, repeat_count));
+                }
+                else {
+                    index += 1;
+                    return parse_result_success(movement_make(Movement_Type::GOTO_END_OF_TEXT, repeat_count));
+                }
+        }
+        case 'g': {
+            if (repeat_count_exists) {
+                // Note: This is a non-vim shortcut, so that 123g is the same as 123G
+                index += 1;
+                return parse_result_success(movement_make(Movement_Type::GOTO_LINE_NUMBER, repeat_count));
+            }
+
+            if (index + 1 >= cmd.size) {
+                return parse_result_completable<Movement>();
+            }
+            if (cmd[index + 1] == 'g') {
+                index += 2;
+                return parse_result_success(movement_make(Movement_Type::GOTO_START_OF_TEXT, 1));
+            }
+            return parse_result_failure<Movement>();
+        }
+        }
+    
+        return parse_result_failure<Movement>();
+    }
+
+    Parse_Result<Motion> parse_motion(int& index)
+    {
+        auto& cmd = syntax_editor.command_buffer;
+
+        // Parse repeat count
+        int prev_index = index;
+        int repeat_count = parse_repeat_count(index, 1);
+        bool repeat_count_exists = prev_index != index;
+    
+        // Motions may also be movements, so we check if we can parse a movement first
+        Parse_Result<Movement> movement_parse = parse_movement(index, repeat_count_exists ? repeat_count : -1);
+        if (movement_parse.type == Parse_Result_Type::SUCCESS) {
+            return parse_result_success(motion_make_from_movement(movement_parse.result));
+        }
+        else if (movement_parse.type == Parse_Result_Type::COMPLETABLE) {
+            return parse_result_completable<Motion>();
+        }
+    
+        if (index >= cmd.size) return parse_result_completable<Motion>();
+
+        // Now we need to check for real motions, which may start with a repeat count
+        if (cmd[index] != 'i' && cmd[index] != 'a') return parse_result_failure<Motion>();
+        bool contains_edges = cmd[index] == 'a';
+
+        index += 1;
+        if (index >= cmd.size) return parse_result_completable<Motion>();
+    
+        // Now we need to determine the motion
+        char c = cmd[index];
+        index += 1;
+        switch (c)
+        {
+        case 'w': return parse_result_success(motion_make(Motion_Type::WORD, repeat_count, contains_edges));
+        case 'W': return parse_result_success(motion_make(Motion_Type::SPACES, repeat_count, contains_edges));
+        case ')': 
+        case '(': return parse_result_success(motion_make(Motion_Type::PARENTHESES, repeat_count, contains_edges));
+        case '{': 
+        case '}': return parse_result_success(motion_make(Motion_Type::BRACES, repeat_count, contains_edges));
+        case '[':
+        case ']': return parse_result_success(motion_make(Motion_Type::BRACKETS, repeat_count, contains_edges));
+        case '"': return parse_result_success(motion_make(Motion_Type::QUOTATION_MARKS, repeat_count, contains_edges));
+        // case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITHOUT_INDENT, repeat_count, contains_edges));
+        // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
+        case 'b':
+        case 'B': return parse_result_success(motion_make(Motion_Type::BLOCK, repeat_count, contains_edges));
+        }
+    
+        index -= 1;
+        return parse_result_failure<Motion>();
+    }
+
+    Parse_Result<Insert_Command> parse_insert_command(const Key_Message& msg)
+    {
+        Insert_Command input;
+        if ((msg.key_code == Key_Code::P || msg.key_code == Key_Code::N) && msg.ctrl_down && msg.key_down) {
+            input.type = Insert_Command_Type::INSERT_CODE_COMPLETION;
+        }
+        else if ((msg.key_code == Key_Code::W) && msg.ctrl_down && msg.key_down) {
+            input.type = Insert_Command_Type::DELETE_LAST_WORD;
+        }
+        else if ((msg.key_code == Key_Code::U) && msg.ctrl_down && msg.key_down) {
+            input.type = Insert_Command_Type::DELETE_TO_LINE_START;
+        }
+        else if (msg.key_code == Key_Code::SPACE && msg.key_down) {
+            if (msg.shift_down && syntax_editor.code_completion_suggestions.size > 0) {
+                input.type = Insert_Command_Type::INSERT_CODE_COMPLETION;
+            }
+            else {
+                input.type = Insert_Command_Type::SPACE;
+            }
+        }
+        else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
+            input.type = Insert_Command_Type::EXIT_INSERT_MODE;
+        }
+        else if (msg.key_code == Key_Code::ARROW_LEFT && msg.key_down) {
+            input.type = Insert_Command_Type::MOVE_LEFT;
+        }
+        else if (msg.key_code == Key_Code::ARROW_RIGHT && msg.key_down) {
+            input.type = Insert_Command_Type::MOVE_RIGHT;
+        }
+        else if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
+            input.type = Insert_Command_Type::BACKSPACE;
+        }
+        else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
+            if (msg.shift_down) {
+                input.type = Insert_Command_Type::ENTER_REMOVE_ONE_INDENT;
+            }
+            else {
+                input.type = Insert_Command_Type::ENTER;
+            }
+        }
+        else if (char_is_letter(msg.character) || msg.character == '_') {
+            input.type = Insert_Command_Type::IDENTIFIER_LETTER;
+            input.letter = msg.character;
+        }
+        else if (char_is_digit(msg.character)) {
+            input.type = Insert_Command_Type::NUMBER_LETTER;
+            input.letter = msg.character;
+        }
+        else if (msg.key_code == Key_Code::TAB && msg.key_down) {
+            if (msg.shift_down) {
+                input.type = Insert_Command_Type::REMOVE_INDENTATION;
+            }
+            else {
+                input.type = Insert_Command_Type::ADD_INDENTATION;
+            }
+        }
+        else if (msg.key_down && msg.character != -1) {
+            if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
+                input.type = Insert_Command_Type::DELIMITER_LETTER;
+                input.letter = msg.character;
+            }
+            else {
+                return parse_result_failure<Insert_Command>();
+            }
+        }
+        else {
+            return parse_result_failure<Insert_Command>();
+        }
+
+        return parse_result_success(input);
+    }
+
+    Parse_Result<Normal_Mode_Command> parse_normal_command(int& index)
+    {
+        auto& cmd = syntax_editor.command_buffer;
+
+        int prev_index = index;
+        int repeat_count = parse_repeat_count(index, 1);
+        bool repeat_count_exists = prev_index != index;
+        if (index >= cmd.size) return parse_result_completable<Normal_Mode_Command>();
+
+        // Check if it is a movement
+        Parse_Result<Movement> movement_parse = parse_movement(index, repeat_count_exists ? repeat_count : -1);
+        if (movement_parse.type == Parse_Result_Type::SUCCESS) {
+            return parse_result_success(normal_mode_command_make_movement(Normal_Mode_Command_Type::MOVEMENT, 1, movement_parse.result));
+        }
+        else if (movement_parse.type == Parse_Result_Type::COMPLETABLE) {
+            return parse_result_completable<Normal_Mode_Command>();
+        }
+
+        if (index >= cmd.size) return parse_result_completable<Normal_Mode_Command>();
+    
+        // Check character
+        Normal_Mode_Command_Type command_type = Normal_Mode_Command_Type::MAX_ENUM_VALUE;
+        bool parse_motion_afterwards = false;
+        char curr_char = cmd[index];
+        char follow_char = index + 1 < cmd.size ? cmd[index + 1] : '?';
+        bool follow_char_valid = index + 1 < cmd.size;
+        index += 1;
+        switch (curr_char)
+        {
+        case 'x': 
+            return parse_result_success(
+                    normal_mode_command_make_motion(
+                        Normal_Mode_Command_Type::DELETE_MOTION, repeat_count, 
+                        motion_make_from_movement(movement_make(Movement_Type::MOVE_RIGHT, 1))
+                    )
+            );
+        case 'i':
+            return parse_result_success(normal_mode_command_make_movement(
+                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                    movement_make(Movement_Type::MOVE_LEFT, 0))
+            );
+        case 'I':
+            return parse_result_success(normal_mode_command_make_movement(
+                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                    movement_make(Movement_Type::TO_START_OF_LINE, 0))
+            );
+        case 'a':
+            return parse_result_success(normal_mode_command_make_movement(
+                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                    movement_make(Movement_Type::MOVE_RIGHT, 1))
+            );
+        case 'A':
+            return parse_result_success(normal_mode_command_make_movement(
+                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                    movement_make(Movement_Type::TO_END_OF_LINE, 1))
+            );
+        case 'o': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, 1));
+        case 'O': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, 1));
+        case '.': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::REPEAT_LAST_COMMAND, repeat_count));
+        case 'D':
+            return parse_result_success(
+                    normal_mode_command_make_motion(
+                        Normal_Mode_Command_Type::DELETE_MOTION, repeat_count, 
+                        motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                    )
+            );
+        case 'C':
+            return parse_result_success(
+                    normal_mode_command_make_motion(
+                        Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count, 
+                        motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                    )
+            );
+        case 'Y': 
+            return parse_result_success(
+                    normal_mode_command_make_motion(
+                        Normal_Mode_Command_Type::YANK_MOTION, 0,
+                        motion_make(Motion_Type::LINE, repeat_count - 1, false)
+                    )
+            );
+        case 'L': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, 1));
+        case 'M': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, 1));
+        case 'H': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP, 1));
+        case 'p': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_AFTER_CURSOR, repeat_count));
+        case 'P': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_BEFORE_CURSOR, repeat_count));
+        case 'u': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::UNDO, repeat_count));
+
+        case 'r': {
+            if (!follow_char_valid) {
+                return parse_result_completable<Normal_Mode_Command>();
+            }
+            return parse_result_success(normal_mode_command_make_char(Normal_Mode_Command_Type::REPLACE_CHAR, 1, follow_char));
+        }
+        case 'd': 
+        case 'c':
+        case 'y': 
+        {
+            if (!follow_char_valid) {
+                return parse_result_completable<Normal_Mode_Command>();
+            }
+            bool include_edges = false;
+            if (curr_char == 'd') {
+                command_type = Normal_Mode_Command_Type::DELETE_MOTION;
+                include_edges = true;
+            }
+            else if (curr_char == 'c') {
+                command_type = Normal_Mode_Command_Type::CHANGE_MOTION;
+            }
+            else if (curr_char == 'y') {
+                command_type = Normal_Mode_Command_Type::YANK_MOTION;
+            }
+            parse_motion_afterwards = true;
+
+            if (follow_char == curr_char) { // dd, yy or cc
+                index += 1;
+                return parse_result_success(
+                    normal_mode_command_make_motion(
+                        command_type, 1,
+                        motion_make(Motion_Type::LINE, repeat_count - 1, include_edges)
+                    )
+                );
+            }
+            break;
+        }
+        case 'v': command_type = Normal_Mode_Command_Type::VISUALIZE_MOTION; parse_motion_afterwards = true; break;
+        case 'R': command_type = Normal_Mode_Command_Type::REPLACE_MOTION_WITH_YANK; parse_motion_afterwards = true; break;
+        case 'z': {
+            if (!follow_char_valid) {
+                return parse_result_completable<Normal_Mode_Command>();
+            }
+
+            if (follow_char == 't') {
+                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP, 1));
+            }
+            else if (follow_char == 'z') {
+                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, 1));
+            }
+            else if (follow_char == 'b') {
+                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM, 1));
+            }
+            return parse_result_failure<Normal_Mode_Command>();
+        }
+        }
+
+        // Check if further parsing is required
+        if (command_type == Normal_Mode_Command_Type::MAX_ENUM_VALUE) {
+            return parse_result_failure<Normal_Mode_Command>();
+        }
+
+        if (!parse_motion_afterwards) {
+            return parse_result_success<Normal_Mode_Command>(normal_mode_command_make(command_type, repeat_count));
+        }
+        else
+        {
+            Parse_Result<Motion> motion = parse_motion(index);
+            if (motion.type == Parse_Result_Type::SUCCESS) {
+                return parse_result_success<Normal_Mode_Command>(normal_mode_command_make_motion(command_type, repeat_count, motion.result));
+            }
+            else if (motion.type == Parse_Result_Type::COMPLETABLE) {
+                return parse_result_completable<Normal_Mode_Command>();
+            }
+            else {
+                return parse_result_failure<Normal_Mode_Command>();
+            }
+        }
+
+        return parse_result_failure<Normal_Mode_Command>();
+    }
+};
+
+
+Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
+{
+    auto code = syntax_editor.code;
+    auto& editor = syntax_editor;
+
+    pos = sanitize_index(pos);
+    Source_Line* line = source_code_get_line(code, pos.line);
+
+    auto do_char_search = [&](char c, bool forward, bool search_towards) {
+        auto char_equals = [](char c, void* test_char) -> bool {
+            char other = *(char*)test_char;
+            return c == other;
+        };
+        Text_Index start = pos;
+        bool found = Motions::goto_next_in_set(start, char_equals, (void*) &c, forward, true);
+        if (found) {
+            pos = start;
+            if (search_towards) {
+                pos.character += forward ? -1 : 1;
+            }
+        }
+    };
+
+    bool repeat_movement = true;
+    bool set_horizontal_pos = true;
+    for (int i = 0; i < movement.repeat_count && repeat_movement; i++)
+    {
+        switch (movement.type)
+        {
+        case Movement_Type::MOVE_DOWN: 
+        case Movement_Type::MOVE_UP: {
+            int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
+            pos.line += dir * movement.repeat_count;
+            pos = sanitize_index(pos);
+            line = source_code_get_line(code, pos.line);
+
+            // Set position on line
+            pos.character = syntax_editor.last_line_x_pos - line->indentation * 4;
+            set_horizontal_pos = false;
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::MOVE_LEFT: {
+            pos.character -= movement.repeat_count;
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::MOVE_RIGHT: {
+            pos.character += movement.repeat_count;
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::TO_END_OF_LINE: {
+            pos.character = line->text.size;
+            editor.last_line_x_pos = 10000; // Look at jk movements after $ to understand this
+            set_horizontal_pos = false;
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::TO_START_OF_LINE: {
+            pos.character = 0;
+            editor.last_line_x_pos = 0; // Look at jk movements after $ to understand this
+            set_horizontal_pos = false;
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::GOTO_END_OF_TEXT: {
+            pos = text_index_make(code->line_count - 1, 0);
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::GOTO_START_OF_TEXT: {
+            pos = text_index_make(0, 0);
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::GOTO_LINE_NUMBER: {
+            pos = text_index_make(movement.repeat_count, 0);
+            repeat_movement = false;
+            break;
+        }
+        case Movement_Type::NEXT_WORD:
+        {
+            Text_Range range = Motions::text_range_get_word(pos);
+            pos = range.end;
+            Motions::skip_in_set(pos, char_is_whitespace);
+            break;
+        }
+        case Movement_Type::NEXT_SPACE: {
+            Motions::skip_in_set(pos, char_is_whitespace, nullptr, true); // Skip current non-whitespaces
+            Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+            break;
+        }
+        case Movement_Type::END_OF_WORD: 
+        {
+            if (char_is_whitespace(Motions::get_char(pos))) {
+                Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+                Text_Range range = Motions::text_range_get_word(pos);
+                pos.character = math_maximum(range.start.character, range.end.character - 1);
+                break;
+            }
+
+            Text_Range range = Motions::text_range_get_word(pos);
+            // Check if we are currently at end of word
+            if (pos.character == range.end.character - 1) {
+                Motions::move(pos, 1);
+                Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+                range = Motions::text_range_get_word(pos);
+            }
+            pos.character = math_maximum(range.start.character, range.end.character - 1);
+            break;
+        }
+        case Movement_Type::END_OF_WORD_AFTER_SPACE: 
+        {
+            if (char_is_whitespace(Motions::get_char(pos))) {
+                Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+                Text_Range range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+                pos.character = math_maximum(range.start.character, range.end.character - 1);
+                break;
+            }
+
+            Text_Range range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+            // Check if we are currently at end of word
+            if (pos.character == range.end.character - 1) {
+                Motions::move(pos, 1);
+                Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+                range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+            }
+            pos.character = math_maximum(range.start.character, range.end.character - 1);
+            break;
+        }
+        case Movement_Type::PREVIOUS_SPACE: {
+            int prev = pos.character;
+            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); 
+            pos = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true).start;
+            if (pos.character != prev) break;
+
+            Motions::move(pos, -1);
+            Motions::skip_in_set(pos, char_is_whitespace, nullptr, false, false); // Skip whitespaces
+            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); // Move backwards until start of word
+            break;
+        }
+        case Movement_Type::PREVIOUS_WORD: {
+            int prev = pos.character;
+            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); // Move backwards until start of word
+            pos = Motions::text_range_get_word(pos).start;
+            if (pos.character != prev) break;
+
+            Motions::move(pos, -1);
+            Motions::skip_in_set(pos, char_is_whitespace, nullptr, false, false); // Skip whitespaces
+            pos = Motions::text_range_get_word(pos).start;
+            break;
+        }
+        case Movement_Type::JUMP_ENCLOSURE: 
+        {
+            char c = Motions::get_char(pos);
+
+            // If on some type of parenthesis its quite logical () {} [] <>, just search next thing
+            // The question is what to do when not on such a thing
+            char open_parenthesis = '\0';
+            char closed_parenthesis = '\0';
+            switch (c) {
+            case '(': open_parenthesis = '('; closed_parenthesis = ')'; break;
+            case ')': open_parenthesis = '('; closed_parenthesis = ')'; break;
+            case '{': open_parenthesis = '{'; closed_parenthesis = '}'; break;
+            case '}': open_parenthesis = '{'; closed_parenthesis = '}'; break;
+            case '[': open_parenthesis = '['; closed_parenthesis = ']';  break;
+            case ']': open_parenthesis = '['; closed_parenthesis = ']'; break;
+            case '\"': open_parenthesis = '\"'; closed_parenthesis = '\"'; break;
+            default: break;
+            }
+            if (open_parenthesis == '\0') {
+                break;
+            }
+
+            Text_Range range = Motions::text_range_get_parenthesis(pos, open_parenthesis, closed_parenthesis);
+            if (!text_index_equal(range.start, range.end)) {
+                if (text_index_equal(pos, range.start)) {
+                    pos = range.end;
+                    pos.character -= 1;
+                }
+                else {
+                    pos = range.start;
+                }
+            }
+            break;
+        }
+        case Movement_Type::BLOCK_START: 
+        {
+            int line_index = pos.line;
+            auto line = source_code_get_line(code, line_index);
+            int start_indent = line->indentation;
+
+            // Go up lines while indent is smaller
+            // Skip current block of lines
+            while (line_index >= 0) {
+                auto line = source_code_get_line(code, line_index);
+                if (line->indentation < start_indent) {
+                    line_index = line_index + 1; // e.g. the previous line was the last of the block
+                    break;
+                }
+                line_index -= 1;
+            }
+            line_index = math_maximum(0, line_index);
+
+            pos.line = line_index;
+            pos.character = 0;
+            break;
+        }
+        case Movement_Type::BLOCK_END: 
+        {
+            int line_index = pos.line;
+            auto line = source_code_get_line(code, line_index);
+            int start_indent = line->indentation;
+
+            // Go up lines while indent is smaller
+            // Skip current block of lines
+            while (line_index < code->line_count) {
+                auto line = source_code_get_line(code, line_index);
+                if (line->indentation < start_indent) {
+                    line_index = line_index - 1; // e.g. the previous line was the last of the block
+                    break;
+                }
+                line_index += 1;
+            }
+            line_index = math_minimum(code->line_count - 1, line_index);
+
+            pos.line = line_index;
+            line = source_code_get_line(code, line_index);
+            pos.character = line->text.size;
+            break;
+        }
+        case Movement_Type::SEARCH_FORWARDS_FOR:
+        case Movement_Type::SEARCH_FORWARDS_TO:
+        case Movement_Type::SEARCH_BACKWARDS_FOR: 
+        case Movement_Type::SEARCH_BACKWARDS_TO: 
+        {
+            editor.last_search_was_forward = movement.type == Movement_Type::SEARCH_FORWARDS_FOR || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
+            editor.last_search_was_to = movement.type == Movement_Type::SEARCH_BACKWARDS_TO || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
+            editor.last_search_char = movement.search_char;
+            do_char_search(editor.last_search_char, editor.last_search_was_forward, editor.last_search_was_to);
+            break;
+        }
+        case Movement_Type::REPEAT_LAST_SEARCH: {
+            do_char_search(editor.last_search_char, editor.last_search_was_forward, editor.last_search_was_to);
+            break;
+        }
+        case Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
+            do_char_search(editor.last_search_char, !editor.last_search_was_forward, editor.last_search_was_to);
+            break;
+        }
+        default: panic("");
+        }
+
+        pos = sanitize_index(pos);
+        Source_Line* line = source_code_get_line(code, pos.line);
+        if (set_horizontal_pos) {
+            syntax_editor.last_line_x_pos = pos.character + 4 * line->indentation; 
+        }
+    }
+
+    return pos;
+}
+
+Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
+{
+    auto code = syntax_editor.code;
+    Text_Range result;
+    switch (motion.motion_type)
+    {
+    case Motion_Type::MOVEMENT: 
+    {
+        // Note: Repeat count is stored in movement, and motion should always have 1 as repeat count here
+        assert(motion.repeat_count == 1, "");
+        auto& mov = motion.movement;
+
+        Text_Index end_pos = movement_evaluate(motion.movement, pos);
+        if (text_index_in_order(pos, end_pos)) {
+            result = text_range_make(pos, end_pos);
+        }
+        else {
+            Motions::move(pos, 1);
+            result = text_range_make(end_pos, pos);
+        }
+
+        // Check for special movements
+        bool add_one_char = false;
+        auto mov_type = motion.movement.type;
+        if (mov_type == Movement_Type::SEARCH_FORWARDS_FOR || mov_type == Movement_Type::SEARCH_FORWARDS_TO) {
+            add_one_char = true;
+        }
+        else if (mov_type == Movement_Type::REPEAT_LAST_SEARCH) {
+            add_one_char = syntax_editor.last_search_was_forward;
+        }
+        else if (mov_type == Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION) {
+            add_one_char = !syntax_editor.last_search_was_forward;
+        }
+
+        if (add_one_char) {
+            Motions::move(result.end, 1);
+        }
+
+        break;
+    }
+    case Motion_Type::WORD: {
+        result = Motions::text_range_get_word(pos);
+
+        if (motion.contains_edges && !text_index_equal(result.start, result.end)) {
+            if (char_is_whitespace(Motions::get_char(result.start, -1))) {
+                Motions::move(result.start, -1);
+                Motions::skip_in_set(result.start, char_is_whitespace, nullptr, false, false);
+            }
+            if (char_is_whitespace(Motions::get_char(result.end))) {
+                Motions::skip_in_set(result.end, char_is_whitespace);
+            }
+        }
+        break;
+    }
+    case Motion_Type::SPACES: 
+    {
+        if (char_is_whitespace(Motions::get_char(pos))) {
+            result = Motions::text_range_get_island(pos, char_is_whitespace);
+        }
+        else {
+            result = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+        }
+
+        if (motion.contains_edges && !text_index_equal(result.start, result.end)) {
+            if (char_is_whitespace(Motions::get_char(result.start, -1))) {
+                Motions::move(result.start, -1);
+                Motions::skip_in_set(result.start, char_is_whitespace, nullptr, false, false);
+            }
+            if (char_is_whitespace(Motions::get_char(result.end))) {
+                Motions::skip_in_set(result.end, char_is_whitespace);
+            }
+        }
+        break;
+    }
+    case Motion_Type::BRACES: 
+    case Motion_Type::BRACKETS: 
+    case Motion_Type::PARENTHESES: 
+    case Motion_Type::QUOTATION_MARKS: 
+    {
+        char start = '\0';
+        char end = '\0';
+        switch (motion.motion_type) {
+        case Motion_Type::PARENTHESES:     start = '('; end = ')'; break;
+        case Motion_Type::BRACES:          start = '{'; end = '}'; break;
+        case Motion_Type::BRACKETS:        start = '['; end = ']'; break;
+        case Motion_Type::QUOTATION_MARKS: start = '\"'; end = '\"'; break;
+        }
+
+        for (int i = 0; i < motion.repeat_count; i++) 
+        {
+            result = Motions::text_range_get_parenthesis(pos, start, end);
+            pos = result.start;
+            if (pos.character == 0) {
+                if (pos.line == 0) {
+                    break;
+                }
+                pos.line -= 1;
+            }
+            else {
+                pos.character -= 1;
+            }
+        }
+
+        if (!text_index_equal(result.start, result.end) && !motion.contains_edges) {
+            Motions::move_forwards_over_line(result.start);
+            Motions::move_backwards_over_line(result.end);
+        }
+
+        break;
+    }
+    case Motion_Type::BLOCK: 
+    {
+        int line_start = pos.line;
+        int start_indentation = source_code_get_line(code, line_start)->indentation - (motion.repeat_count - 1);
+        while (line_start > 0) {
+            auto line = source_code_get_line(code, line_start);
+            if (line->indentation < start_indentation) {
+                line_start = line_start + 1;
+                break;
+            }
+            line_start -= 1;
+        }
+        line_start = math_maximum(0, line_start);
+
+        int line_end = pos.line;
+        while (line_end < code->line_count) {
+            auto line = source_code_get_line(code, line_end);
+            if (line->indentation < start_indentation) {
+                line_end = line_end - 1;
+                break;
+            }
+            line_end += 1;
+        }
+        line_end = math_minimum(code->line_count - 1, line_end);
+
+        result.start = text_index_make(line_start, 0);
+        result.end = text_index_make_line_end(code, line_end);
+        if (motion.contains_edges) {
+            if (result.start.line > 0) {
+                result.start = text_index_make_line_end(code, result.start.line - 1);
+            }
+            if (result.end.line + 1 < code->line_count) {
+                result.end = text_index_make(result.end.line + 1, 0);
+            }
+        }
+
+        break;
+    }
+    case Motion_Type::LINE: 
+    {
+        // Note: The repeat count for line gives the final line offset
+        if (motion.repeat_count >= 0) {
+            result.start = text_index_make(pos.line, 0);
+            result.end = text_index_make_line_end(code, pos.line + motion.repeat_count);
+        }
+        else {
+            result.start = text_index_make(pos.line + motion.repeat_count, 0);
+            result.end = text_index_make_line_end(code, pos.line);
+        }
+        result.start = sanitize_index(result.start);
+        result.end = sanitize_index(result.end);
+
+        if (motion.contains_edges) {
+            Motions::move_forwards_over_line(result.end);
+            // if (motion.repeat_count > 0) {
+            // }
+            // else {
+            //     Motions::move_backwards_over_line(result.start);
+            // }
+        }
+        break;
+    }
+    default:
+        panic("Invalid motion type");
+        result = text_range_make(pos, pos);
+        break;
+    }
+
+    return result;
+}
+
+void text_range_delete(Text_Range range)
+{
+    auto code = syntax_editor.code;
+
+    history_start_complex_command(&syntax_editor.history);
+    SCOPE_EXIT(history_stop_complex_command(&syntax_editor.history));
+
+    // Handle single line case
+    if (range.start.line == range.end.line) {
+        history_delete_text(&syntax_editor.history, range.start, range.end.character);
+        return;
+    }
+
+    // Delete text in first line
+    auto line = Motions::get_line(range.start);
+    auto end_line = Motions::get_line(range.end);
+    if (end_line == nullptr || line == nullptr) return;
+    history_delete_text(&syntax_editor.history, range.start, line->text.size); 
+
+    // Append remaining text of last-line into first line
+    String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
+    history_insert_text(&syntax_editor.history, range.start, remainder);
+
+    // Delete all lines inbetween
+    for (int i = range.start.line + 1; range.start.line + 1 < code->line_count && i <= range.end.line; i++) {
+        history_remove_line(&syntax_editor.history, range.start.line + 1);
+    }
+}
+
+void text_range_append_to_string(Text_Range range, String* str)
+{
+    auto code = syntax_editor.code;
+
+    // Handle single line case first
+    if (range.start.line == range.end.line) {
+        auto line = source_code_get_line(code, range.start.line);
+        for (int j = 0; j < line->indentation; j++) {
+            string_append_character(str, '\t');
+        }
+        String substring = string_create_substring_static(&line->text, range.start.character, range.end.character);
+        string_append_string(str, &substring);
+        return;
+    }
+
+    // Append first line
+    auto start_line = source_code_get_line(code, range.start.line);
+    for (int j = 0; j < start_line->indentation; j++) {
+        string_append_character(str, '\t');
+    }
+    String substring = string_create_substring_static(&start_line->text, range.start.character, start_line->text.size);
+    string_append_string(str, &substring);
+
+    // Append lines until end
+    for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++) 
+    {
+        auto line = source_code_get_line(code, i);
+        string_append_character(str, '\n');
+        // Append indentation
+        for (int j = 0; j < line->indentation; j++) {
+            string_append_character(str, '\t');
+        }
+
+        // Append line content
+        if (i == range.end.line) {
+            String substring = string_create_substring_static(&line->text, 0, range.end.character);
+            string_append_string(str, &substring);
+        }
+        else {
+            string_append_string(str, &line->text);
+        }
+    }
+}
+
+struct Yank_Line
+{
+    String text;
+    int indentation;
+};
+
+void insert_command_execute(Insert_Command input);
+
+void syntax_editor_insert_yank(bool before_cursor)
+{
+    auto& editor = syntax_editor;
+    auto code = editor.code;
+    auto& cursor = editor.cursor;
+
+    history_start_complex_command(&editor.history);
+    SCOPE_EXIT(history_stop_complex_command(&editor.history));
+
+    // Parse yanked text into individual lines
+    Dynamic_Array<Yank_Line> yank_lines = dynamic_array_create<Yank_Line>();
+    SCOPE_EXIT(dynamic_array_destroy(&yank_lines));
+    {
+        int index = 0;
+        int last_line_start = 0;
+        int last_indentation = 0;
+        bool tabs_valid = true;
+        while (index < editor.yank_string.size)
+        {
+            SCOPE_EXIT(index += 1);
+
+            char c = editor.yank_string.characters[index];
+            if (c == '\n')
+            {
+                Yank_Line yank;
+                yank.text = string_create_substring_static(&editor.yank_string, last_line_start, index);
+                yank.indentation = last_indentation;
+                dynamic_array_push_back(&yank_lines, yank);
+
+                tabs_valid = true;
+                last_indentation = 0;
+                last_line_start = index + 1;
+            }
+            else if (c == '\t') {
+                if (tabs_valid) {
+                    last_indentation += 1;
+                    last_line_start = index + 1;
+                }
+            }
+            else {
+                tabs_valid = false;
+            }
+        }
+
+        // Insert last yank line
+        Yank_Line yank;
+        yank.text = string_create_substring_static(&editor.yank_string, last_line_start, editor.yank_string.size);
+        yank.indentation = last_indentation;
+        dynamic_array_push_back(&yank_lines, yank);
+    }
+
+    // Insert text
+    if (editor.yank_was_line)
+    {
+        int line_insert_index = cursor.line + (before_cursor ? 0 : 1);
+        for (int i = 0; i < yank_lines.size; i++) {
+            auto& yank_line = yank_lines[i];
+            history_insert_line_with_text(&editor.history, line_insert_index + i, yank_line.indentation, yank_line.text);
+        }
+        cursor = text_index_make(line_insert_index + yank_lines.size - 1, 0);
+    }
+    else
+    {
+        // Insert first line
+        const Yank_Line& first_line = yank_lines[0];
+        auto& pos = cursor;
+        pos.character += before_cursor ? 0 : 1;
+        pos = sanitize_index(pos);
+        history_insert_text(&editor.history, pos, first_line.text);
+
+        if (yank_lines.size > 1)
+        {
+            // Insert the rest of the lines
+            for (int i = 1; i < yank_lines.size; i++) {
+                const Yank_Line& yank_line = yank_lines[i];
+                history_insert_line_with_text(&editor.history, pos.line + i, yank_line.indentation, yank_line.text);
+            }
+
+            // Append first line cutoff to last line, e.g. asdf|what and then put needs to add what to the end
+            Source_Line* first = source_code_get_line(editor.code, pos.line);
+            int cutoff_start = pos.character + first_line.text.size;
+            String substring = string_create_substring_static(&first->text, cutoff_start, first->text.size);
+            history_insert_text(&editor.history, text_index_make_line_end(editor.code, pos.line + yank_lines.size - 1), substring);
+            history_delete_text(&editor.history, text_index_make(pos.line, cutoff_start), first->text.size);
+        }
+    }
+}
+
+void normal_command_execute(Normal_Mode_Command& command)
 {
     auto& editor = syntax_editor;
     auto& cursor = editor.cursor;
     auto line = source_code_get_line(editor.code, cursor.line);
     auto& tokens = line->tokens;
 
-    SCOPE_EXIT(history_set_cursor_pos(&editor.history, editor.cursor));
-    SCOPE_EXIT(syntax_editor_sanitize_cursor());
+    // Save cursor pos
+    history_set_cursor_pos(&editor.history, editor.cursor);
 
-    switch (command)
+    // Record command for repeat
+    if (command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT ||
+        command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE ||
+        command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW ||
+        command.type == Normal_Mode_Command_Type::DELETE_MOTION ||
+        command.type == Normal_Mode_Command_Type::CHANGE_MOTION ||
+        command.type == Normal_Mode_Command_Type::PUT_AFTER_CURSOR ||
+        command.type == Normal_Mode_Command_Type::PUT_BEFORE_CURSOR)
     {
-    case Normal_Command::INSERT_AFTER: {
-        cursor.character += 1;
+        editor.last_normal_command = command;
+    }
+
+    // Start complex command for non-history commands
+    bool execute_as_complex = command.type != Normal_Mode_Command_Type::UNDO && command.type != Normal_Mode_Command_Type::REDO;
+    if (execute_as_complex) {
+        history_start_complex_command(&editor.history);
+    }
+
+    SCOPE_EXIT(
+        syntax_editor_sanitize_cursor();
+        history_set_cursor_pos(&editor.history, editor.cursor);
+        auto_format_line(cursor.line);
+        if (execute_as_complex) {
+            history_stop_complex_command(&editor.history);
+        }
+    );
+
+    switch (command.type)
+    {
+    case Normal_Mode_Command_Type::MOVEMENT: {
+        cursor = movement_evaluate(command.options.movement, cursor);
+        syntax_editor_sanitize_cursor();
+        break;
+    }
+    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT: {
+        editor_enter_insert_mode();
+        cursor = movement_evaluate(command.options.movement, cursor);
+        syntax_editor_sanitize_cursor();
+        break;
+    }
+    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW:
+    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
+        bool below = command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW;
+        int new_line_index = cursor.line + (below ? 1 : 0);
+        history_insert_line(&editor.history, new_line_index, line->indentation);
+        cursor = text_index_make(new_line_index, 0);
         editor_enter_insert_mode();
         break;
     }
-    case Normal_Command::INSERT_BEFORE: {
+    case Normal_Mode_Command_Type::YANK_MOTION:
+    case Normal_Mode_Command_Type::DELETE_MOTION:
+    {
+        // First yank deleted text
+        const auto& motion = command.options.motion;
+        if (motion.motion_type == Motion_Type::LINE)
+        {
+            editor.yank_was_line = true;
+            int start_line = cursor.line;
+            int end_line = cursor.line;
+            if (motion.repeat_count < 0) {
+                start_line += motion.repeat_count;
+                start_line = math_maximum(start_line, 0);
+            }
+            else {
+                end_line += motion.repeat_count;
+                start_line = math_minimum(editor.code->line_count - 1, start_line);
+            }
+
+            string_reset(&editor.yank_string);
+            for (int i = start_line; i <= end_line; i += 1) {
+                auto line = source_code_get_line(editor.code, i);
+                for (int j = 0; j < line->indentation; j++) {
+                    string_append_character(&editor.yank_string, '\t');
+                }
+                string_append_string(&editor.yank_string, &line->text);
+                if (i != end_line) {
+                    string_append_character(&editor.yank_string, '\n');
+                }
+            }
+        }
+        else {
+            editor.yank_was_line = false;
+            auto range = motion_evaluate(command.options.motion, cursor);
+            string_reset(&editor.yank_string);
+            text_range_append_to_string(range, &editor.yank_string);
+        }
+        printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
+
+        // Delete if necessary
+        if (command.type == Normal_Mode_Command_Type::DELETE_MOTION) {
+            auto range = motion_evaluate(command.options.motion, cursor);
+            text_range_delete(range);
+            cursor = range.start;
+        }
+        break;
+    }
+    case Normal_Mode_Command_Type::CHANGE_MOTION: {
+        auto range = motion_evaluate(command.options.motion, cursor);
+        cursor = range.start;
         editor_enter_insert_mode();
+        text_range_delete(range);
         break;
     }
-    case Normal_Command::MOVE_LEFT: {
-        cursor.character -= 1;
+    case Normal_Mode_Command_Type::PUT_AFTER_CURSOR:
+    case Normal_Mode_Command_Type::PUT_BEFORE_CURSOR: {
+        syntax_editor_insert_yank((command.type == Normal_Mode_Command_Type::PUT_BEFORE_CURSOR));
         break;
     }
-    case Normal_Command::MOVE_RIGHT: {
-        cursor.character += 1;
+    case Normal_Mode_Command_Type::REPLACE_CHAR: {
+        auto curr_char = Motions::get_char(cursor);
+        if (curr_char == '\0' || curr_char == command.options.character) break;
+        history_delete_char(&editor.history, cursor);
+        history_insert_char(&editor.history, cursor, command.options.character);
         break;
     }
-    case Normal_Command::INSERT_AT_LINE_END: {
-        cursor.character = line->text.size;
-        editor_enter_insert_mode();
+    case Normal_Mode_Command_Type::REPLACE_MOTION_WITH_YANK: {
+        auto range = motion_evaluate(command.options.motion, cursor);
+        cursor = range.start;
+        if (text_index_equal(range.start, range.end)) {
+            break;
+        }
+        text_range_delete(range);
+        syntax_editor_insert_yank(true);
         break;
     }
-    case Normal_Command::INSERT_AT_LINE_START: {
-        cursor.character = 0;
-        editor_enter_insert_mode();
-        break;
-    }
-    case Normal_Command::UNDO: {
+    case Normal_Mode_Command_Type::UNDO: {
         history_undo(&editor.history);
         auto cursor_history = history_get_cursor_pos(&editor.history);
         if (cursor_history.available) {
@@ -1171,7 +2873,7 @@ void normal_command_execute(Normal_Command command)
         }
         break;
     }
-    case Normal_Command::REDO: {
+    case Normal_Mode_Command_Type::REDO: {
         history_redo(&editor.history);
         auto cursor_history = history_get_cursor_pos(&editor.history);
         if (cursor_history.available) {
@@ -1179,46 +2881,60 @@ void normal_command_execute(Normal_Command command)
         }
         break;
     }
-    case Normal_Command::CHANGE_CHARACTER:
-    case Normal_Command::DELETE_CHARACTER: {
-        if (line->text.size == 0) break;
-        history_delete_char(&editor.history, editor.cursor);
-        bool changed = auto_format_line(cursor.line);
-        if (command == Normal_Command::CHANGE_CHARACTER) {
-            editor_enter_insert_mode();
-        }
-        break;
-    }
-    case Normal_Command::MOVE_LINE_START: {
-        cursor.character = 0;
-        break;
-    }
-    case Normal_Command::MOVE_LINE_END: {
-        cursor.character = line->text.size;
-        break;
-    }
-    case Normal_Command::ADD_LINE_ABOVE:
-    case Normal_Command::ADD_LINE_BELOW:
-    {
-        history_start_complex_command(&editor.history);
-        SCOPE_EXIT(history_stop_complex_command(&editor.history));
 
-        bool below = command == Normal_Command::ADD_LINE_BELOW;
-        int new_line_index = cursor.line + (below ? 1 : 0);
-        history_insert_line(&editor.history, new_line_index, line->indentation);
-        cursor = text_index_make(new_line_index, 0);
-        editor_enter_insert_mode();
+    case Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
+    case Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
+        int dir = command.type == Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
+        editor.camera_start_line += (editor.camera_start_line - editor.last_visible_line) / 2 * dir;
         break;
     }
-    case Normal_Command::MOVE_UP: {
-        // FUTURE: Use token render positions to move up/down
-        cursor.line -= 1;
+    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
+        editor.camera_start_line = editor.cursor.line - MIN_CURSOR_DISTANCE;
         break;
     }
-    case Normal_Command::MOVE_DOWN: {
-        cursor.line += 1;
+    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
+        editor.camera_start_line = editor.cursor.line - (editor.last_visible_line - editor.camera_start_line) / 2;
         break;
     }
+    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
+        editor.camera_start_line = editor.cursor.line - (editor.last_visible_line - editor.camera_start_line) + MIN_CURSOR_DISTANCE;
+        break;
+    }
+    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
+        cursor.line = editor.camera_start_line + MIN_CURSOR_DISTANCE;
+        cursor.character = 0;
+        syntax_editor_sanitize_cursor();
+        break;
+    }
+    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
+        cursor.line = editor.camera_start_line + (editor.last_visible_line - editor.camera_start_line) / 2;
+        cursor.character = 0;
+        syntax_editor_sanitize_cursor();
+        break;
+    }
+    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
+        cursor.line = editor.last_visible_line - MIN_CURSOR_DISTANCE;
+        cursor.character = 0;
+        syntax_editor_sanitize_cursor();
+        break;
+    }
+    case Normal_Mode_Command_Type::REPEAT_LAST_COMMAND:
+    {
+        editor.record_insert_commands = false;
+        normal_command_execute(editor.last_normal_command);
+        if (editor.mode == Editor_Mode::INSERT) {
+            for (int i = 0; i < editor.last_insert_commands.size; i++) {
+                insert_command_execute(editor.last_insert_commands[i]);
+            }
+        }
+        assert(editor.mode == Editor_Mode::NORMAL, "");
+        editor.record_insert_commands = true;
+        break;
+    }
+    case Normal_Mode_Command_Type::VISUALIZE_MOTION:
+    case Normal_Mode_Command_Type::GOTO_LAST_JUMP:
+    case Normal_Mode_Command_Type::GOTO_NEXT_JUMP:
+        break;
     default: panic("");
     }
 }
@@ -1239,6 +2955,10 @@ void insert_command_execute(Insert_Command input)
     syntax_editor_sanitize_cursor();
     SCOPE_EXIT(syntax_editor_sanitize_cursor());
     SCOPE_EXIT(code_completion_find_suggestions());
+
+    if (editor.record_insert_commands) {
+        dynamic_array_push_back(&editor.last_insert_commands, input);
+    }
 
     // Experimental: Automatically complete identifier if we are about to enter some seperation afterwards
     if (false)
@@ -1277,7 +2997,13 @@ void insert_command_execute(Insert_Command input)
     switch (input.type)
     {
     case Insert_Command_Type::INSERT_CODE_COMPLETION: {
-        code_completion_insert_suggestion();
+        if (editor.record_insert_commands) {
+            code_completion_insert_suggestion();
+        }
+        else {
+            history_insert_text(&editor.history, cursor, editor.last_recorded_code_completion);
+            auto_format_line(cursor.line);
+        }
         break;
     }
     case Insert_Command_Type::EXIT_INSERT_MODE: {
@@ -1315,6 +3041,25 @@ void insert_command_execute(Insert_Command input)
         pos = math_minimum(line->text.size, pos + 1);
         break;
     }
+    case Insert_Command_Type::DELETE_LAST_WORD: {
+        Movement movement = Parsing::movement_make(Movement_Type::PREVIOUS_WORD, 1);
+        Text_Index start = movement_evaluate(movement, cursor);
+        if (!text_index_equal(start, cursor)) {
+            Text_Index end = cursor;
+            cursor = start;
+            text_range_delete(text_range_make(start, end));
+        }
+        break;
+    }
+    case Insert_Command_Type::DELETE_TO_LINE_START: {
+        if (cursor.character == 0) break;
+        auto to = cursor;
+        cursor.character = 0;
+        text_range_delete(text_range_make(cursor, to));
+        break;
+    }
+
+    // Letters
     case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;
@@ -1380,12 +3125,12 @@ void insert_command_execute(Insert_Command input)
     }
     case Insert_Command_Type::SPACE:
     {
+        // Handle strings and comments, where we always just add a space
         if (line->is_comment) {
             history_insert_char(&syntax_editor.history, cursor, ' ');
             pos += 1;
             break;
         }
-
         if (pos == 0) break;
         syntax_editor_synchronize_tokens();
         auto token = get_cursor_token(false);
@@ -1404,13 +3149,11 @@ void insert_command_execute(Insert_Command input)
             break;
         }
 
-        char c = text[pos - 1];
-        if (pos < text.size) {
-            if (char_is_space_critical(c) && char_is_space_critical(text[pos])) {
-                history_insert_char(&syntax_editor.history, cursor, ' ');
-                pos += 1;
-                break;
-            }
+        char prev = text[pos - 1];
+        if ((char_is_space_critical(prev)) || (pos == text.size && prev != ' ')) {
+            history_insert_char(&syntax_editor.history, cursor, ' ');
+            pos += 1;
+            auto_format_line(cursor.line);
         }
 
         break;
@@ -1446,135 +3189,89 @@ void insert_command_execute(Insert_Command input)
         auto_format_line(cursor.line);
         break;
     }
-    default: break;
+    default: panic("");
     }
 }
 
 void syntax_editor_process_key_message(Key_Message& msg)
 {
     auto& mode = syntax_editor.mode;
+    auto& editor = syntax_editor;
+
+    using Parsing::Parse_Result;
+    using Parsing::Parse_Result_Type;
+    using Parsing::parse_insert_command;
+    using Parsing::parse_normal_command;
+    using Parsing::parse_repeat_count;
+
     if (mode == Editor_Mode::INSERT)
     {
-        Insert_Command input;
-        if ((msg.key_code == Key_Code::P || msg.key_code == Key_Code::N) && msg.ctrl_down && msg.key_down) {
-            input.type = Insert_Command_Type::INSERT_CODE_COMPLETION;
+        Parse_Result<Insert_Command> result = parse_insert_command(msg);
+        if (result.type == Parse_Result_Type::SUCCESS) {
+            insert_command_execute(result.result);
         }
-        else if (msg.key_code == Key_Code::SPACE && msg.key_down) {
-            input.type = msg.shift_down ? Insert_Command_Type::INSERT_CODE_COMPLETION : Insert_Command_Type::SPACE;
-        }
-        else if (msg.key_code == Key_Code::L && msg.key_down && msg.ctrl_down) {
-            input.type = Insert_Command_Type::EXIT_INSERT_MODE;
-        }
-        else if (msg.key_code == Key_Code::ARROW_LEFT && msg.key_down) {
-            input.type = Insert_Command_Type::MOVE_LEFT;
-        }
-        else if (msg.key_code == Key_Code::ARROW_RIGHT && msg.key_down) {
-            input.type = Insert_Command_Type::MOVE_RIGHT;
-        }
-        else if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
-            input.type = Insert_Command_Type::BACKSPACE;
-        }
-        else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
-            if (msg.shift_down) {
-                input.type = Insert_Command_Type::ENTER_REMOVE_ONE_INDENT;
-            }
-            else {
-                input.type = Insert_Command_Type::ENTER;
-            }
-        }
-        else if (char_is_letter(msg.character) || msg.character == '_') {
-            input.type = Insert_Command_Type::IDENTIFIER_LETTER;
-            input.letter = msg.character;
-        }
-        else if (char_is_digit(msg.character)) {
-            input.type = Insert_Command_Type::NUMBER_LETTER;
-            input.letter = msg.character;
-        }
-        else if (msg.key_code == Key_Code::TAB && msg.key_down) {
-            if (msg.shift_down) {
-                input.type = Insert_Command_Type::REMOVE_INDENTATION;
-            }
-            else {
-                input.type = Insert_Command_Type::ADD_INDENTATION;
-            }
-        }
-        else if (msg.key_down && msg.character != -1) {
-            if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
-                input.type = Insert_Command_Type::DELIMITER_LETTER;
-                input.letter = msg.character;
-            }
-            else {
-                return;
-            }
-        }
-        else {
-            return;
-        }
-        insert_command_execute(input);
     }
     else
     {
-        Normal_Command command;
-        if (msg.key_code == Key_Code::L && msg.key_down) {
-            command = Normal_Command::MOVE_RIGHT;
-        }
-        else if (msg.key_code == Key_Code::H && msg.key_down) {
-            command = Normal_Command::MOVE_LEFT;
-        }
-        else if (msg.key_code == Key_Code::J && msg.key_down) {
-            command = Normal_Command::MOVE_DOWN;
-        }
-        else if (msg.key_code == Key_Code::K && msg.key_down) {
-            command = Normal_Command::MOVE_UP;
-        }
-        else if (msg.key_code == Key_Code::O && msg.key_down) {
-            if (msg.shift_down) {
-                command = Normal_Command::ADD_LINE_ABOVE;
+        auto& cmd_buffer = editor.command_buffer;
+
+        // Filter out special/unnecessary messages
+        {
+            if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
+                string_reset(&editor.command_buffer);
+                logg("Command canceled: \"%s\"!\n", editor.command_buffer.characters);
+                return;
             }
-            else {
-                command = Normal_Command::ADD_LINE_BELOW;
+            // Filter out messages (Key Up messages + random shift or alt or ctrl clicks)
+            if ((msg.character == 0 && !(msg.ctrl_down && msg.key_down)) || !msg.key_down || msg.key_code == Key_Code::ALT) {
+                //logg("message filtered\n");
+                return;
             }
         }
-        else if (msg.key_code == Key_Code::NUM_0 && msg.key_down) {
-            command = Normal_Command::MOVE_LINE_START;
-        }
-        else if (msg.key_code == Key_Code::NUM_4 && msg.key_down && msg.shift_down) {
-            command = Normal_Command::MOVE_LINE_END;
-        }
-        else if (msg.key_code == Key_Code::A && msg.key_down) {
-            if (msg.shift_down) {
-                command = Normal_Command::INSERT_AT_LINE_END;
+
+        // Parse CTRL messages first
+        if (msg.ctrl_down)
+        {
+            Normal_Mode_Command_Type command_type = Normal_Mode_Command_Type::MAX_ENUM_VALUE;
+            switch (msg.key_code)
+            {
+            case Key_Code::R: command_type = Normal_Mode_Command_Type::REDO; break;
+            case Key_Code::U: command_type = Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE; break;
+            case Key_Code::D: command_type = Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE; break;
+            case Key_Code::O: command_type = Normal_Mode_Command_Type::GOTO_LAST_JUMP; break;
+            case Key_Code::I: command_type = Normal_Mode_Command_Type::GOTO_NEXT_JUMP; break;
             }
-            else {
-                command = Normal_Command::INSERT_AFTER;
-            }
-        }
-        else if (msg.key_code == Key_Code::I && msg.key_down) {
-            if (msg.shift_down) {
-                command = Normal_Command::INSERT_AT_LINE_START;
-            }
-            else {
-                command = Normal_Command::INSERT_BEFORE;
-            }
-        }
-        else if (msg.key_code == Key_Code::R && msg.key_down) {
-            if (msg.ctrl_down) {
-                command = Normal_Command::REDO;
-            }
-            else {
-                command = Normal_Command::CHANGE_CHARACTER;
+
+            if (command_type != Normal_Mode_Command_Type::MAX_ENUM_VALUE)
+            {
+                int index = 0;
+                int repeat_count = parse_repeat_count(index, 1);
+                Normal_Mode_Command cmd = Parsing::normal_mode_command_make(command_type, repeat_count);
+                normal_command_execute(cmd);
+                string_reset(&editor.command_buffer);
+                return;
             }
         }
-        else if (msg.key_code == Key_Code::X && msg.key_down) {
-            command = Normal_Command::DELETE_CHARACTER;
-        }
-        else if (msg.key_code == Key_Code::U && msg.key_down) {
-            command = Normal_Command::UNDO;
-        }
-        else {
+
+        // Check that character is valid
+        if (msg.character < ' ' || msg.character > 128) {
+            string_reset(&editor.command_buffer);
             return;
         }
-        normal_command_execute(command);
+
+        // Otherwise try to parse command
+        int index = 0;
+        string_append_character(&cmd_buffer, msg.character);;
+
+        Parse_Result<Normal_Mode_Command> result = parse_normal_command(index);
+        if (result.type == Parse_Result_Type::SUCCESS) {
+            normal_command_execute(result.result);
+            string_reset(&cmd_buffer);
+        }
+        else if (result.type == Parse_Result_Type::FAILURE) {
+            logg("Command parsing failed: \"%s\"!\n", editor.command_buffer.characters);
+            string_reset(&cmd_buffer);
+        }
     }
 }
 
@@ -1583,7 +3280,7 @@ void syntax_editor_update()
     auto& editor = syntax_editor;
     auto& input = syntax_editor.input;
     auto& mode = syntax_editor.mode;
-    
+
     SCOPE_EXIT(source_code_sanity_check(editor.code));
 
     // Handle input replay
@@ -1820,7 +3517,7 @@ void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 e
         // Figure out start and end of highlight in line
         int highlight_start = line->indentation * 4;
         int highlight_end = line->indentation * 4;
-        if (line->tokens.size > 0) 
+        if (line->tokens.size > 0)
         {
             const auto& last = line->tokens[line->tokens.size - 1];
             highlight_end += last.end_index; // Set end to line end
@@ -1895,10 +3592,10 @@ void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
     }
 
     // Highlight dot-calls
-    if (base->type == AST::Node_Type::EXPRESSION) 
+    if (base->type == AST::Node_Type::EXPRESSION)
     {
         auto expr = downcast<AST::Expression>(base);
-        if (expr->type == AST::Expression_Type::MEMBER_ACCESS) 
+        if (expr->type == AST::Expression_Type::MEMBER_ACCESS)
         {
             auto pass = code_query_get_analysis_pass(base);
             if (pass != 0)
@@ -1985,16 +3682,20 @@ void syntax_editor_render()
     // Calculate camera start
     {
         int line_count = rendering_core.render_information.backbuffer_height / editor.character_size.y;
-        int visible_start = editor.camera_start_line;
-        int visible_end = visible_start + line_count;
+        auto& cam_start = editor.camera_start_line;
+        auto& cam_end = editor.last_visible_line;
+        cam_end = cam_start + line_count;
 
         auto cursor_line = cursor.line;
-        if (cursor_line < visible_start) {
-            editor.camera_start_line = cursor_line;
+        if (cursor_line - MIN_CURSOR_DISTANCE < cam_start) {
+            cam_start = cursor_line - MIN_CURSOR_DISTANCE;
         }
-        else if (cursor_line > visible_end) {
-            editor.camera_start_line = cursor_line - line_count;
+        else if (cursor_line + MIN_CURSOR_DISTANCE > cam_end) {
+            cam_start = cursor_line - line_count + MIN_CURSOR_DISTANCE;
         }
+
+        editor.camera_start_line = math_clamp(editor.camera_start_line, 0, editor.code->line_count - 1);
+        cam_end = cam_start + line_count;
     }
 
     // Layout Source Code (Set line screen-indices + token colors)
@@ -2150,11 +3851,11 @@ void syntax_editor_render()
         }
 
         // Analysis-Info
-        if (!show_context_info && node->type == AST::Node_Type::EXPRESSION && pass != 0) 
+        if (!show_context_info && node->type == AST::Node_Type::EXPRESSION && pass != 0)
         {
             auto expr = AST::downcast<AST::Expression>(node);
             auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (expression_info != 0 && expression_info->contains_errors) 
+            if (expression_info != 0 && !expression_info->contains_errors)
             {
                 auto expr_type = expression_info_get_type(expression_info, false);
                 string_append_formated(&syntax_editor.context_text, "Expr Result-Type: ");
@@ -2164,7 +3865,7 @@ void syntax_editor_render()
         }
 
         // Symbol Info
-        if (!show_context_info && symbol != 0)
+        if (!show_context_info && symbol != 0 && pass != 0)
         {
             show_context_info = true;
             string_append_string(&context, symbol->id);

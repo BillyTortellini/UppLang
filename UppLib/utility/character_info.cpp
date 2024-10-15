@@ -16,18 +16,33 @@ String characters_get_all_letters() {
     return string_create_static("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
 }
 
-bool char_is_digit(int c) {
+bool char_is_whitespace(char c, void* unused) {
+    return c == ' ' || c == '\n' || c == '\t';
+}
+
+bool char_is_digit(char c, void* unused) {
     return (c >= '0' && c <= '9');
 }
 
-bool char_is_letter(int c) {
+int char_digit_value(char c) {
+    if (char_is_digit(c)) return c - '0';
+    else {
+        return 0;
+    }
+}
+
+bool char_is_letter(char c, void* unused) {
     return (c >= 'a' && c <= 'z') ||
         (c >= 'A' && c <= 'Z');
 }
 
-bool char_is_valid_identifier(int c) {
+bool char_is_valid_identifier(char c, void* unused) {
     return (c >= 'a' && c <= 'z') ||
         (c >= 'A' && c <= 'Z') ||
         (c >= '0' && c <= '9') ||
         (c == '_' || c == '#');
+}
+
+bool char_is_operator(char c, void* _unused) {
+    return !(char_is_valid_identifier(c) || char_is_whitespace(c));
 }

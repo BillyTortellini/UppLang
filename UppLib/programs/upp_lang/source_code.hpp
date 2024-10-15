@@ -78,6 +78,18 @@ struct Text_Index
     int character;
 };
 
+struct Text_Range
+{
+    Text_Index start;
+    Text_Index end;
+};
+
+Text_Index text_index_make(int line, int character);
+Text_Index text_index_make_line_end(Source_Code* code, int line);
+bool text_index_equal(const Text_Index& a, const Text_Index& b);
+bool text_index_in_order(const Text_Index& a, const Text_Index& b);
+Text_Range text_range_make(Text_Index start, Text_Index end);
+
 struct Token_Index
 {
     int line;
@@ -100,6 +112,5 @@ bool token_index_equal(Token_Index a, Token_Index b);
 int token_index_compare(Token_Index a, Token_Index b);
 bool token_range_contains(Token_Range range, Token_Index index);
 
-Text_Index text_index_make(int line, int character);
 
 

@@ -535,6 +535,27 @@ Text_Index text_index_make(int line, int character) {
     return { line, character };
 }
 
+Text_Index text_index_make_line_end(Source_Code* code, int line) {
+    Text_Index index;
+    index.line = line;
+    index.character = source_code_get_line(code, line)->text.size;
+    return index;
+}
+
+bool text_index_equal(const Text_Index& a, const Text_Index& b) {
+    return a.line == b.line && a.character == b.character;
+}
+
+bool text_index_in_order(const Text_Index& a, const Text_Index& b) {
+    if (a.line > b.line) return false;
+    if (a.line < b.line) return true;
+    return a.character <= b.character;
+}
+
+Text_Range text_range_make(Text_Index start, Text_Index end) {
+    return { start, end };
+}
+
 // Token Indices
 Token_Index token_index_make(int line, int token)
 {
@@ -602,6 +623,6 @@ bool token_range_contains(Token_Range range, Token_Index index)
 {
     int cmp_start = token_index_compare(range.start, index);
     int cmp_end = token_index_compare(index, range.end);
-    return !(cmp_start == -1 || cmp_end == -1);
+    return cmp_start != -1 && cmp_end == 1; // End is not inclusive
 }
 

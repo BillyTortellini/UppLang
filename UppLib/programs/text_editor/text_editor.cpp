@@ -824,7 +824,7 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             pos = current_word.start;
             break;
         }
-        case Movement_Type::NEXT_PARAGRAPH: {
+        case Movement_Type::BLOCK_END: {
             int line_index = pos.line_index;
             while (line_index < editor->text.size && string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
                 line_index++;
@@ -1233,7 +1233,7 @@ Parse_Result<Movement> key_messages_parse_movement(Array<Key_Message> messages, 
             return parse_result_make_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count.result), 1);
         }
         else if (msg.character == '}') {
-            return parse_result_make_success(movement_make(Movement_Type::NEXT_PARAGRAPH, repeat_count.result), 1);
+            return parse_result_make_success(movement_make(Movement_Type::BLOCK_END, repeat_count.result), 1);
         }
         else if (msg.character == '{') {
             return parse_result_make_success(movement_make(Movement_Type::PREVIOUS_PARAGRAPH, repeat_count.result), 1);
@@ -1427,6 +1427,7 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     case 'z':
         if (messages.size == 1) return parse_result_make_completable<Normal_Mode_Command>();
     }
+
     if (messages[0].ctrl_down && messages[0].key_down)
     {
         if (messages[0].key_code == Key_Code::R) {

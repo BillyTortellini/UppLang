@@ -466,9 +466,9 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
                 {
                     char op_char = op_str[j];
                     // skip unnecessary characters between
-                    while (end < text.size && string_contains_character(string_create_static(" \n\r\t"), text[end])) {
-                        end += 1;
-                    }
+                    // while (end < text.size && string_contains_character(string_create_static(" \n\r\t"), text[end])) {
+                    //     end += 1;
+                    // }
                     if (end >= text.size || text[end] != op_char) {
                         matches = false;
                         break;

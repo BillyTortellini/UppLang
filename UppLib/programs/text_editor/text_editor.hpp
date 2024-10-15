@@ -67,7 +67,7 @@ enum class Movement_Type
     END_OF_WORD, // e
     END_OF_WORD_AFTER_SPACE, // E
     JUMP_ENCLOSURE, // %
-    NEXT_PARAGRAPH, // }
+    BLOCK_END, // }
     PREVIOUS_PARAGRAPH, // {
     GOTO_END_OF_TEXT, // G
     GOTO_START_OF_TEXT, // gg
