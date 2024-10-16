@@ -797,15 +797,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
                     }
                 }
 
-                String tmp = string_create_empty(256);
-                SCOPE_EXIT(string_destroy(&tmp));
-                for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
-                {
-                    Semantic_Error e = compiler.semantic_analyser->errors[i];
-                    string_append_formated(&result, "    Semantic Error: ");
-                    semantic_error_append_to_string(e, &result);
-                    string_append_formated(&result, "\n");
-                }
+                semantic_analyser_append_all_errors_to_string(&result, 1);
             }
             errors_occured = true;
         }

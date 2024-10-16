@@ -177,8 +177,9 @@ struct Error_Display
     String message;
     Token_Range range;
     bool from_main_source;
+    int semantic_error_index; // -1 if parsing error
 };
-Error_Display error_display_make(String msg, Token_Range range, bool from_main_source);
+Error_Display error_display_make(String msg, Token_Range range, bool from_main_source, int semantic_error_index);
 
 enum class Editor_Mode
 {
@@ -195,6 +196,22 @@ struct Input_Replay
     bool currently_replaying;
     Editor_Mode start_mode;
     Text_Index cursor_start;
+};
+
+struct Text_Style
+{
+    int char_start;
+    vec3 text_color;
+    bool has_bg;
+    vec3 bg_color;
+};
+
+struct Context_Line
+{
+    String text;
+    int indentation;
+    Dynamic_Array<Text_Style> styles;
+    bool is_seperator; // E.g. just a blank ---- line
 };
 
 struct Syntax_Editor
@@ -230,6 +247,8 @@ struct Syntax_Editor
 
     // Rendering
     String context_text;
+    Dynamic_Array<Context_Line> context_lines;
+
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
     int camera_start_line;
@@ -251,6 +270,7 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 {
     memory_zero(&syntax_editor);
     syntax_editor.context_text = string_create_empty(256);
+    syntax_editor.context_lines = dynamic_array_create<Context_Line>();
     syntax_editor.errors = dynamic_array_create<Error_Display>(1);
     syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
     syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
@@ -306,6 +326,7 @@ void syntax_editor_destroy()
     source_code_destroy(editor.code);
     code_history_destroy(&editor.history);
     dynamic_array_destroy(&editor.code_completion_suggestions);
+    dynamic_array_destroy(&editor.context_lines);
     string_destroy(&syntax_editor.context_text);
     string_destroy(&syntax_editor.command_buffer);
     string_destroy(&syntax_editor.yank_string);
@@ -491,7 +512,10 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
                 auto& error = parse_errors[j];
                 dynamic_array_push_back(
                     &editor.errors, 
-                    error_display_make(string_create_static(error.msg), error.range, compiler.program_sources[i]->origin == Code_Origin::MAIN_PROJECT)
+                    error_display_make(
+                        string_create_static(error.msg), error.range, 
+                        compiler.program_sources[i]->origin == Code_Origin::MAIN_PROJECT, -1
+                    )
                 );
             }
         }
@@ -511,9 +535,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             for (int j = 0; j < error_ranges.size; j++) {
                 auto& range = error_ranges[j];
                 assert(token_index_compare(range.start, range.end) >= 0, "hey");
-                String string = string_create_empty(4);
-                semantic_error_append_to_string(error, &string);
-                dynamic_array_push_back(&editor.errors, error_display_make(string, range, true));
+                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), range, true, i));
             }
         }
     }
@@ -522,11 +544,13 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 
 // Helpers
-Error_Display error_display_make(String msg, Token_Range range, bool from_main_source) {
+Error_Display error_display_make(String msg, Token_Range range, bool from_main_source, int semantic_error_index)
+{
     Error_Display result;
     result.message = msg;
     result.range = range;
     result.from_main_source = from_main_source;
+    result.semantic_error_index = semantic_error_index;
     return result;
 }
 
@@ -1046,6 +1070,8 @@ void code_completion_find_suggestions()
     {
         auto expr = AST::downcast<AST::Expression>(node);
         auto pass = code_query_get_analysis_pass(node);
+
+        // Check if Expression is Member-Access
         Datatype* type = 0;
         if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
             auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
@@ -1142,6 +1168,25 @@ void code_completion_find_suggestions()
                 fuzzy_search_add_item(*key.options.dot_call.id);
             }
         }
+
+        // Check for function-call...
+        if (type == 0)
+        {
+            // TODO!
+            // AST::Node* parent = node;
+            // while (parent != 0)
+            // {
+            //     if (parent->type == AST::Node_Type::EXPRESSION) {
+            //         AST::Expression* expr = AST::downcast<AST::Expression>(parent);
+            //         if (expr->type == AST::Expression_Type::FUNCTION_CALL) {
+
+            //         }
+            //         else if (expr->type == AST::Expression_Type::)
+            //     }
+            //     parent = node->parent;
+            // }
+
+        }
     }
     else if (node->type == AST::Node_Type::PATH_LOOKUP) {
         // This probably only happens if the last token was ~
@@ -1212,11 +1257,12 @@ void code_completion_find_suggestions()
     }
 
     // If no text has been written yet and we aren't on some special context (e.g. no suggestions), return
-    if (specific_table == nullptr && syntax_editor.code_completion_suggestions.size == 0 && partially_typed.size == 0) {
+    if (specific_table == nullptr && fuzzy_search_get_item_count() == 0 && partially_typed.size == 0) {
         return;
     }
 
-    if (syntax_editor.code_completion_suggestions.size == 0)
+    // Search symbols
+    if (fuzzy_search_get_item_count() == 0)
     {
         bool search_includes = specific_table == 0;
         if (specific_table == 0) {
@@ -1989,7 +2035,7 @@ namespace Parsing
         case 'I':
             return parse_result_success(normal_mode_command_make_movement(
                     Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                    movement_make(Movement_Type::TO_START_OF_LINE, 0))
+                    movement_make(Movement_Type::TO_START_OF_LINE, 1))
             );
         case 'a':
             return parse_result_success(normal_mode_command_make_movement(
@@ -3368,10 +3414,19 @@ void syntax_editor_update()
         else {
             // Print errors
             logg("Could not run program, there were errors:\n");
+            String tmp = string_create();
+            SCOPE_EXIT(string_destroy(&tmp));
+
             for (int i = 0; i < editor.errors.size; i++) {
                 auto error = editor.errors[i];
-                logg("\t%s\n", error.message.characters);
+                if (error.semantic_error_index != -1) {
+                    continue;
+                }
+                string_append_formated(&tmp, "\t%s\n", error.message.characters);
             }
+
+            semantic_analyser_append_all_errors_to_string(&tmp, 1);
+            logg(tmp.characters);
         }
     }
 }
@@ -3657,6 +3712,181 @@ int syntax_editor_draw_block_outlines_recursive(int line_index, int indentation)
     return block_end;
 }
 
+namespace Context
+{
+    const vec3 COLOR_BG = vec3(0.2f);
+    const vec3 COLOR_TEXT = vec3(1.0f);
+    const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
+
+    const int BORDER_SIZE = 2;
+    const int PADDING = 2;
+    const vec3 BORDER_COLOR = vec3(0.5f, 0.0f, 1.0f);
+
+    void reset() 
+    {
+        auto& lines = syntax_editor.context_lines;
+        for (int i = 0; i < lines.size; i++) {
+            auto& line = lines[i];
+            dynamic_array_destroy(&line.styles);
+            string_destroy(&line.text);
+        }
+        dynamic_array_reset(&lines);
+    }
+
+    void add_line(bool keep_style = false, int indentation = 0) 
+    {
+        auto& lines = syntax_editor.context_lines;
+
+        Context_Line line;
+        line.indentation = indentation;
+        line.is_seperator = false;
+        line.styles = dynamic_array_create<Text_Style>();
+        line.text = string_create();
+
+        if (keep_style && lines.size != 0) {
+            auto& prev_line = lines[lines.size - 1];
+            if (!prev_line.is_seperator && prev_line.styles.size != 0) {
+                Text_Style style = prev_line.styles[prev_line.styles.size - 1];
+                style.char_start = 0;
+                dynamic_array_push_back(&line.styles, style);
+            }
+        }
+
+        dynamic_array_push_back(&lines, line);
+    }
+
+    void add_seperator(bool skip_if_last_was_seperator_or_first = true) 
+    {
+        auto& lines = syntax_editor.context_lines;
+
+        if (lines.size == 0 && skip_if_last_was_seperator_or_first) return;
+        auto& current = lines[lines.size - 1];
+        if (current.is_seperator && skip_if_last_was_seperator_or_first) return;
+
+        Context_Line line;
+        line.is_seperator = true;
+        line.indentation = 0;
+        line.styles = dynamic_array_create<Text_Style>();
+        line.text = string_create();
+        dynamic_array_push_back(&syntax_editor.context_lines, line);
+    }
+
+    void add_text(String string) 
+    {
+        auto& lines = syntax_editor.context_lines;
+
+        if (lines.size == 0) return;
+        auto& line = lines[lines.size - 1];
+        if (line.is_seperator) return;
+        string_append_string(&line.text, &string);
+    }
+
+    void add_text(const char* text) {
+        add_text(string_create_static(text));
+    }
+
+    Text_Style* get_or_push_current_style() 
+    {
+        auto& lines = syntax_editor.context_lines;
+        if (lines.size == 0) return 0;
+        auto& line = lines[lines.size - 1];
+
+        bool add_new_style = true;
+        if (line.styles.size != 0 && line.styles[line.styles.size - 1].char_start == line.text.size) {
+            add_new_style = false;
+        }
+        
+        if (add_new_style) {
+            Text_Style style;
+            if (line.styles.size != 0) {
+                style = line.styles[line.styles.size - 1];
+            }
+            else {
+                style.has_bg = false;
+                style.bg_color = COLOR_BG;
+                style.text_color = COLOR_TEXT;
+            }
+            style.char_start = line.text.size;
+            dynamic_array_push_back(&line.styles, style);
+        }
+        return &line.styles[line.styles.size - 1];
+    }
+
+    void set_text_color(vec3 text_color = COLOR_TEXT) {
+        get_or_push_current_style()->text_color = text_color;
+    }
+
+    void set_bg(vec3 bg_color) {
+        auto style = get_or_push_current_style();
+        style->has_bg = true;
+        style->bg_color = bg_color;
+    }
+
+    void stop_bg() {
+        get_or_push_current_style()->has_bg = false;
+    }
+
+    void add_datatype(Datatype* datatype) 
+    {
+        auto& lines = syntax_editor.context_lines;
+
+        if (lines.size == 0) return;
+        auto& line = lines[lines.size - 1];
+        if (line.is_seperator) return;
+
+        auto highlight_start_fn = []() {
+            Context::set_bg(vec3(COLOR_BG * 2.0f));
+        };
+        auto highlight_stop_fn = []() {
+            Context::stop_bg();
+        };
+        auto set_color_fn = [](vec3 color, void* userdata) {
+            set_text_color(color);
+        };
+
+        Datatype_Format format = datatype_format_make_default();
+        format.color_fn = set_color_fn;
+        format.highlight_parameter_index = 0;
+        format.highlight_start = highlight_start_fn;
+        format.highlight_stop = highlight_stop_fn;
+        datatype_append_to_string(&line.text, datatype, format);
+    }
+
+    void add_error(Error_Display error)
+    {
+        Context::add_line();
+        Context::set_bg(vec3(1.0f, 0.0f, 0.0f));
+        Context::set_text_color(vec3(1.0f));
+        Context::add_text("Error:");
+        Context::set_text_color();
+        Context::stop_bg();
+        Context::add_text(" ");
+        Context::add_text(error.message);
+
+        auto set_color_fn = [](vec3 color, void* userdata) {
+            set_text_color(color);
+        };
+        Datatype_Format format = datatype_format_make_default();
+        format.color_fn = set_color_fn;
+
+        // Add error infos
+        if (error.semantic_error_index != -1)
+        {
+            auto& semantic_error = compiler.semantic_analyser->errors[error.semantic_error_index];
+            for (int j = 0; j < semantic_error.information.size; j++) 
+            {
+                auto& error_info = semantic_error.information[j];
+                Context::add_line(false, 1);
+
+                auto& lines = syntax_editor.context_lines;
+                auto& line = lines[lines.size - 1];
+
+                error_information_append_to_string(error_info, &line.text, format);
+            }
+        }
+    }
+}
+
 void syntax_editor_render()
 {
     auto& editor = syntax_editor;
@@ -3768,6 +3998,14 @@ void syntax_editor_render()
                 syntax_highlighting_mark_section(symbol->definition_node, Parser::Section::IDENTIFIER, color, color, false);
             }
         }
+
+        // Error messages 
+        for (int i = 0; i < editor.errors.size; i++)
+        {
+            auto& error = editor.errors[i];
+            if (!error.from_main_source) continue;
+            syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), true);
+        }
     }
 
     // Render Block outlines
@@ -3812,77 +4050,77 @@ void syntax_editor_render()
     renderer_2D_draw(editor.renderer_2D, pass_2D);
     text_renderer_draw(editor.text_renderer, pass_2D);
 
-    // Calculate context string
-    if (true)
+
+    // Calculate context
+    Context::reset();
     {
-        bool show_context_info = false;
-        auto& context = syntax_editor.context_text;
-        string_reset(&context);
-
-        // Error messages (If cursor is directly on error)
-        for (int i = 0; i < editor.errors.size; i++)
-        {
-            auto& error = editor.errors[i];
-            if (!error.from_main_source) continue;
-            syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), true);
-            if (token_range_contains(error.range, cursor_token_index)) {
-                show_context_info = true;
-                if (context.size != 0) {
-                    string_append(&context, "\n\n");
-                }
-                string_append_string(&context, &error.message);
-            }
-        }
-
-        // Code-Completion
+        // If we are in Insert-Mode, prioritize code-completion
+        bool show_normal_mode_context = true;
         if (editor.code_completion_suggestions.size != 0 && editor.mode == Editor_Mode::INSERT)
         {
+            Context::add_seperator();
+            show_normal_mode_context = false;
             auto& suggestions = syntax_editor.code_completion_suggestions;
-            show_context_info = true;
-            string_reset(&context);
-            for (int i = 0; i < editor.code_completion_suggestions.size; i++)
-            {
+            for (int i = 0; i < editor.code_completion_suggestions.size; i++) {
                 auto sugg = editor.code_completion_suggestions[i];
-                string_append_string(&context, &sugg);
-                if (i != editor.code_completion_suggestions.size - 1) {
-                    string_append_formated(&context, "\n");
-                }
+                Context::add_line();
+                Context::add_text(sugg);
             }
         }
 
-        // Analysis-Info
-        if (!show_context_info && node->type == AST::Node_Type::EXPRESSION && pass != 0)
+        // Error messages (If cursor is directly on error)
+        if (editor.errors.size > 0 && show_normal_mode_context && editor.mode == Editor_Mode::NORMAL) 
         {
-            auto expr = AST::downcast<AST::Expression>(node);
-            auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (expression_info != 0 && !expression_info->contains_errors)
+            Context::add_seperator();
+            for (int i = 0; i < editor.errors.size; i++)
             {
-                auto expr_type = expression_info_get_type(expression_info, false);
-                string_append_formated(&syntax_editor.context_text, "Expr Result-Type: ");
-                datatype_append_to_string(&syntax_editor.context_text, expr_type);
-                show_context_info = true;
+                auto& error = editor.errors[i];
+                if (!error.from_main_source) continue;
+
+                auto line = source_code_get_line(editor.code, cursor.line);
+                bool inside_error = token_range_contains(error.range, cursor_token_index);
+                // Special handling for empty error-ranges
+                if (token_index_equal(error.range.start, error.range.end) && token_index_equal(cursor_token_index, error.range.start)) {
+                    inside_error = true;
+                }
+                // Special handling for error on last token
+                if (editor.mode == Editor_Mode::NORMAL &&
+                    cursor_token_index.token == math_maximum(0, line->tokens.size - 1) &&
+                    error.range.start.token == line->tokens.size && cursor_token_index.line == error.range.start.line)
+                {
+                    inside_error = true;
+                }
+
+                if (inside_error) {
+                    Context::add_error(error);
+                }
             }
         }
 
         // Symbol Info
-        if (!show_context_info && symbol != 0 && pass != 0)
+        if (show_normal_mode_context && symbol != 0 && pass != 0)
         {
-            show_context_info = true;
-            string_append_string(&context, symbol->id);
-            string_append_formated(&context, " ");
+            Context::add_seperator();
+            Context::add_line();
+
             Datatype* type = 0;
+            const char* after_text = nullptr;
             switch (symbol->type)
             {
             case Symbol_Type::COMPTIME_VALUE:
-                string_append_formated(&context, "Comptime ");
+                after_text = "Comptime";
                 type = symbol->options.constant.type;
                 break;
             case Symbol_Type::HARDCODED_FUNCTION:
-                type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded));
+                break;
+            case Symbol_Type::FUNCTION:
+                after_text = "Function";
+                type = upcast(symbol->options.function->signature);
                 break;
             case Symbol_Type::PARAMETER: {
                 auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
                 type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+                after_text = "Parameter";
                 break;
             }
             case Symbol_Type::POLYMORPHIC_VALUE: {
@@ -3901,23 +4139,177 @@ void syntax_editor_render()
                 break;
             case Symbol_Type::VARIABLE:
                 type = symbol->options.variable_type;
+                after_text = "Variable";
                 break;
             default: break;
             }
 
             if (type != 0) {
-                datatype_append_to_string(&context, type);
+                Context::add_datatype(type);
+                Context::set_text_color();
+            }
+
+            if (symbol->type != Symbol_Type::TYPE)
+            {
+                Context::add_line(false, 2);
+                Context::set_text_color(symbol_type_to_color(symbol->type));
+                Context::add_text(*symbol->id);
+
+                if (after_text != 0) {
+                    Context::set_text_color();
+                    Context::add_text(": ");
+                    Context::add_text(after_text);
+                }
             }
         }
 
-        // Draw context
-        if (show_context_info)
+        // Analysis-Info
+        if (node->type == AST::Node_Type::EXPRESSION && pass != 0)
+        {
+            auto expr = AST::downcast<AST::Expression>(node);
+            auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
+            if (expression_info != 0 && !expression_info->contains_errors)
+            {
+                Context::add_seperator();
+                Context::add_line();
+                Context::add_text("Expr: ");
+                Context::add_datatype(expression_info_get_type(expression_info, false));
+            }
+        }
+    }
+
+    // Push some example text for testing
+    if (false)
+    {
+        Context::add_seperator();
+        Context::add_line();
+        Context::set_text_color(Context::COLOR_ERROR_TEXT);
+        Context::add_text(string_create_static("Error: "));
+        Context::set_text_color(Context::COLOR_TEXT);
+        Context::set_bg(vec3(0.8f, 0.0f, 0.0f));
+        Context::add_text("This is the error");
+        Context::stop_bg();
+        Context::add_text(" afterwards...");
+    }
+
+    // Render new context
+    auto& context_lines = editor.context_lines;
+    if (context_lines.size > 0)
+    {
+        auto& char_size = editor.character_size * 0.8f;
+
+        // Figure out size of box
+        int max_line_size = 0;
+        int line_count = context_lines.size;
+        {
+            for (int i = 0; i < context_lines.size; i++) {
+                auto& line = context_lines[i];
+                int length = line.text.size + 2 * line.indentation;
+                max_line_size = math_maximum(max_line_size, length);
+            }
+            max_line_size = math_maximum(max_line_size, 40); // Min box size
+        }
+        vec2 content_size = vec2(max_line_size * char_size.x, line_count * char_size.y);
+        vec2 box_size = content_size + 2 * (Context::BORDER_SIZE + Context::PADDING);
+
+        // Figure out box position
+        vec2 box_top_left = vec2(0.0f);
         {
             auto line = source_code_get_line(editor.code, cursor.line);
-            int char_index = line->indentation * 4 + cursor.character;
-            vec2 context_pos = syntax_editor_position_to_pixel(line->screen_index, char_index);
-            syntax_editor_draw_string_in_box(context, vec3(1.0f), vec3(0.2f), context_pos, syntax_editor.character_size.y * 0.8f);
+            vec2 cursor_pos = syntax_editor_position_to_pixel(line->screen_index, line->indentation * 4 + cursor.character);
+
+            int width = rendering_core.render_information.backbuffer_width;
+            int height = rendering_core.render_information.backbuffer_height;
+
+            // Move box above cursor if more space is available there
+            int pixels_below = cursor_pos.y;
+            int pixels_above = height - cursor_pos.y - editor.character_size.y;
+            if (pixels_below >= box_size.y || pixels_below > pixels_above) {
+                box_top_left.y = cursor_pos.y;
+            }
+            else {
+                box_top_left.y = cursor_pos.y + editor.character_size.y + box_size.y;
+            }
+
+            box_top_left.x = cursor_pos.x;
         }
+        using Context::BORDER_COLOR;
+        using Context::BORDER_SIZE;
+        using Context::PADDING;
+        vec2 box_content_start = box_top_left + vec2(BORDER_SIZE + PADDING, -BORDER_SIZE - PADDING);
+
+        // Render
+        renderer_2D_add_rectangle(editor.renderer_2D, bounding_box_2_make_anchor(box_top_left, box_size, Anchor::TOP_LEFT), BORDER_COLOR);
+        renderer_2D_draw(editor.renderer_2D, pass_context);
+        renderer_2D_add_rectangle(editor.renderer_2D, bounding_box_2_make_anchor(box_top_left + vec2(BORDER_SIZE, -BORDER_SIZE), content_size + 2 * PADDING, Anchor::TOP_LEFT), Context::COLOR_BG);
+        renderer_2D_draw(editor.renderer_2D, pass_context);
+
+        for (int i = 0; i < context_lines.size; i++)
+        {
+            auto& line = context_lines[i];
+            vec2 line_pos = box_content_start + vec2(0.0f, -char_size.y * (i + 1));
+
+            if (line.is_seperator) {
+                vec2 seperator_size = vec2(box_size.y - 4, 2.0f);
+                vec2 start = vec2(box_content_start.x, char_size.y * (i + 0.5f));
+                renderer_2D_add_rectangle(editor.renderer_2D,
+                    bounding_box_2_make_anchor(line_pos + vec2(0.0f, char_size.y / 2.0f), vec2(char_size.x * max_line_size, 1.0f), Anchor::CENTER_LEFT),
+                    BORDER_COLOR * 0.8f
+                );
+                continue;
+            }
+
+            line_pos.x += line.indentation * 2 * char_size.x;
+            if (line.styles.size == 0) {
+                text_renderer_add_text(
+                    editor.text_renderer, line.text, line_pos, Anchor::BOTTOM_LEFT, char_size.y, vec3(1.0f),
+                    optional_make_success(bounding_box_2_make_anchor(box_content_start, content_size, Anchor::TOP_LEFT))
+                );
+                continue;
+            }
+
+            Text_Style default_style;
+            default_style.char_start = 0;
+            default_style.text_color = vec3(1.0f);
+            default_style.has_bg = false;
+            default_style.bg_color = Context::COLOR_BG;
+
+            Text_Style last_style = default_style;
+            int last_start = 0;
+            for (int i = 0; i <= line.styles.size; i++)
+            {
+                Text_Style style;
+                SCOPE_EXIT(last_style = style; last_start = style.char_start;);
+                if (i < line.styles.size) {
+                    style = line.styles[i];
+                }
+                else {
+                    style = default_style;
+                    style.char_start = line.text.size;
+                }
+
+                String substring = string_create_substring_static(&line.text, last_start, style.char_start);
+                if (substring.size == 0) {
+                    continue;
+                }
+
+                vec2 pos = line_pos + vec2(last_start * char_size.x, 0.0f);
+                if (last_style.has_bg) {
+                    renderer_2D_add_rectangle(editor.renderer_2D,
+                        bounding_box_2_make_anchor(pos, vec2(char_size.x * substring.size, char_size.y), Anchor::BOTTOM_LEFT),
+                        last_style.bg_color
+                    );
+                }
+
+                text_renderer_add_text(
+                    editor.text_renderer, substring, line_pos + vec2(last_start * char_size.x, 0.0f), Anchor::BOTTOM_LEFT, char_size.y, last_style.text_color,
+                    optional_make_success(bounding_box_2_make_anchor(box_content_start, content_size, Anchor::TOP_LEFT))
+                );
+            }
+        }
+
+        renderer_2D_draw(editor.renderer_2D, pass_context);
+        text_renderer_draw(editor.text_renderer, pass_context);
     }
 
     // Render Primitives

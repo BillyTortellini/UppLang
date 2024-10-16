@@ -1,12 +1,12 @@
 
-
-Make context info more fruitfull:
-    * Make multiple lines possible (E.g. seperate with ----- or something)
-    * Context-Lines should also allow layout 
-        - Text color for identifiers + types + functions
-        - Something to highlight current parameter of function (e.g. Text-Color, maybe fat/larger font, underline?)
+Better formating:
+ * Show current function call information
+    If inside a function call, or something the like (e.g. Struct-Inititalizer or anything callable), show parameters
+ * Code-completion should use colored information --> It should?
 
 DONE:
+ * Nicer context window with multiple lines + sections
+
  * Implement missing insert mode commands
  * Replace character ...
  * Replace with yank

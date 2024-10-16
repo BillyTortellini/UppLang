@@ -18,4 +18,5 @@ struct Fuzzy_Item
 
 void fuzzy_search_start_search(String search_term);
 void fuzzy_search_add_item(String item_name, int user_index = 0);
+int fuzzy_search_get_item_count();
 Dynamic_Array<Fuzzy_Item> fuzzy_search_rank_results(bool allow_cutoff, int min_cutoff_length);

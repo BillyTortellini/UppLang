@@ -801,8 +801,6 @@ struct Node_Passes
 enum class Error_Information_Type
 {
     ARGUMENT_COUNT,
-    MISSING_PARAMETER,
-    INVALID_MEMBER,
     ID,
     SYMBOL,
     EXIT_CODE,
@@ -823,7 +821,6 @@ struct Error_Information
     Error_Information_Type type;
     union
     {
-        Function_Parameter parameter;
         struct {
             int expected;
             int given;
@@ -858,7 +855,8 @@ struct Semantic_Error
 
 void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section = Parser::Section::WHOLE);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
-void semantic_error_append_to_string(Semantic_Error e, String* string);
+void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format = datatype_format_make_default());
+void semantic_analyser_append_all_errors_to_string(String* string, int indentation);
 
 
 

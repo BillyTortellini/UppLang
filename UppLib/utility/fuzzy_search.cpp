@@ -106,6 +106,10 @@ void fuzzy_search_add_item(String item_name, int user_index)
     return;
 }
 
+int fuzzy_search_get_item_count() {
+    return searcher.items.size;
+}
+
 Dynamic_Array<Fuzzy_Item> fuzzy_search_rank_results(bool allow_cutoff, int min_cutoff_length)
 {
     // Exit if no suggestions are available

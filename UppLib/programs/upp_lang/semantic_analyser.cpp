@@ -18,6 +18,7 @@
 #include "parser.hpp"
 #include "source_code.hpp"
 #include "symbol_table.hpp"
+#include "syntax_colors.hpp"
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
@@ -363,13 +364,6 @@ void log_error_info_argument_count(int given_argument_count, int expected_argume
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
-void log_error_info_invalid_member(Datatype_Struct* struct_signature, String* id) {
-    Error_Information info = error_information_make_empty(Error_Information_Type::INVALID_MEMBER);
-    info.options.invalid_member.member_id = id;
-    info.options.invalid_member.struct_signature = struct_signature;
-    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
-}
-
 void log_error_info_id(String* id) {
     assert(id != 0, "");
     Error_Information info = error_information_make_empty(Error_Information_Type::ID);
@@ -398,12 +392,6 @@ void log_error_info_given_type(Datatype* type) {
 void log_error_info_expected_type(Datatype* type) {
     Error_Information info = error_information_make_empty(Error_Information_Type::EXPECTED_TYPE);
     info.options.type = type;
-    dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
-}
-
-void log_error_info_missing_parameter(Function_Parameter parameter) {
-    Error_Information info = error_information_make_empty(Error_Information_Type::MISSING_PARAMETER);
-    info.options.parameter = parameter;
     dynamic_array_push_back(&semantic_analyser.errors[semantic_analyser.errors.size - 1].information, info);
 }
 
@@ -2755,12 +2743,14 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
     {
     case Analysis_Workload_Type::MODULE_ANALYSIS: {
         auto module = downcast<Workload_Module_Analysis>(workload);
-        string_append_formated(string, "Module analysis %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+        string_append(string, "Module analysis ");
+        string_append(string, module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
         break;
     }
     case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
         auto module = downcast<Workload_Operator_Context_Change>(workload)->parent_workload;
-        string_append_formated(string, "Operator_Context_Change %s", module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+        string_append(string, "Operator_Context_Change ");
+        string_append(string, module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters );
         break;
     }
     case Analysis_Workload_Type::IMPORT_RESOLVE: {
@@ -11331,112 +11321,117 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void semantic_error_append_to_string(Semantic_Error e, String* string)
+void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format)
 {
-    string_append_formated(string, e.msg);
-
-    for (int k = 0; k < e.information.size; k++)
+    format.color_fn(Syntax_Color::TEXT, format.color_fn_userdata);
+    switch (info.type)
     {
-        Error_Information* info = &e.information[k];
-        switch (info->type)
+    case Error_Information_Type::CYCLE_WORKLOAD:
+        analysis_workload_append_to_string(info.options.cycle_workload, string);
+        break;
+    case Error_Information_Type::COMPTIME_MESSAGE:
+        string_append_formated(string, "Comptime msg: %s", info.options.comptime_message);
+        break;
+    case Error_Information_Type::ARGUMENT_COUNT:
+        string_append_formated(string, "Given argument count: %d, required: %d",
+            info.options.invalid_argument_count.given, info.options.invalid_argument_count.expected);
+        break;
+    case Error_Information_Type::ID:
+        string_append_formated(string, "ID: %s", info.options.id->characters);
+        break;
+    case Error_Information_Type::SYMBOL: {
+        string_append_formated(string, "Symbol: ");
+        format.color_fn(symbol_type_to_color(info.options.symbol->type), format.color_fn_userdata);
+        symbol_append_to_string(info.options.symbol, string);
+        break;
+    }
+    case Error_Information_Type::EXIT_CODE: {
+        string_append_formated(string, "Exit_Code: ");
+        exit_code_append_to_string(string, info.options.exit_code);
+        break;
+    }
+    case Error_Information_Type::GIVEN_TYPE:
+        string_append_formated(string, "Given Type:    ");
+        datatype_append_to_string(string, info.options.type, format);
+        break;
+    case Error_Information_Type::EXPECTED_TYPE:
+        string_append_formated(string, "Expected Type: ");
+        datatype_append_to_string(string, info.options.type, format);
+        break;
+    case Error_Information_Type::FUNCTION_TYPE:
+        string_append_formated(string, "Function Type: ");
+        datatype_append_to_string(string, info.options.type, format);
+        break;
+    case Error_Information_Type::BINARY_OP_TYPES:
+        string_append_formated(string, "Left: ");
+        datatype_append_to_string(string, info.options.binary_op_types.left_type, format);
+        format.color_fn(Syntax_Color::TEXT, format.color_fn_userdata);
+        string_append_formated(string, ", Right: ");
+        datatype_append_to_string(string, info.options.binary_op_types.right_type, format);
+        break;
+    case Error_Information_Type::EXPRESSION_RESULT_TYPE:
+    {
+        string_append_formated(string, "Given: ");
+        switch (info.options.expression_type)
         {
-        case Error_Information_Type::CYCLE_WORKLOAD:
-            string_append_formated(string, "\n  ");
-            analysis_workload_append_to_string(info->options.cycle_workload, string);
+        case Expression_Result_Type::NOTHING:
+            string_append_formated(string, "Nothing/void");
             break;
-        case Error_Information_Type::COMPTIME_MESSAGE:
-            string_append_formated(string, "\n  Comptime msg: %s", info->options.comptime_message);
+        case Expression_Result_Type::HARDCODED_FUNCTION:
+            string_append_formated(string, "Hardcoded function");
             break;
-        case Error_Information_Type::ARGUMENT_COUNT:
-            string_append_formated(string, "\n  Given argument count: %d, required: %d",
-                info->options.invalid_argument_count.given, info->options.invalid_argument_count.expected);
+        case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+            string_append_formated(string, "Polymorphic function");
             break;
-        case Error_Information_Type::MISSING_PARAMETER:
-            string_append_formated(string, "\n  Missing ");
-            string_append_formated(string, "\"%s\": ", info->options.parameter.name->characters);
-            datatype_append_to_string(string, info->options.parameter.type);
+        case Expression_Result_Type::POLYMORPHIC_STRUCT:
+            string_append_formated(string, "Polymorphic struct");
             break;
-        case Error_Information_Type::ID:
-            string_append_formated(string, "\n  Name: %s", info->options.id->characters);
+        case Expression_Result_Type::CONSTANT:
+            string_append_formated(string, "Constant");
             break;
-        case Error_Information_Type::INVALID_MEMBER: {
-            string_append_formated(string, "\n  Accessed member name: %s", info->options.invalid_member.member_id->characters);
-            string_append_formated(string, "\n  Available struct members ");
-            auto& members = info->options.invalid_member.struct_signature->content.members;
-            for (int i = 0; i < members.size; i++) {
-                Struct_Member* member = &members[i];
-                string_append_formated(string, "\n\t\t%s", member->id->characters);
-            }
+        case Expression_Result_Type::VALUE:
+            string_append_formated(string, "Value");
             break;
-        }
-        case Error_Information_Type::SYMBOL: {
-            string_append_formated(string, "\n  Symbol: ");
-            symbol_append_to_string(info->options.symbol, string);
+        case Expression_Result_Type::FUNCTION:
+            string_append_formated(string, "Function");
             break;
-        }
-        case Error_Information_Type::EXIT_CODE: {
-            string_append_formated(string, "\n  Exit_Code: ");
-            exit_code_append_to_string(string, info->options.exit_code);
+        case Expression_Result_Type::TYPE:
+            string_append_formated(string, "Type");
             break;
-        }
-        case Error_Information_Type::GIVEN_TYPE:
-            string_append_formated(string, "\n  Given Type:    ");
-            datatype_append_to_string(string, info->options.type);
-            break;
-        case Error_Information_Type::EXPECTED_TYPE:
-            string_append_formated(string, "\n  Expected Type: ");
-            datatype_append_to_string(string, info->options.type);
-            break;
-        case Error_Information_Type::FUNCTION_TYPE:
-            string_append_formated(string, "\n  Function Type: ");
-            datatype_append_to_string(string, info->options.type);
-            break;
-        case Error_Information_Type::BINARY_OP_TYPES:
-            string_append_formated(string, "\n  Left Operand type:  ");
-            datatype_append_to_string(string, info->options.binary_op_types.left_type);
-            string_append_formated(string, "\n  Right Operand type: ");
-            datatype_append_to_string(string, info->options.binary_op_types.right_type);
-            break;
-        case Error_Information_Type::EXPRESSION_RESULT_TYPE:
-        {
-            string_append_formated(string, "\nGiven: ");
-            switch (info->options.expression_type)
-            {
-            case Expression_Result_Type::NOTHING:
-                string_append_formated(string, "Nothing/void");
-                break;
-            case Expression_Result_Type::HARDCODED_FUNCTION:
-                string_append_formated(string, "Hardcoded function");
-                break;
-            case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-                string_append_formated(string, "Polymorphic function");
-                break;
-            case Expression_Result_Type::POLYMORPHIC_STRUCT:
-                string_append_formated(string, "Polymorphic struct");
-                break;
-            case Expression_Result_Type::CONSTANT:
-                string_append_formated(string, "Constant");
-                break;
-            case Expression_Result_Type::VALUE:
-                string_append_formated(string, "Value");
-                break;
-            case Expression_Result_Type::FUNCTION:
-                string_append_formated(string, "Function");
-                break;
-            case Expression_Result_Type::TYPE:
-                string_append_formated(string, "Type");
-                break;
-            case Expression_Result_Type::DOT_CALL:
-                string_append_formated(string, "Dot_Call");
-                break;
-            default: panic("");
-            }
-            break;
-        }
-        case Error_Information_Type::CONSTANT_STATUS:
-            string_append_formated(string, "\n  Couldn't serialize constant: %s", info->options.constant_message);
+        case Expression_Result_Type::DOT_CALL:
+            string_append_formated(string, "Dot_Call");
             break;
         default: panic("");
+        }
+        break;
+    }
+    case Error_Information_Type::CONSTANT_STATUS:
+        string_append_formated(string, "Couldn't serialize constant: %s", info.options.constant_message);
+        break;
+    default: panic("");
+    }
+}
+
+void semantic_analyser_append_all_errors_to_string(String* string, int indentation)
+{
+    auto& errors = semantic_analyser.errors;
+    for (int i = 0; i < errors.size; i++) 
+    {
+        auto& e = errors[i];
+        for (int k = 0; k < indentation; k++) {
+            string_append(string, "    ");
+        }
+        
+        string_append(string, e.msg);
+        string_append(string, "\n");
+        for (int j = 0; j < e.information.size; j++) {
+            auto& info = e.information[j];
+            string_append(string, "\n");
+            for (int k = 0; k < indentation + 1; k++) {
+                string_append(string, "    ");
+            }
+            error_information_append_to_string(info, string);
+            string_append(string, "\t");
         }
     }
 }

@@ -3,6 +3,8 @@
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
 
+#include "syntax_colors.hpp"
+
 using AST::Structure_Type;
 
 Function_Parameter function_parameter_make_empty() {
@@ -46,168 +48,6 @@ void type_base_destroy(Datatype* base)
     else if (base->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
         auto instance = downcast<Datatype_Struct_Instance_Template>(base);
         array_destroy(&instance->instance_values);
-    }
-}
-
-void type_append_to_string_with_children(String* string, Datatype* signature, bool print_child)
-{
-    switch (signature->type)
-    {
-    case Datatype_Type::TEMPLATE_PARAMETER: {
-        Datatype_Template_Parameter* polymorphic = downcast<Datatype_Template_Parameter>(signature);
-        assert(polymorphic->symbol != 0, "");
-        if (!polymorphic->is_reference) {
-            string_append_formated(string, "$");
-        }
-        string_append_formated(string, "%s", polymorphic->symbol->id->characters);
-        break;
-    }
-    case Datatype_Type::CONSTANT: {
-        Datatype_Constant* constant = downcast<Datatype_Constant>(signature);
-        string_append_formated(string, "const ");
-        type_append_to_string_with_children(string, constant->element_type, print_child);
-        break;
-    }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
-        string_append_formated(string, "Struct instance template");
-        break;
-    }
-    case Datatype_Type::ARRAY: {
-        auto array_type = downcast<Datatype_Array>(signature);
-        if (array_type->count_known) {
-            string_append_formated(string, "[%d]", array_type->element_count);
-        }
-        else {
-            string_append_formated(string, "[Unknown]");
-        }
-        type_append_to_string_with_children(string, array_type->element_type, print_child);
-        break;
-    }
-    case Datatype_Type::SLICE: {
-        auto slice_type = downcast<Datatype_Slice>(signature);
-        string_append_formated(string, "[]");
-        type_append_to_string_with_children(string, slice_type->element_type, print_child);
-        break;
-    }
-    case Datatype_Type::UNKNOWN_TYPE:
-        string_append_formated(string, "Unknown-Type");
-        break;
-    case Datatype_Type::POINTER: {
-        auto pointer_type = downcast<Datatype_Pointer>(signature);
-        string_append_formated(string, "*");
-        type_append_to_string_with_children(string, pointer_type->element_type, print_child);
-        break;
-    }
-    case Datatype_Type::BYTE_POINTER: {
-        string_append_formated(string, "Byte_Pointer");
-        break;
-    }
-    case Datatype_Type::TYPE_HANDLE: {
-        string_append_formated(string, "Type_Handle");
-        break;
-    }
-    case Datatype_Type::PRIMITIVE: {
-        auto primitive = downcast<Datatype_Primitive>(signature);
-        auto memory = primitive->base.memory_info.value;
-        switch (primitive->primitive_type)
-        {
-        case Primitive_Type::BOOLEAN: string_append_formated(string, "bool"); break;
-        case Primitive_Type::INTEGER: string_append_formated(string, "%s%d", primitive->is_signed ? "int" : "uint", memory.size * 8); break;
-        case Primitive_Type::FLOAT: string_append_formated(string, "float%d", memory.size * 8); break;
-        default: panic("Heyo");
-        }
-        break;
-    }
-    case Datatype_Type::ENUM:
-    {
-        auto enum_type = downcast<Datatype_Enum>(signature);
-        if (enum_type->name != 0) {
-            string_append_formated(string, enum_type->name->characters);
-        }
-        if (print_child)
-        {
-            string_append_formated(string, "{");
-            for (int i = 0; i < enum_type->members.size; i++) {
-                string_append_formated(string, "%s(%d)", enum_type->members[i].name->characters, enum_type->members[i].value);
-                if (i != enum_type->members.size - 1) {
-                    string_append_formated(string, ", ");
-                }
-            }
-            string_append_formated(string, "}");
-        }
-        break;
-    }
-    case Datatype_Type::SUBTYPE: {
-        auto subtype = downcast<Datatype_Subtype>(signature);
-        string_append_formated(string, "Subtype \"%s\" ", subtype->subtype_name->characters);
-        if (print_child) {
-            type_append_to_string_with_children(string, upcast(subtype->base_type), print_child);
-        }
-        break;
-    }
-    case Datatype_Type::STRUCT:
-    {
-        auto struct_type = downcast<Datatype_Struct>(signature);
-        auto& members = struct_type->content.members;
-        string_append_formated(string, struct_type->content.name->characters);
-
-        // Append polymorphic instance values
-        if (struct_type->workload != 0) {
-            if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-                string_append_formated(string, "(");
-                SCOPE_EXIT(string_append_formated(string, ")"));
-                auto& instance = struct_type->workload->polymorphic.instance;
-                auto instance_values = instance.parent->info.instances[instance.instance_index].instance_parameter_values;
-                for (int i = 0; i < instance_values.size; i++) {
-                    auto& poly_value = instance_values[i];
-                    assert(!poly_value.only_datatype_known, "True for instances");
-                    auto& constant = poly_value.options.value;
-                    datatype_append_value_to_string(constant.type, constant.memory, string);
-                    if (i != instance_values.size - 1) {
-                        string_append_formated(string, ", ");
-                    }
-                }
-            }
-        }
-
-        if (print_child)
-        {
-            string_append_formated(string, "{");
-            for (int i = 0; i < members.size && print_child; i++) {
-                type_append_to_string_with_children(string, members[i].type, false);
-                if (i != members.size - 1) {
-                    string_append_formated(string, ", ");
-                }
-            }
-            string_append_formated(string, "}");
-        }
-        break;
-    }
-    case Datatype_Type::FUNCTION: {
-        auto function_type = downcast<Datatype_Function>(signature);
-        auto& parameters = function_type->parameters;
-        string_append_formated(string, "(");
-        for (int i = 0; i < function_type->parameters.size; i++) {
-            auto& param = function_type->parameters[i];
-            string_append_formated(string, "%s: ", param.name->characters);
-            type_append_to_string_with_children(string, parameters[i].type, print_child);
-            if (param.default_value_exists) {
-                string_append_formated(string, " = ...");
-            }
-            if (i != parameters.size - 1) {
-                string_append_formated(string, ", ");
-            }
-        }
-        string_append_formated(string, ") -> ");
-        if (function_type->return_type.available) {
-            type_append_to_string_with_children(string, function_type->return_type.value, print_child);
-        }
-        else {
-            string_append_formated(string, "void");
-        }
-        break;
-    }
-    default: panic("Fugg");
     }
 }
 
@@ -309,7 +149,13 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     case Datatype_Type::TYPE_HANDLE: 
     {
         Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
-        string_append_formated(string, "Type_Handle (#%d)", handle.index);
+        if (handle.index < (u32) compiler.type_system.types.size) {
+            Datatype* type = compiler.type_system.types[handle.index];
+            datatype_append_to_string(string, type);
+        }
+        else {
+            string_append_formated(string, "Invalid_Type_Handle(#%d)", handle.index);
+        }
         break;
     }
     case Datatype_Type::SUBTYPE: 
@@ -443,8 +289,209 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     }
 }
 
-void datatype_append_to_string(String* string, Datatype* signature) {
-    type_append_to_string_with_children(string, signature, false);
+void dummy_set_color(vec3 color, void* userdata) {}
+void dummy_hightlight_start_stop() {}
+
+Datatype_Format datatype_format_make_default()
+{
+    Datatype_Format format;
+    format.append_struct_poly_parameter_values = true;
+    format.highlight_parameter_index = -1;
+    format.remove_const_from_function_params = true;
+    format.color_fn = dummy_set_color;
+    format.color_fn_userdata = nullptr;
+    format.highlight_start = dummy_hightlight_start_stop;
+    format.highlight_stop = dummy_hightlight_start_stop;
+    return format;
+}
+
+void datatype_append_to_string(String* string, Datatype* signature, Datatype_Format format)
+{
+    const auto color_fn = format.color_fn;
+    const auto userdata = format.color_fn_userdata;
+
+    color_fn(Syntax_Color::TEXT, userdata);
+
+    switch (signature->type)
+    {
+    case Datatype_Type::TEMPLATE_PARAMETER: {
+        Datatype_Template_Parameter* polymorphic = downcast<Datatype_Template_Parameter>(signature);
+        assert(polymorphic->symbol != 0, "");
+        if (!polymorphic->is_reference) {
+            string_append_formated(string, "$");
+        }
+        color_fn(Syntax_Color::IDENTIFIER_FALLBACK, userdata);
+        string_append_formated(string, "%s", polymorphic->symbol->id->characters);
+        break;
+    }
+    case Datatype_Type::CONSTANT: {
+        Datatype_Constant* constant = downcast<Datatype_Constant>(signature);
+        color_fn(Syntax_Color::KEYWORD, userdata);
+        string_append_formated(string, "const ");
+        datatype_append_to_string(string, constant->element_type, format);
+        break;
+    }
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
+        string_append_formated(string, "Struct instance template");
+        break;
+    }
+    case Datatype_Type::ARRAY: {
+        auto array_type = downcast<Datatype_Array>(signature);
+        if (array_type->count_known) {
+            string_append_formated(string, "[%d]", array_type->element_count);
+        }
+        else {
+            string_append_formated(string, "[Unknown]");
+        }
+        datatype_append_to_string(string, array_type->element_type, format);
+        break;
+    }
+    case Datatype_Type::SLICE: {
+        auto slice_type = downcast<Datatype_Slice>(signature);
+        string_append_formated(string, "[]");
+        datatype_append_to_string(string, slice_type->element_type, format);
+        break;
+    }
+    case Datatype_Type::UNKNOWN_TYPE:
+        string_append_formated(string, "Unknown-Type");
+        break;
+    case Datatype_Type::POINTER: {
+        auto pointer_type = downcast<Datatype_Pointer>(signature);
+        string_append_formated(string, "*");
+        datatype_append_to_string(string, pointer_type->element_type, format);
+        break;
+    }
+    case Datatype_Type::BYTE_POINTER: {
+        color_fn(Syntax_Color::TYPE, userdata);
+        string_append_formated(string, "byte_pointer");
+        break;
+    }
+    case Datatype_Type::TYPE_HANDLE: {
+        color_fn(Syntax_Color::TYPE, userdata);
+        string_append_formated(string, "Type_Handle");
+        break;
+    }
+    case Datatype_Type::PRIMITIVE: 
+    {
+        color_fn(Syntax_Color::TYPE, userdata);
+        auto primitive = downcast<Datatype_Primitive>(signature);
+        auto memory = primitive->base.memory_info.value;
+        switch (primitive->primitive_type)
+        {
+        case Primitive_Type::BOOLEAN: string_append_formated(string, "bool"); break;
+        case Primitive_Type::INTEGER: {
+            if (memory.size == 4) {
+                string_append(string, "int");
+            }
+            else {
+                string_append_formated(string, "%s%d", (primitive->is_signed ? "i" : "u"), memory.size * 8); break;
+            }
+            break;
+        }
+        case Primitive_Type::FLOAT: {
+            if (memory.size == 4) {
+                string_append(string, "float");
+            }
+            else {
+                string_append_formated(string, "f%d", memory.size * 8);
+            }
+            break;
+        }
+        default: panic("Heyo");
+        }
+        break;
+    }
+    case Datatype_Type::ENUM:
+    {
+        color_fn(Syntax_Color::TYPE, userdata);
+        auto enum_type = downcast<Datatype_Enum>(signature);
+        if (enum_type->name != 0) {
+            string_append_formated(string, enum_type->name->characters);
+        }
+        break;
+    }
+    case Datatype_Type::SUBTYPE: {
+        auto subtype = downcast<Datatype_Subtype>(signature);
+        datatype_append_to_string(string, upcast(subtype->base_type), format);
+        color_fn(Syntax_Color::TEXT, userdata);
+        string_append_character(string, '.');
+        color_fn(Syntax_Color::TYPE, userdata);
+        string_append_formated(string, ".%s", subtype->subtype_name->characters);
+        break;
+    }
+    case Datatype_Type::STRUCT:
+    {
+        auto struct_type = downcast<Datatype_Struct>(signature);
+        auto& members = struct_type->content.members;
+        color_fn(Syntax_Color::TYPE, userdata);
+        string_append_formated(string, struct_type->content.name->characters);
+
+        // Append polymorphic instance values
+        color_fn(Syntax_Color::TEXT, userdata);
+        if (struct_type->workload != 0 && format.append_struct_poly_parameter_values) {
+            if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                string_append_formated(string, "(");
+                SCOPE_EXIT(string_append_formated(string, ")"));
+                auto& instance = struct_type->workload->polymorphic.instance;
+                auto instance_values = instance.parent->info.instances[instance.instance_index].instance_parameter_values;
+                for (int i = 0; i < instance_values.size; i++) 
+                {
+                    auto& poly_value = instance_values[i];
+                    assert(!poly_value.only_datatype_known, "True for instances");
+                    auto& constant = poly_value.options.value;
+
+                    datatype_append_value_to_string(constant.type, constant.memory, string);
+                    if (i != instance_values.size - 1) {
+                        string_append_formated(string, ", ");
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case Datatype_Type::FUNCTION: 
+    {
+        auto function_type = downcast<Datatype_Function>(signature);
+        auto& parameters = function_type->parameters;
+        string_append_formated(string, "(");
+
+        int highlight_index = format.highlight_parameter_index;
+        format.highlight_parameter_index = 0;
+        for (int i = 0; i < function_type->parameters.size; i++) 
+        {
+            auto& param = function_type->parameters[i];
+            auto param_type = param.type;
+            if (format.remove_const_from_function_params) {
+                param_type = datatype_get_non_const_type(param_type);
+            }
+            color_fn(Syntax_Color::IDENTIFIER_FALLBACK, userdata);
+            if (highlight_index == i) {
+                format.highlight_start();
+            }
+            string_append_formated(string, "%s: ", param.name->characters);
+            datatype_append_to_string(string, param_type, format);
+            color_fn(Syntax_Color::TEXT, userdata);
+            if (highlight_index == i) {
+                format.highlight_stop();
+            }
+
+            if (param.default_value_exists) {
+                string_append_formated(string, " = ...");
+            }
+            if (i != parameters.size - 1) {
+                string_append_formated(string, ", ");
+            }
+        }
+        string_append_formated(string, ")");
+        if (function_type->return_type.available) {
+            string_append(string, " -> ");
+            datatype_append_to_string(string, function_type->return_type.value, format);
+            color_fn(Syntax_Color::TEXT, userdata);
+        }
+        break;
+    }
+    default: panic("Fugg");
+    }
 }
 
 
