@@ -1,4 +1,40 @@
 
+TODO: 
+ * Text-Editor should use rich-text rendering
+
+ * Function-Information in Editor:
+    - If inside callable, show current parameter
+    - Show missing parameters in Callable
+    - Also for struct-initializer (Maybe make callable?)
+
+ * Use Rich-Text for rendering Code-Suggestions?
+ * Draw line numbers (relative)
+
+
+DONE:
+ * Context should work now with rich text
+ * Rich_Text append + append_formated
+ * Rich_Text append_to_string
+ * Use rich-text for datatypes + error-infos
+ * Move Rich_Text to own header
+ * Rich Text replacing context-box
+
+
+Idea:
+ * Rich_Text struct, which contains colored text + background highlights
+ * Work-flow:
+    1. Add all text to rich_text struct (push_lines + push text) 
+    2. Adding Styles can be done while adding text (Current-Style) or afterwards with ranges...
+    3. Box-Size calculation is done while adding text
+    4. Rendering in given box
+    5. Queries where text is positioned afterwards (For e.g. drawing cursor + Code-Blocks)
+ * Should it have a start-line and be scrollable? Or not
+
+Seperate Rich-Text rendering into a custom thingy...
+Rich-Text rendering:
+
+
+
 Better formating:
  * Show current function call information
     If inside a function call, or something the like (e.g. Struct-Inititalizer or anything callable), show parameters
@@ -31,44 +67,58 @@ Features: (Done first, then ranked by priority)
  - Auto-Formating
  - Motions + Vim commands
 
+Required:
  - Better Code-Information 
     * Colored Text-Hints (Types and others)
     * function-info in function calls, parameter-types + current/missing parameters
     * Code completion more infos (e.g colors + symbol types)
- - Goto definition
- - Find definition/symbol
+ - Render Line-numbers (relative or not...)
+ - Function call information
+    * Show current call parameters
+    * Show current parameter
+    * Missing parameter informations?
+ - Multiple-file handling (One 'main' project file + some imported/openend file information)
+    * Option to open multiple files in tabs
+    * Switching from one tab to another (vim gt, gT)
+    * Closing tabs? :x...
+    * Either in tabs or concatenated at the end of the file?
+ - Fuzzy Goto definition/symbol
     * Fuzzy search to multiple definitions
     * Over multiple files when imports are used
- - Multiple-file handling (One 'main' project file + some imported/openend file information)
-    * Either in tabs or concatenated at the end of the file?
- - Search-and-replace
+ - Jumping between last positions 
+    * Maybe even have a GUI for the jump list with functions + indices
+
+Almost required:
+ - Interactive Search-and-replace
     * Per line simple search and replace of text
     * Interactive replacement mode with GUI
     * Smart mode for comments and string literals
- - Jumping between last positions 
-    * Maybe even have a GUI for the jump list with functions + indices
  - Code-Folding
     * Commands to fold/unfold + recursively
     * Movements should respect folding
     * Folds should be stored in editor after exit?
     * Auto-Fold mode? (e.g. fold lower in same block)
-
- - More Motions + Better replacement with yank/put
-    * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
-    * Replace command with motions (e.g. diw + ria)
- - Yank and Put with Registers
-    * Store multiple yanks and puts/last used
-    * when using p" to access register, show list in gui
- - Macros/Command recording
  - Marks
     * Ability to set and jump to marks
     * Marks over multiple files
     * GUI to look at/delete marks
     * Named marks + fuzzy jumps
     * Store marks after exit
- - Visual block mode
-    * Deletion of multiple lines
-    * Multi-Cursor
+ - Store last session
+    * Store open tabs, marks + code-folding
+
+Optional:
+ - More Motions
+    * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
+ - Yank and Put with Registers
+    * Store multiple yanks and puts/last used
+    * when using p" to access register, show list in gui
+ - Macros/Command recording
+ - Visual modes
+    * Visual block
+    * Visual line
+    * Visual mode
+ - Multi-Cursor mode
  - Multiple windows
  - Animations
     * For block deletes or copy pastes

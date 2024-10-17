@@ -5,6 +5,7 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/stack_allocator.hpp"
 #include "../../datastructures/list.hpp"
+#include "../../utility/rich_text.hpp"
 
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
@@ -856,6 +857,7 @@ struct Semantic_Error
 void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section = Parser::Section::WHOLE);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format = datatype_format_make_default());
+void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
 void semantic_analyser_append_all_errors_to_string(String* string, int indentation);
 
 

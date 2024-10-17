@@ -85,6 +85,7 @@
     <ClInclude Include="utility\gui.hpp" />
     <ClInclude Include="utility\hash_functions.hpp" />
     <ClInclude Include="utility\random.hpp" />
+    <ClInclude Include="utility\rich_text.hpp" />
     <ClInclude Include="utility\utils.hpp" />
     <ClInclude Include="win32\input.hpp" />
     <ClInclude Include="win32\process.hpp" />
@@ -154,6 +155,7 @@
     <ClCompile Include="utility\gui.cpp" />
     <ClCompile Include="utility\hash_functions.cpp" />
     <ClCompile Include="utility\random.cpp" />
+    <ClCompile Include="utility\rich_text.cpp" />
     <ClCompile Include="utility\utils.cpp" />
     <ClCompile Include="win32\input.cpp" />
     <ClCompile Include="win32\process.cpp" />

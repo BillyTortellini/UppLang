@@ -1,0 +1,103 @@
+#pragma once
+
+#include "../math/vectors.hpp"
+#include "../datastructures/string.hpp"
+#include "../datastructures/dynamic_array.hpp"
+#include "../rendering/basic2D.hpp"
+
+struct Text_Renderer;
+struct Renderer_2D;
+struct Render_Pass;
+
+namespace Rich_Text
+{
+    struct Text_Style
+    {
+        vec3 text_color;
+        vec3 bg_color;
+        vec3 underline_color;
+        bool has_bg;
+        bool has_underline;
+    };
+
+    struct Style_Change
+    {
+        int char_start;
+        Text_Style style;
+    };
+
+    struct Rich_Line 
+    {
+        String text;
+        Dynamic_Array<Style_Change> style_changes;
+        Text_Style default_style; 
+        int indentation;
+        bool is_seperator; // E.g. just a blank ---- line
+    };
+
+    struct Rich_Text
+    {
+        Dynamic_Array<Rich_Line> lines;
+        int max_line_char_count;
+        Text_Style style;
+        vec3 default_text_color;
+    };
+
+    Rich_Text create(vec3 default_text_color);
+    void destroy(Rich_Text* text);
+    void reset(Rich_Text* text);
+
+    void add_line(Rich_Text* text, bool keep_style = false, int indentation = 0);
+    void add_seperator_line(Rich_Text* text, bool skip_if_last_was_seperator_or_first = true);
+    void append(Rich_Text* rich_text, String string);
+    void append(Rich_Text* rich_text, const char* msg);
+    void append_character(Rich_Text* rich_text, char c);
+    void append_formated(Rich_Text* rich_text, const char* format, ...);
+
+    String* start_line_manipulation(Rich_Text* rich_text);
+    void stop_line_manipulation(Rich_Text* rich_text);
+
+    void set_text_color(Rich_Text* text, vec3 color);
+    void set_text_color(Rich_Text* text); // Resets to default text-color
+    void set_bg(Rich_Text* text, vec3 color);
+    void stop_bg(Rich_Text* text);
+
+    void set_underline(Rich_Text* text, vec3 color);
+    void stop_underline(Rich_Text* text);
+    void line_set_underline_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
+    void line_set_bg_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
+    void line_set_text_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
+
+    void append_to_string(Rich_Text* text, String* string, int indentation_spaces);
+};
+
+namespace Rich_Text_Renderer
+{
+    struct Rich_Text_Renderer
+    {
+        Rich_Text::Rich_Text* text;
+
+        // Render info
+        Renderer_2D* renderer_2D;
+        Text_Renderer* text_renderer;
+        vec2 char_size; // Note: this is to pixel aligned, so it cannot be used as text-renderer height without conversion
+        int indentation_spaces;
+
+        int border_thickness; // In pixels 
+        int padding; // In pixels
+        vec3 bg_color;
+        vec3 border_color;
+        bool draw_bg_and_border;
+
+        // Render_Position
+        vec2 frame_size;
+        vec2 frame_pos;
+        Anchor frame_anchor;
+    };
+
+    Rich_Text_Renderer make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces);
+    void set_decorations(Rich_Text_Renderer* renderer, int padding, int border_thickness, bool draw_bg_and_border, vec3 bg_color, vec3 border_color);
+    void set_frame(Rich_Text_Renderer* renderer, vec2 position, Anchor anchor, vec2 size);
+    vec2 get_char_position(Rich_Text_Renderer* renderer, int line, int char_index, Anchor anchor);
+    void render(Rich_Text_Renderer* renderer, Render_Pass* render_pass);
+};

@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include "ast.hpp"
 #include "constant_pool.hpp"
+#include "../../utility/rich_text.hpp"
 
 struct Symbol;
 struct Timer;
@@ -233,22 +234,17 @@ struct Datatype_Struct_Instance_Template
     Array<Polymorphic_Value> instance_values; // These need to be stored somewhere else now...
 };
 
-typedef void (*set_color_fn)(vec3 color, void* userdata);
-typedef void (*start_highlight_fn)();
-typedef void (*stop_highlight_fn)();
 struct Datatype_Format
 {
-    set_color_fn color_fn;
-    void* color_fn_userdata;
     int highlight_parameter_index; // -1 If invalid
-    start_highlight_fn highlight_start;
-    stop_highlight_fn highlight_stop;
+    vec3 highlight_color;
     bool remove_const_from_function_params;
     bool append_struct_poly_parameter_values;
 };
 Datatype_Format datatype_format_make_default();
 
-void datatype_append_to_string(String* string, Datatype* type, Datatype_Format format = datatype_format_make_default());
+void datatype_append_to_rich_text(Datatype* type, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
+void datatype_append_to_string(String* string, Datatype* signature, Datatype_Format format = datatype_format_make_default());
 void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* string);
 
 

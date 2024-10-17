@@ -19,6 +19,7 @@
 #include "parser.hpp"
 #include "source_code.hpp"
 #include "code_history.hpp"
+#include "../../utility/rich_text.hpp"
 
 const int MIN_CURSOR_DISTANCE = 3;
 
@@ -26,7 +27,13 @@ const int MIN_CURSOR_DISTANCE = 3;
 bool auto_format_line(int line_index);
 void syntax_editor_load_text_file(const char* filename);
 
-
+struct Error_Display
+{
+    String message;
+    Token_Range range;
+    bool from_main_source;
+    int semantic_error_index; // -1 if parsing error
+};
 
 // Structures/Enums
 
@@ -172,13 +179,6 @@ struct Normal_Mode_Command
     } options;
 };
 
-struct Error_Display
-{
-    String message;
-    Token_Range range;
-    bool from_main_source;
-    int semantic_error_index; // -1 if parsing error
-};
 Error_Display error_display_make(String msg, Token_Range range, bool from_main_source, int semantic_error_index);
 
 enum class Editor_Mode
@@ -198,22 +198,6 @@ struct Input_Replay
     Text_Index cursor_start;
 };
 
-struct Text_Style
-{
-    int char_start;
-    vec3 text_color;
-    bool has_bg;
-    vec3 bg_color;
-};
-
-struct Context_Line
-{
-    String text;
-    int indentation;
-    Dynamic_Array<Text_Style> styles;
-    bool is_seperator; // E.g. just a blank ---- line
-};
-
 struct Syntax_Editor
 {
     // Editing
@@ -231,7 +215,7 @@ struct Syntax_Editor
     Input_Replay input_replay;
     String yank_string;
     bool yank_was_line;
-    
+
     // Command repeating
     Normal_Mode_Command last_normal_command;
     Dynamic_Array<Insert_Command> last_insert_commands;
@@ -246,8 +230,8 @@ struct Syntax_Editor
     bool last_search_was_to;
 
     // Rendering
-    String context_text;
-    Dynamic_Array<Context_Line> context_lines;
+    Rich_Text::Rich_Text context_text;
+    Rich_Text_Renderer::Rich_Text_Renderer context_renderer;
 
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
@@ -269,8 +253,14 @@ static Syntax_Editor syntax_editor;
 void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer)
 {
     memory_zero(&syntax_editor);
-    syntax_editor.context_text = string_create_empty(256);
-    syntax_editor.context_lines = dynamic_array_create<Context_Line>();
+
+    syntax_editor.character_size.y = math_floor(convertHeight(0.55f, Unit::CENTIMETER));
+    syntax_editor.character_size.x = text_renderer_character_width(text_renderer, syntax_editor.character_size.y);
+    syntax_editor.context_text = Rich_Text::create(vec3(1.0f));
+    syntax_editor.context_renderer = Rich_Text_Renderer::make(
+        &syntax_editor.context_text, renderer_2D, text_renderer, syntax_editor.character_size.y * 0.8f, 2
+    );
+
     syntax_editor.errors = dynamic_array_create<Error_Display>(1);
     syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
     syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
@@ -326,8 +316,7 @@ void syntax_editor_destroy()
     source_code_destroy(editor.code);
     code_history_destroy(&editor.history);
     dynamic_array_destroy(&editor.code_completion_suggestions);
-    dynamic_array_destroy(&editor.context_lines);
-    string_destroy(&syntax_editor.context_text);
+    Rich_Text::destroy(&editor.context_text);
     string_destroy(&syntax_editor.command_buffer);
     string_destroy(&syntax_editor.yank_string);
     compiler_destroy();
@@ -412,7 +401,7 @@ void syntax_editor_synchronize_tokens()
     // Find out which lines were line_changed
     auto line_changes = dynamic_array_create<int>();
     SCOPE_EXIT(dynamic_array_destroy(&line_changes));
-    auto helper_add_delete_line_item = [&line_changes](int new_line_index, bool is_insert) -> void 
+    auto helper_add_delete_line_item = [&line_changes](int new_line_index, bool is_insert) -> void
     {
         for (int i = 0; i < line_changes.size; i++) {
             auto& line_index = line_changes[i];
@@ -450,7 +439,7 @@ void syntax_editor_synchronize_tokens()
             int changed_line = change.type == Code_Change_Type::CHAR_INSERT ? change.options.char_insert.index.line : change.options.text_insert.index.line;
             bool found = false;
             for (int j = 0; j < line_changes.size; j++) {
-                if (line_changes[j] ==  changed_line) {
+                if (line_changes[j] == changed_line) {
                     found = true;
                     break;
                 }
@@ -482,7 +471,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 {
     syntax_editor_synchronize_tokens();
     auto& editor = syntax_editor;
-    
+
     if (!editor.code_changed_since_last_compile)
     {
         if (!generate_code) {
@@ -511,9 +500,9 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             for (int j = 0; j < parse_errors.size; j++) {
                 auto& error = parse_errors[j];
                 dynamic_array_push_back(
-                    &editor.errors, 
+                    &editor.errors,
                     error_display_make(
-                        string_create_static(error.msg), error.range, 
+                        string_create_static(error.msg), error.range,
                         compiler.program_sources[i]->origin == Code_Origin::MAIN_PROJECT, -1
                     )
                 );
@@ -648,24 +637,24 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
     // Handle different operator types
     switch (token.options.op)
     {
-    // Operators that always have spaces before and after
-    case Operator::ADDITION: 
+        // Operators that always have spaces before and after
+    case Operator::ADDITION:
     case Operator::DIVISON:
-    case Operator::LESS_THAN: 
+    case Operator::LESS_THAN:
     case Operator::GREATER_THAN:
-    case Operator::LESS_EQUAL: 
+    case Operator::LESS_EQUAL:
     case Operator::GREATER_EQUAL:
     case Operator::EQUALS:
-    case Operator::NOT_EQUALS: 
+    case Operator::NOT_EQUALS:
     case Operator::POINTER_EQUALS:
     case Operator::POINTER_NOT_EQUALS:
     case Operator::DEFINE_COMPTIME:
     case Operator::DEFINE_INFER:
-    case Operator::DEFINE_INFER_POINTER: 
-    case Operator::DEFINE_INFER_RAW: 
-    case Operator::AND: 
-    case Operator::OR: 
-    case Operator::ARROW: 
+    case Operator::DEFINE_INFER_POINTER:
+    case Operator::DEFINE_INFER_RAW:
+    case Operator::AND:
+    case Operator::OR:
+    case Operator::ARROW:
     case Operator::ASSIGN:
     case Operator::ASSIGN_RAW:
     case Operator::ASSIGN_POINTER:
@@ -680,9 +669,9 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
         break;
     }
 
-    // No spaces before or after
-    case Operator::DOT: 
-    case Operator::TILDE: 
+                         // No spaces before or after
+    case Operator::DOT:
+    case Operator::TILDE:
     case Operator::NOT:
     case Operator::AMPERSAND:
     case Operator::UNINITIALIZED:
@@ -692,7 +681,7 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
         break;
     }
 
-    // Only space after
+                         // Only space after
     case Operator::COMMA:
     case Operator::TILDE_STAR:
     case Operator::TILDE_STAR_STAR:
@@ -703,9 +692,9 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
         break;
     }
 
-    // Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
+                             // Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
     case Operator::MULTIPLY: // Could also be pointer dereference...
-    case Operator::SUBTRACTION: 
+    case Operator::SUBTRACTION:
     {
         // If we don't have a token before or after, assume that it's a Unop
         if (token_index <= 0 || token_index + 1 >= line->tokens.size) {
@@ -863,7 +852,7 @@ bool auto_format_line(int line_index)
 
             // Don't remove space if it could cause lexing to change
             // Therefore check all operators if they contain a substring of the two added letters
-            for (int j = 0; j < (int)Operator::MAX_ENUM_VALUE && remove_space; j++) 
+            for (int j = 0; j < (int)Operator::MAX_ENUM_VALUE && remove_space; j++)
             {
                 String op_str = operator_get_string((Operator)j);
                 for (int k = 0; k + 1 < op_str.size; k++) {
@@ -881,7 +870,7 @@ bool auto_format_line(int line_index)
         }
 
         // Update cursor + follow tokens in space was removed
-        if (index_shift_for_tokens_after_current != 0) 
+        if (index_shift_for_tokens_after_current != 0)
         {
             line_changed = true;
             if (pos > curr.end_index && cursor_on_line) {
@@ -1102,7 +1091,7 @@ void code_completion_find_suggestions()
                 break;
             }
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-            case Datatype_Type::STRUCT: 
+            case Datatype_Type::STRUCT:
             {
                 Datatype_Struct* structure = 0;
                 if (type->type == Datatype_Type::STRUCT) {
@@ -1239,7 +1228,7 @@ void code_completion_find_suggestions()
         // Check if we should fill context options
         bool fill_context_options = false;
         auto& tokens = source_code_get_line(editor.code, editor.cursor.line)->tokens;
-        if (tokens.size != 0 && tokens[0].type == Token_Type::KEYWORD && tokens[0].options.keyword == Keyword::CONTEXT) { 
+        if (tokens.size != 0 && tokens[0].type == Token_Type::KEYWORD && tokens[0].options.keyword == Keyword::CONTEXT) {
             fill_context_options = get_cursor_char('!') == ' ';
         }
 
@@ -1396,7 +1385,7 @@ namespace Motions
         pos.line += 1;
     }
 
-    void move_backwards_over_line(Text_Index& pos) 
+    void move_backwards_over_line(Text_Index& pos)
     {
         if (pos.character > 0) {
             pos.character -= 1;
@@ -1406,7 +1395,7 @@ namespace Motions
         if (pos.line == 0) return;
         pos = text_index_make_line_end(syntax_editor.code, pos.line - 1);
     }
-    
+
     char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
         Source_Line* line = get_line(pos);
         if (line == nullptr) return invalid_char;
@@ -1416,7 +1405,7 @@ namespace Motions
     }
 
     // Returns true if a character was found that matched the test_fn
-    bool goto_next_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool forward = true, bool skip_current_char = false) 
+    bool goto_next_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool forward = true, bool skip_current_char = false)
     {
         Source_Line* line = get_line(pos);
         if (line == nullptr) return false;
@@ -1434,7 +1423,7 @@ namespace Motions
         return false;
     }
 
-    bool move_while_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true) 
+    bool move_while_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true)
     {
         Source_Line* line = get_line(pos);
         if (line == nullptr) return false;
@@ -1496,7 +1485,7 @@ namespace Motions
         if (char_is_whitespace(c)) {
             return text_range_get_island(pos, char_is_whitespace);
         }
-        
+
         // If we are on a identifier word
         if (char_is_valid_identifier(c)) {
             return text_range_get_island(pos, char_is_valid_identifier);
@@ -1513,7 +1502,7 @@ namespace Motions
         Source_Line* line = source_code_get_line(code, start.line);
 
         // Special handling for string literals ""
-        if (start_char == '\"' && end_char == '\"') 
+        if (start_char == '\"' && end_char == '\"')
         {
             int index = 0;
             bool inside_string = false;
@@ -1569,12 +1558,12 @@ namespace Motions
         if (!found)
         {
             int start_indent = line->indentation;
-            for (int i = start.line - 1; i >= 0; i -= 1) 
+            for (int i = start.line - 1; i >= 0; i -= 1)
             {
                 line = source_code_get_line(code, i);
-                if (line->indentation == start_indent - 1) 
+                if (line->indentation == start_indent - 1)
                 {
-                    if (line->text.size != 0 && line->text.characters[line->text.size-1] == start_char) {
+                    if (line->text.size != 0 && line->text.characters[line->text.size - 1] == start_char) {
                         found = true;
                         start.line = i;
                         start.character = line->text.size - 1;
@@ -1596,7 +1585,7 @@ namespace Motions
         {
             // Try to find end parenthesis on current line...
             int depth = 0;
-            for (int i = end.character + 1; i < line->text.size; i++) 
+            for (int i = end.character + 1; i < line->text.size; i++)
             {
                 char c = line->text.characters[i];
                 if (c == end_char) {
@@ -1618,7 +1607,7 @@ namespace Motions
         {
             // Find end parenthesis at end of block
             int start_indent = line->indentation;
-            for (int i = start.line + 1; i < code->line_count; i++) 
+            for (int i = start.line + 1; i < code->line_count; i++)
             {
                 line = source_code_get_line(code, i);
                 if (line->indentation == start_indent) {
@@ -1661,8 +1650,8 @@ namespace Parsing
         result.contains_edges = contains_edges;
         return result;
     }
-    
-    Motion motion_make_from_movement(Movement movement) 
+
+    Motion motion_make_from_movement(Movement movement)
     {
         Motion result;
         result.motion_type = Motion_Type::MOVEMENT;
@@ -1694,7 +1683,7 @@ namespace Parsing
         result.options.character = character;
         return result;
     }
-    
+
     Normal_Mode_Command normal_mode_command_make_motion(Normal_Mode_Command_Type command_type, int repeat_count, Motion motion) {
         Normal_Mode_Command result;
         result.type = command_type;
@@ -1702,7 +1691,7 @@ namespace Parsing
         result.options.motion = motion;
         return result;
     }
-    
+
     Normal_Mode_Command normal_mode_command_make_movement(Normal_Mode_Command_Type command_type, int repeat_count, Movement movement) {
         Normal_Mode_Command result;
         result.type = command_type;
@@ -1754,9 +1743,9 @@ namespace Parsing
         int result = 0;
         // Parse repeat count if existing
         if (index >= buffer.size) return return_value_if_invalid;
-    
+
         int start_index = index;
-    
+
         char c = buffer[index];
         if (c == '0') return return_value_if_invalid;
         while (char_is_digit(c) && index < buffer.size) {
@@ -1764,7 +1753,7 @@ namespace Parsing
             index += 1;
             c = buffer[index];
         }
-    
+
         if (index != start_index) return result;
         return return_value_if_invalid;
     }
@@ -1785,7 +1774,7 @@ namespace Parsing
 
         switch (cmd.characters[index])
         {
-        // Single character movements
+            // Single character movements
         case 'h': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_LEFT, repeat_count));
         case 'l': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_RIGHT, repeat_count));
         case 'j': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_DOWN, repeat_count));
@@ -1799,12 +1788,12 @@ namespace Parsing
         case 'e': index += 1; return parse_result_success(movement_make(Movement_Type::END_OF_WORD, repeat_count));
         case 'E': index += 1; return parse_result_success(movement_make(Movement_Type::END_OF_WORD_AFTER_SPACE, repeat_count));
         case '%': index += 1; return parse_result_success(movement_make(Movement_Type::JUMP_ENCLOSURE, repeat_count));
-        case ';': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH , repeat_count));
+        case ';': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH, repeat_count));
         case ',': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count));
         case '}': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_END, repeat_count));
         case '{': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_START, repeat_count));
 
-        // Character search movements:
+            // Character search movements:
         case 'f':
         case 'F':
         case 't':
@@ -1836,16 +1825,16 @@ namespace Parsing
             return result;
         }
 
-        // Line index movements
+                // Line index movements
         case 'G': {
-                if (repeat_count_exists) {
-                    index += 1;
-                    return parse_result_success(movement_make(Movement_Type::GOTO_LINE_NUMBER, repeat_count));
-                }
-                else {
-                    index += 1;
-                    return parse_result_success(movement_make(Movement_Type::GOTO_END_OF_TEXT, repeat_count));
-                }
+            if (repeat_count_exists) {
+                index += 1;
+                return parse_result_success(movement_make(Movement_Type::GOTO_LINE_NUMBER, repeat_count));
+            }
+            else {
+                index += 1;
+                return parse_result_success(movement_make(Movement_Type::GOTO_END_OF_TEXT, repeat_count));
+            }
         }
         case 'g': {
             if (repeat_count_exists) {
@@ -1864,7 +1853,7 @@ namespace Parsing
             return parse_result_failure<Movement>();
         }
         }
-    
+
         return parse_result_failure<Movement>();
     }
 
@@ -1876,7 +1865,7 @@ namespace Parsing
         int prev_index = index;
         int repeat_count = parse_repeat_count(index, 1);
         bool repeat_count_exists = prev_index != index;
-    
+
         // Motions may also be movements, so we check if we can parse a movement first
         Parse_Result<Movement> movement_parse = parse_movement(index, repeat_count_exists ? repeat_count : -1);
         if (movement_parse.type == Parse_Result_Type::SUCCESS) {
@@ -1885,7 +1874,7 @@ namespace Parsing
         else if (movement_parse.type == Parse_Result_Type::COMPLETABLE) {
             return parse_result_completable<Motion>();
         }
-    
+
         if (index >= cmd.size) return parse_result_completable<Motion>();
 
         // Now we need to check for real motions, which may start with a repeat count
@@ -1894,7 +1883,7 @@ namespace Parsing
 
         index += 1;
         if (index >= cmd.size) return parse_result_completable<Motion>();
-    
+
         // Now we need to determine the motion
         char c = cmd[index];
         index += 1;
@@ -1902,19 +1891,19 @@ namespace Parsing
         {
         case 'w': return parse_result_success(motion_make(Motion_Type::WORD, repeat_count, contains_edges));
         case 'W': return parse_result_success(motion_make(Motion_Type::SPACES, repeat_count, contains_edges));
-        case ')': 
+        case ')':
         case '(': return parse_result_success(motion_make(Motion_Type::PARENTHESES, repeat_count, contains_edges));
-        case '{': 
+        case '{':
         case '}': return parse_result_success(motion_make(Motion_Type::BRACES, repeat_count, contains_edges));
         case '[':
         case ']': return parse_result_success(motion_make(Motion_Type::BRACKETS, repeat_count, contains_edges));
         case '"': return parse_result_success(motion_make(Motion_Type::QUOTATION_MARKS, repeat_count, contains_edges));
-        // case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITHOUT_INDENT, repeat_count, contains_edges));
-        // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
+            // case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITHOUT_INDENT, repeat_count, contains_edges));
+            // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
         case 'b':
         case 'B': return parse_result_success(motion_make(Motion_Type::BLOCK, repeat_count, contains_edges));
         }
-    
+
         index -= 1;
         return parse_result_failure<Motion>();
     }
@@ -2010,7 +1999,7 @@ namespace Parsing
         }
 
         if (index >= cmd.size) return parse_result_completable<Normal_Mode_Command>();
-    
+
         // Check character
         Normal_Mode_Command_Type command_type = Normal_Mode_Command_Type::MAX_ENUM_VALUE;
         bool parse_motion_afterwards = false;
@@ -2020,56 +2009,56 @@ namespace Parsing
         index += 1;
         switch (curr_char)
         {
-        case 'x': 
+        case 'x':
             return parse_result_success(
-                    normal_mode_command_make_motion(
-                        Normal_Mode_Command_Type::DELETE_MOTION, repeat_count, 
-                        motion_make_from_movement(movement_make(Movement_Type::MOVE_RIGHT, 1))
-                    )
+                normal_mode_command_make_motion(
+                    Normal_Mode_Command_Type::DELETE_MOTION, repeat_count,
+                    motion_make_from_movement(movement_make(Movement_Type::MOVE_RIGHT, 1))
+                )
             );
         case 'i':
             return parse_result_success(normal_mode_command_make_movement(
-                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                    movement_make(Movement_Type::MOVE_LEFT, 0))
+                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                movement_make(Movement_Type::MOVE_LEFT, 0))
             );
         case 'I':
             return parse_result_success(normal_mode_command_make_movement(
-                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                    movement_make(Movement_Type::TO_START_OF_LINE, 1))
+                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                movement_make(Movement_Type::TO_START_OF_LINE, 1))
             );
         case 'a':
             return parse_result_success(normal_mode_command_make_movement(
-                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                    movement_make(Movement_Type::MOVE_RIGHT, 1))
+                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                movement_make(Movement_Type::MOVE_RIGHT, 1))
             );
         case 'A':
             return parse_result_success(normal_mode_command_make_movement(
-                    Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                    movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                movement_make(Movement_Type::TO_END_OF_LINE, 1))
             );
         case 'o': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, 1));
         case 'O': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, 1));
         case '.': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::REPEAT_LAST_COMMAND, repeat_count));
         case 'D':
             return parse_result_success(
-                    normal_mode_command_make_motion(
-                        Normal_Mode_Command_Type::DELETE_MOTION, repeat_count, 
-                        motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
-                    )
+                normal_mode_command_make_motion(
+                    Normal_Mode_Command_Type::DELETE_MOTION, repeat_count,
+                    motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                )
             );
         case 'C':
             return parse_result_success(
-                    normal_mode_command_make_motion(
-                        Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count, 
-                        motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
-                    )
+                normal_mode_command_make_motion(
+                    Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count,
+                    motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                )
             );
-        case 'Y': 
+        case 'Y':
             return parse_result_success(
-                    normal_mode_command_make_motion(
-                        Normal_Mode_Command_Type::YANK_MOTION, 0,
-                        motion_make(Motion_Type::LINE, repeat_count - 1, false)
-                    )
+                normal_mode_command_make_motion(
+                    Normal_Mode_Command_Type::YANK_MOTION, 0,
+                    motion_make(Motion_Type::LINE, repeat_count - 1, false)
+                )
             );
         case 'L': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, 1));
         case 'M': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, 1));
@@ -2084,9 +2073,9 @@ namespace Parsing
             }
             return parse_result_success(normal_mode_command_make_char(Normal_Mode_Command_Type::REPLACE_CHAR, 1, follow_char));
         }
-        case 'd': 
+        case 'd':
         case 'c':
-        case 'y': 
+        case 'y':
         {
             if (!follow_char_valid) {
                 return parse_result_completable<Normal_Mode_Command>();
@@ -2176,7 +2165,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             return c == other;
         };
         Text_Index start = pos;
-        bool found = Motions::goto_next_in_set(start, char_equals, (void*) &c, forward, true);
+        bool found = Motions::goto_next_in_set(start, char_equals, (void*)&c, forward, true);
         if (found) {
             pos = start;
             if (search_towards) {
@@ -2191,7 +2180,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
     {
         switch (movement.type)
         {
-        case Movement_Type::MOVE_DOWN: 
+        case Movement_Type::MOVE_DOWN:
         case Movement_Type::MOVE_UP: {
             int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
             pos.line += dir * movement.repeat_count;
@@ -2255,7 +2244,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
             break;
         }
-        case Movement_Type::END_OF_WORD: 
+        case Movement_Type::END_OF_WORD:
         {
             if (char_is_whitespace(Motions::get_char(pos))) {
                 Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
@@ -2274,7 +2263,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             pos.character = math_maximum(range.start.character, range.end.character - 1);
             break;
         }
-        case Movement_Type::END_OF_WORD_AFTER_SPACE: 
+        case Movement_Type::END_OF_WORD_AFTER_SPACE:
         {
             if (char_is_whitespace(Motions::get_char(pos))) {
                 Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
@@ -2295,7 +2284,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         }
         case Movement_Type::PREVIOUS_SPACE: {
             int prev = pos.character;
-            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); 
+            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false);
             pos = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true).start;
             if (pos.character != prev) break;
 
@@ -2315,7 +2304,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             pos = Motions::text_range_get_word(pos).start;
             break;
         }
-        case Movement_Type::JUMP_ENCLOSURE: 
+        case Movement_Type::JUMP_ENCLOSURE:
         {
             char c = Motions::get_char(pos);
 
@@ -2349,7 +2338,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             }
             break;
         }
-        case Movement_Type::BLOCK_START: 
+        case Movement_Type::BLOCK_START:
         {
             int line_index = pos.line;
             auto line = source_code_get_line(code, line_index);
@@ -2371,7 +2360,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             pos.character = 0;
             break;
         }
-        case Movement_Type::BLOCK_END: 
+        case Movement_Type::BLOCK_END:
         {
             int line_index = pos.line;
             auto line = source_code_get_line(code, line_index);
@@ -2396,8 +2385,8 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         }
         case Movement_Type::SEARCH_FORWARDS_FOR:
         case Movement_Type::SEARCH_FORWARDS_TO:
-        case Movement_Type::SEARCH_BACKWARDS_FOR: 
-        case Movement_Type::SEARCH_BACKWARDS_TO: 
+        case Movement_Type::SEARCH_BACKWARDS_FOR:
+        case Movement_Type::SEARCH_BACKWARDS_TO:
         {
             editor.last_search_was_forward = movement.type == Movement_Type::SEARCH_FORWARDS_FOR || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
             editor.last_search_was_to = movement.type == Movement_Type::SEARCH_BACKWARDS_TO || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
@@ -2419,7 +2408,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         pos = sanitize_index(pos);
         Source_Line* line = source_code_get_line(code, pos.line);
         if (set_horizontal_pos) {
-            syntax_editor.last_line_x_pos = pos.character + 4 * line->indentation; 
+            syntax_editor.last_line_x_pos = pos.character + 4 * line->indentation;
         }
     }
 
@@ -2432,7 +2421,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
     Text_Range result;
     switch (motion.motion_type)
     {
-    case Motion_Type::MOVEMENT: 
+    case Motion_Type::MOVEMENT:
     {
         // Note: Repeat count is stored in movement, and motion should always have 1 as repeat count here
         assert(motion.repeat_count == 1, "");
@@ -2480,7 +2469,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
         }
         break;
     }
-    case Motion_Type::SPACES: 
+    case Motion_Type::SPACES:
     {
         if (char_is_whitespace(Motions::get_char(pos))) {
             result = Motions::text_range_get_island(pos, char_is_whitespace);
@@ -2500,10 +2489,10 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
         }
         break;
     }
-    case Motion_Type::BRACES: 
-    case Motion_Type::BRACKETS: 
-    case Motion_Type::PARENTHESES: 
-    case Motion_Type::QUOTATION_MARKS: 
+    case Motion_Type::BRACES:
+    case Motion_Type::BRACKETS:
+    case Motion_Type::PARENTHESES:
+    case Motion_Type::QUOTATION_MARKS:
     {
         char start = '\0';
         char end = '\0';
@@ -2514,7 +2503,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
         case Motion_Type::QUOTATION_MARKS: start = '\"'; end = '\"'; break;
         }
 
-        for (int i = 0; i < motion.repeat_count; i++) 
+        for (int i = 0; i < motion.repeat_count; i++)
         {
             result = Motions::text_range_get_parenthesis(pos, start, end);
             pos = result.start;
@@ -2536,7 +2525,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 
         break;
     }
-    case Motion_Type::BLOCK: 
+    case Motion_Type::BLOCK:
     {
         int line_start = pos.line;
         int start_indentation = source_code_get_line(code, line_start)->indentation - (motion.repeat_count - 1);
@@ -2574,7 +2563,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 
         break;
     }
-    case Motion_Type::LINE: 
+    case Motion_Type::LINE:
     {
         // Note: The repeat count for line gives the final line offset
         if (motion.repeat_count >= 0) {
@@ -2624,7 +2613,7 @@ void text_range_delete(Text_Range range)
     auto line = Motions::get_line(range.start);
     auto end_line = Motions::get_line(range.end);
     if (end_line == nullptr || line == nullptr) return;
-    history_delete_text(&syntax_editor.history, range.start, line->text.size); 
+    history_delete_text(&syntax_editor.history, range.start, line->text.size);
 
     // Append remaining text of last-line into first line
     String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
@@ -2660,7 +2649,7 @@ void text_range_append_to_string(Text_Range range, String* str)
     string_append_string(str, &substring);
 
     // Append lines until end
-    for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++) 
+    for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++)
     {
         auto line = source_code_get_line(code, i);
         string_append_character(str, '\n');
@@ -2806,11 +2795,11 @@ void normal_command_execute(Normal_Mode_Command& command)
 
     SCOPE_EXIT(
         syntax_editor_sanitize_cursor();
-        history_set_cursor_pos(&editor.history, editor.cursor);
-        auto_format_line(cursor.line);
-        if (execute_as_complex) {
-            history_stop_complex_command(&editor.history);
-        }
+    history_set_cursor_pos(&editor.history, editor.cursor);
+    auto_format_line(cursor.line);
+    if (execute_as_complex) {
+        history_stop_complex_command(&editor.history);
+    }
     );
 
     switch (command.type)
@@ -3105,7 +3094,7 @@ void insert_command_execute(Insert_Command input)
         break;
     }
 
-    // Letters
+                                                  // Letters
     case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;
@@ -3712,181 +3701,6 @@ int syntax_editor_draw_block_outlines_recursive(int line_index, int indentation)
     return block_end;
 }
 
-namespace Context
-{
-    const vec3 COLOR_BG = vec3(0.2f);
-    const vec3 COLOR_TEXT = vec3(1.0f);
-    const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
-
-    const int BORDER_SIZE = 2;
-    const int PADDING = 2;
-    const vec3 BORDER_COLOR = vec3(0.5f, 0.0f, 1.0f);
-
-    void reset() 
-    {
-        auto& lines = syntax_editor.context_lines;
-        for (int i = 0; i < lines.size; i++) {
-            auto& line = lines[i];
-            dynamic_array_destroy(&line.styles);
-            string_destroy(&line.text);
-        }
-        dynamic_array_reset(&lines);
-    }
-
-    void add_line(bool keep_style = false, int indentation = 0) 
-    {
-        auto& lines = syntax_editor.context_lines;
-
-        Context_Line line;
-        line.indentation = indentation;
-        line.is_seperator = false;
-        line.styles = dynamic_array_create<Text_Style>();
-        line.text = string_create();
-
-        if (keep_style && lines.size != 0) {
-            auto& prev_line = lines[lines.size - 1];
-            if (!prev_line.is_seperator && prev_line.styles.size != 0) {
-                Text_Style style = prev_line.styles[prev_line.styles.size - 1];
-                style.char_start = 0;
-                dynamic_array_push_back(&line.styles, style);
-            }
-        }
-
-        dynamic_array_push_back(&lines, line);
-    }
-
-    void add_seperator(bool skip_if_last_was_seperator_or_first = true) 
-    {
-        auto& lines = syntax_editor.context_lines;
-
-        if (lines.size == 0 && skip_if_last_was_seperator_or_first) return;
-        auto& current = lines[lines.size - 1];
-        if (current.is_seperator && skip_if_last_was_seperator_or_first) return;
-
-        Context_Line line;
-        line.is_seperator = true;
-        line.indentation = 0;
-        line.styles = dynamic_array_create<Text_Style>();
-        line.text = string_create();
-        dynamic_array_push_back(&syntax_editor.context_lines, line);
-    }
-
-    void add_text(String string) 
-    {
-        auto& lines = syntax_editor.context_lines;
-
-        if (lines.size == 0) return;
-        auto& line = lines[lines.size - 1];
-        if (line.is_seperator) return;
-        string_append_string(&line.text, &string);
-    }
-
-    void add_text(const char* text) {
-        add_text(string_create_static(text));
-    }
-
-    Text_Style* get_or_push_current_style() 
-    {
-        auto& lines = syntax_editor.context_lines;
-        if (lines.size == 0) return 0;
-        auto& line = lines[lines.size - 1];
-
-        bool add_new_style = true;
-        if (line.styles.size != 0 && line.styles[line.styles.size - 1].char_start == line.text.size) {
-            add_new_style = false;
-        }
-        
-        if (add_new_style) {
-            Text_Style style;
-            if (line.styles.size != 0) {
-                style = line.styles[line.styles.size - 1];
-            }
-            else {
-                style.has_bg = false;
-                style.bg_color = COLOR_BG;
-                style.text_color = COLOR_TEXT;
-            }
-            style.char_start = line.text.size;
-            dynamic_array_push_back(&line.styles, style);
-        }
-        return &line.styles[line.styles.size - 1];
-    }
-
-    void set_text_color(vec3 text_color = COLOR_TEXT) {
-        get_or_push_current_style()->text_color = text_color;
-    }
-
-    void set_bg(vec3 bg_color) {
-        auto style = get_or_push_current_style();
-        style->has_bg = true;
-        style->bg_color = bg_color;
-    }
-
-    void stop_bg() {
-        get_or_push_current_style()->has_bg = false;
-    }
-
-    void add_datatype(Datatype* datatype) 
-    {
-        auto& lines = syntax_editor.context_lines;
-
-        if (lines.size == 0) return;
-        auto& line = lines[lines.size - 1];
-        if (line.is_seperator) return;
-
-        auto highlight_start_fn = []() {
-            Context::set_bg(vec3(COLOR_BG * 2.0f));
-        };
-        auto highlight_stop_fn = []() {
-            Context::stop_bg();
-        };
-        auto set_color_fn = [](vec3 color, void* userdata) {
-            set_text_color(color);
-        };
-
-        Datatype_Format format = datatype_format_make_default();
-        format.color_fn = set_color_fn;
-        format.highlight_parameter_index = 0;
-        format.highlight_start = highlight_start_fn;
-        format.highlight_stop = highlight_stop_fn;
-        datatype_append_to_string(&line.text, datatype, format);
-    }
-
-    void add_error(Error_Display error)
-    {
-        Context::add_line();
-        Context::set_bg(vec3(1.0f, 0.0f, 0.0f));
-        Context::set_text_color(vec3(1.0f));
-        Context::add_text("Error:");
-        Context::set_text_color();
-        Context::stop_bg();
-        Context::add_text(" ");
-        Context::add_text(error.message);
-
-        auto set_color_fn = [](vec3 color, void* userdata) {
-            set_text_color(color);
-        };
-        Datatype_Format format = datatype_format_make_default();
-        format.color_fn = set_color_fn;
-
-        // Add error infos
-        if (error.semantic_error_index != -1)
-        {
-            auto& semantic_error = compiler.semantic_analyser->errors[error.semantic_error_index];
-            for (int j = 0; j < semantic_error.information.size; j++) 
-            {
-                auto& error_info = semantic_error.information[j];
-                Context::add_line(false, 1);
-
-                auto& lines = syntax_editor.context_lines;
-                auto& line = lines[lines.size - 1];
-
-                error_information_append_to_string(error_info, &line.text, format);
-            }
-        }
-    }
-}
-
 void syntax_editor_render()
 {
     auto& editor = syntax_editor;
@@ -3894,8 +3708,6 @@ void syntax_editor_render()
     auto& code = syntax_editor.code;
 
     // Prepare Render
-    editor.character_size.y = math_floor(convertHeight(0.55f, Unit::CENTIMETER));
-    editor.character_size.x = text_renderer_character_width(editor.text_renderer, editor.character_size.y);
     syntax_editor_sanitize_cursor();
 
     auto state_2D = pipeline_state_make_default();
@@ -4052,26 +3864,29 @@ void syntax_editor_render()
 
 
     // Calculate context
-    Context::reset();
+    Rich_Text::reset(&editor.context_text);
+    if (true)
     {
+        Rich_Text::Rich_Text* text = &editor.context_text;
+
         // If we are in Insert-Mode, prioritize code-completion
         bool show_normal_mode_context = true;
         if (editor.code_completion_suggestions.size != 0 && editor.mode == Editor_Mode::INSERT)
         {
-            Context::add_seperator();
+            Rich_Text::add_seperator_line(text);
             show_normal_mode_context = false;
             auto& suggestions = syntax_editor.code_completion_suggestions;
             for (int i = 0; i < editor.code_completion_suggestions.size; i++) {
                 auto sugg = editor.code_completion_suggestions[i];
-                Context::add_line();
-                Context::add_text(sugg);
+                Rich_Text::add_line(text);
+                Rich_Text::append(text, sugg);
             }
         }
 
         // Error messages (If cursor is directly on error)
-        if (editor.errors.size > 0 && show_normal_mode_context && editor.mode == Editor_Mode::NORMAL) 
+        if (editor.errors.size > 0 && show_normal_mode_context && editor.mode == Editor_Mode::NORMAL)
         {
-            Context::add_seperator();
+            Rich_Text::add_seperator_line(text);
             for (int i = 0; i < editor.errors.size; i++)
             {
                 auto& error = editor.errors[i];
@@ -4091,8 +3906,28 @@ void syntax_editor_render()
                     inside_error = true;
                 }
 
-                if (inside_error) {
-                    Context::add_error(error);
+                if (inside_error) 
+                {
+                    show_normal_mode_context = false;
+
+                    auto text = &syntax_editor.context_text;
+                    Rich_Text::add_line(text);
+                    Rich_Text::set_text_color(text, vec3(1.0f, 0.5f, 0.5f));
+                    Rich_Text::set_underline(text, vec3(1.0f, 0.5f, 0.5f));
+                    Rich_Text::append(text, "Error:");
+                    Rich_Text::set_text_color(text);
+                    Rich_Text::append(text, " ");
+                    Rich_Text::append(text, error.message);
+
+                    // Add error infos
+                    if (error.semantic_error_index != -1) {
+                        auto& semantic_error = compiler.semantic_analyser->errors[error.semantic_error_index];
+                        for (int j = 0; j < semantic_error.information.size; j++) {
+                            auto& error_info = semantic_error.information[j];
+                            add_line(text, false, 1);
+                            error_information_append_to_rich_text(error_info, text);
+                        }
+                    }
                 }
             }
         }
@@ -4100,8 +3935,8 @@ void syntax_editor_render()
         // Symbol Info
         if (show_normal_mode_context && symbol != 0 && pass != 0)
         {
-            Context::add_seperator();
-            Context::add_line();
+            Rich_Text::add_seperator_line(text);
+            Rich_Text::add_line(text);
 
             Datatype* type = 0;
             const char* after_text = nullptr;
@@ -4145,35 +3980,35 @@ void syntax_editor_render()
             }
 
             if (type != 0) {
-                Context::add_datatype(type);
-                Context::set_text_color();
+                datatype_append_to_rich_text(type, text);
+                Rich_Text::set_text_color(text);
             }
 
             if (symbol->type != Symbol_Type::TYPE)
             {
-                Context::add_line(false, 2);
-                Context::set_text_color(symbol_type_to_color(symbol->type));
-                Context::add_text(*symbol->id);
+                Rich_Text::add_line(text, false, 2);
+                Rich_Text::set_text_color(text, symbol_type_to_color(symbol->type));
+                Rich_Text::append(text, *symbol->id);
 
                 if (after_text != 0) {
-                    Context::set_text_color();
-                    Context::add_text(": ");
-                    Context::add_text(after_text);
+                    Rich_Text::set_text_color(text);
+                    Rich_Text::append(text, ": ");
+                    Rich_Text::append(text, after_text);
                 }
             }
         }
 
         // Analysis-Info
-        if (node->type == AST::Node_Type::EXPRESSION && pass != 0)
+        if (node->type == AST::Node_Type::EXPRESSION && pass != 0 && show_normal_mode_context)
         {
             auto expr = AST::downcast<AST::Expression>(node);
             auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
             if (expression_info != 0 && !expression_info->contains_errors)
             {
-                Context::add_seperator();
-                Context::add_line();
-                Context::add_text("Expr: ");
-                Context::add_datatype(expression_info_get_type(expression_info, false));
+                Rich_Text::add_seperator_line(text);
+                Rich_Text::add_line(text);
+                Rich_Text::append(text, "Expr: ");
+                datatype_append_to_rich_text(expression_info_get_type(expression_info, false), text);
             }
         }
     }
@@ -4181,36 +4016,40 @@ void syntax_editor_render()
     // Push some example text for testing
     if (false)
     {
-        Context::add_seperator();
-        Context::add_line();
-        Context::set_text_color(Context::COLOR_ERROR_TEXT);
-        Context::add_text(string_create_static("Error: "));
-        Context::set_text_color(Context::COLOR_TEXT);
-        Context::set_bg(vec3(0.8f, 0.0f, 0.0f));
-        Context::add_text("This is the error");
-        Context::stop_bg();
-        Context::add_text(" afterwards...");
+        const vec3 COLOR_BG = vec3(0.2f);
+        const vec3 COLOR_TEXT = vec3(1.0f);
+        const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
+
+        Rich_Text::Rich_Text* text = &editor.context_text;
+        Rich_Text::add_seperator_line(text);
+        Rich_Text::add_line(text);
+        Rich_Text::set_text_color(text, COLOR_ERROR_TEXT);
+        Rich_Text::append(text, "Error: ");
+        Rich_Text::set_text_color(text, COLOR_TEXT);
+        Rich_Text::set_bg(text, vec3(0.8f, 0.0f, 0.0f));
+        Rich_Text::append(text, "This is ");
+        Rich_Text::set_underline(text, vec3(0.0f, 1.0f, 1.0f));
+        Rich_Text::append(text, "the");
+        Rich_Text::stop_underline(text);
+        Rich_Text::stop_bg(text);
+        Rich_Text::append(text, " afterwards...");
     }
 
-    // Render new context
-    auto& context_lines = editor.context_lines;
-    if (context_lines.size > 0)
+    if (editor.context_text.lines.size > 0)
     {
-        auto& char_size = editor.character_size * 0.8f;
+        const vec3 COLOR_BG = vec3(0.2f);
+        const vec3 COLOR_TEXT = vec3(1.0f);
+        const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
+        const vec3 COLOR_BORDER = vec3(0.5f, 0.0f, 1.0f);
 
-        // Figure out size of box
-        int max_line_size = 0;
-        int line_count = context_lines.size;
-        {
-            for (int i = 0; i < context_lines.size; i++) {
-                auto& line = context_lines[i];
-                int length = line.text.size + 2 * line.indentation;
-                max_line_size = math_maximum(max_line_size, length);
-            }
-            max_line_size = math_maximum(max_line_size, 40); // Min box size
-        }
-        vec2 content_size = vec2(max_line_size * char_size.x, line_count * char_size.y);
-        vec2 box_size = content_size + 2 * (Context::BORDER_SIZE + Context::PADDING);
+        const int BORDER_SIZE = 2;
+        const int PADDING = 2;
+
+        // Figure out text position
+        auto text = &editor.context_text;
+        auto renderer = &editor.context_renderer;
+        vec2 content_size = vec2(renderer->char_size) * vec2(math_maximum(30, text->max_line_char_count), text->lines.size);
+        vec2 box_size = content_size + 2 * (BORDER_SIZE + PADDING);
 
         // Figure out box position
         vec2 box_top_left = vec2(0.0f);
@@ -4233,88 +4072,11 @@ void syntax_editor_render()
 
             box_top_left.x = cursor_pos.x;
         }
-        using Context::BORDER_COLOR;
-        using Context::BORDER_SIZE;
-        using Context::PADDING;
-        vec2 box_content_start = box_top_left + vec2(BORDER_SIZE + PADDING, -BORDER_SIZE - PADDING);
 
-        // Render
-        renderer_2D_add_rectangle(editor.renderer_2D, bounding_box_2_make_anchor(box_top_left, box_size, Anchor::TOP_LEFT), BORDER_COLOR);
-        renderer_2D_draw(editor.renderer_2D, pass_context);
-        renderer_2D_add_rectangle(editor.renderer_2D, bounding_box_2_make_anchor(box_top_left + vec2(BORDER_SIZE, -BORDER_SIZE), content_size + 2 * PADDING, Anchor::TOP_LEFT), Context::COLOR_BG);
-        renderer_2D_draw(editor.renderer_2D, pass_context);
-
-        for (int i = 0; i < context_lines.size; i++)
-        {
-            auto& line = context_lines[i];
-            vec2 line_pos = box_content_start + vec2(0.0f, -char_size.y * (i + 1));
-
-            if (line.is_seperator) {
-                vec2 seperator_size = vec2(box_size.y - 4, 2.0f);
-                vec2 start = vec2(box_content_start.x, char_size.y * (i + 0.5f));
-                renderer_2D_add_rectangle(editor.renderer_2D,
-                    bounding_box_2_make_anchor(line_pos + vec2(0.0f, char_size.y / 2.0f), vec2(char_size.x * max_line_size, 1.0f), Anchor::CENTER_LEFT),
-                    BORDER_COLOR * 0.8f
-                );
-                continue;
-            }
-
-            line_pos.x += line.indentation * 2 * char_size.x;
-            if (line.styles.size == 0) {
-                text_renderer_add_text(
-                    editor.text_renderer, line.text, line_pos, Anchor::BOTTOM_LEFT, char_size.y, vec3(1.0f),
-                    optional_make_success(bounding_box_2_make_anchor(box_content_start, content_size, Anchor::TOP_LEFT))
-                );
-                continue;
-            }
-
-            Text_Style default_style;
-            default_style.char_start = 0;
-            default_style.text_color = vec3(1.0f);
-            default_style.has_bg = false;
-            default_style.bg_color = Context::COLOR_BG;
-
-            Text_Style last_style = default_style;
-            int last_start = 0;
-            for (int i = 0; i <= line.styles.size; i++)
-            {
-                Text_Style style;
-                SCOPE_EXIT(last_style = style; last_start = style.char_start;);
-                if (i < line.styles.size) {
-                    style = line.styles[i];
-                }
-                else {
-                    style = default_style;
-                    style.char_start = line.text.size;
-                }
-
-                String substring = string_create_substring_static(&line.text, last_start, style.char_start);
-                if (substring.size == 0) {
-                    continue;
-                }
-
-                vec2 pos = line_pos + vec2(last_start * char_size.x, 0.0f);
-                if (last_style.has_bg) {
-                    renderer_2D_add_rectangle(editor.renderer_2D,
-                        bounding_box_2_make_anchor(pos, vec2(char_size.x * substring.size, char_size.y), Anchor::BOTTOM_LEFT),
-                        last_style.bg_color
-                    );
-                }
-
-                text_renderer_add_text(
-                    editor.text_renderer, substring, line_pos + vec2(last_start * char_size.x, 0.0f), Anchor::BOTTOM_LEFT, char_size.y, last_style.text_color,
-                    optional_make_success(bounding_box_2_make_anchor(box_content_start, content_size, Anchor::TOP_LEFT))
-                );
-            }
-        }
-
-        renderer_2D_draw(editor.renderer_2D, pass_context);
-        text_renderer_draw(editor.text_renderer, pass_context);
+        Rich_Text_Renderer::set_frame(renderer, box_top_left, Anchor::TOP_LEFT, box_size);
+        Rich_Text_Renderer::set_decorations(renderer, PADDING, BORDER_SIZE, true, COLOR_BG, COLOR_BORDER);
+        Rich_Text_Renderer::render(renderer, pass_context);
     }
-
-    // Render Primitives
-    renderer_2D_draw(editor.renderer_2D, pass_context);
-    text_renderer_draw(editor.text_renderer, pass_context);
 }
 
 

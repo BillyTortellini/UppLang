@@ -53,7 +53,13 @@ void text_renderer_destroy(Text_Renderer* renderer)
 
 float text_renderer_character_width(Text_Renderer* renderer, float line_height) {
     auto& atlas = renderer->glyph_atlas;
-    return line_height * atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
+    const float width_to_height_ratio = atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
+    return line_height * width_to_height_ratio;
+}
+
+float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer) {
+    auto& atlas = renderer->glyph_atlas;
+    return atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
 void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color, Optional<Bounding_Box2> clip_box)

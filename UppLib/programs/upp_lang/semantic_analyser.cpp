@@ -11321,95 +11321,110 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format)
+void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format)
 {
-    format.color_fn(Syntax_Color::TEXT, format.color_fn_userdata);
+    Rich_Text::set_text_color(text, Syntax_Color::TEXT);
     switch (info.type)
     {
-    case Error_Information_Type::CYCLE_WORKLOAD:
+    case Error_Information_Type::CYCLE_WORKLOAD: {
+        auto string = Rich_Text::start_line_manipulation(text);
         analysis_workload_append_to_string(info.options.cycle_workload, string);
+        Rich_Text::stop_line_manipulation(text);
         break;
+    }
     case Error_Information_Type::COMPTIME_MESSAGE:
-        string_append_formated(string, "Comptime msg: %s", info.options.comptime_message);
+        Rich_Text::append_formated(text, "Comptime msg: %s", info.options.comptime_message);
         break;
     case Error_Information_Type::ARGUMENT_COUNT:
-        string_append_formated(string, "Given argument count: %d, required: %d",
+        Rich_Text::append_formated(text, "Given argument count: %d, required: %d",
             info.options.invalid_argument_count.given, info.options.invalid_argument_count.expected);
         break;
     case Error_Information_Type::ID:
-        string_append_formated(string, "ID: %s", info.options.id->characters);
+        Rich_Text::append_formated(text, "ID: %s", info.options.id->characters);
         break;
     case Error_Information_Type::SYMBOL: {
-        string_append_formated(string, "Symbol: ");
-        format.color_fn(symbol_type_to_color(info.options.symbol->type), format.color_fn_userdata);
+        Rich_Text::append_formated(text, "Symbol: ");
+        Rich_Text::set_text_color(text, symbol_type_to_color(info.options.symbol->type));
+        auto string = Rich_Text::start_line_manipulation(text);
         symbol_append_to_string(info.options.symbol, string);
+        Rich_Text::stop_line_manipulation(text);
         break;
     }
     case Error_Information_Type::EXIT_CODE: {
-        string_append_formated(string, "Exit_Code: ");
+        Rich_Text::append_formated(text, "Exit_Code: ");
+        auto string = Rich_Text::start_line_manipulation(text);
         exit_code_append_to_string(string, info.options.exit_code);
+        Rich_Text::stop_line_manipulation(text);
         break;
     }
     case Error_Information_Type::GIVEN_TYPE:
-        string_append_formated(string, "Given Type:    ");
-        datatype_append_to_string(string, info.options.type, format);
+        Rich_Text::append_formated(text, "Given Type:    ");
+        datatype_append_to_rich_text(info.options.type, text, format);
         break;
     case Error_Information_Type::EXPECTED_TYPE:
-        string_append_formated(string, "Expected Type: ");
-        datatype_append_to_string(string, info.options.type, format);
+        Rich_Text::append_formated(text, "Expected Type: ");
+        datatype_append_to_rich_text(info.options.type, text, format);
         break;
     case Error_Information_Type::FUNCTION_TYPE:
-        string_append_formated(string, "Function Type: ");
-        datatype_append_to_string(string, info.options.type, format);
+        Rich_Text::append_formated(text, "Function Type: ");
+        datatype_append_to_rich_text(info.options.type, text, format);
         break;
     case Error_Information_Type::BINARY_OP_TYPES:
-        string_append_formated(string, "Left: ");
-        datatype_append_to_string(string, info.options.binary_op_types.left_type, format);
-        format.color_fn(Syntax_Color::TEXT, format.color_fn_userdata);
-        string_append_formated(string, ", Right: ");
-        datatype_append_to_string(string, info.options.binary_op_types.right_type, format);
+        Rich_Text::append_formated(text, "Left: ");
+        datatype_append_to_rich_text(info.options.binary_op_types.left_type, text, format);
+        Rich_Text::set_text_color(text);
+        Rich_Text::append_formated(text, ", Right: ");
+        datatype_append_to_rich_text(info.options.binary_op_types.right_type, text, format);
         break;
     case Error_Information_Type::EXPRESSION_RESULT_TYPE:
     {
-        string_append_formated(string, "Given: ");
+        Rich_Text::append(text, "Given: ");
         switch (info.options.expression_type)
         {
         case Expression_Result_Type::NOTHING:
-            string_append_formated(string, "Nothing/void");
+            Rich_Text::append(text, "Nothing/void");
             break;
         case Expression_Result_Type::HARDCODED_FUNCTION:
-            string_append_formated(string, "Hardcoded function");
+            Rich_Text::append(text, "Hardcoded function");
             break;
         case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-            string_append_formated(string, "Polymorphic function");
+            Rich_Text::append(text, "Polymorphic function");
             break;
         case Expression_Result_Type::POLYMORPHIC_STRUCT:
-            string_append_formated(string, "Polymorphic struct");
+            Rich_Text::append(text, "Polymorphic struct");
             break;
         case Expression_Result_Type::CONSTANT:
-            string_append_formated(string, "Constant");
+            Rich_Text::append(text, "Constant");
             break;
         case Expression_Result_Type::VALUE:
-            string_append_formated(string, "Value");
+            Rich_Text::append(text, "Value");
             break;
         case Expression_Result_Type::FUNCTION:
-            string_append_formated(string, "Function");
+            Rich_Text::append(text, "Function");
             break;
         case Expression_Result_Type::TYPE:
-            string_append_formated(string, "Type");
+            Rich_Text::append(text, "Type");
             break;
         case Expression_Result_Type::DOT_CALL:
-            string_append_formated(string, "Dot_Call");
+            Rich_Text::append(text, "Dot_Call");
             break;
         default: panic("");
         }
         break;
     }
     case Error_Information_Type::CONSTANT_STATUS:
-        string_append_formated(string, "Couldn't serialize constant: %s", info.options.constant_message);
+        Rich_Text::append_formated(text, "Couldn't serialize constant: %s", info.options.constant_message);
         break;
     default: panic("");
     }
+}
+
+void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format)
+{
+    Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
+    SCOPE_EXIT(Rich_Text::destroy(&text));
+    error_information_append_to_rich_text(info, &text, format);
+    Rich_Text::append_to_string(&text, string, 2);
 }
 
 void semantic_analyser_append_all_errors_to_string(String* string, int indentation)
