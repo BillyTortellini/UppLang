@@ -6,22 +6,12 @@
 #include "lexer.hpp"
 
 // Source Code
-struct Render_Info
-{
-    vec3 color;
-    vec3 bg_color;
-};
-
 struct Source_Line
 {
     // Content
     String text;
     Dynamic_Array<Token> tokens;
     int indentation;
-
-    // Rendering
-    Dynamic_Array<Render_Info> infos;
-    int screen_index; // E.g. 0 for first line on screen
 
     // Comment/Lexing info
     bool is_comment; // True if we are inside a comment block or if the line starts with //

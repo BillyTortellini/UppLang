@@ -11,6 +11,13 @@ struct Render_Pass;
 
 namespace Rich_Text
 {
+    enum class Mark_Type
+    {
+        TEXT_COLOR,
+        BACKGROUND_COLOR,
+        UNDERLINE
+    };
+
     struct Text_Style
     {
         vec3 text_color;
@@ -61,19 +68,20 @@ namespace Rich_Text
     void set_text_color(Rich_Text* text); // Resets to default text-color
     void set_bg(Rich_Text* text, vec3 color);
     void stop_bg(Rich_Text* text);
-
     void set_underline(Rich_Text* text, vec3 color);
     void stop_underline(Rich_Text* text);
+
     void line_set_underline_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
     void line_set_bg_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
     void line_set_text_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
+    void mark_line(Rich_Text* text, Mark_Type mark_type, vec3 color, int line, int char_start, int char_end);
 
     void append_to_string(Rich_Text* text, String* string, int indentation_spaces);
 };
 
-namespace Rich_Text_Renderer
+namespace Text_Display
 {
-    struct Rich_Text_Renderer
+    struct Text_Display
     {
         Rich_Text::Rich_Text* text;
 
@@ -83,21 +91,33 @@ namespace Rich_Text_Renderer
         vec2 char_size; // Note: this is to pixel aligned, so it cannot be used as text-renderer height without conversion
         int indentation_spaces;
 
-        int border_thickness; // In pixels 
-        int padding; // In pixels
-        vec3 bg_color;
-        vec3 border_color;
-        bool draw_bg_and_border;
-
         // Render_Position
         vec2 frame_size;
         vec2 frame_pos;
         Anchor frame_anchor;
+
+        // Decorations
+        int padding; // In pixels
+
+        bool draw_border;
+        int border_thickness; // In pixels 
+        vec3 border_color;
+
+        bool draw_bg;
+        vec3 bg_color;
+
+        bool draw_block_outline;
+        int block_outline_thickness;
+        vec3 outline_color;
     };
 
-    Rich_Text_Renderer make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces);
-    void set_decorations(Rich_Text_Renderer* renderer, int padding, int border_thickness, bool draw_bg_and_border, vec3 bg_color, vec3 border_color);
-    void set_frame(Rich_Text_Renderer* renderer, vec2 position, Anchor anchor, vec2 size);
-    vec2 get_char_position(Rich_Text_Renderer* renderer, int line, int char_index, Anchor anchor);
-    void render(Rich_Text_Renderer* renderer, Render_Pass* render_pass);
+    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces);
+    void set_background_color(Text_Display* display, vec3 color);
+    void set_padding(Text_Display* display, int padding);
+    void set_border(Text_Display* display, int border_thickness, vec3 color);
+    void set_block_outline(Text_Display* display, int thickness, vec3 color);
+
+    void set_frame(Text_Display* display, vec2 position, Anchor anchor, vec2 size);
+    vec2 get_char_position(Text_Display* display, int line, int char_index, Anchor anchor, bool with_indentation = true);
+    void render(Text_Display* display, Render_Pass* render_pass);
 };

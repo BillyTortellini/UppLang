@@ -328,6 +328,16 @@ namespace Rich_Text
         line_update_style_range(text, set_text_color, (void*)&color, line, char_start, char_end);
     }
 
+    void mark_line(Rich_Text* text, Mark_Type mark_type, vec3 color, int line, int char_start, int char_end) {
+        switch (mark_type)
+        {
+        case Mark_Type::TEXT_COLOR:        line_set_text_color_range(text, color, line, char_start, char_end); break;
+        case Mark_Type::BACKGROUND_COLOR:  line_set_bg_color_range(text, color, line, char_start, char_end); break;
+        case Mark_Type::UNDERLINE:         line_set_underline_range(text, color, line, char_start, char_end); break;
+        default: panic("");
+        }
+    }
+
 
 
     void append_to_string(Rich_Text* text, String* string, int indentation_spaces)
@@ -346,91 +356,160 @@ namespace Rich_Text
     }
 };
 
-namespace Rich_Text_Renderer
+namespace Text_Display
 {
-    Rich_Text_Renderer make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces) 
+    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces) 
     {
-        Rich_Text_Renderer renderer;
-        renderer.text = text;
-        renderer.renderer_2D = renderer_2D;
-        renderer.text_renderer = text_renderer;
-        renderer.indentation_spaces = indentation_spaces;
+        Text_Display display;
+        display.text = text;
+        display.renderer_2D = renderer_2D;
+        display.text_renderer = text_renderer;
+        display.indentation_spaces = indentation_spaces;
 
         // Calculate char size (Align char width to pixel size)
         {
             float width_to_height_ratio = text_renderer_get_char_width_to_height_ratio(text_renderer);
             float width = math_ceil(text_height * width_to_height_ratio); // Align to pixel size
             float height = math_ceil(width / width_to_height_ratio); // Also align to pixel size
-            renderer.char_size = vec2(width, height);
+            display.char_size = vec2(width, height);
         }
+
+        // Initialize other members
+        display.frame_anchor = Anchor::BOTTOM_LEFT;
+        display.frame_size = vec2(0.0f);
+        display.frame_pos = vec2(0.0f);
 
         // Set other options to 0
-        renderer.bg_color = vec3(0.0f);
-        renderer.border_color = vec3(0.0f);
-        renderer.draw_bg_and_border = false;
-        renderer.border_thickness = 0;
-        renderer.padding = 0;
-        renderer.frame_anchor = Anchor::BOTTOM_LEFT;
-        renderer.frame_size = vec2(0.0f);
-        renderer.frame_pos = vec2(0.0f);
+        display.padding = 0;
+        display.draw_bg = false;
+        display.draw_border = false;
+        display.draw_block_outline = false;
 
-        return renderer;
+        display.border_thickness = 0;
+        display.block_outline_thickness = 0;
+
+        return display;
     }
 
-    void set_decorations(Rich_Text_Renderer* renderer, int padding, int border_thickness, bool draw_bg_and_border, vec3 bg_color, vec3 border_color)
+    void set_background_color(Text_Display* display, vec3 color) {
+        display->draw_bg = true;
+        display->bg_color = color;
+    }
+
+    void set_padding(Text_Display* display, int padding) {
+        display->padding = padding;
+    }
+
+    void set_border(Text_Display* display, int border_thickness, vec3 color) {
+        display->draw_border = true;
+        display->border_thickness = border_thickness;
+        display->border_color = color;
+    }
+
+    void set_block_outline(Text_Display* display, int thickness, vec3 color) {
+        display->draw_block_outline = true;
+        display->block_outline_thickness = thickness;
+        display->outline_color = color;
+    }
+
+    void set_frame(Text_Display* display, vec2 position, Anchor anchor, vec2 size) {
+        display->frame_pos = position;
+        display->frame_anchor = anchor;
+        display->frame_size = size;
+    }
+
+    vec2 get_char_position(Text_Display* display, int line, int char_index, Anchor anchor, bool with_indentation) 
     {
-        renderer->padding = padding;
-        renderer->border_thickness = border_thickness;
-        renderer->draw_bg_and_border = draw_bg_and_border;
-        if (renderer->draw_bg_and_border) {
-            renderer->bg_color = bg_color;
-            renderer->border_color = border_color;
-        }
-    }
-
-    void set_frame(Rich_Text_Renderer* renderer, vec2 position, Anchor anchor, vec2 size) {
-        renderer->frame_pos = position;
-        renderer->frame_anchor = anchor;
-        renderer->frame_size = size;
-    }
-
-    vec2 get_char_position(Rich_Text_Renderer* renderer, int line, int char_index, Anchor anchor) 
-    {
-        Rich_Text::Rich_Text* rich_text = renderer->text;
-        vec2 top_left = anchor_switch(renderer->frame_pos, renderer->frame_size, renderer->frame_anchor, Anchor::TOP_LEFT);
-        vec2 char_pos = top_left + renderer->char_size * vec2(char_index, -line); // Lines go downwards
-        char_pos = anchor_switch(char_pos, renderer->char_size, Anchor::TOP_LEFT, anchor);
-        float padding_border = renderer->padding + renderer->border_thickness;
+        Rich_Text::Rich_Text* rich_text = display->text;
+        vec2 top_left = anchor_switch(display->frame_pos, display->frame_size, display->frame_anchor, Anchor::TOP_LEFT);
+        vec2 char_pos = top_left + display->char_size * vec2(char_index, -line); // Lines go downwards
+        char_pos = anchor_switch(char_pos, display->char_size, Anchor::TOP_LEFT, anchor);
+        float padding_border = display->padding + display->border_thickness;
         char_pos = char_pos + vec2(padding_border, -padding_border);
-        if (line >= 0 && line < rich_text->lines.size) {
+        if (line >= 0 && line < rich_text->lines.size && with_indentation) {
             int indent = rich_text->lines[line].indentation;
-            char_pos.x += indent * renderer->indentation_spaces * renderer->char_size.x;
+            char_pos.x += indent * display->indentation_spaces * display->char_size.x;
         }
         return char_pos;
     }
 
-    void render(Rich_Text_Renderer* renderer, Render_Pass* render_pass)
+    void draw_block_outline(Text_Display* display, int line_start, int line_end, int indentation)
     {
-        Rich_Text::Rich_Text* text = renderer->text;
-        Renderer_2D* renderer_2D = renderer->renderer_2D;
-        Text_Renderer* text_renderer = renderer->text_renderer;
-        auto& char_size = renderer->char_size;
+        if (indentation == 0) return;
+        if (display->block_outline_thickness <= 0) return;
+        int t = display->block_outline_thickness;
+        vec2 start = get_char_position(display, line_start, 0, Anchor::TOP_LEFT, false);
+        vec2 end = get_char_position(display, line_end, 0, Anchor::BOTTOM_LEFT, false);
 
-        Bounding_Box2 bb = bounding_box_2_make_anchor(renderer->frame_pos, renderer->frame_size, renderer->frame_anchor);
-        if (renderer->draw_bg_and_border)
+        int min_x = start.x + (((indentation - 1) * display->indentation_spaces) + 1 * display->char_size.x);
+        // min_x -= (display->indentation_spaces * display->char_size.x) / 2.0f - display->block_outline_thickness;
+        int max_y = start.y - display->char_size.y * 0.1f;
+        int min_y = end.y   + display->char_size.y * 0.1f;
+        int stub_length = (display->char_size.x * 2) / 3;
+
+        // Vertical line
+        renderer_2D_add_rectangle(display->renderer_2D, bounding_box_2_make_min_max(vec2(min_x, min_y + t), vec2(min_x + t, max_y)), display->outline_color);
+        // Stub
+        renderer_2D_add_rectangle(display->renderer_2D, bounding_box_2_make_min_max(vec2(min_x, min_y), vec2(min_x + t + stub_length, min_y + t)), display->outline_color);
+    }
+
+    // Returns position after this block has ended (Or on final line?)
+    int draw_block_outlines_recursive(Text_Display* display, int line_index, int indentation)
+    {
+        auto& lines = display->text->lines;
+        int block_start = line_index;
+    
+        // Find end of block
+        int block_end = lines.size - 1;
+        while (line_index < lines.size)
         {
-            int t = renderer->border_thickness;
+            auto& line = lines[line_index];
+            if (line.indentation > indentation) {
+                line_index = draw_block_outlines_recursive(display, line_index, indentation + 1) + 1;
+            }
+            else if (line.indentation == indentation) {
+                line_index += 1;
+            }
+            else { // line->indentation < indentation
+                block_end = line_index - 1;
+                break;
+            }
+        }
+    
+        draw_block_outline(display, block_start, block_end, indentation);
+        return block_end;
+    }
+
+    void render(Text_Display* display, Render_Pass* render_pass)
+    {
+        Rich_Text::Rich_Text* text = display->text;
+        Renderer_2D* renderer_2D = display->renderer_2D;
+        Text_Renderer* text_renderer = display->text_renderer;
+        auto& char_size = display->char_size;
+
+        // Draw border and background and block_outlines
+        Bounding_Box2 bb = bounding_box_2_make_anchor(display->frame_pos, display->frame_size, display->frame_anchor);
+        {
+            int t = display->draw_border ? display->border_thickness : 0;
             // Draw bg
-            renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(bb.min + t, bb.max - t), renderer->bg_color);
+            if (display->draw_bg) {
+                renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(bb.min + t, bb.max - t), display->bg_color);
+            }
             // Draw border
-            if (renderer->border_thickness > 0) {
-                vec3 bc = renderer->border_color;
+            if (display->draw_border && t > 0) {
+                vec3 bc = display->border_color;
                 renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(bb.min, vec2(bb.min.x + t, bb.max.y)), bc);
                 renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(vec2(bb.max.x - t, bb.min.y), vec2(bb.max.x, bb.max.y)), bc);
                 renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(vec2(bb.min.x + t, bb.min.y), vec2(bb.max.x - t, bb.min.y + t)), bc);
                 renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(vec2(bb.min.x + t, bb.max.y - t), vec2(bb.max.x - t, bb.max.y)), bc);
             }
-            renderer_2D_draw(renderer_2D, render_pass);
+            if (display->draw_block_outline) {
+                draw_block_outlines_recursive(display, 0, 0);
+            }
+
+            if (display->draw_bg || display->draw_border || display->draw_block_outline) {
+                renderer_2D_draw(renderer_2D, render_pass);
+            }
         }
 
         const float text_render_height = char_size.x / text_renderer_get_char_width_to_height_ratio(text_renderer);
@@ -442,15 +521,15 @@ namespace Rich_Text_Renderer
             auto& line = lines[line_index];
             if (line.is_seperator) {
                 int t = 1;
-                vec2 pos = get_char_position(renderer, line_index, 0, Anchor::CENTER_LEFT);
+                vec2 pos = get_char_position(display, line_index, 0, Anchor::CENTER_LEFT);
                 renderer_2D_add_rectangle(renderer_2D,
-                    bounding_box_2_make_min_max(vec2(bb.min.x + renderer->border_thickness, (pos.y)), vec2(bb.max.x - renderer->border_thickness, pos.y + t)),
-                    renderer->border_color * 0.8f
+                    bounding_box_2_make_min_max(vec2(bb.min.x + display->border_thickness, (pos.y)), vec2(bb.max.x - display->border_thickness, pos.y + t)),
+                    display->border_color * 0.8f
                 );
                 continue;
             }
 
-            vec2 line_start_pos = get_char_position(renderer, line_index, 0, Anchor::BOTTOM_LEFT);
+            vec2 line_start_pos = get_char_position(display, line_index, 0, Anchor::BOTTOM_LEFT);
             Bounding_Box2 line_bb = bounding_box_2_make_min_max(line_start_pos, line_start_pos + char_size * vec2(line.text.size, 1));
             for (int i = 0; i <= line.style_changes.size; i++)
             {
@@ -472,7 +551,7 @@ namespace Rich_Text_Renderer
 
                 // Skip if range is empty
                 if (last_change.char_start == change.char_start) continue;
-                vec2 text_start_pos = get_char_position(renderer, line_index, last_change.char_start, Anchor::BOTTOM_LEFT);
+                vec2 text_start_pos = get_char_position(display, line_index, last_change.char_start, Anchor::BOTTOM_LEFT);
 
                 // Render background and underline
                 {

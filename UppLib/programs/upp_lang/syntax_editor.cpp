@@ -19,9 +19,11 @@
 #include "parser.hpp"
 #include "source_code.hpp"
 #include "code_history.hpp"
+
 #include "../../utility/rich_text.hpp"
 
 const int MIN_CURSOR_DISTANCE = 3;
+using Rich_Text::Mark_Type;
 
 // Prototypes
 bool auto_format_line(int line_index);
@@ -230,8 +232,11 @@ struct Syntax_Editor
     bool last_search_was_to;
 
     // Rendering
+    Rich_Text::Rich_Text editor_text;
+    Text_Display::Text_Display text_display;
+
     Rich_Text::Rich_Text context_text;
-    Rich_Text_Renderer::Rich_Text_Renderer context_renderer;
+    Text_Display::Text_Display context_display;
 
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
@@ -242,7 +247,6 @@ struct Syntax_Editor
     Rendering_Core* rendering_core;
     Renderer_2D* renderer_2D;
     Text_Renderer* text_renderer;
-    vec2 character_size;
 };
 
 
@@ -254,11 +258,17 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
 {
     memory_zero(&syntax_editor);
 
-    syntax_editor.character_size.y = math_floor(convertHeight(0.55f, Unit::CENTIMETER));
-    syntax_editor.character_size.x = text_renderer_character_width(text_renderer, syntax_editor.character_size.y);
+    float text_height = convertHeight(0.48f, Unit::CENTIMETER);
+
+    syntax_editor.editor_text = Rich_Text::create(vec3(1.0f));
+    syntax_editor.text_display = Text_Display::make(
+        &syntax_editor.editor_text, renderer_2D, text_renderer, text_height, 4
+    );
+    Text_Display::set_block_outline(&syntax_editor.text_display, 3, vec3(0.5f));
+
     syntax_editor.context_text = Rich_Text::create(vec3(1.0f));
-    syntax_editor.context_renderer = Rich_Text_Renderer::make(
-        &syntax_editor.context_text, renderer_2D, text_renderer, syntax_editor.character_size.y * 0.8f, 2
+    syntax_editor.context_display = Text_Display::make(
+        &syntax_editor.context_text, renderer_2D, text_renderer, text_height * 0.8f, 2
     );
 
     syntax_editor.errors = dynamic_array_create<Error_Display>(1);
@@ -317,6 +327,7 @@ void syntax_editor_destroy()
     code_history_destroy(&editor.history);
     dynamic_array_destroy(&editor.code_completion_suggestions);
     Rich_Text::destroy(&editor.context_text);
+    Rich_Text::destroy(&editor.editor_text);
     string_destroy(&syntax_editor.command_buffer);
     string_destroy(&syntax_editor.yank_string);
     compiler_destroy();
@@ -2150,7 +2161,6 @@ namespace Parsing
     }
 };
 
-
 Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 {
     auto code = syntax_editor.code;
@@ -3422,176 +3432,57 @@ void syntax_editor_update()
 
 
 
-// RENDERING
-// Draw Commands
-
-// Returns bottom left vector
-vec2 syntax_editor_position_to_pixel(int line_index, int character)
-{
-    float height = rendering_core.render_information.backbuffer_height;
-    return vec2(0.0f, height) + syntax_editor.character_size * vec2(character, -line_index - 1);
-}
-
-void syntax_editor_draw_underline(int line_index, int character, int length, vec3 color)
-{
-    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
-    vec2 size = vec2((float)length, 1.0f / 8.f) * syntax_editor.character_size;
-    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
-}
-
-void syntax_editor_draw_cursor_line(int line_index, int character, vec3 color)
-{
-    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
-    vec2 size = vec2(0.1f, 1.0) * syntax_editor.character_size;
-    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
-}
-
-void syntax_editor_draw_text_background(int line_index, int character, int length, vec3 color)
-{
-    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
-    vec2 size = vec2(length, 1) * syntax_editor.character_size;
-    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(pos, size, Anchor::BOTTOM_LEFT), color);
-}
-
-void syntax_editor_draw_string(String string, vec3 color, int line_index, int character)
-{
-    vec2 pos = syntax_editor_position_to_pixel(line_index, character);
-    text_renderer_add_text(syntax_editor.text_renderer, string, pos, Anchor::BOTTOM_LEFT, syntax_editor.character_size.y, color);
-}
-
-// Note: Always takes Anchor::TOP_LEFT, because string may grow downwards...
-void syntax_editor_draw_string_in_box(String string, vec3 text_color, vec3 box_color, vec2 position, float text_height)
-{
-    vec2 char_size = vec2(text_renderer_character_width(syntax_editor.text_renderer, text_height), text_height);
-
-    int line_pos = 0;
-    int max_line_pos = 0;
-    int current_char_pos = 0;
-    int last_draw_character_index = 0;
-    int next_draw_char_pos = 0;
-    for (int i = 0; i <= string.size; i++) {
-        char c = i == string.size ? 0 : string[i];
-        bool draw_until_this_character = i == string.size;
-        const int draw_line_index = line_pos;
-
-        if (c == '\n') {
-            draw_until_this_character = true;
-            line_pos += 1;
-            current_char_pos = 0;
-        }
-        else if (c == '\t') {
-            draw_until_this_character = true;
-            current_char_pos += 4;
-        }
-        else if (c < 32) {
-            // Ignore other ascii control sequences
-        }
-        else {
-            // Normal character
-            current_char_pos += 1;
-        }
-        max_line_pos = math_maximum(max_line_pos, current_char_pos);
-
-        if (draw_until_this_character) {
-            String line = string_create_substring_static(&string, last_draw_character_index, i);
-            last_draw_character_index = i + 1;
-            vec2 text_line_pos = position + char_size * vec2(next_draw_char_pos, -draw_line_index);
-            text_renderer_add_text(syntax_editor.text_renderer, line, text_line_pos, Anchor::TOP_LEFT, text_height, text_color);
-            next_draw_char_pos = current_char_pos;
-        }
-    }
-
-    // Draw surrounding retangle
-    vec2 text_size = char_size * vec2(max_line_pos, line_pos + 1);
-    renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_anchor(position, text_size, Anchor::TOP_LEFT), box_color);
-}
-
-void syntax_editor_draw_block_outline(int line_start, int line_end, int indentation)
-{
-    if (indentation == 0) return;
-    auto offset = syntax_editor.character_size * vec2(0.5f, 1.0f);
-    vec2 start = syntax_editor_position_to_pixel(line_start, (indentation - 1) * 4) + offset;
-    vec2 end = syntax_editor_position_to_pixel(line_end, (indentation - 1) * 4) + offset;
-    start.y -= syntax_editor.character_size.y * 0.1;
-    end.y += syntax_editor.character_size.y * 0.1;
-    renderer_2D_add_line(syntax_editor.renderer_2D, start, end, vec3(0.4f), 3);
-    vec2 l_end = end + vec2(syntax_editor.character_size.x * 0.5f, 0.0f);
-    renderer_2D_add_line(syntax_editor.renderer_2D, end, l_end, vec3(0.4f), 3);
-}
-
-
-
 // Syntax Highlighting
-void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 empty_range_color, bool underline)
+void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 empty_range_color, Mark_Type mark_type)
 {
+    auto& code = syntax_editor.code;
+
     auto index = range.start;
     auto end = range.end;
 
-    typedef void (*draw_fn)(int line_index, int character, int length, vec3 color);
-    draw_fn draw_mark = underline ? syntax_editor_draw_underline : syntax_editor_draw_text_background;
-
     // Handle empty ranges
-    assert(token_index_compare(index, end) >= 0, "hey");
+    assert(token_index_compare(index, end) >= 0, "token indices must be in order");
+
     if (token_index_equal(index, end))
     {
-        auto line = source_code_get_line(syntax_editor.code, index.line);
-        int render_end_pos = line->indentation * 4;
-        if (line->tokens.size > 0) {
-            auto& last = line->tokens[line->tokens.size - 1];
-            render_end_pos = line->indentation * 4 + last.end_index;
+        auto line = source_code_get_line(code, index.line);
+        int line_index = range.start.line - syntax_editor.camera_start_line;
+        // Draw range at end of line
+        if (index.token >= line->tokens.size) {
+            Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, empty_range_color, line_index, line->text.size, line->text.size + 1);
+            return;
         }
 
-        if (index.token >= line->tokens.size) {
-            draw_mark(line->screen_index, render_end_pos, 1, empty_range_color);
-        }
-        else {
-            auto& info = line->tokens[index.token];
-            int start = line->indentation * 4 + info.start_index;
-            draw_mark(line->screen_index, start, info.end_index - info.start_index, normal_color);
-        }
+        // Otherwise draw range one after cursor?
+        auto& token = line->tokens[index.token];
+        Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, empty_range_color, line_index, token.start_index, token.start_index + 1);
         return;
     }
 
     // Otherwise draw mark on all affected lines
     bool quit_loop = false;
-    while (true)
+    for (int i = range.start.line; i <= range.end.line && i < code->line_count; i += 1)
     {
-        auto line = source_code_get_line(syntax_editor.code, index.line);
-
-        // Figure out start and end of highlight in line
-        int highlight_start = line->indentation * 4;
-        int highlight_end = line->indentation * 4;
-        if (line->tokens.size > 0)
-        {
-            const auto& last = line->tokens[line->tokens.size - 1];
-            highlight_end += last.end_index; // Set end to line end
-
-            if (index.token < line->tokens.size) {
-                highlight_start += line->tokens[index.token].start_index;
+        auto line = source_code_get_line(syntax_editor.code, i);
+        int char_start = 0;
+        int char_end = line->text.size;
+        if (i == range.start.line && range.start.token < line->tokens.size) {
+            char_start = line->tokens[range.start.token].start_index;
+        }
+        if (i == range.end.line && range.end.token - 1 < line->tokens.size) {
+            if (range.end.token - 1 >= 0) {
+                char_end = line->tokens[range.end.token - 1].end_index;
+            }
+            else {
+                char_end = 0;
             }
         }
-
-        if (index.line == end.line) {
-            if (end.token > 0 && end.token - 1 < line->infos.size) {
-                const auto& end_token = line->tokens[end.token - 1];
-                highlight_end = line->indentation * 4 + end_token.end_index;
-            }
-        }
-
-        // Draw
-        if (highlight_start != highlight_end) {
-            draw_mark(line->screen_index, highlight_start, highlight_end - highlight_start, normal_color);
-        }
-
-        // Break loop or go to next line
-        if (index.line == end.line) {
-            break;
-        }
-        index = token_index_make(index.line + 1, 0);
+        if (char_start >= char_end) continue;
+        Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, normal_color, i - syntax_editor.camera_start_line, char_start, char_end);
     }
 }
 
-void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, bool underline)
+void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, Mark_Type mark_type)
 {
     assert(base != 0, "");
     auto ranges = syntax_editor.token_range_buffer;
@@ -3600,31 +3491,7 @@ void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, 
     auto& node = base;
     Parser::ast_base_get_section_token_range(syntax_editor.code, node, section, &ranges);
     for (int i = 0; i < ranges.size; i++) {
-        syntax_highlighting_mark_range(ranges[i], normal_color, empty_range_color, underline);
-    }
-}
-
-void syntax_highlighting_set_section_text_color(AST::Node* base, Parser::Section section, vec3 color)
-{
-    assert(base != 0, "");
-    auto ranges = syntax_editor.token_range_buffer;
-    dynamic_array_reset(&ranges);
-
-    auto& node = base;
-    Parser::ast_base_get_section_token_range(syntax_editor.code, node, section, &ranges);
-    for (int r = 0; r < ranges.size; r++)
-    {
-        Token_Range range = ranges[r];
-        for (int line_index = range.start.line; line_index <= range.end.line; line_index += 1)
-        {
-            Source_Line* line = source_code_get_line(syntax_editor.code, line_index);
-
-            int start_index = line_index == range.start.line ? range.start.token : 0;
-            int end_index = line_index == range.end.line ? range.end.token : line->tokens.size;
-            for (int token = start_index; token < end_index && token < line->tokens.size; token += 1) {
-                line->infos[token].color = color;
-            }
-        }
+        syntax_highlighting_mark_range(ranges[i], normal_color, empty_range_color, mark_type);
     }
 }
 
@@ -3632,7 +3499,8 @@ void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
 {
     Symbol* symbol = code_query_get_ast_node_symbol(base);
     if (symbol != 0) {
-        syntax_highlighting_set_section_text_color(base, Parser::Section::IDENTIFIER, symbol_type_to_color(symbol->type));
+        vec3 color = symbol_type_to_color(symbol->type);
+        syntax_highlighting_mark_section(base, Parser::Section::IDENTIFIER, color, color, Mark_Type::TEXT_COLOR);
     }
 
     // Highlight dot-calls
@@ -3647,7 +3515,8 @@ void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
                 auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
                 if (info != nullptr) {
                     if (info->result_type == Expression_Result_Type::DOT_CALL || info->specifics.member_access.options.dot_call_function != nullptr) {
-                        syntax_highlighting_set_section_text_color(base, Parser::Section::END_TOKEN, Syntax_Color::FUNCTION);
+                        vec3 color = Syntax_Color::FUNCTION;
+                        syntax_highlighting_mark_section(base, Parser::Section::END_TOKEN, color, color, Mark_Type::TEXT_COLOR);
                     }
                 }
             }
@@ -3667,40 +3536,7 @@ void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
 
 
 
-// Code Layout 
-
 // Rendering
-int syntax_editor_draw_block_outlines_recursive(int line_index, int indentation)
-{
-    auto code = syntax_editor.code;
-    int block_start = line_index;
-
-    // Find end of block
-    int block_end = code->line_count - 1;
-    while (line_index < code->line_count)
-    {
-        if (line_index >= code->line_count) {
-            block_end = code->line_count - 1;
-            break;
-        }
-
-        auto line = source_code_get_line(code, line_index);
-        if (line->indentation > indentation) {
-            line_index = syntax_editor_draw_block_outlines_recursive(line_index, indentation + 1) + 1;
-        }
-        else if (line->indentation == indentation) {
-            line_index += 1;
-        }
-        else { // line->indentation < indentation
-            block_end = line_index - 1;
-            break;
-        }
-    }
-
-    syntax_editor_draw_block_outline(block_start - syntax_editor.camera_start_line, block_end - syntax_editor.camera_start_line + 1, indentation);
-    return block_end;
-}
-
 void syntax_editor_render()
 {
     auto& editor = syntax_editor;
@@ -3710,22 +3546,17 @@ void syntax_editor_render()
     // Prepare Render
     syntax_editor_sanitize_cursor();
 
-    auto state_2D = pipeline_state_make_default();
-    state_2D.blending_state.blending_enabled = true;
-    state_2D.blending_state.source = Blend_Operand::SOURCE_ALPHA;
-    state_2D.blending_state.destination = Blend_Operand::ONE_MINUS_SOURCE_ALPHA;
-    state_2D.blending_state.equation = Blend_Equation::ADDITION;
-    state_2D.depth_state.test_type = Depth_Test_Type::IGNORE_DEPTH;
+    auto state_2D = pipeline_state_make_alpha_blending();
     auto pass_context = rendering_core_query_renderpass("Context pass", state_2D, 0);
     auto pass_2D = rendering_core_query_renderpass("2D state", state_2D, 0);
     render_pass_add_dependency(pass_2D, rendering_core.predefined.main_pass);
     render_pass_add_dependency(pass_context, pass_2D);
 
     // Calculate camera start
+    auto& cam_start = editor.camera_start_line;
+    auto& cam_end = editor.last_visible_line;
     {
-        int line_count = rendering_core.render_information.backbuffer_height / editor.character_size.y;
-        auto& cam_start = editor.camera_start_line;
-        auto& cam_end = editor.last_visible_line;
+        int line_count = rendering_core.render_information.backbuffer_height / editor.text_display.char_size.y;
         cam_end = cam_start + line_count;
 
         auto cursor_line = cursor.line;
@@ -3740,53 +3571,60 @@ void syntax_editor_render()
         cam_end = cam_start + line_count;
     }
 
-    // Layout Source Code (Set line screen-indices + token colors)
-    for (int i = 0; i < code->line_count; i++)
+    // Push Source-Code into Rich-Text
+    Text_Display::set_frame(
+        &editor.text_display, vec2(0.0f), Anchor::BOTTOM_LEFT, 
+        vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height)
+    );
+    Rich_Text::reset(&editor.editor_text);
+    for (int i = cam_start; i < code->line_count && i < cam_end + 1; i++)
     {
         Source_Line* line = source_code_get_line(code, i);
-        line->screen_index = i - editor.camera_start_line;
+        int screen_index = i - editor.camera_start_line;
+        auto text = &editor.editor_text;
 
-        dynamic_array_reset(&line->infos);
+        // Push line I guess? Or push token by token?
+        Rich_Text::add_line(text, false, line->indentation);
+        Rich_Text::append(text, line->text);
+        Rich_Text::append(text, " "); // So that we can have a underline if something is missing at end of line
+
+        // Color tokens based on type (Initial coloring, syntax highlighting is done later)
         for (int j = 0; j < line->tokens.size; j++)
         {
             auto& token = line->tokens[j];
 
-            Render_Info info;
-            info.color = Syntax_Color::TEXT;
-            info.bg_color = vec3(0.0f);
+            vec3 color = Syntax_Color::TEXT;
             switch (token.type)
             {
-            case Token_Type::COMMENT: info.color = Syntax_Color::COMMENT; break;
-            case Token_Type::INVALID: info.color = vec3(1.0f, 0.8f, 0.8f); break;
-            case Token_Type::KEYWORD: info.color = Syntax_Color::KEYWORD; break;
-            case Token_Type::IDENTIFIER: info.color = Syntax_Color::IDENTIFIER_FALLBACK; break;
+            case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
+            case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
+            case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
+            case Token_Type::IDENTIFIER: color = Syntax_Color::IDENTIFIER_FALLBACK; break;
             case Token_Type::LITERAL: {
                 switch (token.options.literal_value.type)
                 {
-                case Literal_Type::BOOLEAN: info.color = vec3(0.5f, 0.5f, 1.0f); break;
-                case Literal_Type::STRING: info.color = Syntax_Color::STRING; break;
+                case Literal_Type::BOOLEAN: color = vec3(0.5f, 0.5f, 1.0f); break;
+                case Literal_Type::STRING: color = Syntax_Color::STRING; break;
                 case Literal_Type::INTEGER:
                 case Literal_Type::FLOAT_VAL:
                 case Literal_Type::NULL_VAL:
-                    info.color = Syntax_Color::LITERAL_NUMBER; break;
+                    color = Syntax_Color::LITERAL_NUMBER; break;
                 default: panic("");
                 }
                 break;
             }
+            default: continue;
             }
 
-            dynamic_array_push_back(&line->infos, info);
+            Rich_Text::line_set_text_color_range(text, color, screen_index, token.start_index, token.end_index);
         }
     }
 
-    // Find objects under cursor
+    // Find objects under cursor for Syntax highlighting
     Token_Index cursor_token_index = token_index_make(syntax_editor.cursor.line, get_cursor_token_index(true));
     AST::Node* node = Parser::find_smallest_enclosing_node(&compiler.main_source->parsed_code->root->base, cursor_token_index);
     Analysis_Pass* pass = code_query_get_analysis_pass(node); // Note: May be null?
     Symbol* symbol = code_query_get_ast_node_symbol(node); // May be null
-    // AST::Node* node = nullptr;
-    // Analysis_Pass* pass = nullptr;
-    // Symbol* symbol = nullptr;
 
     // Syntax Highlighting
     if (true)
@@ -3802,12 +3640,12 @@ void syntax_editor_render()
                 auto node = &symbol->references[i]->base;
                 if (compiler_find_ast_source_code(node) != editor.code)
                     continue;
-                syntax_highlighting_mark_section(node, Parser::Section::IDENTIFIER, color, color, false);
+                syntax_highlighting_mark_section(node, Parser::Section::IDENTIFIER, color, color, Mark_Type::BACKGROUND_COLOR);
             }
 
             // Highlight Definition
             if (symbol->definition_node != 0 && compiler_find_ast_source_code(symbol->definition_node) == editor.code) {
-                syntax_highlighting_mark_section(symbol->definition_node, Parser::Section::IDENTIFIER, color, color, false);
+                syntax_highlighting_mark_section(symbol->definition_node, Parser::Section::IDENTIFIER, color, color, Mark_Type::BACKGROUND_COLOR);
             }
         }
 
@@ -3816,52 +3654,33 @@ void syntax_editor_render()
         {
             auto& error = editor.errors[i];
             if (!error.from_main_source) continue;
-            syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), true);
+            syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), Mark_Type::UNDERLINE);
         }
     }
 
-    // Render Block outlines
-    syntax_editor_draw_block_outlines_recursive(0, 0);
+    // Set cursor text-background
+    if (editor.mode == Editor_Mode::NORMAL) {
+        Rich_Text::mark_line(&editor.editor_text, Mark_Type::BACKGROUND_COLOR, vec3(0.25f), cursor.line - editor.camera_start_line, cursor.character, cursor.character + 1);
+    }
 
     // Render Code
-    for (int i = 0; i < code->line_count; i++)
-    {
-        Source_Line* line = source_code_get_line(code, i);
-        for (int j = 0; j < line->tokens.size; j++)
-        {
-            auto& token = line->tokens[j];
-            auto& info = line->infos[j];
-            auto str = token_get_string(token, line->text);
-            syntax_editor_draw_string(str, info.color, line->screen_index, line->indentation * 4 + token.start_index);
-        }
-    }
+    Text_Display::render(&editor.text_display, pass_2D);
 
     // Draw Cursor
     if (true)
     {
-        auto line = source_code_get_line(editor.code, cursor.line);
-        auto& text = line->text;
-        auto& tokens = line->tokens;
-        auto& infos = line->infos;
-        auto& pos = cursor.character;
-        auto token_index = get_cursor_token_index(true);
+        auto display = &syntax_editor.text_display;
+        const int t = 2;
+        vec2 min = Text_Display::get_char_position(display, cursor.line, cursor.character, Anchor::BOTTOM_LEFT);
+        vec2 max = min + vec2((float)t, display->char_size.y);
 
-        if (editor.mode == Editor_Mode::NORMAL)
-        {
-            int box_start = line->indentation * 4 + cursor.character;
-            int box_end = box_start + 1;
-            syntax_editor_draw_text_background(line->screen_index, box_start, box_end - box_start, vec3(0.2f));
-            syntax_editor_draw_cursor_line(line->screen_index, box_start, Syntax_Color::COMMENT);
-            syntax_editor_draw_cursor_line(line->screen_index, box_end, Syntax_Color::COMMENT);
+        renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_min_max(min, max), Syntax_Color::COMMENT);
+        if (editor.mode == Editor_Mode::NORMAL) {
+            vec2 o = vec2(display->char_size.x - t, 0.0f);
+            renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_min_max(min + o, max + o), Syntax_Color::COMMENT);
         }
-        else {
-            syntax_editor_draw_cursor_line(line->screen_index, line->indentation * 4 + cursor.character, Syntax_Color::COMMENT);
-        }
+        renderer_2D_draw(editor.renderer_2D, pass_2D);
     }
-
-    renderer_2D_draw(editor.renderer_2D, pass_2D);
-    text_renderer_draw(editor.text_renderer, pass_2D);
-
 
     // Calculate context
     Rich_Text::reset(&editor.context_text);
@@ -4021,18 +3840,10 @@ void syntax_editor_render()
         const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
 
         Rich_Text::Rich_Text* text = &editor.context_text;
-        Rich_Text::add_seperator_line(text);
         Rich_Text::add_line(text);
-        Rich_Text::set_text_color(text, COLOR_ERROR_TEXT);
-        Rich_Text::append(text, "Error: ");
-        Rich_Text::set_text_color(text, COLOR_TEXT);
-        Rich_Text::set_bg(text, vec3(0.8f, 0.0f, 0.0f));
-        Rich_Text::append(text, "This is ");
-        Rich_Text::set_underline(text, vec3(0.0f, 1.0f, 1.0f));
-        Rich_Text::append(text, "the");
-        Rich_Text::stop_underline(text);
-        Rich_Text::stop_bg(text);
-        Rich_Text::append(text, " afterwards...");
+        Rich_Text::append(text, "Hello there, this is the final thing of the final thingy");
+        Rich_Text::mark_line(text, Mark_Type::TEXT_COLOR, COLOR_ERROR_TEXT, 0, 6, 11);
+        Rich_Text::mark_line(text, Mark_Type::TEXT_COLOR, COLOR_TEXT, 0, 7, 8);
     }
 
     if (editor.context_text.lines.size > 0)
@@ -4047,35 +3858,38 @@ void syntax_editor_render()
 
         // Figure out text position
         auto text = &editor.context_text;
-        auto renderer = &editor.context_renderer;
-        vec2 content_size = vec2(renderer->char_size) * vec2(math_maximum(30, text->max_line_char_count), text->lines.size);
+        auto display = &editor.context_display;
+        Text_Display::set_background_color(display, COLOR_BG);
+        Text_Display::set_border(display, BORDER_SIZE, COLOR_BORDER);
+        Text_Display::set_padding(display, PADDING);
+
+        vec2 content_size = vec2(display->char_size) * vec2(math_maximum(30, text->max_line_char_count), text->lines.size);
         vec2 box_size = content_size + 2 * (BORDER_SIZE + PADDING);
 
         // Figure out box position
         vec2 box_top_left = vec2(0.0f);
         {
             auto line = source_code_get_line(editor.code, cursor.line);
-            vec2 cursor_pos = syntax_editor_position_to_pixel(line->screen_index, line->indentation * 4 + cursor.character);
+            vec2 cursor_pos = Text_Display::get_char_position(&editor.text_display, cursor.line, cursor.character, Anchor::BOTTOM_LEFT);
 
             int width = rendering_core.render_information.backbuffer_width;
             int height = rendering_core.render_information.backbuffer_height;
 
             // Move box above cursor if more space is available there
             int pixels_below = cursor_pos.y;
-            int pixels_above = height - cursor_pos.y - editor.character_size.y;
+            int pixels_above = height - cursor_pos.y - editor.text_display.char_size.y;
             if (pixels_below >= box_size.y || pixels_below > pixels_above) {
                 box_top_left.y = cursor_pos.y;
             }
             else {
-                box_top_left.y = cursor_pos.y + editor.character_size.y + box_size.y;
+                box_top_left.y = cursor_pos.y + editor.text_display.char_size.y + box_size.y;
             }
 
             box_top_left.x = cursor_pos.x;
         }
 
-        Rich_Text_Renderer::set_frame(renderer, box_top_left, Anchor::TOP_LEFT, box_size);
-        Rich_Text_Renderer::set_decorations(renderer, PADDING, BORDER_SIZE, true, COLOR_BG, COLOR_BORDER);
-        Rich_Text_Renderer::render(renderer, pass_context);
+        Text_Display::set_frame(display, box_top_left, Anchor::TOP_LEFT, box_size);
+        Text_Display::render(display, pass_context);
     }
 }
 

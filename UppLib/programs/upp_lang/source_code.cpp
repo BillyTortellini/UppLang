@@ -21,7 +21,6 @@ void add_first_bundle_and_line(Source_Code* code)
     Source_Line first_line;
     first_line.indentation = 0;
     first_line.text = string_create();
-    first_line.infos = dynamic_array_create<Render_Info>();
     first_line.tokens = dynamic_array_create<Token>();
     first_line.is_comment = false;
     first_line.comment_block_indentation = -1;
@@ -43,18 +42,15 @@ Source_Code* source_code_create()
 
 void source_line_destroy(Source_Line* line)
 {
-    dynamic_array_destroy(&line->infos);
     dynamic_array_destroy(&line->tokens);
+    string_destroy(&line->text);
 }
 
 void source_code_destroy(Source_Code* code)
 {
     for (int i = 0; i < code->bundles.size; i++) {
         auto& bundle = code->bundles[i];
-        for (int j = 0; j < bundle.lines.size; j++) {
-            auto& src_line = bundle.lines[j];
-            source_line_destroy(&src_line);
-        }
+        dynamic_array_for_each(bundle.lines, source_line_destroy);
         dynamic_array_destroy(&bundle.lines);
     }
     dynamic_array_destroy(&code->bundles);
@@ -65,10 +61,7 @@ void source_code_reset(Source_Code* code)
 {
     for (int i = 0; i < code->bundles.size; i++) {
         auto& bundle = code->bundles[i];
-        for (int j = 0; j < bundle.lines.size; j++) {
-            auto& src_line = bundle.lines[j];
-            source_line_destroy(&src_line);
-        }
+        dynamic_array_for_each(bundle.lines, source_line_destroy);
         dynamic_array_destroy(&bundle.lines);
     }
     dynamic_array_reset(&code->bundles);
@@ -253,7 +246,6 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         line.indentation = indentation;
         line.text = string_create();
         line.tokens = dynamic_array_create<Token>();
-        line.infos = dynamic_array_create<Render_Info>();
         line.is_comment = false;
         line.comment_block_indentation = -1;
         dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
