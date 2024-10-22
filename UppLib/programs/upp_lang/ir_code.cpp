@@ -287,9 +287,9 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     case IR_Instruction_Type::VARIABLE_DEFINITION: {
         string_append_formated(string, "VARIABLE_DEFINITION %s", instruction->options.variable_definition.symbol->id->characters);
         if (instruction->options.variable_definition.initial_value.available) {
+            string_append(string, ", value: ");
             ir_data_access_append_to_string(instruction->options.variable_definition.initial_value.value, string, code_block);
         }
-        string_append(string, "\n");
         break;
     }
     case IR_Instruction_Type::GOTO: {
@@ -731,10 +731,6 @@ Statement_Info* get_info(AST::Statement* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
-Argument_Info* get_info(AST::Argument* node) {
-    return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
-}
-
 Case_Info* get_info(AST::Switch_Case* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
@@ -747,39 +743,31 @@ Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-Member_Initializer_Info* get_info(AST::Member_Initializer* node) {
+Parameter_Matching_Info* get_info(AST::Arguments* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
-void generate_member_initalizers(IR_Code_Block* ir_block, IR_Data_Access* struct_access, Dynamic_Array<AST::Member_Initializer*> initializers)
+void generate_member_initalizers(IR_Code_Block* ir_block, IR_Data_Access* struct_access, AST::Arguments* arguments)
 {
-    for (int i = 0; i < initializers.size; i++)
-    {
-        auto init_node = initializers[i];
-        auto init_info = get_info(init_node);
+    auto param_infos = get_info(arguments);
+    assert(param_infos->call_type == Call_Type::STRUCT_INITIALIZER, "");
+    auto& init_info = param_infos->options.struct_init;
 
-        switch (init_node->type)
-        {
-        case AST::Member_Initializer_Type::NORMAL: 
-        {
-            assert(init_info->valid, "Should be true at this point");
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(struct_access, init_info->member);
-            move_instr.options.move.source = ir_generator_generate_expression(ir_block, init_node->options.value);
-            dynamic_array_push_back(&ir_block->instructions, move_instr);
-            break;
-        }
-        case AST::Member_Initializer_Type::SUBTYPE_INITIALIZER: 
-        {
-            generate_member_initalizers(ir_block, struct_access, init_node->options.subtype_initializers);
-            break;
-        }
-        case AST::Member_Initializer_Type::UNINITIALIZED: {
-            break;
-        }
-        default: panic("");
-        }
+    for (int i = 0; i < param_infos->matched_parameters.size; i++)
+    {
+        auto& param_info = param_infos->matched_parameters[i];
+        assert(param_info.expression != 0 && param_info.is_set && param_info.argument_index >= 0, "");
+        auto& member = init_info.content->members[param_info.argument_index];
+
+        IR_Instruction move_instr;
+        move_instr.type = IR_Instruction_Type::MOVE;
+        move_instr.options.move.destination = ir_data_access_create_member(struct_access, member);
+        move_instr.options.move.source = ir_generator_generate_expression(ir_block, param_info.expression);
+        dynamic_array_push_back(&ir_block->instructions, move_instr);
+    }
+    for (int i = 0; i < arguments->subtype_initializers.size; i++) {
+        auto initializer = arguments->subtype_initializers[i];
+        generate_member_initalizers(ir_block, struct_access, initializer->arguments);
     }
 }
 
@@ -968,7 +956,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             {
                 IR_Instruction if_instr;
                 if_instr.type = IR_Instruction_Type::IF;
-                if_instr.options.if_instr.condition = ir_generator_generate_expression(ir_block, call.arguments[0]->value);
+                if_instr.options.if_instr.condition = ir_generator_generate_expression(ir_block, call.arguments->arguments[0]->value);
                 if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
                 if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
                 dynamic_array_push_back(&ir_block->instructions, if_instr);
@@ -1040,33 +1028,44 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         }
 
         // Generate arguments 
-        call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(call.arguments.size);
         auto function_signature = info->specifics.function_call_signature;
+        auto param_mapping = get_info(call.arguments);
+        int next_mapping_index = 0;
+        call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(signature->parameters.size);
 
-        // Add default/dummy arguments
-        for (int i = 0; i < function_signature->parameters.size; i++) {
+        bool is_dotcall = param_mapping->call_type == Call_Type::DOT_CALL || param_mapping->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
+        if (is_dotcall) {
+            auto first_arg = call.expr;
+            assert(first_arg->type == AST::Expression_Type::MEMBER_ACCESS, "Dot call must have a member access!");
+            next_mapping_index += 1;
+            IR_Data_Access* argument_access = ir_generator_generate_expression(ir_block, first_arg->options.member_access.expr);
+            dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
+        }
+        
+        for (int i = is_dotcall ? 1 : 0; i < function_signature->parameters.size; i++) 
+        {
             auto& param = function_signature->parameters[i];
-            if (param.default_value_exists) {
-                // Initialize all default arguments with their default value, if they are supplied, this will be overwritten
-                assert(param.default_value_opt.available, "Must be, otherwise we shouldn't get to this point");
-                dynamic_array_push_back(&call_instr.options.call.arguments, ir_data_access_create_constant(param.default_value_opt.value));
+            Parameter_Match* match = &param_mapping->matched_parameters[next_mapping_index];
+            if (match->ignore_during_code_generation) {
+                while (match->ignore_during_code_generation) {
+                    next_mapping_index += 1;
+                    match = &param_mapping->matched_parameters[next_mapping_index];
+                }
             }
             else {
-                dynamic_array_push_back_dummy(&call_instr.options.call.arguments);
+                next_mapping_index += 1;
             }
-        }
 
-        if (call_info->result_type == Expression_Result_Type::DOT_CALL) {
-            assert(call.expr->type == AST::Expression_Type::MEMBER_ACCESS, "Must be true for dot call!");
-            call_instr.options.call.arguments[0] = ir_generator_generate_expression(ir_block, call.expr->options.member_access.expr);
-        }
-
-        // Generate code for arguments
-        for (int j = 0; j < call.arguments.size; j++) {
-            auto info = get_info(call.arguments[j]);
-            if (!info->ignore_during_code_generation) { // Skip polymorphic_function arguments
-                call_instr.options.call.arguments[info->parameter_index] = ir_generator_generate_expression(ir_block, call.arguments[j]->value);
+            IR_Data_Access* argument_access;
+            if (match->is_set) {
+                argument_access = ir_generator_generate_expression(ir_block, match->expression);
             }
+            else {
+                assert(param.default_value_exists, "");
+                assert(param.default_value_opt.available, "Must be, otherwise we shouldn't get to this point");
+                argument_access = ir_data_access_create_constant(param.default_value_opt.value);
+            }
+            dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
         }
 
         dynamic_array_push_back(&ir_block->instructions, call_instr);
@@ -1096,31 +1095,32 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     }
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
-        auto& init_info = info->specifics.struct_initializer;
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
-        
-        // Initialize tags
+        auto& init_info = get_info(expression->options.struct_initializer.arguments)->options.struct_init;
+
+        // First, set all tags to correct values
         Datatype_Struct* structure = downcast<Datatype_Struct>(result_type->base_type);
-        assert(structure == init_info.structure_type, "Should be the same");
         {
             Struct_Content* content = &structure->content;
-            for (int i = 0; i < init_info.subtype_index->indices.size; i++) 
+            Subtype_Index* subtype = result_type->mods.subtype_index;
+            for (int i = 0; i < subtype->indices.size; i++) 
             {
-                int tag_value = init_info.subtype_index->indices[i].index + 1;
+                int tag_value = subtype->indices[i].index + 1;
                 assert(content->subtypes.size > 0, "");
-
+                
                 IR_Instruction move_instr;
                 move_instr.type = IR_Instruction_Type::MOVE;
                 move_instr.options.move.destination = ir_data_access_create_member(struct_access, content->tag_member);
                 move_instr.options.move.source = 
                     ir_data_access_create_constant(content->tag_member.type, array_create_static_as_bytes<int>(&tag_value, 1));
-                    
                 dynamic_array_push_back(&ir_block->instructions, move_instr);
+
+                content = content->subtypes[tag_value - 1];
             }
         }
 
         // Generate initializers for members
-        generate_member_initalizers(ir_block, struct_access, expression->options.struct_initializer.member_initializers);
+        generate_member_initalizers(ir_block, struct_access, expression->options.struct_initializer.arguments);
         return struct_access;
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:

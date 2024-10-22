@@ -491,6 +491,7 @@ void datatype_append_to_string(String* string, Datatype* signature, Datatype_For
 {
     Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
     SCOPE_EXIT(Rich_Text::destroy(&text));
+    Rich_Text::add_line(&text);
     datatype_append_to_rich_text(signature, &text, format);
     Rich_Text::append_to_string(&text, string, 2);
 }

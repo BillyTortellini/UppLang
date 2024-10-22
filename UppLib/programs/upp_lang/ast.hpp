@@ -17,6 +17,8 @@ namespace AST
     struct Definition;
     struct Extern_Import;
     struct Path_Lookup;
+    struct Arguments;
+
     enum class Binop
     {
         ADDITION,
@@ -62,16 +64,17 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENT,          // Expression with optional base_name
-        PARAMETER,         // Name/Type compination with optional default value + comptime
-        SYMBOL_LOOKUP,     // A single identifier lookup
-        PATH_LOOKUP,       // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        IMPORT,            // Aliases/Symbol-Import/File-Loading
-        ENUM_MEMBER,       // ID with or without value-expr
-        STRUCT_MEMBER,     // Either a normal member or a struct-subtype
-        SWITCH_CASE,       // Expression 
-        CONTEXT_CHANGE,    // Changing some operator context
-        MEMBER_INITIALIZER,
+        ARGUMENTS,           // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
+        ARGUMENT,            // Expression with optional base_name
+        SUBTYPE_INITIALIZER, // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
+        PARAMETER,           // Name/Type compination with optional default value + comptime
+        SYMBOL_LOOKUP,       // A single identifier lookup
+        PATH_LOOKUP,         // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
+        IMPORT,              // Aliases/Symbol-Import/File-Loading
+        ENUM_MEMBER,         // ID with or without value-expr
+        STRUCT_MEMBER,       // Either a normal member or a struct-subtype
+        SWITCH_CASE,         // Expression 
+        CONTEXT_CHANGE,      // Changing some operator context
         EXTERN_IMPORT,
     };
 
@@ -110,7 +113,7 @@ namespace AST
         {
             Path_Lookup* import_path;
             struct {
-                Dynamic_Array<Argument*> arguments;
+                Arguments* arguments;
                 String* id;
             } setting;
         } options;
@@ -170,22 +173,19 @@ namespace AST
         Expression* value;
     };
 
-    enum class Member_Initializer_Type
-    {
-        NORMAL, // e.g. Player.{name = "Frank"}
-        SUBTYPE_INITIALIZER, // e.g. Node.{.Expression = .{15, true, "ID"}}
-        UNINITIALIZED, // e.g. Player.{_}
-    };
-    
-    struct Member_Initializer
+    struct Subtype_Initializer
     {
         Node base;
-        Optional<String*> name; 
-        Member_Initializer_Type type;
-        union {
-            Expression* value;
-            Dynamic_Array<Member_Initializer*> subtype_initializers;
-        } options;
+        Optional<String*> name;
+        Arguments* arguments;
+    };
+
+    struct Arguments
+    {
+        Node base;
+        Dynamic_Array<Argument*> arguments;
+        Dynamic_Array<Subtype_Initializer*> subtype_initializers;
+        Dynamic_Array<Expression*> uninitialized_tokens;
     };
 
     enum class Extern_Type
@@ -308,7 +308,7 @@ namespace AST
             Code_Block* bake_block;
             struct {
                 Expression* expr;
-                Dynamic_Array<Argument*> arguments;
+                Arguments* arguments;
             } call;
             struct {
                 Expression* type_expr;
@@ -341,7 +341,7 @@ namespace AST
             } function_signature;
             struct {
                 Optional<Expression*> type_expr;
-                Dynamic_Array<Member_Initializer*> member_initializers;
+                Arguments* arguments;
             } struct_initializer;
             struct {
                 Optional<Expression*> type_expr;
@@ -359,7 +359,7 @@ namespace AST
                 Structure_Type type;
             } structure;
             struct {
-                Dynamic_Array<Argument*> arguments;
+                Arguments* arguments;
             } instanciate;
             Dynamic_Array<Enum_Member_Node*> enum_members;
         } options;
@@ -476,7 +476,8 @@ namespace AST
         bool type_correct(Code_Block* base);
         bool type_correct(Context_Change* base);
         bool type_correct(Structure_Member_Node* base);
-        bool type_correct(Member_Initializer* base);
+        bool type_correct(Arguments* base);
+        bool type_correct(Subtype_Initializer* base);
         bool type_correct(Extern_Import* base);
     }
 

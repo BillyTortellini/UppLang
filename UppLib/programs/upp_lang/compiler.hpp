@@ -48,12 +48,23 @@ struct Predefined_IDs
     String* cast_mode_implicit;
     String* byte;
     String* value;
+    String* uninitialized_token; // _
 
     String* lambda_function;
     String* bake_function;
 
     String* function;
+    String* create_fn;
+    String* next_fn;
+    String* has_next_fn;
+    String* value_fn;
+    String* name;
+    String* as_member_access;
+    String* commutative;
+    String* binop;
+    String* unop;
     String* global;
+    String* option;
     String* lib;
     String* lib_dir;
     String* source;

@@ -27,7 +27,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -210,12 +210,23 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
             ids.id_struct =           add_id("Struct");
             ids.byte =                add_id("byte");
             ids.value =               add_id("value");
+            ids.uninitialized_token = add_id("_");
             ids.string =              add_id("string");
             ids.bytes =               add_id("bytes");
             ids.lambda_function =     add_id("lambda_function");
             ids.bake_function =       add_id("bake_function");
 
             ids.function =           add_id("function");
+            ids.create_fn =          add_id("create_fn");
+            ids.next_fn =            add_id("next_fn");
+            ids.has_next_fn =        add_id("has_next_fn");
+            ids.value_fn =           add_id("value_fn");
+            ids.name =               add_id("name");
+            ids.as_member_access =   add_id("as_member_access");
+            ids.commutative =        add_id("commutative");
+            ids.binop    =           add_id("binop");
+            ids.unop    =            add_id("unop");
+            ids.option =             add_id("option");
             ids.global =             add_id("global");
             ids.lib =                add_id("lib");
             ids.lib_dir =            add_id("lib_dir");

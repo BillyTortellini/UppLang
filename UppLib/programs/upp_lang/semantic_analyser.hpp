@@ -299,7 +299,6 @@ struct Polymorphic_Instance_Info
     Polymorphic_Base_Info* base_info;
     Array<Polymorphic_Value> instance_parameter_values;
 
-    bool is_function_instance;
     union {
         Function_Progress* function_instance;
         Workload_Structure_Body* struct_instance;
@@ -309,6 +308,7 @@ struct Polymorphic_Instance_Info
 struct Polymorphic_Base_Info
 {
     String* name; // Either struct or function name
+    bool is_function;
 
     // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
     Array<Polymorphic_Parameter> parameters;
@@ -357,10 +357,9 @@ struct Workload_Structure_Polymorphic
 
 // ANALYSIS_PROGRESS
 
-// This type only exist so we can have a pointer to a polymorphic function base (Which is always the member in Function_Progress)
 struct Polymorphic_Function_Base
 {
-    Polymorphic_Base_Info base_info;
+    Polymorphic_Base_Info base;
 };
 
 struct Function_Progress
@@ -373,8 +372,8 @@ struct Function_Progress
 
     Polymorphic_Analysis_Type type;
     union {
-        Polymorphic_Function_Base base;
-        Polymorphic_Function_Base* instance_base;
+        Polymorphic_Function_Base function_base;
+        Polymorphic_Function_Base* instance_poly_base;
     } polymorphic;
 };
 
@@ -563,39 +562,83 @@ struct Expression_Info
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;
         } overload;
-        struct {
-            Datatype_Struct* structure_type;
-            Subtype_Index* subtype_index; // Contains info which tag members should be set during instanciation
-        } struct_initializer;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
     Expression_Cast_Info cast_info;
 };
 
-enum class Argument_State
+enum class Parameter_State
 {
     NOT_ANALYSED,
-    CAST_MISSING,
     ANALYSED
 };
 
-struct Argument_Info
+struct Parameter_Match
 {
-    Argument_State state;
-    AST::Expression* expression;
+    // Matching info
+    String* name;
+    Datatype* param_type; // May be null
+    bool required; // Default values and implicit parameters don't require values
+    bool requires_named_addressing; // Implicit arguments and #instanciate
+
+    // Argument info (Can be used to instanciate)
+    AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the correspoding argument
     Datatype* argument_type; // Type of analysed expression
-    bool is_temporary_value;
-    Optional<String*> argument_name;
-    int parameter_index; // -1 Indicates that argument hasn't been matched yet or a failure to match
+    bool argument_is_temporary_value; // Required when expression == 0, to check if type_mods are compatible
+    int argument_index; // -1 if argument is not set
+
+    // Analysis info
+    Parameter_State state;
+    bool is_set;
     bool reanalyse_param_type_flag;
     bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
 };
 
-struct Member_Initializer_Info
+enum class Call_Type
 {
-    bool valid;
-    Struct_Member member; // For a normal member initializer this is the member to be initialized, otherwise this is the tag member to be initialized
+    FUNCTION,
+    FUNCTION_POINTER,
+    HARDCODED,
+    DOT_CALL,
+
+    POLYMORPHIC_STRUCT,
+    POLYMORPHIC_FUNCTION,
+    POLYMORPHIC_DOT_CALL,
+
+    INSTANCIATE,
+    CONTEXT_OPTION,
+    STRUCT_INITIALIZER
+};
+
+struct Parameter_Matching_Info
+{
+    Dynamic_Array<Parameter_Match> matched_parameters;
+    AST::Arguments* arguments; // May be null
+
+    // Call to-infos
+    Call_Type call_type;
+    union 
+    {
+        ModTree_Function* function;
+        Datatype_Function* pointer_call;
+        Hardcoded_Type hardcoded;
+        ModTree_Function* dot_call_function;
+        Polymorphic_Function_Base* poly_function;
+        Polymorphic_Function_Base* instanciate;
+        Polymorphic_Function_Base* poly_dotcall;
+        Workload_Structure_Polymorphic* poly_struct;
+        struct {
+            bool valid; // E.g. if the name exists
+            Datatype_Struct* structure;
+            Struct_Content* content;
+            bool subtype_valid;
+            bool supertype_valid;
+        } struct_init;
+    } options;
+
+    bool has_return_value;
+    Datatype* return_type; // Unknown if no return value exists
 };
 
 enum class Context_Change_Info_Type
@@ -698,14 +741,13 @@ union Analysis_Info
     Statement_Info info_stat;
     Code_Block_Info info_block;
     Case_Info info_case;
-    Argument_Info arg_info;
+    Parameter_Matching_Info parameter_matching_info;
     Parameter_Info param_info;
     Definition_Symbol_Info definition_symbol_info;
     Symbol_Lookup_Info symbol_lookup_info;
     Path_Lookup_Info path_info;
     Module_Info module_info;
     Context_Change_Info context_info;
-    Member_Initializer_Info member_init_info;
 };
 
 enum class Info_Query
@@ -718,7 +760,6 @@ enum class Info_Query
 
 Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query);
 Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query);
-Argument_Info* pass_get_node_info(Analysis_Pass* pass, AST::Argument* node, Info_Query query);
 Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query);
 Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query);
 Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query);
@@ -727,7 +768,7 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
 Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query);
-Member_Initializer_Info* pass_get_node_info(Analysis_Pass* pass, AST::Member_Initializer* node, Info_Query query);
+Parameter_Matching_Info* pass_get_node_info(Analysis_Pass* pass, AST::Arguments* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 

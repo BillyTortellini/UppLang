@@ -16,6 +16,7 @@ namespace AST
         case Node_Type::DEFINITION_SYMBOL: 
         case Node_Type::ENUM_MEMBER: 
         case Node_Type::EXTERN_IMPORT:
+        case Node_Type::CONTEXT_CHANGE: 
             break;
         case Node_Type::STRUCT_MEMBER: {
             auto member = (Structure_Member_Node*)node;
@@ -24,19 +25,11 @@ namespace AST
             }
             break;
         }
-        case Node_Type::CONTEXT_CHANGE: {
-            auto change = (Context_Change*)node;
-            if (change->is_import) {
-                break;
-            }
-            dynamic_array_destroy(&change->options.setting.arguments);
-            break;
-        }
-        case Node_Type::MEMBER_INITIALIZER: {
-            auto init = (Member_Initializer*)node;
-            if (init->type == Member_Initializer_Type::SUBTYPE_INITIALIZER) {
-                dynamic_array_destroy(&init->options.subtype_initializers);
-            }
+        case Node_Type::ARGUMENTS: {
+            auto args = (Arguments*)node;
+            dynamic_array_destroy(&args->arguments);
+            dynamic_array_destroy(&args->subtype_initializers);
+            dynamic_array_destroy(&args->uninitialized_tokens);
             break;
         }
         case Node_Type::DEFINITION: {
@@ -81,28 +74,9 @@ namespace AST
             auto expr = (Expression*)node;
             switch (expr->type)
             {
-            case Expression_Type::STRUCT_INITIALIZER: {
-                auto& init = expr->options.struct_initializer;
-                dynamic_array_destroy(&init.member_initializers);
-                break;
-            }
             case Expression_Type::ARRAY_INITIALIZER: {
                 auto& init = expr->options.array_initializer;
                 dynamic_array_destroy(&init.values);
-                break;
-            }
-            case Expression_Type::FUNCTION_CALL: {
-                auto& call = expr->options.call;
-                if (call.arguments.data != 0) {
-                    dynamic_array_destroy(&call.arguments);
-                }
-                break;
-            }
-            case Expression_Type::INSTANCIATE: {
-                auto& instance = expr->options.instanciate;
-                if (instance.arguments.data != 0) {
-                    dynamic_array_destroy(&instance.arguments);
-                }
                 break;
             }
             case Expression_Type::FUNCTION_SIGNATURE: {
@@ -133,7 +107,8 @@ namespace AST
             }
             break;
         }
-        case Node_Type::STATEMENT: {
+        case Node_Type::STATEMENT: 
+        {
             auto stat = (Statement*)node;
             switch (stat->type)
             {
@@ -189,6 +164,13 @@ namespace AST
             FILL_OPTIONAL(enum_member->value);
             break;
         }
+        case Node_Type::ARGUMENTS: {
+            auto args = (Arguments*)node;
+            FILL_ARRAY(args->arguments);
+            FILL_ARRAY(args->subtype_initializers);
+            FILL_ARRAY(args->uninitialized_tokens);
+            break;
+        }
         case Node_Type::STRUCT_MEMBER: {
             auto member = (Structure_Member_Node*)node;
             if (member->is_expression) {
@@ -229,19 +211,13 @@ namespace AST
                 FILL(context->options.import_path);
             }
             else {
-                FILL_ARRAY(context->options.setting.arguments);
+                FILL(context->options.setting.arguments);
             }
             break;
         }
-        case Node_Type::MEMBER_INITIALIZER: {
-            auto init = (Member_Initializer*)node;
-            switch (init->type)
-            {
-            case Member_Initializer_Type::NORMAL: FILL(init->options.value); break;
-            case Member_Initializer_Type::SUBTYPE_INITIALIZER: FILL_ARRAY(init->options.subtype_initializers); break;
-            case Member_Initializer_Type::UNINITIALIZED: break;
-            default: panic("");
-            }
+        case Node_Type::SUBTYPE_INITIALIZER: {
+            auto init = (Subtype_Initializer*)node;
+            FILL(init->arguments);
             break;
         }
         case Node_Type::IMPORT: {
@@ -339,7 +315,7 @@ namespace AST
             case Expression_Type::STRUCT_INITIALIZER: {
                 auto& init = expr->options.struct_initializer;
                 FILL_OPTIONAL(init.type_expr);
-                FILL_ARRAY(init.member_initializers);
+                FILL(init.arguments);
                 break;
             }
             case Expression_Type::BAKE_BLOCK: {
@@ -351,7 +327,7 @@ namespace AST
                 break;
             }
             case Expression_Type::INSTANCIATE: {
-                FILL_ARRAY(expr->options.instanciate.arguments);
+                FILL(expr->options.instanciate.arguments);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -391,7 +367,7 @@ namespace AST
             case Expression_Type::FUNCTION_CALL: {
                 auto& call = expr->options.call;
                 FILL(call.expr);
-                FILL_ARRAY(call.arguments);
+                FILL(call.arguments);
                 break;
             }
             case Expression_Type::FUNCTION_SIGNATURE: {
@@ -539,6 +515,13 @@ namespace AST
             FILL_OPTIONAL(enum_member->value);
             break;
         }
+        case Node_Type::ARGUMENTS: {
+            auto args = (Arguments*)node;
+            FILL_ARRAY(args->arguments);
+            FILL_ARRAY(args->subtype_initializers);
+            FILL_ARRAY(args->uninitialized_tokens);
+            break;
+        }
         case Node_Type::STRUCT_MEMBER: {
             auto member = (Structure_Member_Node*)node;
             if (member->is_expression) {
@@ -558,19 +541,13 @@ namespace AST
                 FILL(context->options.import_path);
             }
             else {
-                FILL_ARRAY(context->options.setting.arguments);
+                FILL(context->options.setting.arguments);
             }
             break;
         }
-        case Node_Type::MEMBER_INITIALIZER: {
-            auto init = (Member_Initializer*)node;
-            switch (init->type)
-            {
-            case Member_Initializer_Type::NORMAL: FILL(init->options.value); break;
-            case Member_Initializer_Type::SUBTYPE_INITIALIZER: FILL_ARRAY(init->options.subtype_initializers); break;
-            case Member_Initializer_Type::UNINITIALIZED: break;
-            default: panic("");
-            }
+        case Node_Type::SUBTYPE_INITIALIZER: {
+            auto init = (Subtype_Initializer*)node;
+            FILL(init->arguments);
             break;
         }
         case Node_Type::IMPORT: {
@@ -700,7 +677,7 @@ namespace AST
             case Expression_Type::STRUCT_INITIALIZER: {
                 auto& init = expr->options.struct_initializer;
                 FILL_OPTIONAL(init.type_expr);
-                FILL_ARRAY(init.member_initializers);
+                FILL(init.arguments);
                 break;
             }
             case Expression_Type::BAKE_BLOCK: {
@@ -712,7 +689,7 @@ namespace AST
                 break;
             }
             case Expression_Type::INSTANCIATE: {
-                FILL_ARRAY(expr->options.instanciate.arguments);
+                FILL(expr->options.instanciate.arguments);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -752,7 +729,7 @@ namespace AST
             case Expression_Type::FUNCTION_CALL: {
                 auto& call = expr->options.call;
                 FILL(call.expr);
-                FILL_ARRAY(call.arguments);
+                FILL(call.arguments);
                 break;
             }
             case Expression_Type::FUNCTION_SIGNATURE: {
@@ -892,6 +869,10 @@ namespace AST
             string_append_formated(str, "DEFINITION");
             break;
         }
+        case Node_Type::ARGUMENTS: {
+            string_append_formated(str, "ARGS");
+            break;
+        }
         case Node_Type::IMPORT: {
             auto import = (Import*)base;
             string_append_formated(str, "IMPORT ");
@@ -955,33 +936,14 @@ namespace AST
             }
             break;
         }
-        case Node_Type::MEMBER_INITIALIZER: {
-            auto init = (Member_Initializer*)base;
-            switch (init->type)
-            {
-            case Member_Initializer_Type::NORMAL: {
-                string_append_formated(str, "MEMBER_INIT");
-                if (init->name.available) {
-                    string_append_formated(str, ", %s", init->name.value->characters);
-                }
-                break;
+        case Node_Type::SUBTYPE_INITIALIZER: {
+            auto init = (Subtype_Initializer*)base;
+            string_append(str, "SUBTYPE_INIT");
+            if (init->name.available) {
+                string_append_character(str, ' ');
+                string_append(str, init->name.value->characters);
             }
-            case Member_Initializer_Type::SUBTYPE_INITIALIZER: {
-                string_append_formated(str, "SUBTYPE_INIT, .");
-                if (init->name.available) {
-                    string_append_formated(str, "%s", init->name.value->characters);
-                }
-                break;
-            }
-            case Member_Initializer_Type::UNINITIALIZED: {
-                string_append_formated(str, "UNINITIALIZED, _");
-                if (init->name.available) {
-                    string_append_formated(str, "%s", init->name.value->characters);
-                }
-                break;
-            }
-            default: panic("");
-            }
+            break;
             break;
         }
         case Node_Type::PATH_LOOKUP:
@@ -1180,8 +1142,11 @@ namespace AST
 
     namespace Helpers
     {
-        bool type_correct(Member_Initializer* base) {
-            return base->base.type == Node_Type::MEMBER_INITIALIZER;
+        bool type_correct(Subtype_Initializer* base) {
+            return base->base.type == Node_Type::SUBTYPE_INITIALIZER;
+        }
+        bool type_correct(Arguments* base) {
+            return base->base.type == Node_Type::ARGUMENTS;
         }
         bool type_correct(Context_Change* base) {
             return base->base.type == Node_Type::CONTEXT_CHANGE;

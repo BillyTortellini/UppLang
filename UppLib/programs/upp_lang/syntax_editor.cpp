@@ -2871,7 +2871,7 @@ void normal_command_execute(Normal_Mode_Command& command)
             string_reset(&editor.yank_string);
             text_range_append_to_string(range, &editor.yank_string);
         }
-        printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
+        // printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
 
         // Delete if necessary
         if (command.type == Normal_Mode_Command_Type::DELETE_MOTION) {

@@ -1,7 +1,31 @@
 
-Callable-Types:
+
+ * Normal function calls + instanciate should error on ignore-tokens
+ * Ignore tokens should cause the struct-inititalizer to not be exhaustive on members
+ * Indentation lines are fucked --> Also probably skip comment blocks
+ * Sometimes text is rendered twice e.g. / what
+ * Also when scrolling longer text cursor and Ctrl-D is fucked
+
+Test:
+ * Overloads
+ * Function calls
+ * Instanciate
+ * Struct Inititalizer
+
+DONE:
+ * Comptime struct inititalizer
+ * IR-Code update
+ * Overloads for all things need update
+ * Analyse Operator context-changes
+
+
+
+Calling instances:
  - Function-Pointer
  - Struct-Instance
+ - Dot-Calls
+ - Hardcoded-Functions
+ - context_options (e.g. context set_cast_option(Fuck))
  - Function
     --> Overloading must be handled here (matching arguments one by one)
  - Poly-Function
@@ -13,11 +37,6 @@ Callable-Types:
         Node.{15, value=10, normal=false, .SUBTYPE={x=12, y=20}, . = {Frick me but}}
 
 Some ideas:
- - Struct Initializer:
-    * Could store if it contains ignore in arguments, and not as argument
-    * Could store arguments and sub_initializer seperately
-    --> 
-
  - Call AST::Node
     * Dynamic_Array of Arguments
     * Dynamic_Array of subtype_initializers (. = {})
@@ -26,10 +45,28 @@ Some ideas:
     * Stores argument-to-parameter mapping
     * parameter-to-argument mapping also...
     * Stores callable (+ missing parameters)
-    
+ - Callable:
+    * Number of parameters
+    * Optional-Parameters
+    * Default parameters
+    * Set-by-name parameters
+    * Something where parameters can be mapped to
 
-Argument-Info:
- - Should contain
+Maybe better Idea:
+ 1. Have a call-node
+    * Dynamic_Array of Arguments
+    * Dynamic_Array of subtype_initializers (name + call-node. = {})
+ - Implement parsing
+    * Parse arguments as function
+    * If argument is _, then add error-expression... as expression
+ 2. Use call node for all calls
+    * Update struct-initializer logic for this
+    * Normal calls should check that no _ and {} exist
+ 3. Store Callable in Analysis_Info
+ 4. In Editor, show parameter of callable in call
+
+
+
 
 
 TODO: 
@@ -64,8 +101,6 @@ Required:
     * Show current call parameters
     * Show current parameter
     * Missing parameter informations?
- - Better Code-Completion
- - Line-numbers (relative or not...)
  - Multiple-file handling (One 'main' project file + some imported/openend file information)
     * Option to open multiple files in tabs
     * Switching from one tab to another (vim gt, gT)
@@ -76,6 +111,7 @@ Required:
     * Over multiple files when imports are used
  - Jumping between last positions 
     * Maybe even have a GUI for the jump list with functions + indices
+ - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
 
 Almost required:
  - Interactive Search-and-replace
@@ -95,18 +131,19 @@ Almost required:
     * Store marks after exit
  - Store last session
     * Store open tabs, marks + code-folding
-
-Optional:
+ - Visual modes
+    * Visual block (Without multi-cursor)
+    * Visual line
+    * Visual mode
  - More Motions
     * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
+ - Line-numbers (relative or not...)
+
+Optional:
  - Yank and Put with Registers
     * Store multiple yanks and puts/last used
     * when using p" to access register, show list in gui
  - Macros/Command recording
- - Visual modes
-    * Visual block
-    * Visual line
-    * Visual mode
  - Multi-Cursor mode
  - Multiple windows
  - Animations
@@ -174,13 +211,13 @@ Additional:
 
 -----------------
 Code improvements:
-    * Deduplication of comptime instances when the generated ir-code is the same
+    * Polymorphic Custom-Operators can be hashed based on type, so we don't have to instanciate/reanalyse header for every instance...
+    * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
+    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
+    * Deduplication of polymorphic instances when the generated ir-code is the same
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
     * Symbol table lookups could be combined into a single hashtable?
-    * Expression_Info could already store if value is comptime calculatable (Could be implemented similar to is_temporary_value)
-    * Polymorphic Iterators should be hashed, so we don't have to instanciate/reanalyse header for every instance...
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
-    * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
     * Sizeof_program.obj now appears in main folder...
 
 
