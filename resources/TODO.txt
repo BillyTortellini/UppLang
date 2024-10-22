@@ -1,18 +1,17 @@
 
 
- * Normal function calls + instanciate should error on ignore-tokens
- * Ignore tokens should cause the struct-inititalizer to not be exhaustive on members
- * Indentation lines are fucked --> Also probably skip comment blocks
- * Sometimes text is rendered twice e.g. / what
- * Also when scrolling longer text cursor and Ctrl-D is fucked
-
-Test:
- * Overloads
- * Function calls
- * Instanciate
- * Struct Inititalizer
+ * Subtypes and member access should not have the same color as function call
+ * New color for struct-subtypes
+ * Show completable command in normal mode next to cursor
 
 DONE:
+ * dd isn't working correctly at end of block
+ * Datatype to string for Subtypes shows dot twice
+ * Scrolling longer text cursor and Ctrl-D is fucked
+ * Indentation lines are fucked --> Also probably skip comment blocks
+ * Sometimes text is rendered twice e.g. / what
+ * Ignore tokens should cause the struct-inititalizer to not be exhaustive on members
+ * Normal function calls + instanciate should error on ignore-tokens/subtype-initializers
  * Comptime struct inititalizer
  * IR-Code update
  * Overloads for all things need update

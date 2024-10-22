@@ -1142,8 +1142,9 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(Datatype* dataty
     for (int i = 0; i < param_infos->matched_parameters.size; i++) 
     {
         auto& param_info = param_infos->matched_parameters[i];
-        assert(param_info.expression != 0 && param_info.is_set && param_info.argument_index >= 0, "");
-        auto& member = init_info.content->members[param_info.argument_index];
+        if (!param_info.is_set) continue;
+        assert(param_info.expression != 0 && param_info.argument_index >= 0, "");
+        auto& member = init_info.content->members[i];
 
         Comptime_Result result = expression_calculate_comptime_value_internal(param_info.expression);
         if (result.type != Comptime_Result_Type::AVAILABLE) {
@@ -2954,6 +2955,9 @@ void analyse_arguments_in_unknown_context(AST::Arguments* arguments) {
             semantic_analyser_analyse_expression_value(expr, expression_context_make_unknown());
         }
     }
+    for (int i = 0; i < arguments->subtype_initializers.size; i++) {
+        analyse_arguments_in_unknown_context(arguments->subtype_initializers[i]->arguments);
+    }
 }
 
 void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matching_info)
@@ -3176,6 +3180,24 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
     auto& param_infos = matching_info->matched_parameters;
     matching_info->arguments = args;
 
+
+    bool is_struct_initializer = matching_info->call_type == Call_Type::STRUCT_INITIALIZER;
+    if (!is_struct_initializer && log_errors) 
+    {
+        bool error_occured = false;
+        for (int i = 0; i < args->subtype_initializers.size; i++) {
+            auto sub_init = args->subtype_initializers[i];
+            log_semantic_error("Subtype_initializer only valid on struct-initializers", upcast(sub_init), Parser::Section::FIRST_TOKEN);
+            analyse_arguments_in_unknown_context(sub_init->arguments);
+            error_occured = true;
+        }
+        for (int i = 0; i < args->uninitialized_tokens.size; i++) {
+            auto token_expr = args->uninitialized_tokens[i];
+            log_semantic_error("Uninitialized-token only valid for subtype-initializers", upcast(token_expr), Parser::Section::FIRST_TOKEN);
+            error_occured = true;
+        }
+    }
+
     bool is_dot_call = matching_info->call_type == Call_Type::DOT_CALL || matching_info->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
     if (is_dot_call) {
         assert(param_infos.size > 0, "");
@@ -3269,7 +3291,7 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
     }
 
     // Check if all required parameters were specified
-    if (!argument_error_occured)
+    if (!argument_error_occured && !(is_struct_initializer && args->uninitialized_tokens.size > 0))
     {
         bool missing_parameter_reported = false;
         for (int i = 0; i < param_infos.size; i++)
@@ -3291,6 +3313,7 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
 
     return !argument_error_occured;
 }
+
 
 
 
@@ -5568,7 +5591,7 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
             bool expected_is_const = type_mods_is_constant(expected_mods, i - 1);
             bool given_is_const = type_mods_is_constant(cast_info.initial_type->mods, i - 1);
             if (!expected_is_const && given_is_const) {
-                return false; // Cannot cast from non-const pointer to const-pointer, e.g. Error: *int -> *const int
+                return false; // Cannot cast from const pointer to non-const-pointer, e.g. Error: *const int -> *int
             }
         }
     }
@@ -5862,8 +5885,10 @@ void analyse_member_initializer_recursive(
     if (arguments_match_to_parameters(arguments, matching_info, true)) {
         for (int i = 0; i < matching_info->matched_parameters.size; i++) {
             auto& member = content->members[i];
-            auto param_info = matching_info->matched_parameters[i];
-            assert(param_info.is_set, "Must be true for all members");
+            const auto& param_info = matching_info->matched_parameters[i];
+            if (!param_info.is_set) { // Possible if we have ignore-tokens
+                continue;
+            }
             semantic_analyser_analyse_expression_value(arguments->arguments[param_info.argument_index]->value, expression_context_make_specific_type(member.type));
         }
     }
@@ -10710,6 +10735,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
             // Analyse value
             Datatype* value_type = semantic_analyser_analyse_expression_value(values[i], context);
+            Type_Mods original_mods = value_type->mods;
 
             // Note: Constant tag gets removed when infering the type, e.g. x := 15
             if (types.size == 0) {
@@ -10721,7 +10747,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 bool value_is_pointer = datatype_is_pointer(value_type);
                 if (definition->assignment_type == AST::Assignment_Type::POINTER && !value_is_pointer) {
-                    if (try_updating_expression_type_mods(values[i], type_mods_make(1, value_type->mods.constant_flags, value_type->mods.subtype_index))) {
+                    if (try_updating_expression_type_mods(values[i], type_mods_make(1, original_mods.constant_flags, value_type->mods.subtype_index))) {
                         value_type = get_info(values[i])->cast_info.result_type;
                     }
                     else {

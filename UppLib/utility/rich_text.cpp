@@ -252,7 +252,7 @@ namespace Rich_Text
             int last_change_index = 0;
             for (int i = 0; i < line.style_changes.size; i++) {
                 auto& change = line.style_changes[i];
-                if (change.char_start <= char_start) {
+                if (change.char_start <= char_index) {
                     last_change_index = i;
                 }
                 else {
@@ -441,7 +441,8 @@ namespace Text_Display
         vec2 start = get_char_position(display, line_start, 0, Anchor::TOP_LEFT, false);
         vec2 end = get_char_position(display, line_end, 0, Anchor::BOTTOM_LEFT, false);
 
-        int min_x = start.x + (((indentation - 1) * display->indentation_spaces) + 1 * display->char_size.x);
+        int min_x = start.x + (((indentation - 1) * display->indentation_spaces) * display->char_size.x);
+        min_x += 4;
         // min_x -= (display->indentation_spaces * display->char_size.x) / 2.0f - display->block_outline_thickness;
         int max_y = start.y - display->char_size.y * 0.1f;
         int min_y = end.y   + display->char_size.y * 0.1f;

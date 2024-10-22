@@ -756,8 +756,9 @@ void generate_member_initalizers(IR_Code_Block* ir_block, IR_Data_Access* struct
     for (int i = 0; i < param_infos->matched_parameters.size; i++)
     {
         auto& param_info = param_infos->matched_parameters[i];
-        assert(param_info.expression != 0 && param_info.is_set && param_info.argument_index >= 0, "");
-        auto& member = init_info.content->members[param_info.argument_index];
+        if (!param_info.is_set) continue;
+        assert(param_info.expression != 0 && param_info.argument_index >= 0, "");
+        auto& member = init_info.content->members[i];
 
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
@@ -1219,7 +1220,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             if (dst_type->mods.subtype_index->indices.size > src_type->mods.subtype_index->indices.size) 
             {
                 assert(dst_type->mods.subtype_index->indices.size == src_type->mods.subtype_index->indices.size + 1, "Downcast must only be a single level");
-                Struct_Content* base_content = type_mods_get_subtype(downcast<Datatype_Struct>(datatype_get_non_const_type(src_type)), src_type->mods);
+                Struct_Content* base_content = type_mods_get_subtype(downcast<Datatype_Struct>(src_type->base_type), src_type->mods);
                 int child_tag_value = dst_type->mods.subtype_index->indices[dst_type->mods.subtype_index->indices.size-1].index + 1; // Tag value == index + 1
 
                 IR_Data_Access* condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));

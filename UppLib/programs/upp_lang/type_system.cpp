@@ -407,7 +407,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         Rich_Text::set_text_color(text, Syntax_Color::TEXT);
         Rich_Text::append_character(text, '.');
         Rich_Text::set_text_color(text, Syntax_Color::TYPE);
-        Rich_Text::append_formated(text, ".%s", subtype->subtype_name->characters);
+        Rich_Text::append(text, subtype->subtype_name->characters);
         break;
     }
     case Datatype_Type::STRUCT:

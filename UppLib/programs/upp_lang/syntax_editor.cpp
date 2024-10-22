@@ -242,6 +242,8 @@ struct Syntax_Editor
     Dynamic_Array<Token_Range> token_range_buffer;
     int camera_start_line;
     int last_visible_line;
+    History_Timestamp last_render_timestamp;
+    Text_Index last_render_cursor_pos;
 
     Input* input;
     Rendering_Core* rendering_core;
@@ -289,6 +291,8 @@ void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* tex
     syntax_editor.code = source_code_create();
     syntax_editor.history = code_history_create(syntax_editor.code);
     syntax_editor.last_token_synchronized = history_get_timestamp(&syntax_editor.history);
+    syntax_editor.last_render_timestamp = history_get_timestamp(&syntax_editor.history);
+    syntax_editor.last_render_cursor_pos = text_index_make(0, 0);
     syntax_editor.code_changed_since_last_compile = true;
 
     syntax_editor.text_renderer = text_renderer;
@@ -360,6 +364,8 @@ void syntax_editor_set_text(String string)
     code_history_reset(&editor.history);
     editor.last_token_synchronized = history_get_timestamp(&editor.history);
     editor.code_changed_since_last_compile = true;
+    editor.last_render_cursor_pos = editor.cursor;
+    editor.last_render_timestamp = editor.last_token_synchronized;
     // compiler_compile_clean(editor.code, Compile_Type::ANALYSIS_ONLY, string_create(syntax_editor.file_path));
 }
 
@@ -2628,6 +2634,9 @@ void text_range_delete(Text_Range range)
     // Append remaining text of last-line into first line
     String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
     history_insert_text(&syntax_editor.history, range.start, remainder);
+    if (line->indentation != end_line->indentation && range.start.character == 0) {
+        history_change_indent(&syntax_editor.history, range.start.line, end_line->indentation);
+    }
 
     // Delete all lines inbetween
     for (int i = range.start.line + 1; range.start.line + 1 < code->line_count && i <= range.end.line; i++) {
@@ -2929,7 +2938,7 @@ void normal_command_execute(Normal_Mode_Command& command)
 
     case Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
     case Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
-        int dir = command.type == Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
+        int dir = command.type == Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? -1 : 1;
         editor.camera_start_line += (editor.camera_start_line - editor.last_visible_line) / 2 * dir;
         break;
     }
@@ -3559,12 +3568,20 @@ void syntax_editor_render()
         int line_count = rendering_core.render_information.backbuffer_height / editor.text_display.char_size.y;
         cam_end = cam_start + line_count;
 
-        auto cursor_line = cursor.line;
-        if (cursor_line - MIN_CURSOR_DISTANCE < cam_start) {
-            cam_start = cursor_line - MIN_CURSOR_DISTANCE;
-        }
-        else if (cursor_line + MIN_CURSOR_DISTANCE > cam_end) {
-            cam_start = cursor_line - line_count + MIN_CURSOR_DISTANCE;
+        // Clamp camera to cursor if cursor moved or text changed
+        History_Timestamp timestamp = history_get_timestamp(&editor.history);
+        if (!text_index_equal(editor.last_render_cursor_pos, cursor) || editor.last_render_timestamp.node_index != timestamp.node_index) 
+        {
+            editor.last_render_cursor_pos = cursor;
+            editor.last_render_timestamp = timestamp;
+
+            auto cursor_line = cursor.line;
+            if (cursor_line - MIN_CURSOR_DISTANCE < cam_start) {
+                cam_start = cursor_line - MIN_CURSOR_DISTANCE;
+            }
+            else if (cursor_line + MIN_CURSOR_DISTANCE > cam_end) {
+                cam_start = cursor_line - line_count + MIN_CURSOR_DISTANCE;
+            }
         }
 
         editor.camera_start_line = math_clamp(editor.camera_start_line, 0, editor.code->line_count - 1);
@@ -3671,7 +3688,7 @@ void syntax_editor_render()
     {
         auto display = &syntax_editor.text_display;
         const int t = 2;
-        vec2 min = Text_Display::get_char_position(display, cursor.line, cursor.character, Anchor::BOTTOM_LEFT);
+        vec2 min = Text_Display::get_char_position(display, cursor.line - cam_start, cursor.character, Anchor::BOTTOM_LEFT);
         vec2 max = min + vec2((float)t, display->char_size.y);
 
         renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_min_max(min, max), Syntax_Color::COMMENT);
@@ -3870,7 +3887,7 @@ void syntax_editor_render()
         vec2 box_top_left = vec2(0.0f);
         {
             auto line = source_code_get_line(editor.code, cursor.line);
-            vec2 cursor_pos = Text_Display::get_char_position(&editor.text_display, cursor.line, cursor.character, Anchor::BOTTOM_LEFT);
+            vec2 cursor_pos = Text_Display::get_char_position(&editor.text_display, cursor.line - cam_start, cursor.character, Anchor::BOTTOM_LEFT);
 
             int width = rendering_core.render_information.backbuffer_width;
             int height = rendering_core.render_information.backbuffer_height;
