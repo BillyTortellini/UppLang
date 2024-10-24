@@ -5,6 +5,7 @@
 #include "../win32/window.hpp"
 #include "../rendering/text_renderer.hpp"
 #include "../rendering/rendering_core.hpp"
+#include "../utility/line_edit.hpp"
 
 // GUI Layout elements
 int float_to_nearest_int(float value) {
@@ -186,6 +187,7 @@ struct GUI
     Text_Renderer* text_renderer;
     Window* window;
     Input* input;
+    vec2 default_text_size;
 };
 
 static GUI gui;
@@ -204,6 +206,8 @@ void gui_initialize(Text_Renderer* text_renderer, Window* window)
     gui.cursor_type = Cursor_Icon_Type::ARROW;
     gui.active_checkpoint.type = GUI_Matching_Checkpoint_Type::NONE;
     gui.focused_node = 0;
+
+    gui.default_text_size = text_renderer_get_aligned_char_size(text_renderer, convertHeight(0.4f, Unit::CENTIMETER));
 
     // Push root node
     GUI_Node root;
@@ -1265,12 +1269,9 @@ void gui_update_and_render(Render_Pass* render_pass)
                 }
                 case GUI_Drawable_Type::TEXT: {
                     auto bb = node.bounding_box.as_bounding_box();
-                    float height = bb.max.y - bb.min.y;
-                    float char_width = text_renderer_character_width(gui.text_renderer, height);
-                    String text = node.drawable.text; // Local copy so size can be changed without affecting original code
                     vec4 c = node.drawable.color;
                     text_renderer_add_text(
-                        gui.text_renderer, text, bb.min, Anchor::BOTTOM_LEFT, height, vec3(c.x, c.y, c.z),
+                        gui.text_renderer, node.drawable.text, bb.min, Anchor::BOTTOM_LEFT, node.drawable.char_size, vec3(c.x, c.y, c.z),
                         optional_make_success(node.clipped_box.value.as_bounding_box())
                     );
                     break;
@@ -1539,11 +1540,12 @@ GUI_Drawable gui_drawable_make_none() {
     return drawable;
 }
 
-GUI_Drawable gui_drawable_make_text(String text, vec4 color) {
+GUI_Drawable gui_drawable_make_text(String text, vec2 char_size, vec4 color) {
     GUI_Drawable drawable;
     drawable.type = GUI_Drawable_Type::TEXT;
     drawable.color = color;
     drawable.text = string_copy(text);
+    drawable.char_size = char_size;
     return drawable;
 }
 
@@ -1567,15 +1569,24 @@ void gui_drawable_destroy(GUI_Drawable& drawable) {
 
 
 // GUI PREDEFINED OBJECTS
-GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm, vec4 color)
+GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color)
 {
-    const float char_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    const float char_width = text_renderer_character_width(gui.text_renderer, char_height) + 0.01f;
+    auto char_size = gui.default_text_size;
     return gui_add_node(
         parent_handle,
-        gui_size_make_fixed(char_width * text.size),
-        gui_size_make_fixed(char_height),
-        gui_drawable_make_text(text, color)
+        gui_size_make_fixed(char_size.x * text.size),
+        gui_size_make_fixed(char_size.y),
+        gui_drawable_make_text(text, char_size, color)
+    );
+}
+
+GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, String text, vec2 char_size, vec4 color)
+{
+    return gui_add_node(
+        parent_handle,
+        gui_size_make_fixed(char_size.x * text.size),
+        gui_size_make_fixed(char_size.y),
+        gui_drawable_make_text(text, char_size, color)
     );
 }
 
@@ -1845,7 +1856,7 @@ GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name)
     gui_drag_data_apply_to_node(*drag_data, window_handle);
     gui_node_set_padding(window_handle, 1, 1);
     gui_node_set_padding(header_handle, 1, 1);
-    gui_push_text(header_handle, string_create_static(name), .43f);
+    gui_push_text_with_size(header_handle, string_create_static(name), text_renderer_get_aligned_char_size(gui.text_renderer, convertHeight(.43f, Unit::CENTIMETER)));
 
     // Handle focusing of windows (e.g. window order)
     if (window_handle.first_time_created || ((window_handle.mouse_hovers_child || window_handle.mouse_hover) && gui.input->mouse_pressed[(int)Mouse_Key_Code::LEFT])) {
@@ -1912,7 +1923,7 @@ GUI_Handle gui_push_focusable(GUI_Handle parent_handle, GUI_Size size_x, GUI_Siz
     return container;
 }
 
-Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm)
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, vec2 char_size)
 {
     Text_Edit_Input result;
     result.enter_pressed = false;
@@ -1922,38 +1933,39 @@ Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, flo
     auto container = gui_push_focusable(parent_handle, gui_size_make_fill(), gui_size_make_fit());
     gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT);
 
+    Line_Editor* editor = gui_store_primitive<Line_Editor>(container, line_editor_make());
+    if (container.first_time_created) {
+        editor->pos = string->size;
+        editor->select_start = string->size;
+    }
+
     // Alter text if we have focus
-    if (gui_node_has_focus(container)) {
+    bool in_focus = gui_node_has_focus(container);
+    if (in_focus) 
+    {
         for (int i = 0; i < input->key_messages.size; i++) {
             auto& msg = input->key_messages[i];
-            if (msg.key_code == Key_Code::BACKSPACE && msg.key_down) {
-                if (string->size > 0) {
-                    string_remove_character(string, string->size - 1);
-                    result.text_changed = true;
-                }
-            }
-            if (msg.key_code == Key_Code::U && msg.key_down && msg.ctrl_down) {
-                string_reset(string);
-                result.text_changed = true;
-            }
-            else if (msg.key_code == Key_Code::RETURN && msg.key_down) {
+            if (msg.key_code == Key_Code::RETURN && msg.key_down) {
                 gui_node_remove_focus(container);
+                in_focus = false;
                 result.enter_pressed = true;
                 break;
             }
-            else if (msg.character != 0) {
-                string_append_character(string, msg.character);
+            
+            if (line_editor_feed_key_message(*editor, string, msg)) {
                 result.text_changed = true;
             }
         }
     }
 
     // Add text box
-    int text_height = convertHeight(text_height_cm, Unit::CENTIMETER);
-    float char_width = text_renderer_character_width(gui.text_renderer, text_height);
-    auto text = gui_add_node(container, gui_size_make_fixed(string->size * char_width), gui_size_make_fixed(text_height), gui_drawable_make_text(*string));
+    auto text = gui_add_node(
+        container, gui_size_make_fixed(string->size * char_size.x), gui_size_make_fixed(char_size.y), 
+        gui_drawable_make_text(*string, char_size)
+    );
     if (gui_node_has_focus(container)) { // Add cursor
-        gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
+        auto cursor = gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fill(), gui_drawable_make_rect(vec4(0, 0, 0, 1)));
+        gui_node_set_position_fixed(cursor, vec2(editor->pos * char_size.x, 0.0f), Anchor::BOTTOM_LEFT);
     }
 
     return result;
@@ -1982,7 +1994,7 @@ bool gui_push_toggle(GUI_Handle parent_handle, bool* value)
         *value = !*value;
     }
     if (*value) {
-        auto text = gui_push_text(center, string_create_static("x"), .4f, vec4(1.0f, 0.0f, 0.0f, 1.0f));
+        auto text = gui_push_text(center, string_create_static("x"), vec4(1.0f, 0.0f, 0.0f, 1.0f));
         gui_node_set_alignment(text, GUI_Alignment::CENTER);
     }
     return pressed;
@@ -2033,7 +2045,7 @@ void gui_push_example_gui()
 
     auto window = gui_push_window(gui_root_handle(), "Test");
     String* str = gui_store_string(window, "");
-    gui_push_text_edit(window, str);
+    gui_push_text_edit(window, str, gui.default_text_size);
     if (gui_push_button(window, string_create_static("Test me!"))) {
         logg("%s\n", str->characters);
     }

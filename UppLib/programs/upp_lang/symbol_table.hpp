@@ -263,4 +263,5 @@ void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);
+void symbol_type_append_to_string(Symbol_Type type, String* string);
 

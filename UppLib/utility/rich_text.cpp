@@ -358,21 +358,14 @@ namespace Rich_Text
 
 namespace Text_Display
 {
-    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces) 
+    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, vec2 char_size, int indentation_spaces) 
     {
         Text_Display display;
         display.text = text;
         display.renderer_2D = renderer_2D;
         display.text_renderer = text_renderer;
         display.indentation_spaces = indentation_spaces;
-
-        // Calculate char size (Align char width to pixel size)
-        {
-            float width_to_height_ratio = text_renderer_get_char_width_to_height_ratio(text_renderer);
-            float width = math_ceil(text_height * width_to_height_ratio); // Align to pixel size
-            float height = math_ceil(width / width_to_height_ratio); // Also align to pixel size
-            display.char_size = vec2(width, height);
-        }
+        display.char_size = char_size;
 
         // Initialize other members
         display.frame_anchor = Anchor::BOTTOM_LEFT;
@@ -513,8 +506,6 @@ namespace Text_Display
             }
         }
 
-        const float text_render_height = char_size.x / text_renderer_get_char_width_to_height_ratio(text_renderer);
-
         // Render lines
         auto& lines = text->lines;
         for (int line_index = 0; line_index < lines.size; line_index++)
@@ -571,7 +562,7 @@ namespace Text_Display
                 // Draw text
                 String substring = string_create_substring_static(&line.text, last_change.char_start, change.char_start);
                 text_renderer_add_text(
-                    text_renderer, substring, text_start_pos, Anchor::BOTTOM_LEFT, text_render_height, last_change.style.text_color, optional_make_success(line_bb)
+                    text_renderer, substring, text_start_pos, Anchor::BOTTOM_LEFT, display->char_size, last_change.style.text_color, optional_make_success(line_bb)
                 );
             }
         }

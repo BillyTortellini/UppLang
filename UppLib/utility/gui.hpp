@@ -124,6 +124,7 @@ struct GUI_Drawable
 {
     GUI_Drawable_Type type;
     String text;
+    vec2 char_size;
     vec4 color;
 
     // Rectangle Options
@@ -133,7 +134,7 @@ struct GUI_Drawable
 };
 
 GUI_Drawable gui_drawable_make_none();
-GUI_Drawable gui_drawable_make_text(String text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Drawable gui_drawable_make_text(String text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
 GUI_Drawable gui_drawable_make_rect(vec4 color, int border_thickness = 0, vec4 border_color = vec4(0, 0, 0, 1), int edge_radius = 0);
 void gui_drawable_destroy(GUI_Drawable& drawable);
 
@@ -169,13 +170,14 @@ struct Text_Edit_Input
 };
 
 // PREDEFINED OBJECTS
-GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, float text_height_cm = .4f, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Handle gui_push_text(GUI_Handle parent_handle, String text, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
+GUI_Handle gui_push_text_with_size(GUI_Handle parent_handle, String text, vec2 char_size, vec4 color = vec4(0.0f, 0.0f, 0.0f, 1.0f));
 GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_Size size_y);
 GUI_Handle gui_push_window(GUI_Handle parent_handle, const char* name);
 bool gui_push_button(GUI_Handle parent_handle, String text);
 bool gui_push_toggle(GUI_Handle parent_handle, bool* value);
 GUI_Handle gui_push_text_description(GUI_Handle parent_handle, const char* text);
-Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, float text_height_cm = 0.4f);
+Text_Edit_Input gui_push_text_edit(GUI_Handle parent_handle, String* string, vec2 char_size);
 
 void gui_push_example_gui();
 

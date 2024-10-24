@@ -426,6 +426,8 @@ int run_import_gui()
     import_package.available = false;
     c_compiler_initialize();
 
+    vec2 default_char_size = text_renderer_get_aligned_char_size(text_renderer, 0.4f);
+
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
     float angle = 0.0f;
@@ -460,7 +462,7 @@ int run_import_gui()
             auto file_dialog = gui_add_node(window, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_none());
             gui_node_set_layout(file_dialog, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
             gui_push_text_description(file_dialog, "Header filepath: ");
-            gui_push_text_edit(file_dialog, &importer.header_filepath);
+            gui_push_text_edit(file_dialog, &importer.header_filepath, default_char_size);
 
             if (gui_push_button(file_dialog, string_create_static("Open file")))
             {
@@ -569,7 +571,7 @@ int run_import_gui()
                             }
                         }
 
-                        gui_push_text_edit(node, &string);
+                        gui_push_text_edit(node, &string, default_char_size);
 
 
                         if (should_remove) {
@@ -602,7 +604,7 @@ int run_import_gui()
             {
                 auto filter_area = gui_push_text_description(window, "Filter: ");
                 String* filter = gui_store_string(filter_area, "");
-                auto info = gui_push_text_edit(filter_area, filter);
+                auto info = gui_push_text_edit(filter_area, filter, default_char_size);
 
                 // Rank all import symbols by filter with fuzzy search
                 if (info.text_changed)
@@ -678,7 +680,7 @@ int run_import_gui()
             gui_node_set_layout(bottom, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
             gui_push_text(bottom, string_create_static("Output_filename: "));
             String* out_filename = gui_store_string(bottom, "output.upp");
-            gui_push_text_edit(bottom, out_filename);
+            gui_push_text_edit(bottom, out_filename, default_char_size);
             if (gui_push_button(bottom, string_create_static("Create file")) && import_package.available && out_filename->size > 0) 
             {
                 printf("Generating output\n");

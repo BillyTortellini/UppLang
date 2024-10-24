@@ -111,7 +111,7 @@ namespace Text_Display
         vec3 outline_color;
     };
 
-    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, float text_height, int indentation_spaces);
+    Text_Display make(Rich_Text::Rich_Text* text, Renderer_2D* renderer_2D, Text_Renderer* text_renderer, vec2 char_size, int indentation_spaces);
     void set_background_color(Text_Display* display, vec3 color);
     void set_padding(Text_Display* display, int padding);
     void set_border(Text_Display* display, int border_thickness, vec3 color);

@@ -479,18 +479,17 @@ bool string_test_char(String str, int char_index, char c)
 Array<String> string_split(String string, char c)
 {
     auto parts = dynamic_array_create<String>(1);
-    int last_end_index = -1;
+    int last_start = 0;
     for (int i = 0; i < string.size; i++) {
-        if (string.characters[i] == c && i > (last_end_index + 1)) {
-            String sub = string_create_substring_static(&string, last_end_index+1, i);
+        if (string.characters[i] == c) {
+            String sub = string_create_substring_static(&string, last_start, i);
             dynamic_array_push_back(&parts, sub);
-            last_end_index = i;
+            last_start = i + 1;
         }
     }
-    if (last_end_index + 1 < string.size) {
-        String sub = string_create_substring_static(&string, last_end_index+1, string.size);
-        dynamic_array_push_back(&parts, sub);
-    }
+    String end = string_create_substring_static(&string, last_start, string.size);
+    dynamic_array_push_back(&parts, end);
+
     return dynamic_array_as_array(&parts);
 }
 

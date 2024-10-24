@@ -27,10 +27,11 @@ void text_renderer_add_text(
     String text, 
     vec2 position, 
     Anchor anchor, 
-    float line_height,
+    vec2 char_size,
     vec3 color,
     Optional<Bounding_Box2> clip_box = optional_make_failure<Bounding_Box2>()
 );
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);
+
 float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer);
-float text_renderer_character_width(Text_Renderer* renderer, float line_height);
+vec2 text_renderer_get_aligned_char_size(Text_Renderer* renderer, float text_height); // Returns char size in pixel

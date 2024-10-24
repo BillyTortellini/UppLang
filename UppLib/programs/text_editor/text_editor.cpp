@@ -385,7 +385,7 @@ void text_editor_draw_bounding_box(Text_Editor* editor, Rendering_Core* core, Bo
 
 Bounding_Box2 text_editor_get_character_bounding_box(Text_Editor* editor, Text_Position pos)
 {
-    float glyph_advance = text_renderer_character_width(editor->renderer, editor->last_text_height);
+    float glyph_advance = text_renderer_get_aligned_char_size(editor->renderer, editor->last_text_height).x;
     vec2 cursor_pos = vec2(glyph_advance * (pos.character - editor->first_rendered_char), 0.0f) +
         vec2(editor->last_editor_region.min.x, editor->last_editor_region.max.y - ((pos.line_index - editor->first_rendered_line) + 1.0f) * editor->last_text_height);
     vec2 cursor_size = vec2(glyph_advance, editor->last_text_height);
@@ -455,13 +455,13 @@ void text_editor_render(Text_Editor* editor, Rendering_Core* core, Bounding_Box2
             // text_renderer_add_text_from_layout(editor->renderer, layout, line_pos);
             // line_pos.y -= (text_height);
         }
-        editor_region.min.x += text_renderer_character_width(editor->renderer, text_height) * line_number_char_count;
+        editor_region.min.x += text_renderer_get_aligned_char_size(editor->renderer, text_height).x * line_number_char_count;
     }
     editor->last_editor_region = editor_region;
     editor->last_text_height = text_height;
 
     // Calculate the first and last character to be drawn in any line_index (Viewport)
-    int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_character_width(editor->renderer, text_height);
+    int max_character_count = (editor_region.max.x - editor_region.min.x) / text_renderer_get_aligned_char_size(editor->renderer, text_height).x;
     if (editor->cursor_position.character < editor->first_rendered_char) {
         editor->first_rendered_char = editor->cursor_position.character;
     }

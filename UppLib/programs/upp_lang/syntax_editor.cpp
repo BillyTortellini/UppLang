@@ -22,6 +22,7 @@
 #include "code_history.hpp"
 
 #include "../../utility/rich_text.hpp"
+#include "../../utility/line_edit.hpp"
 
 const int MIN_CURSOR_DISTANCE = 3;
 using Rich_Text::Mark_Type;
@@ -171,6 +172,7 @@ enum class Normal_Mode_Command_Type
     GOTO_PREV_TAB,
 
     // Others
+    ENTER_FUZZY_FIND_DEFINITION,
     VISUALIZE_MOTION, // not sure
     GOTO_LAST_JUMP, // Ctrl-O
     GOTO_NEXT_JUMP, // Ctrl-I
@@ -195,6 +197,7 @@ enum class Editor_Mode
 {
     NORMAL,
     INSERT,
+    FUZZY_FIND_DEFINITION
 };
 
 struct Input_Replay
@@ -231,6 +234,7 @@ struct Syntax_Editor
     Dynamic_Array<Editor_Tab> tabs;
     int open_tab_index;
     int main_tab_index; // If -1, use the currently open tab for compiling
+    float normal_text_size_pixel;
 
     bool last_compile_was_with_code_gen;
     bool code_changed_since_last_compile;
@@ -256,10 +260,16 @@ struct Syntax_Editor
     Rich_Text::Rich_Text editor_text;
     Text_Display::Text_Display text_display;
 
+    // Fuzzy-Find definition
+    String fuzzy_find_search;
+    Line_Editor fuzzy_line_edit;
+    Dynamic_Array<Symbol*> fuzzy_find_suggestions;
+
     // Rendering
     Dynamic_Array<Error_Display> errors;
     Dynamic_Array<Token_Range> token_range_buffer;
 
+    Bounding_Box2 code_box;
     Input* input;
     Rendering_Core* rendering_core;
     Renderer_2D* renderer_2D;
@@ -348,13 +358,12 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     memory_zero(&syntax_editor);
     gui_initialize(text_renderer, window);
 
-    float text_height = convertHeight(0.48f, Unit::CENTIMETER);
-
     syntax_editor.last_compile_was_with_code_gen = false;
     syntax_editor.code_changed_since_last_compile = true;
     syntax_editor.editor_text = Rich_Text::create(vec3(1.0f));
+    syntax_editor.normal_text_size_pixel = convertHeight(0.48f, Unit::CENTIMETER);
     syntax_editor.text_display = Text_Display::make(
-        &syntax_editor.editor_text, renderer_2D, text_renderer, text_height, 4
+        &syntax_editor.editor_text, renderer_2D, text_renderer, text_renderer_get_aligned_char_size(text_renderer, syntax_editor.normal_text_size_pixel), 4
     );
     Text_Display::set_padding(&syntax_editor.text_display, 2);
     Text_Display::set_block_outline(&syntax_editor.text_display, 3, vec3(0.5f));
@@ -363,6 +372,9 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
     syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
     syntax_editor.command_buffer = string_create();
+
+    syntax_editor.fuzzy_find_search = string_create();
+    syntax_editor.fuzzy_find_suggestions = dynamic_array_create<Symbol*>();
 
     syntax_editor.yank_string = string_create();
     syntax_editor.yank_was_line = false;
@@ -406,9 +418,11 @@ void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
     dynamic_array_destroy(&editor.code_completion_suggestions);
+    dynamic_array_destroy(&editor.fuzzy_find_suggestions);
     Rich_Text::destroy(&editor.editor_text);
     string_destroy(&syntax_editor.command_buffer);
     string_destroy(&syntax_editor.yank_string);
+    string_destroy(&syntax_editor.fuzzy_find_search);
     compiler_destroy();
     for (int i = 0; i < editor.errors.size; i++) {
         string_destroy(&editor.errors[i].message);
@@ -3160,6 +3174,13 @@ void normal_command_execute(Normal_Mode_Command& command)
         editor.record_insert_commands = true;
         break;
     }
+    case Normal_Mode_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
+        string_reset(&editor.fuzzy_find_search);
+        editor.fuzzy_line_edit = line_editor_make();
+        dynamic_array_reset(&editor.fuzzy_find_suggestions);
+        editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
+        break;
+    }
     case Normal_Mode_Command_Type::VISUALIZE_MOTION:
     case Normal_Mode_Command_Type::GOTO_LAST_JUMP:
     case Normal_Mode_Command_Type::GOTO_NEXT_JUMP:
@@ -3436,14 +3457,17 @@ void syntax_editor_process_key_message(Key_Message& msg)
     using Parsing::parse_normal_command;
     using Parsing::parse_repeat_count;
 
-    if (mode == Editor_Mode::INSERT)
+    switch (editor.mode)
+    {
+    case Editor_Mode::INSERT: 
     {
         Parse_Result<Insert_Command> result = parse_insert_command(msg);
         if (result.type == Parse_Result_Type::SUCCESS) {
             insert_command_execute(result.result);
         }
+        break;
     }
-    else
+    case Editor_Mode::NORMAL: 
     {
         auto& cmd_buffer = editor.command_buffer;
 
@@ -3472,6 +3496,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
             case Key_Code::D: command_type = Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE; break;
             case Key_Code::O: command_type = Normal_Mode_Command_Type::GOTO_LAST_JUMP; break;
             case Key_Code::I: command_type = Normal_Mode_Command_Type::GOTO_NEXT_JUMP; break;
+            case Key_Code::P: command_type = Normal_Mode_Command_Type::ENTER_FUZZY_FIND_DEFINITION; break;
             }
 
             if (command_type != Normal_Mode_Command_Type::MAX_ENUM_VALUE)
@@ -3504,6 +3529,158 @@ void syntax_editor_process_key_message(Key_Message& msg)
             logg("Command parsing failed: \"%s\"!\n", editor.command_buffer.characters);
             string_reset(&cmd_buffer);
         }
+
+        break;
+    }
+    case Editor_Mode::FUZZY_FIND_DEFINITION: 
+    {
+        // Exit if requested
+        if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
+            editor.mode = Editor_Mode::NORMAL;
+            return;
+        }
+
+        if (msg.key_code == Key_Code::RETURN && msg.key_down) 
+        {
+            if (editor.fuzzy_find_suggestions.size > 0) 
+            {
+                editor.mode = Editor_Mode::NORMAL;
+                auto symbol = editor.fuzzy_find_suggestions[0];
+                assert(symbol->definition_node != 0, "");
+
+                // Switch tab to file with symbol
+                Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
+                int index = syntax_editor_add_tab(code->file_path);
+                syntax_editor_switch_tab(index);
+
+                auto& tab = editor.tabs[editor.open_tab_index];
+                Token_Index token = symbol->definition_node->range.start;
+                auto line = source_code_get_line(tab.code, token.line);
+                tab.cursor.line = token.line;
+                if (token.token < line->tokens.size) {
+                    tab.cursor.character = line->tokens[token.token].start_index;
+                }
+                else {
+                    tab.cursor.character = 0;
+                }
+            }
+            return;
+        }
+
+        bool changed = false;
+        if (msg.key_code == Key_Code::TAB && msg.key_down && editor.fuzzy_find_suggestions.size > 0) {
+            auto symbol = editor.fuzzy_find_suggestions[0];
+            auto& search = editor.fuzzy_find_search;
+            int reset_pos = 0;
+
+            Optional<int> result = string_find_character_index_reverse(&search, '~', search.size-1);
+            if (result.available) {
+                reset_pos = result.value + 1;
+            }
+            string_remove_substring(&search, reset_pos, search.size);
+            string_append_string(&search, symbol->id);
+            if (symbol->type == Symbol_Type::MODULE) {
+                string_append_character(&search, '~');
+            }
+            changed = true;
+
+            editor.fuzzy_line_edit.pos = search.size;
+            editor.fuzzy_line_edit.select_start = search.size;
+        }
+
+        // Otherwise let line handler use key-message
+        if (!changed) {
+            changed = line_editor_feed_key_message(editor.fuzzy_line_edit, &editor.fuzzy_find_search, msg);
+        }
+
+        if (changed) 
+        {
+            if (editor.fuzzy_find_search.size == 0) {
+                dynamic_array_reset(&editor.fuzzy_find_suggestions);
+                return;
+            }
+
+            auto& tab = editor.tabs[editor.open_tab_index];
+            syntax_editor_synchronize_with_compiler(false);
+
+            Symbol_Table* symbol_table = nullptr;
+            Array<String> path_parts = string_split(editor.fuzzy_find_search, '~');
+            SCOPE_EXIT(string_split_destroy(path_parts));
+
+            String search = editor.fuzzy_find_search;
+            bool is_intern = true;
+            if (path_parts[0].size == 0) { // E.g. first term is a ~
+                search = string_create_substring_static(&editor.fuzzy_find_search, 1, editor.fuzzy_find_search.size);
+                symbol_table = compiler.main_source->module_progress->module_analysis->symbol_table;
+                is_intern = false;
+            }
+            else 
+            {
+                Token_Index cursor_token_index = token_index_make(tab.cursor.line, get_cursor_token_index(true));
+                AST::Node* node = Parser::find_smallest_enclosing_node(upcast(tab.code->root), cursor_token_index);
+                Analysis_Pass* pass = code_query_get_analysis_pass(node); // Note: May be null?
+                assert(pass != 0, "After compile the module discory should always execute with normal pass...");
+                symbol_table = code_query_get_ast_node_symbol_table(node);
+                is_intern = true;
+            }
+            assert(symbol_table != 0, "At least root table should always be available");
+
+            // Follow path
+            Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
+            SCOPE_EXIT(dynamic_array_destroy(&symbols));
+            bool search_includes = true;
+            {
+                for (int i = 0; i < path_parts.size - 1; i++) 
+                {
+                    String part = path_parts[i];
+                    if (i == 0 && part.size == 0) {
+                        continue; 
+                    }
+
+                    String* id = identifier_pool_add(&compiler.identifier_pool, part);
+                    dynamic_array_reset(&symbols);
+                    symbol_table_query_id(symbol_table, id, search_includes, (is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &symbols);
+                    search_includes = false;
+                    is_intern = false;
+
+                    Symbol_Table* next_table = nullptr;
+                    for (int j = 0; j < symbols.size; j++) {
+                        auto symbol = symbols[j];
+                        if (symbol->type == Symbol_Type::MODULE) {
+                            next_table = symbol->options.module_progress->module_analysis->symbol_table;
+                            break;
+                        }
+                    }
+
+                    if (next_table == 0) {
+                        return;
+                    }
+                    symbol_table = next_table;
+                }
+            }
+
+            // Add all symbols to fuzzy search
+            dynamic_array_reset(&symbols);
+            symbol_table_query_id(symbol_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &symbols);
+            String last = path_parts[path_parts.size - 1];
+            fuzzy_search_start_search(last);
+            for (int i = 0; i < symbols.size; i++) {
+                auto symbol = symbols[i];
+                if (symbol->definition_node != 0) {
+                    fuzzy_search_add_item(*symbol->id, i);
+                }
+            }
+
+            auto items = fuzzy_search_rank_results(true, 3);
+            auto& suggestions = editor.fuzzy_find_suggestions;
+            dynamic_array_reset(&suggestions);
+            for (int i = 0; i < items.size; i++) {
+                dynamic_array_push_back(&suggestions, symbols[items[i].user_index]);
+            }
+        }
+        break;
+    }
+    default:panic("");
     }
 }
 
@@ -3591,6 +3768,87 @@ void syntax_editor_update()
     for (int i = 0; i < input->key_messages.size; i++) {
         syntax_editor_process_key_message(input->key_messages[i]);
     }
+
+    // Generate GUI
+    {
+        // Draw Tabs
+        auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
+        auto tabs_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.1f, 0.1f, 0.7f, 1.0f)));
+        if (editor.tabs.size > 1)
+        {
+            gui_node_set_layout(tabs_container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MIN);
+            gui_node_set_padding(tabs_container, 2, 2, true);
+            for (int i = 0; i < editor.tabs.size; i++)
+            {
+                auto& tab = editor.tabs[i];
+                String name = tab.code->file_path;
+                int start = 0;
+                int end = name.size;
+
+                Optional<int> path_found = string_find_character_index_reverse(&name, '/', name.size - 1);
+                if (path_found.available) {
+                    start = path_found.value + 1;
+                }
+                path_found = string_find_character_index_reverse(&name, '\\', name.size - 1);
+                if (path_found.available) {
+                    if (path_found.value + 1 > start) {
+                        start = path_found.value + 1;
+                    }
+                }
+                if (string_ends_with(name.characters, ".upp")) {
+                    end = name.size - 4;
+                }
+                name = string_create_substring_static(&name, start, end);
+
+                vec4 bg_color = vec4(0.3f, 0.3f, 0.3f, 1.0f);
+                if (editor.open_tab_index == i) {
+                    bg_color = vec4(0.8f, 0.4f, 0.1f, 1.0f);
+                }
+                auto container = gui_add_node(tabs_container, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(bg_color, 2, vec4(0.2f, 0.2f, 0.2f, 1.0f)));
+                gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
+                gui_node_set_padding(container, 2, 2);
+                gui_node_enable_input(container);
+                if (container.mouse_hover && editor.input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
+                    if (editor.input->key_down[(int)Key_Code::CTRL]) {
+                        if (editor.main_tab_index == i) {
+                            editor.main_tab_index = -1;
+                        }
+                        else {
+                            editor.main_tab_index = i;
+                            editor.code_changed_since_last_compile = true;
+                            syntax_editor_synchronize_with_compiler(false);
+                        }
+                    }
+                    else {
+                        syntax_editor_switch_tab(i);
+                    }
+                }
+
+                if (editor.main_tab_index == i) {
+                    gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
+                    gui_add_node(container, gui_size_make_fixed(5), gui_size_make_fixed(5), gui_drawable_make_rect(vec4(1.0f, 0.8f, 0.0f, 1.0f), 0, vec4(0, 0, 0, 1), 2));
+                    gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
+                }
+                gui_push_text(container, name, vec4(1.0f));
+
+                gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
+                auto rm_button = gui_add_node(container, gui_size_make_fixed(8), gui_size_make_fixed(8), gui_drawable_make_rect(vec4(0.8f, 0.0f, 0.0f, 1.0f)));
+                gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
+                gui_node_enable_input(rm_button);
+                bool should_delete = false;
+                if (rm_button.mouse_hover && editor.input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
+                    should_delete = true;
+                }
+                if (should_delete) {
+                    syntax_editor_close_tab(editor.open_tab_index);
+                    i -= 1;
+                }
+            }
+        }
+        auto code_node = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
+        editor.code_box = gui_node_get_previous_frame_box(code_node);
+    }
+
 
     bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
     syntax_editor_synchronize_with_compiler(build_and_run);
@@ -3786,85 +4044,6 @@ void syntax_editor_render()
     render_pass_add_dependency(pass_context, pass_2D);
 
     // Draw tabs with gui
-    Bounding_Box2 code_box;
-    {
-        auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
-        auto tabs_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.1f, 0.1f, 0.7f, 1.0f)));
-        if (editor.tabs.size > 1)
-        {
-            gui_node_set_layout(tabs_container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MIN);
-            gui_node_set_padding(tabs_container, 2, 2, true);
-            for (int i = 0; i < editor.tabs.size; i++)
-            {
-                auto& tab = editor.tabs[i];
-                String name = tab.code->file_path;
-                int start = 0;
-                int end = name.size;
-
-                Optional<int> path_found = string_find_character_index_reverse(&name, '/', name.size - 1);
-                if (path_found.available) {
-                    start = path_found.value + 1;
-                }
-                path_found = string_find_character_index_reverse(&name, '\\', name.size - 1);
-                if (path_found.available) {
-                    if (path_found.value + 1 > start) {
-                        start = path_found.value + 1;
-                    }
-                }
-                if (string_ends_with(name.characters, ".upp")) {
-                    end = name.size - 4;
-                }
-                name = string_create_substring_static(&name, start, end);
-
-                vec4 bg_color = vec4(0.3f, 0.3f, 0.3f, 1.0f);
-                if (editor.open_tab_index == i) {
-                    bg_color = vec4(0.8f, 0.4f, 0.1f, 1.0f);
-                }
-                auto container = gui_add_node(tabs_container, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(bg_color, 2, vec4(0.2f, 0.2f, 0.2f, 1.0f)));
-                gui_node_set_layout(container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::CENTER);
-                gui_node_set_padding(container, 2, 2);
-                gui_node_enable_input(container);
-                if (container.mouse_hover && editor.input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
-                    if (editor.input->key_down[(int)Key_Code::CTRL]) {
-                        if (editor.main_tab_index == i) {
-                            editor.main_tab_index = -1;
-                        }
-                        else {
-                            editor.main_tab_index = i;
-                            editor.code_changed_since_last_compile = true;
-                            syntax_editor_synchronize_with_compiler(false);
-                        }
-                    }
-                    else {
-                        syntax_editor_switch_tab(i);
-                    }
-                }
-
-                if (editor.main_tab_index == i) {
-                    gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
-                    gui_add_node(container, gui_size_make_fixed(5), gui_size_make_fixed(5), gui_drawable_make_rect(vec4(1.0f, 0.8f, 0.0f, 1.0f), 0, vec4(0, 0, 0, 1), 2));
-                    gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
-                }
-                gui_push_text(container, name, 0.42f, vec4(1.0f));
-
-                gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
-                auto rm_button = gui_add_node(container, gui_size_make_fixed(8), gui_size_make_fixed(8), gui_drawable_make_rect(vec4(0.8f, 0.0f, 0.0f, 1.0f)));
-                gui_add_node(container, gui_size_make_fixed(2), gui_size_make_fixed(1), gui_drawable_make_none()); // Padding
-                gui_node_enable_input(rm_button);
-                bool should_delete = false;
-                if (rm_button.mouse_hover && editor.input->mouse_pressed[(int)Mouse_Key_Code::LEFT]) {
-                    should_delete = true;
-                }
-                if (should_delete) {
-                    syntax_editor_close_tab(editor.open_tab_index);
-                    i -= 1;
-                }
-            }
-        }
-        auto code_node = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
-        code_box = gui_node_get_previous_frame_box(code_node);
-    }
-
     auto& tab = editor.tabs[editor.open_tab_index];
     auto code = tab.code;
     auto& cursor = tab.cursor;
@@ -3872,6 +4051,7 @@ void syntax_editor_render()
     // Calculate camera start
     auto& cam_start = tab.cam_start;
     auto& cam_end = tab.cam_end;
+    auto& code_box = editor.code_box;
     {
         int line_count = (code_box.max.y - code_box.min.y) / editor.text_display.char_size.y;
         cam_end = cam_start + line_count;
@@ -3954,7 +4134,7 @@ void syntax_editor_render()
         syntax_highlighting_highlight_identifiers_recursive(upcast(code->root));
 
         // Highlight selected symbol occurances
-        if (symbol != 0)
+        if (symbol != 0 && editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION)
         {
             // Highlight all instances of the symbol
             vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
@@ -3968,6 +4148,15 @@ void syntax_editor_render()
             // Highlight Definition
             if (symbol->definition_node != 0 && compiler_find_ast_source_code(symbol->definition_node) == code) {
                 syntax_highlighting_mark_section(symbol->definition_node, Parser::Section::IDENTIFIER, color, color, Mark_Type::BACKGROUND_COLOR);
+            }
+        }
+
+        if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.fuzzy_find_suggestions.size > 0) {
+            auto symbol = editor.fuzzy_find_suggestions[0];
+            Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
+            if (code == tab.code) {
+                vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
+                syntax_highlighting_mark_range(symbol->definition_node->range, color, color, Rich_Text::Mark_Type::BACKGROUND_COLOR);
             }
         }
 
@@ -3999,7 +4188,7 @@ void syntax_editor_render()
         max = max + vec2(-t, 0);
 
         renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_min_max(min, max), Syntax_Color::COMMENT);
-        if (editor.mode == Editor_Mode::NORMAL) {
+        if (editor.mode != Editor_Mode::INSERT) {
             vec2 offset = vec2(display->char_size.x + t, 0.0f);
             renderer_2D_add_rectangle(syntax_editor.renderer_2D, bounding_box_2_make_min_max(min + offset, max + offset), Syntax_Color::COMMENT);
 
@@ -4015,7 +4204,7 @@ void syntax_editor_render()
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
     Rich_Text::Rich_Text call_info_text = Rich_Text::create(vec3(1));
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
-    if (true)
+    if (editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION)
     {
         Rich_Text::Rich_Text* text = &context_text;
 
@@ -4293,11 +4482,11 @@ void syntax_editor_render()
         bool draw_call_info = call_info_text.lines.size > 0;
 
         // Figure out text position
+        vec2 char_size = text_renderer_get_aligned_char_size(editor.text_renderer, editor.normal_text_size_pixel * 0.75f);
         Text_Display::Text_Display context_display = Text_Display::make(
-            &context_text, editor.renderer_2D, editor.text_renderer, editor.text_display.char_size.y * 0.75f, 2
+            &context_text, editor.renderer_2D, editor.text_renderer, char_size, 2
         );
 
-        vec2 char_size = context_display.char_size;
         vec2 context_size = vec2(0);
         vec2 call_info_size = vec2(0);
         if (draw_context) {
@@ -4347,7 +4536,7 @@ void syntax_editor_render()
         }
         if (draw_call_info) {
             Text_Display::Text_Display call_display = Text_Display::make(
-                &call_info_text, editor.renderer_2D, editor.text_renderer, editor.text_display.char_size.y * 0.75f, 2
+                &call_info_text, editor.renderer_2D, editor.text_renderer, char_size, 2
             );
             Text_Display::set_background_color(&call_display, COLOR_BG);
             Text_Display::set_border(&call_display, BORDER_SIZE, COLOR_BORDER);
@@ -4368,8 +4557,9 @@ void syntax_editor_render()
         vec2 pos = Text_Display::get_char_position(&editor.text_display, cursor.line - cam_start, cursor.character, Anchor::TOP_RIGHT);
         pos.x += 4;
 
+        vec2 char_size = text_renderer_get_aligned_char_size(editor.text_renderer, editor.normal_text_size_pixel * 0.6f);
         Text_Display::Text_Display display = Text_Display::make(
-            &rich_text, editor.renderer_2D, editor.text_renderer, editor.text_display.char_size.y * 0.6f, 2
+            &rich_text, editor.renderer_2D, editor.text_renderer, char_size, 2
         );
         vec2 size = display.char_size * vec2(editor.command_buffer.size, 1) + 2 * (1 + 1);
         Text_Display::set_background_color(&display, vec3(0.2f));
@@ -4377,6 +4567,75 @@ void syntax_editor_render()
         Text_Display::set_padding(&display, 1);
         Text_Display::set_frame(&display, pos, Anchor::TOP_LEFT, size);
         Text_Display::render(&display, pass_context);
+    }
+
+    // Draw Fuzzy-Find
+    if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION)
+    {
+        auto& line_edit = editor.fuzzy_line_edit;
+
+        Rich_Text::Rich_Text rich_text = Rich_Text::create(vec3(1));
+        SCOPE_EXIT(Rich_Text::destroy(&rich_text));
+        Rich_Text::add_line(&rich_text);
+        Rich_Text::append(&rich_text, editor.fuzzy_find_search);
+
+        // Draw highlighted
+        if (line_edit.pos != line_edit.select_start) {
+            int start = math_minimum(line_edit.pos, line_edit.select_start);
+            int end = math_maximum(line_edit.pos, line_edit.select_start);
+            Rich_Text::mark_line(&rich_text, Rich_Text::Mark_Type::BACKGROUND_COLOR, vec3(0.3f), 0, start, end);
+        }
+
+        // Push suggestions
+        if (editor.fuzzy_find_suggestions.size > 0) 
+        {
+            Rich_Text::add_seperator_line(&rich_text);
+            for (int i = 0; i < editor.fuzzy_find_suggestions.size; i++) 
+            {
+                auto symbol = editor.fuzzy_find_suggestions[i];
+                Rich_Text::add_line(&rich_text);
+                vec3 color = symbol_type_to_color(symbol->type);
+                Rich_Text::set_text_color(&rich_text, color);
+                if (i == 0) {
+                    Rich_Text::set_bg(&rich_text, vec3(0.3f));
+                    Rich_Text::set_underline(&rich_text, Syntax_Color::STRING);
+                }
+                else {
+                    Rich_Text::set_bg(&rich_text, vec3(0.08f));
+                }
+                Rich_Text::append(&rich_text, *editor.fuzzy_find_suggestions[i]->id);
+
+                Rich_Text::set_text_color(&rich_text);
+                Rich_Text::append(&rich_text, ": ");
+                String* string = Rich_Text::start_line_manipulation(&rich_text);
+                symbol_type_append_to_string(symbol->type, string);
+                Rich_Text::stop_line_manipulation(&rich_text);
+            }
+        }
+
+        // Create display and render
+        vec2 char_size = editor.text_display.char_size;
+        Text_Display::Text_Display display = Text_Display::make(
+            &rich_text, editor.renderer_2D, editor.text_renderer, char_size, 2
+        );
+        Text_Display::set_border(&display, 0, vec3(1.0f));
+
+        int width = rendering_core.render_information.backbuffer_width;
+        int height = rendering_core.render_information.backbuffer_height;
+
+        int length = ((int)(width / 2) / (int)char_size.x) * char_size.x;
+        vec2 size = vec2((float)length, char_size.y * rich_text.lines.size);
+        vec2 pos = vec2(width / 2 - length / 2, height - 30);
+        Text_Display::set_frame(&display, pos, Anchor::TOP_LEFT, size);
+        Text_Display::set_background_color(&display, vec3(0.5f));
+        Text_Display::render(&display, pass_2D);
+
+        // Draw cursor
+        const int t = 2;
+        vec2 min = Text_Display::get_char_position(&display, 0, line_edit.pos, Anchor::BOTTOM_LEFT);
+        vec2 max = min + vec2((float)t, char_size.y);
+        renderer_2D_add_rectangle(editor.renderer_2D, bounding_box_2_make_min_max(min, max), Syntax_Color::COMMENT);
+        renderer_2D_draw(editor.renderer_2D, pass_2D);
     }
 
     // Render gui

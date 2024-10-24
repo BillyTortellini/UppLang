@@ -1064,7 +1064,7 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
         auto push_section_header = [&](const char* name) {
             // Add Header
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(12.0f), gui_drawable_make_none()); // Padding
-            gui_push_text(area, string_create_static(name), 0.5f);
+            gui_push_text(area, string_create_static(name)); // Note:: Make size biggah
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_rect(vec4(0.0f, 0.0f, 0.0f, 1.0f)));
             gui_add_node(area, gui_size_make_fill(), gui_size_make_fixed(2.0f), gui_drawable_make_none()); // Padding

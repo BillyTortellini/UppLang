@@ -57,29 +57,37 @@ float text_renderer_character_width(Text_Renderer* renderer, float line_height) 
     return line_height * width_to_height_ratio;
 }
 
+vec2 text_renderer_get_aligned_char_size(Text_Renderer* renderer, float text_height)
+{
+    float width_to_height_ratio = text_renderer_get_char_width_to_height_ratio(renderer);
+    float width = math_ceil(text_height * width_to_height_ratio); // Align to pixel size
+    float height = math_ceil(width / width_to_height_ratio); // Also align to pixel size
+    return vec2(width, height);
+}
+
 float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer) {
     auto& atlas = renderer->glyph_atlas;
     return atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
-void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, float line_height, vec3 color, Optional<Bounding_Box2> clip_box)
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<Bounding_Box2> clip_box)
 {
     if (text.size == 0) {
         return;
     }
 
     Glyph_Atlas* atlas = &renderer->glyph_atlas;
-    const vec2 char_size = vec2(text_renderer_character_width(renderer, line_height), line_height);
+    float text_height = char_size.x / text_renderer_get_char_width_to_height_ratio(renderer);
     const vec2 char_size_normalized = convertSizeFromTo(char_size, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     vec2 offset = anchor_switch(
         convertPointFromTo(position, Unit::PIXELS, Unit::NORMALIZED_SCREEN), vec2(char_size_normalized.x * text.size, char_size_normalized.y),
         anchor, Anchor::BOTTOM_LEFT
     );
-    vec2 font_scaling = convertSizeFromTo(vec2(line_height) / (float)(atlas->ascender - atlas->descender), Unit::PIXELS, Unit::NORMALIZED_SCREEN);
+    vec2 font_scaling = convertSizeFromTo(vec2(text_height) / (float)(atlas->ascender - atlas->descender), Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     float distance_field_scaling;
     {
         float line_pixel_size_in_atlas = ((atlas->ascender - atlas->descender) / 64.0f); // In pixel per line_index
-        float line_size_on_screen = line_height; // In pixel per line_index
+        float line_size_on_screen = text_height; // In pixel per line_index
         distance_field_scaling = line_size_on_screen / line_pixel_size_in_atlas;
     }
 
@@ -87,7 +95,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
     bool clipping = false;
     if (clip_box.available) {
         auto clip = clip_box.value;
-        Bounding_Box2 text_box = bounding_box_2_make_anchor(position, vec2(char_size.x * text.size, line_height), anchor);
+        Bounding_Box2 text_box = bounding_box_2_make_anchor(position, vec2(char_size.x * text.size, text_height), anchor);
         if (!bounding_box_2_overlap(clip, text_box)) { // Return if everything is clipped
             return;
         }

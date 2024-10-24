@@ -205,10 +205,9 @@ void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes
     return symbol_table_query_id_recursive(table, id, search_includes, access_level, results);
 }
 
-void symbol_append_to_string(Symbol* symbol, String* string)
+void symbol_type_append_to_string(Symbol_Type type, String* string)
 {
-    string_append_formated(string, "%s ", symbol->id->characters);
-    switch (symbol->type)
+    switch (type)
     {
     case Symbol_Type::VARIABLE_UNDEFINED:
         string_append_formated(string, "Variable Undefined");
@@ -241,7 +240,7 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         string_append_formated(string, "Error");
         break;
     case Symbol_Type::COMPTIME_VALUE:
-        string_append_formated(string, "Constant %d", symbol->options.constant.constant_index);
+        string_append_formated(string, "Constant");
         break;
     case Symbol_Type::HARDCODED_FUNCTION:
         string_append_formated(string, "Hardcoded Function");
@@ -254,6 +253,12 @@ void symbol_append_to_string(Symbol* symbol, String* string)
         break;
     default: panic("What");
     }
+}
+
+void symbol_append_to_string(Symbol* symbol, String* string)
+{
+    string_append_formated(string, "%s ", symbol->id->characters);
+    symbol_type_append_to_string(symbol->type, string);
 }
 
 void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, bool is_parent, bool print_root)

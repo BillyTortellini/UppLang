@@ -1,123 +1,11 @@
 
-
-IMPL:
- * Compiler should have list of sources
-    --> Parser can probably just parse into Code
-    --> Source-Code and Program_Source could be the same thing (Maybe when code is generated we need something else, but for now this works)
- * Errors from different files should be show correctly
-
- * GUI should also use pixel aligned text... (Makes life easier)
-
-
-TODO:
- * Mouse-Clicking tabs switches to them
- * Ctrl-Click locks tab as 'main'-file, default for editor_text
- * Don't open tabs if the filepath already exists
- * Implement tabs with distinct histories
- * Normal mode commands for tab-switching
- * Show tabs at the top of the screen
- * Open_file dialog should append to string...
- * Error-highlighting only in currently open tab...
-
-Multiple-File Handling:
------------------------
- * Use GUI to draw files at the top of the screen
- * Highlight main-file (Which gets run when compiled...)
- * How to do history?
-    --> Should history be per file?
-    if history is per-file, then:
-        * Refactoring across files will not be un-doable
-        * But undo/redo will make more sense?
-    --> Either history stores openend files, or...
-    --> Syntax-Editor could store history-timestamps per file
-
-Per-File History:
- * Easy to implement
- * Refactoring acress files will not be un-doable
- * Undo/Redo won't jump across files
-Global History:
- * Harder to implement
- * I think it makes more sense
-
-DONE:
- * Error-Display::Enclosure not working for missing function parameters...
- * Show completable command in normal mode next to cursor
- * Show call-infos if available
- * Make cursor a little nicer
- * Color for enum values
-    - Member-Access should store if it's an enum
-    - In enum definition we should store this
- * Parameters aren't marked, as they are no symbol-definitions?
- * New Color for struct-members + member access
- * New Color for Subtypes
-
-
-
-Calling instances:
- - Function-Pointer
- - Struct-Instance
- - Dot-Calls
- - Hardcoded-Functions
- - context_options (e.g. context set_cast_option(Fuck))
- - Function
-    --> Overloading must be handled here (matching arguments one by one)
- - Poly-Function
-    --> Parameters which must be set with named arguments
- - #instanciate
-    --> All comptime and implicit parameters must be set, and nothing else
- - Struct Initializer
-    --> Arguments may be recursive and may be subtypes, e.g.
-        Node.{15, value=10, normal=false, .SUBTYPE={x=12, y=20}, . = {Frick me but}}
-
-Some ideas:
- - Call AST::Node
-    * Dynamic_Array of Arguments
-    * Dynamic_Array of subtype_initializers (. = {})
-    * bool if ignore exists
- - Call Analysis_Info
-    * Stores argument-to-parameter mapping
-    * parameter-to-argument mapping also...
-    * Stores callable (+ missing parameters)
- - Callable:
-    * Number of parameters
-    * Optional-Parameters
-    * Default parameters
-    * Set-by-name parameters
-    * Something where parameters can be mapped to
-
-Maybe better Idea:
- 1. Have a call-node
-    * Dynamic_Array of Arguments
-    * Dynamic_Array of subtype_initializers (name + call-node. = {})
- - Implement parsing
-    * Parse arguments as function
-    * If argument is _, then add error-expression... as expression
- 2. Use call node for all calls
-    * Update struct-initializer logic for this
-    * Normal calls should check that no _ and {} exist
- 3. Store Callable in Analysis_Info
- 4. In Editor, show parameter of callable in call
+Fuzzy-Find Definition:
+ * Handle file-names if search starts with ./
+ * Fuzzy find isn't great, see 'p' finding main before Player
 
 
 
 
-
-TODO: 
- * Function-Information in Editor:
-    - If inside callable, show current parameter
-    - Show missing parameters in Callable
-    - Also for struct-initializer (Maybe make callable?)
-
-
-
-DONE:
- * Text-Editor should use rich-text rendering
- * Context should work now with rich text
- * Rich_Text append + append_formated
- * Rich_Text append_to_string
- * Use rich-text for datatypes + error-infos
- * Move Rich_Text to own header
- * Rich Text replacing context-box
 
 
 
@@ -128,8 +16,6 @@ Features: (Done first, then ranked by priority)
  - Auto-Formating
  - Motions + Vim commands
  - Better Context-Info
-
-Required:
  - Function call information
     * Show current call parameters
     * Show current parameter
@@ -142,6 +28,8 @@ Required:
  - Fuzzy Goto definition/symbol
     * Fuzzy search to multiple definitions
     * Over multiple files when imports are used
+
+Required:
  - Jumping between last positions 
     * Maybe even have a GUI for the jump list with functions + indices
  - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
