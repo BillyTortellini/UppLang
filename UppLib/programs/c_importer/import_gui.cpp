@@ -464,10 +464,12 @@ int run_import_gui()
 
             if (gui_push_button(file_dialog, string_create_static("Open file")))
             {
-                auto result = file_io_open_file_selection_dialog();
-                if (result.available) {
+                String tmp = string_create();
+                SCOPE_EXIT(string_destroy(&tmp));
+                bool available = file_io_open_file_selection_dialog(&tmp);
+                if (available) {
                     string_reset(&importer.header_filepath);
-                    string_append_string(&importer.header_filepath, &result.value);
+                    string_append_string(&importer.header_filepath, &tmp);
                     string_replace_character(&importer.header_filepath, '\\', '/');
                 }
             }
@@ -557,10 +559,12 @@ int run_import_gui()
 
                         if (gui_push_button(node, string_create_static("Open")))
                         {
-                            auto result = file_io_open_file_selection_dialog();
-                            if (result.available) {
+                            String tmp = string_create();
+                            SCOPE_EXIT(string_destroy(&tmp));
+                            bool available = file_io_open_file_selection_dialog(&tmp);
+                            if (available) {
                                 string_reset(&string);
-                                string_append_string(&string, &result.value);
+                                string_append_string(&string, &tmp);
                                 string_replace_character(&string, '\\', '/');
                             }
                         }

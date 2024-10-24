@@ -1,21 +1,55 @@
 
 
- * Subtypes and member access should not have the same color as function call
- * New color for struct-subtypes
- * Show completable command in normal mode next to cursor
+IMPL:
+ * Compiler should have list of sources
+    --> Parser can probably just parse into Code
+    --> Source-Code and Program_Source could be the same thing (Maybe when code is generated we need something else, but for now this works)
+ * Errors from different files should be show correctly
+
+ * GUI should also use pixel aligned text... (Makes life easier)
+
+
+TODO:
+ * Mouse-Clicking tabs switches to them
+ * Ctrl-Click locks tab as 'main'-file, default for editor_text
+ * Don't open tabs if the filepath already exists
+ * Implement tabs with distinct histories
+ * Normal mode commands for tab-switching
+ * Show tabs at the top of the screen
+ * Open_file dialog should append to string...
+ * Error-highlighting only in currently open tab...
+
+Multiple-File Handling:
+-----------------------
+ * Use GUI to draw files at the top of the screen
+ * Highlight main-file (Which gets run when compiled...)
+ * How to do history?
+    --> Should history be per file?
+    if history is per-file, then:
+        * Refactoring across files will not be un-doable
+        * But undo/redo will make more sense?
+    --> Either history stores openend files, or...
+    --> Syntax-Editor could store history-timestamps per file
+
+Per-File History:
+ * Easy to implement
+ * Refactoring acress files will not be un-doable
+ * Undo/Redo won't jump across files
+Global History:
+ * Harder to implement
+ * I think it makes more sense
 
 DONE:
- * dd isn't working correctly at end of block
- * Datatype to string for Subtypes shows dot twice
- * Scrolling longer text cursor and Ctrl-D is fucked
- * Indentation lines are fucked --> Also probably skip comment blocks
- * Sometimes text is rendered twice e.g. / what
- * Ignore tokens should cause the struct-inititalizer to not be exhaustive on members
- * Normal function calls + instanciate should error on ignore-tokens/subtype-initializers
- * Comptime struct inititalizer
- * IR-Code update
- * Overloads for all things need update
- * Analyse Operator context-changes
+ * Error-Display::Enclosure not working for missing function parameters...
+ * Show completable command in normal mode next to cursor
+ * Show call-infos if available
+ * Make cursor a little nicer
+ * Color for enum values
+    - Member-Access should store if it's an enum
+    - In enum definition we should store this
+ * Parameters aren't marked, as they are no symbol-definitions?
+ * New Color for struct-members + member access
+ * New Color for Subtypes
 
 
 

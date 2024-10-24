@@ -4,6 +4,7 @@
 #include "compiler.hpp"
 #include "../../utility/character_info.hpp"
 #include "lexer.hpp"
+#include "ast.hpp"
 #include <string>
 
 const int BUNDLE_MAX_SIZE = 500;
@@ -31,12 +32,23 @@ void add_first_bundle_and_line(Source_Code* code)
 }
 
 // Source Code
-Source_Code* source_code_create()
+Source_Code* source_code_create(String file_path, bool used_in_last_compile, bool open_in_editor)
 {
     Source_Code* result = new Source_Code;
+    result->file_path = file_path;
+    result->used_in_last_compile = used_in_last_compile;
+    result->open_in_editor = open_in_editor;
+    result->code_changed_since_last_compile = true;
+
+    result->module_progress = 0;
+    result->root = 0;
+    result->allocated_nodes = dynamic_array_create<AST::Node*>();
+    result->error_messages = dynamic_array_create<Error_Message>();
+
     result->line_count = 0;
     result->bundles = dynamic_array_create<Line_Bundle>();
     add_first_bundle_and_line(result);
+
     return result;
 }
 
@@ -54,17 +66,34 @@ void source_code_destroy(Source_Code* code)
         dynamic_array_destroy(&bundle.lines);
     }
     dynamic_array_destroy(&code->bundles);
+    dynamic_array_destroy(&code->error_messages);
+
+    for (int i = 0; i < code->allocated_nodes.size; i++) {
+        AST::base_destroy(code->allocated_nodes[i]);
+    }
+    dynamic_array_destroy(&code->allocated_nodes);
+
     code->line_count = 0;
+    delete code;
 }
 
 void source_code_reset(Source_Code* code)
 {
+    for (int i = 0; i < code->allocated_nodes.size; i++) {
+        AST::base_destroy(code->allocated_nodes[i]);
+    }
+    dynamic_array_reset(&code->allocated_nodes);
+    code->module_progress = 0;
+    code->root = 0;
+    dynamic_array_reset(&code->error_messages);
+
     for (int i = 0; i < code->bundles.size; i++) {
         auto& bundle = code->bundles[i];
         dynamic_array_for_each(bundle.lines, source_line_destroy);
         dynamic_array_destroy(&bundle.lines);
     }
     dynamic_array_reset(&code->bundles);
+
     add_first_bundle_and_line(code);
 }
 

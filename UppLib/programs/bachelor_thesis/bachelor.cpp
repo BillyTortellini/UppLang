@@ -1227,9 +1227,11 @@ void graph_editor_update(Input* input, Window_State* window_state, Render_Pass* 
 
         if (do_load_file)
         {
-            auto open_file = file_io_open_file_selection_dialog();
-            if (open_file.available) {
-                graph_editor_load_file(open_file.value.characters);
+            String tmp = string_create();
+            SCOPE_EXIT(string_destroy(&tmp));
+            bool available = file_io_open_file_selection_dialog(&tmp);
+            if (available) {
+                graph_editor_load_file(tmp.characters);
             }
         }
     }

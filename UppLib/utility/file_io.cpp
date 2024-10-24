@@ -170,7 +170,7 @@ bool file_io_write_file(const char* filepath, Array<byte> data)
 }
 
 static char buffer[256];
-Optional<String> file_io_open_file_selection_dialog()
+bool file_io_open_file_selection_dialog(String* write_to)
 {
     // open a file base_name
     OPENFILENAME ofn;
@@ -188,6 +188,8 @@ Optional<String> file_io_open_file_selection_dialog()
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
 
     int ret_val = GetOpenFileName(&ofn);
-    if (ret_val == 0) return optional_make_failure<String>();
-    return optional_make_success(string_create_static(ofn.lpstrFile));
+    if (ret_val == 0) return false;
+    string_reset(write_to);
+    string_append(write_to, buffer);
+    return true;
 }

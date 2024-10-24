@@ -21,16 +21,15 @@ namespace Parser
     {
         Token_Index pos;
         Source_Line* line;
-        Parsed_Code* parsed_code;
         int allocated_count;
         int error_count;
     };
 
     struct Parser
     {
+        Source_Code* code;
         Parse_State state;
-        Dynamic_Array<AST::Node*> allocated_nodes;
-        Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
+        // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
     };
 
 
@@ -40,42 +39,16 @@ namespace Parser
     // Parser Functions
     void parser_rollback(Parse_State checkpoint)
     {
-        assert(checkpoint.allocated_count <= parser.allocated_nodes.size, "");
-        for (int i = checkpoint.allocated_count; i < parser.allocated_nodes.size; i++) {
-            AST::base_destroy(parser.allocated_nodes[i]);
+        auto& nodes = parser.code->allocated_nodes;
+        auto& errors = parser.code->error_messages;
+
+        assert(checkpoint.allocated_count <= nodes.size, "");
+        for (int i = checkpoint.allocated_count; i < nodes.size; i++) {
+            AST::base_destroy(nodes[i]);
         }
-        dynamic_array_rollback_to_size(&parser.allocated_nodes, checkpoint.allocated_count);
-        dynamic_array_rollback_to_size(&parser.new_error_messages, checkpoint.error_count);
+        dynamic_array_rollback_to_size(&nodes, checkpoint.allocated_count);
+        dynamic_array_rollback_to_size(&errors, checkpoint.error_count);
         parser.state = checkpoint;
-    }
-
-    void reset()
-    {
-        Parse_State state;
-        state.allocated_count = 0;
-        state.error_count = 0;
-        state.parsed_code = 0;
-        state.pos = token_index_make(0, 0);
-        state.line = 0;
-        parser.state.parsed_code = 0;
-        parser_rollback(state);
-    }
-
-    void initialize()
-    {
-        parser.allocated_nodes = dynamic_array_create<AST::Node*>(32);
-        parser.new_error_messages = dynamic_array_create<Error_Message>(1);
-        reset();
-    }
-
-    void destroy()
-    {
-        reset();
-        for (int i = 0; i < parser.allocated_nodes.size; i++) {
-            AST::base_destroy(parser.allocated_nodes[i]);
-        }
-        dynamic_array_destroy(&parser.allocated_nodes);
-        dynamic_array_destroy(&parser.new_error_messages);
     }
 
     template<typename T>
@@ -101,8 +74,8 @@ namespace Parser
         Error_Message err;
         err.msg = msg;
         err.range = range;
-        dynamic_array_push_back(&parser.new_error_messages, err);
-        parser.state.error_count = parser.new_error_messages.size;
+        dynamic_array_push_back(&parser.code->error_messages, err);
+        parser.state.error_count = parser.code->error_messages.size;
     }
 
     void log_error_to_pos(const char* msg, Token_Index pos) {
@@ -145,7 +118,7 @@ namespace Parser
     bool test_parenthesis(char c);
     bool on_follow_block() {
         auto& pos = parser.state.pos;
-        auto code = parser.state.parsed_code->code;
+        auto code = parser.code;
 
         if (test_parenthesis('{')) return true;
         if (pos.line + 1 >= code->line_count) return false;
@@ -243,7 +216,7 @@ namespace Parser
         //      * Sanity checks
         //      * Sets the end of the node
         //      * Calcualtes bounding-ranges (for editor)
-        auto code = parser.state.parsed_code->code;
+        auto code = parser.code;
 
         // Set end of node
         auto& range = node->range;
@@ -269,7 +242,7 @@ namespace Parser
 
     // Parsing Helpers
 #define CHECKPOINT_SETUP \
-        if (parser.state.pos.line >= parser.state.parsed_code->code->line_count) {return 0;}\
+        if (parser.state.pos.line >= parser.code->line_count) {return 0;}\
         if (remaining_line_tokens() == 0 && !on_follow_block()) {return 0;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
@@ -403,7 +376,7 @@ namespace Parser
                 }
 
                 // Check if we are finished with item parsing
-                if (parser.state.pos.line >= parser.state.parsed_code->code->line_count) {
+                if (parser.state.pos.line >= parser.code->line_count) {
                     return;
                 }
                 if (remaining_line_tokens() == 0) { // Reached end of line
@@ -439,7 +412,7 @@ namespace Parser
                 }
                 return token->type == Token_Type::OPERATOR && token->options.op == stopper->seperator;
             };
-            auto recovery_point_opt = search_token(parser.state.parsed_code->code, parser.state.pos, search_fn, &stopper);
+            auto recovery_point_opt = search_token(parser.code, parser.state.pos, search_fn, &stopper);
 
             // Check if we reached stop, found comma or none of both
             if (!recovery_point_opt.available) {
@@ -467,7 +440,7 @@ namespace Parser
         Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, Operator seperator, int block_indent, bool anonymous_blocks_allowed)
     {
         auto& pos = parser.state.pos;
-        auto& code = parser.state.parsed_code->code;
+        auto& code = parser.code;
 
         Source_Line* line = parser.state.line;
         while (true)
@@ -573,7 +546,7 @@ namespace Parser
         Parenthesis_Type parenthesis, Operator seperator, bool valid_without_parenthesis, bool anonymous_blocks_allowed)
     {
         auto& pos = parser.state.pos;
-        auto& code = parser.state.parsed_code->code;
+        auto& code = parser.code;
 
         bool multi_line_valid = false;
         bool expecting_closing_parenthesis_after_block = false;
@@ -696,7 +669,7 @@ namespace Parser
 
         // Check if we can find the parenthesis exit
         auto parenthesis_pos = search_token(
-            parser.state.parsed_code->code,
+            parser.code,
             parser.state.pos,
             [](Token* t, void* _unused) -> bool
             { return t->type == Token_Type::PARENTHESIS &&
@@ -1394,7 +1367,7 @@ namespace Parser
             {
                 // Check for Anonymous Blocks with identifiers
                 // INFO: This needs to be done before definition
-                auto code = parser.state.parsed_code->code;
+                auto code = parser.code;
                 auto& pos = parser.state.pos;
 
                 bool next_line_has_indent = false;
@@ -1564,7 +1537,7 @@ namespace Parser
                                 return true;
                             }
                             auto pos_opt = search_token(
-                                parser.state.parsed_code->code,
+                                parser.code,
                                 parser.state.pos,
                                 [](Token* token, void* userdata) -> bool {
                                     return token->type == Token_Type::OPERATOR && token->options.op == Operator::SEMI_COLON;
@@ -1808,8 +1781,10 @@ namespace Parser
             result->value = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);
         }
-        result->value = parse_expression(&result->base);
-        if (result->value == 0) CHECKPOINT_EXIT;
+        result->value = parse_expression_or_error_expr(&result->base);
+        // Note: This only works because parse arguments is only called in once in arguments node
+        // result->value = parse_expression(&result->base);
+        // if (result->value == 0) CHECKPOINT_EXIT;
         PARSE_SUCCESS(result);
     }
 
@@ -2401,13 +2376,14 @@ namespace Parser
 
     void parse_root()
     {
+        auto code = parser.code;
+
         parser.state.pos = token_index_make(0, 0);
-        parser.state.line = source_code_get_line(parser.state.parsed_code->code, 0);
+        parser.state.line = source_code_get_line(parser.code, 0);
 
         // Create root
-        auto& root = parser.state.parsed_code->root;
-        auto& code = parser.state.parsed_code->code;
-        root = allocate_base<Module>(0, Node_Type::MODULE);
+        auto root = allocate_base<Module>(0, Node_Type::MODULE);
+        code->root = root;
         root->definitions = dynamic_array_create<Definition*>();
         root->import_nodes = dynamic_array_create<Import*>();
         root->context_changes = dynamic_array_create<Context_Change*>();
@@ -2421,35 +2397,21 @@ namespace Parser
         root->base.bounding_range = range;
     }
 
-    void parser_prepare_parsing(Parsed_Code* parsed_code)
+    void execute_clean(Source_Code* code)
     {
-        parser.state.parsed_code = parsed_code;
+        for (int i = 0; i < code->allocated_nodes.size; i++) {
+            AST::base_destroy(code->allocated_nodes[i]);
+        }
+        dynamic_array_reset(&code->allocated_nodes);
+        dynamic_array_reset(&code->error_messages);
+        code->root = 0;
+
+        parser.code = code;
+        parser.state.allocated_count = 0;
         parser.state.error_count = 0;
-        dynamic_array_reset(&parser.new_error_messages);
-        dynamic_array_reset(&parser.allocated_nodes);
-    }
-
-    Parsed_Code* execute_clean(Source_Code* code)
-    {
-        Parsed_Code* parsed_code = new Parsed_Code;
-        parsed_code->code = code;
-        parsed_code->error_messages = dynamic_array_create<Error_Message>(1);
-
-        parser_prepare_parsing(parsed_code);
+        parser.state.pos = token_index_make(0, 0);
+        parser.state.line = source_code_get_line(code, 0);
         parse_root();
-
-        // Add created error messages to all error messages
-        dynamic_array_append_other(&parsed_code->error_messages, &parser.new_error_messages);
-        dynamic_array_reset(&parser.new_error_messages);
-
-        return parsed_code;
-    }
-
-    void source_parse_destroy(Parsed_Code* parsed_code)
-    {
-        parser.state.parsed_code = parsed_code;
-        dynamic_array_destroy(&parsed_code->error_messages);
-        delete parsed_code;
     }
 
     // AST queries based on Token-Indices
@@ -2518,14 +2480,13 @@ namespace Parser
             // Find closing parenthesis
             auto par_type = source_code_get_line(code, result.value.line)->tokens[result.value.token].options.parenthesis.type;
             advance_token();
-            auto end_token = search_token(
-                code,
-                result.value,
-                [](Token* t, void* type) -> bool
-                { return t->type == Token_Type::PARENTHESIS &&
-                !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); },
-                (void*)(&par_type)
-            );
+            auto end_found_fn = [](Token* t, void* type) -> bool { 
+                return t->type == Token_Type::PARENTHESIS && 
+                    !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); 
+            };
+            Token_Index start = result.value;
+            start.token += 1;
+            auto end_token = search_token(code, start, end_found_fn, (void*)(&par_type));
             if (!end_token.available) {
                 break;
             }

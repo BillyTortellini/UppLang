@@ -91,26 +91,6 @@ struct Source_Code;
 namespace AST {
     struct Module;
 }
-namespace Parser {
-    struct Parsed_Code;
-}
-
-enum class Code_Origin
-{
-    MAIN_PROJECT,
-    LOADED_FILE,
-};
-
-struct Program_Source
-{
-    Code_Origin origin;
-    String file_path;
-
-    Source_Code* code;
-    Parser::Parsed_Code* parsed_code;
-    Module_Progress* module_progress; // Analysis progress, may be 0 if not analysed yet
-};
-
 
 // Extern Sources
 struct Extern_Sources

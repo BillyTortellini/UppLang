@@ -905,7 +905,8 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     }
 
     // Create workload for global variables/comptime definitions
-    auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(upcast(definition));
+    AST::Node* mapping_node = definition->is_comptime ? upcast(definition->values[0]) : upcast(definition); // Otherwise syntax-editor will look at wrong path when looking at definition symbol
+    auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(mapping_node);
     definition_workload->symbol = symbol;
     definition_workload->is_extern_import = false;
     auto& def = definition_workload->options.normal;
@@ -1385,38 +1386,53 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         }
         return comptime_result_make_available(&base_ptr[element_offset], result_type);
     }
-    case AST::Expression_Type::MEMBER_ACCESS: {
+    case AST::Expression_Type::MEMBER_ACCESS: 
+    {
         auto& access_info = info->specifics.member_access;
-        if (access_info.type == Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS) {
+        switch (access_info.type)
+        {
+        case Member_Access_Type::STRUCT_MEMBER_ACCESS: 
+        {
+            Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
+            if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
+                return value_struct;
+            }
+            else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
+                return comptime_result_make_unavailable(result_type, value_struct.message);
+            }
+
+            assert(access_info.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
+            byte* raw_data = (byte*)value_struct.data;
+            return comptime_result_make_available(&raw_data[access_info.options.member.offset], result_type);
+        }
+        case Member_Access_Type::DOT_CALL:
+        case Member_Access_Type::DOT_CALL_AS_MEMBER: {
+            return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
+        }
+        case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
             assert(access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "In instance this should already be constant");
             return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
         }
-        else if (access_info.type == Member_Access_Type::DOT_CALL_AS_MEMBER) {
-            return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
-        }
-        else if (access_info.type == Member_Access_Type::STRUCT_SUBTYPE) {
+        case Member_Access_Type::STRUCT_SUBTYPE: {
             panic("Should be handled by type_type!");
+            return comptime_result_make_unavailable(result_type, "Invalid code-path!");
         }
-        else if (access_info.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST) 
-        {
+        case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: {
             Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
             if (value_struct.type != Comptime_Result_Type::AVAILABLE) {
                 return value_struct;
             }
             return comptime_result_make_available(value_struct.data, result_type);
         }
-
-        Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
-        if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return value_struct;
+        case Member_Access_Type::ENUM_MEMBER_ACCESS: {
+            panic("Should be handled by type_type!");
+            return comptime_result_make_unavailable(result_type, "Invalid code-path, should be handled by constant-path");
         }
-        else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type, value_struct.message);
+        default: panic("");
         }
 
-        assert(access_info.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
-        byte* raw_data = (byte*)value_struct.data;
-        return comptime_result_make_available(&raw_data[access_info.options.member.offset], result_type);
+        panic("error");
+        return comptime_result_make_unavailable(result_type, "error");
     }
     case AST::Expression_Type::FUNCTION_CALL: {
         return comptime_result_make_not_comptime("Function calls require #bake to be used as comtime values");
@@ -6211,6 +6227,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                             }
                         }
 
+                        assert(match != nullptr, "");
                         if (match->param_type == nullptr) {
                             argument_usable = false;
                             break;
@@ -7386,6 +7403,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 log_error_info_given_type(datatype);
                 EXIT_ERROR(types.unknown_type);
             }
+            info->specifics.member_access.type = Member_Access_Type::ENUM_MEMBER_ACCESS;
             auto enum_type = downcast<Datatype_Enum>(datatype);
             auto& members = enum_type->members;
 
@@ -7623,6 +7641,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                             return info;
                         }
                         else {
+                            info->specifics.member_access.type = Member_Access_Type::DOT_CALL;
                             expression_info_set_dot_call(info, member_node.expr, custom_operator);
                             return info;
                         }
@@ -10908,7 +10927,7 @@ void semantic_analyser_finish()
     semantic_analyser.program->main_function = 0;
     Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, ids.main);
     if (main_symbols == 0) {
-        log_semantic_error("Main function not defined", (AST::Node*)nullptr);
+        log_semantic_error("Main function not defined", upcast(compiler.main_source->root), Parser::Section::END_TOKEN);
         return;
     }
     if (main_symbols->size > 1) {

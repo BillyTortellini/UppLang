@@ -51,34 +51,6 @@ Compiler compiler;
 
 
 
-// Program_Source
-Program_Source* code_source_create_empty(Code_Origin origin, Source_Code* code, String file_path)
-{
-    Program_Source* result = new Program_Source;
-    result->origin = origin;
-    result->code = code;
-    result->parsed_code = nullptr;
-    result->module_progress = nullptr;
-    result->file_path = file_path;
-    dynamic_array_push_back(&compiler.program_sources, result);
-    hashtable_insert_element(&compiler.cached_imports, file_path, result);
-    return result;
-}
-
-void code_source_destroy(Program_Source* source)
-{
-    if (source->origin != Code_Origin::MAIN_PROJECT) { // Main project code gets destroyed by syntax_editor_destroy
-        source_code_destroy(source->code);
-    }
-    string_destroy(&source->file_path);
-    if (source->parsed_code != 0) {
-        Parser::source_parse_destroy(source->parsed_code);
-    }
-    delete source;
-}
-
-
-
 // COMPILER
 Compiler* compiler_initialize(Timer* timer)
 {
@@ -86,11 +58,12 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.identifier_pool = identifier_pool_create();
     compiler.constant_pool = constant_pool_create();
     compiler.extern_sources = extern_sources_create();
-    compiler.cached_imports = hashtable_create_empty<String, Program_Source*>(1, hash_string, string_equals);
     compiler.fiber_pool = fiber_pool_create();
     compiler.random = random_make_time_initalized();
+    compiler.last_main_source = 0;
+    compiler.last_compile_generated_code = false;
+    compiler.main_source = 0;
 
-    Parser::initialize();
     lexer_initialize(&compiler.identifier_pool);
 
     compiler.type_system = type_system_create(timer);
@@ -101,13 +74,12 @@ Compiler* compiler_initialize(Timer* timer)
     compiler.c_generator = c_generator_initialize();
     compiler.c_compiler = c_compiler_initialize();
 
-    compiler.program_sources = dynamic_array_create<Program_Source*>(1);
+    compiler.program_sources = dynamic_array_create<Source_Code*>();
     return &compiler;
 }
 
 void compiler_destroy()
 {
-    Parser::destroy();
     lexer_shutdown();
     fiber_pool_destroy(compiler.fiber_pool);
     compiler.fiber_pool = 0;
@@ -118,11 +90,10 @@ void compiler_destroy()
     constant_pool_destroy(&compiler.constant_pool);
 
     for (int i = 0; i < compiler.program_sources.size; i++) {
-        code_source_destroy(compiler.program_sources[i]);
+        source_code_destroy(compiler.program_sources[i]);
         compiler.program_sources[i] = 0;
     }
     dynamic_array_destroy(&compiler.program_sources);
-    hashtable_destroy(&compiler.cached_imports);
 
     semantic_analyser_destroy();
     ir_generator_destroy();
@@ -135,39 +106,48 @@ void compiler_destroy()
 
 
 // Compiling
-void compiler_lex_parse_and_add_workload_for_code_source(Program_Source* source, bool is_root_module)
+Source_Code* compiler_add_source(String file_path, bool opened_in_editor, bool used_in_last_compile)
 {
-    Timing_Task before = compiler.task_current;
-    SCOPE_EXIT(compiler_switch_timing_task(before));
-
-    // Lex code if required
-    compiler_switch_timing_task(Timing_Task::LEXING);
-    if (!enable_lexing) {
-        return;
+    // Convert file_path to full_path
+    String path = string_copy(file_path);
+    file_io_relative_to_full_path(&path);
+    
+    // Check if file is already loaded
+    for (int i = 0; i < compiler.program_sources.size; i++) 
+    {
+        auto source = compiler.program_sources[i];
+        if (string_equals(&source->file_path, &path)) {
+            string_destroy(&path);
+            if (opened_in_editor) {
+                source->open_in_editor = true;
+            }
+            if (used_in_last_compile) {
+                source->used_in_last_compile = true;
+            }
+            return source;
+        }
     }
-    source_code_tokenize(source->code);
 
-    // Parse code
-    compiler_switch_timing_task(Timing_Task::PARSING);
-    if (!enable_parsing) {
-        return;
+    // Check if file is readable
+    Optional<String> content = file_io_load_text_file(path.characters);
+    SCOPE_EXIT(file_io_unload_text_file(&content););
+    if (!content.available) {
+        string_destroy(&path);
+        return 0;
     }
 
-    assert(source->parsed_code == 0, "Hey");
-    source->parsed_code = Parser::execute_clean(source->code);
-
-    compiler_switch_timing_task(Timing_Task::ANALYSIS);
-    if (!enable_analysis) {
-        return;
-    }
-    assert(source->module_progress == 0, "At this point this has to be 0 me thinks");
-    source->module_progress = workload_executer_add_module_discovery(source->parsed_code->root, is_root_module);
+    // Otherwise create new source
+    Source_Code* result = source_code_create(path, used_in_last_compile, opened_in_editor);
+    source_code_fill_from_string(result, content.value);
+    dynamic_array_push_back(&compiler.program_sources, result);
+    return result;
 }
 
-
-
-void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type compile_type)
+void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
 {
+    compiler.main_source = main_source;
+    main_source->used_in_last_compile = true;
+
     bool generate_code = compile_type == Compile_Type::BUILD_CODE;
     do_output = enable_output && !(output_only_on_code_gen && !generate_code);
     if (do_output) {
@@ -281,30 +261,36 @@ void compiler_reset_data(bool keep_data_for_incremental_compile, Compile_Type co
         extern_sources_destroy(&compiler.extern_sources);
         compiler.extern_sources = extern_sources_create();
 
-        if (!keep_data_for_incremental_compile) {
-            compiler.main_source = 0;
-        }
-        for (int i = 0; i < compiler.program_sources.size; i++) {
+        // Remove/Delete sources that aren't used anymore
+        for (int i = 0; i < compiler.program_sources.size; i++) 
+        {
             auto source = compiler.program_sources[i];
-            if (keep_data_for_incremental_compile) {
-                source->module_progress = 0;
+            source->module_progress = 0;
+
+            bool should_delete = false;
+            if (source->used_in_last_compile) {
+                source->used_in_last_compile = false; // Reset
+                continue;
             }
             else {
-                code_source_destroy(compiler.program_sources[i]);
-                compiler.program_sources[i] = 0;
+                should_delete = true;
+            }
+
+            if (source->open_in_editor) {
+                should_delete = false;
+            }
+
+            if (should_delete) {
+                source_code_destroy(source);
+                dynamic_array_swap_remove(&compiler.program_sources, i);
+                i -= 1;
             }
         }
-        if (!keep_data_for_incremental_compile) {
-            dynamic_array_reset(&compiler.program_sources);
-            hashtable_reset(&compiler.cached_imports);
-        }
+        main_source->used_in_last_compile = true;
 
         // Reset stages
         type_system_reset(&compiler.type_system);
         type_system_add_predefined_types(&compiler.type_system);
-        if (!keep_data_for_incremental_compile) {
-            Parser::reset();
-        }
 
         semantic_analyser_reset();
         ir_generator_reset();
@@ -354,7 +340,7 @@ void compiler_execute_analysis_workloads_and_code_generation()
         if (do_output && output_ast) {
             logg("\n");
             logg("--------AST PARSE RESULT--------:\n");
-            AST::base_print(upcast(compiler.main_source->parsed_code->root));
+            AST::base_print(upcast(compiler.main_source->root));
         }
         if (do_output && generate_code)
         {
@@ -425,21 +411,95 @@ void compiler_execute_analysis_workloads_and_code_generation()
     }
 }
 
-void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file) // Takes ownership of project path
+void compiler_lex_and_parse_source(Source_Code* code)
 {
-    compiler_reset_data(false, compile_type);
+    if (!code->code_changed_since_last_compile) return;
 
-    file_io_relative_to_full_path(&project_file);
-    compiler.main_source = code_source_create_empty(Code_Origin::MAIN_PROJECT, source_code, project_file);
-    compiler_lex_parse_and_add_workload_for_code_source(compiler.main_source, true);
+    Timing_Task before = compiler.task_current;
+    SCOPE_EXIT(compiler_switch_timing_task(before));
+
+    // Reset parsing data
+    if (code->root != 0) {
+        code->root = 0;
+        for (int i = 0; i < code->allocated_nodes.size; i++) {
+            AST::base_destroy(code->allocated_nodes[i]);
+        }
+        dynamic_array_reset(&code->allocated_nodes);
+        dynamic_array_reset(&code->error_messages);
+    }
+
+    // Lex code if required
+    compiler_switch_timing_task(Timing_Task::LEXING);
+    if (!enable_lexing) {
+        return;
+    }
+    source_code_tokenize(code);
+
+    // Parse code
+    compiler_switch_timing_task(Timing_Task::PARSING);
+    if (!enable_parsing) {
+        return;
+    }
+    Parser::execute_clean(code);
+
+    code->code_changed_since_last_compile = false;
+}
+
+void compiler_compile_clean(Source_Code* main_source, Compile_Type compile_type)
+{
+    // Check if anything has changed
+    {
+        bool has_changed = false;
+        if (main_source != compiler.last_main_source) {
+            has_changed = true;
+            compiler.last_main_source = main_source;
+        }
+
+        for (int i = 0; i < compiler.program_sources.size; i++) {
+            auto code = compiler.program_sources[i];
+            if (code->code_changed_since_last_compile) {
+                has_changed = true;
+                break;
+            }
+        }
+
+        bool gen_code = compile_type == Compile_Type::BUILD_CODE;
+        if (!compiler.last_compile_generated_code && gen_code) {
+            has_changed = true;
+        }
+        compiler.last_compile_generated_code = gen_code;
+
+        if (!has_changed) {
+            return;
+        }
+    }
+
+    compiler_reset_data(main_source, compile_type);
+
+    // Lex and parse all workloads
+    for (int i = 0; i < compiler.program_sources.size; i++) 
+    {
+        auto code = compiler.program_sources[i];
+        compiler_lex_and_parse_source(code);
+
+        // Add module workload if main-source
+        if (code == compiler.main_source && enable_analysis) {
+            code->module_progress = workload_executer_add_module_discovery(code->root, code == compiler.main_source);
+        }
+        else {
+            code->module_progress = 0;
+        }
+    }
+
     compiler_execute_analysis_workloads_and_code_generation();
 }
 
 Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node)
 {
     assert(import_node->type == AST::Import_Type::FILE, "");
-    auto src = compiler_find_ast_program_source(&import_node->base);
     
+    // Resolve file-path (E.g. imports are relative from the file they are in)
+    auto src = compiler_find_ast_source_code(&import_node->base);
     String path = string_create(src->file_path.characters);
     file_io_relative_to_full_path(&path);
     bool success = false;
@@ -458,32 +518,15 @@ Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import
         file_io_relative_to_full_path(&path);
     }
     
-    // Check cache
-    {
-        Program_Source** cached_code = hashtable_find_element(&compiler.cached_imports, path);
-        if (cached_code != 0) {
-            auto code = *cached_code;
-            // Source was imported before (So already lexed and parsed)
-            if (code->module_progress == 0) {
-                code->module_progress = workload_executer_add_module_discovery(code->parsed_code->root, false);
-            }
-            return code->module_progress;
-        }
+    // Add source (does duplicate file-checking)
+    Source_Code* code = compiler_add_source(path, false, true);
+    if (code == 0) return 0;
+
+    compiler_lex_and_parse_source(code);
+    if (code->module_progress == nullptr) {
+        code->module_progress = workload_executer_add_module_discovery(code->root, false);
     }
-    
-    // Otherwise load file
-    Optional<String> file_content = file_io_load_text_file(path.characters);
-    SCOPE_EXIT(file_io_unload_text_file(&file_content));
-    if (file_content.available) {
-        auto source_code = source_code_create();
-        source_code_fill_from_string(source_code, file_content.value);
-    
-        Program_Source* code_source = code_source_create_empty(Code_Origin::LOADED_FILE, source_code, path);
-        compiler_lex_parse_and_add_workload_for_code_source(code_source, false);
-        success = true;
-        return code_source->module_progress;
-    }
-    return 0;
+    return code->module_progress;
 }
 
 Exit_Code compiler_execute()
@@ -553,30 +596,26 @@ void compiler_switch_timing_task(Timing_Task task)
 bool compiler_errors_occured() {
     if (compiler.semantic_analyser->errors.size > 0) return true;
     for (int i = 0; i < compiler.program_sources.size; i++) {
-        if (compiler.program_sources[i]->parsed_code->error_messages.size > 0) return true;
+        auto code = compiler.program_sources[i];
+        if (!code->used_in_last_compile) continue;
+        if (code->error_messages.size > 0) return true;
     }
     return false;
 }
 
-Program_Source* compiler_find_ast_program_source(AST::Node* base)
+Source_Code* compiler_find_ast_source_code(AST::Node* base)
 {
     while (base->parent != 0) {
         base = base->parent;
     }
     for (int i = 0; i < compiler.program_sources.size; i++) {
-        auto src = compiler.program_sources[i];
-        if (upcast(src->parsed_code->root) == base) {
-            return src;
+        auto code = compiler.program_sources[i];
+        if (upcast(code->root) == base) {
+            return code;
         }
     }
     return 0;
 }
-
-Source_Code* compiler_find_ast_source_code(AST::Node* base) {
-    auto src = compiler_find_ast_program_source(base);
-    return src->parsed_code->code;
-}
-
 
 
 
@@ -779,19 +818,15 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         Test_Case* test_case = &test_cases[i];
         logg("Testcase: %s\n", test_case->name);
         String path = string_create_formated("upp_code/testcases/%s", test_case->name);
-        Optional<String> code = file_io_load_text_file(path.characters);
-        SCOPE_EXIT(file_io_unload_text_file(&code));
-        if (!code.available) {
+        SCOPE_EXIT(string_destroy(&path));
+        auto source_code = compiler_add_source(path, false, true);
+        if (source_code == 0) {
             string_append_formated(&result, "ERROR:   Test %s could not load test file\n", test_case->name);
             errors_occured = true;
-            string_destroy(&path);
             continue;
         }
 
-        auto source_code = source_code_create();
-        source_code_fill_from_string(source_code, code.value);
-        SCOPE_EXIT(source_code_destroy(source_code));
-        compiler_compile_clean(source_code, Compile_Type::BUILD_CODE, path);
+        compiler_compile_clean(source_code, Compile_Type::BUILD_CODE);
         Exit_Code exit_code = compiler_execute();
         if (exit_code.type != Exit_Code_Type::SUCCESS && test_case->should_succeed)
         {
@@ -801,7 +836,9 @@ void compiler_run_testcases(Timer* timer, bool force_run)
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
                 for (int i = 0; i < compiler.program_sources.size; i++) {
-                    auto parser_errors = compiler.program_sources[i]->parsed_code->error_messages;
+                    auto code = compiler.program_sources[i];
+                    if (code->open_in_editor && !code->used_in_last_compile) continue;
+                    auto parser_errors = code->error_messages;
                     for (int j = 0; j < parser_errors.size; j++) {
                         auto& e = parser_errors[i];
                         string_append_formated(&result, "    Parse Error: %s\n", e.msg);

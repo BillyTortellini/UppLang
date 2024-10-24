@@ -1228,14 +1228,14 @@ void gui_update_and_render(Render_Pass* render_pass)
         auto rectangle_shader = rendering_core_query_shader("gui_rect.glsl");
 
         static int skip_batches = 0;
-        if (input->key_pressed[(int)Key_Code::O] && gui.focused_node == 0) {
-            skip_batches += 1;
-            logg("Skip batches: %\n", skip_batches);
-        }
-        else if (input->key_pressed[(int)Key_Code::P] && gui.focused_node == 0) {
-            skip_batches -= 1;
-            logg("Skip batches: %\n", skip_batches);
-        }
+        // if (input->key_pressed[(int)Key_Code::O] && gui.focused_node == 0) {
+        //     skip_batches += 1;
+        //     logg("Skip batches: %\n", skip_batches);
+        // }
+        // else if (input->key_pressed[(int)Key_Code::P] && gui.focused_node == 0) {
+        //     skip_batches -= 1;
+        //     logg("Skip batches: %\n", skip_batches);
+        // }
         skip_batches = math_clamp(skip_batches, 0, batch_start_indices.size - 1);
 
         // Draw batches in order

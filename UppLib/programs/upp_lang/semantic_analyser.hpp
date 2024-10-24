@@ -495,7 +495,9 @@ enum class Member_Access_Type
 {
     STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
     STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
+    ENUM_MEMBER_ACCESS,
     DOT_CALL_AS_MEMBER,
+    DOT_CALL,
     STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
     STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };

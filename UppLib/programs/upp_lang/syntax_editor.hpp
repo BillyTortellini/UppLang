@@ -9,10 +9,11 @@ struct Input;
 struct Text_Renderer;
 struct Timer;
 struct Renderer_2D;
+struct Window;
 
 // Tokens
 // Functions
-void syntax_editor_initialize(Rendering_Core* rendering_core, Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Input* input, Timer* timer);
+void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer);
 void syntax_editor_destroy();
 void syntax_editor_update();
 void syntax_editor_render();

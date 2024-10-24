@@ -16,7 +16,6 @@
 #include "../../win32/process.hpp"
 #include "../../utility/file_io.hpp"
 #include "../../utility/random.hpp"
-#include "../../utility/gui.hpp"
 #include "../../rendering/renderer_2d.hpp"
 
 #include "../../math/umath.hpp"
@@ -241,7 +240,7 @@ void upp_lang_main()
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
 
-    syntax_editor_initialize(&rendering_core, text_renderer, renderer_2D, window_get_input(window), &timer);
+    syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());
 
     // Background
@@ -271,7 +270,6 @@ void upp_lang_main()
     pipeline_state.blending_state.blending_enabled = true;
     rendering_core_update_pipeline_state(pipeline_state);
 
-
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds(&timer);
     float angle = 0.0f;
@@ -298,10 +296,8 @@ void upp_lang_main()
             }
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
-            //gui_update(&gui, input, window_state->width, window_state->height);
             syntax_editor_update();
             //code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
-            input_reset(input); // Clear input for next frame
         }
 
         double time_input_end = timer_current_time_in_seconds(&timer);
@@ -401,6 +397,7 @@ void upp_lang_main()
             */
         }
 
+        input_reset(input); // Clear input for next frame
         double time_render_end = timer_current_time_in_seconds(&timer);
 
         // Sleep

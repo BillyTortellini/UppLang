@@ -104,10 +104,11 @@ struct Predefined_IDs
 struct Compiler
 {
     // Compiler internals
-    Dynamic_Array<Program_Source*> program_sources;
-    Program_Source* main_source;
+    Dynamic_Array<Source_Code*> program_sources;
+    Source_Code* main_source;
+    Source_Code* last_main_source;
+    bool last_compile_generated_code;
     bool generate_code; // This indicates if we want to compile (E.g. user pressed CTRL-B or F5)
-    Hashtable<String, Program_Source*> cached_imports;
 
     // Helpers
     Identifier_Pool identifier_pool;
@@ -138,7 +139,6 @@ struct Compiler
     double time_output;
     double time_code_exec;
     double time_reset;
-
 };
 
 extern Compiler compiler;
@@ -146,12 +146,14 @@ extern Compiler compiler;
 Compiler* compiler_initialize(Timer* timer);
 void compiler_destroy();
 
-void compiler_compile_clean(Source_Code* source_code, Compile_Type compile_type, String project_file); // Takes ownership of project file
+// Returns 0 if file does not exist
+Source_Code* compiler_add_source(String file_path, bool opened_in_editor, bool imported);
+
+void compiler_compile_clean(Source_Code* main_source, Compile_Type compile_type);
 Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node); // Returns 0 if file couldn't be read
 Exit_Code compiler_execute();
 
 bool compiler_errors_occured();
 Source_Code* compiler_find_ast_source_code(AST::Node* base);
-Program_Source* compiler_find_ast_program_source(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
 void compiler_run_testcases(Timer* timer, bool force_run);
