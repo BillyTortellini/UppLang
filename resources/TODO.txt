@@ -1,7 +1,7 @@
 
-Fuzzy-Find Definition:
+
+Fuzzy-Find Files:
  * Handle file-names if search starts with ./
- * Fuzzy find isn't great, see 'p' finding main before Player
 
 
 

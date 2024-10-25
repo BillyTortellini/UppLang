@@ -4,22 +4,25 @@
 #include "../utility/datatypes.hpp"
 #include "../datastructures/string.hpp"
 
-struct DirectoryCrawler;
+struct Directory_Crawler;
 
-struct FileInfo
+struct File_Info
 {
-    String name_handle;
+    String name;
     i64 size;
     bool is_directory;
 };
 
-DirectoryCrawler* directory_crawler_create();
-void directory_crawler_destroy(DirectoryCrawler* directory_crawler);
+Directory_Crawler* directory_crawler_create();
+void directory_crawler_destroy(Directory_Crawler* directory_crawler);
 
-const char* directory_crawler_get_path(DirectoryCrawler* crawler);
-bool directory_crawler_go_up_one_directory(DirectoryCrawler* crawler);
-void directory_crawler_print_all_files(DirectoryCrawler* crawler);
+String directory_crawler_get_path(Directory_Crawler* crawler);
+void directory_crawler_set_path(Directory_Crawler* crawler, String path);
+void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String file_path);
+void directory_crawler_set_to_working_directory(Directory_Crawler* crawler);
 
-Array<FileInfo> directory_crawler_create_file_infos(DirectoryCrawler* crawler);
-void directory_crawler_destroy_file_infos(Array<FileInfo>* file_infos);
+Array<File_Info> directory_crawler_get_content(Directory_Crawler* crawler);
+bool directory_crawler_go_up_one_directory(Directory_Crawler* crawler);
+bool directory_crawler_go_down_one_directory(Directory_Crawler* crawler, int dir_index); // Directory index from crawler content
 
+void directory_crawler_print_all_files(Directory_Crawler* crawler);

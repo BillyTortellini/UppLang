@@ -10,6 +10,7 @@
 #include "../../utility/character_info.hpp"
 #include "../../utility/fuzzy_search.hpp"
 #include "../../utility/gui.hpp"
+#include "../../utility/directory_crawler.hpp"
 
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
@@ -227,6 +228,25 @@ struct Editor_Tab
     Text_Index last_render_cursor_pos;
 };
 
+enum class Suggestion_Type
+{
+    SYMBOL,
+    FILE
+};
+
+struct Editor_Suggestion
+{
+    Suggestion_Type type;
+    union {
+        Symbol* symbol;
+        struct {
+            String full_path;
+            String name_substring;
+            bool is_dir;
+        } file;
+    } options; 
+};
+
 struct Syntax_Editor
 {
     // Editing
@@ -263,7 +283,7 @@ struct Syntax_Editor
     // Fuzzy-Find definition
     String fuzzy_find_search;
     Line_Editor fuzzy_line_edit;
-    Dynamic_Array<Symbol*> fuzzy_find_suggestions;
+    Dynamic_Array<Editor_Suggestion> fuzzy_find_suggestions;
 
     // Rendering
     Dynamic_Array<Error_Display> errors;
@@ -280,6 +300,19 @@ struct Syntax_Editor
 
 // Editor
 static Syntax_Editor syntax_editor;
+
+void editor_suggestion_destroy(Editor_Suggestion* suggestion) {
+    if (suggestion->type == Suggestion_Type::FILE) {
+        string_destroy(&suggestion->options.file.full_path);
+    }
+}
+
+Editor_Suggestion editor_suggestion_make_symbol(Symbol* symbol) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::SYMBOL;
+    result.options.symbol = symbol;
+    return result;
+}
 
 // Returns new tab index
 int syntax_editor_add_tab(String file_path)
@@ -374,7 +407,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.command_buffer = string_create();
 
     syntax_editor.fuzzy_find_search = string_create();
-    syntax_editor.fuzzy_find_suggestions = dynamic_array_create<Symbol*>();
+    syntax_editor.fuzzy_find_suggestions = dynamic_array_create<Editor_Suggestion>();
 
     syntax_editor.yank_string = string_create();
     syntax_editor.yank_was_line = false;
@@ -418,6 +451,7 @@ void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
     dynamic_array_destroy(&editor.code_completion_suggestions);
+    dynamic_array_for_each(editor.fuzzy_find_suggestions, editor_suggestion_destroy);
     dynamic_array_destroy(&editor.fuzzy_find_suggestions);
     Rich_Text::destroy(&editor.editor_text);
     string_destroy(&syntax_editor.command_buffer);
@@ -1033,6 +1067,29 @@ bool auto_format_line(int line_index, int tab_index)
 
 
 
+// Not sure what this is yet
+void syntax_editor_goto_node(AST::Node* node)
+{
+    auto& editor = syntax_editor;
+
+    // Switch tab to file with symbol
+    Source_Code* code = compiler_find_ast_source_code(node);
+    int index = syntax_editor_add_tab(code->file_path); // Doesn't add a tab if already open
+    syntax_editor_switch_tab(index);
+
+    auto& tab = editor.tabs[editor.open_tab_index];
+    Token_Index token = node->range.start;
+    auto line = source_code_get_line(tab.code, token.line);
+    tab.cursor.line = token.line;
+    if (token.token < line->tokens.size) {
+        tab.cursor.character = line->tokens[token.token].start_index;
+    }
+    else {
+        tab.cursor.character = 0;
+    }
+}
+
+
 // Code Queries
 Analysis_Pass* code_query_get_analysis_pass(AST::Node* base);
 Symbol* code_query_get_ast_node_symbol(AST::Node* base)
@@ -1174,7 +1231,7 @@ void code_completion_find_suggestions()
         }
     }
     auto partially_typed = code_completion_get_partially_typed_word();
-    fuzzy_search_start_search(partially_typed);
+    fuzzy_search_start_search(partially_typed, 10);
 
     // Check if we are on special node
     syntax_editor_synchronize_with_compiler(false);
@@ -1396,7 +1453,7 @@ void code_completion_find_suggestions()
         }
     }
 
-    auto results = fuzzy_search_rank_results(true, 3);
+    auto results = fuzzy_search_get_results(true, 3);
     for (int i = 0; i < results.size; i++) {
         dynamic_array_push_back(&syntax_editor.code_completion_suggestions, results[i].item_name);
     }
@@ -3177,6 +3234,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     case Normal_Mode_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
         string_reset(&editor.fuzzy_find_search);
         editor.fuzzy_line_edit = line_editor_make();
+        dynamic_array_for_each(editor.fuzzy_find_suggestions, editor_suggestion_destroy);
         dynamic_array_reset(&editor.fuzzy_find_suggestions);
         editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
         break;
@@ -3537,55 +3595,75 @@ void syntax_editor_process_key_message(Key_Message& msg)
         // Exit if requested
         if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
             editor.mode = Editor_Mode::NORMAL;
+            dynamic_array_for_each(editor.fuzzy_find_suggestions, editor_suggestion_destroy);
+            dynamic_array_reset(&editor.fuzzy_find_suggestions);
             return;
         }
 
         if (msg.key_code == Key_Code::RETURN && msg.key_down) 
         {
-            if (editor.fuzzy_find_suggestions.size > 0) 
-            {
-                editor.mode = Editor_Mode::NORMAL;
-                auto symbol = editor.fuzzy_find_suggestions[0];
-                assert(symbol->definition_node != 0, "");
+            if (editor.fuzzy_find_suggestions.size == 0) {
+                return;
+            }
 
-                // Switch tab to file with symbol
-                Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
-                int index = syntax_editor_add_tab(code->file_path);
-                syntax_editor_switch_tab(index);
-
-                auto& tab = editor.tabs[editor.open_tab_index];
-                Token_Index token = symbol->definition_node->range.start;
-                auto line = source_code_get_line(tab.code, token.line);
-                tab.cursor.line = token.line;
-                if (token.token < line->tokens.size) {
-                    tab.cursor.character = line->tokens[token.token].start_index;
+            editor.mode = Editor_Mode::NORMAL;
+            auto suggestion = editor.fuzzy_find_suggestions[0];
+            if (suggestion.type == Suggestion_Type::SYMBOL) {
+                syntax_editor_goto_node(suggestion.options.symbol->definition_node);
+            }
+            else {
+                auto& file = suggestion.options.file;
+                if (file.is_dir) {
+                    return;
                 }
-                else {
-                    tab.cursor.character = 0;
-                }
+                int tab_index = syntax_editor_add_tab(file.full_path);
+                syntax_editor_switch_tab(tab_index);
             }
             return;
         }
 
         bool changed = false;
-        if (msg.key_code == Key_Code::TAB && msg.key_down && editor.fuzzy_find_suggestions.size > 0) {
-            auto symbol = editor.fuzzy_find_suggestions[0];
+        if (msg.key_code == Key_Code::TAB && msg.key_down && editor.fuzzy_find_suggestions.size > 0) 
+        {
+            auto sugg = editor.fuzzy_find_suggestions[0];
             auto& search = editor.fuzzy_find_search;
-            int reset_pos = 0;
+            if (sugg.type == Suggestion_Type::SYMBOL)
+            {
+                auto symbol = sugg.options.symbol;
 
-            Optional<int> result = string_find_character_index_reverse(&search, '~', search.size-1);
-            if (result.available) {
-                reset_pos = result.value + 1;
+                int reset_pos = 0;
+                Optional<int> result = string_find_character_index_reverse(&search, '~', search.size-1);
+                if (result.available) {
+                    reset_pos = result.value + 1;
+                }
+                string_remove_substring(&search, reset_pos, search.size);
+                string_append_string(&search, symbol->id);
+                if (symbol->type == Symbol_Type::MODULE) {
+                    string_append_character(&search, '~');
+                }
+                changed = true;
             }
-            string_remove_substring(&search, reset_pos, search.size);
-            string_append_string(&search, symbol->id);
-            if (symbol->type == Symbol_Type::MODULE) {
-                string_append_character(&search, '~');
-            }
-            changed = true;
+            else
+            {
+                auto file = sugg.options.file;
 
-            editor.fuzzy_line_edit.pos = search.size;
-            editor.fuzzy_line_edit.select_start = search.size;
+                int reset_pos = 0;
+                Optional<int> result = string_find_character_index_reverse(&search, '/', search.size-1);
+                if (result.available) {
+                    reset_pos = result.value + 1;
+                }
+                string_remove_substring(&search, reset_pos, search.size);
+                string_append_string(&search, &file.name_substring);
+                if (file.is_dir) {
+                    string_append_character(&search, '/');
+                }
+                changed = true;
+            }
+
+            if (changed) {
+                editor.fuzzy_line_edit.pos = search.size;
+                editor.fuzzy_line_edit.select_start = search.size;
+            }
         }
 
         // Otherwise let line handler use key-message
@@ -3603,11 +3681,75 @@ void syntax_editor_process_key_message(Key_Message& msg)
             auto& tab = editor.tabs[editor.open_tab_index];
             syntax_editor_synchronize_with_compiler(false);
 
+            String search = editor.fuzzy_find_search;
+            if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/')
+            {
+                search = string_create_substring_static(&editor.fuzzy_find_search, 2, editor.fuzzy_find_search.size); 
+                Array<String> path_parts = string_split(search, '/');
+                SCOPE_EXIT(string_split_destroy(path_parts));
+
+                Directory_Crawler* crawler = directory_crawler_create();
+                directory_crawler_set_path_to_file_dir(crawler, tab.code->file_path);
+
+                bool success = true;
+                for (int i = 0; i < path_parts.size - 1 && success; i++) 
+                {
+                    String part = path_parts[i];
+                    auto files = directory_crawler_get_content(crawler);
+                    bool found = false;
+                    for (int j = 0; j < files.size; j++) {
+                        auto file = files[j];
+                        if (string_equals(&file.name, &part)) {
+                            directory_crawler_go_down_one_directory(crawler, j);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        success = false;
+                    }
+                }
+                if (!success) {
+                    break;
+                }
+
+                // Fuzzy find file
+                auto files = directory_crawler_get_content(crawler);
+                fuzzy_search_start_search(path_parts[path_parts.size - 1], 10);
+                for (int i = 0; i < files.size; i++) {
+                    auto& file = files[i];
+                    if (!file.is_directory) {
+                        if (!string_ends_with(file.name.characters, ".upp")) {
+                            continue;
+                        }
+                    }
+                    fuzzy_search_add_item(file.name, i);
+                }
+
+                auto items = fuzzy_search_get_results(true, 3);
+                auto& suggestions = editor.fuzzy_find_suggestions;
+                dynamic_array_for_each(suggestions, editor_suggestion_destroy);
+                dynamic_array_reset(&suggestions);
+                for (int i = 0; i < items.size; i++) {
+                    auto file = files[items[i].user_index];
+                    Editor_Suggestion sugg;
+                    sugg.type = Suggestion_Type::FILE;
+                    sugg.options.file.is_dir = file.is_directory;
+                    String path = string_copy(directory_crawler_get_path(crawler));
+                    string_append_character(&path, '/');
+                    string_append_string(&path, &file.name);
+                    sugg.options.file.full_path = path;
+                    sugg.options.file.name_substring = string_create_substring_static(&path, path.size - file.name.size, path.size);
+                    dynamic_array_push_back(&suggestions, sugg);
+                }
+
+                break;
+            }
+
             Symbol_Table* symbol_table = nullptr;
             Array<String> path_parts = string_split(editor.fuzzy_find_search, '~');
             SCOPE_EXIT(string_split_destroy(path_parts));
 
-            String search = editor.fuzzy_find_search;
             bool is_intern = true;
             if (path_parts[0].size == 0) { // E.g. first term is a ~
                 search = string_create_substring_static(&editor.fuzzy_find_search, 1, editor.fuzzy_find_search.size);
@@ -3663,7 +3805,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
             dynamic_array_reset(&symbols);
             symbol_table_query_id(symbol_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &symbols);
             String last = path_parts[path_parts.size - 1];
-            fuzzy_search_start_search(last);
+            fuzzy_search_start_search(last, 10);
             for (int i = 0; i < symbols.size; i++) {
                 auto symbol = symbols[i];
                 if (symbol->definition_node != 0) {
@@ -3671,11 +3813,11 @@ void syntax_editor_process_key_message(Key_Message& msg)
                 }
             }
 
-            auto items = fuzzy_search_rank_results(true, 3);
+            auto items = fuzzy_search_get_results(true, 3);
             auto& suggestions = editor.fuzzy_find_suggestions;
             dynamic_array_reset(&suggestions);
             for (int i = 0; i < items.size; i++) {
-                dynamic_array_push_back(&suggestions, symbols[items[i].user_index]);
+                dynamic_array_push_back(&suggestions, editor_suggestion_make_symbol(symbols[items[i].user_index]));
             }
         }
         break;
@@ -4152,11 +4294,14 @@ void syntax_editor_render()
         }
 
         if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.fuzzy_find_suggestions.size > 0) {
-            auto symbol = editor.fuzzy_find_suggestions[0];
-            Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
-            if (code == tab.code) {
-                vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
-                syntax_highlighting_mark_range(symbol->definition_node->range, color, color, Rich_Text::Mark_Type::BACKGROUND_COLOR);
+            auto& sugg = editor.fuzzy_find_suggestions[0];
+            if (sugg.type == Suggestion_Type::SYMBOL) {
+                auto symbol = sugg.options.symbol;
+                Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
+                if (code == tab.code) {
+                    vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
+                    syntax_highlighting_mark_range(symbol->definition_node->range, color, color, Rich_Text::Mark_Type::BACKGROUND_COLOR);
+                }
             }
         }
 
@@ -4592,10 +4737,8 @@ void syntax_editor_render()
             Rich_Text::add_seperator_line(&rich_text);
             for (int i = 0; i < editor.fuzzy_find_suggestions.size; i++) 
             {
-                auto symbol = editor.fuzzy_find_suggestions[i];
+                auto& sugg = editor.fuzzy_find_suggestions[i];
                 Rich_Text::add_line(&rich_text);
-                vec3 color = symbol_type_to_color(symbol->type);
-                Rich_Text::set_text_color(&rich_text, color);
                 if (i == 0) {
                     Rich_Text::set_bg(&rich_text, vec3(0.3f));
                     Rich_Text::set_underline(&rich_text, Syntax_Color::STRING);
@@ -4603,13 +4746,30 @@ void syntax_editor_render()
                 else {
                     Rich_Text::set_bg(&rich_text, vec3(0.08f));
                 }
-                Rich_Text::append(&rich_text, *editor.fuzzy_find_suggestions[i]->id);
 
-                Rich_Text::set_text_color(&rich_text);
-                Rich_Text::append(&rich_text, ": ");
-                String* string = Rich_Text::start_line_manipulation(&rich_text);
-                symbol_type_append_to_string(symbol->type, string);
-                Rich_Text::stop_line_manipulation(&rich_text);
+                if (sugg.type == Suggestion_Type::SYMBOL)
+                {
+                    auto symbol = sugg.options.symbol;
+                    vec3 color = symbol_type_to_color(symbol->type);
+                    Rich_Text::set_text_color(&rich_text, color);
+                    Rich_Text::append(&rich_text, *symbol->id);
+                    Rich_Text::set_text_color(&rich_text);
+                    Rich_Text::append(&rich_text, ": ");
+                    String* string = Rich_Text::start_line_manipulation(&rich_text);
+                    symbol_type_append_to_string(symbol->type, string);
+                    Rich_Text::stop_line_manipulation(&rich_text);
+                }
+                else
+                {
+                    auto& file = sugg.options.file;
+                    if (file.is_dir) {
+                        Rich_Text::set_text_color(&rich_text, Syntax_Color::STRING);
+                    }
+                    else {
+                        Rich_Text::set_text_color(&rich_text, Syntax_Color::IDENTIFIER_FALLBACK);
+                    }
+                    Rich_Text::append(&rich_text, file.name_substring);
+                }
             }
         }
 

@@ -15,4 +15,5 @@ bool char_is_whitespace(char c, void* unused = nullptr);
 bool char_is_letter(char c, void* _unused = nullptr);
 bool char_is_operator(char c, void* _unused = nullptr);
 bool char_is_valid_identifier(char c, void* _unused = nullptr); // a-z, A-Z, _ and # (For some reason the last two also
+char char_get_lowercase(char c); // Returns the same char if already lowercase or not uppercase
 

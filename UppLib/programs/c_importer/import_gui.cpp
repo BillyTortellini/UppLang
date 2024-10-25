@@ -609,11 +609,11 @@ int run_import_gui()
                 // Rank all import symbols by filter with fuzzy search
                 if (info.text_changed)
                 {
-                    fuzzy_search_start_search(*filter);
+                    fuzzy_search_start_search(*filter, 30);
                     for (int i = 0; i < importer.symbols_to_import.size; i++) {
                         fuzzy_search_add_item(*importer.symbols_to_import[i].name, i);
                     }
-                    fuzzy_search_results = fuzzy_search_rank_results(true, 25);
+                    fuzzy_search_results = fuzzy_search_get_results(true, 14);
                 }
             }
 

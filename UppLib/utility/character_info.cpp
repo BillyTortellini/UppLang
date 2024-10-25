@@ -43,6 +43,13 @@ bool char_is_valid_identifier(char c, void* unused) {
         (c == '_' || c == '#');
 }
 
+char char_get_lowercase(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c - ('A' - 'a');
+    }
+    return c;
+}
+
 bool char_is_operator(char c, void* _unused) {
     return !(char_is_valid_identifier(c) || char_is_whitespace(c));
 }
