@@ -52,6 +52,8 @@ enum class Movement_Type
     SEARCH_FORWARDS_FOR, // f
     SEARCH_BACKWARDS_TO, // T
     SEARCH_BACKWARDS_FOR, // F
+    REPEAT_TEXT_SEARCH, // n
+    REPEAT_TEXT_SEARCH_REVERSE, // N
     REPEAT_LAST_SEARCH, // ;
     REPEAT_LAST_SEARCH_REVERSE_DIRECTION, // ,
     MOVE_LEFT, // h
@@ -67,8 +69,8 @@ enum class Movement_Type
     END_OF_WORD, // e
     END_OF_WORD_AFTER_SPACE, // E
     JUMP_ENCLOSURE, // %
-    BLOCK_END, // }
-    BLOCK_START, // {
+    PARAGRAPH_END, // }
+    PARAGRAPH_START, // {
     GOTO_END_OF_TEXT, // G
     GOTO_START_OF_TEXT, // gg
     GOTO_LINE_NUMBER, // g43
@@ -137,7 +139,7 @@ struct Insert_Command
     char letter;
 };
 
-enum class Normal_Mode_Command_Type
+enum class Normal_Command_Type
 {
     MOVEMENT,
     ENTER_INSERT_MODE_AFTER_MOVEMENT, // i, a, I, A
@@ -169,21 +171,27 @@ enum class Normal_Mode_Command_Type
     MOVE_CURSOR_VIEWPORT_BOTTOM, // 'Shift-L'
 
     // Tabs
-    GOTO_NEXT_TAB,
-    GOTO_PREV_TAB,
+    GOTO_NEXT_TAB, // gt
+    GOTO_PREV_TAB, // gT
+    GOTO_DEFINITION, // F12
 
     // Others
     ENTER_FUZZY_FIND_DEFINITION,
+    ENTER_TEXT_SEARCH, // / 
+    ENTER_TEXT_SEARCH_REVERSE, // ?
+    SEARCH_IDENTIFER_UNDER_CURSOR, // *
     VISUALIZE_MOTION, // not sure
     GOTO_LAST_JUMP, // Ctrl-O
     GOTO_NEXT_JUMP, // Ctrl-I
+    ADD_INDENTATION, // >
+    REMOVE_INDENTATION, // >
 
     MAX_ENUM_VALUE
 };
 
 struct Normal_Mode_Command
 {
-    Normal_Mode_Command_Type type;
+    Normal_Command_Type type;
     int repeat_count;
     union {
         Motion motion;
@@ -198,7 +206,8 @@ enum class Editor_Mode
 {
     NORMAL,
     INSERT,
-    FUZZY_FIND_DEFINITION
+    FUZZY_FIND_DEFINITION,
+    TEXT_SEARCH
 };
 
 struct Input_Replay
@@ -280,10 +289,15 @@ struct Syntax_Editor
     Rich_Text::Rich_Text editor_text;
     Text_Display::Text_Display text_display;
 
-    // Fuzzy-Find definition
-    String fuzzy_find_search;
-    Line_Editor fuzzy_line_edit;
+    // Search and Fuzzy-Find
+    String fuzzy_search_text;
+    Line_Editor search_text_edit;
     Dynamic_Array<Editor_Suggestion> fuzzy_find_suggestions;
+
+    String search_text;
+    Text_Index search_start_pos;
+    int search_start_cam_start;
+    bool search_reverse;
 
     // Rendering
     Dynamic_Array<Error_Display> errors;
@@ -406,13 +420,14 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.code_completion_suggestions = dynamic_array_create<String>();
     syntax_editor.command_buffer = string_create();
 
-    syntax_editor.fuzzy_find_search = string_create();
+    syntax_editor.fuzzy_search_text = string_create();
     syntax_editor.fuzzy_find_suggestions = dynamic_array_create<Editor_Suggestion>();
+    syntax_editor.search_text = string_create();
 
     syntax_editor.yank_string = string_create();
     syntax_editor.yank_was_line = false;
 
-    syntax_editor.last_normal_command.type = Normal_Mode_Command_Type::MOVEMENT;
+    syntax_editor.last_normal_command.type = Normal_Command_Type::MOVEMENT;
     syntax_editor.last_normal_command.options.movement.type = Movement_Type::MOVE_LEFT;
     syntax_editor.last_normal_command.options.movement.repeat_count = 0;
     syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
@@ -456,7 +471,8 @@ void syntax_editor_destroy()
     Rich_Text::destroy(&editor.editor_text);
     string_destroy(&syntax_editor.command_buffer);
     string_destroy(&syntax_editor.yank_string);
-    string_destroy(&syntax_editor.fuzzy_find_search);
+    string_destroy(&syntax_editor.fuzzy_search_text);
+    string_destroy(&syntax_editor.search_text);
     compiler_destroy();
     for (int i = 0; i < editor.errors.size; i++) {
         string_destroy(&editor.errors[i].message);
@@ -1879,14 +1895,14 @@ namespace Parsing
         return result;
     }
 
-    Normal_Mode_Command normal_mode_command_make(Normal_Mode_Command_Type command_type, int repeat_count) {
+    Normal_Mode_Command normal_mode_command_make(Normal_Command_Type command_type, int repeat_count) {
         Normal_Mode_Command result;
         result.type = command_type;
         result.repeat_count = repeat_count;
         return result;
     }
 
-    Normal_Mode_Command normal_mode_command_make_char(Normal_Mode_Command_Type command_type, int repeat_count, char character) {
+    Normal_Mode_Command normal_mode_command_make_char(Normal_Command_Type command_type, int repeat_count, char character) {
         Normal_Mode_Command result;
         result.type = command_type;
         result.repeat_count = repeat_count;
@@ -1894,7 +1910,7 @@ namespace Parsing
         return result;
     }
 
-    Normal_Mode_Command normal_mode_command_make_motion(Normal_Mode_Command_Type command_type, int repeat_count, Motion motion) {
+    Normal_Mode_Command normal_mode_command_make_motion(Normal_Command_Type command_type, int repeat_count, Motion motion) {
         Normal_Mode_Command result;
         result.type = command_type;
         result.repeat_count = repeat_count;
@@ -1902,7 +1918,7 @@ namespace Parsing
         return result;
     }
 
-    Normal_Mode_Command normal_mode_command_make_movement(Normal_Mode_Command_Type command_type, int repeat_count, Movement movement) {
+    Normal_Mode_Command normal_mode_command_make_movement(Normal_Command_Type command_type, int repeat_count, Movement movement) {
         Normal_Mode_Command result;
         result.type = command_type;
         result.repeat_count = 1;
@@ -1984,7 +2000,7 @@ namespace Parsing
 
         switch (cmd.characters[index])
         {
-            // Single character movements
+        // Single character movements
         case 'h': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_LEFT, repeat_count));
         case 'l': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_RIGHT, repeat_count));
         case 'j': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_DOWN, repeat_count));
@@ -2000,8 +2016,10 @@ namespace Parsing
         case '%': index += 1; return parse_result_success(movement_make(Movement_Type::JUMP_ENCLOSURE, repeat_count));
         case ';': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH, repeat_count));
         case ',': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count));
-        case '}': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_END, repeat_count));
-        case '{': index += 1; return parse_result_success(movement_make(Movement_Type::BLOCK_START, repeat_count));
+        case '}': index += 1; return parse_result_success(movement_make(Movement_Type::PARAGRAPH_END, repeat_count));
+        case '{': index += 1; return parse_result_success(movement_make(Movement_Type::PARAGRAPH_START, repeat_count));
+        case 'n': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_TEXT_SEARCH, repeat_count));
+        case 'N': index += 1; return parse_result_success(movement_make(Movement_Type::REPEAT_TEXT_SEARCH_REVERSE, repeat_count));
 
             // Character search movements:
         case 'f':
@@ -2208,10 +2226,10 @@ namespace Parsing
                     repeat_count = 0;
                 }
                 if (follow_char == 'T') {
-                    return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::GOTO_PREV_TAB, repeat_count));
+                    return parse_result_success(normal_mode_command_make(Normal_Command_Type::GOTO_PREV_TAB, repeat_count));
                 }
                 else {
-                    return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::GOTO_NEXT_TAB, repeat_count));
+                    return parse_result_success(normal_mode_command_make(Normal_Command_Type::GOTO_NEXT_TAB, repeat_count));
                 }
             }
         }
@@ -2219,7 +2237,7 @@ namespace Parsing
         // Check if it is a movement
         Parse_Result<Movement> movement_parse = parse_movement(index, repeat_count_exists ? repeat_count : -1);
         if (movement_parse.type == Parse_Result_Type::SUCCESS) {
-            return parse_result_success(normal_mode_command_make_movement(Normal_Mode_Command_Type::MOVEMENT, 1, movement_parse.result));
+            return parse_result_success(normal_mode_command_make_movement(Normal_Command_Type::MOVEMENT, 1, movement_parse.result));
         }
         else if (movement_parse.type == Parse_Result_Type::COMPLETABLE) {
             return parse_result_completable<Normal_Mode_Command>();
@@ -2228,7 +2246,7 @@ namespace Parsing
         if (index >= cmd.size) return parse_result_completable<Normal_Mode_Command>();
 
         // Check character
-        Normal_Mode_Command_Type command_type = Normal_Mode_Command_Type::MAX_ENUM_VALUE;
+        Normal_Command_Type command_type = Normal_Command_Type::MAX_ENUM_VALUE;
         bool parse_motion_afterwards = false;
         char curr_char = cmd[index];
         char follow_char = index + 1 < cmd.size ? cmd[index + 1] : '?';
@@ -2239,66 +2257,71 @@ namespace Parsing
         case 'x':
             return parse_result_success(
                 normal_mode_command_make_motion(
-                    Normal_Mode_Command_Type::DELETE_MOTION, repeat_count,
+                    Normal_Command_Type::DELETE_MOTION, repeat_count,
                     motion_make_from_movement(movement_make(Movement_Type::MOVE_RIGHT, 1))
                 )
             );
         case 'i':
             return parse_result_success(normal_mode_command_make_movement(
-                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
                 movement_make(Movement_Type::MOVE_LEFT, 0))
             );
         case 'I':
             return parse_result_success(normal_mode_command_make_movement(
-                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
                 movement_make(Movement_Type::TO_START_OF_LINE, 1))
             );
         case 'a':
             return parse_result_success(normal_mode_command_make_movement(
-                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
                 movement_make(Movement_Type::MOVE_RIGHT, 1))
             );
         case 'A':
             return parse_result_success(normal_mode_command_make_movement(
-                Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
+                Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
                 movement_make(Movement_Type::TO_END_OF_LINE, 1))
             );
-        case 'o': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, 1));
-        case 'O': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, 1));
-        case '.': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::REPEAT_LAST_COMMAND, repeat_count));
+        case 'o': return parse_result_success(normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, 1));
+        case 'O': return parse_result_success(normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, 1));
+        case '.': return parse_result_success(normal_mode_command_make(Normal_Command_Type::REPEAT_LAST_COMMAND, repeat_count));
+        case '/': return parse_result_success(normal_mode_command_make(Normal_Command_Type::ENTER_TEXT_SEARCH, repeat_count));
+        case '?': return parse_result_success(normal_mode_command_make(Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE, repeat_count));
+        case '*': return parse_result_success(normal_mode_command_make(Normal_Command_Type::SEARCH_IDENTIFER_UNDER_CURSOR, repeat_count));
         case 'D':
             return parse_result_success(
                 normal_mode_command_make_motion(
-                    Normal_Mode_Command_Type::DELETE_MOTION, repeat_count,
+                    Normal_Command_Type::DELETE_MOTION, repeat_count,
                     motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
                 )
             );
         case 'C':
             return parse_result_success(
                 normal_mode_command_make_motion(
-                    Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count,
+                    Normal_Command_Type::CHANGE_MOTION, repeat_count,
                     motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
                 )
             );
         case 'Y':
             return parse_result_success(
                 normal_mode_command_make_motion(
-                    Normal_Mode_Command_Type::YANK_MOTION, 0,
+                    Normal_Command_Type::YANK_MOTION, 0,
                     motion_make(Motion_Type::LINE, repeat_count - 1, false)
                 )
             );
-        case 'L': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, 1));
-        case 'M': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, 1));
-        case 'H': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP, 1));
-        case 'p': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_AFTER_CURSOR, repeat_count));
-        case 'P': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_BEFORE_CURSOR, repeat_count));
-        case 'u': return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::UNDO, repeat_count));
+        case 'L': return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, 1));
+        case 'M': return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, 1));
+        case 'H': return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_TOP, 1));
+        case 'p': return parse_result_success(normal_mode_command_make(Normal_Command_Type::PUT_AFTER_CURSOR, repeat_count));
+        case 'P': return parse_result_success(normal_mode_command_make(Normal_Command_Type::PUT_BEFORE_CURSOR, repeat_count));
+        case 'u': return parse_result_success(normal_mode_command_make(Normal_Command_Type::UNDO, repeat_count));
         case 'r': {
             if (!follow_char_valid) {
                 return parse_result_completable<Normal_Mode_Command>();
             }
-            return parse_result_success(normal_mode_command_make_char(Normal_Mode_Command_Type::REPLACE_CHAR, 1, follow_char));
+            return parse_result_success(normal_mode_command_make_char(Normal_Command_Type::REPLACE_CHAR, 1, follow_char));
         }
+        case '>': command_type = Normal_Command_Type::ADD_INDENTATION; parse_motion_afterwards = true; break;
+        case '<': command_type = Normal_Command_Type::REMOVE_INDENTATION; parse_motion_afterwards = true; break;
         case 'd':
         case 'c':
         case 'y':
@@ -2308,14 +2331,14 @@ namespace Parsing
             }
             bool include_edges = false;
             if (curr_char == 'd') {
-                command_type = Normal_Mode_Command_Type::DELETE_MOTION;
+                command_type = Normal_Command_Type::DELETE_MOTION;
                 include_edges = true;
             }
             else if (curr_char == 'c') {
-                command_type = Normal_Mode_Command_Type::CHANGE_MOTION;
+                command_type = Normal_Command_Type::CHANGE_MOTION;
             }
             else if (curr_char == 'y') {
-                command_type = Normal_Mode_Command_Type::YANK_MOTION;
+                command_type = Normal_Command_Type::YANK_MOTION;
             }
             parse_motion_afterwards = true;
 
@@ -2330,28 +2353,28 @@ namespace Parsing
             }
             break;
         }
-        case 'v': command_type = Normal_Mode_Command_Type::VISUALIZE_MOTION; parse_motion_afterwards = true; break;
-        case 'R': command_type = Normal_Mode_Command_Type::REPLACE_MOTION_WITH_YANK; parse_motion_afterwards = true; break;
+        case 'v': command_type = Normal_Command_Type::VISUALIZE_MOTION; parse_motion_afterwards = true; break;
+        case 'R': command_type = Normal_Command_Type::REPLACE_MOTION_WITH_YANK; parse_motion_afterwards = true; break;
         case 'z': {
             if (!follow_char_valid) {
                 return parse_result_completable<Normal_Mode_Command>();
             }
 
             if (follow_char == 't') {
-                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP, 1));
+                return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP, 1));
             }
             else if (follow_char == 'z') {
-                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, 1));
+                return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, 1));
             }
             else if (follow_char == 'b') {
-                return parse_result_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM, 1));
+                return parse_result_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM, 1));
             }
             return parse_result_failure<Normal_Mode_Command>();
         }
         }
 
         // Check if further parsing is required
-        if (command_type == Normal_Mode_Command_Type::MAX_ENUM_VALUE) {
+        if (command_type == Normal_Command_Type::MAX_ENUM_VALUE) {
             return parse_result_failure<Normal_Mode_Command>();
         }
 
@@ -2564,49 +2587,68 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
             }
             break;
         }
-        case Movement_Type::BLOCK_START:
+        case Movement_Type::PARAGRAPH_START:
+        case Movement_Type::PARAGRAPH_END:
         {
-            int line_index = pos.line;
-            auto line = source_code_get_line(code, line_index);
-            int start_indent = line->indentation;
+            auto find_next_empty_line = [](int start_line, int dir) -> int {
+                auto& editor = syntax_editor;
+                auto& code = editor.tabs[editor.open_tab_index].code;
+                if (start_line < 0 || start_line >= code->line_count) return start_line;
 
-            // Go up lines while indent is smaller
-            // Skip current block of lines
-            while (line_index >= 0) {
-                auto line = source_code_get_line(code, line_index);
-                if (line->indentation < start_indent) {
-                    line_index = line_index + 1; // e.g. the previous line was the last of the block
-                    break;
+                auto line = source_code_get_line(code, start_line);
+                int start_indent = line->indentation;
+                int index = start_line + dir;
+                while (index >= 0 && index < code->line_count) {
+                    line = source_code_get_line(code, index);
+                    if (line->text.size == 0 && line->indentation <= start_indent) {
+                        break;
+                    }
+                    if (line->indentation < start_indent) {
+                        break;
+                    }
+                    index += dir;
                 }
-                line_index -= 1;
-            }
-            line_index = math_maximum(0, line_index);
+                return math_clamp(index, 0, code->line_count - 1);
+            };
+            auto skip_empty_lines = [](int start_line, int dir) -> int {
+                auto& editor = syntax_editor;
+                auto& code = editor.tabs[editor.open_tab_index].code;
+                if (start_line < 0 || start_line >= code->line_count) return start_line;
 
-            pos.line = line_index;
-            pos.character = 0;
-            break;
-        }
-        case Movement_Type::BLOCK_END:
-        {
-            int line_index = pos.line;
-            auto line = source_code_get_line(code, line_index);
-            int start_indent = line->indentation;
-
-            // Go up lines while indent is smaller
-            // Skip current block of lines
-            while (line_index < code->line_count) {
-                auto line = source_code_get_line(code, line_index);
-                if (line->indentation < start_indent) {
-                    line_index = line_index - 1; // e.g. the previous line was the last of the block
-                    break;
+                auto line = source_code_get_line(code, start_line);
+                int start_indent = line->indentation;
+                int index = start_line;
+                while (index >= 0 && index < code->line_count) {
+                    line = source_code_get_line(code, index);
+                    if (line->text.size != 0 || line->indentation != start_indent) {
+                        break;
+                    }
+                    index += dir;
                 }
-                line_index += 1;
-            }
-            line_index = math_minimum(code->line_count - 1, line_index);
+                return math_clamp(index, 0, code->line_count - 1);
+            };
 
-            pos.line = line_index;
-            line = source_code_get_line(code, line_index);
-            pos.character = line->text.size;
+            if (movement.type == Movement_Type::PARAGRAPH_START) 
+            {
+                int line_index = pos.line;
+                line_index = skip_empty_lines(line_index, -1);
+                int next_empty = find_next_empty_line(line_index, -1) + 1;
+                if (next_empty == line_index) {
+                    next_empty = find_next_empty_line(line_index - 1, -1) + 1;
+                }
+                pos = text_index_make(next_empty, 0);
+            }
+            else {
+                int line_index = pos.line;
+                line_index = skip_empty_lines(line_index, 1);
+                line_index = find_next_empty_line(line_index, 1) - 1;
+                if (line_index == pos.line) {
+                    line_index = find_next_empty_line(line_index + 1, 1) - 1;
+                    line_index = skip_empty_lines(line_index, 1);
+                }
+                pos = text_index_make(line_index, 0);
+            }
+
             break;
         }
         case Movement_Type::SEARCH_FORWARDS_FOR:
@@ -2626,6 +2668,78 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         }
         case Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
             do_char_search(editor.last_search_char, !editor.last_search_was_forward, editor.last_search_was_to);
+            break;
+        }
+        case Movement_Type::REPEAT_TEXT_SEARCH_REVERSE: 
+        case Movement_Type::REPEAT_TEXT_SEARCH: 
+        {
+            auto& tab = editor.tabs[editor.open_tab_index];
+            auto& search_text = editor.search_text;
+
+            bool search_reverse = editor.search_reverse;
+            if (movement.type == Movement_Type::REPEAT_TEXT_SEARCH_REVERSE) {
+                search_reverse = !search_reverse;
+            }
+
+            if (search_text.size == 0) {
+                repeat_movement = false;
+                break;
+            }
+
+            // Otherwise go through lines from start and try to find occurance
+            Text_Index index = pos;
+            bool found = false;
+            for (int i = index.line; i >= 0 && i < tab.code->line_count; i += search_reverse ? -1 : 1) 
+            {
+                auto line = source_code_get_line(tab.code, i);
+                int pos = 0;
+
+                if (search_reverse) 
+                {
+                    if (i == index.line && index.character == 0) {
+                        continue;
+                    }
+
+                    // Search substrings until last substring is found...
+                    int last_substring_start = string_contains_substring(line->text, 0, search_text);
+                    if (last_substring_start == -1) {
+                        continue;
+                    }
+
+                    int max = line->text.size;
+                    if (index.line == i) {
+                        max = index.character - 1;
+                    }
+                    while (last_substring_start + 1 < max) {
+                        int substr = string_contains_substring(line->text, last_substring_start + 1, search_text);
+                        if (substr == -1 || substr > max) {
+                            break;
+                        }
+                        last_substring_start = substr;
+                    }
+
+                    if (last_substring_start + 1 < max) {
+                        found = true;
+                        index = text_index_make(i, last_substring_start);
+                        break;
+                    }
+                }
+                else {
+                    if (i == index.line) {
+                        pos = index.character + 1;
+                    }
+                    int start = string_contains_substring(line->text, pos, search_text);
+                    if (start != -1) {
+                        index = text_index_make(i, start);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (found) {
+                pos = index;
+            }
             break;
         }
         default: panic("");
@@ -2783,10 +2897,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
         result.end = text_index_make_line_end(code, line_end);
         if (motion.contains_edges) {
             if (result.start.line > 0) {
-                result.start = text_index_make_line_end(code, result.start.line - 1);
-            }
-            if (result.end.line + 1 < code->line_count) {
-                result.end = text_index_make(result.end.line + 1, 0);
+                result.start.line -= 1;
             }
         }
 
@@ -2970,10 +3081,11 @@ void syntax_editor_insert_yank(bool before_cursor)
     // Insert text
     if (editor.yank_was_line)
     {
+        auto indent = source_code_get_line(code, cursor.line)->indentation;
         int line_insert_index = cursor.line + (before_cursor ? 0 : 1);
         for (int i = 0; i < yank_lines.size; i++) {
             auto& yank_line = yank_lines[i];
-            history_insert_line_with_text(history, line_insert_index + i, yank_line.indentation, yank_line.text);
+            history_insert_line_with_text(history, line_insert_index + i, yank_line.indentation + indent, yank_line.text);
         }
         cursor = text_index_make(line_insert_index + yank_lines.size - 1, 0);
     }
@@ -3019,26 +3131,26 @@ void normal_command_execute(Normal_Mode_Command& command)
     history_set_cursor_pos(history, cursor);
 
     // Record command for repeat
-    if (command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT ||
-        command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE ||
-        command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW ||
-        command.type == Normal_Mode_Command_Type::DELETE_MOTION ||
-        command.type == Normal_Mode_Command_Type::CHANGE_MOTION ||
-        command.type == Normal_Mode_Command_Type::PUT_AFTER_CURSOR ||
-        command.type == Normal_Mode_Command_Type::PUT_BEFORE_CURSOR)
+    if (command.type == Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT ||
+        command.type == Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE ||
+        command.type == Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW ||
+        command.type == Normal_Command_Type::DELETE_MOTION ||
+        command.type == Normal_Command_Type::CHANGE_MOTION ||
+        command.type == Normal_Command_Type::PUT_AFTER_CURSOR ||
+        command.type == Normal_Command_Type::PUT_BEFORE_CURSOR)
     {
         editor.last_normal_command = command;
     }
 
     // Start complex command for non-history commands
-    bool execute_as_complex = command.type != Normal_Mode_Command_Type::UNDO && command.type != Normal_Mode_Command_Type::REDO &&
-        command.type != Normal_Mode_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Mode_Command_Type::GOTO_PREV_TAB;
+    bool execute_as_complex = command.type != Normal_Command_Type::UNDO && command.type != Normal_Command_Type::REDO &&
+        command.type != Normal_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Command_Type::GOTO_PREV_TAB;
     if (execute_as_complex) {
         history_start_complex_command(history);
     }
 
     SCOPE_EXIT(
-        if (command.type != Normal_Mode_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Mode_Command_Type::GOTO_PREV_TAB) 
+        if (command.type != Normal_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Command_Type::GOTO_PREV_TAB) 
         {
             syntax_editor_sanitize_cursor();
             history_set_cursor_pos(history, cursor);
@@ -3051,49 +3163,64 @@ void normal_command_execute(Normal_Mode_Command& command)
 
     switch (command.type)
     {
-    case Normal_Mode_Command_Type::MOVEMENT: {
+    case Normal_Command_Type::MOVEMENT: {
         cursor = movement_evaluate(command.options.movement, cursor);
         syntax_editor_sanitize_cursor();
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT: {
         editor_enter_insert_mode();
         cursor = movement_evaluate(command.options.movement, cursor);
         syntax_editor_sanitize_cursor();
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW:
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
-        bool below = command.type == Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW;
+    case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW:
+    case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
+        bool below = command.type == Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW;
         int new_line_index = cursor.line + (below ? 1 : 0);
         history_insert_line(history, new_line_index, line->indentation);
         cursor = text_index_make(new_line_index, 0);
         editor_enter_insert_mode();
         break;
     }
-    case Normal_Mode_Command_Type::YANK_MOTION:
-    case Normal_Mode_Command_Type::DELETE_MOTION:
+    case Normal_Command_Type::YANK_MOTION:
+    case Normal_Command_Type::DELETE_MOTION:
     {
         // First yank deleted text
         const auto& motion = command.options.motion;
-        if (motion.motion_type == Motion_Type::LINE)
+        if (motion.motion_type == Motion_Type::LINE || motion.motion_type == Motion_Type::BLOCK)
         {
             editor.yank_was_line = true;
             int start_line = cursor.line;
             int end_line = cursor.line;
-            if (motion.repeat_count < 0) {
-                start_line += motion.repeat_count;
-                start_line = math_maximum(start_line, 0);
+            if (motion.motion_type == Motion_Type::LINE)
+            {
+                if (motion.repeat_count < 0) {
+                    start_line += motion.repeat_count;
+                    start_line = math_maximum(start_line, 0);
+                }
+                else {
+                    end_line += motion.repeat_count;
+                    start_line = math_minimum(code->line_count - 1, start_line);
+                }
             }
-            else {
-                end_line += motion.repeat_count;
-                start_line = math_minimum(code->line_count - 1, start_line);
+            else
+            {
+                Text_Range range = motion_evaluate(motion, cursor);
+                start_line = range.start.line;
+                end_line = range.end.line;
+            }
+
+            int max_indent = 0;
+            for (int i = start_line; i <= end_line; i += 1) {
+                auto line = source_code_get_line(code, i);
+                max_indent = math_maximum(line->indentation, max_indent);
             }
 
             string_reset(&editor.yank_string);
             for (int i = start_line; i <= end_line; i += 1) {
                 auto line = source_code_get_line(code, i);
-                for (int j = 0; j < line->indentation; j++) {
+                for (int j = 0; j < line->indentation - max_indent; j++) {
                     string_append_character(&editor.yank_string, '\t');
                 }
                 string_append_string(&editor.yank_string, &line->text);
@@ -3111,33 +3238,33 @@ void normal_command_execute(Normal_Mode_Command& command)
         // printf("Yanked: was_line = %s ----\n%s\n----\n", (editor.yank_was_line ? "true" : "false"), editor.yank_string.characters);
 
         // Delete if necessary
-        if (command.type == Normal_Mode_Command_Type::DELETE_MOTION) {
+        if (command.type == Normal_Command_Type::DELETE_MOTION) {
             auto range = motion_evaluate(command.options.motion, cursor);
             text_range_delete(range);
             cursor = range.start;
         }
         break;
     }
-    case Normal_Mode_Command_Type::CHANGE_MOTION: {
+    case Normal_Command_Type::CHANGE_MOTION: {
         auto range = motion_evaluate(command.options.motion, cursor);
         cursor = range.start;
         editor_enter_insert_mode();
         text_range_delete(range);
         break;
     }
-    case Normal_Mode_Command_Type::PUT_AFTER_CURSOR:
-    case Normal_Mode_Command_Type::PUT_BEFORE_CURSOR: {
-        syntax_editor_insert_yank((command.type == Normal_Mode_Command_Type::PUT_BEFORE_CURSOR));
+    case Normal_Command_Type::PUT_AFTER_CURSOR:
+    case Normal_Command_Type::PUT_BEFORE_CURSOR: {
+        syntax_editor_insert_yank(command.type == Normal_Command_Type::PUT_BEFORE_CURSOR);
         break;
     }
-    case Normal_Mode_Command_Type::REPLACE_CHAR: {
+    case Normal_Command_Type::REPLACE_CHAR: {
         auto curr_char = Motions::get_char(cursor);
         if (curr_char == '\0' || curr_char == command.options.character) break;
         history_delete_char(history, cursor);
         history_insert_char(history, cursor, command.options.character);
         break;
     }
-    case Normal_Mode_Command_Type::REPLACE_MOTION_WITH_YANK: {
+    case Normal_Command_Type::REPLACE_MOTION_WITH_YANK: {
         auto range = motion_evaluate(command.options.motion, cursor);
         cursor = range.start;
         if (text_index_equal(range.start, range.end)) {
@@ -3147,7 +3274,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         syntax_editor_insert_yank(true);
         break;
     }
-    case Normal_Mode_Command_Type::UNDO: {
+    case Normal_Command_Type::UNDO: {
         history_undo(history);
         auto cursor_history = history_get_cursor_pos(history);
         if (cursor_history.available) {
@@ -3155,7 +3282,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         }
         break;
     }
-    case Normal_Mode_Command_Type::REDO: {
+    case Normal_Command_Type::REDO: {
         history_redo(history);
         auto cursor_history = history_get_cursor_pos(history);
         if (cursor_history.available) {
@@ -3164,44 +3291,44 @@ void normal_command_execute(Normal_Mode_Command& command)
         break;
     }
 
-    case Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
-    case Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
-        int dir = command.type == Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? -1 : 1;
+    case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
+    case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
+        int dir = command.type == Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? -1 : 1;
         tab.cam_start += (tab.cam_start - tab.cam_end) / 2 * dir;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
         tab.cam_start = tab.cursor.line - MIN_CURSOR_DISTANCE;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
         tab.cam_start = tab.cursor.line - (tab.cam_end - tab.cam_start) / 2;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
         tab.cam_start = tab.cursor.line - (tab.cam_end - tab.cam_start) + MIN_CURSOR_DISTANCE;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
         cursor.line = tab.cam_start + MIN_CURSOR_DISTANCE;
         cursor.character = 0;
         syntax_editor_sanitize_cursor();
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
         cursor.line = tab.cam_start + (tab.cam_end - tab.cam_start) / 2;
         cursor.character = 0;
         syntax_editor_sanitize_cursor();
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
         cursor.line = tab.cam_end - MIN_CURSOR_DISTANCE;
         cursor.character = 0;
         syntax_editor_sanitize_cursor();
         break;
     }
-    case Normal_Mode_Command_Type::GOTO_NEXT_TAB: 
-    case Normal_Mode_Command_Type::GOTO_PREV_TAB: {
+    case Normal_Command_Type::GOTO_NEXT_TAB: 
+    case Normal_Command_Type::GOTO_PREV_TAB: {
         int repeat_count = command.repeat_count;
         if (editor.tabs.size == 1) break;
 
@@ -3211,14 +3338,24 @@ void normal_command_execute(Normal_Mode_Command& command)
             next_tab_index = math_clamp(next_tab_index, 0, editor.tabs.size - 1);
         }
         else {
-            next_tab_index = next_tab_index + (command.type == Normal_Mode_Command_Type::GOTO_NEXT_TAB ? 1 : -1);
+            next_tab_index = next_tab_index + (command.type == Normal_Command_Type::GOTO_NEXT_TAB ? 1 : -1);
             next_tab_index = math_modulo(next_tab_index, editor.tabs.size);
         }
 
         syntax_editor_switch_tab(next_tab_index);
         break;
     }
-    case Normal_Mode_Command_Type::REPEAT_LAST_COMMAND:
+    case Normal_Command_Type::GOTO_DEFINITION: {
+        syntax_editor_synchronize_with_compiler(false);
+        Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(true));
+        AST::Node* node = Parser::find_smallest_enclosing_node(upcast(code->root), cursor_token_index);
+        Symbol* symbol = code_query_get_ast_node_symbol(node); // May be null
+        if (symbol != 0 && symbol->definition_node != 0) {
+            syntax_editor_goto_node(symbol->definition_node);
+        }
+        break;
+    }
+    case Normal_Command_Type::REPEAT_LAST_COMMAND:
     {
         editor.record_insert_commands = false;
         normal_command_execute(editor.last_normal_command);
@@ -3231,17 +3368,59 @@ void normal_command_execute(Normal_Mode_Command& command)
         editor.record_insert_commands = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
-        string_reset(&editor.fuzzy_find_search);
-        editor.fuzzy_line_edit = line_editor_make();
+    case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
+        string_reset(&editor.fuzzy_search_text);
+        editor.search_text_edit = line_editor_make();
         dynamic_array_for_each(editor.fuzzy_find_suggestions, editor_suggestion_destroy);
         dynamic_array_reset(&editor.fuzzy_find_suggestions);
         editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
         break;
     }
-    case Normal_Mode_Command_Type::VISUALIZE_MOTION:
-    case Normal_Mode_Command_Type::GOTO_LAST_JUMP:
-    case Normal_Mode_Command_Type::GOTO_NEXT_JUMP:
+    case Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE: 
+    case Normal_Command_Type::ENTER_TEXT_SEARCH: {
+        editor.search_text_edit = line_editor_make();
+        editor.search_text_edit.select_start = 0;
+        editor.search_reverse = command.type == Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE;
+        editor.search_text_edit.pos = editor.search_text.size;
+        editor.search_start_pos = tab.cursor;
+        editor.search_start_cam_start = tab.cam_start;
+        editor.mode = Editor_Mode::TEXT_SEARCH;
+        break;
+    }
+    case Normal_Command_Type::SEARCH_IDENTIFER_UNDER_CURSOR: 
+    {
+        syntax_editor_synchronize_tokens();
+        Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(true));
+        Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::WORD, 1, false), cursor);
+        if (text_index_equal(range.start, range.end)) break;
+
+        assert(range.start.line == range.end.line && range.start.line == cursor.line, "");
+        String substr = string_create_substring_static(&line->text, range.start.character, range.end.character);
+        editor.search_reverse = false;
+        string_reset(&editor.search_text);
+        string_append_string(&editor.search_text, &substr);
+
+        cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor);
+        break;
+    }
+    case Normal_Command_Type::ADD_INDENTATION:
+    case Normal_Command_Type::REMOVE_INDENTATION: {
+        Motion motion = command.options.motion;
+        if (motion.motion_type == Motion_Type::LINE) {
+            motion.contains_edges = false;
+        }
+        Text_Range range = motion_evaluate(motion, cursor);
+        for (int i = range.start.line; i <= range.end.line; i++) {
+            Source_Line* line = source_code_get_line(code, i);
+            int new_indent = line->indentation + (command.type == Normal_Command_Type::ADD_INDENTATION ? 1 : -1) * command.repeat_count;
+            if (new_indent < 0) break;
+            history_change_indent(history, i, new_indent);
+        }
+        break;
+    }
+    case Normal_Command_Type::VISUALIZE_MOTION:
+    case Normal_Command_Type::GOTO_LAST_JUMP:
+    case Normal_Command_Type::GOTO_NEXT_JUMP:
         break;
     default: panic("");
     }
@@ -3544,20 +3723,23 @@ void syntax_editor_process_key_message(Key_Message& msg)
         }
 
         // Parse CTRL messages first
-        if (msg.ctrl_down)
         {
-            Normal_Mode_Command_Type command_type = Normal_Mode_Command_Type::MAX_ENUM_VALUE;
-            switch (msg.key_code)
+            Normal_Command_Type command_type = Normal_Command_Type::MAX_ENUM_VALUE;
+            if (msg.ctrl_down)
             {
-            case Key_Code::R: command_type = Normal_Mode_Command_Type::REDO; break;
-            case Key_Code::U: command_type = Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE; break;
-            case Key_Code::D: command_type = Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE; break;
-            case Key_Code::O: command_type = Normal_Mode_Command_Type::GOTO_LAST_JUMP; break;
-            case Key_Code::I: command_type = Normal_Mode_Command_Type::GOTO_NEXT_JUMP; break;
-            case Key_Code::P: command_type = Normal_Mode_Command_Type::ENTER_FUZZY_FIND_DEFINITION; break;
+                switch (msg.key_code)
+                {
+                case Key_Code::R: command_type = Normal_Command_Type::REDO; break;
+                case Key_Code::U: command_type = Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE; break;
+                case Key_Code::D: command_type = Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE; break;
+                case Key_Code::O: command_type = Normal_Command_Type::GOTO_LAST_JUMP; break;
+                case Key_Code::I: command_type = Normal_Command_Type::GOTO_NEXT_JUMP; break;
+                case Key_Code::P: command_type = Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION; break;
+                case Key_Code::G: command_type = Normal_Command_Type::GOTO_DEFINITION; break;
+                }
             }
 
-            if (command_type != Normal_Mode_Command_Type::MAX_ENUM_VALUE)
+            if (command_type != Normal_Command_Type::MAX_ENUM_VALUE)
             {
                 int index = 0;
                 int repeat_count = parse_repeat_count(index, 1);
@@ -3588,6 +3770,36 @@ void syntax_editor_process_key_message(Key_Message& msg)
             string_reset(&cmd_buffer);
         }
 
+        break;
+    }
+    case Editor_Mode::TEXT_SEARCH: 
+    {
+        auto& search_text = editor.search_text;
+        auto& tab = editor.tabs[editor.open_tab_index];
+
+        // Exit if requested
+        if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
+            tab.cursor = editor.search_start_pos;
+            editor.mode = Editor_Mode::NORMAL;
+            return;
+        }
+        if (msg.key_code == Key_Code::RETURN && msg.key_down) {
+            editor.mode = Editor_Mode::NORMAL;
+            return;
+        }
+
+        bool changed = line_editor_feed_key_message(editor.search_text_edit, &search_text, msg);
+        if (!changed) break;
+
+        // If search size = 0, return
+        if (search_text.size == 0) {
+            tab.cursor = editor.search_start_pos;
+            tab.cam_start = editor.search_start_cam_start;
+            break;
+        }
+
+        // Otherwise go through lines from start and try to find occurance
+        tab.cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), editor.search_start_pos);
         break;
     }
     case Editor_Mode::FUZZY_FIND_DEFINITION: 
@@ -3626,7 +3838,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
         if (msg.key_code == Key_Code::TAB && msg.key_down && editor.fuzzy_find_suggestions.size > 0) 
         {
             auto sugg = editor.fuzzy_find_suggestions[0];
-            auto& search = editor.fuzzy_find_search;
+            auto& search = editor.fuzzy_search_text;
             if (sugg.type == Suggestion_Type::SYMBOL)
             {
                 auto symbol = sugg.options.symbol;
@@ -3661,19 +3873,20 @@ void syntax_editor_process_key_message(Key_Message& msg)
             }
 
             if (changed) {
-                editor.fuzzy_line_edit.pos = search.size;
-                editor.fuzzy_line_edit.select_start = search.size;
+                editor.search_text_edit.pos = search.size;
+                editor.search_text_edit.select_start = search.size;
             }
         }
 
         // Otherwise let line handler use key-message
         if (!changed) {
-            changed = line_editor_feed_key_message(editor.fuzzy_line_edit, &editor.fuzzy_find_search, msg);
+            changed = line_editor_feed_key_message(editor.search_text_edit, &editor.fuzzy_search_text, msg);
         }
 
         if (changed) 
         {
-            if (editor.fuzzy_find_search.size == 0) {
+            if (editor.fuzzy_search_text.size == 0) {
+                dynamic_array_for_each(editor.fuzzy_find_suggestions, editor_suggestion_destroy);
                 dynamic_array_reset(&editor.fuzzy_find_suggestions);
                 return;
             }
@@ -3681,10 +3894,10 @@ void syntax_editor_process_key_message(Key_Message& msg)
             auto& tab = editor.tabs[editor.open_tab_index];
             syntax_editor_synchronize_with_compiler(false);
 
-            String search = editor.fuzzy_find_search;
+            String search = editor.fuzzy_search_text;
             if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/')
             {
-                search = string_create_substring_static(&editor.fuzzy_find_search, 2, editor.fuzzy_find_search.size); 
+                search = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size); 
                 Array<String> path_parts = string_split(search, '/');
                 SCOPE_EXIT(string_split_destroy(path_parts));
 
@@ -3747,12 +3960,12 @@ void syntax_editor_process_key_message(Key_Message& msg)
             }
 
             Symbol_Table* symbol_table = nullptr;
-            Array<String> path_parts = string_split(editor.fuzzy_find_search, '~');
+            Array<String> path_parts = string_split(editor.fuzzy_search_text, '~');
             SCOPE_EXIT(string_split_destroy(path_parts));
 
             bool is_intern = true;
             if (path_parts[0].size == 0) { // E.g. first term is a ~
-                search = string_create_substring_static(&editor.fuzzy_find_search, 1, editor.fuzzy_find_search.size);
+                search = string_create_substring_static(&editor.fuzzy_search_text, 1, editor.fuzzy_search_text.size);
                 symbol_table = compiler.main_source->module_progress->module_analysis->symbol_table;
                 is_intern = false;
             }
@@ -3815,6 +4028,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 
             auto items = fuzzy_search_get_results(true, 3);
             auto& suggestions = editor.fuzzy_find_suggestions;
+            dynamic_array_for_each(suggestions, editor_suggestion_destroy);
             dynamic_array_reset(&suggestions);
             for (int i = 0; i < items.size; i++) {
                 dynamic_array_push_back(&suggestions, editor_suggestion_make_symbol(symbols[items[i].user_index]));
@@ -4218,6 +4432,52 @@ void syntax_editor_render()
         cam_end = cam_start + line_count;
     }
 
+    // Render line numbers
+    {
+        auto get_digits = [](int number) -> int {
+            int digits = 1;
+            while ((number / 10) != 0) {
+                digits += 1;
+                number = number / 10;
+            }
+            return digits;
+        };
+
+        vec2 char_size = editor.text_display.char_size;
+        int line_num_digits = math_maximum(get_digits(cursor.line), 2) + 1;
+
+        // Move code-box to the right
+        code_box.min.x += char_size.x * (line_num_digits + 1);
+
+        // Draw line numbers
+        String text = string_create();
+        SCOPE_EXIT(string_destroy(&text));
+        for (int i = cam_start; i <= cam_end && i < code->line_count; i++) 
+        {
+            float x = 0;
+            int height = code_box.max.y;
+            int number;
+            vec3 color = vec3(0.f, .5f, 1.0f);
+            if (cam_start + i == cursor.line) {
+                number = cursor.line;
+                color = color * 1.6f;
+            }
+            else {
+                number = (cam_start + i) - cursor.line;
+                if (number < 0) {
+                    number = -number;
+                }
+                x = (line_num_digits - get_digits(number)) * char_size.x;
+            }
+
+            string_reset(&text);
+            string_append_formated(&text, "%d", number);
+            text_renderer_add_text(
+                editor.text_renderer, text, vec2(x, height - char_size.y * i), Anchor::TOP_LEFT, char_size, color
+            );
+        }
+    }
+
     // Push Source-Code into Rich-Text
     Text_Display::set_frame(&editor.text_display, code_box.min, Anchor::BOTTOM_LEFT, code_box.max - code_box.min);
     Rich_Text::reset(&editor.editor_text);
@@ -4270,13 +4530,29 @@ void syntax_editor_render()
     Analysis_Pass* pass = code_query_get_analysis_pass(node); // Note: May be null?
     Symbol* symbol = code_query_get_ast_node_symbol(node); // May be null
 
+    // Show search results in editor
+    if (editor.mode == Editor_Mode::TEXT_SEARCH && editor.search_text.size != 0)
+    {
+        auto text = &editor.editor_text;
+        auto& search_text = editor.search_text;
+        for (int i = 0; i < text->lines.size; i++)
+        {
+            String str = text->lines[i].text;
+            int substring_start = string_contains_substring(str, 0, search_text);
+            while (substring_start != -1) {
+                Rich_Text::mark_line(text, Rich_Text::Mark_Type::BACKGROUND_COLOR, vec3(0.3f), i, substring_start, substring_start + search_text.size);
+                substring_start = string_contains_substring(str, substring_start + search_text.size, search_text);
+            }
+        }
+    }
+
     // Syntax Highlighting
     if (true)
     {
         syntax_highlighting_highlight_identifiers_recursive(upcast(code->root));
 
         // Highlight selected symbol occurances
-        if (symbol != 0 && editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION)
+        if (symbol != 0 && editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION && editor.mode != Editor_Mode::TEXT_SEARCH)
         {
             // Highlight all instances of the symbol
             vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
@@ -4349,7 +4625,7 @@ void syntax_editor_render()
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
     Rich_Text::Rich_Text call_info_text = Rich_Text::create(vec3(1));
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
-    if (editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION)
+    if (editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION && editor.mode != Editor_Mode::TEXT_SEARCH)
     {
         Rich_Text::Rich_Text* text = &context_text;
 
@@ -4715,14 +4991,14 @@ void syntax_editor_render()
     }
 
     // Draw Fuzzy-Find
-    if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION)
+    if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH)
     {
-        auto& line_edit = editor.fuzzy_line_edit;
+        auto& line_edit = editor.search_text_edit;
 
         Rich_Text::Rich_Text rich_text = Rich_Text::create(vec3(1));
         SCOPE_EXIT(Rich_Text::destroy(&rich_text));
         Rich_Text::add_line(&rich_text);
-        Rich_Text::append(&rich_text, editor.fuzzy_find_search);
+        Rich_Text::append(&rich_text, editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION ? editor.fuzzy_search_text : editor.search_text);
 
         // Draw highlighted
         if (line_edit.pos != line_edit.select_start) {
@@ -4731,8 +5007,8 @@ void syntax_editor_render()
             Rich_Text::mark_line(&rich_text, Rich_Text::Mark_Type::BACKGROUND_COLOR, vec3(0.3f), 0, start, end);
         }
 
-        // Push suggestions
-        if (editor.fuzzy_find_suggestions.size > 0) 
+        // Push suggestions in Fuzzy-Find Mode
+        if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.fuzzy_find_suggestions.size > 0) 
         {
             Rich_Text::add_seperator_line(&rich_text);
             for (int i = 0; i < editor.fuzzy_find_suggestions.size; i++) 

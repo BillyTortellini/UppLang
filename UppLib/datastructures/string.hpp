@@ -37,7 +37,7 @@ void string_set_characters(String* string, const char* characters);
 
 void string_remove_substring(String* string, int start_index, int end_index);
 bool string_compare_substring(String* string, int start_index, String* other);
-bool string_contains_substring(String* string, String* substring);
+int string_contains_substring(String string, int search_start, String substring); // -1 if not available
 void string_reset(String* string);
 void string_reserve(String* string, int new_capacity);
 void string_append(String* string, const char* appendix);

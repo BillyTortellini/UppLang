@@ -1,13 +1,11 @@
 
+BUG:
+ --> Delete 2 lines before comment start invalidates comment! d2j
 
-Fuzzy-Find Files:
- * Handle file-names if search starts with ./
-
-
-
-
-
-
+DONE:
+ * Change indentation with <>
+ * Line-Numbers
+ * Yank/put indentation storage 
 
 -----------------
 - Editor-Update -
@@ -28,6 +26,7 @@ Features: (Done first, then ranked by priority)
  - Fuzzy Goto definition/symbol
     * Fuzzy search to multiple definitions
     * Over multiple files when imports are used
+ - Line-numbers (relative or not...)
 
 Required:
  - Jumping between last positions 
@@ -35,15 +34,13 @@ Required:
  - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
 
 Almost required:
+ - Code-Folding
+    * Commands to fold/unfold + recursively
+    * Movements should respect folding
  - Interactive Search-and-replace
     * Per line simple search and replace of text
     * Interactive replacement mode with GUI
     * Smart mode for comments and string literals
- - Code-Folding
-    * Commands to fold/unfold + recursively
-    * Movements should respect folding
-    * Folds should be stored in editor after exit?
-    * Auto-Fold mode? (e.g. fold lower in same block)
  - Marks
     * Ability to set and jump to marks
     * Marks over multiple files
@@ -58,7 +55,6 @@ Almost required:
     * Visual mode
  - More Motions
     * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
- - Line-numbers (relative or not...)
 
 Optional:
  - Yank and Put with Registers

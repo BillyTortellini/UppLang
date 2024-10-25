@@ -67,7 +67,7 @@ enum class Movement_Type
     END_OF_WORD, // e
     END_OF_WORD_AFTER_SPACE, // E
     JUMP_ENCLOSURE, // %
-    BLOCK_END, // }
+    PARAGRAPH_END, // }
     PREVIOUS_PARAGRAPH, // {
     GOTO_END_OF_TEXT, // G
     GOTO_START_OF_TEXT, // gg
@@ -103,7 +103,7 @@ struct Motion
 };
 Text_Slice motion_evaluate_at_position(Motion motion, Text_Position pos, Text_Editor* editor);
 
-enum class Normal_Mode_Command_Type
+enum class Normal_Command_Type
 {
     MOVEMENT,
     ENTER_INSERT_MODE_LINE_START,
@@ -141,7 +141,7 @@ enum class Normal_Mode_Command_Type
 
 struct Normal_Mode_Command
 {
-    Normal_Mode_Command_Type type;
+    Normal_Command_Type type;
     Motion motion;
     Movement movement;
     char character;

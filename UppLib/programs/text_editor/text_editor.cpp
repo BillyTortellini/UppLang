@@ -293,7 +293,7 @@ void text_history_redo(Text_History* history, Text_Editor* editor)
     }
 }
 
-Normal_Mode_Command normal_mode_command_make(Normal_Mode_Command_Type command_type, int repeat_count);
+Normal_Mode_Command normal_mode_command_make(Normal_Command_Type command_type, int repeat_count);
 Movement movement_make(Movement_Type movement_type, int repeat_count, char search_char);
 Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* core)
 {
@@ -321,7 +321,7 @@ Text_Editor* text_editor_create(Text_Renderer* text_renderer, Rendering_Core* co
     result->jump_history = dynamic_array_create<Text_Editor_Jump>(32);
     result->jump_history_index = 0;
 
-    result->last_normal_mode_command = normal_mode_command_make(Normal_Mode_Command_Type::MOVEMENT, 0);
+    result->last_normal_mode_command = normal_mode_command_make(Normal_Command_Type::MOVEMENT, 0);
     result->last_normal_mode_command.movement = movement_make(Movement_Type::MOVE_LEFT, 0, 0);
     result->normal_mode_incomplete_command = dynamic_array_create<Key_Message>(32);
     result->record_insert_mode_inputs = true;
@@ -824,7 +824,7 @@ Text_Position movement_evaluate_at_position(Movement movement, Text_Position pos
             pos = current_word.start;
             break;
         }
-        case Movement_Type::BLOCK_END: {
+        case Movement_Type::PARAGRAPH_END: {
             int line_index = pos.line_index;
             while (line_index < editor->text.size && string_contains_only_characters_in_set(&editor->text.data[line_index], whitespace_characters, false)) {
                 line_index++;
@@ -1082,14 +1082,14 @@ Text_Slice motion_evaluate_at_position(Motion motion, Text_Position pos, Text_Ed
     return result;
 }
 
-Normal_Mode_Command normal_mode_command_make(Normal_Mode_Command_Type command_type, int repeat_count) {
+Normal_Mode_Command normal_mode_command_make(Normal_Command_Type command_type, int repeat_count) {
     Normal_Mode_Command result;
     result.type = command_type;
     result.repeat_count = repeat_count;
     return result;
 }
 
-Normal_Mode_Command normal_mode_command_make_with_char(Normal_Mode_Command_Type command_type, int repeat_count, char character) {
+Normal_Mode_Command normal_mode_command_make_with_char(Normal_Command_Type command_type, int repeat_count, char character) {
     Normal_Mode_Command result;
     result.type = command_type;
     result.repeat_count = repeat_count;
@@ -1097,7 +1097,7 @@ Normal_Mode_Command normal_mode_command_make_with_char(Normal_Mode_Command_Type 
     return result;
 }
 
-Normal_Mode_Command normal_mode_command_make_with_motion(Normal_Mode_Command_Type command_type, int repeat_count, Motion motion) {
+Normal_Mode_Command normal_mode_command_make_with_motion(Normal_Command_Type command_type, int repeat_count, Motion motion) {
     Normal_Mode_Command result;
     result.type = command_type;
     result.repeat_count = repeat_count;
@@ -1107,7 +1107,7 @@ Normal_Mode_Command normal_mode_command_make_with_motion(Normal_Mode_Command_Typ
 
 Normal_Mode_Command normal_mode_command_make_movement(Movement movement) {
     Normal_Mode_Command result;
-    result.type = Normal_Mode_Command_Type::MOVEMENT;
+    result.type = Normal_Command_Type::MOVEMENT;
     result.repeat_count = 1;
     result.movement = movement;
     return result;
@@ -1233,7 +1233,7 @@ Parse_Result<Movement> key_messages_parse_movement(Array<Key_Message> messages, 
             return parse_result_make_success(movement_make(Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION, repeat_count.result), 1);
         }
         else if (msg.character == '}') {
-            return parse_result_make_success(movement_make(Movement_Type::BLOCK_END, repeat_count.result), 1);
+            return parse_result_make_success(movement_make(Movement_Type::PARAGRAPH_END, repeat_count.result), 1);
         }
         else if (msg.character == '{') {
             return parse_result_make_success(movement_make(Movement_Type::PREVIOUS_PARAGRAPH, repeat_count.result), 1);
@@ -1359,66 +1359,66 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     {
     case '=':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::FORMAT_TEXT, 1), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::FORMAT_TEXT, 1), 1 + repeat_count.key_message_count);
     case 'x':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::DELETE_CHARACTER, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::DELETE_CHARACTER, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'i':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_ON_CURSOR, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_ON_CURSOR, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'I':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_LINE_START, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_LINE_START, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'a':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_CURSOR, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_AFTER_CURSOR, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'A':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_LINE_END, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_LINE_END, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'o':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'O':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE, repeat_count.result), 1 + repeat_count.key_message_count);
     case '.':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::REPEAT_LAST_COMMAND, repeat_count.result), 1 + repeat_count.key_message_count);
+            normal_mode_command_make(Normal_Command_Type::REPEAT_LAST_COMMAND, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'D':
         return parse_result_make_success(
             normal_mode_command_make_with_motion(
-                Normal_Mode_Command_Type::DELETE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                Normal_Command_Type::DELETE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
             ),
             1 + repeat_count.key_message_count);
     case 'C':
         return parse_result_make_success(
             normal_mode_command_make_with_motion(
-                Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
+                Normal_Command_Type::CHANGE_MOTION, repeat_count.result, motion_make_from_movement(movement_make(Movement_Type::TO_END_OF_LINE, 1))
             ),
             1 + repeat_count.key_message_count);
     case 'L':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, repeat_count.result),
+            normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM, repeat_count.result),
             repeat_count.key_message_count + 1);
     case 'M':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, repeat_count.result),
+            normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER, repeat_count.result),
             repeat_count.key_message_count + 1);
     case 'H':
         return parse_result_make_success(
-            normal_mode_command_make(Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP, repeat_count.result),
+            normal_mode_command_make(Normal_Command_Type::MOVE_CURSOR_VIEWPORT_TOP, repeat_count.result),
             repeat_count.key_message_count + 1);
     case 'p':
-        return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_AFTER_CURSOR, repeat_count.result),
+        return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::PUT_AFTER_CURSOR, repeat_count.result),
             1 + repeat_count.key_message_count);
     case 'P':
-        return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::PUT_BEFORE_CURSOR, repeat_count.result),
+        return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::PUT_BEFORE_CURSOR, repeat_count.result),
             1 + repeat_count.key_message_count);
     case 'Y':
-        return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::YANK_LINE, repeat_count.result),
+        return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::YANK_LINE, repeat_count.result),
             1 + repeat_count.key_message_count);
     case 'u':
-        return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::UNDO, repeat_count.result), 1 + repeat_count.key_message_count);
+        return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::UNDO, repeat_count.result), 1 + repeat_count.key_message_count);
     case 'd':
     case 'r':
     case 'c':
@@ -1431,23 +1431,23 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     if (messages[0].ctrl_down && messages[0].key_down)
     {
         if (messages[0].key_code == Key_Code::R) {
-            return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::REDO, repeat_count.result), 1 + repeat_count.key_message_count);
+            return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::REDO, repeat_count.result), 1 + repeat_count.key_message_count);
         }
         else if (messages[0].key_code == Key_Code::U) {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
+                normal_mode_command_make(Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
         }
         else if (messages[0].key_code == Key_Code::D) {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
+                normal_mode_command_make(Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE, 1), 1 + repeat_count.key_message_count);
         }
         else if (messages[0].key_code == Key_Code::O) {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::GOTO_LAST_JUMP, 1), 1 + repeat_count.key_message_count);
+                normal_mode_command_make(Normal_Command_Type::GOTO_LAST_JUMP, 1), 1 + repeat_count.key_message_count);
         }
         else if (messages[0].key_code == Key_Code::I) {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::GOTO_NEXT_JUMP, 1), 1 + repeat_count.key_message_count);
+                normal_mode_command_make(Normal_Command_Type::GOTO_NEXT_JUMP, 1), 1 + repeat_count.key_message_count);
         }
     }
 
@@ -1455,20 +1455,20 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
 
     // Parse multi key normal mode commands (d and c for now)
     if (messages[0].character == 'y' && messages[1].character == 'y') {
-        return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::YANK_LINE, repeat_count.result),
+        return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::YANK_LINE, repeat_count.result),
             1 + repeat_count.key_message_count);
     }
     if (messages[0].character == 'd') {
         Parse_Result<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
         if (motion_parse.symbol_type == Parse_Result_Type::SUCCESS) {
             return parse_result_make_success(
-                normal_mode_command_make_with_motion(Normal_Mode_Command_Type::DELETE_MOTION, repeat_count.result, motion_parse.result),
+                normal_mode_command_make_with_motion(Normal_Command_Type::DELETE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
             );
         }
         if (messages[1].character == 'd') {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::DELETE_LINE, repeat_count.result),
+                normal_mode_command_make(Normal_Command_Type::DELETE_LINE, repeat_count.result),
                 repeat_count.key_message_count + 2
             );
         }
@@ -1478,7 +1478,7 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
         Parse_Result<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
         if (motion_parse.symbol_type == Parse_Result_Type::SUCCESS) {
             return parse_result_make_success(
-                normal_mode_command_make_with_motion(Normal_Mode_Command_Type::YANK_MOTION, repeat_count.result, motion_parse.result),
+                normal_mode_command_make_with_motion(Normal_Command_Type::YANK_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
             );
         }
@@ -1488,13 +1488,13 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
         Parse_Result<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
         if (motion_parse.symbol_type == Parse_Result_Type::SUCCESS) {
             return parse_result_make_success(
-                normal_mode_command_make_with_motion(Normal_Mode_Command_Type::CHANGE_MOTION, repeat_count.result, motion_parse.result),
+                normal_mode_command_make_with_motion(Normal_Command_Type::CHANGE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
             );
         }
         if (messages[1].character == 'c') {
             return parse_result_make_success(
-                normal_mode_command_make(Normal_Mode_Command_Type::CHANGE_LINE, repeat_count.result),
+                normal_mode_command_make(Normal_Command_Type::CHANGE_LINE, repeat_count.result),
                 repeat_count.key_message_count + 2
             );
         }
@@ -1502,7 +1502,7 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     }
     if (messages[0].character == 'r') {
         return parse_result_make_success(
-            normal_mode_command_make_with_char(Normal_Mode_Command_Type::REPLACE_CHARACTER, repeat_count.result, messages[1].character),
+            normal_mode_command_make_with_char(Normal_Command_Type::REPLACE_CHARACTER, repeat_count.result, messages[1].character),
             repeat_count.key_message_count + 2
         );
     }
@@ -1510,7 +1510,7 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
         Parse_Result<Motion> motion_parse = key_messages_parse_motion(array_make_slice(&messages, 1, messages.size));
         if (motion_parse.symbol_type == Parse_Result_Type::SUCCESS) {
             return parse_result_make_success(
-                normal_mode_command_make_with_motion(Normal_Mode_Command_Type::VISUALIZE_MOTION, repeat_count.result, motion_parse.result),
+                normal_mode_command_make_with_motion(Normal_Command_Type::VISUALIZE_MOTION, repeat_count.result, motion_parse.result),
                 repeat_count.key_message_count + 1 + motion_parse.key_message_count
             );
         }
@@ -1518,15 +1518,15 @@ Parse_Result<Normal_Mode_Command> key_messages_parse_normal_mode_command(Array<K
     }
     if (messages[0].character == 'z') {
         if (messages[1].character == 't') {
-            return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP, repeat_count.result),
+            return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP, repeat_count.result),
                 repeat_count.key_message_count + 2);
         }
         if (messages[1].character == 'z') {
-            return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, repeat_count.result),
+            return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, repeat_count.result),
                 repeat_count.key_message_count + 2);
         }
         if (messages[1].character == 'b') {
-            return parse_result_make_success(normal_mode_command_make(Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM, repeat_count.result),
+            return parse_result_make_success(normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM, repeat_count.result),
                 repeat_count.key_message_count + 2);
         }
         return parse_result_make_failure<Normal_Mode_Command>();
@@ -1667,7 +1667,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
     bool save_as_last_command = false;
     switch (command.type)
     {
-    case Normal_Mode_Command_Type::CHANGE_LINE: {
+    case Normal_Command_Type::CHANGE_LINE: {
         text_history_start_record_complex_command(&editor->history);
         text_history_delete_slice(&editor->history, text_slice_make_line(editor->text, editor->cursor_position.line_index));
         insert_mode_enter(editor);
@@ -1676,7 +1676,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::CHANGE_MOTION: {
+    case Normal_Command_Type::CHANGE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, editor->cursor_position, editor);
         if (command.motion.motion_type == Motion_Type::MOVEMENT &&
             (command.motion.movement.type == Movement_Type::SEARCH_FORWARDS_FOR ||
@@ -1691,7 +1691,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::DELETE_CHARACTER: {
+    case Normal_Command_Type::DELETE_CHARACTER: {
         Text_Position next = editor->cursor_position;
         for (int i = 0; i < command.repeat_count; i++) {
             if (editor->text[editor->cursor_position.line_index].size != 0) {
@@ -1702,7 +1702,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::DELETE_LINE:
+    case Normal_Command_Type::DELETE_LINE:
     {
         if (editor->text.size == 0) break;
         Text_Position delete_start = editor->cursor_position;
@@ -1732,7 +1732,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::DELETE_MOTION:
+    case Normal_Command_Type::DELETE_MOTION:
     {
         Text_Slice deletion_slice;
         if (command.motion.motion_type == Motion_Type::MOVEMENT &&
@@ -1776,24 +1776,24 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_AFTER_CURSOR: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_AFTER_CURSOR: {
         editor->cursor_position.character++;
         insert_mode_enter(editor);
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_ON_CURSOR: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_ON_CURSOR: {
         insert_mode_enter(editor);
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_LINE_END: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_LINE_END: {
         editor->cursor_position.character = editor->text[editor->cursor_position.line_index].size;
         insert_mode_enter(editor);
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_LINE_START: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_LINE_START: {
         editor->cursor_position.character = 0;
         Text_Iterator it = text_iterator_make(&editor->text, editor->cursor_position);
         text_iterator_skip_characters_in_set(&it, string_create_static(" \t"), true);
@@ -1802,7 +1802,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: {
         Text_Position new_pos;
         new_pos.line_index = editor->cursor_position.line_index;
         new_pos.character = 0;
@@ -1820,7 +1820,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW: {
+    case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW: {
         Text_Position new_pos;
         new_pos.line_index = editor->cursor_position.line_index;
         new_pos.character = editor->text[new_pos.line_index].size;
@@ -1840,7 +1840,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::FORMAT_TEXT:
+    case Normal_Command_Type::FORMAT_TEXT:
     {
         // Start at the start of the text, go through every single character, check
         int depth = 0;
@@ -1875,21 +1875,21 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         }
         break;
     }
-    case Normal_Mode_Command_Type::MOVEMENT: {
+    case Normal_Command_Type::MOVEMENT: {
         for (int i = 0; i < command.repeat_count; i++) {
             editor->cursor_position = movement_evaluate_at_position(command.movement, editor->cursor_position, editor);
             text_editor_clamp_cursor(editor);
         }
         break;
     }
-    case Normal_Mode_Command_Type::VISUALIZE_MOTION: {
+    case Normal_Command_Type::VISUALIZE_MOTION: {
         Text_Slice slice = motion_evaluate_at_position(command.motion, editor->cursor_position, editor);
         text_editor_reset_highlights(editor);
         text_editor_add_highlight_from_slice(editor, slice, vec3(1.0f), vec4(0.0f, 0.3f, 0.0f, 1.0f));
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::REPLACE_CHARACTER: {
+    case Normal_Command_Type::REPLACE_CHARACTER: {
         String* line_index = &editor->text[editor->cursor_position.line_index];
         if (line_index->size == 0) {
             text_history_insert_character(&editor->history, editor->cursor_position, command.character);
@@ -1910,7 +1910,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         save_as_last_command = true;
         break;
     }
-    case Normal_Mode_Command_Type::REPEAT_LAST_COMMAND: {
+    case Normal_Command_Type::REPEAT_LAST_COMMAND: {
         editor->record_insert_mode_inputs = false;
         normal_mode_command_execute(editor->last_normal_mode_command, editor);
         if (editor->mode == Text_Editor_Mode::INSERT) {
@@ -1921,17 +1921,17 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         editor->record_insert_mode_inputs = true;
         break;
     }
-    case Normal_Mode_Command_Type::UNDO: {
+    case Normal_Command_Type::UNDO: {
         text_history_undo(&editor->history, editor);
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::REDO: {
+    case Normal_Command_Type::REDO: {
         text_history_redo(&editor->history, editor);
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::YANK_MOTION: 
+    case Normal_Command_Type::YANK_MOTION: 
     {
         Text_Slice yank_slice;
         if (command.motion.motion_type == Motion_Type::MOVEMENT &&
@@ -1966,7 +1966,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         text_append_slice_to_string(editor->text, yank_slice, &editor->yanked_string);
         break;
     }
-    case Normal_Mode_Command_Type::YANK_LINE: {
+    case Normal_Command_Type::YANK_LINE: {
         if (editor->text.size == 0) break;
         Text_Position delete_start = editor->cursor_position;
         delete_start.character = 0;
@@ -1982,7 +1982,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         editor->last_yank_was_line = true;
         break;
     }
-    case Normal_Mode_Command_Type::PUT_BEFORE_CURSOR: 
+    case Normal_Command_Type::PUT_BEFORE_CURSOR: 
     {
         Text_Position insert_pos = editor->cursor_position;
         Text_Position next_edit_pos = editor->cursor_position;
@@ -2015,7 +2015,7 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         editor->horizontal_position = editor->cursor_position.character;
         break;
     }
-    case Normal_Mode_Command_Type::PUT_AFTER_CURSOR: 
+    case Normal_Command_Type::PUT_AFTER_CURSOR: 
     {
         Text_Position insert_pos = editor->cursor_position;
         Text_Position next_edit_pos = editor->cursor_position;
@@ -2049,58 +2049,58 @@ void normal_mode_command_execute(Normal_Mode_Command command, Text_Editor* edito
         editor->horizontal_position = editor->cursor_position.character;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
         editor->first_rendered_line = editor->cursor_position.line_index;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->first_rendered_line = math_maximum(0, editor->cursor_position.line_index - line_count / 2);
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
+    case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->first_rendered_line = math_maximum(0, editor->cursor_position.line_index - line_count);
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_TOP: {
         editor->cursor_position.line_index = editor->first_rendered_line;
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->cursor_position.line_index = editor->first_rendered_line + line_count / 2;
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
+    case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->cursor_position.line_index = editor->first_rendered_line + line_count - 1;
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE: {
+    case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->cursor_position.line_index += line_count / 2;
         text_editor_clamp_cursor(editor);
         editor->first_rendered_line = math_minimum(editor->text.size - 1, editor->first_rendered_line + line_count / 2);
         break;
     }
-    case Normal_Mode_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
+    case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
         int line_count = (editor->last_editor_region.max.y - editor->last_editor_region.min.y) / editor->last_text_height;
         editor->cursor_position.line_index -= line_count / 2;
         text_editor_clamp_cursor(editor);
         editor->first_rendered_line = math_maximum(0, editor->first_rendered_line - line_count / 2);
         break;
     }
-    case Normal_Mode_Command_Type::GOTO_LAST_JUMP: {
+    case Normal_Command_Type::GOTO_LAST_JUMP: {
         if (editor->jump_history_index == 0) break;
         editor->jump_history_index--;
         editor->cursor_position = editor->jump_history[editor->jump_history_index].jump_start;
         text_editor_clamp_cursor(editor);
         break;
     }
-    case Normal_Mode_Command_Type::GOTO_NEXT_JUMP: {
+    case Normal_Command_Type::GOTO_NEXT_JUMP: {
         if (editor->jump_history_index >= editor->jump_history.size) break;
         editor->cursor_position = editor->jump_history[editor->jump_history_index].jump_end;
         editor->jump_history_index++;
@@ -2163,7 +2163,7 @@ void insert_mode_handle_message(Text_Editor* editor, Key_Message* msg)
                 editor->cursor_position = pos;
             }
             else {
-                Normal_Mode_Command cmd = normal_mode_command_make_with_motion(Normal_Mode_Command_Type::DELETE_MOTION, 1,
+                Normal_Mode_Command cmd = normal_mode_command_make_with_motion(Normal_Command_Type::DELETE_MOTION, 1,
                     motion_make_from_movement(movement_make(Movement_Type::PREVIOUS_WORD, 1, 0)));
                 normal_mode_command_execute(cmd, editor);
             }

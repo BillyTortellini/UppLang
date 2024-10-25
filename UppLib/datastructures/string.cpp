@@ -161,7 +161,7 @@ bool string_in_order(String* s1, String* s2)
 {
     int res = strncmp(s1->characters, s2->characters, math_minimum(s1->size, s2->size));
     if (res == 0) {
-        return s1->size < s2->size;
+        return s1->size > s2->size;
     }
     return res >= 0;
 }
@@ -394,8 +394,27 @@ void string_prepend_string(String* string, String* prepension) {
 }
 
 
-bool string_contains_substring(String* string, String* substring) {
-    return strstr(string->characters, substring->characters) != 0;
+int string_contains_substring(String string, int search_start, String substring) { // -1 if not available
+    if (substring.size > string.size - search_start) return -1;
+    if (search_start >= string.size) return -1;
+
+    for (int i = search_start; i < string.size; i++) {
+        if (i + substring.size > string.size) return -1;
+
+        bool success = true;
+        for (int j = 0; j < substring.size; j++) {
+            char c = string.characters[i + j];
+            char o = substring.characters[j];
+            if (c != o) {
+                success = false;
+                break;
+            }
+        }
+
+        if (success) return i;
+    }
+
+    return -1;
 }
 
 void string_clear(String* string)

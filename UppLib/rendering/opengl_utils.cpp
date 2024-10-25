@@ -148,7 +148,7 @@ GLuint opengl_utils_create_program_from_single_file(const char* filepath)
 
     for (int i = 0; i < possible_shader_defines_count && success; i++)
     {
-        if (string_contains_substring(&file_content, &string_create_static(possible_shader_defines[i]))) 
+        if (string_contains_substring(file_content, 0, string_create_static(possible_shader_defines[i])) != -1) 
         {
             GLint shader_id = glCreateShader(possible_shader_define_types[i]);
             const char* sources[] = {"#version 430 core\n", "#define ", possible_shader_defines[i], "\n", file_content.characters};
