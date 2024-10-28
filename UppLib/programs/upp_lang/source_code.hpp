@@ -73,6 +73,10 @@ struct Source_Line
     // If this line is the start of the comment block, then -1 (Execpt in hierarchical comment stacks)
     // Also for stacked/hierarchical comment blocks, this is the lowest indentation (And always > 0)
     int comment_block_indentation;  
+
+    bool is_folded;
+    int fold_index;
+    int on_screen_index; // May not be visible depending on cam_start/end
 };
 
 struct Line_Bundle

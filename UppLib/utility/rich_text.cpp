@@ -83,9 +83,22 @@ namespace Rich_Text
         line.style_changes = dynamic_array_create<Style_Change>();
         line.text = string_create();
         line.default_style = keep_style ? text->style : text_style_make();
+        line.has_bg = false;
+        line.bg_color = vec3(0.0f);
         dynamic_array_push_back(&text->lines, line);
 
         text->style = line.default_style;
+    }
+
+    void set_line_bg(Rich_Text* text, vec3 color, int line_index) {
+        if (text->lines.size == 0) return;
+        if (line_index == -1) {
+            line_index = text->lines.size - 1;
+        }
+        if (line_index < -1 || line_index >= text->lines.size) return;
+        auto& line = text->lines[line_index];
+        line.has_bg = true;
+        line.bg_color = color;
     }
 
     void add_seperator_line(Rich_Text* text, bool skip_if_last_was_seperator_or_first) 
@@ -506,8 +519,29 @@ namespace Text_Display
             }
         }
 
-        // Render lines
+        // Render line backgrounds
         auto& lines = text->lines;
+        {
+            int t = display->draw_border ? display->border_thickness : 0;
+            bool has_line_bgs = false;
+            for (int i = 0; i < lines.size; i++) 
+            {
+                auto& line = text->lines[i];
+                if (!line.has_bg) {
+                    continue;
+                }
+
+                has_line_bgs = true;
+                vec2 min = vec2(
+                    bb.min.x + t + line.indentation * display->char_size.x * display->indentation_spaces, 
+                    bb.max.y - t - display->char_size.y * (i + 1)
+                );
+                vec2 max = vec2(bb.max.x - t, bb.max.y - t - display->char_size.y * i);
+                renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, max), line.bg_color);
+            }
+        }
+
+        // Render lines
         for (int line_index = 0; line_index < lines.size; line_index++)
         {
             auto& line = lines[line_index];

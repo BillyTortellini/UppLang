@@ -40,6 +40,8 @@ namespace Rich_Text
         Text_Style default_style; 
         int indentation;
         bool is_seperator; // E.g. just a blank ---- line
+        bool has_bg;
+        vec3 bg_color;
     };
 
     struct Rich_Text
@@ -55,6 +57,7 @@ namespace Rich_Text
     void reset(Rich_Text* text);
 
     void add_line(Rich_Text* text, bool keep_style = false, int indentation = 0);
+    void set_line_bg(Rich_Text* text, vec3 color, int line_index = -1);
     void add_seperator_line(Rich_Text* text, bool skip_if_last_was_seperator_or_first = true);
     void append(Rich_Text* rich_text, String string);
     void append(Rich_Text* rich_text, const char* msg);

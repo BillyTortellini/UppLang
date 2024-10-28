@@ -720,7 +720,6 @@ namespace Parser
     // So one should always test for ( or { before calling this...
     Arguments* parse_arguments(Node* parent, Parenthesis_Type parenthesis)
     {
-        CHECKPOINT_SETUP;
         auto args = allocate_base<Arguments>(parent, Node_Type::ARGUMENTS);
         args->arguments = dynamic_array_create<Argument*>();
         args->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();

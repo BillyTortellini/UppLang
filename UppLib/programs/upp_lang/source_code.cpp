@@ -25,6 +25,7 @@ void add_first_bundle_and_line(Source_Code* code)
     first_line.tokens = dynamic_array_create<Token>();
     first_line.is_comment = false;
     first_line.comment_block_indentation = -1;
+    first_line.is_folded = false;
 
     dynamic_array_push_back(&first_bundle.lines, first_line);
     dynamic_array_push_back(&code->bundles, first_bundle);
@@ -276,6 +277,7 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         line.text = string_create();
         line.tokens = dynamic_array_create<Token>();
         line.is_comment = false;
+        line.is_folded = false;
         line.comment_block_indentation = -1;
         dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
     }
@@ -317,6 +319,11 @@ void source_code_remove_line(Source_Code* code, int line_index)
     }
     code->line_count -= 1;
 
+    // Update block comment infos
+    if (line_index < code->line_count) {
+        update_line_block_comment_information(code, line_index);
+    }
+
     if (bundle->lines.size == 0)
     {
         // This means that the bundle should just be deleted, as merging was not possible previously
@@ -347,11 +354,6 @@ void source_code_remove_line(Source_Code* code, int line_index)
         }
         dynamic_array_destroy(&next_bundle->lines);
         dynamic_array_swap_remove(&code->bundles, bundle_index + 1);
-    }
-
-    // Update block comment infos
-    if (line_index < code->line_count) {
-        update_line_block_comment_information(code, line_index);
     }
 }
 

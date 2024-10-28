@@ -1,11 +1,23 @@
 
-BUG:
- --> Delete 2 lines before comment start invalidates comment! d2j
+TODO:
 
 DONE:
- * Change indentation with <>
- * Line-Numbers
- * Yank/put indentation storage 
+ - Visual Block-Mode
+ - Code-Completions should use rich-text
+ - Change motion does weird things...
+ - Bug fix with comments
+ - Proper line yank and delete
+ - Handle Text-Search and folds 
+ - Implement next indent fold
+ - Cursor should display correctly in fold
+ - Normal mode left-right movement should open fold
+ - Up-Down movements respecting folds
+ - Update folds when code is edited
+ - Render folds at correct indentation
+ - Render line numbers correctly with folds
+ - Render Folds
+ - Calculate cam-start/cam-end with folds
+ - Add fold shortcuts
 
 -----------------
 - Editor-Update -
