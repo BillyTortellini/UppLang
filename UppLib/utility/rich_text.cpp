@@ -542,21 +542,23 @@ namespace Text_Display
         }
 
         // Render lines
+        int max_char_count = (bb.max.x - bb.min.x) / display->char_size.x;
         for (int line_index = 0; line_index < lines.size; line_index++)
         {
             auto& line = lines[line_index];
+            vec2 line_start_pos = get_char_position(display, line_index, 0, Anchor::BOTTOM_LEFT);
+            Bounding_Box2 line_bb = bounding_box_2_make_min_max(vec2(bb.min.x, line_start_pos.y), vec2(bb.max.x, line_start_pos.y + char_size.y));
+
             if (line.is_seperator) {
                 int t = 1;
                 vec2 pos = get_char_position(display, line_index, 0, Anchor::CENTER_LEFT);
-                renderer_2D_add_rectangle(renderer_2D,
-                    bounding_box_2_make_min_max(vec2(bb.min.x + display->border_thickness, (pos.y)), vec2(bb.max.x - display->border_thickness, pos.y + t)),
-                    display->border_color * 0.8f
-                );
+                auto sep_bb = bounding_box_2_union(line_bb, bounding_box_2_make_min_max(vec2(bb.min.x + display->border_thickness, (pos.y)), vec2(bb.max.x - display->border_thickness, pos.y + t)));
+                if (sep_bb.available) {
+                    renderer_2D_add_rectangle(renderer_2D, sep_bb.value, display->border_color * 0.8f);
+                }
                 continue;
             }
 
-            vec2 line_start_pos = get_char_position(display, line_index, 0, Anchor::BOTTOM_LEFT);
-            Bounding_Box2 line_bb = bounding_box_2_make_min_max(line_start_pos, line_start_pos + char_size * vec2(line.text.size, 1));
             for (int i = 0; i <= line.style_changes.size; i++)
             {
                 // Get current and last change
@@ -583,13 +585,17 @@ namespace Text_Display
                 {
                     vec2 min = text_start_pos;
                     vec2 max = min + char_size * vec2(change.char_start - last_change.char_start, 1);
-                    if (last_change.style.has_underline) {
-                        renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, vec2(max.x, min.y + 2)), last_change.style.underline_color);
-                        min.y += 2; // Background should not draw over underline
-                    }
+                    max.x = math_minimum(max.x, line_bb.max.x);
+                    if (max.x - min.x >= 0.5f)
+                    {
+                        if (last_change.style.has_underline) {
+                            renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, vec2(max.x, min.y + 2)), last_change.style.underline_color);
+                            min.y += 2; // Background should not draw over underline
+                        }
 
-                    if (last_change.style.has_bg) {
-                        renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, max), last_change.style.bg_color);
+                        if (last_change.style.has_bg) {
+                            renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, max), last_change.style.bg_color);
+                        }
                     }
                 }
 

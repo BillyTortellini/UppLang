@@ -177,6 +177,7 @@
     <None Include="..\resources\shaders\core\geometry_2d.glsl" />
     <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
     <None Include="..\resources\shaders\gui_rect.glsl" />
+    <None Include="..\resources\shaders\particle.glsl" />
     <None Include="..\resources\shaders\proc_city\city_shader.glsl" />
     <None Include="..\resources\shaders\rectangle_2D.glsl" />
     <None Include="..\resources\shaders\test.glsl" />

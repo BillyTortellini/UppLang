@@ -1,92 +1,4 @@
 
-TODO:
-
-DONE:
- - Visual Block-Mode
- - Code-Completions should use rich-text
- - Change motion does weird things...
- - Bug fix with comments
- - Proper line yank and delete
- - Handle Text-Search and folds 
- - Implement next indent fold
- - Cursor should display correctly in fold
- - Normal mode left-right movement should open fold
- - Up-Down movements respecting folds
- - Update folds when code is edited
- - Render folds at correct indentation
- - Render line numbers correctly with folds
- - Render Folds
- - Calculate cam-start/cam-end with folds
- - Add fold shortcuts
-
------------------
-- Editor-Update -
------------------
-Features: (Done first, then ranked by priority)
- - Auto-Formating
- - Motions + Vim commands
- - Better Context-Info
- - Function call information
-    * Show current call parameters
-    * Show current parameter
-    * Missing parameter informations?
- - Multiple-file handling (One 'main' project file + some imported/openend file information)
-    * Option to open multiple files in tabs
-    * Switching from one tab to another (vim gt, gT)
-    * Closing tabs? :x...
-    * Either in tabs or concatenated at the end of the file?
- - Fuzzy Goto definition/symbol
-    * Fuzzy search to multiple definitions
-    * Over multiple files when imports are used
- - Line-numbers (relative or not...)
-
-Required:
- - Jumping between last positions 
-    * Maybe even have a GUI for the jump list with functions + indices
- - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
-
-Almost required:
- - Code-Folding
-    * Commands to fold/unfold + recursively
-    * Movements should respect folding
- - Interactive Search-and-replace
-    * Per line simple search and replace of text
-    * Interactive replacement mode with GUI
-    * Smart mode for comments and string literals
- - Marks
-    * Ability to set and jump to marks
-    * Marks over multiple files
-    * GUI to look at/delete marks
-    * Named marks + fuzzy jumps
-    * Store marks after exit
- - Store last session
-    * Store open tabs, marks + code-folding
- - Visual modes
-    * Visual block (Without multi-cursor)
-    * Visual line
-    * Visual mode
- - More Motions
-    * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
-
-Optional:
- - Yank and Put with Registers
-    * Store multiple yanks and puts/last used
-    * when using p" to access register, show list in gui
- - Macros/Command recording
- - Multi-Cursor mode
- - Multiple windows
- - Animations
-    * For block deletes or copy pastes
-    * Smooth scrolling
-    * Fast cursor movements
- - Focus on Block
-    * Only editing in single block
-    * Remove indentations
-
-
-
-
-
 
 
 Missing-Testcases:
@@ -108,7 +20,6 @@ Missing-Testcases:
 - MISSING FEATURES -
 --------------------
 Core: (Required for programming)
-    * Editor-Update 
     * Language Features:
         - Optional Pointers ?* ( + Context-option to disable behavior)
         - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
@@ -148,6 +59,89 @@ Code improvements:
     * Symbol table lookups could be combined into a single hashtable?
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
     * Sizeof_program.obj now appears in main folder...
+
+
+
+
+
+
+
+
+
+
+-----------------
+- Editor-Update -
+-----------------
+Features: (Done first, then ranked by priority)
+ - Auto-Formating
+ - Motions + Vim commands
+ - Better Context-Info
+ - Function call information
+    * Show current call parameters
+    * Show current parameter
+    * Missing parameter informations?
+ - Multiple-file handling (One 'main' project file + some imported/openend file information)
+    * Option to open multiple files in tabs
+    * Switching from one tab to another (vim gt, gT)
+    * Closing tabs? :x...
+    * Either in tabs or concatenated at the end of the file?
+ - Fuzzy Goto definition/symbol
+    * Fuzzy search to multiple definitions
+    * Over multiple files when imports are used
+ - Line-numbers (relative or not...)
+ - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
+ - Code-Folding
+    * Commands to fold/unfold + recursively
+    * Movements should respect folding
+ - Visual block-mode
+ - Jumping between last positions 
+    * Maybe even have a GUI for the jump list with functions + indices
+
+Required:
+
+Almost required:
+ - Interactive Search-and-replace
+    * Per line simple search and replace of text
+    * Interactive replacement mode with GUI
+    * Smart mode for comments and string literals
+ - Marks
+    * Ability to set and jump to marks
+    * Marks over multiple files
+    * GUI to look at/delete marks
+    * Named marks + fuzzy jumps
+    * Store marks after exit
+ - More Motions
+    * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
+
+Optional:
+ - Yank and Put with Registers
+    * Store multiple yanks and puts/last used
+    * when using p" to access register, show list in gui
+ - Macros/Command recording
+ - Multi-Cursor mode
+ - Multiple windows
+ - Animations
+    * For block deletes or copy pastes
+    * Smooth scrolling
+    * Fast cursor movements (After-trail)
+ - Focus on Block
+    * Only editing in single block
+    * Remove indentations
+ - Visual modes
+    * Visual line
+    * Visual mode
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

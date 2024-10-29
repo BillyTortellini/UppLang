@@ -375,49 +375,51 @@ void pipeline_state_set_unconditional(Pipeline_State* state)
 
 void pipeline_state_switch(Pipeline_State current_state, Pipeline_State new_state)
 {
-    if (current_state.blending_state.blending_enabled != new_state.blending_state.blending_enabled)
     {
         Blending_State* current = &current_state.blending_state;
         Blending_State* updated = &new_state.blending_state;
-        if (updated->blending_enabled)
-        {
-            glEnable(GL_BLEND);
-            if (current->custom_color.x != updated->custom_color.x ||
-                current->custom_color.y != updated->custom_color.y ||
-                current->custom_color.z != updated->custom_color.z ||
-                current->custom_color.w != updated->custom_color.w) {
-                glBlendColor(updated->custom_color.x, updated->custom_color.y, updated->custom_color.z, updated->custom_color.w);
+        if (current->blending_enabled != updated->blending_enabled) {
+            if (updated->blending_enabled) {
+                glEnable(GL_BLEND);
             }
-
-            if (current->destination != updated->destination || current->source != updated->source) {
-                glBlendFunc((GLenum)updated->source, (GLenum)updated->destination);
-            }
-
-            if (current->equation != updated->equation) {
-                glBlendEquation((GLenum)updated->equation);
+            else {
+                glDisable(GL_BLEND);
             }
         }
-        else {
-            glDisable(GL_BLEND);
+
+        if (current->custom_color.x != updated->custom_color.x ||
+            current->custom_color.y != updated->custom_color.y ||
+            current->custom_color.z != updated->custom_color.z ||
+            current->custom_color.w != updated->custom_color.w) {
+            glBlendColor(updated->custom_color.x, updated->custom_color.y, updated->custom_color.z, updated->custom_color.w);
+        }
+
+        if (current->destination != updated->destination || current->source != updated->source) {
+            glBlendFunc((GLenum)updated->source, (GLenum)updated->destination);
+        }
+
+        if (current->equation != updated->equation) {
+            glBlendEquation((GLenum)updated->equation);
         }
     }
 
-    if (current_state.culling_state.culling_enabled != new_state.culling_state.culling_enabled)
     {
         Face_Culling_State* current = &current_state.culling_state;
         Face_Culling_State* updated = &new_state.culling_state;
-        if (updated->culling_enabled)
-        {
-            glEnable(GL_CULL_FACE);
-            if (current->cull_mode != updated->cull_mode) {
-                glCullFace((GLenum)updated->cull_mode);
+        if (current->culling_enabled != updated->culling_enabled) {
+            if (updated->culling_enabled) {
+                glEnable(GL_CULL_FACE);
             }
-            if (current->front_face_definition != updated->front_face_definition) {
-                glFrontFace((GLenum)updated->front_face_definition);
+            else {
+                glDisable(GL_CULL_FACE);
             }
         }
-        else {
-            glDisable(GL_CULL_FACE);
+
+        if (current->cull_mode != updated->cull_mode) {
+            glCullFace((GLenum)updated->cull_mode);
+        }
+        if (current->front_face_definition != updated->front_face_definition) {
+            glFrontFace((GLenum)updated->front_face_definition);
         }
     }
 

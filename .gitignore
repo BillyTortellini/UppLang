@@ -2,6 +2,7 @@ backend/**
 external_libraries/library_source/**
 upp_code/editor_text.upp
 *.set
+*.ses
 backend/test/**
 
 ## Visual Studio Gitignore

@@ -242,6 +242,7 @@ void upp_lang_main()
 
     syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window), &timer);
     SCOPE_EXIT(syntax_editor_destroy());
+    syntax_editor_load_state(string_create_static("upp_code/session.ses"));
 
     // Background
     Camera_3D* camera = camera_3D_create(math_degree_to_radians(90), 0.1f, 100.0f);
@@ -271,6 +272,8 @@ void upp_lang_main()
     rendering_core_update_pipeline_state(pipeline_state);
 
     // Window Loop
+    int last_animation_required_frame = -100;
+    int frame = 0;
     double time_last_update_start = timer_current_time_in_seconds(&timer);
     float angle = 0.0f;
     while (true)
@@ -279,13 +282,20 @@ void upp_lang_main()
         float time_since_last_update = (float)(time_frame_start - time_last_update_start);
         time_last_update_start = time_frame_start;
 
+        frame += 1;
+        bool wait_for_messages = true;
+        if (frame - last_animation_required_frame < 10) {
+            wait_for_messages = false;
+        }
+
         // Input Handling
         Input* input = window_get_input(window);
         {
-            if (!window_handle_messages(window, true)) {
+            if (!window_handle_messages(window, wait_for_messages)) {
                 break;
             }
-            if (input->close_request_issued || (input->key_pressed[(int)Key_Code::E] && input->key_down[(int)Key_Code::CTRL])) {
+            if (input->close_request_issued || (input->key_pressed[(int)Key_Code::ESCAPE])) {
+                syntax_editor_save_state(string_create_static("upp_code/session.ses"));
                 window_save_position(window, "window_pos.set");
                 window_close(window);
                 break;
@@ -296,7 +306,11 @@ void upp_lang_main()
             }
 
             camera_controller_arcball_update(&camera_controller_arcball, camera, input, window_state->width, window_state->height);
-            syntax_editor_update();
+            bool animations_running = false;
+            syntax_editor_update(animations_running);
+            if (animations_running) {
+                last_animation_required_frame = frame;
+            }
             //code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
         }
 
@@ -411,7 +425,7 @@ void upp_lang_main()
             */
 
             // Sleep
-            const int TARGET_FPS = 60;
+            const int TARGET_FPS = 30;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
             timer_sleep_until(&timer, time_frame_start + SECONDS_PER_FRAME);
         }

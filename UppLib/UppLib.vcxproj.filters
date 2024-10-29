@@ -594,5 +594,8 @@
     <None Include="..\resources\shaders\gui_rect.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
+    <None Include="..\resources\shaders\particle.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>
