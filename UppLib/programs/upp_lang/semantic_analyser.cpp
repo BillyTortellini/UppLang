@@ -56,10 +56,11 @@ void analysis_workload_add_dependency_internal(
     Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 void polymorphic_base_info_destroy(Polymorphic_Base_Info* info);
-Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table);
-void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context);
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods);
-bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods);
+Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base* wait_for_workload);
+bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg = nullptr);
+bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods, const char** out_error_msg = nullptr);
+void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context);
+Custom_Operator* operator_context_query_custom_operator(Operator_Context* context, Custom_Operator_Key key);
 
 
 
@@ -304,10 +305,6 @@ Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Que
     return &pass_get_base_info(pass, AST::upcast(node), query)->module_info;
 }
 
-Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query) {
-    return &pass_get_base_info(pass, AST::upcast(node), query)->context_info;
-}
-
 Parameter_Matching_Info* pass_get_node_info(Analysis_Pass* pass, AST::Arguments* node, Info_Query query) {
     return &pass_get_base_info(pass, AST::upcast(node), query)->parameter_matching_info;
 }
@@ -347,10 +344,6 @@ Path_Lookup_Info* get_info(AST::Path_Lookup* node, bool create = false) {
 
 Module_Info* get_info(AST::Module* module, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, module, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
-}
-
-Context_Change_Info* get_info(AST::Context_Change* context_change, bool create = false) {
-    return pass_get_node_info(semantic_analyser.current_workload->current_pass, context_change, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
 Parameter_Matching_Info* get_info(AST::Arguments* node, bool create = false) {
@@ -771,7 +764,7 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
 }
 
 // Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
-void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition)
+void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Workload_Base* wait_for_workload)
 {
     Symbol_Table* current_table = semantic_analyser.current_workload->current_symbol_table;
     assert(!(definition->values.size == 0 && definition->types.size == 0), "Cannot have values and types be 0");
@@ -838,19 +831,6 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         return;
     }
 
-    // Check if we are currently in a module discovery workload
-    Workload_Base* symbol_finish_workload = 0;
-    if (semantic_analyser.current_workload->type == Analysis_Workload_Type::MODULE_ANALYSIS) {
-        symbol_finish_workload = upcast(downcast<Workload_Module_Analysis>(semantic_analyser.current_workload)->progress->event_symbol_table_ready);
-    }
-
-    Workload_Base* operator_context_workload = 0;
-    if (semantic_analyser.current_workload->current_symbol_table != 0) {
-        if (semantic_analyser.current_workload->current_symbol_table->operator_context->workload != 0) {
-            operator_context_workload = upcast(semantic_analyser.current_workload->current_symbol_table->operator_context->workload);
-        }
-    }
-
     // Create workload for functions, structs and modules directly
     Symbol* symbol = get_info(definition->symbols[0])->symbol;
     if (definition->is_comptime)
@@ -881,22 +861,16 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         case AST::Expression_Type::FUNCTION: {
             // Note: Creating the progress also sets the symbol type
             auto workload = upcast(function_progress_create_with_modtree_function(symbol, value, 0)->header_workload);
-            if (symbol_finish_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
-            }
-            if (operator_context_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, operator_context_workload);
+            if (wait_for_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, wait_for_workload);
             }
             return;
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
             // Note: Creating the progress also sets the symbol type
             auto workload = upcast(workload_structure_create(value, symbol, false));
-            if (symbol_finish_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, symbol_finish_workload);
-            }
-            if (operator_context_workload != 0) {
-                analysis_workload_add_dependency_internal(workload, operator_context_workload);
+            if (wait_for_workload != 0) {
+                analysis_workload_add_dependency_internal(workload, wait_for_workload);
             }
             return;
         }
@@ -920,11 +894,8 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     if (definition->values.size != 0) {
         def.value_node = definition->values[0];
     }
-    if (symbol_finish_workload != 0) {
-        analysis_workload_add_dependency_internal(upcast(definition_workload), symbol_finish_workload);
-    }
-    if (operator_context_workload != 0) {
-        analysis_workload_add_dependency_internal(upcast(definition_workload), operator_context_workload);
+    if (wait_for_workload != 0) {
+        analysis_workload_add_dependency_internal(upcast(definition_workload), wait_for_workload);
     }
 
     symbol->type = Symbol_Type::DEFINITION_UNFINISHED;
@@ -1104,12 +1075,6 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast
             return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
         return comptime_result_make_available(given->data, any_type);
-    }
-    case Cast_Type::POINTER_NULL_CHECK: {
-        void* pointer_value = (void*)value.data;
-        bool* result = stack_allocator_allocate<bool>(&analyser.comptime_value_allocator);
-        *result = pointer_value != nullptr;
-        return comptime_result_make_available(result, upcast(compiler.type_system.predefined_types.bool_type));
     }
     case Cast_Type::CUSTOM_CAST: {
         return comptime_result_make_not_comptime("Custom casts cannot be calculated at comptime");
@@ -1408,6 +1373,22 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         case Member_Access_Type::DOT_CALL:
         case Member_Access_Type::DOT_CALL_AS_MEMBER: {
             return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
+        }
+        case Member_Access_Type::OPTIONAL_PTR_ACCESS: 
+        {
+            Datatype* opt_type = expression_info_get_type(get_info(expr->options.optional_check_value), false);
+            if (access_info.options.optional_deref_count > 0) {
+                return comptime_result_make_unavailable(result_type, "Cannot dereference pointer to get retrieve optional");
+            }
+            Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.optional_check_value);
+            if (result.type != Comptime_Result_Type::AVAILABLE) {
+                return result;
+            }
+
+            void* ptr = *(void**)result.data;
+            bool* result_bool = (bool*) stack_allocator_allocate_size(&analyser.comptime_value_allocator, 1, 1);
+            *result_bool = ptr != nullptr;
+            return comptime_result_make_available(result_bool, result_type);
         }
         case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
             assert(access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "In instance this should already be constant");
@@ -2772,9 +2753,9 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
         break;
     }
     case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
-        auto module = downcast<Workload_Operator_Context_Change>(workload)->parent_workload;
-        string_append(string, "Operator_Context_Change ");
-        string_append(string, module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters );
+        auto change = downcast<Workload_Operator_Context_Change>(workload);
+        string_append(string, "Operator Context Change Type: ");
+        AST::context_change_type_append_to_string(change->context_type_to_analyse, string);
         break;
     }
     case Analysis_Workload_Type::IMPORT_RESOLVE: {
@@ -3072,9 +3053,12 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
         if (type->type != Datatype_Type::FUNCTION) {
             return optional_make_failure<Overload_Candidate>();
         }
-        candidate.matching_info.call_type = Call_Type::FUNCTION_POINTER;
-        candidate.matching_info.options.pointer_call = downcast<Datatype_Function>(type);
         function_type = downcast<Datatype_Function>(type);
+        if (function_type->is_optional) {
+            return optional_make_failure<Overload_Candidate>();
+        }
+        candidate.matching_info.call_type = Call_Type::FUNCTION_POINTER;
+        candidate.matching_info.options.pointer_call = function_type;
         break;
     }
     case Expression_Result_Type::HARDCODED_FUNCTION:
@@ -3938,6 +3922,11 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
             downcast<Datatype_Array>(polymorphic_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, info
         );
     }
+    case Datatype_Type::OPTIONAL_TYPE: {
+        return match_templated_type_internal(
+            downcast<Datatype_Optional>(polymorphic_type)->child_type, downcast<Datatype_Optional>(match_against)->child_type, info
+        );
+    }
     case Datatype_Type::SLICE:
         return match_templated_type_internal(
             downcast<Datatype_Slice>(polymorphic_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, info
@@ -4769,33 +4758,16 @@ void analysis_workload_entry(void* userdata)
             analysis_workload_add_dependency_internal(upcast(analysis->progress->event_symbol_table_ready), upcast(analysis->last_import_workload));
         }
 
-        // Check if operator context changes
-        Workload_Operator_Context_Change* context_change = 0;
-        if (module_node->context_changes.size != 0)
-        {
-            // Create new operator context
-            auto symbol_table = analysis->symbol_table;
-            auto parent_context = symbol_table->operator_context;
-            auto context = symbol_table_install_new_operator_context(symbol_table);
-
-            // Create new workload
-            context_change = workload_executer_allocate_workload<Workload_Operator_Context_Change>(nullptr, workload->current_pass);
-            context_change->module_node = analysis->module_node;
-            context_change->parent_workload = analysis;
-            context_change->context = context;
-            symbol_table->operator_context->workload = context_change;
-            context->workload = context_change;
-
-            // Add dependencies
-            analysis_workload_add_dependency_internal(upcast(context_change), upcast(analysis->progress->event_symbol_table_ready));
-            if (parent_context->workload != 0) {
-                analysis_workload_add_dependency_internal(upcast(context_change), upcast(parent_context->workload));
-            }
+        // Check if operator context changes exist
+        if (module_node->context_changes.size != 0) {
+            auto context = symbol_table_install_new_operator_context_and_add_workloads(
+                analysis->symbol_table, module_node->context_changes, upcast(analysis->progress->event_symbol_table_ready)
+            );
         }
 
         // Create workloads for definitions
         for (int i = 0; i < module_node->definitions.size; i++) {
-            analyser_create_symbol_and_workload_for_definition(module_node->definitions[i]);
+            analyser_create_symbol_and_workload_for_definition(module_node->definitions[i], upcast(analysis->progress->event_symbol_table_ready));
         }
 
         // Create/Handle extern imports
@@ -4841,9 +4813,6 @@ void analysis_workload_entry(void* userdata)
 
                 // Add dependencies and finish
                 analysis_workload_add_dependency_internal(upcast(definition_workload), upcast(analysis->progress->event_symbol_table_ready));
-                if (context_change != 0) {
-                    analysis_workload_add_dependency_internal(upcast(definition_workload), upcast(context_change));
-                }
                 if (symbol != 0) {
                     symbol->options.definition_workload = definition_workload;
                 }
@@ -4881,7 +4850,13 @@ void analysis_workload_entry(void* userdata)
     case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE:
     {
         auto change_workload = downcast<Workload_Operator_Context_Change>(workload);
-        analyse_operator_context_changes(change_workload->module_node->context_changes, change_workload->context);
+        for (int i = 0; i < change_workload->change_nodes.size; i++)
+        {
+            auto change_node = change_workload->change_nodes[i];
+            if (change_workload->context_type_to_analyse == change_node->type) {
+                analyse_operator_context_change(change_node, change_workload->context);
+            }
+        }
         break;
     }
     case Analysis_Workload_Type::IMPORT_RESOLVE:
@@ -4975,7 +4950,7 @@ void analysis_workload_entry(void* userdata)
                     if (def.assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
                         log_semantic_error("Type must not be a pointer-type with normal value definition ': foo ='", def.type_node);
                         type = type_system_make_type_with_mods(
-                            type->base_type, type_mods_make(0, (type_mods_is_constant(type->mods, 0) ? 1 : 0), type->mods.subtype_index)
+                            type->base_type, type_mods_make(type->mods.is_constant, 0, 0, 0, type->mods.subtype_index)
                         );
                     }
                     else if (def.assignment_type == AST::Assignment_Type::POINTER && type->mods.pointer_level == 0) {
@@ -4997,7 +4972,7 @@ void analysis_workload_entry(void* userdata)
                         type = semantic_analyser_analyse_expression_value(def.value_node, context);
 
                         if (def.assignment_type == AST::Assignment_Type::POINTER && type->mods.pointer_level == 0) {
-                            if (try_updating_expression_type_mods(def.value_node, type_mods_make(1, type->mods.constant_flags, type->mods.subtype_index))) {
+                            if (try_updating_expression_type_mods(def.value_node, type_mods_make(type->mods.is_constant, 1, 0, 0, type->mods.subtype_index))) {
                                 type = get_info(def.value_node)->cast_info.result_type;
                             }
                             else {
@@ -5568,46 +5543,94 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
     return cast_info;
 }
 
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods)
+bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg)
 {
     if (cast_info.result_type->mods.pointer_level == expected_mods.pointer_level &&
         cast_info.result_type->mods.constant_flags == expected_mods.constant_flags &&
+        cast_info.result_type->mods.optional_flags == expected_mods.optional_flags &&
+        cast_info.result_type->mods.is_constant == expected_mods.is_constant &&
         cast_info.result_type->mods.subtype_index == expected_mods.subtype_index)
     {
         return true;
     }
 
+    const char* dummy;
+    if (out_error_msg == 0) {
+        out_error_msg = &dummy;
+    }
+
+    Type_Mods given = cast_info.initial_type->mods;
+    Type_Mods expected = expected_mods;
+
     // Check if pointers are compatible
-    if (cast_info.initial_type->mods.pointer_level != expected_mods.pointer_level)
+    if (given.pointer_level != expected.pointer_level)
     {
-        int max_pointer_level = cast_info.initial_type->mods.pointer_level;
+        int max_pointer_level = given.pointer_level;
         if (!cast_info.initial_value_is_temporary) {
             max_pointer_level += 1;
         }
-        if (expected_mods.pointer_level > max_pointer_level) {
+        if (expected.pointer_level > max_pointer_level) {
+            if (expected.pointer_level == given.pointer_level + 1 && cast_info.initial_value_is_temporary) {
+                *out_error_msg = "Cannot automatically take address of temporaray value";
+            }
+            else {
+                *out_error_msg = "Pointer level difference is too high";
+            }
             return false;
         }
         // We cannot change the pointer level after a cast (Currently, but I guess deref afterwards would still be ok)
         if (cast_info.cast_type != Cast_Type::NO_CAST) {
+            *out_error_msg = "Pointer level after cast does not match";
             return false;
+        }
+        // Check if we are dereferencing optional pointers
+        for (int i = 0; i < given.pointer_level - expected.pointer_level; i++) {
+            int ptr_level = given.pointer_level - i;
+            if (type_mods_pointer_is_optional(given, ptr_level - 1)) {
+                *out_error_msg = "Requires a dereference of an optional pointer";
+                return false; // Cannot dereference optional flags
+            }
         }
     }
 
     // Check if constant flags are compatible
-    if (expected_mods.constant_flags != cast_info.initial_type->mods.constant_flags)
+    if (expected.constant_flags != given.constant_flags)
     {
         // Note: It is important that the const-ness of _pointed_to_ elements is not different,
-        //       but two non-const pointers can be exchanged freely.
+        //       but two non-pointer values can be exchanged freely.
         // Examples: const *char -> *char       Valid (pass by value)
         //           int         -> const int   Valid 
         //           const int   -> int         Valid
         //           *const int  -> *int        Invalid
-        for (int i = 1; i <= expected_mods.pointer_level; i++)
+        for (int i = 0; i < expected_mods.pointer_level; i++)
         {
-            bool expected_is_const = type_mods_is_constant(expected_mods, i - 1);
-            bool given_is_const = type_mods_is_constant(cast_info.initial_type->mods, i - 1);
+            bool expected_is_const;
+            bool given_is_const;
+            if (i == 0) {
+                expected_is_const = expected.is_constant;
+                given_is_const = given.is_constant;
+            }
+            else {
+                expected_is_const = type_mods_pointer_is_constant(expected_mods, i - 1);
+                given_is_const = type_mods_pointer_is_constant(cast_info.initial_type->mods, i - 1);
+            }
             if (!expected_is_const && given_is_const) {
+                *out_error_msg = "Cast from constant pointer to non-constant pointer";
                 return false; // Cannot cast from const pointer to non-const-pointer, e.g. Error: *const int -> *int
+            }
+        }
+    }
+
+    // Check if optional flags are compatible
+    if (expected.optional_flags != given.optional_flags)
+    {
+        for (int i = 0; i < expected_mods.pointer_level; i++)
+        {
+            bool expected_is_opt = type_mods_pointer_is_optional(expected, i);
+            bool given_is_opt = type_mods_pointer_is_optional(given, i);
+            if (given_is_opt && !expected_is_opt) {
+                *out_error_msg = "Cast from optional pointer to non-optional pointer";
+                return false; // Cannot cast from optional to non-optional pointer
             }
         }
     }
@@ -5619,12 +5642,14 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
         auto& expected = expected_mods.subtype_index->indices;
 
         if (given.size <= expected.size) {
+            *out_error_msg = "Cannot downcast/switch to other subtype automatically";
             return false; // Cannot downcast, or switch to other subtype
         }
 
         // Check if all subtypes match to given...
         for (int i = 0; i < expected.size; i++) {
             if (given[i].index != expected[i].index || given[i].name != expected[i].name) {
+                *out_error_msg = "Subtypes don't match";
                 return false;
             }
         }
@@ -5647,15 +5672,15 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
     return true;
 };
 
-bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods) {
+bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods, const char** out_error_msg) {
     auto info = get_info(expr);
-    return try_updating_type_mods(info->cast_info, expected_mods);
+    return try_updating_type_mods(info->cast_info, expected_mods, out_error_msg);
 };
 
-bool datatype_check_if_auto_casts_to_other_mods(Datatype* datatype, Type_Mods expected_mods, bool is_temporary)
+bool datatype_check_if_auto_casts_to_other_mods(Datatype* datatype, Type_Mods expected_mods, bool is_temporary, const char** out_error_msg = nullptr)
 {
     Expression_Cast_Info cast_info = cast_info_make_empty(datatype, is_temporary);
-    return try_updating_type_mods(cast_info, expected_mods);
+    return try_updating_type_mods(cast_info, expected_mods, out_error_msg);
 };
 
 Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node)
@@ -6715,7 +6740,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         case Literal_Type::FLOAT_VAL:
         {
-            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(datatype_get_non_const_type(context.expected_type.type), upcast(types.f64_type)))
+            if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && 
+                types_are_equal(datatype_get_non_const_type(context.expected_type.type), upcast(types.f64_type)))
             {
                 literal_type = context.expected_type.type;
                 value_ptr = &read.options.float_val;
@@ -6871,15 +6897,38 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
         case Literal_Type::NULL_VAL:
         {
-            literal_type = types.byte_pointer;
+            literal_type = types.byte_pointer_optional;
             value_ptr = &value_nullptr;
             if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
             {
-                if (context.expected_type.type->type == Datatype_Type::POINTER ||
-                    context.expected_type.type->type == Datatype_Type::BYTE_POINTER ||
-                    context.expected_type.type->type == Datatype_Type::FUNCTION)
+                bool is_const = context.expected_type.type->mods.is_constant;
+                Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
+                bool is_optional_pointer = false;
+                bool is_pointer = datatype_is_pointer(expected, &is_const);
+
+                // Special handling for null, so that we can assign null to values
+                // in cast_pointer null and cast_pointer{*int}null
+                if (context.expected_type.cast_mode == Cast_Mode::POINTER_EXPLICIT || context.expected_type.cast_mode == Cast_Mode::POINTER_INFERRED)
                 {
+                    if (is_pointer) {
+                        literal_type = context.expected_type.type;
+                    }
+                }
+                else if (is_pointer && is_optional_pointer) {
                     literal_type = context.expected_type.type;
+                }
+                else if (expected->type == Datatype_Type::OPTIONAL_TYPE) 
+                {
+                    Datatype_Optional* opt = downcast<Datatype_Optional>(expected);
+                    type_wait_for_size_info_to_finish(upcast(opt));
+                    int size = opt->base.memory_info.value.size;
+
+                    byte* memory = (byte*) malloc(size);
+                    SCOPE_EXIT(free(memory));
+                    memory_set_bytes(memory, size, 0);
+
+                    expression_info_set_constant(info, expected, array_create_static<byte>(memory, size), AST::upcast(expr));
+                    return info;
                 }
             }
             break;
@@ -7070,6 +7119,51 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::CONST_TYPE: {
         EXIT_TYPE(upcast(type_system_make_constant(semantic_analyser_analyse_expression_type(expr->options.const_type))));
     }
+    case AST::Expression_Type::OPTIONAL_TYPE: 
+    {
+        auto child_type = semantic_analyser_analyse_expression_type(expr->options.optional_child_type);
+
+        // Handle optional byte-pointer and function_pointer
+        bool is_constant = child_type->mods.is_constant;
+        child_type = datatype_get_non_const_type(child_type);
+        if (datatype_get_non_const_type(child_type)->type == Datatype_Type::BYTE_POINTER) {
+            auto byte_ptr = downcast<Datatype_Bytepointer>(child_type);
+            if (!byte_ptr->is_optional) {
+                if (is_constant) {
+                    EXIT_TYPE(type_system_make_constant(types.byte_pointer_optional));
+                }
+                EXIT_TYPE(types.byte_pointer_optional);
+            }
+        }
+        else if (datatype_get_non_const_type(child_type)->type == Datatype_Type::FUNCTION) {
+            auto function_type = downcast<Datatype_Function>(child_type);
+            if (!function_type->is_optional) {
+                function_type = type_system_make_function_optional(function_type);
+                if (is_constant) {
+                    EXIT_TYPE(type_system_make_constant(upcast(function_type)));
+                }
+                EXIT_TYPE(upcast(function_type));
+            }
+        }
+
+        EXIT_TYPE(upcast(type_system_make_optional(child_type)));
+    }
+    case AST::Expression_Type::OPTIONAL_POINTER: 
+    {
+        auto child_type = semantic_analyser_analyse_expression_type(expr->options.optional_child_type);
+        EXIT_TYPE(upcast(type_system_make_pointer(child_type, true)));
+    }
+    case AST::Expression_Type::OPTIONAL_CHECK: {
+        auto value_type = semantic_analyser_analyse_expression_value(expr->options.optional_check_value, expression_context_make_unknown());
+        auto non_const = datatype_get_non_const_type(value_type);
+        bool is_pointer = datatype_is_pointer(non_const);
+        if (!is_pointer) {
+            log_semantic_error("Optional-Check is only valid on pointers currently", expr, Parser::Section::FIRST_TOKEN);
+            log_error_info_given_type(value_type);
+            EXIT_ERROR(upcast(types.bool_type));
+        }
+        EXIT_VALUE(upcast(types.bool_type), true);
+    }
     case AST::Expression_Type::NEW_EXPR:
     {
         auto& new_node = expr->options.new_expr;
@@ -7118,7 +7212,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             analyse_member_initializer_recursive(init_node.arguments, struct_type, content, 0, &final_subtype);
 
             // Create result type
-            auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(0, 0, final_subtype));
+            auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(false, 0, 0, 0, final_subtype));
             EXIT_VALUE(final_type, true);
         }
         else
@@ -7181,7 +7275,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         auto& access_node = expr->options.array_access;
         Datatype* array_type = semantic_analyser_analyse_expression_value(access_node.array_expr, expression_context_make_auto_dereference());
-        bool array_is_const = type_mods_is_constant(array_type->mods, 0);
+        bool array_is_const = array_type->mods.is_constant;
         array_type = array_type->base_type; // Remove const modifier
         if (datatype_is_unknown(array_type)) {
             EXIT_ERROR(types.unknown_type);
@@ -7190,7 +7284,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         bool type_is_valid = false;
         Datatype* result_type = types.unknown_type;
         bool result_is_temporary = false;
-        Type_Mods expected_mods = type_mods_make(0, 1);
+        Type_Mods expected_mods = type_mods_make(true, 0, 0, 0);
         if (array_type->type == Datatype_Type::ARRAY || array_type->type == Datatype_Type::SLICE)
         {
             type_is_valid = true;
@@ -7217,9 +7311,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             result_is_temporary = true; // When calling a custom function the return type is for sure temporary
             Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::ARRAY_ACCESS;
+            key.type = AST::Context_Change_Type::ARRAY_ACCESS;
             key.options.array_access.array_type = array_type;
-            Custom_Operator* overload = hashtable_find_element(&operator_context->custom_operators, key);
+            Custom_Operator* overload = operator_context_query_custom_operator(operator_context, key);
             if (overload != 0)
             {
                 auto& custom_access = overload->array_access;
@@ -7244,10 +7338,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
             {
                 Custom_Operator_Key key;
-                key.type = Custom_Operator_Type::ARRAY_ACCESS;
+                key.type = AST::Context_Change_Type::ARRAY_ACCESS;
                 key.options.array_access.array_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
 
-                Custom_Operator* overload = hashtable_find_element(&operator_context->custom_operators, key);
+                Custom_Operator* overload = operator_context_query_custom_operator(operator_context, key);
                 if (overload != 0)
                 {
                     auto& array_access = overload->array_access;
@@ -7284,7 +7378,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     case AST::Expression_Type::MEMBER_ACCESS:
     {
         auto& member_node = expr->options.member_access;
-        auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_auto_dereference());
+        auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_unknown());
         bool result_is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
         auto& ids = compiler.predefined_ids;
 
@@ -7454,6 +7548,84 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             auto& access_info = info->specifics.member_access;
             auto datatype = access_expr_info->cast_info.result_type;
+
+            // Handle optional .value access
+            if (member_node.name == ids.value)
+            {
+                if (datatype->mods.pointer_level > 0 && datatype->mods.optional_flags != 0) 
+                {
+                    Datatype* first_opt_ptr = datatype;
+                    int deref_count = 0;
+                    while (first_opt_ptr != nullptr)
+                    {
+                        if (first_opt_ptr->type == Datatype_Type::POINTER) {
+                            auto ptr = downcast<Datatype_Pointer>(first_opt_ptr);
+                            if (ptr->is_optional) {
+                                break;
+                            }
+                            else {
+                                first_opt_ptr = ptr->element_type;
+                                deref_count += 1;
+                                continue;
+                            }
+                        }
+                        else if (first_opt_ptr->type == Datatype_Type::CONSTANT) {
+                            first_opt_ptr = downcast<Datatype_Constant>(first_opt_ptr)->element_type;
+                            continue;
+                        }
+                        else {
+                            panic("");
+                        }
+                    }
+
+                    info->specifics.member_access.type = Member_Access_Type::OPTIONAL_PTR_ACCESS;
+                    info->specifics.member_access.options.optional_deref_count = deref_count;
+                    bool is_temporary = false;
+                    if (deref_count == 0) {
+                        is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
+                    }
+                    EXIT_VALUE(upcast(type_system_make_pointer(downcast<Datatype_Pointer>(first_opt_ptr)->element_type, false)), is_temporary);
+                }
+
+                // Optional function/byte pointers
+                bool is_optional;
+                bool is_pointer = datatype_is_pointer(datatype_get_non_const_type(datatype), &is_optional);
+                if (is_optional && is_pointer) 
+                {
+                    bool is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
+                    info->specifics.member_access.type = Member_Access_Type::OPTIONAL_PTR_ACCESS;
+                    info->specifics.member_access.options.optional_deref_count = 0;
+
+                    bool is_const = datatype->mods.is_constant;
+                    datatype = datatype_get_non_const_type(datatype);
+                    Datatype* result_type = 0;
+                    if (datatype->type == Datatype_Type::BYTE_POINTER) {
+                        result_type = types.byte_pointer;
+                    }
+                    else if (datatype->type == Datatype_Type::FUNCTION) {
+                        result_type = upcast(downcast<Datatype_Function>(datatype)->non_optional_type);
+                    }
+                    else {
+                        panic("");
+                    }
+
+                    if (is_const) {
+                        result_type = type_system_make_constant(result_type);
+                    }
+                    EXIT_VALUE(result_type, is_temporary);
+                }
+            }
+
+            if (datatype->mods.pointer_level > 0)
+            {
+                const char* error_msg = "";
+                if (!try_updating_expression_type_mods(
+                    member_node.expr, type_mods_make(datatype->mods.is_constant, 0, 0, 0, datatype->mods.subtype_index), &error_msg)) 
+                {
+                    log_semantic_error(error_msg, expr, Parser::Section::WHOLE_NO_CHILDREN);
+                }
+            }
+
             bool is_const = datatype->type == Datatype_Type::CONSTANT;
             datatype = datatype_get_non_const_type(datatype);
             if (datatype_is_unknown(datatype)) {
@@ -7577,16 +7749,41 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     EXIT_VALUE(member.type, result_is_temporary);
                 }
             }
+            else if (datatype->type == Datatype_Type::OPTIONAL_TYPE)
+            {
+                type_wait_for_size_info_to_finish(datatype);
+                auto opt = downcast<Datatype_Optional>(datatype);
+                if (member_node.name == ids.value) 
+                {
+                    info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
+                    info->specifics.member_access.options.member = opt->value_member;
+                    Datatype* result_type = opt->value_member.type;
+                    if (is_const) {
+                        result_type = type_system_make_constant(result_type);
+                    }
+                    EXIT_VALUE(result_type, result_is_temporary)
+                }
+                else if (member_node.name == ids.is_available)
+                {
+                    info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
+                    info->specifics.member_access.options.member = opt->is_available_member;
+                    Datatype* result_type = opt->is_available_member.type;
+                    if (is_const) {
+                        result_type = type_system_make_constant(result_type);
+                    }
+                    EXIT_VALUE(result_type, result_is_temporary)
+                }
+            }
 
             // Check for dot-calls/custom member accesses
             {
                 Custom_Operator_Key key;
-                key.type = Custom_Operator_Type::DOT_CALL;
+                key.type = AST::Context_Change_Type::DOT_CALL;
                 key.options.dot_call.datatype = datatype->base_type;
                 key.options.dot_call.id = member_node.name;
 
                 auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-                Custom_Operator* custom_operator = hashtable_find_element(&operator_context->custom_operators, key);
+                Custom_Operator* custom_operator = operator_context_query_custom_operator(operator_context, key);
 
                 // Check for polymorphic overload if normal overload was not found
                 if (custom_operator == 0 && datatype->base_type->type == Datatype_Type::STRUCT)
@@ -7595,7 +7792,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                         auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
                         key.options.dot_call.datatype = upcast(base_struct);
-                        custom_operator = hashtable_find_element(&operator_context->custom_operators, key);
+                        custom_operator = operator_context_query_custom_operator(operator_context, key);
                     }
                 }
 
@@ -7733,7 +7930,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
             // Check for primitive operand
             bool type_is_valid = false;
-            Type_Mods expected_mods = type_mods_make(0, 1);
+            Type_Mods expected_mods = type_mods_make(true, 0, 0, 0);
             Datatype* result_type = types.unknown_type;
             if (is_negate)
             {
@@ -7760,12 +7957,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             if (!type_is_valid)
             {
                 Custom_Operator_Key key;
-                key.type = Custom_Operator_Type::UNARY_OPERATOR;
+                key.type = AST::Context_Change_Type::UNARY_OPERATOR;
                 key.options.unop.unop = is_negate ? AST::Unop::NEGATE : AST::Unop::NOT;
                 key.options.unop.type = operand_type;
 
                 auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-                Custom_Operator* overload = hashtable_find_element(&operator_context->custom_operators, key);
+                Custom_Operator* overload = operator_context_query_custom_operator(operator_context, key);
                 if (overload != 0)
                 {
                     type_is_valid = true;
@@ -7853,7 +8050,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             auto operand_type = datatype_get_non_const_type(semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unknown()));
             Datatype* result_type = types.unknown_type;
             if (operand_type->type == Datatype_Type::POINTER) {
-                result_type = downcast<Datatype_Pointer>(operand_type)->element_type;
+                auto ptr = downcast<Datatype_Pointer>(operand_type);
+                if (ptr->is_optional) {
+                    log_semantic_error("Cannot dereference optional pointer, use .value instead", expr);
+                    log_error_info_given_type(operand_type);
+                }
+                result_type = ptr->element_type;
             }
             else {
                 log_semantic_error("Cannot dereference non-pointer value", expr);
@@ -7923,8 +8125,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         bool types_are_valid = false;
         Datatype* result_type = types.unknown_type;
 
-        Type_Mods expected_mods_left = type_mods_make(0, 1);
-        Type_Mods expected_mods_right = type_mods_make(0, 1);
+        Type_Mods expected_mods_left = type_mods_make(true, 0, 0, 0);
+        Type_Mods expected_mods_right = type_mods_make(true, 0, 0, 0);
         left_type = left_type->base_type;
         right_type = right_type->base_type;
 
@@ -8013,11 +8215,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         if (!types_are_valid)
         {
             Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::BINARY_OPERATOR;
+            key.type = AST::Context_Change_Type::BINARY_OPERATOR;
             key.options.binop.binop = binop_node.type;
             key.options.binop.left_type = left_type;
             key.options.binop.right_type = right_type;
-            auto overload = hashtable_find_element(&operator_context->custom_operators, key);
+            auto overload = operator_context_query_custom_operator(operator_context, key);
             if (overload != nullptr)
             {
                 auto& custom_binop = overload->binop;
@@ -8072,6 +8274,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_FUNCTION
 }
 
+bool cast_possible_in_mode(Cast_Mode mode, Cast_Mode allowed_mode)
+{
+    switch (allowed_mode)
+    {
+    case Cast_Mode::IMPLICIT: return true;
+    case Cast_Mode::NONE: return false;
+    case Cast_Mode::EXPLICIT: return mode == Cast_Mode::EXPLICIT;
+    case Cast_Mode::INFERRED: return mode == Cast_Mode::INFERRED || mode == Cast_Mode::EXPLICIT;
+    case Cast_Mode::POINTER_EXPLICIT: return mode == Cast_Mode::POINTER_EXPLICIT;
+    case Cast_Mode::POINTER_INFERRED: return mode == Cast_Mode::POINTER_INFERRED || mode == Cast_Mode::POINTER_EXPLICIT;
+    default: panic("");
+    }
+    return false;
+};
+
+
 // If expr == nullptr, then we don't check for custom casts. otherwise, we expect expression to be already analysed.
 Expression_Cast_Info semantic_analyser_check_if_cast_possible(
     bool is_temporary_value, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode, AST::Expression* expr)
@@ -8110,8 +8328,10 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
     if (cast_mode == Cast_Mode::POINTER_EXPLICIT || cast_mode == Cast_Mode::POINTER_INFERRED)
     {
         Cast_Mode allowed_mode = Cast_Mode::NONE;
-        bool src_is_ptr = datatype_is_pointer(source_type);
-        bool dst_is_ptr = datatype_is_pointer(destination_type);
+        bool src_is_opt = false;
+        bool dst_is_opt = false;
+        bool src_is_ptr = datatype_is_pointer(source_type, &src_is_opt);
+        bool dst_is_ptr = datatype_is_pointer(destination_type, &dst_is_opt);
 
         // Check for from/to u64
         if (src_is_ptr && types_are_equal(destination_type, upcast(types.u64_type))) {
@@ -8125,6 +8345,9 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
         else if (src_is_ptr && dst_is_ptr) {
             result.cast_type = Cast_Type::POINTERS;
             allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::POINTER_TO_POINTER);
+            if (src_is_opt && !dst_is_opt) {
+                allowed_mode = Cast_Mode::NONE;
+            }
         }
         else {
             result.cast_type = Cast_Type::INVALID;
@@ -8132,14 +8355,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             allowed_mode = Cast_Mode::NONE;
         }
 
-        if (cast_mode == Cast_Mode::POINTER_EXPLICIT) {
-            cast_mode = Cast_Mode::EXPLICIT;
-        }
-        else {
-            cast_mode = Cast_Mode::INFERRED;
-        }
-
-        if ((int)cast_mode <= (int)allowed_mode) {
+        if (cast_possible_in_mode(cast_mode, allowed_mode)) {
             // Success
             result.result_value_is_temporary = true;
         }
@@ -8151,23 +8367,32 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
         return result;
     }
 
-    // Pointer null check, from/to byte_pointer and any casts (Which have higher precedence than other cast types)
+    // from/to byte_pointer and any casts (Which have higher precedence than other cast types)
     {
         Cast_Mode allowed_mode = Cast_Mode::NONE;
         bool result_is_temporary = true;
-        if (datatype_is_pointer(source_type) &&
-            destination_type->mods.pointer_level == 0 && types_are_equal(destination_type->base_type, upcast(types.bool_type)))
+        bool is_opt_pointer = false;
+        if (source_type->mods.pointer_level == 0 && 
+            source_type->base_type->type == Datatype_Type::BYTE_POINTER && 
+            datatype_is_pointer(destination_type, &is_opt_pointer)) 
         {
-            result.cast_type = Cast_Type::POINTER_NULL_CHECK;
-            allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::POINTER_NULL_CHECK);
-        }
-        else if (source_type->mods.pointer_level == 0 && source_type->base_type->type == Datatype_Type::BYTE_POINTER && datatype_is_pointer(destination_type)) {
+            bool byteptr_is_opt = downcast<Datatype_Bytepointer>(source_type->base_type)->is_optional;
             result.cast_type = Cast_Type::POINTERS;
             allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FROM_BYTE_POINTER);
+            if (byteptr_is_opt && !is_opt_pointer) {
+                allowed_mode = Cast_Mode::NONE;
+            }
         }
-        else if (destination_type->mods.pointer_level == 0 && destination_type->base_type->type == Datatype_Type::BYTE_POINTER && datatype_is_pointer(source_type)) {
+        else if (destination_type->mods.pointer_level == 0 &&
+            destination_type->base_type->type == Datatype_Type::BYTE_POINTER &&
+            datatype_is_pointer(source_type, &is_opt_pointer)) 
+        {
+            bool byte_is_opt = downcast<Datatype_Bytepointer>(destination_type->base_type)->is_optional;
             result.cast_type = Cast_Type::POINTERS;
             allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::TO_BYTE_POINTER);
+            if (is_opt_pointer && !byte_is_opt) {
+                allowed_mode = Cast_Mode::NONE;
+            }
         }
         else if (types_are_equal(datatype_get_non_const_type(source_type), upcast(types.any_type))) {
             result.cast_type = Cast_Type::FROM_ANY;
@@ -8178,18 +8403,15 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             result.cast_type = Cast_Type::TO_ANY;
             allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::TO_ANY);
         }
-
-        if ((int)cast_mode <= (int)allowed_mode)
-        {
-            // Check for ambiguities with bool-pointers
-            if (result.cast_type == Cast_Type::POINTER_NULL_CHECK && types_are_equal(source_type->base_type, upcast(types.bool_type)))
-            {
-                result.cast_type = Cast_Type::INVALID;
-                result.options.error_msg = "Cannot do pointer null check here, because there is ambiguities with bool-pointers";
-                result.result_value_is_temporary = false;
-                return result;
+        else if (datatype_get_non_const_type(destination_type)->type == Datatype_Type::OPTIONAL_TYPE) {
+            auto opt = downcast<Datatype_Optional>(datatype_get_non_const_type(destination_type));
+            if (types_are_equal(datatype_get_non_const_type(opt->child_type), datatype_get_non_const_type(source_type))) {
+                result.cast_type = Cast_Type::TO_OPTIONAL;
+                allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::TO_OPTIONAL);
             }
+        }
 
+        if (cast_possible_in_mode(cast_mode, allowed_mode)) {
             result.result_value_is_temporary = result_is_temporary;
             return result;
         }
@@ -8201,24 +8423,14 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
         result.cast_type = Cast_Type::NO_CAST;
         result.result_type = source_type;
         result.deref_count = 0;
-        if (try_updating_type_mods(result, destination_type->mods)) {
+
+        if (try_updating_type_mods(result, destination_type->mods, &result.options.error_msg)) {
             result.result_type = destination_type;
             return result;
         }
         else {
             result.cast_type = Cast_Type::INVALID;
             result.result_type = destination_type;
-
-            int max_pointer_level = result.initial_type->mods.pointer_level;
-            if (!result.initial_value_is_temporary) {
-                max_pointer_level += 1;
-            }
-            if (destination_type->mods.pointer_level > max_pointer_level) {
-                result.options.error_msg = "Cannot take address of temporary value";
-            }
-            else {
-                result.options.error_msg = "Const types don't match";
-            }
             return result;
         }
     }
@@ -8242,7 +8454,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
                 auto dest_slice = downcast<Datatype_Slice>(destination);
                 if (types_are_equal(datatype_get_non_const_type(source_array->element_type), datatype_get_non_const_type(dest_slice->element_type)))
                 {
-                    bool array_is_const = type_mods_is_constant(source_type->mods, 0) || source_array->element_type->type == Datatype_Type::CONSTANT;
+                    bool array_is_const = source_type->mods.is_constant || source_array->element_type->type == Datatype_Type::CONSTANT;
                     bool slice_ptr_is_const = dest_slice->element_type->type == Datatype_Type::CONSTANT;
                     // We can only cast to slice if we respect the constant rules
                     if (!(array_is_const && !slice_ptr_is_const)) {
@@ -8375,7 +8587,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
         default: break;
         }
 
-        if ((int)cast_mode <= (int)allowed_mode && result.cast_type != Cast_Type::INVALID) {
+        if (cast_possible_in_mode(cast_mode, allowed_mode) && result.cast_type != Cast_Type::INVALID) {
             result.deref_count = source_type->mods.pointer_level; // Dereference to base level for built-in casts
             result.result_value_is_temporary = true;
             return result;
@@ -8386,10 +8598,10 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
     if (expr != 0)
     {
         Custom_Operator_Key key;
-        key.type = Custom_Operator_Type::CAST;
+        key.type = AST::Context_Change_Type::CAST;
         key.options.custom_cast.from_type = source_type->base_type;
         key.options.custom_cast.to_type = destination_type; // Destination type currently has to match perfectly for overload to work, e.g. no deref afterwards
-        Custom_Operator* overload = hashtable_find_element(&operator_context->custom_operators, key);
+        Custom_Operator* overload = operator_context_query_custom_operator(operator_context, key);
 
         // Search for polymorphic overloads
         if (overload == 0 && source_type->base_type->type == Datatype_Type::STRUCT)
@@ -8398,11 +8610,11 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
             if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
             {
                 key.options.custom_cast.from_type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);;
-                overload = hashtable_find_element(&operator_context->custom_operators, key);
+                overload = operator_context_query_custom_operator(operator_context, key);
                 if (overload == 0) {
                     // Check overload with polymorphic result type
                     key.options.custom_cast.to_type = nullptr;
-                    overload = hashtable_find_element(&operator_context->custom_operators, key);
+                    overload = operator_context_query_custom_operator(operator_context, key);
                 }
             }
         }
@@ -8417,7 +8629,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(
         }
         // Check if overload has correct cast_mode
         if (overload != 0) {
-            if ((int)cast_mode > (int)overload->custom_cast.cast_mode) {
+            if (!cast_possible_in_mode(cast_mode, overload->custom_cast.cast_mode)) {
                 overload = 0;
             }
         }
@@ -8506,6 +8718,9 @@ Expression_Cast_Info expression_context_apply(
         // Auto dereference now always forces pointer value to be 0
         result.deref_count = initial_type->mods.pointer_level;
         if (result.deref_count > 0) {
+            if (initial_type->mods.optional_flags != 0) {
+                log_semantic_error("Cannot auto-dereference optional pointer", expression, error_section);
+            }
             result.result_value_is_temporary = false;
         }
         else {
@@ -8513,11 +8728,7 @@ Expression_Cast_Info expression_context_apply(
         }
 
         // Make result type
-        Type_Mods result_mods = initial_type->mods;
-        result_mods.pointer_level = 0;
-        if (type_mods_is_constant(initial_type->mods, 0)) {
-            result_mods.constant_flags = 1;
-        }
+        Type_Mods result_mods = type_mods_make(initial_type->mods.is_constant, 0, 0, 0, initial_type->mods.subtype_index);
         result.result_type = type_system_make_type_with_mods(initial_type->base_type, result_mods);
         result.cast_type = Cast_Type::NO_CAST;
         return result;
@@ -8725,8 +8936,63 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
 
 
 // OPERATOR CONTEXT
-Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Cast_Option option) {
-    return context->cast_options[(int)option];
+Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context* context, Custom_Operator_Key key, Hashset<Operator_Context*>& visited)
+{
+    if (hashset_contains(&visited, context)) {
+        return nullptr;
+    }
+    hashset_insert_element(&visited, context);
+
+    auto change_workload = context->workloads[(int)key.type];
+    if (change_workload != 0) {
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(change_workload));
+        workload_executer_wait_for_dependency_resolution();
+    }
+
+    auto result = hashtable_find_element(&context->custom_operators, key);
+    if (result != 0) {
+        return result;
+    }
+
+    // Otherwise wait for import workloads
+    auto import_workload = context->workloads[(int)AST::Context_Change_Type::IMPORT];
+    if (import_workload != 0) {
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(import_workload));
+        workload_executer_wait_for_dependency_resolution();
+    }
+
+    for (int i = 0; i < context->context_imports.size; i++) {
+        auto result = operator_context_query_custom_operator_recursive(context->context_imports[i], key, visited);
+        if (result != nullptr) {
+            return result;
+        }
+    }
+    return nullptr;
+}
+
+Custom_Operator* operator_context_query_custom_operator(Operator_Context* context, Custom_Operator_Key key)
+{
+    Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
+    SCOPE_EXIT(hashset_destroy(&visited));
+    return operator_context_query_custom_operator_recursive(context, key, visited);
+}
+
+Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Cast_Option option) 
+{
+    Custom_Operator_Key key;
+    key.type = AST::Context_Change_Type::CAST_OPTION;
+    key.options.cast_option = option;
+
+    Custom_Operator* result = operator_context_query_custom_operator(context, key);
+    if (result != 0) {
+        return result->cast_mode;
+    }
+
+    // Otherwise return default option
+    if (option == Cast_Option::FROM_BYTE_POINTER || option == Cast_Option::TO_BYTE_POINTER || option == Cast_Option::POINTER_TO_POINTER) {
+        return Cast_Mode::POINTER_INFERRED;
+    }
+    return Cast_Mode::INFERRED;
 }
 
 u64 custom_operator_key_hash(Custom_Operator_Key* key)
@@ -8735,12 +9001,12 @@ u64 custom_operator_key_hash(Custom_Operator_Key* key)
     u64 hash = hash_i32(&type_as_int);
     switch (key->type)
     {
-    case Custom_Operator_Type::ARRAY_ACCESS: {
+    case AST::Context_Change_Type::ARRAY_ACCESS: {
         auto& access = key->options.array_access;
         hash = hash_combine(hash, hash_pointer(access.array_type));
         break;
     }
-    case Custom_Operator_Type::BINARY_OPERATOR: {
+    case AST::Context_Change_Type::BINARY_OPERATOR: {
         auto& binop = key->options.binop;
         int op_as_int = (int)binop.binop;
         hash = hash_combine(hash, hash_i32(&op_as_int));
@@ -8748,28 +9014,41 @@ u64 custom_operator_key_hash(Custom_Operator_Key* key)
         hash = hash_combine(hash, hash_pointer(binop.right_type));
         break;
     }
-    case Custom_Operator_Type::UNARY_OPERATOR: {
+    case AST::Context_Change_Type::UNARY_OPERATOR: {
         auto& unop = key->options.unop;
         int op_as_int = (int)unop.unop;
         hash = hash_combine(hash, hash_i32(&op_as_int));
         hash = hash_combine(hash, hash_pointer(unop.type));
         break;
     }
-    case Custom_Operator_Type::CAST: {
+    case AST::Context_Change_Type::CAST: {
         auto& cast = key->options.custom_cast;
         hash = hash_combine(hash, hash_pointer(cast.from_type));
         hash = hash_combine(hash, hash_pointer(cast.to_type));
         break;
     }
-    case Custom_Operator_Type::DOT_CALL: {
+    case AST::Context_Change_Type::DOT_CALL: {
         auto& dot_call = key->options.dot_call;
         hash = hash_combine(hash, hash_pointer(dot_call.datatype));
         hash = hash_combine(hash, hash_pointer(dot_call.id->characters)); // Should work because all strings are in string pool
         break;
     }
-    case Custom_Operator_Type::ITERATOR: {
+    case AST::Context_Change_Type::ITERATOR: {
         auto& iter = key->options.iterator;
         hash = hash_combine(hash, hash_pointer(iter.datatype));
+        break;
+    }
+    case AST::Context_Change_Type::CAST_OPTION: {
+        int option_value = (int) key->options.cast_option;
+        hash = hash_combine(hash, hash_i32(&option_value));
+        break;
+    }
+    case AST::Context_Change_Type::INVALID: {
+        hash = 234129345;
+        break;
+    }
+    case AST::Context_Change_Type::IMPORT: {
+        hash = 8947234;
         break;
     }
     default: panic("");
@@ -8783,26 +9062,35 @@ bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) 
     }
     switch (a->type)
     {
-    case Custom_Operator_Type::ARRAY_ACCESS: {
+    case AST::Context_Change_Type::ARRAY_ACCESS: {
         return types_are_equal(a->options.array_access.array_type, b->options.array_access.array_type);
     }
-    case Custom_Operator_Type::BINARY_OPERATOR: {
+    case AST::Context_Change_Type::BINARY_OPERATOR: {
         return types_are_equal(a->options.binop.left_type, b->options.binop.left_type) &&
             types_are_equal(a->options.binop.right_type, b->options.binop.right_type) &&
             a->options.binop.binop == b->options.binop.binop;
     }
-    case Custom_Operator_Type::UNARY_OPERATOR: {
+    case AST::Context_Change_Type::UNARY_OPERATOR: {
         return types_are_equal(a->options.unop.type, b->options.unop.type) && a->options.unop.unop == b->options.unop.unop;
     }
-    case Custom_Operator_Type::CAST: {
+    case AST::Context_Change_Type::CAST: {
         return types_are_equal(a->options.custom_cast.from_type, b->options.custom_cast.from_type) &&
             types_are_equal(a->options.custom_cast.to_type, b->options.custom_cast.to_type);
     }
-    case Custom_Operator_Type::DOT_CALL: {
+    case AST::Context_Change_Type::DOT_CALL: {
         return types_are_equal(a->options.dot_call.datatype, b->options.dot_call.datatype) && a->options.dot_call.id == b->options.dot_call.id;
     }
-    case Custom_Operator_Type::ITERATOR: {
+    case AST::Context_Change_Type::ITERATOR: {
         return types_are_equal(a->options.iterator.datatype, b->options.iterator.datatype);
+    }
+    case AST::Context_Change_Type::CAST_OPTION: {
+        return types_are_equal(a->options.iterator.datatype, b->options.iterator.datatype);
+    }
+    case AST::Context_Change_Type::INVALID: {
+        return true;
+    }
+    case AST::Context_Change_Type::IMPORT: {
+        return true;
     }
     default: panic("");
     }
@@ -8810,42 +9098,49 @@ bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) 
     return true;
 }
 
-Operator_Context* symbol_table_install_new_operator_context(Symbol_Table* symbol_table)
+Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
+    Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base* wait_for_workload
+)
 {
     // Create new operator context
     auto context = new Operator_Context;
-    dynamic_array_push_back(&semantic_analyser.allocated_operator_contexts, context);
+    context->context_imports = dynamic_array_create<Operator_Context*>();
+    context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
+    for (int i = 0; i < (int)AST::Context_Change_Type::MAX_ENUM_VALUE; i++) {
+        context->workloads[i] = nullptr;
+    }
 
-    // Root context
+    // Add parent to imports if exists
     auto parent_context = symbol_table->operator_context;
-    if (parent_context == 0)
-    {
-        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
-        for (int i = 0; i < (int)Cast_Option::MAX_ENUM_VALUE; i++) {
-            context->cast_options[i] = Cast_Mode::INFERRED; // Default is now inferred for all casts except pointer null checks
-        }
-        context->cast_options[(int)Cast_Option::POINTER_NULL_CHECK] = Cast_Mode::EXPLICIT;
-    }
-    else
-    {
-        // Copy settings from parent context
-        *context = *parent_context; // Shallow copy first, then fill the new hashtable
-        context->custom_operators = hashtable_create_empty<Custom_Operator_Key, Custom_Operator>(1, custom_operator_key_hash, custom_operator_key_equals);
-        {
-            auto iter = hashtable_iterator_create(&parent_context->custom_operators);
-            while (hashtable_iterator_has_next(&iter)) {
-                hashtable_insert_element(&context->custom_operators, *iter.key, *iter.value);
-                hashtable_iterator_next(&iter);
-            }
-        }
+    if (parent_context != 0) {
+        dynamic_array_push_back(&context->context_imports, parent_context);
     }
 
-    context->workload = 0;
+    // Create workloads
+    auto parent_workload = semantic_analyser.current_workload;
+    for (int i = 0; i < context_changes.size; i++)
+    {
+        auto change = context_changes[i];
+        if (context->workloads[(int)change->type] != 0) { // Only create one workload per change type
+            continue;
+        }
+
+        auto workload = workload_executer_allocate_workload<Workload_Operator_Context_Change>(nullptr, parent_workload->current_pass);
+        workload->context = context;
+        workload->context_type_to_analyse = change->type;
+        workload->change_nodes = context_changes;
+        if (wait_for_workload != 0) {
+            analysis_workload_add_dependency_internal(upcast(workload), wait_for_workload);
+        }
+        context->workloads[(int)change->type] = workload;
+    }
+
+    dynamic_array_push_back(&semantic_analyser.allocated_operator_contexts, context);
     symbol_table->operator_context = context;
     return context;
 }
 
-void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> context_changes, Operator_Context* context)
+void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context)
 {
     auto& ids = compiler.predefined_ids;
     auto& types = compiler.type_system.predefined_types;
@@ -8939,7 +9234,7 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
     // Returns unknown on error and sets error flag
     auto poly_function_check_first_argument = [&](Polymorphic_Base_Info* poly_base, AST::Node* error_report_node, Type_Mods* type_mods) -> Datatype*
     {
-        *type_mods = type_mods_make(0, 0);
+        *type_mods = type_mods_make(0, 0, 0, 0);
         if (poly_base->parameter_nodes.size == 0) {
             log_semantic_error("Poly function must have at least one argument for custom operator", error_report_node);
             success = false;
@@ -8981,180 +9276,131 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
         }
     };
 
-    for (int i = 0; i < context_changes.size; i++)
+    switch (change_node->type)
     {
-        auto change_node = context_changes[i];
-        auto info = get_info(change_node, true);
-        info->type = Context_Change_Info_Type::IGNORE_ON_IMPORT;
+    case AST::Context_Change_Type::IMPORT: 
+    {
+        auto& path = change_node->options.import_path;
+        auto symbol = path_lookup_resolve_to_single_symbol(path, true);
 
-        if (change_node->is_import)
+        // Check if symbol is module
+        if (symbol->type != Symbol_Type::MODULE)
         {
-            auto& path = change_node->options.import_path;
-            auto symbol = path_lookup_resolve_to_single_symbol(path, true);
-
-            // Check if symbol is module
-            if (symbol->type != Symbol_Type::MODULE)
-            {
-                if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
-                    continue;
-                }
-                log_semantic_error("Operator context import requires a module to be passed, but other symbol was specified", upcast(path));
-                log_error_info_symbol(symbol);
-                continue;
+            if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+                return;
             }
+            log_semantic_error("Operator context import requires a module to be passed, but other symbol was specified", upcast(path));
+            log_error_info_symbol(symbol);
+            return;
+        }
 
-            // Wait for other context changes to finish (So we can copy it's results)
-            auto module_analysis = symbol->options.module_progress->module_analysis;
-            {
-                bool dependency_failed = false;
-                analysis_workload_add_dependency_internal(
-                    semantic_analyser.current_workload, upcast(module_analysis),
-                    dependency_failure_info_make(&dependency_failed, path->last)
-                );
-                workload_executer_wait_for_dependency_resolution();
-                if (dependency_failed) {
-                    continue; // If there were cyclic dependencies, just skip importing the options
-                }
-            }
+        // Wait for other module to finish module analysis (Which may install a new operator context)
+        auto other_module = symbol->options.module_progress;
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(other_module->module_analysis));
+        workload_executer_wait_for_dependency_resolution();
 
-            auto other_context = module_analysis->symbol_table->operator_context;
-            if (other_context->workload != 0)
-            {
-                bool dependency_failed = false;
-                analysis_workload_add_dependency_internal(
-                    semantic_analyser.current_workload,
-                    upcast(other_context->workload),
-                    dependency_failure_info_make(&dependency_failed, path->last)
-                );
-                workload_executer_wait_for_dependency_resolution();
-                if (dependency_failed) {
-                    continue; // If there were cyclic dependencies, just skip importing the options
-                }
-            }
-
-
-            // Skip imports if there are no imports in that module
-            if (module_analysis->module_node->context_changes.size == 0) {
-                continue;
-            }
-
-
-            // Apply all changes from other module here
-            for (int j = 0; j < module_analysis->module_node->context_changes.size; j++)
-            {
-                auto other_change = module_analysis->module_node->context_changes[j];
-                assert(other_context->workload != 0, "Should be the case for module contexts!");
-                if (other_context->workload == 0) { // To get rid of the warning
-                    continue;
-                }
-
-                auto other_change_info = pass_get_node_info(other_context->workload->base.current_pass, other_change, Info_Query::READ_NOT_NULL);
-                switch (other_change_info->type)
-                {
-                case Context_Change_Info_Type::IGNORE_ON_IMPORT: continue;
-                case Context_Change_Info_Type::CAST_OPTION: {
-                    auto cast_option = other_change_info->options.cast_option;
-                    context->cast_options[(int)cast_option] = other_context->cast_options[(int)cast_option];
-                    break;
-                }
-                case Context_Change_Info_Type::CUSTOM_OPERATOR:
-                {
-                    Custom_Operator_Key& key = other_change_info->options.key;
-                    Custom_Operator* op = hashtable_find_element(&other_context->custom_operators, key);
-                    assert(op != 0, "Should have been set");
-                    hashtable_insert_element(&context->custom_operators, key, *op);
-                    if (other_change_info->has_commutative_version) {
-                        assert(key.type == Custom_Operator_Type::BINARY_OPERATOR, "");
-                        Custom_Operator_Key commutative_key = key;
-                        commutative_key.options.binop.left_type = key.options.binop.right_type;
-                        commutative_key.options.binop.right_type = key.options.binop.left_type;
-                        op = hashtable_find_element(&other_context->custom_operators, commutative_key);
-                        assert(op != 0, "Should have been set");
-                        hashtable_insert_element(&context->custom_operators, commutative_key, *op);
-                    }
-                    break;
-                }
-                default: panic("");
-                }
+        // Check if we already have this import
+        auto other_context = symbol->options.module_progress->module_analysis->symbol_table->operator_context;
+        for (int i = 0; i < context->context_imports.size; i++) {
+            if (context->context_imports[i] == other_context) {
+                return;
             }
         }
-        else if (change_node->options.setting.id == compiler.predefined_ids.set_cast_option)
+        if (other_context == context) {
+            return;
+        }
+
+        dynamic_array_push_back(&context->context_imports, other_context);
+        return;
+    }
+    case AST::Context_Change_Type::CAST_OPTION:
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
+        parameter_matching_info_add_param(matching_info, ids.option, true, false, upcast(types.cast_option));
+        parameter_matching_info_add_param(matching_info, ids.option, true, false, upcast(types.cast_mode));
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_cast_option = matching_info->matched_parameters[0];
+        auto& param_cast_mode = matching_info->matched_parameters[1];
+        Cast_Option option = (Cast_Option)analyse_parameter_as_comptime_enum(param_cast_option, (int)Cast_Option::MAX_ENUM_VALUE);
+        Cast_Mode cast_mode = (Cast_Mode)analyse_parameter_as_comptime_enum(param_cast_mode, (int)Cast_Mode::MAX_ENUM_VALUE);
+
+        if (success)
         {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
-            parameter_matching_info_add_param(matching_info, ids.option, true, false, upcast(types.cast_option));
-            parameter_matching_info_add_param(matching_info, ids.option, true, false, upcast(types.cast_mode));
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
-                success = false;
-            }
-
-            auto& param_cast_option = matching_info->matched_parameters[0];
-            auto& param_cast_mode = matching_info->matched_parameters[1];
-            Cast_Option option = (Cast_Option)analyse_parameter_as_comptime_enum(param_cast_option, (int)Cast_Option::MAX_ENUM_VALUE);
-            Cast_Mode cast_mode = (Cast_Mode)analyse_parameter_as_comptime_enum(param_cast_mode, (int)Cast_Mode::MAX_ENUM_VALUE);
-
-            if (param_cast_mode.is_set && (cast_mode == Cast_Mode::POINTER_EXPLICIT || cast_mode == Cast_Mode::POINTER_INFERRED)) {
-                log_semantic_error("Cannot set cast mode in cast mode options to pointer modes!", param_cast_mode.expression);
-                success = false;
-            }
-
-            if (success) {
-                info->type = Context_Change_Info_Type::CAST_OPTION;
-                info->options.cast_option = option;
-                context->cast_options[(int)option] = cast_mode;
+            if (option == Cast_Option::FROM_BYTE_POINTER || option == Cast_Option::POINTER_TO_POINTER || option == Cast_Option::TO_BYTE_POINTER)
+            {
+                if (cast_mode == Cast_Mode::INFERRED || cast_mode == Cast_Mode::EXPLICIT) {
+                    log_semantic_error("Cannot set cast mode of pointer-casts to non-pointer modes", param_cast_mode.expression);
+                    success = false;
+                }
             }
             else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
+                if (cast_mode == Cast_Mode::POINTER_EXPLICIT || cast_mode == Cast_Mode::POINTER_INFERRED) {
+                    log_semantic_error("Cannot set cast mode of normal casts to pointer modes", param_cast_mode.expression);
+                    success = false;
+                }
             }
         }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_binop)
+
+        if (success) {
+            Custom_Operator_Key key;
+            key.type = AST::Context_Change_Type::CAST_OPTION;
+            key.options.cast_option = option;
+            Custom_Operator op;
+            op.cast_mode = cast_mode;
+            hashtable_insert_element(&context->custom_operators, key, op);
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+        break;
+    }
+    case AST::Context_Change_Type::BINARY_OPERATOR:
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
+        parameter_matching_info_add_param(matching_info, ids.binop, true, false, upcast(types.string));
+        parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.commutative, false, false, upcast(types.bool_type));
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_binop = matching_info->matched_parameters[0];
+        auto& param_function = matching_info->matched_parameters[1];
+        auto& param_commutative = matching_info->matched_parameters[2];
+
+        AST::Binop binop = AST::Binop::ADDITION;
+        if (param_binop.is_set)
         {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
-            parameter_matching_info_add_param(matching_info, ids.binop, true, false, upcast(types.string));
-            parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.commutative, false, false, upcast(types.bool_type));
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
-                success = false;
-            }
-
-            auto& param_binop = matching_info->matched_parameters[0];
-            auto& param_function = matching_info->matched_parameters[1];
-            auto& param_commutative = matching_info->matched_parameters[2];
-
-            AST::Binop binop = AST::Binop::ADDITION;
-            if (param_binop.is_set)
+            auto binop_expr = param_binop.expression;
+            if (binop_expr->type == AST::Expression_Type::LITERAL_READ && binop_expr->options.literal_read.type == Literal_Type::STRING)
             {
-                auto binop_expr = param_binop.expression;
-                if (binop_expr->type == AST::Expression_Type::LITERAL_READ && binop_expr->options.literal_read.type == Literal_Type::STRING)
-                {
-                    auto expr_info = get_info(binop_expr, true);
-                    expression_info_set_value(expr_info, upcast(types.string), true);
-                    parameter_set_analysed(param_binop);
+                auto expr_info = get_info(binop_expr, true);
+                expression_info_set_value(expr_info, upcast(types.string), true);
+                parameter_set_analysed(param_binop);
 
-                    auto binop_str = binop_expr->options.literal_read.options.string;
-                    if (binop_str->size == 1)
-                    {
-                        int c = binop_str->characters[0];
-                        if (c == '+') {
-                            binop = AST::Binop::ADDITION;
-                        }
-                        else if (c == '-') {
-                            binop = AST::Binop::SUBTRACTION;
-                        }
-                        else if (c == '*') {
-                            binop = AST::Binop::MULTIPLICATION;
-                        }
-                        else if (c == '/') {
-                            binop = AST::Binop::DIVISION;
-                        }
-                        else if (c == '%') {
-                            binop = AST::Binop::MODULO;
-                        }
-                        else {
-                            log_semantic_error("Binop string must be one of +,-,*,/,%", upcast(binop_expr));
-                            success = false;
-                        }
+                auto binop_str = binop_expr->options.literal_read.options.string;
+                if (binop_str->size == 1)
+                {
+                    int c = binop_str->characters[0];
+                    if (c == '+') {
+                        binop = AST::Binop::ADDITION;
+                    }
+                    else if (c == '-') {
+                        binop = AST::Binop::SUBTRACTION;
+                    }
+                    else if (c == '*') {
+                        binop = AST::Binop::MULTIPLICATION;
+                    }
+                    else if (c == '/') {
+                        binop = AST::Binop::DIVISION;
+                    }
+                    else if (c == '%') {
+                        binop = AST::Binop::MODULO;
                     }
                     else {
                         log_semantic_error("Binop string must be one of +,-,*,/,%", upcast(binop_expr));
@@ -9162,90 +9408,89 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     }
                 }
                 else {
-                    log_semantic_error("Binop type must be string literal", upcast(binop_expr));
+                    log_semantic_error("Binop string must be one of +,-,*,/,%", upcast(binop_expr));
                     success = false;
                 }
             }
-
-            bool is_commutative = analyse_parameter_as_comptime_bool(param_commutative);
-
-            ModTree_Function* function = nullptr;
-            if (param_function.is_set) {
-                Expression_Info* info = semantic_analyser_analyse_expression_any(param_function.expression, expression_context_make_unknown());
-                parameter_set_analysed(param_function);
-                Type_Mods unused;
-                function = analyse_expression_info_as_function(param_function.expression, info, 2, true, &unused);
-            }
-
-            if (success)
-            {
-                Custom_Operator op;
-                op.binop.function = function;
-                op.binop.switch_left_and_right = false;
-                op.binop.left_mods = function->signature->parameters[0].type->mods;
-                op.binop.right_mods = function->signature->parameters[1].type->mods;
-                Custom_Operator_Key key;
-                key.type = Custom_Operator_Type::BINARY_OPERATOR;
-                key.options.binop.binop = binop;
-                key.options.binop.left_type = function->signature->parameters[0].type->base_type;
-                key.options.binop.right_type = function->signature->parameters[1].type->base_type;
-                hashtable_insert_element(&context->custom_operators, key, op);
-
-                if (is_commutative) {
-                    Custom_Operator commutative_op = op;
-                    commutative_op.binop.switch_left_and_right = true;
-                    commutative_op.binop.left_mods = op.binop.right_mods;
-                    commutative_op.binop.right_mods = op.binop.left_mods;
-                    Custom_Operator_Key commutative_key = key;
-                    commutative_key.options.binop.left_type = key.options.binop.right_type;
-                    commutative_key.options.binop.right_type = key.options.binop.left_type;
-                    hashtable_insert_element(&context->custom_operators, commutative_key, commutative_op);
-                }
-
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
             else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
-        }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_unop)
-        {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
-            parameter_matching_info_add_param(matching_info, ids.unop, true, false, upcast(types.string));
-            parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
+                log_semantic_error("Binop type must be string literal", upcast(binop_expr));
                 success = false;
             }
+        }
 
-            auto& param_unop = matching_info->matched_parameters[0];
-            auto& param_function = matching_info->matched_parameters[1];
+        bool is_commutative = analyse_parameter_as_comptime_bool(param_commutative);
 
-            AST::Unop unop = AST::Unop::NEGATE;
-            if (param_unop.is_set)
+        ModTree_Function* function = nullptr;
+        if (param_function.is_set) {
+            Expression_Info* info = semantic_analyser_analyse_expression_any(param_function.expression, expression_context_make_unknown());
+            parameter_set_analysed(param_function);
+            Type_Mods unused;
+            function = analyse_expression_info_as_function(param_function.expression, info, 2, true, &unused);
+        }
+
+        if (success)
+        {
+            Custom_Operator op;
+            op.binop.function = function;
+            op.binop.switch_left_and_right = false;
+            op.binop.left_mods = function->signature->parameters[0].type->mods;
+            op.binop.right_mods = function->signature->parameters[1].type->mods;
+            Custom_Operator_Key key;
+            key.type = AST::Context_Change_Type::BINARY_OPERATOR;
+            key.options.binop.binop = binop;
+            key.options.binop.left_type = function->signature->parameters[0].type->base_type;
+            key.options.binop.right_type = function->signature->parameters[1].type->base_type;
+            hashtable_insert_element(&context->custom_operators, key, op);
+
+            if (is_commutative) {
+                Custom_Operator commutative_op = op;
+                commutative_op.binop.switch_left_and_right = true;
+                commutative_op.binop.left_mods = op.binop.right_mods;
+                commutative_op.binop.right_mods = op.binop.left_mods;
+                Custom_Operator_Key commutative_key = key;
+                commutative_key.options.binop.left_type = key.options.binop.right_type;
+                commutative_key.options.binop.right_type = key.options.binop.left_type;
+                hashtable_insert_element(&context->custom_operators, commutative_key, commutative_op);
+            }
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+
+        break;
+    }
+    case AST::Context_Change_Type::UNARY_OPERATOR:
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
+        parameter_matching_info_add_param(matching_info, ids.unop, true, false, upcast(types.string));
+        parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_unop = matching_info->matched_parameters[0];
+        auto& param_function = matching_info->matched_parameters[1];
+
+        AST::Unop unop = AST::Unop::NEGATE;
+        if (param_unop.is_set)
+        {
+            auto unop_expr = param_unop.expression;
+            if (unop_expr->type == AST::Expression_Type::LITERAL_READ && unop_expr->options.literal_read.type == Literal_Type::STRING)
             {
-                auto unop_expr = param_unop.expression;
-                if (unop_expr->type == AST::Expression_Type::LITERAL_READ && unop_expr->options.literal_read.type == Literal_Type::STRING)
-                {
-                    auto expr_info = get_info(unop_expr, true);
-                    expression_info_set_value(expr_info, upcast(types.string), true);
-                    parameter_set_analysed(param_unop);
+                auto expr_info = get_info(unop_expr, true);
+                expression_info_set_value(expr_info, upcast(types.string), true);
+                parameter_set_analysed(param_unop);
 
-                    auto unop_str = unop_expr->options.literal_read.options.string;
-                    if (unop_str->size == 1)
-                    {
-                        int c = unop_str->characters[0];
-                        if (c == '-') {
-                            unop = AST::Unop::NEGATE;
-                        }
-                        else if (c == '!') {
-                            unop = AST::Unop::NOT;
-                        }
-                        else {
-                            log_semantic_error("Unop string must be either ! or -", upcast(unop_expr));
-                            success = false;
-                        }
+                auto unop_str = unop_expr->options.literal_read.options.string;
+                if (unop_str->size == 1)
+                {
+                    int c = unop_str->characters[0];
+                    if (c == '-') {
+                        unop = AST::Unop::NEGATE;
+                    }
+                    else if (c == '!') {
+                        unop = AST::Unop::NOT;
                     }
                     else {
                         log_semantic_error("Unop string must be either ! or -", upcast(unop_expr));
@@ -9253,523 +9498,520 @@ void analyse_operator_context_changes(Dynamic_Array<AST::Context_Change*> contex
                     }
                 }
                 else {
-                    log_semantic_error("Unop type must be string literal", upcast(unop_expr));
+                    log_semantic_error("Unop string must be either ! or -", upcast(unop_expr));
                     success = false;
                 }
             }
-
-            ModTree_Function* function = nullptr;
-            Type_Mods mods;
-            if (param_function.is_set) {
-                Expression_Info* info = semantic_analyser_analyse_expression_any(param_function.expression, expression_context_make_unknown());
-                parameter_set_analysed(param_function);
-                function = analyse_expression_info_as_function(param_function.expression, info, 1, true, &mods);
-            }
-
-            if (success)
-            {
-                Custom_Operator op;
-                op.unop.function = function;
-                op.unop.mods = mods;
-                Custom_Operator_Key key;
-                key.type = Custom_Operator_Type::UNARY_OPERATOR;
-                key.options.unop.unop = unop;
-                key.options.unop.type = function->signature->parameters[0].type->base_type;
-                hashtable_insert_element(&context->custom_operators, key, op);
-
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
             else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
-        }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_cast)
-        {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
-            parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.cast_mode, true, false, upcast(types.cast_mode));
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
+                log_semantic_error("Unop type must be string literal", upcast(unop_expr));
                 success = false;
             }
-
-            auto& param_function = matching_info->matched_parameters[0];
-            auto& param_cast_mode = matching_info->matched_parameters[1];
-
-            Cast_Mode cast_mode = (Cast_Mode)analyse_parameter_as_comptime_enum(param_cast_mode, (int)Cast_Mode::MAX_ENUM_VALUE);
-
-            // Analyse function
-            Custom_Operator op;
-            Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::CAST;
-            op.custom_cast.cast_mode = cast_mode;
-
-            if (param_function.is_set)
-            {
-                auto expr = param_function.expression;
-                Expression_Info* fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
-                parameter_set_analysed(param_function);
-                if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-                {
-                    ModTree_Function* function = analyse_expression_info_as_function(expr, fn_info, 1, true, &op.custom_cast.mods);
-                    if (function != nullptr) {
-                        op.custom_cast.is_polymorphic = false;
-                        op.custom_cast.options.function = function;
-                        key.options.custom_cast.from_type = function->signature->parameters[0].type->base_type;
-                        key.options.custom_cast.to_type = function->signature->return_type.value;
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-                {
-                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
-                    op.custom_cast.is_polymorphic = true;
-                    op.custom_cast.options.poly_base = fn_info->options.polymorphic_function.base;
-                    key.options.custom_cast.from_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.custom_cast.mods);
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 1);
-
-                    // Check return type
-                    if (poly_base->return_type_index != -1)
-                    {
-                        // If the return type is a normal type, just use it as key, otherwise 
-                        auto& return_param = poly_base->parameters[poly_base->return_type_index];
-                        if (return_param.depends_on.size > 0 || return_param.infos.type->contains_type_template) {
-                            key.options.custom_cast.to_type = nullptr;
-                        }
-                        else {
-                            key.options.custom_cast.to_type = return_param.infos.type;
-                        }
-                    }
-                    else {
-                        success = false;
-                        log_semantic_error("For custom casts polymorphic function must have a return type", expr);
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-                    success = false;
-                }
-                else {
-                    success = false;
-                    log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
-                }
-            }
-
-            if (success) {
-                hashtable_insert_element(&context->custom_operators, key, op);
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
-            else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
         }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_array_access)
-        {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 1);
-            parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
-                success = false;
-            }
 
-            auto& param_function = matching_info->matched_parameters[0];
-
-            Custom_Operator op;
-            Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::ARRAY_ACCESS;
-
-            if (param_function.is_set)
-            {
-                auto expr = param_function.expression;
-                auto fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
-                parameter_set_analysed(param_function);
-                if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-                {
-                    ModTree_Function* function = analyse_expression_info_as_function(expr, fn_info, 2, true, &op.array_access.mods);
-                    op.array_access.is_polymorphic = false;
-                    op.array_access.options.function = function;
-                    if (function != nullptr) {
-                        key.options.array_access.array_type = function->signature->parameters[0].type->base_type;
-                        op.array_access.mods = function->signature->parameters[0].type->mods;
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-                {
-                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
-                    op.array_access.is_polymorphic = true;
-                    op.array_access.options.poly_base = fn_info->options.polymorphic_function.base;
-                    key.options.array_access.array_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.array_access.mods);
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 2);
-                }
-                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-                    success = false;
-                }
-                else {
-                    success = false;
-                    log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
-                }
-            }
-
-            if (success) {
-                hashtable_insert_element(&context->custom_operators, key, op);
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
-            else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
+        ModTree_Function* function = nullptr;
+        Type_Mods mods;
+        if (param_function.is_set) {
+            Expression_Info* info = semantic_analyser_analyse_expression_any(param_function.expression, expression_context_make_unknown());
+            parameter_set_analysed(param_function);
+            function = analyse_expression_info_as_function(param_function.expression, info, 1, true, &mods);
         }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_dot_call)
+
+        if (success)
         {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
-            parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.as_member_access, false, false, upcast(types.bool_type));
-            parameter_matching_info_add_param(matching_info, ids.name, false, false, upcast(types.string));
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
-                success = false;
-            }
-
-            auto& param_function = matching_info->matched_parameters[0];
-            auto& param_as_member_access = matching_info->matched_parameters[1];
-            auto& param_name = matching_info->matched_parameters[2];
-
             Custom_Operator op;
+            op.unop.function = function;
+            op.unop.mods = mods;
             Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::DOT_CALL;
-
-            op.dot_call.dot_call_as_member_access = false;
-            if (param_as_member_access.is_set) {
-                op.dot_call.dot_call_as_member_access = analyse_parameter_as_comptime_bool(param_as_member_access);
-            }
-            const bool as_member_access = op.dot_call.dot_call_as_member_access;
-
-            if (param_function.is_set)
-            {
-                auto expr = param_function.expression;
-                auto fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
-                parameter_set_analysed(param_function);
-                if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-                {
-                    ModTree_Function* function = fn_info->options.function;
-                    auto& parameters = function->signature->parameters;
-                    if (parameters.size == 0) {
-                        log_semantic_error("Dotcall function must have at least one parameter", upcast(expr));
-                        success = false;
-                    }
-                    else if (parameters.size != 1 && as_member_access) {
-                        log_semantic_error("Dotcall function as member access must have exactly one parameter", upcast(expr));
-                        success = false;
-                    }
-                    else {
-                        key.options.dot_call.datatype = parameters[0].type->base_type;
-                        op.dot_call.mods = parameters[0].type->mods;
-                    }
-
-                    Symbol* symbol = 0;
-                    if (function->function_type == ModTree_Function_Type::NORMAL) {
-                        symbol = function->options.normal.symbol;
-                    }
-                    if (symbol != nullptr) {
-                        key.options.dot_call.id = symbol->id;
-                    }
-                    else {
-                        key.options.dot_call.id = nullptr;
-                        if (!param_name.is_set) {
-                            log_semantic_error("Dotcall with unnamed function requires the use of the name argument", upcast(expr));
-                        }
-                    }
-
-                    op.dot_call.is_polymorphic = false;
-                    op.dot_call.options.function = function;
-                    op.dot_call.dot_call_as_member_access = as_member_access;
-                }
-                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-                {
-                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
-                    op.dot_call.is_polymorphic = true;
-                    op.dot_call.options.poly_base = fn_info->options.polymorphic_function.base;
-                    key.options.dot_call.datatype = poly_function_check_first_argument(poly_base, upcast(expr), &op.dot_call.mods);
-                    key.options.dot_call.id = fn_info->options.polymorphic_function.base->base.name;
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), poly_base->parameter_nodes.size);
-                }
-                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-                    success = false;
-                }
-                else {
-                    success = false;
-                    log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
-                }
-            }
-
-            // If name is given, use name instead
-            if (param_name.is_set)
-            {
-                auto name_expr = param_name.expression;
-                if (name_expr->type == AST::Expression_Type::LITERAL_READ && name_expr->options.literal_read.type == Literal_Type::STRING) {
-                    key.options.dot_call.id = name_expr->options.literal_read.options.string;
-                    auto expr_info = get_info(name_expr, true);
-                    expression_info_set_value(expr_info, upcast(types.string), true);
-                    parameter_set_analysed(param_name);
-                }
-                else {
-                    log_semantic_error("Dotcall name must be a string literal", upcast(name_expr));
-                    success = false;
-                }
-            }
-
-            if (success) {
-                hashtable_insert_element(&context->custom_operators, key, op);
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
-            else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
-        }
-        else if (change_node->options.setting.id == compiler.predefined_ids.add_iterator)
-        {
-            auto matching_info = get_info(change_node->options.setting.arguments, true);
-            *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 4);
-            parameter_matching_info_add_param(matching_info, ids.create_fn, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.has_next_fn, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.next_fn, true, false, nullptr);
-            parameter_matching_info_add_param(matching_info, ids.value_fn, true, false, nullptr);
-            if (!arguments_match_to_parameters(change_node->options.setting.arguments, matching_info, true)) {
-                success = false;
-            }
-
-            auto& param_create_fn = matching_info->matched_parameters[0];
-            auto& param_has_next_fn = matching_info->matched_parameters[1];
-            auto& param_next_fn = matching_info->matched_parameters[2];
-            auto& param_value_fn = matching_info->matched_parameters[3];
-
-            Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::ITERATOR;
-            Custom_Operator op;
-            auto& iter = op.iterator;
-            iter.is_polymorphic = false; // Depends on the type of the create function expression
-
-            Datatype* iterator_type = types.unknown_type; // Note: Iterator type is not available for polymorphic functions
-
-            if (param_create_fn.is_set && success)
-            {
-                auto function_node = param_create_fn.expression;
-                auto fn_info = semantic_analyser_analyse_expression_any(function_node, expression_context_make_unknown());
-                parameter_set_analysed(param_create_fn);
-                if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-                {
-                    ModTree_Function* function = fn_info->options.function;
-                    iter.options.normal.create = function;
-                    auto& parameters = function->signature->parameters;
-                    if (parameters.size == 1) {
-                        key.options.iterator.datatype = parameters[0].type->base_type;
-                        op.iterator.iterable_mods = parameters[0].type->mods;
-                        if (types_are_equal(key.options.iterator.datatype, types.unknown_type)) {
-                            success = false;
-                        }
-                    }
-                    else {
-                        log_semantic_error("Iterator create function must have exactly one argument", upcast(function_node));
-                        success = false;
-                    }
-
-                    if (function->signature->return_type.available) {
-                        iterator_type = function->signature->return_type.value;
-                        if (datatype_is_unknown(iterator_type)) {
-                            success = false;
-                        }
-                    }
-                    else {
-                        log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
-                        success = false;
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-                {
-                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
-                    iter.is_polymorphic = true;
-                    iter.options.polymorphic.fn_create = fn_info->options.polymorphic_function.base;
-
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
-                    key.options.iterator.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.iterator.iterable_mods);
-
-                    // Function must have return type
-                    if (poly_base->return_type_index == -1) {
-                        log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
-                        success = false;
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-                    success = false;
-                }
-                else {
-                    log_semantic_error("add_iterator argument must be a function", upcast(function_node));
-                    success = false;
-                }
-            }
-
-            // Function_index: 1 = has_next, 2 = next, 3 = get_value
-            auto analyse_iter_fn = [&](Parameter_Match& function_param, int function_index)
-            {
-                if (!function_param.is_set || !success) return;
-
-                auto fn_expr = function_param.expression;
-                auto fn_info = semantic_analyser_analyse_expression_any(fn_expr, expression_context_make_unknown());
-                parameter_set_analysed(function_param);
-
-                ModTree_Function** function_pointer_to_set = nullptr;
-                Polymorphic_Function_Base** poly_pointer_to_set = nullptr;
-                bool should_have_return_type = false;
-                bool return_should_be_boolean = false;
-                if (function_index == 1) {
-                    function_pointer_to_set = &op.iterator.options.normal.has_next;
-                    poly_pointer_to_set = &op.iterator.options.polymorphic.has_next;
-                    should_have_return_type = true;
-                    return_should_be_boolean = true;
-                }
-                else if (function_index == 2) {
-                    function_pointer_to_set = &op.iterator.options.normal.next;
-                    poly_pointer_to_set = &op.iterator.options.polymorphic.next;
-                    should_have_return_type = false;
-                    return_should_be_boolean = false;
-                }
-                else if (function_index == 3) {
-                    function_pointer_to_set = &op.iterator.options.normal.get_value;
-                    poly_pointer_to_set = &op.iterator.options.polymorphic.get_value;
-                    should_have_return_type = true;
-                    return_should_be_boolean = false;
-                }
-                else {
-                    panic("");
-                }
-
-                if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-                {
-                    ModTree_Function* function = fn_info->options.function;
-                    if (!iter.is_polymorphic) {
-                        *function_pointer_to_set = function;
-                    }
-                    else {
-                        log_semantic_error("Expected polymorphic function, as iter create function is also polymorphic", upcast(fn_expr));
-                        success = false;
-                    }
-
-                    auto& parameters = function->signature->parameters;
-                    if (parameters.size == 1)
-                    {
-                        Datatype* arg_type = parameters[0].type->base_type;
-                        if (datatype_is_unknown(arg_type)) {
-                            success = false;
-                        }
-                        else if (!(types_are_equal(arg_type->base_type, iterator_type->base_type) &&
-                            datatype_check_if_auto_casts_to_other_mods(arg_type, iterator_type->mods, false)))
-                        {
-                            log_semantic_error("Function parameter type must be compatible with iterator type (Create function return type)", upcast(fn_expr));
-                            log_error_info_given_type(arg_type);
-                            log_error_info_expected_type(iterator_type);
-                            success = false;
-                        }
-                    }
-                    else {
-                        log_semantic_error("Iterator has_next function must have exactly one argument", upcast(fn_expr));
-                        success = false;
-                    }
-
-                    // Check return value
-                    if (function->signature->return_type.available)
-                    {
-                        if (!should_have_return_type) {
-                            log_semantic_error("Function should not have a return value", upcast(fn_expr));
-                            success = false;
-                        }
-                        else {
-                            if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), function->signature->return_type.value)) {
-                                log_semantic_error("Function return type should be bool", upcast(fn_expr));
-                                success = false;
-                            }
-                        }
-                    }
-                    else {
-                        if (should_have_return_type) {
-                            log_semantic_error("Function should have a return value", upcast(fn_expr));
-                            success = false;
-                        }
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-                {
-                    Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
-                    if (iter.is_polymorphic) {
-                        *poly_pointer_to_set = fn_info->options.polymorphic_function.base;
-                    }
-                    else {
-                        log_semantic_error("Expected normal (non-polymorphic) function for has_next function", upcast(fn_expr));
-                        success = false;
-                        return;
-                    }
-
-                    // Check parameters
-                    poly_function_check_argument_count_and_comptime(poly_base, upcast(fn_expr), 1);
-                    Type_Mods unused;
-                    Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(fn_expr), &unused);
-                    if (!success) return;
-
-                    // Note: We don't know the iterator type from the make function, as this is currently not provided by the
-                    //      polymorphic base analysis. So here we only check that everything works
-                    if (types_are_equal(arg_type->base_type, types.unknown_type)) {
-                        success = false;
-                    }
-
-                    // Check return type
-                    if (poly_base->return_type_index != -1)
-                    {
-                        Datatype* return_type = poly_base->parameters[poly_base->return_type_index].infos.type;
-                        if (!should_have_return_type) {
-                            log_semantic_error("Function should not have a return value", upcast(fn_expr));
-                            success = false;
-                        }
-                        else {
-                            if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), return_type)) {
-                                log_semantic_error("Function return type should be bool", upcast(fn_expr));
-                                success = false;
-                            }
-                        }
-                    }
-                    else {
-                        if (should_have_return_type) {
-                            log_semantic_error("Function should have a return value", upcast(fn_expr));
-                            success = false;
-                        }
-                    }
-                }
-                else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-                    success = false;
-                }
-                else {
-                    log_semantic_error("Argument must be a function", upcast(fn_expr));
-                    success = false;
-                }
-            };
-
-            analyse_iter_fn(param_has_next_fn, 1);
-            analyse_iter_fn(param_next_fn, 2);
-            analyse_iter_fn(param_value_fn, 3);
-
-            if (success) {
-                hashtable_insert_element(&context->custom_operators, key, op);
-                info->type = Context_Change_Info_Type::CUSTOM_OPERATOR;
-                info->options.key = key;
-            }
-            else {
-                parameter_matching_analyse_in_unknown_context(matching_info);
-            }
+            key.type = AST::Context_Change_Type::UNARY_OPERATOR;
+            key.options.unop.unop = unop;
+            key.options.unop.type = function->signature->parameters[0].type->base_type;
+            hashtable_insert_element(&context->custom_operators, key, op);
         }
         else {
-            success = false;
-            log_semantic_error("Invalid id for context function", upcast(change_node), Parser::Section::IDENTIFIER);
-            analyse_arguments_in_unknown_context(change_node->options.setting.arguments);
+            parameter_matching_analyse_in_unknown_context(matching_info);
         }
+        break;
+    }
+    case AST::Context_Change_Type::CAST: 
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
+        parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.cast_mode, true, false, upcast(types.cast_mode));
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_function = matching_info->matched_parameters[0];
+        auto& param_cast_mode = matching_info->matched_parameters[1];
+
+        Cast_Mode cast_mode = (Cast_Mode)analyse_parameter_as_comptime_enum(param_cast_mode, (int)Cast_Mode::MAX_ENUM_VALUE);
+
+        // Analyse function
+        Custom_Operator op;
+        Custom_Operator_Key key;
+        key.type = AST::Context_Change_Type::CAST;
+        op.custom_cast.cast_mode = cast_mode;
+
+        if (param_function.is_set)
+        {
+            auto expr = param_function.expression;
+            Expression_Info* fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
+            parameter_set_analysed(param_function);
+            if (fn_info->result_type == Expression_Result_Type::FUNCTION)
+            {
+                ModTree_Function* function = analyse_expression_info_as_function(expr, fn_info, 1, true, &op.custom_cast.mods);
+                if (function != nullptr) {
+                    op.custom_cast.is_polymorphic = false;
+                    op.custom_cast.options.function = function;
+                    key.options.custom_cast.from_type = function->signature->parameters[0].type->base_type;
+                    key.options.custom_cast.to_type = function->signature->return_type.value;
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
+            {
+                Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
+                op.custom_cast.is_polymorphic = true;
+                op.custom_cast.options.poly_base = fn_info->options.polymorphic_function.base;
+                key.options.custom_cast.from_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.custom_cast.mods);
+                poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 1);
+
+                // Check return type
+                if (poly_base->return_type_index != -1)
+                {
+                    // If the return type is a normal type, just use it as key, otherwise 
+                    auto& return_param = poly_base->parameters[poly_base->return_type_index];
+                    if (return_param.depends_on.size > 0 || return_param.infos.type->contains_type_template) {
+                        key.options.custom_cast.to_type = nullptr;
+                    }
+                    else {
+                        key.options.custom_cast.to_type = return_param.infos.type;
+                    }
+                }
+                else {
+                    success = false;
+                    log_semantic_error("For custom casts polymorphic function must have a return type", expr);
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                success = false;
+            }
+            else {
+                success = false;
+                log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
+            }
+        }
+
+        if (success) {
+            hashtable_insert_element(&context->custom_operators, key, op);
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+        break;
+    }
+    case AST::Context_Change_Type::ARRAY_ACCESS:
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 1);
+        parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_function = matching_info->matched_parameters[0];
+
+        Custom_Operator op;
+        Custom_Operator_Key key;
+        key.type = AST::Context_Change_Type::ARRAY_ACCESS;
+
+        if (param_function.is_set)
+        {
+            auto expr = param_function.expression;
+            auto fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
+            parameter_set_analysed(param_function);
+            if (fn_info->result_type == Expression_Result_Type::FUNCTION)
+            {
+                ModTree_Function* function = analyse_expression_info_as_function(expr, fn_info, 2, true, &op.array_access.mods);
+                op.array_access.is_polymorphic = false;
+                op.array_access.options.function = function;
+                if (function != nullptr) {
+                    key.options.array_access.array_type = function->signature->parameters[0].type->base_type;
+                    op.array_access.mods = function->signature->parameters[0].type->mods;
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
+            {
+                Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
+                op.array_access.is_polymorphic = true;
+                op.array_access.options.poly_base = fn_info->options.polymorphic_function.base;
+                key.options.array_access.array_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.array_access.mods);
+                poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 2);
+            }
+            else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                success = false;
+            }
+            else {
+                success = false;
+                log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
+            }
+        }
+
+        if (success) {
+            hashtable_insert_element(&context->custom_operators, key, op);
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+
+        break;
+    }
+    case AST::Context_Change_Type::DOT_CALL:
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
+        parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.as_member_access, false, false, upcast(types.bool_type));
+        parameter_matching_info_add_param(matching_info, ids.name, false, false, upcast(types.string));
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_function = matching_info->matched_parameters[0];
+        auto& param_as_member_access = matching_info->matched_parameters[1];
+        auto& param_name = matching_info->matched_parameters[2];
+
+        Custom_Operator op;
+        Custom_Operator_Key key;
+        key.type = AST::Context_Change_Type::DOT_CALL;
+
+        op.dot_call.dot_call_as_member_access = false;
+        if (param_as_member_access.is_set) {
+            op.dot_call.dot_call_as_member_access = analyse_parameter_as_comptime_bool(param_as_member_access);
+        }
+        const bool as_member_access = op.dot_call.dot_call_as_member_access;
+
+        if (param_function.is_set)
+        {
+            auto expr = param_function.expression;
+            auto fn_info = semantic_analyser_analyse_expression_any(expr, expression_context_make_unknown());
+            parameter_set_analysed(param_function);
+            if (fn_info->result_type == Expression_Result_Type::FUNCTION)
+            {
+                ModTree_Function* function = fn_info->options.function;
+                auto& parameters = function->signature->parameters;
+                if (parameters.size == 0) {
+                    log_semantic_error("Dotcall function must have at least one parameter", upcast(expr));
+                    success = false;
+                }
+                else if (parameters.size != 1 && as_member_access) {
+                    log_semantic_error("Dotcall function as member access must have exactly one parameter", upcast(expr));
+                    success = false;
+                }
+                else {
+                    key.options.dot_call.datatype = parameters[0].type->base_type;
+                    op.dot_call.mods = parameters[0].type->mods;
+                }
+
+                Symbol* symbol = 0;
+                if (function->function_type == ModTree_Function_Type::NORMAL) {
+                    symbol = function->options.normal.symbol;
+                }
+                if (symbol != nullptr) {
+                    key.options.dot_call.id = symbol->id;
+                }
+                else {
+                    key.options.dot_call.id = nullptr;
+                    if (!param_name.is_set) {
+                        log_semantic_error("Dotcall with unnamed function requires the use of the name argument", upcast(expr));
+                    }
+                }
+
+                op.dot_call.is_polymorphic = false;
+                op.dot_call.options.function = function;
+                op.dot_call.dot_call_as_member_access = as_member_access;
+            }
+            else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
+            {
+                Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
+                op.dot_call.is_polymorphic = true;
+                op.dot_call.options.poly_base = fn_info->options.polymorphic_function.base;
+                key.options.dot_call.datatype = poly_function_check_first_argument(poly_base, upcast(expr), &op.dot_call.mods);
+                key.options.dot_call.id = fn_info->options.polymorphic_function.base->base.name;
+                poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), poly_base->parameter_nodes.size);
+            }
+            else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                success = false;
+            }
+            else {
+                success = false;
+                log_semantic_error("Function argument must be either a normal or polymorphic function", expr);
+            }
+        }
+
+        // If name is given, use name instead
+        if (param_name.is_set)
+        {
+            auto name_expr = param_name.expression;
+            if (name_expr->type == AST::Expression_Type::LITERAL_READ && name_expr->options.literal_read.type == Literal_Type::STRING) {
+                key.options.dot_call.id = name_expr->options.literal_read.options.string;
+                auto expr_info = get_info(name_expr, true);
+                expression_info_set_value(expr_info, upcast(types.string), true);
+                parameter_set_analysed(param_name);
+            }
+            else {
+                log_semantic_error("Dotcall name must be a string literal", upcast(name_expr));
+                success = false;
+            }
+        }
+
+        if (success) {
+            hashtable_insert_element(&context->custom_operators, key, op);
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+        break;
+    }
+    case AST::Context_Change_Type::ITERATOR: 
+    {
+        auto matching_info = get_info(change_node->options.arguments, true);
+        *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 4);
+        parameter_matching_info_add_param(matching_info, ids.create_fn, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.has_next_fn, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.next_fn, true, false, nullptr);
+        parameter_matching_info_add_param(matching_info, ids.value_fn, true, false, nullptr);
+        if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
+            success = false;
+        }
+
+        auto& param_create_fn = matching_info->matched_parameters[0];
+        auto& param_has_next_fn = matching_info->matched_parameters[1];
+        auto& param_next_fn = matching_info->matched_parameters[2];
+        auto& param_value_fn = matching_info->matched_parameters[3];
+
+        Custom_Operator_Key key;
+        key.type = AST::Context_Change_Type::ITERATOR;
+        Custom_Operator op;
+        auto& iter = op.iterator;
+        iter.is_polymorphic = false; // Depends on the type of the create function expression
+
+        Datatype* iterator_type = types.unknown_type; // Note: Iterator type is not available for polymorphic functions
+
+        if (param_create_fn.is_set && success)
+        {
+            auto function_node = param_create_fn.expression;
+            auto fn_info = semantic_analyser_analyse_expression_any(function_node, expression_context_make_unknown());
+            parameter_set_analysed(param_create_fn);
+            if (fn_info->result_type == Expression_Result_Type::FUNCTION)
+            {
+                ModTree_Function* function = fn_info->options.function;
+                iter.options.normal.create = function;
+                auto& parameters = function->signature->parameters;
+                if (parameters.size == 1) {
+                    key.options.iterator.datatype = parameters[0].type->base_type;
+                    op.iterator.iterable_mods = parameters[0].type->mods;
+                    if (types_are_equal(key.options.iterator.datatype, types.unknown_type)) {
+                        success = false;
+                    }
+                }
+                else {
+                    log_semantic_error("Iterator create function must have exactly one argument", upcast(function_node));
+                    success = false;
+                }
+
+                if (function->signature->return_type.available) {
+                    iterator_type = function->signature->return_type.value;
+                    if (datatype_is_unknown(iterator_type)) {
+                        success = false;
+                    }
+                }
+                else {
+                    log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
+                    success = false;
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
+            {
+                Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
+                iter.is_polymorphic = true;
+                iter.options.polymorphic.fn_create = fn_info->options.polymorphic_function.base;
+
+                poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1);
+                key.options.iterator.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.iterator.iterable_mods);
+
+                // Function must have return type
+                if (poly_base->return_type_index == -1) {
+                    log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
+                    success = false;
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                success = false;
+            }
+            else {
+                log_semantic_error("add_iterator argument must be a function", upcast(function_node));
+                success = false;
+            }
+        }
+
+        // Function_index: 1 = has_next, 2 = next, 3 = get_value
+        auto analyse_iter_fn = [&](Parameter_Match& function_param, int function_index)
+        {
+            if (!function_param.is_set || !success) return;
+
+            auto fn_expr = function_param.expression;
+            auto fn_info = semantic_analyser_analyse_expression_any(fn_expr, expression_context_make_unknown());
+            parameter_set_analysed(function_param);
+
+            ModTree_Function** function_pointer_to_set = nullptr;
+            Polymorphic_Function_Base** poly_pointer_to_set = nullptr;
+            bool should_have_return_type = false;
+            bool return_should_be_boolean = false;
+            if (function_index == 1) {
+                function_pointer_to_set = &op.iterator.options.normal.has_next;
+                poly_pointer_to_set = &op.iterator.options.polymorphic.has_next;
+                should_have_return_type = true;
+                return_should_be_boolean = true;
+            }
+            else if (function_index == 2) {
+                function_pointer_to_set = &op.iterator.options.normal.next;
+                poly_pointer_to_set = &op.iterator.options.polymorphic.next;
+                should_have_return_type = false;
+                return_should_be_boolean = false;
+            }
+            else if (function_index == 3) {
+                function_pointer_to_set = &op.iterator.options.normal.get_value;
+                poly_pointer_to_set = &op.iterator.options.polymorphic.get_value;
+                should_have_return_type = true;
+                return_should_be_boolean = false;
+            }
+            else {
+                panic("");
+            }
+
+            if (fn_info->result_type == Expression_Result_Type::FUNCTION)
+            {
+                ModTree_Function* function = fn_info->options.function;
+                if (!iter.is_polymorphic) {
+                    *function_pointer_to_set = function;
+                }
+                else {
+                    log_semantic_error("Expected polymorphic function, as iter create function is also polymorphic", upcast(fn_expr));
+                    success = false;
+                }
+
+                auto& parameters = function->signature->parameters;
+                if (parameters.size == 1)
+                {
+                    Datatype* arg_type = parameters[0].type->base_type;
+                    if (datatype_is_unknown(arg_type)) {
+                        success = false;
+                    }
+                    else if (!(types_are_equal(arg_type->base_type, iterator_type->base_type) &&
+                        datatype_check_if_auto_casts_to_other_mods(arg_type, iterator_type->mods, false)))
+                    {
+                        log_semantic_error("Function parameter type must be compatible with iterator type (Create function return type)", upcast(fn_expr));
+                        log_error_info_given_type(arg_type);
+                        log_error_info_expected_type(iterator_type);
+                        success = false;
+                    }
+                }
+                else {
+                    log_semantic_error("Iterator has_next function must have exactly one argument", upcast(fn_expr));
+                    success = false;
+                }
+
+                // Check return value
+                if (function->signature->return_type.available)
+                {
+                    if (!should_have_return_type) {
+                        log_semantic_error("Function should not have a return value", upcast(fn_expr));
+                        success = false;
+                    }
+                    else {
+                        if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), function->signature->return_type.value)) {
+                            log_semantic_error("Function return type should be bool", upcast(fn_expr));
+                            success = false;
+                        }
+                    }
+                }
+                else {
+                    if (should_have_return_type) {
+                        log_semantic_error("Function should have a return value", upcast(fn_expr));
+                        success = false;
+                    }
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
+            {
+                Polymorphic_Base_Info* poly_base = &fn_info->options.polymorphic_function.base->base;
+                if (iter.is_polymorphic) {
+                    *poly_pointer_to_set = fn_info->options.polymorphic_function.base;
+                }
+                else {
+                    log_semantic_error("Expected normal (non-polymorphic) function for has_next function", upcast(fn_expr));
+                    success = false;
+                    return;
+                }
+
+                // Check parameters
+                poly_function_check_argument_count_and_comptime(poly_base, upcast(fn_expr), 1);
+                Type_Mods unused;
+                Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(fn_expr), &unused);
+                if (!success) return;
+
+                // Note: We don't know the iterator type from the make function, as this is currently not provided by the
+                //      polymorphic base analysis. So here we only check that everything works
+                if (types_are_equal(arg_type->base_type, types.unknown_type)) {
+                    success = false;
+                }
+
+                // Check return type
+                if (poly_base->return_type_index != -1)
+                {
+                    Datatype* return_type = poly_base->parameters[poly_base->return_type_index].infos.type;
+                    if (!should_have_return_type) {
+                        log_semantic_error("Function should not have a return value", upcast(fn_expr));
+                        success = false;
+                    }
+                    else {
+                        if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), return_type)) {
+                            log_semantic_error("Function return type should be bool", upcast(fn_expr));
+                            success = false;
+                        }
+                    }
+                }
+                else {
+                    if (should_have_return_type) {
+                        log_semantic_error("Function should have a return value", upcast(fn_expr));
+                        success = false;
+                    }
+                }
+            }
+            else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
+                success = false;
+            }
+            else {
+                log_semantic_error("Argument must be a function", upcast(fn_expr));
+                success = false;
+            }
+        };
+
+        analyse_iter_fn(param_has_next_fn, 1);
+        analyse_iter_fn(param_next_fn, 2);
+        analyse_iter_fn(param_value_fn, 3);
+
+        if (success) {
+            hashtable_insert_element(&context->custom_operators, key, op);
+        }
+        else {
+            parameter_matching_analyse_in_unknown_context(matching_info);
+        }
+        break;
+    }
+    case AST::Context_Change_Type::INVALID: break;
+    default: panic("");
     }
 }
 
@@ -10073,7 +10315,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     Struct_Content* subtype = struct_content->subtypes[case_info->case_value - 1];
                     auto result_subtype = type_system_make_type_with_mods(
                         condition_type->base_type,
-                        type_mods_make(1, (type_mods_is_constant(condition_type->mods, 0) ? 1 : 0), subtype->index)
+                        type_mods_make(condition_type->mods.is_constant, 1, 0, 0, subtype->index)
                     );
                     var_symbol->options.variable_type = result_subtype;
                 }
@@ -10209,7 +10451,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         symbol->options.variable_type = types.unknown_type; // Should be updated by further code
 
         // Find loop-variable type
-        Type_Mods expected_mods = type_mods_make(0, 1);
+        Type_Mods expected_mods = type_mods_make(true, 0, 0, 0);
         if (iterable_type->type == Datatype_Type::SLICE || iterable_type->type == Datatype_Type::ARRAY)
         {
             Datatype* element_type = nullptr;
@@ -10230,16 +10472,16 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
 
             Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::ITERATOR;
+            key.type = AST::Context_Change_Type::ITERATOR;
             key.options.iterator.datatype = iterable_type;
-            Custom_Operator* op = hashtable_find_element(&operator_context->custom_operators, key);
+            Custom_Operator* op = operator_context_query_custom_operator(operator_context, key);
 
             // Check for polymorphic overload
             if (op == nullptr && expr_type->type == Datatype_Type::STRUCT) {
                 auto struct_type = downcast<Datatype_Struct>(expr_type);
                 if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
                     key.options.iterator.datatype = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-                    op = hashtable_find_element(&operator_context->custom_operators, key);
+                    op = operator_context_query_custom_operator(operator_context, key);
                 }
             }
 
@@ -10528,11 +10770,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         if (!types_are_valid)
         {
             Custom_Operator_Key key;
-            key.type = Custom_Operator_Type::BINARY_OPERATOR;
+            key.type = AST::Context_Change_Type::BINARY_OPERATOR;
             key.options.binop.binop = assignment.binop;
             key.options.binop.left_type = left_type;
             key.options.binop.right_type = right_type;
-            auto overload = hashtable_find_element(&operator_context->custom_operators, key);
+            auto overload = operator_context_query_custom_operator(operator_context, key);
             if (overload != nullptr)
             {
                 auto function = overload->binop.function;
@@ -10665,7 +10907,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
                 log_semantic_error("Type must not be a pointer-type with normal value definition 'x: foo ='", type_node);
                 type = type_system_make_type_with_mods(
-                    type->base_type, type_mods_make(0, (type_mods_is_constant(type->mods, 0) ? 1 : 0), type->mods.subtype_index)
+                    type->base_type, type_mods_make(type->mods.is_constant, 0, 0, 0, type->mods.subtype_index)
                 );
             }
             else if (definition->assignment_type == AST::Assignment_Type::POINTER && !is_pointer) {
@@ -10766,7 +11008,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             {
                 bool value_is_pointer = datatype_is_pointer(value_type);
                 if (definition->assignment_type == AST::Assignment_Type::POINTER && !value_is_pointer) {
-                    if (try_updating_expression_type_mods(values[i], type_mods_make(1, original_mods.constant_flags, value_type->mods.subtype_index))) {
+                    if (try_updating_expression_type_mods(values[i], type_mods_make(original_mods.is_constant, 1, 0, 0, value_type->mods.subtype_index))) {
                         value_type = get_info(values[i])->cast_info.result_type;
                     }
                     else {
@@ -10828,6 +11070,22 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
         polymorphic_symbol_access ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL);
     RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, block_info->symbol_table);
 
+    // Handle import statements 
+    Workload_Import_Resolve* last_import_workload = 0;
+    for (int i = 0; i < block->statements.size; i++) {
+        if (block->statements[i]->type == AST::Statement_Type::IMPORT) {
+            auto import = block->statements[i]->options.import_node;
+            auto import_workload = create_import_workload(import);
+            if (import_workload == 0) {
+                continue;
+            }
+            if (last_import_workload != 0) {
+                analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_import_workload));
+            }
+            last_import_workload = import_workload;
+        }
+    }
+
     // Create symbols and workloads for definitions inside the block
     {
         auto fn = semantic_analyser.current_workload->current_function;
@@ -10845,43 +11103,25 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
             if (block->statements[i]->type == AST::Statement_Type::DEFINITION) {
                 auto definition = block->statements[i]->options.definition;
                 if (!(dont_define_comptime_symbols && definition->is_comptime)) {
-                    analyser_create_symbol_and_workload_for_definition(definition);
+                    analyser_create_symbol_and_workload_for_definition(definition, upcast(last_import_workload));
                 }
             }
         }
     }
 
-    // Afterwards handle import statements (This order is the same as in modules, first the symbols get defined, then the imports are handled)
-    {
-        // Note: This is almost the same as in workload_entry for Module import
-        Workload_Import_Resolve* last_import_workload = 0;
-        for (int i = 0; i < block->statements.size; i++) {
-            if (block->statements[i]->type == AST::Statement_Type::IMPORT) {
-                auto import = block->statements[i]->options.import_node;
-                auto import_workload = create_import_workload(import);
-                if (import_workload == 0) {
-                    continue;
-                }
-                if (last_import_workload != 0) {
-                    analysis_workload_add_dependency_internal(upcast(import_workload), upcast(last_import_workload));
-                }
-                last_import_workload = import_workload;
-            }
-        }
-
-        // If any imports were found, wait for all imports to finish before analysing block
-        if (last_import_workload != 0) {
-            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(last_import_workload));
-            workload_executer_wait_for_dependency_resolution();
-        }
+    // Create operator context workloads if changes exist
+    if (block->context_changes.size != 0) {
+        auto operator_context = symbol_table_install_new_operator_context_and_add_workloads(
+            block_info->symbol_table, block->context_changes, upcast(last_import_workload)
+        );
     }
 
-    // Handle operator context after imports
-    if (block->context_changes.size != 0)
-    {
-        auto operator_context = symbol_table_install_new_operator_context(block_info->symbol_table);
-        analyse_operator_context_changes(block->context_changes, operator_context);
+    // If any imports were found, wait for all imports to finish before analysing block
+    if (last_import_workload != 0) {
+        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(last_import_workload));
+        workload_executer_wait_for_dependency_resolution();
     }
+
 
     // Check if block id is unique
     auto& block_stack = semantic_analyser.current_workload->block_stack;
@@ -11047,7 +11287,7 @@ void semantic_analyser_reset()
     {
         auto root_table = symbol_table_create();
         semantic_analyser.root_symbol_table = root_table;
-        symbol_table_install_new_operator_context(root_table);
+        symbol_table_install_new_operator_context_and_add_workloads(root_table, dynamic_array_create<AST::Context_Change*>(), nullptr);
     }
 
     // Create predefined Symbols 
@@ -11191,6 +11431,7 @@ void semantic_analyser_destroy()
 
     for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
         auto context = semantic_analyser.allocated_operator_contexts[i];
+        dynamic_array_destroy(&context->context_imports);
         hashtable_destroy(&context->custom_operators);
         delete semantic_analyser.allocated_operator_contexts[i];
     }

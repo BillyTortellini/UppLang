@@ -1012,10 +1012,11 @@ namespace Parser
 
             auto result = allocate_base<Context_Change>(parent, Node_Type::CONTEXT_CHANGE);
             advance_token();
+            result->type = Context_Change_Type::INVALID;
 
             // Check if import
             if (test_keyword(Keyword::IMPORT)) {
-                result->is_import = true;
+                result->type = Context_Change_Type::IMPORT;
                 advance_token();
 
                 auto path = parse_path_lookup(upcast(result));
@@ -1027,18 +1028,32 @@ namespace Parser
                 PARSE_SUCCESS(result);
             }
 
+
             // Check for identifier
-            result->is_import = false;
-            if (test_token(Token_Type::IDENTIFIER)) {
-                result->options.setting.id = get_token()->options.identifier;
+            Context_Change_Type change_type = Context_Change_Type::INVALID;
+            if (test_token(Token_Type::IDENTIFIER)) 
+            {
+                auto& ids = compiler.predefined_ids;
+                auto id = get_token()->options.identifier;
+
+                if (id == ids.add_array_access) { change_type = Context_Change_Type::ARRAY_ACCESS; }
+                else if (id == ids.add_binop) { change_type = Context_Change_Type::BINARY_OPERATOR; }
+                else if (id == ids.add_unop) { change_type = Context_Change_Type::UNARY_OPERATOR; }
+                else if (id == ids.add_iterator) { change_type = Context_Change_Type::ITERATOR; }
+                else if (id == ids.add_cast) { change_type = Context_Change_Type::CAST; }
+                else if (id == ids.add_dot_call) { change_type = Context_Change_Type::DOT_CALL; }
+                else if (id == ids.set_cast_option) { change_type = Context_Change_Type::CAST_OPTION; }
+                else {
+                    log_error_range_offset("Identifier is not a valid context operation", 1);
+                }
                 advance_token();
             }
             else {
-                result->options.setting.id = compiler.predefined_ids.invalid_symbol_name;
-                log_error_range_offset("Expected identifier or import after context keyword", 0);
+                log_error_range_offset("Expected identifier", 0);
             }
 
-            result->options.setting.arguments = parse_arguments(upcast(result), Parenthesis_Type::PARENTHESIS);
+            result->type = change_type;
+            result->options.arguments = parse_arguments(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 
@@ -1898,6 +1913,19 @@ namespace Parser
         // Unops
         if (test_token(Token_Type::OPERATOR))
         {
+            if (test_operator(Operator::QUESTION_MARK)) {
+                advance_token();
+                result->type = Expression_Type::OPTIONAL_TYPE;
+                result->options.optional_child_type= parse_single_expression_or_error(&result->base);
+                PARSE_SUCCESS(result);
+            }
+            else if (test_operator(Operator::OPTIONAL_POINTER)) {
+                advance_token();
+                result->type = Expression_Type::OPTIONAL_POINTER;
+                result->options.optional_pointer_child_type = parse_single_expression_or_error(&result->base);
+                PARSE_SUCCESS(result);
+            }
+
             Unop unop;
             bool valid = true;
             switch (get_token(0)->options.op)
@@ -2230,6 +2258,13 @@ namespace Parser
             result->options.array_access.array_expr = child;
             result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
             if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+            PARSE_SUCCESS(result);
+        }
+        else if (test_operator(Operator::QUESTION_MARK)) 
+        {
+            advance_token();
+            result->type = Expression_Type::OPTIONAL_CHECK;
+            result->options.optional_check_value = child;
             PARSE_SUCCESS(result);
         }
         else if (test_parenthesis_offset('(', 0)) // Function call

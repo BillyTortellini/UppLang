@@ -189,11 +189,13 @@ struct Workload_Event
 };
 
 struct Workload_Module_Analysis;
+
+// Analyses context changes of a single type
 struct Workload_Operator_Context_Change
 {
     Workload_Base base;
-    Workload_Module_Analysis* parent_workload;
-    AST::Module* module_node;
+    AST::Context_Change_Type context_type_to_analyse;
+    Dynamic_Array<AST::Context_Change*> change_nodes;
     Operator_Context* context;
 };
 
@@ -466,7 +468,7 @@ enum class Cast_Type
     ARRAY_TO_SLICE, 
     TO_ANY,
     FROM_ANY,
-    POINTER_NULL_CHECK,
+    TO_OPTIONAL,
     CUSTOM_CAST,
 
     NO_CAST, // No cast needed, source-type == destination-type
@@ -498,6 +500,7 @@ enum class Member_Access_Type
     ENUM_MEMBER_ACCESS,
     DOT_CALL_AS_MEMBER,
     DOT_CALL,
+    OPTIONAL_PTR_ACCESS,
     STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
     STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };
@@ -558,6 +561,7 @@ struct Expression_Info
                 } poly_access;
                 Struct_Member member;
                 ModTree_Function* dot_call_function;
+                int optional_deref_count;
             } options;
         } member_access;
         struct {
@@ -641,23 +645,6 @@ struct Parameter_Matching_Info
 
     bool has_return_value;
     Datatype* return_type; // Unknown if no return value exists
-};
-
-enum class Context_Change_Info_Type
-{
-    IGNORE_ON_IMPORT, 
-    CAST_OPTION,
-    CUSTOM_OPERATOR
-};
-
-struct Context_Change_Info
-{
-    Context_Change_Info_Type type;
-    union {
-        Cast_Option cast_option;
-        Custom_Operator_Key key; // Note: On polymorphic cast/commutative binop multiple keys have to be inserted!
-    } options;
-    bool has_commutative_version;
 };
 
 enum class Control_Flow
@@ -749,7 +736,6 @@ union Analysis_Info
     Symbol_Lookup_Info symbol_lookup_info;
     Path_Lookup_Info path_info;
     Module_Info module_info;
-    Context_Change_Info context_info;
 };
 
 enum class Info_Query
@@ -769,7 +755,6 @@ Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
-Context_Change_Info* pass_get_node_info(Analysis_Pass* pass, AST::Context_Change* node, Info_Query query);
 Parameter_Matching_Info* pass_get_node_info(Analysis_Pass* pass, AST::Arguments* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);

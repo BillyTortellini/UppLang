@@ -104,18 +104,29 @@ namespace AST
         String* file_name;
     };
 
+    enum class Context_Change_Type
+    {
+        BINARY_OPERATOR,
+        UNARY_OPERATOR,
+        ARRAY_ACCESS,
+        CAST,
+        DOT_CALL,
+        ITERATOR,
+        CAST_OPTION,
+        IMPORT,
+        INVALID, // Not a valid context change
+        MAX_ENUM_VALUE
+    };
+
     struct Argument;
     struct Context_Change
     {
         Node base;
-        bool is_import;
+        Context_Change_Type type;
         union 
         {
             Path_Lookup* import_path;
-            struct {
-                Arguments* arguments;
-                String* id;
-            } setting;
+            Arguments* arguments; 
         } options;
     };
 
@@ -266,6 +277,7 @@ namespace AST
         BAKE_EXPR,
         BAKE_BLOCK,
         INSTANCIATE,
+        OPTIONAL_CHECK, // x?
 
         // Memory Reads
         PATH_LOOKUP,
@@ -284,6 +296,8 @@ namespace AST
         ARRAY_TYPE,
         SLICE_TYPE,
         CONST_TYPE,
+        OPTIONAL_TYPE,     // ? [type-expr]
+        OPTIONAL_POINTER,  // ?* [type-expr]
 
         ERROR_EXPR,
     };
@@ -295,6 +309,9 @@ namespace AST
         union
         {
             String* polymorphic_symbol_id;
+            Expression* optional_child_type;
+            Expression* optional_pointer_child_type;
+            Expression* optional_check_value;
             struct {
                 Expression* left;
                 Expression* right;
@@ -456,6 +473,7 @@ namespace AST
     void base_print(Node* node);
     void base_append_to_string(Node* base, String* str);
 
+    void context_change_type_append_to_string(Context_Change_Type type, String* string);
     void path_lookup_append_to_string(Path_Lookup* read, String* string);
     int binop_priority(Binop binop);
 

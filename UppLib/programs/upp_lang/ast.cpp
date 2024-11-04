@@ -207,11 +207,11 @@ namespace AST
         }
         case Node_Type::CONTEXT_CHANGE: {
             auto context = (Context_Change*)node;
-            if (context->is_import) {
+            if (context->type == Context_Change_Type::IMPORT) {
                 FILL(context->options.import_path);
             }
             else {
-                FILL(context->options.setting.arguments);
+                FILL(context->options.arguments);
             }
             break;
         }
@@ -272,6 +272,18 @@ namespace AST
             case Expression_Type::UNARY_OPERATION: {
                 auto& unop = expr->options.unop;
                 FILL(unop.expr);
+                break;
+            }
+            case Expression_Type::OPTIONAL_CHECK: {
+                FILL(expr->options.optional_check_value);
+                break;
+            }
+            case Expression_Type::OPTIONAL_TYPE: {
+                FILL(expr->options.optional_child_type);
+                break;
+            }
+            case Expression_Type::OPTIONAL_POINTER: {
+                FILL(expr->options.optional_pointer_child_type);
                 break;
             }
             case Expression_Type::TEMPLATE_PARAMETER: {
@@ -537,11 +549,11 @@ namespace AST
         }
         case Node_Type::CONTEXT_CHANGE: {
             auto context = (Context_Change*)node;
-            if (context->is_import) {
+            if (context->type == Context_Change_Type::IMPORT) {
                 FILL(context->options.import_path);
             }
             else {
-                FILL(context->options.setting.arguments);
+                FILL(context->options.arguments);
             }
             break;
         }
@@ -634,6 +646,18 @@ namespace AST
             case Expression_Type::UNARY_OPERATION: {
                 auto& unop = expr->options.unop;
                 FILL(unop.expr);
+                break;
+            }
+            case Expression_Type::OPTIONAL_CHECK: {
+                FILL(expr->options.optional_check_value);
+                break;
+            }
+            case Expression_Type::OPTIONAL_TYPE: {
+                FILL(expr->options.optional_child_type);
+                break;
+            }
+            case Expression_Type::OPTIONAL_POINTER: {
+                FILL(expr->options.optional_pointer_child_type);
                 break;
             }
             case Expression_Type::TEMPLATE_PARAMETER: {
@@ -927,13 +951,7 @@ namespace AST
             break;
         }
         case Node_Type::CONTEXT_CHANGE: {
-            auto context = (Context_Change*)base;
-            if (context->is_import) {
-                string_append_formated(str, "CONTEXT_IMPORT");
-            }
-            else {
-                string_append_formated(str, "CONTEXT_CHANGE");
-            }
+            context_change_type_append_to_string(downcast<Context_Change>(base)->type, str);
             break;
         }
         case Node_Type::SUBTYPE_INITIALIZER: {
@@ -990,6 +1008,9 @@ namespace AST
             {
             case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
             case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
+            case Expression_Type::OPTIONAL_CHECK: string_append_formated(str, "OPTIONAL_CHECK"); break;
+            case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "OPTIONAL_TYPE"); break;
+            case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "OPTIONAL_POINTER"); break;
             case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "TEMPLATE_PARAMETER %s", expr->options.polymorphic_symbol_id->characters); break;
             case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
             case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
@@ -1128,6 +1149,23 @@ namespace AST
         }
         panic("");
         return 0;
+    }
+
+    void context_change_type_append_to_string(Context_Change_Type type, String* string)
+    {
+        switch (type)
+        {
+        case Context_Change_Type::ARRAY_ACCESS: string_append(string, "ARRAY_ACCESS"); break;
+        case Context_Change_Type::BINARY_OPERATOR: string_append(string, "BINARY_OPERATOR"); break;
+        case Context_Change_Type::UNARY_OPERATOR: string_append(string, "UNARY_OPERATOR"); break;
+        case Context_Change_Type::CAST: string_append(string, "CAST"); break;
+        case Context_Change_Type::CAST_OPTION: string_append(string, "CAST_OPTION"); break;
+        case Context_Change_Type::DOT_CALL: string_append(string, "DOT_CALL"); break;
+        case Context_Change_Type::ITERATOR: string_append(string, "ITERATOR"); break;
+        case Context_Change_Type::INVALID: string_append(string, "INVALID"); break;
+        case Context_Change_Type::IMPORT: string_append(string, "IMPORT"); break;
+        default: panic("");
+        }
     }
 
     void path_lookup_append_to_string(Path_Lookup* path, String* string)

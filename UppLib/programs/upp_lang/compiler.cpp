@@ -190,6 +190,7 @@ void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
             ids.id_struct =           add_id("Struct");
             ids.byte =                add_id("byte");
             ids.value =               add_id("value");
+            ids.is_available =        add_id("is_available");
             ids.uninitialized_token = add_id("_");
             ids.string =              add_id("string");
             ids.bytes =               add_id("bytes");
@@ -220,6 +221,8 @@ void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
             ids.cast_mode_explicit = add_id("EXPLICIT");
             ids.cast_mode_inferred = add_id("INFERRED");
             ids.cast_mode_implicit = add_id("IMPLICIT");
+            ids.cast_mode_pointer_explicit = add_id("POINTER_EXPLICIT");
+            ids.cast_mode_pointer_inferred = add_id("POINTER_INFERRED");
 
             ids.id_import = add_id("import");
             ids.set_option = add_id("set_option");
@@ -244,13 +247,13 @@ void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
             ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_POINTER] = add_id("POINTER_TO_POINTER");
             ids.cast_option_enum_values[(int)Cast_Option::FROM_BYTE_POINTER] = add_id("FROM_BYTE_POINTER");
             ids.cast_option_enum_values[(int)Cast_Option::TO_BYTE_POINTER] = add_id("TO_BYTE_POINTER");
-            ids.cast_option_enum_values[(int)Cast_Option::POINTER_NULL_CHECK] = add_id("POINTER_NULL_CHECK");
             ids.cast_option_enum_values[(int)Cast_Option::TO_ANY] = add_id("TO_ANY");
             ids.cast_option_enum_values[(int)Cast_Option::FROM_ANY] = add_id("FROM_ANY");
             ids.cast_option_enum_values[(int)Cast_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
             ids.cast_option_enum_values[(int)Cast_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
             ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
             ids.cast_option_enum_values[(int)Cast_Option::TO_SUBTYPE] = add_id("TO_SUBTYPE");
+            ids.cast_option_enum_values[(int)Cast_Option::TO_OPTIONAL] = add_id("TO_OPTIONAL");
         }
 
         // FUTURE: When we have incremental compilation we cannot just reset everything anymore

@@ -38,11 +38,10 @@ enum class Cast_Mode
 {
     NONE = 1,
     EXPLICIT, // cast{u64} i
-    INFERRED, // cast{u64} 
+    INFERRED, // cast i
+    POINTER_EXPLICIT, // cast_pointer{*int} ip
+    POINTER_INFERRED, // cast_pointer ip
     IMPLICIT, // x: u32 = i
-
-    POINTER_EXPLICIT,
-    POINTER_INFERRED,
     
     MAX_ENUM_VALUE
 };
@@ -52,22 +51,13 @@ enum class Cast_Mode
     The key-types are always stored as the base_type (E.g. no pointer/constant types).
     After querying the analyse has to make sure that the pointer/constant levels are valid
 */
-enum class Custom_Operator_Type
-{
-    BINARY_OPERATOR,
-    UNARY_OPERATOR,
-    ARRAY_ACCESS,
-    CAST,
-    DOT_CALL,
-    ITERATOR
-};
 
 // Note: Left and right types are always stored as the base types of pointers + pointer level.
 //       Polymorphic custom operators make use of the struct-base as the datatype and null for some Datatype* values.
 //       For binop commutativity the custom operator is inserted twice, so only a single lookup will find one of the versions
 struct Custom_Operator_Key
 {
-    Custom_Operator_Type type;
+    AST::Context_Change_Type type;
     union
     {
         struct {
@@ -93,6 +83,7 @@ struct Custom_Operator_Key
         struct {
             Datatype* datatype; // Iterable type
         } iterator;
+        Cast_Option cast_option;
     } options;
 };
 
@@ -152,13 +143,14 @@ union Custom_Operator
             } polymorphic;
         } options;
     } iterator;
+    Cast_Mode cast_mode;
 };
 
 struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
-    Workload_Operator_Context_Change* workload; // May be null (In case of root operator context)
-    Cast_Mode cast_options[(int)Cast_Option::MAX_ENUM_VALUE];
+    Dynamic_Array<Operator_Context*> context_imports; // Where context 0 is always the parent import
+    Workload_Operator_Context_Change* workloads[(int)AST::Context_Change_Type::MAX_ENUM_VALUE];
     Hashtable<Custom_Operator_Key, Custom_Operator> custom_operators;
 };
 

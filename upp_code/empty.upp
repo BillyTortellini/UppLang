@@ -1,0 +1,23 @@
+
+is_even :: (a: int) -> bool
+	return a % 2 == 0
+
+context add_cast(is_even, .INFERRED)
+
+A :: module
+	context set_cast_option(.INTEGER_SIZE_DOWNCAST, .IMPLICIT)
+
+context import A
+
+main :: ()
+	i: int = 256
+	small: i8 = i
+	
+	print_i32(i)
+	if cast i
+		print_string(" is even")
+	else
+		print_string(" is odd")
+	
+	print_line()
+	print_i32( cast small)

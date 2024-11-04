@@ -46,8 +46,11 @@ struct Predefined_IDs
     String* cast_mode_explicit;
     String* cast_mode_inferred;
     String* cast_mode_implicit;
+    String* cast_mode_pointer_explicit;
+    String* cast_mode_pointer_inferred;
     String* byte;
     String* value;
+    String* is_available;
     String* uninitialized_token; // _
 
     String* lambda_function;

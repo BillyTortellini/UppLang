@@ -162,7 +162,6 @@ void lexer_initialize(Identifier_Pool* pool)
     // Initialize Operator strings
     {
         lexer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
-        lexer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
         lexer.operator_strings[(int)Operator::SUBTRACTION] = string_create_static("-");
         lexer.operator_strings[(int)Operator::DIVISON] = string_create_static("/");
         lexer.operator_strings[(int)Operator::MULTIPLY] = string_create_static("*");
@@ -170,6 +169,8 @@ void lexer_initialize(Identifier_Pool* pool)
         lexer.operator_strings[(int)Operator::COMMA] = string_create_static(",");
         lexer.operator_strings[(int)Operator::DOT] = string_create_static(".");
         lexer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
+        lexer.operator_strings[(int)Operator::QUESTION_MARK] = string_create_static("?");
+        lexer.operator_strings[(int)Operator::OPTIONAL_POINTER] = string_create_static("?*");
         lexer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
         lexer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
         lexer.operator_strings[(int)Operator::COLON] = string_create_static(":");

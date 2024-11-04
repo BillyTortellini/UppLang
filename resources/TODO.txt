@@ -1,8 +1,23 @@
 
 
 
+
+ * Fix all testcases, lol NAH
+
+
+
+    
+
+
+
+    
+
+
+
 Missing-Testcases:
 ------------------
+ * New custom operator import/resolve
+ * Optionals, Optional pointers, optional byte/function pointer, const
  * Struct Subtypes
  * Struct Switch
  * Struct inititalizer with subtypes
@@ -21,7 +36,6 @@ Missing-Testcases:
 --------------------
 Core: (Required for programming)
     * Language Features:
-        - Optional Pointers ?* ( + Context-option to disable behavior)
         - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
         - Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
             --> This also means we could do dot-calls on a whole module? --> Maybe not
@@ -66,6 +80,36 @@ Code improvements:
 
 
 
+
+
+Optional-Types Design:
+----------------------
+Idea: Optionals are used often enough that they can be added to the language.
+
+TODO:
+ * Create optional type with ? [Type]
+ * If optional-subtype is a pointer, we use nullptr as the optional condition
+
+Operations that need to be defined:
+ * Define optional
+    x: ?*int
+ * Check if optional is available 
+    if x?  
+    if x *== cast null (Normal pointer null check)
+ * Get optional value
+    x.value
+ * Set optional value (Setting like normal)
+    x = 15
+ * Set optional to unavailable
+    x = null
+
+Implementation:
+ * Optional Syntax + casting
+ * Type-Mods store optional flags per pointer level
+ * Casting from non-optional to optional allowed
+ * Casting null
+ * Setting normal pointers to null should be possible
+Optionals and casting
 
 
 

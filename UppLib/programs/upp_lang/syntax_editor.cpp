@@ -1181,9 +1181,13 @@ char get_cursor_char(char dummy_char)
     auto& tab = editor.tabs[editor.open_tab_index];
     auto& c = tab.cursor;
 
+    int index = c.character;
+    if (editor.mode == Editor_Mode::INSERT) {
+        index -= 1;
+    }
     Source_Line* line = source_code_get_line(tab.code, c.line);
-    if (c.character >= line->text.size) return dummy_char;
-    return line->text.characters[c.character];
+    if (index >= line->text.size || index < 0) return dummy_char;
+    return line->text.characters[index];
 }
 
 Text_Index sanitize_index(Text_Index index) {
@@ -1290,6 +1294,8 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
     case Operator::NOT:
     case Operator::AMPERSAND:
     case Operator::UNINITIALIZED:
+    case Operator::QUESTION_MARK:
+    case Operator::OPTIONAL_POINTER:
     case Operator::DOLLAR: {
         out_space_after = false;
         out_space_before = false;
@@ -1758,6 +1764,11 @@ void code_completion_find_suggestions()
                 if (info->result_type == Expression_Result_Type::TYPE) {
                     type = info->options.type;
                 }
+                if (info->cast_info.initial_type->mods.optional_flags != 0) {
+                    fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
+                    type = nullptr;
+                }
             }
         }
         else if (expr->type == AST::Expression_Type::AUTO_ENUM && pass != 0) {
@@ -1776,9 +1787,16 @@ void code_completion_find_suggestions()
             case Datatype_Type::ARRAY:
             case Datatype_Type::SLICE: {
                 fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
-                fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
                 dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
+                fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
                 dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
+                break;
+            }
+            case Datatype_Type::OPTIONAL_TYPE: {
+                fuzzy_search_add_item(*ids.value, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
+                fuzzy_search_add_item(*ids.is_available, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.is_available));
                 break;
             }
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
@@ -1844,7 +1862,7 @@ void code_completion_find_suggestions()
                 Custom_Operator_Key key = *iter.key;
                 Custom_Operator overload = *iter.value;
 
-                if (key.type != Custom_Operator_Type::DOT_CALL) {
+                if (key.type != AST::Context_Change_Type::DOT_CALL) {
                     continue;
                 }
                 if (!(types_are_equal(type, key.options.dot_call.datatype) || types_are_equal(poly_base_type, key.options.dot_call.datatype))) {
@@ -2003,9 +2021,14 @@ void code_completion_insert_suggestion()
     string_append_string(&editor.last_recorded_code_completion, &replace_string);
 
     // Remove current token
-    int token_index = get_cursor_token_index(false);
-    int start_pos = line->tokens[token_index].start_index;
-    history_delete_text(&tab.history, text_index_make(tab.cursor.line, start_pos), tab.cursor.character);
+    int start_pos = tab.cursor.character;
+    if (get_cursor_char('!') != '.')
+    {
+        int token_index = get_cursor_token_index(false);
+        start_pos = line->tokens[token_index].start_index;
+        history_delete_text(&tab.history, text_index_make(tab.cursor.line, start_pos), tab.cursor.character);
+    }
+
     // Insert suggestion instead
     tab.cursor.character = start_pos;
     insert_text_with_particles(&tab.history, tab.cursor, replace_string);
@@ -5382,6 +5405,7 @@ void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
                 case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: mark = true; color = Syntax_Color::MEMBER; break;
                 case Member_Access_Type::STRUCT_SUBTYPE: mark = true; color = Syntax_Color::SUBTYPE; break;
                 case Member_Access_Type::ENUM_MEMBER_ACCESS: mark = true; color = Syntax_Color::ENUM_MEMBER; break;
+                case Member_Access_Type::OPTIONAL_PTR_ACCESS: mark = true; color = Syntax_Color::MEMBER; break;
                 default: panic("");
                 }
 

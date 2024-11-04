@@ -673,7 +673,7 @@ IR_Data_Access* ir_data_access_create_array_access(IR_Data_Access* array_access,
     Datatype* element_type = 0;
     if (array_type->type == Datatype_Type::ARRAY) {
         element_type = downcast<Datatype_Array>(array_type)->element_type;
-        if (type_mods_is_constant(array_type->mods, 0)) {
+        if (array_access->datatype->mods.is_constant) {
             element_type = type_system_make_constant(element_type);
         }
     }
@@ -1249,6 +1249,17 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
 
             return source;
         }
+        else if (info->specifics.member_access.type == Member_Access_Type::OPTIONAL_PTR_ACCESS) {
+            auto deref_count = info->specifics.member_access.options.optional_deref_count;
+            if (deref_count == 0) {
+                return ir_generator_generate_expression(ir_block, mem_access.expr, destination);
+            }
+            IR_Data_Access* deref = ir_generator_generate_expression(ir_block, mem_access.expr, destination);
+            for (int i = 0; i < deref_count; i++) {
+                deref = ir_data_access_create_dereference(deref);
+            }
+            return move_access_to_destination(deref);
+        }
 
         // Handle special case of array.data, which basically becomes an address of, but has the type of element pointer
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
@@ -1324,6 +1335,25 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     case AST::Expression_Type::CAST: {
         return ir_generator_generate_expression(ir_block, expression->options.cast.operand, destination);
     }
+    case AST::Expression_Type::OPTIONAL_CHECK: {
+        auto check_access = ir_generator_generate_expression(ir_block, expression->options.optional_check_value);
+        auto type = datatype_get_non_const_type(check_access->datatype);
+        assert(type->type == Datatype_Type::POINTER, "");
+
+        destination = make_destination_access_on_demand(upcast(types.bool_type));
+
+        IR_Instruction check_instr;
+        check_instr.type = IR_Instruction_Type::BINARY_OP;
+        check_instr.options.binary_op.destination = destination;
+        check_instr.options.binary_op.operand_left = check_access;
+        void* null_val = nullptr;
+        check_instr.options.binary_op.operand_right = ir_data_access_create_constant(check_access->datatype, array_create_static_as_bytes(&null_val, 1));
+        check_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
+        dynamic_array_push_back(&ir_block->instructions, check_instr);
+        return destination;
+    }
+    case AST::Expression_Type::OPTIONAL_POINTER:
+    case AST::Expression_Type::OPTIONAL_TYPE:
     case AST::Expression_Type::BAKE_BLOCK:
     case AST::Expression_Type::BAKE_EXPR:
     case AST::Expression_Type::ENUM_TYPE:
@@ -1460,6 +1490,23 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
         }
         return slice_access;
     }
+    case Cast_Type::TO_OPTIONAL: {
+        auto opt_type = downcast<Datatype_Optional>(datatype_get_non_const_type(cast_info.result_type));
+        auto destination = make_destination_access_on_demand(cast_info.result_type);
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::MOVE;
+        instr.options.move.destination = ir_data_access_create_member(destination, opt_type->value_member);
+        instr.options.move.source = source;
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        bool value = true;
+        instr.type = IR_Instruction_Type::MOVE;
+        instr.options.move.destination = ir_data_access_create_member(destination, opt_type->is_available_member);
+        instr.options.move.source = ir_data_access_create_constant(upcast(types.bool_type), array_create_static_as_bytes(&value, 1));
+        dynamic_array_push_back(&ir_block->instructions, instr);
+
+        return destination;
+    }
     case Cast_Type::CUSTOM_CAST: {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -1470,17 +1517,6 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
         instr.options.call.options.function = cast_info.options.custom_cast_function;
         dynamic_array_push_back(&ir_block->instructions, instr);
         return instr.options.call.destination;
-    }
-    case Cast_Type::POINTER_NULL_CHECK: {
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::BINARY_OP;
-        instr.options.binary_op.type = AST::Binop::NOT_EQUAL; // Note: Pointer equals would be more correct, but currently only equals is used as overload
-        instr.options.binary_op.operand_left = source;
-        void* null_ptr = nullptr;
-        instr.options.binary_op.operand_right = ir_data_access_create_constant(types.byte_pointer, array_create_static_as_bytes(&null_ptr, 1));
-        instr.options.binary_op.destination = make_destination_access_on_demand(cast_info.result_type);
-        dynamic_array_push_back(&ir_block->instructions, instr);
-        return instr.options.binary_op.destination;
     }
     case Cast_Type::FROM_ANY:
     {

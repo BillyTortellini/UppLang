@@ -22,6 +22,8 @@ enum class Operator
     TILDE_STAR_STAR, // ~**  Transitive import all
     COLON,           // :
     SEMI_COLON,      // ;
+    QUESTION_MARK,   // ?
+    OPTIONAL_POINTER,   // ?*
     NOT,
     AMPERSAND,
     LESS_THAN,

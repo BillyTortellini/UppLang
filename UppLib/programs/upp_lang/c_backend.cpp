@@ -383,7 +383,7 @@ void c_generator_generate_struct_content(Struct_Content* content, C_Type_Depende
 
         // Add dependencies if necessary
         auto member_type = datatype_get_non_const_type(member.type);
-        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY) 
+        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE) 
         {
             member_type = member_type->base_type;
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
@@ -486,13 +486,13 @@ void c_generator_output_type_reference(Datatype* type)
 
         // Append type
         gen.text = &access_name;
-        if (type_mods_is_constant(mods, 0)) {
+        if (mods.is_constant) {
             string_append(gen.text, "const ");
         }
         c_generator_output_type_reference(type);
         for (int i = 0; i < mods.pointer_level; i++) {
             string_append(gen.text, "*");
-            if (type_mods_is_constant(mods, i + 1)) {
+            if (type_mods_pointer_is_constant(mods, i)) {
                 string_append(gen.text, " const");
             }
         }
@@ -631,6 +631,31 @@ void c_generator_output_type_reference(Datatype* type)
 
         gen.text = &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS];
         string_append(gen.text, tmp.characters);
+        break;
+    }
+    case Datatype_Type::OPTIONAL_TYPE:
+    {
+        auto opt = downcast<Datatype_Optional>(type);
+        string_append_formated(&access_name, "Optional_%d", gen.name_counter);
+        gen.name_counter += 1;
+        string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
+
+        C_Type_Dependency* dependency = get_type_dependency(type);
+        gen.text = &dependency->type_definition;
+        string_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
+        c_generator_output_type_reference(opt->child_type);
+        string_append(gen.text, " value;\n    bool is_available;\n};\n");
+
+        auto member_type = datatype_get_non_const_type(opt->child_type);
+        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE) 
+        {
+            member_type = member_type->base_type;
+            C_Type_Dependency* member_dependency = get_type_dependency(member_type);
+            dynamic_array_push_back(&dependency->depends_on, member_dependency);
+            dynamic_array_push_back(&member_dependency->dependees, dependency);
+            dependency->dependency_count += 1;
+        }
+
         break;
     }
     case Datatype_Type::STRUCT:
@@ -1098,6 +1123,14 @@ void c_generator_generate()
                 string_append_formated(gen.text, "info->subtypes_.Pointer.element_type = %d;\n", pointer->element_type->type_handle.index);
                 break;
             }
+            case Datatype_Type::OPTIONAL_TYPE: {
+                auto opt = downcast<Datatype_Optional>(type);
+                auto& internal_info = type_system.internal_type_infos[i]->options.optional;
+                string_append_formated(gen.text, "info->subtypes_.Optional.child_type = %d;\n", internal_info.child_type.index);
+                string_add_indentation(gen.text, 1);
+                string_append_formated(gen.text, "info->subtypes_.Optional.is_available_offset = %d;\n", internal_info.available_offset);
+                break;
+            }
             case Datatype_Type::SUBTYPE: {
                 auto subtype = downcast<Datatype_Subtype>(type);
                 auto& internal_info = type_system.internal_type_infos[i]->options.struct_subtype;
@@ -1342,7 +1375,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
 
     Datatype* type = datatype_get_non_const_type(constant.type);
     if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
-        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::SUBTYPE) {
+        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::SUBTYPE || type->type == Datatype_Type::OPTIONAL_TYPE) {
         requires_memory_address = true;
     }
 
@@ -1497,6 +1530,31 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             Upp_Slice_Base slice = *(Upp_Slice_Base*)base_memory;
             assert(slice.size == 0 && slice.data == nullptr, "");
             string_append_formated(gen.text, "{.data = nullptr, .size = 0}");
+            break;
+        }
+        case Datatype_Type::ARRAY:
+        {
+            Datatype_Array* array_type = downcast<Datatype_Array>(type);
+            assert(array_type->count_known, "");
+            string_append(gen.text, "{\n");
+            string_add_indentation(gen.text, 1);
+            for (int i = 0; i < array_type->element_count; i++) {
+                output_memory_as_new_constant(constant.memory + i * array_type->element_type->memory_info.value.size, array_type->element_type, false, 1);
+                if (i != array_type->element_count - 1) {
+                    string_append(gen.text, ",\n");
+                    string_add_indentation(gen.text, 1);
+                }
+            }
+            string_append(gen.text, "\n}");
+            break;
+        }
+        case Datatype_Type::OPTIONAL_TYPE:
+        {
+            auto opt = downcast<Datatype_Optional>(type);
+            bool is_available = *(bool*)(constant.memory + opt->is_available_member.offset);
+            string_append(gen.text, "{.value = ");
+            output_memory_as_new_constant(constant.memory, opt->child_type, false, 1);
+            string_append_formated(gen.text, ", is_available = %s}", is_available ? "true" : "false");
             break;
         }
         case Datatype_Type::STRUCT:

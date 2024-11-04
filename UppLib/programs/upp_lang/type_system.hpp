@@ -69,6 +69,7 @@ enum class Datatype_Type
     TYPE_HANDLE,
     BYTE_POINTER, // Same as void* in C++
     CONSTANT,
+    OPTIONAL_TYPE,
     UNKNOWN_TYPE, // For error propagation
 
     // Types for polymorphism
@@ -97,8 +98,10 @@ struct Subtype_Index {
 
 struct Type_Mods
 {
-    u32 constant_flags;
     int pointer_level;
+    u32 constant_flags; // Of pointers
+    u32 optional_flags; // Of pointers
+    bool is_constant;
     Subtype_Index* subtype_index;
 };
 
@@ -155,6 +158,7 @@ struct Datatype_Pointer
 {
     Datatype base;
     Datatype* element_type;
+    bool is_optional;
 };
 
 struct Datatype_Constant
@@ -166,11 +170,16 @@ struct Datatype_Constant
 struct Datatype_Function
 {
     Datatype base;
-    // If the datatype is constant, then the parameters are non-owning (See datatype_base_destroy)
     Dynamic_Array<Function_Parameter> parameters;
     Optional<Datatype*> return_type;
+    bool is_optional;
+    Datatype_Function* non_optional_type;
+};
 
-    int parameters_with_default_value_count;
+struct Datatype_Bytepointer
+{
+    Datatype base;
+    bool is_optional;
 };
 
 struct Datatype_Subtype
@@ -179,6 +188,14 @@ struct Datatype_Subtype
     Datatype* base_type;
     String* subtype_name;
     int subtype_index;
+};
+
+struct Datatype_Optional
+{
+    Datatype base;
+    Datatype* child_type;
+    Struct_Member value_member;
+    Struct_Member is_available_member;
 };
 
 struct Struct_Content
@@ -291,7 +308,6 @@ enum class Cast_Option
     POINTER_TO_POINTER, // Includes casts between pointer, byte_pointer, function-pointer and u64 (But only with cast_pointer)
     TO_BYTE_POINTER, // Does not affect cast_pointer
     FROM_BYTE_POINTER, // Does not affect cast_pointer
-    POINTER_NULL_CHECK,
 
     TO_ANY,
     FROM_ANY,
@@ -299,6 +315,7 @@ enum class Cast_Option
     INT_TO_ENUM,
     ARRAY_TO_SLICE,
     TO_SUBTYPE,
+    TO_OPTIONAL,
 
     MAX_ENUM_VALUE
 };
@@ -369,6 +386,23 @@ struct Internal_Type_Enum
     Upp_String name;
 };
 
+struct Internal_Type_Bytepointer
+{
+    bool is_optional;
+};
+
+struct Internal_Type_Pointer
+{
+    Upp_Type_Handle child_type;
+    bool is_optional;
+};
+
+struct Internal_Type_Optional
+{
+    Upp_Type_Handle child_type;
+    int available_offset;
+};
+
 struct Internal_Type_Information
 {
     Upp_Type_Handle type_handle;
@@ -376,7 +410,9 @@ struct Internal_Type_Information
     int alignment;
 
     union {
-        Upp_Type_Handle pointer;
+        Internal_Type_Pointer pointer;
+        Internal_Type_Optional optional;
+        Internal_Type_Bytepointer byte_pointer;
         Upp_Type_Handle constant;
         Internal_Type_Array array;
         Internal_Type_Slice slice;
@@ -398,7 +434,8 @@ enum class Type_Deduplication_Type
     SLICE,
     ARRAY,
     FUNCTION,
-    SUBTYPE
+    SUBTYPE,
+    OPTIONAL
 };
 
 struct Type_Deduplication
@@ -407,8 +444,12 @@ struct Type_Deduplication
     union
     {
         Datatype* non_constant_type;
-        Datatype* pointer_element_type;
         Datatype* slice_element_type;
+        Datatype* optional_child_type;
+        struct {
+            Datatype* child_type;
+            bool is_optional;
+        } pointer;
         struct {
             Datatype* base_type;
             String* name;
@@ -448,6 +489,7 @@ struct Predefined_Types
     Datatype* unknown_type;
     Datatype* type_handle;
     Datatype* byte_pointer;
+    Datatype* byte_pointer_optional;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* internal_struct_content_type;
@@ -505,17 +547,19 @@ void type_system_add_predefined_types(Type_System* system);
 
 Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
-Datatype_Pointer* type_system_make_pointer(Datatype* child_type);
+Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
 Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
+Datatype_Optional* type_system_make_optional(Datatype* datatype);
 Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
 Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);
 
 // Note: Takes ownership of parameters (Or deletes them if type deduplication kicked in)
 Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type = 0); 
 Datatype_Function* type_system_make_function(std::initializer_list<Function_Parameter> parameter_types, Datatype* return_type = 0);
+Datatype_Function* type_system_make_function_optional(Datatype_Function* function);
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name);
@@ -534,17 +578,20 @@ bool datatype_is_unknown(Datatype* a);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_non_const_type(Datatype* datatype);
-bool type_mods_is_constant(Type_Mods mods, int pointer_level);
+bool type_mods_pointer_is_constant(Type_Mods mods, int pointer_level);
+bool type_mods_pointer_is_optional(Type_Mods mods, int pointer_level);
 Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level = -1);
 Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
 Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int subtype_index);
-Type_Mods type_mods_make(int pointer_level, u32 const_flags, Subtype_Index* subtype = 0);
-bool datatype_is_pointer(Datatype* datatype);
+Type_Mods type_mods_make(bool is_constant, int pointer_level, u32 const_flags, u32 optional_flags, Subtype_Index* subtype = 0);
+bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
 
 
 // Casting functions
-inline Datatype* upcast(Datatype* value)      { return value; }
+inline Datatype* upcast(Datatype* value)           { return value; }
+inline Datatype* upcast(Datatype_Optional* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Function* value)  { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Bytepointer* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct* value)    { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Enum* value)      { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Array* value)     { return (Datatype*)value; }
@@ -556,7 +603,9 @@ inline Datatype* upcast(Datatype_Struct_Instance_Template* value)   { return (Da
 inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
 
+inline Datatype_Type get_datatype_type(Datatype_Optional* unused) { return Datatype_Type::OPTIONAL_TYPE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
+inline Datatype_Type get_datatype_type(Datatype_Bytepointer* unused) { return Datatype_Type::BYTE_POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Function* unused) { return Datatype_Type::FUNCTION; }
 inline Datatype_Type get_datatype_type(Datatype_Enum* unused) { return Datatype_Type::ENUM; }
 inline Datatype_Type get_datatype_type(Datatype_Array* unused) { return Datatype_Type::ARRAY; }

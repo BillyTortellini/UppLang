@@ -195,6 +195,24 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
         }
         return;
     }
+    case Datatype_Type::OPTIONAL_TYPE: 
+    {
+        auto opt = downcast<Datatype_Optional>(signature);
+        bool available = *(bool*)(memory + opt->is_available_member.offset);
+
+        if (!available) {
+            memory_set_bytes(memory, opt->base.memory_info.value.size, 0);
+        }
+        else {
+            datatype_memory_set_padding_bytes_to_zero_recursive(opt->child_type, memory, result);
+            int size = opt->base.memory_info.value.size;
+            int end = opt->is_available_member.offset + 1;
+            if (end < size) {
+                memory_set_bytes(memory + end, size - end, 0);
+            }
+        }
+        return;
+    }
     case Datatype_Type::SUBTYPE:
     case Datatype_Type::STRUCT:
     {
