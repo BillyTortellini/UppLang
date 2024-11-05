@@ -1,0 +1,63 @@
+import "test.upp"
+
+Tester :: module
+	player: int
+	Player: int
+
+Test :: module
+	foo :: ()
+		
+	
+	bar :: ()
+		
+	
+	Baz :: module
+		printing :: ()
+			
+
+Player :: struct
+	name: string
+	age: int
+	alive: bool
+
+Holder :: struct
+	value: int
+
+main :: ()
+	buffer: int = 100
+	
+	x: int = 15
+	
+	if true
+		// Hey
+		// something
+		// something
+		// what
+	
+	//
+		what the
+		frick what the
+			well
+			what
+		and what is what what
+		
+		what
+	p: Player = .{"Frank", 15, true}
+	print_string(p.name)
+
+foo :: ()
+	something := 100
+	
+	// 
+		more text
+		
+		here and there
+			this
+			* and
+			* tohers
+			too doo
+	
+	
+	
+	something += 12
+

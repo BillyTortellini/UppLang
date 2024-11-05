@@ -2099,11 +2099,11 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             string_append_formated(gen.text, " = ");
             switch (unary->type)
             {
-            case IR_Instruction_Unary_OP_Type::NEGATE: {
+            case IR_Unop::NEGATE: {
                 string_append_formated(gen.text, "-");
                 break;
             }
-            case IR_Instruction_Unary_OP_Type::NOT: {
+            case IR_Unop::NOT: {
                 string_append_formated(gen.text, "!");
                 break;
             }
@@ -2124,19 +2124,24 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             const char* binary_str = "";
             switch (binary->type)
             {
-            case AST::Binop::ADDITION: binary_str = "+"; break;
-            case AST::Binop::AND: binary_str = "&&"; break;
-            case AST::Binop::DIVISION: binary_str = "/"; break;
-            case AST::Binop::EQUAL: binary_str = "=="; break;
-            case AST::Binop::GREATER_OR_EQUAL: binary_str = ">="; break;
-            case AST::Binop::GREATER: binary_str = ">"; break;
-            case AST::Binop::LESS_OR_EQUAL: binary_str = "<="; break;
-            case AST::Binop::LESS: binary_str = "<"; break;
-            case AST::Binop::MODULO: binary_str = "%"; break;
-            case AST::Binop::MULTIPLICATION: binary_str = "*"; break;
-            case AST::Binop::NOT_EQUAL: binary_str = "!="; break;
-            case AST::Binop::OR: binary_str = "||"; break;
-            case AST::Binop::SUBTRACTION: binary_str = "-"; break;
+            case IR_Binop::ADDITION:            binary_str = "+"; break;
+            case IR_Binop::SUBTRACTION:         binary_str = "-"; break;
+            case IR_Binop::DIVISION:            binary_str = "/"; break;
+            case IR_Binop::MULTIPLICATION:      binary_str = "*"; break;
+            case IR_Binop::MODULO:              binary_str = "%"; break;
+            case IR_Binop::AND:                 binary_str = "&&"; break;
+            case IR_Binop::OR:                  binary_str = "||"; break;
+            case IR_Binop::BITWISE_AND:         binary_str = "&"; break;
+            case IR_Binop::BITWISE_OR:          binary_str = "|"; break;
+            case IR_Binop::BITWISE_XOR:         binary_str = "~"; break;
+            case IR_Binop::BITWISE_SHIFT_LEFT:  binary_str = "<<"; break;
+            case IR_Binop::BITWISE_SHIFT_RIGHT: binary_str = ">>"; break;
+            case IR_Binop::EQUAL:               binary_str = "=="; break;
+            case IR_Binop::NOT_EQUAL:           binary_str = "!="; break;
+            case IR_Binop::LESS:                binary_str = "<"; break;
+            case IR_Binop::LESS_OR_EQUAL:       binary_str = "<="; break;
+            case IR_Binop::GREATER:             binary_str = ">"; break;
+            case IR_Binop::GREATER_OR_EQUAL:    binary_str = ">="; break;
             default: panic("Hey");
             }
             string_append_formated(gen.text, "%s ", binary_str);

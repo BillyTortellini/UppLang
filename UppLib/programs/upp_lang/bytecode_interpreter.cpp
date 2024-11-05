@@ -117,7 +117,7 @@ void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type typ
 {
     switch (instr_type)
     {
-    case Instruction_Type::UNARY_OP_NEGATE:
+    case Instruction_Type::UNARY_OP_NEGATE: {
         switch (type)
         {
         case Bytecode_Type::BOOL:
@@ -150,6 +150,26 @@ void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type typ
         default: panic("");
         }
         break;
+    }
+    case Instruction_Type::UNARY_OP_BITWISE_NOT: 
+    {
+        switch (type)
+        {
+        case Bytecode_Type::INT8:   *(i8*) (dest) = ~*(i8*) (operand); break;
+        case Bytecode_Type::INT16:  *(i16*)(dest) = ~*(i16*)(operand); break;
+        case Bytecode_Type::INT32:  *(i32*)(dest) = ~*(i32*)(operand); break;
+        case Bytecode_Type::INT64:  *(i64*)(dest) = ~*(i64*)(operand); break;
+        case Bytecode_Type::UINT8:  *(u8*) (dest) = ~*(u8*) (operand); break;
+        case Bytecode_Type::UINT16: *(u16*)(dest) = ~*(u16*)(operand); break;
+        case Bytecode_Type::UINT32: *(u32*)(dest) = ~*(u32*)(operand); break;
+        case Bytecode_Type::UINT64: *(u64*)(dest) = ~*(u64*)(operand); break;
+        case Bytecode_Type::BOOL:
+        case Bytecode_Type::FLOAT32:
+        case Bytecode_Type::FLOAT64: panic("What"); break;
+        default: panic("");
+        }
+        break;
+    }
     case Instruction_Type::UNARY_OP_NOT:
         *(bool*)(dest) = !*(bool*)(operand);
         break;
@@ -164,161 +184,68 @@ bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
     case Instruction_Type::BINARY_OP_ADDITION:
         switch (type)
         {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(i8*)(dest) = *(i8*)(op_left)+*(i8*)(op_right);
-            break;
-        case Bytecode_Type::INT16:
-            *(i16*)(dest) = *(i16*)(op_left)+*(i16*)(op_right);
-            break;
-        case Bytecode_Type::INT32:
-            *(i32*)(dest) = *(i32*)(op_left)+*(i32*)(op_right);
-            break;
-        case Bytecode_Type::INT64:
-            *(i64*)(dest) = *(i64*)(op_left)+*(i64*)(op_right);
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left)+*(u8*)(op_right);
-            break;
-        case Bytecode_Type::UINT16:
-            *(u16*)(dest) = *(u16*)(op_left)+*(u16*)(op_right);
-            break;
-        case Bytecode_Type::UINT32:
-            *(u32*)(dest) = *(u32*)(op_left)+*(u32*)(op_right);
-            break;
-        case Bytecode_Type::UINT64:
-            *(u64*)(dest) = *(u64*)(op_left)+*(u64*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(f32*)(dest) = *(f32*)(op_left)+*(f32*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(f64*)(dest) = *(f64*)(op_left)+*(f64*)(op_right);
-            break;
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) + *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) + *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) + *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) + *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) + *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) + *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) + *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) + *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) + *(f32*)(op_right); break;
+        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) + *(f64*)(op_right); break;
+        case Bytecode_Type::BOOL: return false;
         default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_SUBTRACTION:
         switch (type)
         {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(i8*)(dest) = *(i8*)(op_left)-*(i8*)(op_right);
-            break;
-        case Bytecode_Type::INT16:
-            *(i16*)(dest) = *(i16*)(op_left)-*(i16*)(op_right);
-            break;
-        case Bytecode_Type::INT32:
-            *(i32*)(dest) = *(i32*)(op_left)-*(i32*)(op_right);
-            break;
-        case Bytecode_Type::INT64:
-            *(i64*)(dest) = *(i64*)(op_left)-*(i64*)(op_right);
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left)-*(u8*)(op_right);
-            break;
-        case Bytecode_Type::UINT16:
-            *(u16*)(dest) = *(u16*)(op_left)-*(u16*)(op_right);
-            break;
-        case Bytecode_Type::UINT32:
-            *(u32*)(dest) = *(u32*)(op_left)-*(u32*)(op_right);
-            break;
-        case Bytecode_Type::UINT64:
-            *(u64*)(dest) = *(u64*)(op_left)-*(u64*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(f32*)(dest) = *(f32*)(op_left)-*(f32*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(f64*)(dest) = *(f64*)(op_left)-*(f64*)(op_right);
-            break;
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) - *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) - *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) - *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) - *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) - *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) - *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) - *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) - *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) - *(f32*)(op_right); break;
+        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) - *(f64*)(op_right); break;
+        case Bytecode_Type::BOOL: return false;
         default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_MULTIPLICATION:
         switch (type)
         {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(i8*)(dest) = *(i8*)(op_left) * *(i8*)(op_right);
-            break;
-        case Bytecode_Type::INT16:
-            *(i16*)(dest) = *(i16*)(op_left) * *(i16*)(op_right);
-            break;
-        case Bytecode_Type::INT32:
-            *(i32*)(dest) = *(i32*)(op_left) * *(i32*)(op_right);
-            break;
-        case Bytecode_Type::INT64:
-            *(i64*)(dest) = *(i64*)(op_left) * *(i64*)(op_right);
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) * *(u8*)(op_right);
-            break;
-        case Bytecode_Type::UINT16:
-            *(u16*)(dest) = *(u16*)(op_left) * *(u16*)(op_right);
-            break;
-        case Bytecode_Type::UINT32:
-            *(u32*)(dest) = *(u32*)(op_left) * *(u32*)(op_right);
-            break;
-        case Bytecode_Type::UINT64:
-            *(u64*)(dest) = *(u64*)(op_left) * *(u64*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(f32*)(dest) = *(f32*)(op_left) * *(f32*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(f64*)(dest) = *(f64*)(op_left) * *(f64*)(op_right);
-            break;
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) * *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) * *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) * *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) * *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) * *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) * *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) * *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) * *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) * *(f32*)(op_right); break;
+        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) * *(f64*)(op_right); break;
+        case Bytecode_Type::BOOL: return false;
         default: return false;
         }
         break;
     case Instruction_Type::BINARY_OP_DIVISION:
         switch (type)
         {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            if (*(i8*)op_right == 0) return false;
-            *(i8*)(dest) = *(i8*)(op_left) / *(i8*)(op_right);
-            break;
-        case Bytecode_Type::INT16:
-            if (*(i16*)op_right == 0) return false;
-            *(i16*)(dest) = *(i16*)(op_left) / *(i16*)(op_right);
-            break;
-        case Bytecode_Type::INT32: {
-            if (*(i32*)op_right == 0) return false;
-            *(i32*)(dest) = *(i32*)(op_left) / *(i32*)(op_right);
-            break;
-        }
-        case Bytecode_Type::INT64:
-            if (*(i64*)op_right == 0) return false;
-            *(i64*)(dest) = *(i64*)(op_left) / *(i64*)(op_right);
-            break;
-        case Bytecode_Type::UINT8:
-            if (*(u8*)op_right == 0) return false;
-            *(u8*)(dest) = *(u8*)(op_left) / *(u8*)(op_right);
-            break;
-        case Bytecode_Type::UINT16:
-            if (*(u16*)op_right == 0) return false;
-            *(u16*)(dest) = *(u16*)(op_left) / *(u16*)(op_right);
-            break;
-        case Bytecode_Type::UINT32:
-            if (*(u32*)op_right == 0) return false;
-            *(u32*)(dest) = *(u32*)(op_left) / *(u32*)(op_right);
-            break;
-        case Bytecode_Type::UINT64:
-            if (*(u64*)op_right == 0) return false;
-            *(u64*)(dest) = *(u64*)(op_left) / *(u64*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(f32*)(dest) = *(f32*)(op_left) / *(f32*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(f64*)(dest) = *(f64*)(op_left) / *(f64*)(op_right);
-            break;
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) / *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) / *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) / *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) / *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) / *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) / *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) / *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) / *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) / *(f32*)(op_right); break;
+        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) / *(f64*)(op_right); break;
+        case Bytecode_Type::BOOL: return false;
         default: return false;
         }
         break;
@@ -326,7 +253,7 @@ bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         switch (type)
         {
         case Bytecode_Type::BOOL:
-            *(u8*)(dest) = *(u8*)(op_left) == *(u8*)(op_right) ? 1 : 0;
+            *(u8*)(dest) = *(bool*)(op_left) == *(bool*)(op_right) ? 1 : 0;
             break;
         case Bytecode_Type::INT8:
             *(u8*)(dest) = *(i8*)(op_left) == *(i8*)(op_right) ? 1 : 0;
@@ -605,6 +532,91 @@ bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type ty
         break;
     case Instruction_Type::BINARY_OP_OR:
         *(bool*)(dest) = *(bool*)(op_left) || *(bool*)(op_right);
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_AND:
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) & *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) & *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) & *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) & *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) & *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) & *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) & *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) & *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: 
+        case Bytecode_Type::FLOAT64:
+        case Bytecode_Type::BOOL: return false;
+        default: return false;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_OR:
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) | *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) | *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) | *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) | *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) | *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) | *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) | *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) | *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: 
+        case Bytecode_Type::FLOAT64:
+        case Bytecode_Type::BOOL: return false;
+        default: return false;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_XOR:
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) ^ *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) ^ *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) ^ *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) ^ *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) ^ *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) ^ *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) ^ *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) ^ *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: 
+        case Bytecode_Type::FLOAT64:
+        case Bytecode_Type::BOOL: return false;
+        default: return false;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) << *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) << *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) << *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) << *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) << *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) << *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) << *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) << *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: 
+        case Bytecode_Type::FLOAT64:
+        case Bytecode_Type::BOOL: return false;
+        default: return false;
+        }
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) >> *(i8*) (op_right); break;
+        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) >> *(i16*)(op_right); break;
+        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) >> *(i32*)(op_right); break;
+        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) >> *(i64*)(op_right); break;
+        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) >> *(u8*) (op_right); break;
+        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) >> *(u16*)(op_right); break;
+        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) >> *(u32*)(op_right); break;
+        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) >> *(u64*)(op_right); break;
+        case Bytecode_Type::FLOAT32: 
+        case Bytecode_Type::FLOAT64:
+        case Bytecode_Type::BOOL: return false;
+        default: return false;
+        }
         break;
     default: return false;
     }
@@ -974,6 +986,11 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::BINARY_OP_LESS_THAN:
     case Instruction_Type::BINARY_OP_LESS_EQUAL:
     case Instruction_Type::BINARY_OP_MODULO:
+    case Instruction_Type::BINARY_OP_BITWISE_AND:
+    case Instruction_Type::BINARY_OP_BITWISE_OR:
+    case Instruction_Type::BINARY_OP_BITWISE_XOR:
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
     case Instruction_Type::BINARY_OP_AND:
     case Instruction_Type::BINARY_OP_OR: {
         if (!bytecode_execute_binary_instr(
@@ -989,6 +1006,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         break;
     }
     case Instruction_Type::UNARY_OP_NOT:
+    case Instruction_Type::UNARY_OP_BITWISE_NOT:
     case Instruction_Type::UNARY_OP_NEGATE:
         bytecode_execute_unary_instr(
             i->instruction_type,

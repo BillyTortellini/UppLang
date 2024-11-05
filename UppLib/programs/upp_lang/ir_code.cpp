@@ -217,51 +217,24 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "BINARY_OP ");
         switch (instruction->options.binary_op.type)
         {
-        case AST::Binop::ADDITION:
-            string_append_formated(string, "ADDITION");
-            break;
-        case AST::Binop::AND:
-            string_append_formated(string, "AND");
-            break;
-        case AST::Binop::DIVISION:
-            string_append_formated(string, "DIVISION");
-            break;
-        case AST::Binop::EQUAL:
-            string_append_formated(string, "EQUAL");
-            break;
-        case AST::Binop::GREATER:
-            string_append_formated(string, "GREATER");
-            break;
-        case AST::Binop::GREATER_OR_EQUAL:
-            string_append_formated(string, "GREATER_OR_EQUAL");
-            break;
-        case AST::Binop::LESS:
-            string_append_formated(string, "LESS");
-            break;
-        case AST::Binop::LESS_OR_EQUAL:
-            string_append_formated(string, "LESS_OR_EQUAL");
-            break;
-        case AST::Binop::MODULO:
-            string_append_formated(string, "MODULO");
-            break;
-        case AST::Binop::MULTIPLICATION:
-            string_append_formated(string, "MULTIPLICATION ");
-            break;
-        case AST::Binop::NOT_EQUAL:
-            string_append_formated(string, "NOT_EQUAL");
-            break;
-        case AST::Binop::OR:
-            string_append_formated(string, "OR ");
-            break;
-        case AST::Binop::SUBTRACTION:
-            string_append_formated(string, "SUBTRACTION");
-            break;
-        case AST::Binop::POINTER_EQUAL:
-            string_append_formated(string, "POINTER EQUAL");
-            break;
-        case AST::Binop::POINTER_NOT_EQUAL:
-            string_append_formated(string, "POINTER NOT_EQUAL");
-            break;
+        case IR_Binop::ADDITION: string_append_formated(string, "ADDITION"); break;
+        case IR_Binop::SUBTRACTION: string_append_formated(string, "SUBTRACTION"); break;
+        case IR_Binop::DIVISION: string_append_formated(string, "DIVISION"); break;
+        case IR_Binop::MULTIPLICATION: string_append_formated(string, "MULTIPLICATION"); break;
+        case IR_Binop::MODULO: string_append_formated(string, "MODULO"); break;
+        case IR_Binop::AND: string_append_formated(string, "AND"); break;
+        case IR_Binop::OR: string_append_formated(string, "OR"); break;
+        case IR_Binop::BITWISE_AND: string_append_formated(string, "BITWISE_AND"); break;
+        case IR_Binop::BITWISE_OR: string_append_formated(string, "BITWISE_OR"); break;
+        case IR_Binop::BITWISE_XOR: string_append_formated(string, "BITWISE_XOR"); break;
+        case IR_Binop::BITWISE_SHIFT_LEFT: string_append_formated(string, "BITWISE_SHIFT_LEFT"); break;
+        case IR_Binop::BITWISE_SHIFT_RIGHT: string_append_formated(string, "BITWISE_SHIFT_RIGHT"); break;
+        case IR_Binop::EQUAL: string_append_formated(string, "EQUAL"); break;
+        case IR_Binop::NOT_EQUAL: string_append_formated(string, "NOT_EQUAL"); break;
+        case IR_Binop::LESS: string_append_formated(string, "LESS"); break;
+        case IR_Binop::LESS_OR_EQUAL: string_append_formated(string, "LESS_OR_EQUAL"); break;
+        case IR_Binop::GREATER: string_append_formated(string, "GREATER"); break;
+        case IR_Binop::GREATER_OR_EQUAL: string_append_formated(string, "GREATER_OR_EQUAL"); break;
         default: panic("");
         }
 
@@ -493,10 +466,10 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "Unary_OP ");
         switch (instruction->options.unary_op.type)
         {
-        case IR_Instruction_Unary_OP_Type::NEGATE:
+        case IR_Unop::NEGATE:
             string_append_formated(string, "NEGATE");
             break;
-        case IR_Instruction_Unary_OP_Type::NOT:
+        case IR_Unop::NOT:
             string_append_formated(string, "NOT");
             break;
         }
@@ -856,13 +829,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
 
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::BINARY_OP;
-        instr.options.binary_op.type = binop.type;
-        if (binop.type == AST::Binop::POINTER_EQUAL) {
-            instr.options.binary_op.type = AST::Binop::EQUAL;
-        }
-        else if (binop.type == AST::Binop::POINTER_NOT_EQUAL) {
-            instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
-        }
+        instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
         instr.options.binary_op.operand_left = ir_generator_generate_expression(ir_block, binop.left);
         instr.options.binary_op.operand_right = ir_generator_generate_expression(ir_block, binop.right);
         instr.options.binary_op.destination = make_destination_access_on_demand(info->options.value_type);
@@ -898,7 +865,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::UNARY_OP;
             instr.options.unary_op.destination = make_destination_access_on_demand(result_type);
-            instr.options.unary_op.type = IR_Instruction_Unary_OP_Type::NOT;
+            instr.options.unary_op.type = IR_Unop::NOT;
             instr.options.unary_op.source = access;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.unary_op.destination;
@@ -907,7 +874,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::UNARY_OP;
             instr.options.unary_op.destination = make_destination_access_on_demand(result_type);
-            instr.options.unary_op.type = IR_Instruction_Unary_OP_Type::NEGATE;
+            instr.options.unary_op.type = IR_Unop::NEGATE;
             instr.options.unary_op.source = access;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.unary_op.destination;
@@ -974,6 +941,45 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             case Hardcoded_Type::TYPE_OF: {
                 panic("Should be handled in semantic analyser");
                 break;
+            }
+            case Hardcoded_Type::BITWISE_NOT: 
+            {
+                auto matching = get_info(call.arguments);
+                IR_Instruction unop;
+                unop.type = IR_Instruction_Type::UNARY_OP;
+                unop.options.unary_op.type = IR_Unop::BITWISE_NOT;
+                unop.options.unary_op.source = ir_generator_generate_expression(ir_block, matching->matched_parameters[0].expression);
+                unop.options.unary_op.destination = make_destination_access_on_demand(result_type);
+                dynamic_array_push_back(&ir_block->instructions, unop);
+                return unop.options.unary_op.destination;
+            }
+            case Hardcoded_Type::BITWISE_AND: 
+            case Hardcoded_Type::BITWISE_OR: 
+            case Hardcoded_Type::BITWISE_XOR: 
+            case Hardcoded_Type::BITWISE_SHIFT_LEFT: 
+            case Hardcoded_Type::BITWISE_SHIFT_RIGHT: 
+            {
+                auto matching = get_info(call.arguments);
+
+                IR_Binop binop_type;
+                switch (hardcoded)
+                {
+                case Hardcoded_Type::BITWISE_AND: binop_type = IR_Binop::BITWISE_AND; break;
+                case Hardcoded_Type::BITWISE_OR: binop_type = IR_Binop::BITWISE_OR; break;
+                case Hardcoded_Type::BITWISE_XOR: binop_type = IR_Binop::BITWISE_XOR; break;
+                case Hardcoded_Type::BITWISE_SHIFT_LEFT: binop_type = IR_Binop::BITWISE_SHIFT_LEFT; break;
+                case Hardcoded_Type::BITWISE_SHIFT_RIGHT: binop_type = IR_Binop::BITWISE_SHIFT_RIGHT; break;
+                default: panic("");
+                }
+
+                IR_Instruction binop;
+                binop.type = IR_Instruction_Type::BINARY_OP;
+                binop.options.binary_op.type = binop_type;
+                binop.options.binary_op.operand_left = ir_generator_generate_expression(ir_block, matching->matched_parameters[0].expression);
+                binop.options.binary_op.operand_right = ir_generator_generate_expression(ir_block, matching->matched_parameters[1].expression);
+                binop.options.binary_op.destination = make_destination_access_on_demand(result_type);
+                dynamic_array_push_back(&ir_block->instructions, binop);
+                return binop.options.binary_op.destination;
             }
             }
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
@@ -1230,7 +1236,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 condition_instr.options.binary_op.operand_left = ir_data_access_create_member(source, base_content->tag_member);
                 condition_instr.options.binary_op.operand_right = 
                     ir_data_access_create_constant(base_content->tag_member.type, array_create_static_as_bytes<int>(&child_tag_value, 1));
-                condition_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
+                condition_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
                 dynamic_array_push_back(&ir_block->instructions, condition_instr);
 
                 IR_Instruction if_instr;
@@ -1298,7 +1304,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
 
             IR_Instruction mult_instr;
             mult_instr.type = IR_Instruction_Type::BINARY_OP;
-            mult_instr.options.binary_op.type = AST::Binop::MULTIPLICATION;
+            mult_instr.options.binary_op.type = IR_Binop::MULTIPLICATION;
             mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(ir_block, upcast(types.i32_type));
             mult_instr.options.binary_op.operand_left = ir_data_access_create_constant_i32(element_size);
             mult_instr.options.binary_op.operand_right = slice_size_access;
@@ -1348,7 +1354,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         check_instr.options.binary_op.operand_left = check_access;
         void* null_val = nullptr;
         check_instr.options.binary_op.operand_right = ir_data_access_create_constant(check_access->datatype, array_create_static_as_bytes(&null_val, 1));
-        check_instr.options.binary_op.type = AST::Binop::NOT_EQUAL;
+        check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
         dynamic_array_push_back(&ir_block->instructions, check_instr);
         return destination;
     }
@@ -1530,7 +1536,7 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
 
             IR_Instruction cmp_instr;
             cmp_instr.type = IR_Instruction_Type::BINARY_OP;
-            cmp_instr.options.binary_op.type = AST::Binop::EQUAL;
+            cmp_instr.options.binary_op.type = IR_Binop::EQUAL;
             cmp_instr.options.binary_op.operand_left = ir_data_access_create_constant(
                 types.type_handle, array_create_static_as_bytes(&type_handle, 1)
             );
@@ -1659,7 +1665,7 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         // Increment index access
         IR_Instruction increment;
         increment.type = IR_Instruction_Type::BINARY_OP;
-        increment.options.binary_op.type = AST::Binop::ADDITION;
+        increment.options.binary_op.type = IR_Binop::ADDITION;
         increment.options.binary_op.destination = foreach.index_access;
         increment.options.binary_op.operand_left = foreach.index_access;
         increment.options.binary_op.operand_right = ir_data_access_create_constant_i32(1);
@@ -2054,7 +2060,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
                     IR_Instruction comparison;
                     comparison.type = IR_Instruction_Type::BINARY_OP;
-                    comparison.options.binary_op.type = AST::Binop::LESS;
+                    comparison.options.binary_op.type = IR_Binop::LESS;
                     comparison.options.binary_op.operand_left = index_access;
                     comparison.options.binary_op.operand_right = array_size_access;
                     comparison.options.binary_op.destination = condition_access;
@@ -2203,7 +2209,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         {
             IR_Instruction binop;
             binop.type = IR_Instruction_Type::BINARY_OP;
-            binop.options.binary_op.type = assign.binop;
+            binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
             binop.options.binary_op.destination = left_access;
             binop.options.binary_op.operand_left = left_access;
             binop.options.binary_op.operand_right = right_access;
@@ -2544,4 +2550,28 @@ void ir_generator_destroy()
     dynamic_array_destroy(&ir_generator.fill_out_continues);
 }
 
+IR_Binop ast_binop_to_ir_binop(AST::Binop binop)
+{
+    switch (binop)
+    {
+    case AST::Binop::ADDITION: return IR_Binop::ADDITION;
+    case AST::Binop::SUBTRACTION: return IR_Binop::SUBTRACTION;
+    case AST::Binop::DIVISION: return IR_Binop::DIVISION;
+    case AST::Binop::MULTIPLICATION: return IR_Binop::MULTIPLICATION;
+    case AST::Binop::MODULO: return IR_Binop::MODULO;
+    case AST::Binop::AND: return IR_Binop::AND;
+    case AST::Binop::OR: return IR_Binop::OR;
+    case AST::Binop::EQUAL: return IR_Binop::EQUAL;
+    case AST::Binop::NOT_EQUAL: return IR_Binop::NOT_EQUAL;
+    case AST::Binop::LESS: return IR_Binop::LESS;
+    case AST::Binop::LESS_OR_EQUAL: return IR_Binop::LESS_OR_EQUAL;
+    case AST::Binop::GREATER: return IR_Binop::GREATER;
+    case AST::Binop::GREATER_OR_EQUAL: return IR_Binop::GREATER_OR_EQUAL;
+    case AST::Binop::POINTER_EQUAL: return IR_Binop::EQUAL;
+    case AST::Binop::POINTER_NOT_EQUAL: return IR_Binop::NOT_EQUAL;
+    case AST::Binop::INVALID: panic("Shouldn't happen"); return IR_Binop::ADDITION;
+    default: panic("");
+    }
 
+    return IR_Binop::ADDITION;
+}

@@ -551,6 +551,7 @@ struct Expression_Info
     bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union {
         Datatype_Function* function_call_signature; // Used by code-generation for accessing default values
+        Datatype_Primitive* bitwise_primitive_type;
         Function_Parameter* implicit_parameter;
         struct {
             Member_Access_Type type;

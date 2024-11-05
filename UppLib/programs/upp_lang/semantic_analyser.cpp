@@ -126,6 +126,13 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
     case Hardcoded_Type::READ_F32: return an.type_print_f32;
     case Hardcoded_Type::READ_BOOL: return an.type_print_bool;
     case Hardcoded_Type::RANDOM_I32: return an.type_random_i32;
+
+    case Hardcoded_Type::BITWISE_NOT: return an.type_bitwise_unop;
+    case Hardcoded_Type::BITWISE_AND: 
+    case Hardcoded_Type::BITWISE_OR:
+    case Hardcoded_Type::BITWISE_XOR:
+    case Hardcoded_Type::BITWISE_SHIFT_LEFT: 
+    case Hardcoded_Type::BITWISE_SHIFT_RIGHT: return an.type_bitwise_binop;
     default: panic("HEY");
     }
     return 0;
@@ -6404,7 +6411,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         case Call_Type::HARDCODED: 
         {
             // Handle type-of call
-            if (matching_info->options.hardcoded == Hardcoded_Type::TYPE_OF)
+            switch (matching_info->options.hardcoded)
+            {
+            case Hardcoded_Type::TYPE_OF:
             {
                 auto& arg = call.arguments->arguments[0];
                 auto arg_result = semantic_analyser_analyse_expression_any(arg->value, expression_context_make_unknown());
@@ -6451,6 +6460,71 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 panic("");
                 EXIT_ERROR(arg_result->options.type);
             }
+            case Hardcoded_Type::BITWISE_NOT: 
+            {
+                info->specifics.bitwise_primitive_type = types.i32_type;
+                if (!matching_info->matched_parameters[0].is_set) {
+                    parameter_matching_analyse_in_unknown_context(matching_info);
+                    EXIT_VALUE(upcast(types.i32_type), true);
+                }
+
+                auto arg_expr = matching_info->matched_parameters[0].expression;
+                Datatype* type = analyse_parameter_if_not_already_done(&matching_info->matched_parameters[0], expression_context_make_auto_dereference());
+                type = datatype_get_non_const_type(type);
+                bool type_valid = type->type == Datatype_Type::PRIMITIVE;
+                Datatype_Primitive* primitive = nullptr;
+                if (type_valid) {
+                    primitive = downcast<Datatype_Primitive>(type);
+                    type_valid = primitive->primitive_type == Primitive_Type::INTEGER;
+                }
+                if (!type_valid) {
+                    log_semantic_error("Type for bitwise not must be an integer", arg_expr);
+                    log_error_info_given_type(type);
+                    parameter_matching_analyse_in_unknown_context(matching_info);
+                    EXIT_VALUE(upcast(types.i32_type), true);
+                }
+                info->specifics.bitwise_primitive_type = primitive;
+
+                EXIT_VALUE(type, true);
+            }
+            case Hardcoded_Type::BITWISE_AND: 
+            case Hardcoded_Type::BITWISE_OR: 
+            case Hardcoded_Type::BITWISE_XOR: 
+            case Hardcoded_Type::BITWISE_SHIFT_LEFT: 
+            case Hardcoded_Type::BITWISE_SHIFT_RIGHT: 
+            {
+                info->specifics.bitwise_primitive_type = types.i32_type;
+                if (!matching_info->matched_parameters[0].is_set || !matching_info->matched_parameters[1].is_set) {
+                    parameter_matching_analyse_in_unknown_context(matching_info);
+                    EXIT_VALUE(upcast(types.i32_type), true);
+                }
+
+                auto expr_a = matching_info->matched_parameters[0].expression;
+                Datatype* type_a = analyse_parameter_if_not_already_done(&matching_info->matched_parameters[0], expression_context_make_auto_dereference());
+                type_a = datatype_get_non_const_type(type_a);
+
+                bool type_valid = type_a->type == Datatype_Type::PRIMITIVE;
+                Datatype_Primitive* primitive = nullptr;
+                if (type_valid) {
+                    primitive = downcast<Datatype_Primitive>(type_a);
+                    type_valid = primitive->primitive_type == Primitive_Type::INTEGER;
+                }
+                if (!type_valid) {
+                    log_semantic_error("Type for bitwise operation must be an integer", expr_a);
+                    log_error_info_given_type(type_a);
+                    parameter_matching_analyse_in_unknown_context(matching_info);
+                    EXIT_VALUE(upcast(types.i32_type), true);
+                }
+                info->specifics.bitwise_primitive_type = primitive;
+
+                auto expr_b = matching_info->matched_parameters[1].expression;
+                Datatype* type_b = analyse_parameter_if_not_already_done(&matching_info->matched_parameters[1], expression_context_make_specific_type(type_a));
+                type_b = datatype_get_non_const_type(type_b);
+
+                EXIT_VALUE(type_a, true);
+            }
+            }
+
             info->specifics.function_call_signature = hardcoded_type_to_signature(matching_info->options.hardcoded);
             break;
         }
@@ -11343,6 +11417,13 @@ void semantic_analyser_reset()
         symbols.hardcoded_type_of = define_hardcoded_symbol("type_of", Hardcoded_Type::TYPE_OF);
         symbols.hardcoded_type_info = define_hardcoded_symbol("type_info", Hardcoded_Type::TYPE_INFO);
         symbols.hardcoded_assert = define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
+
+        define_hardcoded_symbol("bitwise_not", Hardcoded_Type::BITWISE_NOT);
+        define_hardcoded_symbol("bitwise_and", Hardcoded_Type::BITWISE_AND);
+        define_hardcoded_symbol("bitwise_or", Hardcoded_Type::BITWISE_OR);
+        define_hardcoded_symbol("bitwise_xor", Hardcoded_Type::BITWISE_XOR);
+        define_hardcoded_symbol("bitwise_shift_left", Hardcoded_Type::BITWISE_SHIFT_LEFT);
+        define_hardcoded_symbol("bitwise_shift_right", Hardcoded_Type::BITWISE_SHIFT_RIGHT);
 
         // NOTE: Error symbol is required so that unresolved symbol-reads can point to something,
         //       but it shouldn't be possible to reference the error symbol by base_name, so the 

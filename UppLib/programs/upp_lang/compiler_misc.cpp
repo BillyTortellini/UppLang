@@ -33,6 +33,12 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
     case Hardcoded_Type::TYPE_OF:
         string_append_formated(string, "TYPE_OF");
         break;
+    case Hardcoded_Type::BITWISE_NOT: string_append_formated(string, "BITWISE_NOT"); break;
+    case Hardcoded_Type::BITWISE_AND: string_append_formated(string, "BITWISE_AND"); break;
+    case Hardcoded_Type::BITWISE_OR: string_append_formated(string, "BITWISE_OR"); break;
+    case Hardcoded_Type::BITWISE_XOR: string_append_formated(string, "BITWISE_XOR"); break;
+    case Hardcoded_Type::BITWISE_SHIFT_LEFT: string_append_formated(string, "BITWISE_SHIFT_LEFT"); break;
+    case Hardcoded_Type::BITWISE_SHIFT_RIGHT: string_append_formated(string, "BITWISE_SHIFT_RIGHT"); break;
     case Hardcoded_Type::PRINT_I32:
         string_append_formated(string, "PRINT_I32");
         break;

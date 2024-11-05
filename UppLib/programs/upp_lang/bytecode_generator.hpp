@@ -85,9 +85,16 @@ enum class Instruction_Type
     BINARY_OP_AND,
     BINARY_OP_OR,
 
+    BINARY_OP_BITWISE_AND,
+    BINARY_OP_BITWISE_OR,
+    BINARY_OP_BITWISE_XOR,
+    BINARY_OP_BITWISE_SHIFT_LEFT,
+    BINARY_OP_BITWISE_SHIFT_RIGHT,
+
     // Unary operations work the following: op1 = dest_byte_offset, op2 = operand_offset, op3 = bytecode_type
     UNARY_OP_NEGATE,
-    UNARY_OP_NOT
+    UNARY_OP_NOT,
+    UNARY_OP_BITWISE_NOT
 };
 
 struct Bytecode_Instruction

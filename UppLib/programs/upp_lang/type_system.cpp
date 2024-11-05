@@ -2096,6 +2096,12 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_read_bool = type_system_make_function({});
         types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
 
+        types->type_bitwise_unop = type_system_make_function({ make_param(upcast(types->i32_type), "value") }, upcast(types->i32_type));
+        types->type_bitwise_binop = type_system_make_function(
+            { make_param(upcast(types->i32_type), "a"), make_param(upcast(types->i32_type), "b")  }, 
+            upcast(types->i32_type)
+        );
+
         types->type_set_cast_option = type_system_make_function({
                 make_param(upcast(types->cast_option), "option"), 
                 make_param(upcast(types->cast_mode), "cast_mode")

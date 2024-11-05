@@ -941,48 +941,26 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             IR_Instruction_Binary_OP* binary_op = &instr->options.binary_op;
             Bytecode_Instruction instr;
             using AST::Binop;
-            // TODO: Replace this with integer logic
             switch (binary_op->type)
             {
-            case Binop::ADDITION:
-                instr.instruction_type = Instruction_Type::BINARY_OP_ADDITION;
-                break;
-            case Binop::AND:
-                instr.instruction_type = Instruction_Type::BINARY_OP_AND;
-                break;
-            case Binop::DIVISION:
-                instr.instruction_type = Instruction_Type::BINARY_OP_DIVISION;
-                break;
-            case Binop::EQUAL:
-                instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL;
-                break;
-            case Binop::GREATER:
-                instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN;
-                break;
-            case Binop::GREATER_OR_EQUAL:
-                instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL;
-                break;
-            case Binop::LESS:
-                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN;
-                break;
-            case Binop::LESS_OR_EQUAL:
-                instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL;
-                break;
-            case Binop::MODULO:
-                instr.instruction_type = Instruction_Type::BINARY_OP_MODULO;
-                break;
-            case Binop::MULTIPLICATION:
-                instr.instruction_type = Instruction_Type::BINARY_OP_MULTIPLICATION;
-                break;
-            case Binop::NOT_EQUAL:
-                instr.instruction_type = Instruction_Type::BINARY_OP_NOT_EQUAL;
-                break;
-            case Binop::OR:
-                instr.instruction_type = Instruction_Type::BINARY_OP_OR;
-                break;
-            case Binop::SUBTRACTION:
-                instr.instruction_type = Instruction_Type::BINARY_OP_SUBTRACTION;
-                break;
+            case IR_Binop::ADDITION: instr.instruction_type = Instruction_Type::BINARY_OP_ADDITION; break;
+            case IR_Binop::SUBTRACTION: instr.instruction_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
+            case IR_Binop::DIVISION: instr.instruction_type = Instruction_Type::BINARY_OP_DIVISION; break;
+            case IR_Binop::MULTIPLICATION: instr.instruction_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
+            case IR_Binop::MODULO: instr.instruction_type = Instruction_Type::BINARY_OP_MODULO; break;
+            case IR_Binop::AND: instr.instruction_type = Instruction_Type::BINARY_OP_AND; break;
+            case IR_Binop::OR: instr.instruction_type = Instruction_Type::BINARY_OP_OR; break;
+            case IR_Binop::BITWISE_AND: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+            case IR_Binop::BITWISE_OR: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_OR; break;
+            case IR_Binop::BITWISE_XOR: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_XOR; break;
+            case IR_Binop::BITWISE_SHIFT_LEFT: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT; break;
+            case IR_Binop::BITWISE_SHIFT_RIGHT: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT; break;
+            case IR_Binop::EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL; break;
+            case IR_Binop::NOT_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
+            case IR_Binop::LESS: instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
+            case IR_Binop::LESS_OR_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
+            case IR_Binop::GREATER: instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
+            case IR_Binop::GREATER_OR_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
             default: panic("");
             }
 
@@ -1004,12 +982,16 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             Bytecode_Instruction instr;
             switch (unary_op->type)
             {
-            case IR_Instruction_Unary_OP_Type::NEGATE:
+            case IR_Unop::NEGATE:
                 instr.instruction_type = Instruction_Type::UNARY_OP_NEGATE;
                 break;
-            case IR_Instruction_Unary_OP_Type::NOT:
+            case IR_Unop::NOT:
                 instr.instruction_type = Instruction_Type::UNARY_OP_NOT;
                 break;
+            case IR_Unop::BITWISE_NOT:
+                instr.instruction_type = Instruction_Type::UNARY_OP_BITWISE_NOT;
+                break;
+            default: panic("");
             }
 
             Datatype* operand_type = datatype_get_non_const_type(unary_op->source->datatype);
@@ -1250,6 +1232,38 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     case Instruction_Type::BINARY_OP_OR:
         string_append_formated(string, "BINARY_OP_OR                 dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+
+    case Instruction_Type::BINARY_OP_BITWISE_AND:
+        string_append_formated(string, "BINARY_BITWISE_AND           dst: %d, left: %d, right: %d, type: %s",
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_OR:
+        string_append_formated(string, "BINARY_OP_BITWISE_OR         dst: %d, left: %d, right: %d, type: %s",
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_XOR:
+        string_append_formated(string, "BINARY_OP_BITWISE_XOR        dst: %d, left: %d, right: %d, type: %s",
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
+        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_LEFT dst: %d, left: %d, right: %d, type: %s",
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
+        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_RIGHT dst: %d, left: %d, right: %d, type: %s",
+            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
+        );
+        break;
+
+    case Instruction_Type::UNARY_OP_BITWISE_NOT:
+        string_append_formated(string, "UNARY_OP_BITWISE_NOT         dst: %d, src: %d, type: %s",
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;
     case Instruction_Type::UNARY_OP_NEGATE:

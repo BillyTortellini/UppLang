@@ -118,23 +118,49 @@ struct IR_Instruction_Return
     } options;
 };
 
+enum class IR_Binop
+{
+    ADDITION,
+    SUBTRACTION,
+    DIVISION,
+    MULTIPLICATION,
+    MODULO,
+
+    AND,
+    OR,
+    BITWISE_AND,
+    BITWISE_OR,
+    BITWISE_XOR,
+    BITWISE_SHIFT_LEFT,
+    BITWISE_SHIFT_RIGHT,
+
+    EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_OR_EQUAL,
+    GREATER,
+    GREATER_OR_EQUAL,
+};
+
+
 struct IR_Instruction_Binary_OP
 {
-    AST::Binop type;
+    IR_Binop type;
     IR_Data_Access* destination;
     IR_Data_Access* operand_left;
     IR_Data_Access* operand_right;
 };
 
-enum class IR_Instruction_Unary_OP_Type
+enum class IR_Unop
 {
     NOT,
+    BITWISE_NOT,
     NEGATE,
 };
 
 struct IR_Instruction_Unary_OP
 {
-    IR_Instruction_Unary_OP_Type type;
+    IR_Unop type;
     IR_Data_Access* destination;
     IR_Data_Access* source;
 };
@@ -314,7 +340,7 @@ struct IR_Generator
     Dynamic_Array<IR_Data_Access*> data_accesses;
     IR_Data_Access nothing_access;
 
-    Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping; 
+    Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping;
     Hashtable<ModTree_Function*, IR_Function*> function_mapping;
     Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
 
@@ -346,6 +372,7 @@ IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
 void ir_program_append_to_string(IR_Program* program, String* string);
+IR_Binop ast_binop_to_ir_binop(AST::Binop binop);
 
 
 

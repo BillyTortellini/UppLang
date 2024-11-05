@@ -515,6 +515,9 @@ struct Predefined_Types
     Datatype_Function* type_read_bool;
     Datatype_Function* type_random_i32;
 
+    Datatype_Function* type_bitwise_unop;
+    Datatype_Function* type_bitwise_binop;
+
     Datatype_Function* type_set_cast_option;
     Datatype_Function* type_add_binop;
     Datatype_Function* type_add_unop;

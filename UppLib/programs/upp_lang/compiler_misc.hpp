@@ -47,6 +47,13 @@ enum class Hardcoded_Type
     TYPE_INFO,
     ASSERT_FN,
 
+    BITWISE_NOT,
+    BITWISE_AND,
+    BITWISE_OR,
+    BITWISE_XOR,
+    BITWISE_SHIFT_LEFT,
+    BITWISE_SHIFT_RIGHT,
+
     MALLOC_SIZE_I32,
     FREE_POINTER,
 
