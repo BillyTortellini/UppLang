@@ -62,7 +62,7 @@ enum class Instruction_Type
     LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global index
-    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function index (Update: Only puts function index as i64 into dest_reg)
+    LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function_slot_index (Update: Only puts function_slot_index + 1 as i64 into dest_reg)
     LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant index
 
     CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type

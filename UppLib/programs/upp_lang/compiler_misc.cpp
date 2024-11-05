@@ -66,8 +66,8 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
     case Hardcoded_Type::RANDOM_I32:
         string_append_formated(string, "RANDOM_I32");
         break;
-    case Hardcoded_Type::MALLOC_SIZE_I32:
-        string_append_formated(string, "MALLOC_SIZE_I32");
+    case Hardcoded_Type::MALLOC_SIZE_U64:
+        string_append_formated(string, "MALLOC_SIZE_U64");
         break;
     case Hardcoded_Type::FREE_POINTER:
         string_append_formated(string, "FREE_POINTER");

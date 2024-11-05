@@ -59,7 +59,7 @@ enum class ModTree_Function_Type
 struct ModTree_Function
 {
     Datatype_Function* signature;
-    i64 function_index_plus_one; // Index in functions array + 1 (So that 0 can be used as null pointer)
+    int function_slot_index; // Index in functions slots array
     String* name; // Symbol name, or "bake_function"/"lambda_function"
 
     ModTree_Function_Type function_type;
@@ -782,6 +782,9 @@ struct Predefined_Symbols
     Symbol* type_f64;
     Symbol* type_byte;
     Symbol* type_string;
+    Symbol* type_allocator;
+    Symbol* global_allocator_symbol;
+    Symbol* default_allocator_symbol;
 
     // Symbols for 'compiler' provided structs
     Symbol* type_type;
@@ -892,6 +895,14 @@ void semantic_analyser_append_all_errors_to_string(String* string, int indentati
 
 
 
+struct IR_Function;
+struct Modtree_Function;
+struct Function_Slot
+{
+    int index; // Not plus one !
+    ModTree_Function* modtree_function; // May be null
+    IR_Function* ir_function; // May be null
+};
 
 // ANALYSER
 struct Semantic_Analyser
@@ -903,11 +914,14 @@ struct Semantic_Analyser
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
 
     // Other
+    Dynamic_Array<Function_Slot> function_slots;
     Workload_Base* current_workload;
     Module_Progress* root_module;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
     Hashtable<AST::Expression*, Datatype_Template_Parameter*> valid_template_parameters;
+    ModTree_Global* global_allocator; // *Allocator
+    ModTree_Global* default_allocator; // Allocator
 
     // Symbol tables
     Symbol_Table* root_symbol_table;

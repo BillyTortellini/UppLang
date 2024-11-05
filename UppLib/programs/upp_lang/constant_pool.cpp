@@ -148,9 +148,9 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
     }
     case Datatype_Type::FUNCTION: {
         // Check if function index is correct
-        auto& functions = compiler.semantic_analyser->program->functions;
+        auto& slots = compiler.semantic_analyser->function_slots;
         i64 function_index = ((int)*(i64*)memory) - 1;
-        if (function_index < -1 || function_index >= functions.size) { // Note: -1 would mean nullptr in this context
+        if (function_index < -1 || function_index >= slots.size) { // Note: -1 would mean nullptr in this context
             result = constant_pool_result_make_error("Found function pointer with invalid value");
             return;
         }

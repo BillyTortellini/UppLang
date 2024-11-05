@@ -86,6 +86,7 @@ struct Predefined_IDs
     String* anon_struct;
     String* anon_enum;
     String* string;
+    String* allocator;
     String* bytes;
 
     // Context members 

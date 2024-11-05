@@ -193,6 +193,7 @@ void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
             ids.is_available =        add_id("is_available");
             ids.uninitialized_token = add_id("_");
             ids.string =              add_id("string");
+            ids.allocator =           add_id("Allocator");
             ids.bytes =               add_id("bytes");
             ids.lambda_function =     add_id("lambda_function");
             ids.bake_function =       add_id("bake_function");

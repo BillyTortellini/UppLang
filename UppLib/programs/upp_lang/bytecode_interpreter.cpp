@@ -739,19 +739,18 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         int jmp_to_instr_index;
         {
             int function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
-            auto& functions = compiler.semantic_analyser->program->functions;
-            if (function_index < 0 || function_index >= functions.size) {
+            auto& slots = compiler.semantic_analyser->function_slots;
+            if (function_index < 0 || function_index >= slots.size) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, pointer does not point to valid function");
                 return true;
             }
-            auto function = functions[function_index];
-            if (function->function_type == ModTree_Function_Type::EXTERN) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to extern function not handelable by bytecode-interpreter");
+            auto& slot = slots[function_index];
+            if (slot.ir_function == nullptr) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call to modtree-only function? (Polymorphic/Extern?)");
                 return true;
             }
 
-            auto ir_function = *hashtable_find_element(&compiler.ir_generator->function_mapping, functions[function_index]);
-            jmp_to_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_function);
+            jmp_to_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, slot.ir_function);
         }
 
         if (jmp_to_instr_index < 0 || jmp_to_instr_index > instructions.size) {
@@ -798,9 +797,9 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         memory_set_bytes(&thread->return_register[0], 256, 0);
         switch (hardcoded_type)
         {
-        case Hardcoded_Type::MALLOC_SIZE_I32: {
+        case Hardcoded_Type::MALLOC_SIZE_U64: {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
-            i32 size = *(i32*)argument_start;
+            u64 size = *(u64*)argument_start;
             assert(size != 0, "");
             void* alloc_data = malloc(size);
             // logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
@@ -954,7 +953,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         *(void**)(thread->stack_pointer + i->op1) = (void*)(constant_pool.constants[i->op2].memory);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        *(i64*)(thread->stack_pointer + i->op1) = (i64)i->op2; // Note: Function pointers are encoded as function indices in interpreter
+        *(i64*)(thread->stack_pointer + i->op1) = (i64)(i->op2 + 1); // Note: Function pointers are encoded as function indices in interpreter
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: 
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: 

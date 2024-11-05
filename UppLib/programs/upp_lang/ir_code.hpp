@@ -92,10 +92,7 @@ struct IR_Instruction_Call
     {
         ModTree_Function* function;
         IR_Data_Access* pointer_access;
-        struct {
-            Datatype_Function* signature;
-            Hardcoded_Type type;
-        } hardcoded;
+        Hardcoded_Type hardcoded;
     } options;
     Dynamic_Array<IR_Data_Access*> arguments;
     IR_Data_Access* destination;
@@ -188,7 +185,7 @@ struct IR_Instruction_Cast
 struct IR_Instruction_Function_Address
 {
     IR_Data_Access* destination;
-    ModTree_Function* function; // This is a modtree function because it could be an extern function
+    int function_slot_index;
 };
 
 struct IR_Instruction;
@@ -277,7 +274,7 @@ struct IR_Function
     IR_Program* program;
     Datatype_Function* function_type;
     IR_Code_Block* code;
-    ModTree_Function* origin;
+    int function_slot_index; // Note: not + 1 
 };
 
 struct IR_Program
@@ -297,12 +294,6 @@ struct Unresolved_Goto
     IR_Code_Block* block;
     int instruction_index;
     AST::Code_Block* break_block;
-};
-
-struct Function_Stub
-{
-    ModTree_Function* mod_func;
-    IR_Function* ir_func;
 };
 
 enum class Loop_Type
@@ -335,16 +326,18 @@ struct IR_Generator
 {
     IR_Program* program;
     ModTree_Program* modtree;
+    IR_Function* default_allocate_function;
+    IR_Function* default_free_function;
+    IR_Function* default_reallocate_function;
 
     // Stuff needed for compilation
     Dynamic_Array<IR_Data_Access*> data_accesses;
     IR_Data_Access nothing_access;
 
     Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping;
-    Hashtable<ModTree_Function*, IR_Function*> function_mapping;
     Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
 
-    Dynamic_Array<Function_Stub> queue_functions;
+    Dynamic_Array<int> queued_function_slot_indices;
 
     Dynamic_Array<AST::Code_Block*> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;

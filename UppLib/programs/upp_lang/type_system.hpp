@@ -79,7 +79,7 @@ enum class Datatype_Type
 
 struct Datatype_Memory_Info
 {
-    int size;
+    u64 size;
     int alignment;
     bool contains_padding_bytes;
     bool contains_reference;
@@ -142,7 +142,7 @@ struct Datatype_Array
     Datatype* element_type;
 
     bool count_known; // False in case of polymorphism (Comptime values) or when Errors occured
-    int element_count;
+    u64 element_count;
 
     Datatype_Template_Parameter* polymorphic_count_variable; // May be null if it doesn't exist
 };
@@ -272,13 +272,13 @@ template<typename T>
 struct Upp_Slice
 {
     T* data;
-    i32 size;
+    u64 size;
 };
 
 struct Upp_Slice_Base
 {
     void* data;
-    i32 size;
+    u64 size;
 };
 
 // A string as it is currently defined in the upp-language
@@ -292,6 +292,13 @@ struct Upp_Any
 {
     void* data;
     Upp_Type_Handle type;
+};
+
+struct Upp_Allocator
+{
+    i64 allocate_fn_index_plus_one;
+    i64 free_fn_index_plus_one;
+    i64 reallocate_fn_index_plus_one;
 };
 
 enum class Cast_Option
@@ -498,6 +505,11 @@ struct Predefined_Types
 
     Datatype_Enum* cast_mode;
     Datatype_Enum* cast_option;
+
+    Datatype_Struct* allocator;
+    Datatype_Function* allocate_function;
+    Datatype_Function* free_function;
+    Datatype_Function* reallocate_function;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_assert;

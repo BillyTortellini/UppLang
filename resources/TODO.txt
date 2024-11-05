@@ -1,10 +1,31 @@
 
-
 TODO:
 
+ * Move normal names into new namespace Upp~int Compiler~i32
+    - How is this usefull? By just importing int, float and others...
+    - Maybe we want to think about aliases now...
+ * Parameter default value as re-evaluateable argument...
+    - So we can have function calls as default arguments, or e.g.
+        create :: (capacity: int = 0, allocator: *Allocator = #eval global_allocator)
+        create(allocator = temp_allocator)
+        create()
+ * fast lambda syntax .-> {return a * 2}
 
- * Fix all testcases, lol NAH
+ * Fix all testcases
+ * Create tescases for all new features
 
+
+DONE:
+ * U64 for array/slice size, iterators, array-access, new[], malloc
+ * Default allocator must be available in bakes
+ * Test if new and delete with allocator works.
+ * Fix all compiler errors with function-slots
+ * Implement free with allocators
+ * New and delete should use the global allocator
+ * The global allocator should be inititalized at the start of the program to use malloc and free
+ * Add global_allocator as global
+ * Add Allocator as struct
+ * Add Symbol for allocator
 
 
     
@@ -17,6 +38,7 @@ TODO:
 
 Missing-Testcases:
 ------------------
+ * Allocators
  * New custom operator import/resolve
  * Optionals, Optional pointers, optional byte/function pointer, const
  * Struct Subtypes

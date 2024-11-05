@@ -1105,7 +1105,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->data_member.offset = 0;
     result->data_member.content = 0;
     result->size_member.id = compiler.predefined_ids.size;
-    result->size_member.type = upcast(compiler.type_system.predefined_types.i32_type);
+    result->size_member.type = upcast(compiler.type_system.predefined_types.u64_type);
     result->size_member.offset = 8;
     result->size_member.content = 0;
 
@@ -1195,7 +1195,7 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
         result->base.memory_info_workload = nullptr;
         auto& mem = result->base.memory_info.value;
         result->is_available_member.offset = mem.size;
-        mem.size = math_round_next_multiple(mem.size + 1, mem.alignment);
+        mem.size = math_round_next_multiple(mem.size + 1, (u64)mem.alignment);
     }
     else {
         result->base.memory_info.available = false;
@@ -1720,8 +1720,8 @@ void type_system_finish_struct(Datatype_Struct* structure)
     }
 
     // Finalize alignment
-    memory.size = math_maximum(1, memory.size);
-    memory.size = math_round_next_multiple(memory.size, memory.alignment);
+    memory.size = math_maximum(memory.size, (u64) 1);
+    memory.size = math_round_next_multiple(memory.size, (u64) memory.alignment);
 
 
 
@@ -1762,7 +1762,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
             opt->base.memory_info = opt->child_type->memory_info;
             auto& mem = opt->base.memory_info.value;
             opt->is_available_member.offset = mem.size;
-            mem.size = math_round_next_multiple(mem.size + 1, mem.alignment);
+            mem.size = math_round_next_multiple(mem.size + 1, (u64) mem.alignment);
 
             auto& info_internal = type_system.internal_type_infos[type->type_handle.index];
             info_internal->options.optional.available_offset = opt->is_available_member.offset;
@@ -1935,6 +1935,13 @@ void type_system_add_predefined_types(Type_System* system)
         type_system_finish_struct(result);
         return result;
     };
+    auto make_param = [&](Datatype* signature, const char* name, bool default_value_exists = false) -> Function_Parameter {
+        auto parameter = function_parameter_make_empty();
+        parameter.name = identifier_pool_add(&compiler.identifier_pool, string_create_static(name));
+        parameter.type = signature;
+        parameter.default_value_exists = default_value_exists;
+        return parameter;
+    };
 
     // Empty structure
     {
@@ -1950,6 +1957,40 @@ void type_system_add_predefined_types(Type_System* system)
         type_system_finish_struct(c_string);
         types->string = upcast(c_string);
         test_type_similarity<Upp_String>(types->string);
+    }
+
+    // Allocator + Allocator-Functions
+    {
+        types->allocator = type_system_make_struct_empty(Structure_Type::STRUCT, ids.allocator, 0);
+        Datatype_Pointer* allocator_pointer = type_system_make_pointer(upcast(types->allocator));
+
+        types->allocate_function = type_system_make_function( {
+                make_param(upcast(allocator_pointer), "allocator"), 
+                make_param(upcast(types->u64_type), "size"), 
+                make_param(upcast(types->u32_type), "alignment")
+            }, 
+            types->byte_pointer_optional
+        );
+        types->free_function = type_system_make_function( {
+                make_param(upcast(allocator_pointer), "allocator"), 
+                make_param(types->byte_pointer, "pointer"), 
+                make_param(upcast(types->u64_type), "size")
+            }, 
+            upcast(types->bool_type)
+        );
+        types->reallocate_function = type_system_make_function( {
+                make_param(upcast(allocator_pointer), "allocator"), 
+                make_param(types->byte_pointer, "pointer"), 
+                make_param(upcast(types->u64_type), "previous_size"),
+                make_param(upcast(types->u64_type), "new_size"),
+            }, 
+            types->byte_pointer_optional
+        );
+
+        add_member_cstr(&types->allocator->content, "allocate_fn", upcast(types->allocate_function));
+        add_member_cstr(&types->allocator->content, "free_fn", upcast(types->free_function));
+        add_member_cstr(&types->allocator->content, "reallocate_fn", upcast(types->reallocate_function));
+        type_system_finish_struct(types->allocator);
     }
 
     // Any
@@ -2074,16 +2115,9 @@ void type_system_add_predefined_types(Type_System* system)
     // Hardcoded Functions
     {
         auto& ts = *system;
-        auto make_param = [&](Datatype* signature, const char* name, bool default_value_exists = false) -> Function_Parameter {
-            auto parameter = function_parameter_make_empty();
-            parameter.name = identifier_pool_add(&compiler.identifier_pool, string_create_static(name));
-            parameter.type = signature;
-            parameter.default_value_exists = default_value_exists;
-            return parameter;
-        };
         types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
         types->type_free = type_system_make_function({ make_param(upcast(types->byte_pointer), "pointer") });
-        types->type_malloc = type_system_make_function({ make_param(upcast(types->i32_type), "size") }, upcast(types->byte_pointer));
+        types->type_malloc = type_system_make_function({ make_param(upcast(types->u64_type), "size") }, upcast(types->byte_pointer_optional));
         types->type_type_info = type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(type_system_make_pointer(upcast(types->type_information_type))));
         types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
         types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });

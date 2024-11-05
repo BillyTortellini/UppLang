@@ -112,7 +112,7 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
     {
     case Hardcoded_Type::ASSERT_FN: return an.type_assert;
     case Hardcoded_Type::FREE_POINTER: return an.type_free;
-    case Hardcoded_Type::MALLOC_SIZE_I32: return an.type_malloc;
+    case Hardcoded_Type::MALLOC_SIZE_U64: return an.type_malloc;
     case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
     case Hardcoded_Type::TYPE_OF: return an.type_type_of;
 
@@ -916,11 +916,17 @@ ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, St
 {
     ModTree_Function* function = new ModTree_Function;
     function->signature = signature;
-    function->function_index_plus_one = semantic_analyser.program->functions.size + 1;
+    function->function_slot_index = semantic_analyser.function_slots.size;
     function->name = name;
 
-    function->called_from = dynamic_array_create<ModTree_Function*>(1);
-    function->calls = dynamic_array_create<ModTree_Function*>(1);
+    Function_Slot slot;
+    slot.index = semantic_analyser.function_slots.size;
+    slot.modtree_function = function;
+    slot.ir_function = nullptr;
+    dynamic_array_push_back(&semantic_analyser.function_slots, slot);
+
+    function->called_from = dynamic_array_create<ModTree_Function*>();
+    function->calls = dynamic_array_create<ModTree_Function*>();
     function->contains_errors = false;
     function->is_runnable = true;
 
@@ -1161,7 +1167,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case Expression_Result_Type::FUNCTION: {
         auto function = info->options.function;
-        return comptime_result_make_available(&function->function_index_plus_one, upcast(function->signature));
+        return comptime_result_make_available(&function->function_slot_index + 1, upcast(function->signature));
     }
     case Expression_Result_Type::DOT_CALL: {
         return comptime_result_make_not_comptime("Dot calls must be evaluated with bake for comptime values");
@@ -1722,6 +1728,17 @@ void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_typ
 
 void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
     expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
+}
+
+void expression_info_set_constant_single_item(Expression_Info* info, Datatype* type, void* value_ptr) {
+    Array<byte> memory;
+    memory.data = (byte*)value_ptr;
+    memory.size = type->memory_info.value.size;
+    expression_info_set_constant(info, type, memory, 0);
+}
+
+void expression_info_set_constant_u64(Expression_Info* info, u64 value) {
+    expression_info_set_constant_single_item(info, upcast(compiler.type_system.predefined_types.u64_type), &value);
 }
 
 // Returns result type of a value
@@ -5430,7 +5447,8 @@ void analysis_workload_entry(void* userdata)
         ir_generator_generate_queued_items(true);
 
         // Execute
-        IR_Function* ir_func = *hashtable_find_element(&ir_gen->function_mapping, bake_function);
+        auto& slots = semantic_analyser.function_slots;
+        IR_Function* ir_func = slots[bake_function->function_slot_index].ir_function;
         int func_start_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_func);
 
         Bytecode_Thread* thread = bytecode_thread_create(10000);
@@ -7248,7 +7266,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         Datatype* result_type = 0;
         if (new_node.count_expr.available) {
             result_type = upcast(type_system_make_slice(allocated_type));
-            semantic_analyser_analyse_expression_value(new_node.count_expr.value, expression_context_make_specific_type(upcast(types.i32_type)));
+            semantic_analyser_analyse_expression_value(new_node.count_expr.value, expression_context_make_specific_type(upcast(types.u64_type)));
         }
         else {
             result_type = upcast(type_system_make_pointer(allocated_type));
@@ -7375,7 +7393,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
 
             semantic_analyser_analyse_expression_value(
-                access_node.index_expr, expression_context_make_specific_type(upcast(types.i32_type))
+                access_node.index_expr, expression_context_make_specific_type(upcast(types.u64_type))
             );
         }
 
@@ -7793,10 +7811,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     auto array = downcast<Datatype_Array>(datatype);
                     if (member_node.name == ids.size) {
                         if (array->count_known) {
-                            expression_info_set_constant_i32(info, array->element_count);
+                            expression_info_set_constant_u64(info, array->element_count);
                         }
                         else {
-                            EXIT_ERROR(upcast(types.i32_type));
+                            EXIT_ERROR(upcast(types.u64_type));
                         }
                         return info;
                     }
@@ -9502,7 +9520,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
             function = analyse_expression_info_as_function(param_function.expression, info, 2, true, &unused);
         }
 
-        if (success)
+        if (success && function != nullptr) // nullptr check because of compiler warning...
         {
             Custom_Operator op;
             op.binop.function = function;
@@ -9583,14 +9601,14 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
         }
 
         ModTree_Function* function = nullptr;
-        Type_Mods mods;
+        Type_Mods mods = type_mods_make(false, 0, 0, 0);
         if (param_function.is_set) {
             Expression_Info* info = semantic_analyser_analyse_expression_any(param_function.expression, expression_context_make_unknown());
             parameter_set_analysed(param_function);
             function = analyse_expression_info_as_function(param_function.expression, info, 1, true, &mods);
         }
 
-        if (success)
+        if (success && function != nullptr) // null-check so that compiler doesn't show warning
         {
             Custom_Operator op;
             op.unop.function = function;
@@ -10754,7 +10772,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL
             );
             loop_info.index_variable_symbol = index_symbol;
-            index_symbol->options.variable_type = upcast(types.i32_type);
+            index_symbol->options.variable_type = upcast(types.u64_type);
         }
         RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
 
@@ -11276,12 +11294,14 @@ void function_progress_destroy(Function_Progress* progress) {
 void semantic_analyser_reset()
 {
     auto& type_system = compiler.type_system;
+    auto& types = compiler.type_system.predefined_types;
 
     // Reset analyser data
     {
         semantic_analyser.root_module = 0;
         semantic_analyser.current_workload = 0;
         hashtable_reset(&semantic_analyser.valid_template_parameters);
+        dynamic_array_reset(&semantic_analyser.function_slots);
 
         // Errors
         for (int i = 0; i < semantic_analyser.errors.size; i++) {
@@ -11369,7 +11389,6 @@ void semantic_analyser_reset()
         auto root = semantic_analyser.root_symbol_table;
         auto pool = &compiler.identifier_pool;
         auto& symbols = semantic_analyser.predefined_symbols;
-        auto& types = compiler.type_system.predefined_types;
 
         auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(
@@ -11393,6 +11412,7 @@ void semantic_analyser_reset()
         symbols.type_f64 = define_type_symbol("f64", upcast(types.f64_type));
         symbols.type_byte = define_type_symbol("byte", upcast(types.u8_type));
         symbols.type_string = define_type_symbol("string", types.string);
+        symbols.type_allocator = define_type_symbol("Allocator", upcast(types.allocator));
         symbols.type_type = define_type_symbol("Type_Handle", types.type_handle);
         symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
         symbols.type_any = define_type_symbol("Any", upcast(types.any_type));
@@ -11432,25 +11452,48 @@ void semantic_analyser_reset()
         //       that isn't connected to anything.
         symbols.error_symbol = define_type_symbol("0_ERROR_SYMBOL", types.unknown_type);
         symbols.error_symbol->type = Symbol_Type::ERROR_SYMBOL;
+
+        // Add global allocator symbol
+        symbols.global_allocator_symbol = symbol_table_define_symbol(
+            root, 
+            identifier_pool_add(pool, string_create_static("global_allocator")), 
+            Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
+        );
+        semantic_analyser.global_allocator = modtree_program_add_global(
+            upcast(type_system_make_pointer(upcast(types.allocator))), symbols.global_allocator_symbol, false
+        );
+        symbols.global_allocator_symbol->options.global = semantic_analyser.global_allocator;
+
+        // Add default allocator
+        symbols.default_allocator_symbol = symbol_table_define_symbol(
+            root, 
+            identifier_pool_add(pool, string_create_static("default_allocator")), 
+            Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
+        );
+        semantic_analyser.default_allocator = modtree_program_add_global(
+            upcast(upcast(types.allocator)), symbols.default_allocator_symbol, false
+        );
+        symbols.default_allocator_symbol->options.global = semantic_analyser.default_allocator;
     }
 }
 
 Semantic_Analyser* semantic_analyser_initialize()
 {
+    semantic_analyser.function_slots = dynamic_array_create<Function_Slot>();
     semantic_analyser.errors = dynamic_array_create<Semantic_Error>(64);
     semantic_analyser.comptime_value_allocator = stack_allocator_create_empty(2048);
     semantic_analyser.workload_executer = workload_executer_initialize();
-    semantic_analyser.allocated_function_progresses = dynamic_array_create<Function_Progress*>(1);
-    semantic_analyser.allocated_operator_contexts = dynamic_array_create<Operator_Context*>(1);
+    semantic_analyser.allocated_function_progresses = dynamic_array_create<Function_Progress*>();
+    semantic_analyser.allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
     semantic_analyser.progress_allocator = stack_allocator_create_empty(2048);
     semantic_analyser.global_variable_memory_pool = stack_allocator_create_empty(1024);
     semantic_analyser.program = 0;
     semantic_analyser.ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(1);
     semantic_analyser.symbol_lookup_visited = hashset_create_pointer_empty<Symbol_Table*>(1);
-    semantic_analyser.allocated_passes = dynamic_array_create<Analysis_Pass*>(1);
+    semantic_analyser.allocated_passes = dynamic_array_create<Analysis_Pass*>();
     semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
-    semantic_analyser.allocated_symbol_tables = dynamic_array_create<Symbol_Table*>(16);
-    semantic_analyser.allocated_symbols = dynamic_array_create<Symbol*>(16);
+    semantic_analyser.allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
+    semantic_analyser.allocated_symbols = dynamic_array_create<Symbol*>();
     semantic_analyser.valid_template_parameters = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template_Parameter*>(1);
     return &semantic_analyser;
 }
@@ -11460,6 +11503,7 @@ void semantic_analyser_destroy()
     hashset_destroy(&semantic_analyser.symbol_lookup_visited);
     hashtable_destroy(&semantic_analyser.valid_template_parameters);
     stack_allocator_destroy(&semantic_analyser.global_variable_memory_pool);
+    dynamic_array_destroy(&semantic_analyser.function_slots);
 
     for (int i = 0; i < semantic_analyser.errors.size; i++) {
         dynamic_array_destroy(&semantic_analyser.errors[i].information);

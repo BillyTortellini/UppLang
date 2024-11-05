@@ -54,7 +54,7 @@ enum class Hardcoded_Type
     BITWISE_SHIFT_LEFT,
     BITWISE_SHIFT_RIGHT,
 
-    MALLOC_SIZE_I32,
+    MALLOC_SIZE_U64,
     FREE_POINTER,
 
     PRINT_I32,
