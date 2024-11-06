@@ -19,6 +19,13 @@ struct Function_Progress;
 struct Polymorphic_Value;
 struct Datatype_Template_Parameter;
 struct Struct_Content;
+struct Analysis_Pass;
+
+namespace AST
+{
+    struct Expression;
+};
+
 
 // Helpers
 struct Function_Parameter
@@ -26,9 +33,11 @@ struct Function_Parameter
     String* name;
     Datatype* type;
 
-    // A default value may or may not exist, and if it exists it may not be available
+    // If the default value does not exist, boolean is set to false and the others are nullptr
+    // If it exists, the value_expr or value_pass may still be null (In polymorphic function/on error)
     bool default_value_exists;
-    Optional<Upp_Constant> default_value_opt;
+    AST::Expression* value_expr;
+    Analysis_Pass* value_pass;
 };
 Function_Parameter function_parameter_make_empty();
 
@@ -281,10 +290,9 @@ struct Upp_Slice_Base
     u64 size;
 };
 
-// A string as it is currently defined in the upp-language
-// Note: The size of the slice includes the 0 character, so it should be always > 0
-//       This is done because delete on slices should be able to work with the size of the slice (e.g. memory size should match)
-struct Upp_String {
+// A c_string as it is currently defined in the upp-language
+// The size of the bytes don't include the null-terminator, which is still expected
+struct Upp_C_String {
     Upp_Slice<const u8> bytes;
 };
 
@@ -344,7 +352,7 @@ struct Internal_Type_Function
 
 struct Internal_Type_Struct_Member
 {
-    Upp_String name;
+    Upp_C_String name;
     Upp_Type_Handle type;
     int offset;
 };
@@ -352,7 +360,7 @@ struct Internal_Type_Struct_Member
 struct Internal_Type_Subtype
 {
     Upp_Type_Handle type;
-    Upp_String subtype_name;
+    Upp_C_String subtype_name;
     int subtype_index;
 };
 
@@ -361,7 +369,7 @@ struct Internal_Type_Struct_Content
     Upp_Slice<Internal_Type_Struct_Member> members;
     Upp_Slice<Internal_Type_Struct_Content> subtypes;
     Internal_Type_Struct_Member tag_member;
-    Upp_String name;
+    Upp_C_String name;
 };
 
 struct Internal_Type_Struct
@@ -372,7 +380,7 @@ struct Internal_Type_Struct
 
 struct Internal_Type_Enum_Member
 {
-    Upp_String name;
+    Upp_C_String name;
     int value;
 };
 
@@ -390,7 +398,7 @@ struct Internal_Type_Slice
 struct Internal_Type_Enum
 {
     Upp_Slice<Internal_Type_Enum_Member> members;
-    Upp_String name;
+    Upp_C_String name;
 };
 
 struct Internal_Type_Bytepointer
@@ -492,7 +500,7 @@ struct Predefined_Types
     Datatype_Primitive* f64_type;
 
     // Prebuilt structs/types used by compiler
-    Datatype* string;
+    Datatype* c_string;
     Datatype* unknown_type;
     Datatype* type_handle;
     Datatype* byte_pointer;
@@ -600,6 +608,8 @@ Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes 
 Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int subtype_index);
 Type_Mods type_mods_make(bool is_constant, int pointer_level, u32 const_flags, u32 optional_flags, Subtype_Index* subtype = 0);
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
+Upp_C_String upp_c_string_from_id(String* id);
+Upp_C_String upp_c_string_empty();
 
 
 // Casting functions

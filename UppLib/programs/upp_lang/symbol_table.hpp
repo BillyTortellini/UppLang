@@ -193,7 +193,6 @@ struct Symbol
     union
     {
         Datatype* variable_type;
-        Module_Progress* module_progress;
         ModTree_Function* function;
         Polymorphic_Function_Base* polymorphic_function;
         Workload_Definition* definition_workload;
@@ -201,6 +200,10 @@ struct Symbol
         Hardcoded_Type hardcoded;
         Datatype* type;
         ModTree_Global* global;
+        struct {
+            Module_Progress* progress; // Some modules (e.g. compiler created) don't have a progress
+            Symbol_Table* symbol_table;
+        } module;
         struct {
             Function_Progress* function;
             int index_in_polymorphic_signature;

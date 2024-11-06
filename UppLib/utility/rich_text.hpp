@@ -47,7 +47,6 @@ namespace Rich_Text
     struct Rich_Text
     {
         Dynamic_Array<Rich_Line> lines;
-        int max_line_char_count;
         Text_Style style;
         vec3 default_text_color;
     };

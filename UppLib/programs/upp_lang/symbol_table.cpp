@@ -37,17 +37,17 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
 }
 
 void symbol_table_add_include_table(
-    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* include_node)
+    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node)
 {
     // Check for errors
     if (symbol_table == included_table) {
-        log_semantic_error("Trying to include symbol table to itself!", include_node);
+        log_semantic_error("Trying to include symbol table to itself!", error_report_node);
         return;
     }
     for (int i = 0; i < symbol_table->included_tables.size; i++) {
         auto include = symbol_table->included_tables[i];
         if (include.table == included_table) {
-            log_semantic_error("Table is already included!", include_node);
+            log_semantic_error("Table is already included!", error_report_node);
             return;
         }
     }
@@ -280,7 +280,7 @@ void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table
         }
     }
     // if (table->parent != 0) {
-    //     symbol_table_append_to_string_with_parent_info(string, table->parent, true, print_root);
+    //     symbol_table_append_to_string_with_parent_info(c_string, table->parent, true, print_root);
     // }
 }
 

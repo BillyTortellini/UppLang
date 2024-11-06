@@ -279,7 +279,7 @@ void string_append_formated(String* string, const char* format, ...)
     }
     string->size = string->size + message_length;
     /*
-    if (string->size != strlen(string->characters)) {
+    if (c_string->size != strlen(c_string->characters)) {
         logg("shit??\n");
     }
     */
@@ -380,7 +380,7 @@ void string_insert_string(String* string, String* insertion, int position)
     int new_size = string->size + insertion->size;
     string_reserve(string, new_size+1);
     string->characters[new_size] = 0;
-    // Create a hole in the string where we the insertion can be placed
+    // Create a hole in the c_string where we the insertion can be placed
     for (int i = new_size - 1; i-insertion->size >= position; i--) {
         string->characters[i] = string->characters[i - insertion->size];
     }
@@ -483,6 +483,8 @@ bool string_contains_only_characters_in_set(String* string, String set, bool use
 }
 
 bool string_equals_cstring(String* string, const char* compare) {
+    int c_size = strlen(compare);
+    if (string->size != c_size) return false;
     if (strncmp(string->characters, compare, string->size) == 0) {
         return true;
     }

@@ -12,7 +12,8 @@ Function_Parameter function_parameter_make_empty() {
     result.name = compiler.predefined_ids.empty_string;
     result.type = compiler.type_system.predefined_types.unknown_type;
     result.default_value_exists = false;
-    result.default_value_opt.available = false;
+    result.value_expr = nullptr;
+    result.value_pass = nullptr;
     return result;
 }
 
@@ -587,9 +588,10 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
             if (p_a.type != p_b.type || p_a.name != p_b.name || p_a.default_value_exists != p_b.default_value_exists) {
                 return false;
             }
-            // If default values exist, we don't deduplicate the function, because comparison may be wrong currently
             if (p_a.default_value_exists) {
-                return false;
+                if (p_a.value_expr != p_b.value_expr || p_a.value_pass != p_b.value_pass) {
+                    return false;
+                }
             }
         }
         return true;
@@ -1257,8 +1259,7 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
 
     auto& info_internal = type_system_register_type(upcast(result))->options.struct_subtype;
     info_internal.type = base_type->type_handle;
-    info_internal.subtype_name.bytes.size = subtype_name->size + 1;
-    info_internal.subtype_name.bytes.data = (const u8*) subtype_name->characters;
+    info_internal.subtype_name = upp_c_string_from_id(subtype_name);
 
     Datatype* final_type = upcast(result);
     if (is_const) {
@@ -1596,18 +1597,15 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
 
 void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_Struct_Content* internal)
 {
-    internal->name.bytes.data = (const u8*) content->name->characters;
-    internal->name.bytes.size = content->name->size + 1;
+    internal->name = upp_c_string_from_id(content->name);
 
     if (content->subtypes.size > 0) {
-        internal->tag_member.name.bytes.data = (const u8*)content->tag_member.id->characters;
-        internal->tag_member.name.bytes.size = content->tag_member.id->size + 1;
+        internal->tag_member.name = upp_c_string_from_id(content->tag_member.id);
         internal->tag_member.offset = content->tag_member.offset;
         internal->tag_member.type = content->tag_member.type->type_handle;
     }
     else {
-        internal->tag_member.name.bytes.data = (const u8*) "";
-        internal->tag_member.name.bytes.size = 1;
+        internal->tag_member.name = upp_c_string_empty();
         internal->tag_member.offset = 0;
         internal->tag_member.type = compiler.type_system.predefined_types.unknown_type->type_handle;
     }
@@ -1621,8 +1619,7 @@ void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_
         {
             Internal_Type_Struct_Member* mem_i = &internal->members.data[i];
             Struct_Member& mem = content->members[i];
-            mem_i->name.bytes.data = (const u8*) mem.id->characters;
-            mem_i->name.bytes.size = mem.id->size + 1;
+            mem_i->name = upp_c_string_from_id(mem.id);
             mem_i->offset = mem.offset;
             mem_i->type = mem.type->type_handle;
         }
@@ -1826,12 +1823,10 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
 
     // Make mirroring internal info
     if (enum_type->name == 0) {
-        internal_info->options.enumeration.name.bytes.size = 1;
-        internal_info->options.enumeration.name.bytes.data = (const u8*) "";
+        internal_info->options.enumeration.name = upp_c_string_empty();
     }
     else {
-        internal_info->options.enumeration.name.bytes.size = enum_type->name->size + 1;
-        internal_info->options.enumeration.name.bytes.data = (const u8*) enum_type->name->characters;
+        internal_info->options.enumeration.name = upp_c_string_from_id(enum_type->name);
     }
     int member_count = members.size;
     internal_info->options.enumeration.members.size = member_count;
@@ -1840,8 +1835,7 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
     {
         Enum_Member* member = &members[i];
         Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data[i];
-        internal_member->name.bytes.size = member->name->size + 1;
-        internal_member->name.bytes.data = (const u8*)member->name->characters;
+        internal_member->name = upp_c_string_from_id(member->name);
         internal_member->value = member->value;
     }
 }
@@ -1951,12 +1945,12 @@ void type_system_add_predefined_types(Type_System* system)
 
     // String
     {
-        Datatype_Struct* c_string = type_system_make_struct_empty(Structure_Type::STRUCT, ids.string, 0);
-        Datatype_Slice* slice_type = type_system_make_slice(type_system_make_constant(upcast(types->u8_type)));
+        Datatype_Struct* c_string = type_system_make_struct_empty(Structure_Type::STRUCT, ids.c_string, 0);
+        Datatype_Slice* slice_type = type_system_make_slice(type_system_make_constant(upcast(types->c_char_type)));
         struct_add_member(&c_string->content, ids.bytes, upcast(slice_type));
         type_system_finish_struct(c_string);
-        types->string = upcast(c_string);
-        test_type_similarity<Upp_String>(types->string);
+        types->c_string = upcast(c_string);
+        test_type_similarity<Upp_C_String>(types->c_string);
     }
 
     // Allocator + Allocator-Functions
@@ -2061,7 +2055,7 @@ void type_system_add_predefined_types(Type_System* system)
         {
             Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
             {
-                add_member_cstr(&struct_member_type->content, "name", upcast(types->string));
+                add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
                 add_member_cstr(&struct_member_type->content, "type", types->type_handle);
                 add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
                 type_system_finish_struct(struct_member_type);
@@ -2073,7 +2067,7 @@ void type_system_add_predefined_types(Type_System* system)
                 add_member_cstr(&internal_content->content, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
                 add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(internal_content))));
                 add_member_cstr(&internal_content->content, "tag_member", upcast(struct_member_type));
-                add_member_cstr(&internal_content->content, "name", upcast(types->string));
+                add_member_cstr(&internal_content->content, "name", upcast(types->c_string));
             }
             type_system_finish_struct(internal_content);
             test_type_similarity<Internal_Type_Struct_Content>(upcast(internal_content));
@@ -2085,7 +2079,7 @@ void type_system_add_predefined_types(Type_System* system)
         // Subtype
         {
             add_member_cstr(subtype_subtype, "base_type", types->type_handle);
-            add_member_cstr(subtype_subtype, "name", upcast(types->string));
+            add_member_cstr(subtype_subtype, "name", upcast(types->c_string));
             add_member_cstr(subtype_subtype, "index", upcast(types->i32_type));
         }
         // ENUM
@@ -2093,12 +2087,12 @@ void type_system_add_predefined_types(Type_System* system)
             {
                 String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static("Enum_Member"));
                 Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, id, 0);
-                add_member_cstr(&enum_member_type->content, "name", upcast(types->string));
+                add_member_cstr(&enum_member_type->content, "name", upcast(types->c_string));
                 add_member_cstr(&enum_member_type->content, "value", upcast(types->i32_type));
                 type_system_finish_struct(enum_member_type);
                 add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
             }
-            add_member_cstr(subtype_enum, "name", upcast(types->string));
+            add_member_cstr(subtype_enum, "name", upcast(types->c_string));
         }
         // Function
         {
@@ -2124,7 +2118,7 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_print_i32 = type_system_make_function({ make_param(upcast(types->i32_type), "value") });
         types->type_print_f32 = type_system_make_function({ make_param(upcast(types->f32_type), "value") });
         types->type_print_line = type_system_make_function({});
-        types->type_print_string = type_system_make_function({ make_param(upcast(types->string), "value") });
+        types->type_print_string = type_system_make_function({ make_param(upcast(types->c_string), "value") });
         types->type_read_i32 = type_system_make_function({});
         types->type_read_f32 = type_system_make_function({});
         types->type_read_bool = type_system_make_function({});
@@ -2142,13 +2136,13 @@ void type_system_add_predefined_types(Type_System* system)
             } 
         );
         types->type_add_binop = type_system_make_function({
-                make_param(upcast(types->string), "binop"), 
+                make_param(upcast(types->c_string), "binop"), 
                 make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
                 make_param(upcast(types->bool_type), "commutative", true)
             }
         );
         types->type_add_unop = type_system_make_function({
-                make_param(upcast(types->string), "unop"), 
+                make_param(upcast(types->c_string), "unop"), 
                 make_param(upcast(types->any_type), "function") // Type doesn't matter too much here...
             }
         );
@@ -2159,7 +2153,7 @@ void type_system_add_predefined_types(Type_System* system)
         types->type_add_dotcall = type_system_make_function({
                 make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
                 make_param(upcast(types->bool_type), "as_member_access", true),
-                make_param(upcast(types->string), "name", true)
+                make_param(upcast(types->c_string), "name", true)
             }
         );
         types->type_add_iterator = type_system_make_function({
@@ -2302,3 +2296,17 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
     return false;
 }
 
+Upp_C_String upp_c_string_from_id(String* id)
+{
+    Upp_C_String result;
+    result.bytes.size = id->size;
+    result.bytes.data = (const u8*) id->characters;
+    return result;
+}
+
+Upp_C_String upp_c_string_empty() {
+    Upp_C_String result;
+    result.bytes.data = (const u8*) "";
+    result.bytes.size = 0;
+    return result;
+}

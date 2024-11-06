@@ -364,7 +364,7 @@ void ir_generator_finish(bool gen_bytecode);
 IR_Program* ir_program_create(Type_System* type_system);
 void ir_program_destroy(IR_Program* program);
 
-void ir_program_append_to_string(IR_Program* program, String* string);
+void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions);
 IR_Binop ast_binop_to_ir_binop(AST::Binop binop);
 
 

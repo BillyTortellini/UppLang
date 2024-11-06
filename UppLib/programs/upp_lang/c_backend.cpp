@@ -583,7 +583,7 @@ void c_generator_output_type_reference(Datatype* type)
         String* section_structs = &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS];
         string_append_formated(section_prototypes, "struct %s;\n", access_name.characters);
 
-        // Temporary string is required when calling this function recursively
+        // Temporary c_string is required when calling this function recursively
         String tmp = string_create_empty(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
@@ -605,7 +605,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(&access_name, "fptr_%d", gen.name_counter);
         gen.name_counter++;
 
-        // Temporary string is required when calling this function recursively
+        // Temporary c_string is required when calling this function recursively
         String tmp = string_create_empty(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
@@ -782,7 +782,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
 
     string_add_indentation(gen.text, indentation_level);
     string_append_formated(gen.text, "content->name = ");
-    output_memory_as_new_constant((byte*)&content->name, types.string, false, 1);
+    output_memory_as_new_constant((byte*)&content->name, types.c_string, false, 1);
     string_append(gen.text, ";\n");
 
     // Generate tag member
@@ -790,7 +790,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
     {
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.name = ");
-        output_memory_as_new_constant((byte*)&content->tag_member.name, types.string, false, 1);
+        output_memory_as_new_constant((byte*)&content->tag_member.name, types.c_string, false, 1);
         string_append(gen.text, ";\n");
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.type = %d;\n", content->tag_member.type.index);
@@ -811,7 +811,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
             auto& member = content->members.data[i];
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "content->members.data[%d].name = ", i);
-            output_memory_as_new_constant((byte*)&member.name, types.string, false, 1);
+            output_memory_as_new_constant((byte*)&member.name, types.c_string, false, 1);
             string_append(gen.text, ";\n");
 
             string_add_indentation(gen.text, indentation_level);
@@ -888,7 +888,7 @@ void c_generator_generate()
         {
             C_Translation translation;
             translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.string;
+            translation.options.datatype = types.c_string;
             String name = string_create("Upp_String_"); // See hardcoded_functions.h
             hashtable_insert_element(&gen.translations, translation, name);
         }
@@ -1031,7 +1031,7 @@ void c_generator_generate()
             Datatype_Function* function_signature = function->function_type;
             auto& parameters = function_signature->parameters;
 
-            // Generate function signature into tmp string
+            // Generate function signature into tmp c_string
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
             {
                 if (function != program->entry_function) 
@@ -1146,7 +1146,7 @@ void c_generator_generate()
                 string_append_formated(gen.text, "info->subtypes_.Subtype.base_type = %d;\n", subtype->base_type->type_handle.index);
                 string_add_indentation(gen.text, 1);
                 string_append(gen.text, "info->subtypes_.Subtype.name = ");
-                output_memory_as_new_constant((byte*)&internal_info.subtype_name, types.string, false, 1);
+                output_memory_as_new_constant((byte*)&internal_info.subtype_name, types.c_string, false, 1);
                 string_append(gen.text, ";\n");
                 string_add_indentation(gen.text, 1);
                 string_append_formated(gen.text, "info->subtypes_.Subtype.index = %d;\n", subtype->subtype_index);
@@ -1169,7 +1169,7 @@ void c_generator_generate()
                 Struct_Content* enum_subtype = types.type_information_type->content.subtypes[(int)Datatype_Type::ENUM - 1];
                 auto& internal_info = type_system.internal_type_infos[i]->options.enumeration;
                 string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
-                output_memory_as_new_constant((byte*)&internal_info.name, types.string, false, 1);
+                output_memory_as_new_constant((byte*)&internal_info.name, types.c_string, false, 1);
                 string_append(gen.text, ";\n");
 
                 string_add_indentation(gen.text, 1);
@@ -1185,7 +1185,7 @@ void c_generator_generate()
                         auto& member = internal_info.members.data[j];
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
-                        output_memory_as_new_constant((byte*)&member.name, types.string, false, 1);
+                        output_memory_as_new_constant((byte*)&member.name, types.c_string, false, 1);
                         string_append(gen.text, ";\n");
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
@@ -1568,11 +1568,11 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
         case Datatype_Type::STRUCT:
         case Datatype_Type::SUBTYPE:
         {
-            // Handle string
-            if (types_are_equal(type, types.string))
+            // Handle c_string
+            if (types_are_equal(type, types.c_string))
             {
                 // Note: Maybe we need something smarter in the future to handle multi-line strings 
-                Upp_String string = *(Upp_String*)base_memory;
+                Upp_C_String string = *(Upp_C_String*)base_memory;
                 string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
 
                 // Note: I need to escape escape sequences, so this is what i'm doing now...

@@ -745,10 +745,6 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
     // Create progress
     auto progress = analysis_progress_allocate_internal<Module_Progress>();
     progress->symbol = symbol;
-    if (symbol != 0) {
-        symbol->type = Symbol_Type::MODULE;
-        symbol->options.module_progress = progress;
-    }
 
     // Create analysis workload
     progress->module_analysis = workload_executer_allocate_workload<Workload_Module_Analysis>(upcast(module));
@@ -760,6 +756,12 @@ Module_Progress* module_progress_create(AST::Module* module, Symbol* symbol, Sym
         analysis->last_import_workload = 0;
         analysis->progress = progress;
         analysis->parent_analysis = 0;
+    }
+
+    if (symbol != 0) {
+        symbol->type = Symbol_Type::MODULE;
+        symbol->options.module.progress = progress;
+        symbol->options.module.symbol_table = progress->module_analysis->symbol_table;
     }
 
     // Create event workload
@@ -850,7 +852,8 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         {
             auto module_progress = module_progress_create(value->options.module, symbol, current_table);
             symbol->type = Symbol_Type::MODULE;
-            symbol->options.module_progress = module_progress;
+            symbol->options.module.progress = module_progress;
+            symbol->options.module.symbol_table = module_progress->module_analysis->symbol_table;
 
             // Add dependencies between parent and child module
             if (semantic_analyser.current_workload->type == Analysis_Workload_Type::MODULE_ANALYSIS)
@@ -1489,8 +1492,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
         memory_set_bytes(result_buffer, result_type_size->size, 0);
 
         // First, set all tags to correct values
+        Datatype_Struct* structure = downcast<Datatype_Struct>(info->cast_info.initial_type->base_type);
+        if (structure->struct_type == AST::Structure_Type::STRUCT)
         {
-            Datatype_Struct* structure = downcast<Datatype_Struct>(info->cast_info.initial_type->base_type);
             Struct_Content* content = &structure->content;
             Subtype_Index* subtype = info->cast_info.initial_type->mods.subtype_index;
             for (int i = 0; i < subtype->indices.size; i++) {
@@ -1850,13 +1854,13 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
     { 
         if (prefer_module_symbols_on_overload)
         {
-            Module_Progress* module_progress = 0;
+            Symbol* found_symbol = 0;
             bool multiple_modules_found = false;
             for (int i = 0; i < results.size; i++) {
                 auto symbol = results[i];
                 if (symbol->type == Symbol_Type::MODULE) {
-                    if (module_progress == 0) {
-                        module_progress = symbol->options.module_progress;
+                    if (symbol == 0) {
+                        found_symbol = symbol;
                     }
                     else {
                         multiple_modules_found = true;
@@ -1864,8 +1868,8 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
                 }
             }
 
-            if (module_progress != 0 && !multiple_modules_found) {
-                info->symbol = module_progress->symbol;
+            if (found_symbol != 0 && !multiple_modules_found) {
+                info->symbol = found_symbol;
                 dynamic_array_push_back(&info->symbol->references, lookup);
                 return info->symbol;
             }
@@ -1927,22 +1931,24 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
         if (symbol->type == Symbol_Type::MODULE)
         {
             auto current = workload->type;
-            bool dependency_failure = false;
-            auto failure_info = dependency_failure_info_make(&dependency_failure, part);
-            if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
-                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module_progress->module_analysis), failure_info);
+
+            if (symbol->options.module.progress != 0)
+            {
+                bool dependency_failure = false;
+                auto failure_info = dependency_failure_info_make(&dependency_failure, part);
+                if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
+                    analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->module_analysis), failure_info);
+                }
+                else {
+                    analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->event_symbol_table_ready), failure_info);
+                }
+                workload_executer_wait_for_dependency_resolution();
+                if (dependency_failure) {
+                    path_lookup_set_info_to_error_symbol(path, workload);
+                    return 0;
+                }
             }
-            else {
-                analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module_progress->event_symbol_table_ready), failure_info);
-            }
-            workload_executer_wait_for_dependency_resolution();
-            if (dependency_failure) {
-                path_lookup_set_info_to_error_symbol(path, workload);
-                return 0;
-            }
-            else {
-                table = symbol->options.module_progress->module_analysis->symbol_table;
-            }
+            table = symbol->options.module.symbol_table;
         }
         else
         {
@@ -3204,7 +3210,6 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
     auto& param_infos = matching_info->matched_parameters;
     matching_info->arguments = args;
 
-
     bool is_struct_initializer = matching_info->call_type == Call_Type::STRUCT_INITIALIZER;
     if (!is_struct_initializer && log_errors) 
     {
@@ -3321,6 +3326,7 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
         for (int i = 0; i < param_infos.size; i++)
         {
             auto& param_info = param_infos[i];
+            if (param_info.is_set || !param_info.required) continue;
             if (!param_info.is_set && param_info.required)
             {
                 if (log_errors) {
@@ -3463,9 +3469,10 @@ void expression_search_for_implicit_parameters_and_symbol_lookups(
 
 void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parameter* parameter_node)
 {
-    parameter.name = parameter_node->name;
+    auto workload = semantic_analyser.current_workload;
 
     // Analyse type
+    parameter.name = parameter_node->name;
     parameter.type = semantic_analyser_analyse_expression_type(parameter_node->type);
     if (!parameter_node->is_comptime && !parameter_node->is_mutable) {
         parameter.type = type_system_make_constant(parameter.type);
@@ -3474,29 +3481,22 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
     // Check if default value exists
     parameter.default_value_exists = parameter_node->default_value.available;
     if (!parameter.default_value_exists) {
-        parameter.default_value_opt.available = false;
+        parameter.value_expr = nullptr;
+        parameter.value_pass = nullptr;
         return;
     }
+    parameter.value_expr = parameter_node->default_value.value;
+    parameter.value_pass = workload->current_pass;
 
     // Update symbol access level for default value
-    RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
+    RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
 
     // Analyse default value
     auto default_value_type = semantic_analyser_analyse_expression_value(
         parameter_node->default_value.value, expression_context_make_specific_type(parameter.type));
     if (parameter_node->is_comptime) {
         log_semantic_error("Comptime parameters cannot have default values", upcast(parameter_node->default_value.value));
-        parameter.default_value_exists = false;
-        parameter.default_value_opt.available = false;
-        return;
     }
-    if (datatype_is_unknown(parameter.type) || default_value_type != parameter.type) {
-        return;
-    }
-
-    // Default value must be comptime known and serializable
-    parameter.default_value_opt = expression_calculate_comptime_value(parameter_node->default_value.value, "Default values must be comptime");
-    return;
 }
 
 // Returns not-available if no polymorphic-parameters were found
@@ -4369,6 +4369,9 @@ Instanciation_Result instanciate_polymorphic_callable(
                 return_type = context.expected_type.type;
             }
 
+            if (return_type->base_type->type == Datatype_Type::UNKNOWN_TYPE) {
+                success = false;
+            }
             final_return_type = return_type;
             continue;
         }
@@ -4582,7 +4585,8 @@ Instanciation_Result instanciate_polymorphic_callable(
                     }
                     else {
                         parameter.default_value_exists = base_param.infos.default_value_exists;
-                        parameter.default_value_opt = base_param.infos.default_value_opt;
+                        parameter.value_expr = base_param.infos.value_expr;
+                        parameter.value_pass = base_param.infos.value_pass;
                         parameter.type = base_param.infos.type;
                     }
                     parameter.name = base_param.infos.name;
@@ -4910,20 +4914,31 @@ void analysis_workload_entry(void* userdata)
             }
             else {
                 import_workload->symbol->type = Symbol_Type::MODULE;
-                import_workload->symbol->options.module_progress = module_progress;
+                import_workload->symbol->options.module.progress = module_progress;
+                import_workload->symbol->options.module.symbol_table = module_progress->module_analysis->symbol_table;
             }
             break;
         }
         else if (node->type == AST::Import_Type::SINGLE_SYMBOL) {
             import_workload->alias_for_symbol = path_lookup_resolve_to_single_symbol(node->path, true);
         }
-        else { // Import * or **
+        else 
+        { 
+            // Import * or **
             Symbol* symbol = path_lookup_resolve_to_single_symbol(node->path, true);
             assert(symbol->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Must not happen here");
-            if (symbol->type == Symbol_Type::MODULE)
+            if (symbol->type != Symbol_Type::MODULE) {
+                if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+                    log_semantic_error("Cannot import from non module", upcast(node));
+                    log_error_info_symbol(symbol);
+                }
+                break;
+            }
+
+            // Wait for symbol discovery to finish
+            if (symbol->options.module.progress != 0) 
             {
-                auto progress = symbol->options.module_progress;
-                // Wait for symbol discovery to finish
+                auto progress = symbol->options.module.progress;
                 analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->module_analysis));
                 workload_executer_wait_for_dependency_resolution();
 
@@ -4937,23 +4952,20 @@ void analysis_workload_entry(void* userdata)
                         dependency_failure_info_make(&failure_indicator, node->path->last));
                     workload_executer_wait_for_dependency_resolution();
                 }
-
-                if (!failure_indicator) {
-                    assert(symbol->type == Symbol_Type::MODULE, "Without error symbol type shouldn't change!");
-                    // Add import
-                    symbol_table_add_include_table(
-                        semantic_analyser.current_workload->current_symbol_table,
-                        progress->module_analysis->symbol_table,
-                        node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE,
-                        Symbol_Access_Level::GLOBAL,
-                        upcast(node)
-                    );
+                if (failure_indicator) {
+                    break;
                 }
             }
-            else if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-                log_semantic_error("Cannot import from non module", upcast(node));
-                log_error_info_symbol(symbol);
-            }
+
+            assert(symbol->type == Symbol_Type::MODULE, "Without error symbol type shouldn't change!");
+            // Add import
+            symbol_table_add_include_table(
+                semantic_analyser.current_workload->current_symbol_table,
+                symbol->options.module.symbol_table,
+                node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE,
+                Symbol_Access_Level::GLOBAL,
+                upcast(node)
+            );
         }
         break;
     }
@@ -6603,6 +6615,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         case Call_Type::CONTEXT_OPTION:
         case Call_Type::INSTANCIATE:
+        case Call_Type::UNION_INITIALIZER:
         case Call_Type::STRUCT_INITIALIZER: {
             panic("Should not happen in normal function call!");
             break;
@@ -6812,7 +6825,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Variables which can hold the specified values
         void* value_nullptr = 0;
-        Upp_String value_string;
+        Upp_C_String value_string;
         u8 value_u8;
         u16 value_u16;
         u32 value_u32;
@@ -6979,11 +6992,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             break;
         }
         case Literal_Type::STRING: {
-            String* string = read.options.string;
-            value_string.bytes.size = string->size + 1;
-            value_string.bytes.data = (const u8*)string->characters;
-
-            literal_type = upcast(types.string);
+            value_string = upp_c_string_from_id(read.options.string);
+            literal_type = upcast(types.c_string);
             value_ptr = &value_string;
             break;
         }
@@ -7299,13 +7309,63 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         if (type_for_init->type == Datatype_Type::STRUCT || type_for_init->type == Datatype_Type::SUBTYPE)
         {
             Datatype_Struct* struct_type = downcast<Datatype_Struct>(type_for_init->base_type);
-            Struct_Content* content = type_mods_get_subtype(struct_type, type_for_init->mods);
-            Subtype_Index* final_subtype = type_for_init->mods.subtype_index;
-            analyse_member_initializer_recursive(init_node.arguments, struct_type, content, 0, &final_subtype);
+            if (struct_type->struct_type == AST::Structure_Type::STRUCT)
+            {
+                Struct_Content* content = type_mods_get_subtype(struct_type, type_for_init->mods);
+                Subtype_Index* final_subtype = type_for_init->mods.subtype_index;
+                analyse_member_initializer_recursive(init_node.arguments, struct_type, content, 0, &final_subtype);
 
-            // Create result type
-            auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(false, 0, 0, 0, final_subtype));
-            EXIT_VALUE(final_type, true);
+                // Create result type
+                auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(false, 0, 0, 0, final_subtype));
+                EXIT_VALUE(final_type, true);
+            }
+            else
+            {
+                // Union initializer
+                Struct_Content* content = &struct_type->content;
+
+                auto matching_info = get_info(init_node.arguments, true);
+                *matching_info = parameter_matching_info_create_empty(Call_Type::UNION_INITIALIZER, content->members.size);
+                matching_info->options.struct_init.content = content;
+                matching_info->options.struct_init.structure = struct_type;
+                matching_info->options.struct_init.subtype_valid = false;
+                matching_info->options.struct_init.supertype_valid = false;
+                matching_info->options.struct_init.valid = true;
+
+                // Match arguments to struct members
+                for (int i = 0; i < content->members.size; i++) {
+                    auto& member = content->members[i];
+                    parameter_matching_info_add_param(matching_info, member.id, false, true, member.type);
+                }
+
+                if (arguments_match_to_parameters(init_node.arguments, matching_info, true)) 
+                {
+                    int match_count = 0;
+                    for (int i = 0; i < matching_info->matched_parameters.size; i++) 
+                    {
+                        auto& member = content->members[i];
+                        auto& param_info = matching_info->matched_parameters[i];
+                        if (!param_info.is_set) {
+                            continue;
+                        }
+                        match_count += 1;
+                        analyse_parameter_if_not_already_done(&param_info, expression_context_make_specific_type(member.type));
+                    }
+
+                    if (match_count == 0) {
+                        log_semantic_error("Union initializer expects a value", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
+                    }
+                    else if (match_count > 1) {
+                        log_semantic_error("Union initializer requires exactly one argument", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
+                        log_error_info_argument_count(match_count, 1);
+                    }
+                }
+                else {
+                    parameter_matching_analyse_in_unknown_context(matching_info);
+                }
+
+                EXIT_VALUE(upcast(struct_type), true);
+            }
         }
         else
         {
@@ -9122,7 +9182,7 @@ u64 custom_operator_key_hash(Custom_Operator_Key* key)
     case AST::Context_Change_Type::DOT_CALL: {
         auto& dot_call = key->options.dot_call;
         hash = hash_combine(hash, hash_pointer(dot_call.datatype));
-        hash = hash_combine(hash, hash_pointer(dot_call.id->characters)); // Should work because all strings are in string pool
+        hash = hash_combine(hash, hash_pointer(dot_call.id->characters)); // Should work because all strings are in c_string pool
         break;
     }
     case AST::Context_Change_Type::ITERATOR: {
@@ -9387,12 +9447,14 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
         }
 
         // Wait for other module to finish module analysis (Which may install a new operator context)
-        auto other_module = symbol->options.module_progress;
-        analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(other_module->module_analysis));
-        workload_executer_wait_for_dependency_resolution();
+        if (symbol->options.module.progress != 0) {
+            auto other_module = symbol->options.module.progress;
+            analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(other_module->module_analysis));
+            workload_executer_wait_for_dependency_resolution();
+        }
 
         // Check if we already have this import
-        auto other_context = symbol->options.module_progress->module_analysis->symbol_table->operator_context;
+        auto other_context = symbol->options.module.symbol_table->operator_context;
         for (int i = 0; i < context->context_imports.size; i++) {
             if (context->context_imports[i] == other_context) {
                 return;
@@ -9454,7 +9516,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
     {
         auto matching_info = get_info(change_node->options.arguments, true);
         *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
-        parameter_matching_info_add_param(matching_info, ids.binop, true, false, upcast(types.string));
+        parameter_matching_info_add_param(matching_info, ids.binop, true, false, upcast(types.c_string));
         parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
         parameter_matching_info_add_param(matching_info, ids.commutative, false, false, upcast(types.bool_type));
         if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
@@ -9472,7 +9534,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
             if (binop_expr->type == AST::Expression_Type::LITERAL_READ && binop_expr->options.literal_read.type == Literal_Type::STRING)
             {
                 auto expr_info = get_info(binop_expr, true);
-                expression_info_set_value(expr_info, upcast(types.string), true);
+                expression_info_set_value(expr_info, upcast(types.c_string), true);
                 parameter_set_analysed(param_binop);
 
                 auto binop_str = binop_expr->options.literal_read.options.string;
@@ -9495,17 +9557,17 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
                         binop = AST::Binop::MODULO;
                     }
                     else {
-                        log_semantic_error("Binop string must be one of +,-,*,/,%", upcast(binop_expr));
+                        log_semantic_error("Binop c_string must be one of +,-,*,/,%", upcast(binop_expr));
                         success = false;
                     }
                 }
                 else {
-                    log_semantic_error("Binop string must be one of +,-,*,/,%", upcast(binop_expr));
+                    log_semantic_error("Binop c_string must be one of +,-,*,/,%", upcast(binop_expr));
                     success = false;
                 }
             }
             else {
-                log_semantic_error("Binop type must be string literal", upcast(binop_expr));
+                log_semantic_error("Binop type must be c_string literal", upcast(binop_expr));
                 success = false;
             }
         }
@@ -9555,7 +9617,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
     {
         auto matching_info = get_info(change_node->options.arguments, true);
         *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 2);
-        parameter_matching_info_add_param(matching_info, ids.unop, true, false, upcast(types.string));
+        parameter_matching_info_add_param(matching_info, ids.unop, true, false, upcast(types.c_string));
         parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
         if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
             success = false;
@@ -9571,7 +9633,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
             if (unop_expr->type == AST::Expression_Type::LITERAL_READ && unop_expr->options.literal_read.type == Literal_Type::STRING)
             {
                 auto expr_info = get_info(unop_expr, true);
-                expression_info_set_value(expr_info, upcast(types.string), true);
+                expression_info_set_value(expr_info, upcast(types.c_string), true);
                 parameter_set_analysed(param_unop);
 
                 auto unop_str = unop_expr->options.literal_read.options.string;
@@ -9585,17 +9647,17 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
                         unop = AST::Unop::NOT;
                     }
                     else {
-                        log_semantic_error("Unop string must be either ! or -", upcast(unop_expr));
+                        log_semantic_error("Unop c_string must be either ! or -", upcast(unop_expr));
                         success = false;
                     }
                 }
                 else {
-                    log_semantic_error("Unop string must be either ! or -", upcast(unop_expr));
+                    log_semantic_error("Unop c_string must be either ! or -", upcast(unop_expr));
                     success = false;
                 }
             }
             else {
-                log_semantic_error("Unop type must be string literal", upcast(unop_expr));
+                log_semantic_error("Unop type must be c_string literal", upcast(unop_expr));
                 success = false;
             }
         }
@@ -9764,7 +9826,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
         *matching_info = parameter_matching_info_create_empty(Call_Type::CONTEXT_OPTION, 3);
         parameter_matching_info_add_param(matching_info, ids.function, true, false, nullptr);
         parameter_matching_info_add_param(matching_info, ids.as_member_access, false, false, upcast(types.bool_type));
-        parameter_matching_info_add_param(matching_info, ids.name, false, false, upcast(types.string));
+        parameter_matching_info_add_param(matching_info, ids.name, false, false, upcast(types.c_string));
         if (!arguments_match_to_parameters(change_node->options.arguments, matching_info, true)) {
             success = false;
         }
@@ -9848,11 +9910,11 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
             if (name_expr->type == AST::Expression_Type::LITERAL_READ && name_expr->options.literal_read.type == Literal_Type::STRING) {
                 key.options.dot_call.id = name_expr->options.literal_read.options.string;
                 auto expr_info = get_info(name_expr, true);
-                expression_info_set_value(expr_info, upcast(types.string), true);
+                expression_info_set_value(expr_info, upcast(types.c_string), true);
                 parameter_set_analysed(param_name);
             }
             else {
-                log_semantic_error("Dotcall name must be a string literal", upcast(name_expr));
+                log_semantic_error("Dotcall name must be a c_string literal", upcast(name_expr));
                 success = false;
             }
         }
@@ -11377,29 +11439,54 @@ void semantic_analyser_reset()
         }
     }
 
-    // Create root table and default operator context
+    // Create root tables and predefined Symbols 
     {
-        auto root_table = symbol_table_create();
-        semantic_analyser.root_symbol_table = root_table;
-        symbol_table_install_new_operator_context_and_add_workloads(root_table, dynamic_array_create<AST::Context_Change*>(), nullptr);
-    }
-
-    // Create predefined Symbols 
-    {
-        auto root = semantic_analyser.root_symbol_table;
         auto pool = &compiler.identifier_pool;
         auto& symbols = semantic_analyser.predefined_symbols;
 
+        // Create root table and default operator context
+        {
+            auto root_table = symbol_table_create();
+            semantic_analyser.root_symbol_table = root_table;
+            symbol_table_install_new_operator_context_and_add_workloads(root_table, dynamic_array_create<AST::Context_Change*>(), nullptr);
+        }
+        auto root = semantic_analyser.root_symbol_table;
+
+        // Create compiler-internals table
+        auto upp_table = symbol_table_create();
+        {
+            Symbol* result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static("Upp")), Symbol_Type::MODULE, 0, Symbol_Access_Level::GLOBAL);
+            result->options.module.progress = nullptr;
+            result->options.module.symbol_table = upp_table;
+
+            // Define int, float, bool
+            result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static("int")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+            result->options.type = upcast(types.i32_type);
+
+            result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static("float")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+            result->options.type = upcast(types.f32_type);
+
+            result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static("bool")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+            result->options.type = upcast(types.bool_type);
+
+            result = symbol_table_define_symbol(
+                root, identifier_pool_add(pool, string_create_static("assert")), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
+            result->options.hardcoded = Hardcoded_Type::ASSERT_FN;
+        }
+
+
+
         auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(
-                root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+                upp_table, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
             result->options.type = type;
             return result;
         };
         symbols.type_c_char = define_type_symbol("c_char", upcast(types.c_char_type));
-        symbols.type_bool = define_type_symbol("bool", upcast(types.bool_type));
-        symbols.type_int = define_type_symbol("int", upcast(types.i32_type));
-        symbols.type_float = define_type_symbol("float", upcast(types.f32_type));
         symbols.type_u8 = define_type_symbol("u8", upcast(types.u8_type));
         symbols.type_u16 = define_type_symbol("u16", upcast(types.u16_type));
         symbols.type_u32 = define_type_symbol("u32", upcast(types.u32_type));
@@ -11411,7 +11498,7 @@ void semantic_analyser_reset()
         symbols.type_f32 = define_type_symbol("f32", upcast(types.f32_type));
         symbols.type_f64 = define_type_symbol("f64", upcast(types.f64_type));
         symbols.type_byte = define_type_symbol("byte", upcast(types.u8_type));
-        symbols.type_string = define_type_symbol("string", types.string);
+        symbols.type_c_string = define_type_symbol("c_string", types.c_string);
         symbols.type_allocator = define_type_symbol("Allocator", upcast(types.allocator));
         symbols.type_type = define_type_symbol("Type_Handle", types.type_handle);
         symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
@@ -11421,7 +11508,7 @@ void semantic_analyser_reset()
 
         auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(
-                root, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
+                upp_table, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
             result->options.hardcoded = type;
             return result;
         };
@@ -11455,7 +11542,7 @@ void semantic_analyser_reset()
 
         // Add global allocator symbol
         symbols.global_allocator_symbol = symbol_table_define_symbol(
-            root, 
+            upp_table, 
             identifier_pool_add(pool, string_create_static("global_allocator")), 
             Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
         );
@@ -11466,7 +11553,7 @@ void semantic_analyser_reset()
 
         // Add default allocator
         symbols.default_allocator_symbol = symbol_table_define_symbol(
-            root, 
+            upp_table, 
             identifier_pool_add(pool, string_create_static("default_allocator")), 
             Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
         );

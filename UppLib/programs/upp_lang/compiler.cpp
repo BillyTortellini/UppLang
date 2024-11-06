@@ -27,9 +27,9 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
-bool output_timing = true;
+bool output_timing = false;
 
 // Testcases
 bool enable_testcases = false;
@@ -192,7 +192,7 @@ void compiler_reset_data(Source_Code* main_source, Compile_Type compile_type)
             ids.value =               add_id("value");
             ids.is_available =        add_id("is_available");
             ids.uninitialized_token = add_id("_");
-            ids.string =              add_id("string");
+            ids.c_string =            add_id("c_string");
             ids.allocator =           add_id("Allocator");
             ids.bytes =               add_id("bytes");
             ids.lambda_function =     add_id("lambda_function");
@@ -370,7 +370,7 @@ void compiler_execute_analysis_workloads_and_code_generation()
                     logg("\n--------IR_PROGRAM---------\n");
                     String tmp = string_create_empty(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    ir_program_append_to_string(compiler.ir_generator->program, &tmp);
+                    ir_program_append_to_string(compiler.ir_generator->program, &tmp, false);
                     logg("%s", tmp.characters);
                 }
 
@@ -844,7 +844,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
                     if (code->open_in_editor && !code->used_in_last_compile) continue;
                     auto parser_errors = code->error_messages;
                     for (int j = 0; j < parser_errors.size; j++) {
-                        auto& e = parser_errors[i];
+                        auto& e = parser_errors[j];
                         string_append_formated(&result, "    Parse Error: %s\n", e.msg);
                     }
                 }

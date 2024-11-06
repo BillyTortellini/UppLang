@@ -45,7 +45,7 @@ void string_append_string(String* string, String* appendix);
 void string_prepend_string(String* string, String* prepension);
 void string_append_formated(String* string, const char* format, ...);
 void string_append_character(String* string, char c);
-void string_append_character_array(String* string, Array<char> appendix); // Difference to append string is that appendix does not need to be 0 terminated
+void string_append_character_array(String* string, Array<char> appendix); // Difference to append c_string is that appendix does not need to be 0 terminated
 void string_truncate(String* string, int vector_length);
 void string_replace_character(String* string, char to_replace, char replace_with);
 bool string_ends_with(const char* string, const char* ending);

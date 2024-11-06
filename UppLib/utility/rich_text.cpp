@@ -51,7 +51,6 @@ namespace Rich_Text
     {
         Rich_Text result;
         result.lines = dynamic_array_create<Rich_Line>();
-        result.max_line_char_count = 0;
         result.style = text_style_make(default_text_color);
         result.default_text_color = default_text_color;
         return result;
@@ -70,7 +69,6 @@ namespace Rich_Text
     void reset(Rich_Text* text) {
         dynamic_array_for_each(text->lines, rich_line_destroy);
         dynamic_array_reset(&text->lines);
-        text->max_line_char_count = 0;
         text->style = text_style_make();
     }
 
@@ -121,7 +119,6 @@ namespace Rich_Text
         if (line.is_seperator) return;
 
         string_append_string(&line.text, &string);
-        rich_text->max_line_char_count = math_maximum(rich_text->max_line_char_count, line.text.size);
     }
 
     void append(Rich_Text* rich_text, const char* msg) {
@@ -135,7 +132,6 @@ namespace Rich_Text
         if (line.is_seperator) return;
 
         string_append_character(&line.text, c);
-        rich_text->max_line_char_count = math_maximum(rich_text->max_line_char_count, line.text.size);
     }
 
     // Copy-paste from string_append_formated
@@ -158,8 +154,6 @@ namespace Rich_Text
         }
         string->size = string->size + message_length;
         va_end(args);
-
-        rich_text->max_line_char_count = math_maximum(rich_text->max_line_char_count, line.text.size);
     }
 
     String* start_line_manipulation(Rich_Text* rich_text) {
@@ -176,8 +170,6 @@ namespace Rich_Text
         if (lines.size == 0) return;
         auto& line = lines[lines.size - 1];
         if (line.is_seperator) return;
-
-        rich_text->max_line_char_count = math_maximum(rich_text->max_line_char_count, line.text.size);
     }
 
     void push_current_style(Rich_Text* text) 

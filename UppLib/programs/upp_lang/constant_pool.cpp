@@ -216,7 +216,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
     case Datatype_Type::SUBTYPE:
     case Datatype_Type::STRUCT:
     {
-        // Check if it's Any-type or string
+        // Check if it's Any-type or c_string
         if (types_are_equal(signature, upcast(types.any_type)))
         {
             Upp_Any any = *(Upp_Any*)memory;
@@ -227,40 +227,22 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
             result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
             return;
         }
-        else if (types_are_equal(signature, types.string))
+        else if (types_are_equal(signature, types.c_string))
         {
-            Upp_String string = *(Upp_String*)memory;
-            if (string.bytes.size < 0) {
-                result = constant_pool_result_make_error("Value contains string with negative size");
+            Upp_C_String string = *(Upp_C_String*)memory;
+
+            // Check if memory is readable
+            if (!memory_is_readable((void*)string.bytes.data, string.bytes.size)) {
+                result = constant_pool_result_make_error("Value contains c_string with unreadable memory");
                 return;
             }
-            else if (string.bytes.size == 0) {
-                if (string.bytes.data == nullptr) {
-                    memory_set_bytes(memory, sizeof(Upp_String), 0);
-                    return;
-                }
-                else {
-                    result = constant_pool_result_make_error("Value contains string with size 0 and non-null pointer");
-                    return;
-                }
-            }
-            else
-            {
-                // Check if memory is readable
-                if (!memory_is_readable((void*)string.bytes.data, string.bytes.size)) {
-                    result = constant_pool_result_make_error("Value contains string with unreadable memory");
-                    return;
-                }
 
-                auto& id_pool = compiler.identifier_pool;
-                auto id = identifier_pool_add(&id_pool, string_create_static((const char*)string.bytes.data));
+            auto& id_pool = compiler.identifier_pool;
+            auto id = identifier_pool_add(&id_pool, string_create_static((const char*)string.bytes.data));
 
-                // Create string value pointing to identifier pool
-                memory_set_bytes(&string, sizeof(Upp_String), 0);
-                string.bytes.data = (const u8*)id->characters;
-                string.bytes.size = id->size + 1;
-                *(Upp_String*)memory = string;
-            }
+            // Create c_string value pointing to identifier pool (Always null terminated)
+            memory_set_bytes(&string, sizeof(Upp_C_String), 0);
+            *(Upp_C_String*)memory = upp_c_string_from_id(id);;
 
             return;
         }

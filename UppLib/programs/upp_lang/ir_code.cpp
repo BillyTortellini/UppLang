@@ -532,11 +532,17 @@ void ir_function_append_to_string(IR_Function* function, String* string, int ind
     ir_code_block_append_to_string(function->code, string, indentation);
 }
 
-void ir_program_append_to_string(IR_Program* program, String* string)
+void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions)
 {
     string_append_formated(string, "Program Dump:\n-----------------\n");
     for (int i = 0; i < program->functions.size; i++)
     {
+        auto function = program->functions[i];
+        const auto& slot = compiler.semantic_analyser->function_slots[function->function_slot_index];
+        if (slot.modtree_function == nullptr && !print_generated_functions) {
+            continue;
+        }
+
         string_append_formated(string, "Function #%d ", i);
         ir_function_append_to_string(program->functions[i], string, 0);
         string_append_formated(string, "\n");
@@ -746,7 +752,7 @@ Parameter_Matching_Info* get_info(AST::Arguments* node) {
 void generate_member_initalizers(IR_Code_Block* ir_block, IR_Data_Access* struct_access, AST::Arguments* arguments)
 {
     auto param_infos = get_info(arguments);
-    assert(param_infos->call_type == Call_Type::STRUCT_INITIALIZER, "");
+    assert(param_infos->call_type == Call_Type::STRUCT_INITIALIZER || param_infos->call_type == Call_Type::UNION_INITIALIZER, "");
     auto& init_info = param_infos->options.struct_init;
 
     for (int i = 0; i < param_infos->matched_parameters.size; i++)
@@ -1091,8 +1097,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             }
             else {
                 assert(param.default_value_exists, "");
-                assert(param.default_value_opt.available, "Must be, otherwise we shouldn't get to this point");
-                argument_access = ir_data_access_create_constant(param.default_value_opt.value);
+                assert(param.value_expr != 0 && param.value_pass != 0, "Must be, otherwise we shouldn't get to this point");
+                RESTORE_ON_SCOPE_EXIT(ir_generator.current_pass, param.value_pass);
+                argument_access = ir_generator_generate_expression(ir_block, param.value_expr);
             }
             dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
         }

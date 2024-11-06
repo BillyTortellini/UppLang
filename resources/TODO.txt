@@ -1,21 +1,46 @@
 
 TODO:
+ * Fix all testcases
+ * Fix all C-generated testcases
+ * Create new testcases for untested features
 
- * Move normal names into new namespace Upp~int Compiler~i32
-    - How is this usefull? By just importing int, float and others...
-    - Maybe we want to think about aliases now...
+DONE:
+ * String literals are now null terminated and called c_string
+ * Context should move if too far left
+ * Context should grow if error message is too long (with indentation)
+ * Semantic analyser needs to set the default-value expr + pass correctly on analysis
+ * IR-Code needs to generate the expression when default value is required
+ * Add expression + analysis-pass in function-parameter as default value
+ * Maybe I still want has_default_value, as comptime parameters shouldn't have them.
+
+
+
+
+Parameter default value as expression:
+--------------------------------------
+Design:
+ * Semantic-Analyse only needs to analyse expression once
+ * IR-Code generates the expression again (in current IR-Block)
+ * This will be the standard methon, as we can make default-comptime values easier
+
+Questions:
+ - How does error-propagation work?
+    If parameter is not set, but default value exists, then I need to raise an error-flag if default-value has errors...
+ - Handling polymorphism
+
+TODO:
  * Parameter default value as re-evaluateable argument...
     - So we can have function calls as default arguments, or e.g.
         create :: (capacity: int = 0, allocator: *Allocator = #eval global_allocator)
         create(allocator = temp_allocator)
         create()
- * fast lambda syntax .-> {return a * 2}
 
  * Fix all testcases
  * Create tescases for all new features
 
 
 DONE:
+ * Unions and union initializer
  * U64 for array/slice size, iterators, array-access, new[], malloc
  * Default allocator must be available in bakes
  * Test if new and delete with allocator works.
@@ -59,11 +84,6 @@ Missing-Testcases:
 --------------------
 Core: (Required for programming)
     * Language Features:
-        - Allocators (Allocator_Base, global allocator-pointer, temporary-pointer)
-        - Custom_Operators could just register a type/function, but have dependencies that are only resolved once they are found
-            --> This also means we could do dot-calls on a whole module? --> Maybe not
-        - Bitwise operators as functions (and, or, xor, not, nand, nor)
-
         - Struct initializer for unions (If it isn't already done?)
         - Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
 
@@ -80,11 +100,41 @@ Additional:
     * QoL Features
         - Default parameter values calculated on demand
         - Template-Types could be detected if used without parenthesis, e.g. foo(array: Dynamic_Array, value: array.T)
-        - Block-Expressions (Expressions which may include statements + return)
+        - Block-Expressions (Expressions which may include statements + return), something like ternary operator
         - Auto function? .-> e.g. search(array, .-> x.name == "What")
         - Varargs (Other syntax for pass as slice...)
         - Using on structs
         - Location information (Mostly for logging)
+    * Editor-Features
+        - Interactive Search-and-replace
+           * Per line simple search and replace of text
+           * Interactive replacement mode with GUI
+           * Smart mode for comments and string literals
+        - Marks
+           * Ability to set and jump to marks
+           * Marks over multiple files
+           * GUI to look at/delete marks
+           * Named marks + fuzzy jumps
+           * Store marks after exit
+        - More Motions
+           * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
+        - Aliases and paths should be handled correctly
+        - Yank and Put with Registers
+           * Store multiple yanks and puts/last used
+           * when using p" to access register, show list in gui
+        - Macros/Command recording
+        - Multi-Cursor mode
+        - Multiple windows
+        - Animations
+           * Fast cursor movements (After-trail)
+           * Smooth scrolling
+        - Focus on Block
+           * Only editing in single block
+           * Remove indentations
+        - Visual modes
+           * Visual line
+           * Visual mode
+        - Call-Hierarchy mode
 
 -----------------
 Code improvements:
@@ -167,36 +217,6 @@ Features: (Done first, then ranked by priority)
 Required:
 
 Almost required:
- - Interactive Search-and-replace
-    * Per line simple search and replace of text
-    * Interactive replacement mode with GUI
-    * Smart mode for comments and string literals
- - Marks
-    * Ability to set and jump to marks
-    * Marks over multiple files
-    * GUI to look at/delete marks
-    * Named marks + fuzzy jumps
-    * Store marks after exit
- - More Motions
-    * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
-
-Optional:
- - Yank and Put with Registers
-    * Store multiple yanks and puts/last used
-    * when using p" to access register, show list in gui
- - Macros/Command recording
- - Multi-Cursor mode
- - Multiple windows
- - Animations
-    * For block deletes or copy pastes
-    * Smooth scrolling
-    * Fast cursor movements (After-trail)
- - Focus on Block
-    * Only editing in single block
-    * Remove indentations
- - Visual modes
-    * Visual line
-    * Visual mode
 
 
 

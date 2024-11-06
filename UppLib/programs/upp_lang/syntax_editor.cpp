@@ -1906,7 +1906,7 @@ void code_completion_find_suggestions()
                 if (info != 0) {
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module_progress->module_analysis->symbol_table;
+                        specific_table = symbol->options.module.symbol_table;
                     }
                 }
             }
@@ -1933,7 +1933,7 @@ void code_completion_find_suggestions()
                 if (info != 0) {
                     auto symbol = info->symbol;
                     if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module_progress->module_analysis->symbol_table;
+                        specific_table = symbol->options.module.symbol_table;
                     }
                 }
             }
@@ -2262,7 +2262,7 @@ namespace Motions
         Text_Index start = pos;
         Source_Line* line = source_code_get_line(code, start.line);
 
-        // Special handling for string literals ""
+        // Special handling for c_string literals ""
         if (start_char == '\"' && end_char == '\"')
         {
             int index = 0;
@@ -3537,6 +3537,14 @@ void delete_char_with_particles(Code_History* history, Text_Index index)
     particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
 }
 
+bool motion_is_line_motion(const Motion& motion) {
+    return motion.motion_type == Motion_Type::LINE || motion.motion_type == Motion_Type::BLOCK ||
+        (motion.motion_type == Motion_Type::MOVEMENT &&
+            (motion.movement.type == Movement_Type::GOTO_START_OF_TEXT || 
+             motion.movement.type == Movement_Type::GOTO_END_OF_TEXT ||
+             motion.movement.type == Movement_Type::GOTO_LINE_NUMBER));
+}
+
 void text_range_delete(Text_Range range, bool is_line_motion)
 {
     auto& editor = syntax_editor;
@@ -3872,7 +3880,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     {
         // First yank deleted text
         const auto& motion = command.options.motion;
-        bool is_line_motion = motion.motion_type == Motion_Type::LINE || motion.motion_type == Motion_Type::BLOCK;
+        bool is_line_motion = motion_is_line_motion(motion);
         if (is_line_motion)
         {
             editor.yank_was_line = true;
@@ -3947,7 +3955,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         if (text_index_equal(range.start, range.end)) {
             break;
         }
-        bool is_line_motion = command.options.motion.motion_type == Motion_Type::LINE || command.options.motion.motion_type == Motion_Type::BLOCK;
+        bool is_line_motion = motion_is_line_motion(command.options.motion);
         text_range_delete(range, is_line_motion);
         syntax_editor_insert_yank(true);
         break;
@@ -4899,7 +4907,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
                     for (int j = 0; j < symbols.size; j++) {
                         auto symbol = symbols[j];
                         if (symbol->type == Symbol_Type::MODULE) {
-                            next_table = symbol->options.module_progress->module_analysis->symbol_table;
+                            next_table = symbol->options.module.symbol_table;
                             break;
                         }
                     }
@@ -6126,7 +6134,14 @@ void syntax_editor_render()
                 {
                 case Call_Type::FUNCTION: name = info->options.function->name; color = Syntax_Color::FUNCTION; break;
                 case Call_Type::DOT_CALL: name = info->options.dot_call_function->name; color = Syntax_Color::FUNCTION; break;
-                case Call_Type::STRUCT_INITIALIZER: name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE; break;
+                case Call_Type::STRUCT_INITIALIZER:
+                case Call_Type::UNION_INITIALIZER: {
+                    if (info->options.struct_init.valid) {
+                        name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE; 
+                        color = Syntax_Color::TYPE;
+                        break;
+                    }
+                }
                 }
 
                 bool is_struct_init = info->call_type == Call_Type::STRUCT_INITIALIZER;
@@ -6220,14 +6235,28 @@ void syntax_editor_render()
 
         vec2 context_size = vec2(0);
         vec2 call_info_size = vec2(0);
-        if (draw_context) {
+        if (draw_context) 
+        {
             auto text = &context_text;
-            context_size = char_size * vec2(math_maximum(30, text->max_line_char_count), text->lines.size);
+            int max_line_char_count = 0;
+            for (int i = 0; i < text->lines.size; i++) {
+                auto& line = text->lines[i];
+                max_line_char_count = math_maximum(max_line_char_count, line.text.size + context_display.indentation_spaces * line.indentation);
+            }
+
+            context_size = char_size * vec2(math_maximum(30, max_line_char_count), text->lines.size);
             context_size = context_size + 2 * (BORDER_SIZE + PADDING);
         }
-        if (draw_call_info) {
+        if (draw_call_info) 
+        {
             auto text = &call_info_text;
-            call_info_size = char_size * vec2(text->max_line_char_count, text->lines.size);
+            int max_line_char_count = 0;
+            for (int i = 0; i < text->lines.size; i++) {
+                auto& line = text->lines[i];
+                max_line_char_count = math_maximum(max_line_char_count, line.text.size + context_display.indentation_spaces * line.indentation);
+            }
+
+            call_info_size = char_size * vec2(max_line_char_count, text->lines.size);
             call_info_size = call_info_size + 2 * (BORDER_SIZE + PADDING);
         }
 
@@ -6255,6 +6284,18 @@ void syntax_editor_render()
                 // Place above cursor
                 call_info_pos.y = cursor_pos.y + char_size.y + call_info_size.y;
                 context_pos.y = call_info_pos.y + context_pos.y;
+            }
+
+            // Move boxes to the left if they are too far
+            if (context_pos.x + context_size.x > width) {
+                int move_left = (context_pos.x + context_size.x) - width;
+                context_pos.x = context_pos.x - move_left;
+                context_pos.x = math_maximum(0, (int)context_pos.x);
+            }
+            if (call_info_pos.x + call_info_size.x > width) {
+                int move_left = (call_info_pos.x + call_info_size.x) - width;
+                call_info_pos.x = call_info_pos.x - move_left;
+                call_info_pos.x = math_maximum(0, (int)call_info_pos.x);
             }
         }
 

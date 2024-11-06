@@ -615,7 +615,8 @@ enum class Call_Type
 
     INSTANCIATE,
     CONTEXT_OPTION,
-    STRUCT_INITIALIZER
+    STRUCT_INITIALIZER,
+    UNION_INITIALIZER
 };
 
 struct Parameter_Matching_Info
@@ -781,7 +782,7 @@ struct Predefined_Symbols
     Symbol* type_f32;
     Symbol* type_f64;
     Symbol* type_byte;
-    Symbol* type_string;
+    Symbol* type_c_string;
     Symbol* type_allocator;
     Symbol* global_allocator_symbol;
     Symbol* default_allocator_symbol;

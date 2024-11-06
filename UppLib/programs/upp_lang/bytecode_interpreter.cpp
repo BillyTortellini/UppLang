@@ -829,9 +829,9 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         }
         case Hardcoded_Type::PRINT_STRING: {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
-            Upp_String string = *(Upp_String*)argument_start;
+            Upp_C_String string = *(Upp_C_String*)argument_start;
 
-            // Check if string size is correct
+            // Check if c_string size is correct
             if (string.bytes.size == 0) {break;}
             if (string.bytes.size >= 10000) {
                 thread->error_occured = true;
@@ -845,19 +845,11 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
-                    "Print string failed, memory of string was not readable");
-                return true;
-            }
-            // Check if string is correctly null-terminated
-            if (!string.bytes.data[string.bytes.size - 1] == '\0') {
-                thread->error_occured = true;
-                thread->exit_code = exit_code_make(
-                    Exit_Code_Type::CODE_ERROR, 
-                    "Print string failed, string was not properly null-terminated");
+                    "Print c_string failed, memory of c_string was not readable");
                 return true;
             }
 
-            logg("%s", (const char*) string.bytes.data);
+            logg("%.*s", string.bytes.size, (const char*) string.bytes.data);
             break;
         }
         case Hardcoded_Type::PRINT_LINE: {
