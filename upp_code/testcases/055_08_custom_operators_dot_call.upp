@@ -1,29 +1,31 @@
 
-Player::struct
-	name:string
-	hp:int
+import Upp~c_string
 
-is_alive::(player:Player)->bool
-	return player.hp>0
+Player :: struct
+	name: c_string
+	hp: int
 
-take_damage::(player:*Player,damage:int)
-	player.hp-=damage
+is_alive :: (player: Player) -> bool
+	return player.hp > 0
 
-main::()
-	context add_dot_call(is_alive,as_member_access=true)
+take_damage :: (player: *Player, damage: int)
+	player.hp -= damage
+
+main :: ()
+	context add_dot_call(is_alive, as_member_access = true)
 	context add_dot_call(take_damage)
-	context add_dot_call(take_damage,name="get_hit")
+	context add_dot_call(take_damage, name = "get_hit")
 	
-	p:=Player.{"Frank",100}
+	p := Player.{"Frank", 100}
 	
 	// Dot_calls as member access don't use the ()
-	alive:=p.is_alive
+	alive := p.is_alive
 	assert(alive)
 	
 	p.take_damage(50)
 	p.get_hit(100)
 	
-	alive=p.is_alive
+	alive = p.is_alive
 	assert(!alive)
 	
-	assert(p.hp==-50)
+	assert(p.hp == -50)

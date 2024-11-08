@@ -1,0 +1,36 @@
+
+
+inc :: (a: *int)
+	a += 1
+
+return_inc :: (a: * const int) -> int
+	return a + 1
+
+main :: ()
+	// Points can be constant in two ways
+	i := 10
+	k := 100
+	ipc: * const int =* i
+	
+	// Now ip cannot change anymore, but we can change the value of i
+	// ipc = 11 // error
+	i = 11
+	assert(ipc == 11)
+	ipc =* k
+	assert(ipc == 100)
+	
+	ip: const *int =* i
+	// Here the pointer cannot change anymore, but the value can
+	// ip =* k // error
+	assert(ip == 11)
+	ip = 12
+	assert(ip == 12)
+	
+	// Pointers are automatically cast to constant pointers, but
+	// not the other way around
+	ip = 3
+	inc(ip)
+	assert(ip == 4)
+	
+	return_inc(ip)
+	return_inc(ipc)

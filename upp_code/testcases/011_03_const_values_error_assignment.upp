@@ -1,0 +1,4 @@
+main :: ()
+	x: const int = 15
+	x = 10
+	

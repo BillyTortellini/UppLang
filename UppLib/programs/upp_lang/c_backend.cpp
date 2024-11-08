@@ -468,21 +468,14 @@ void c_generator_output_type_reference(Datatype* type)
     SCOPE_EXIT(gen.text = backup_text);
 
     // Handle pointers and const combinations
-    if (type->mods.pointer_level > 0 || type->mods.constant_flags != 0)
+    if (type->mods.pointer_level > 0 || type->mods.constant_flags != 0 || type->mods.is_constant)
     {
         // In C, it makes a difference where the const is places...
         // e.g. const int* is not the same as int* const 
 
         // Get base-type 
         Type_Mods mods = type->mods;
-        while (type->type == Datatype_Type::CONSTANT || type->type == Datatype_Type::POINTER) {
-            if (type->type == Datatype_Type::CONSTANT) {
-                type = downcast<Datatype_Constant>(type)->element_type;
-            }
-            else {
-                type = downcast<Datatype_Pointer>(type)->element_type;
-            }
-        }
+        type = type->base_type;
 
         // Append type
         gen.text = &access_name;

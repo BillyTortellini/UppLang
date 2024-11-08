@@ -1,0 +1,7 @@
+
+test :: (a: int)
+	a = 10
+
+main :: ()
+	test(15)
+

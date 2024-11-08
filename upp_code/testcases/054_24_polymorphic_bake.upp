@@ -1,44 +1,48 @@
 
-string_equals::(a:string,b:string)->bool
-	if a.bytes.size!=b.bytes.size
+import Upp~c_string
+import Upp~i64
+import Upp~type_info
+
+string_equals :: (a: c_string, b: c_string) -> bool
+	if a.bytes.size != b.bytes.size
 		return false
 	
-	i:=0
-	while i<a.bytes.size
-		if a.bytes[i]!=b.bytes[i]
+	i := 0
+	while cast i < a.bytes.size
+		if a.bytes[i] != b.bytes[i]
 			return false
-		i=i+1
+		i = i + 1
 	
 	return true
 
-offset_off::(a:$T,$name:string)->int
-	offset:=#bake
-		info:=type_info(T)
-		if info.tag==.Struct
-			members:=info.Struct.content.members
-			i:=0
-			while i<members.size
-				member:=members[i]
-				if string_equals(member.name,name)
+offset_off :: (a: $T, $name: c_string) -> int
+	offset := #bake
+		info := type_info(T)
+		if info.tag == .Struct
+			members := info.Struct.content.members
+			i := 0
+			while cast i < members.size
+				member := members[i]
+				if string_equals(member.name, name)
 					return member.offset
-				i=i+1
-		return-1
+				i = i + 1
+		return -1
 	return offset
 
-Foo::struct
-	a:bool
-	b:bool
-	value:int
-	padding:i64
-	c:float
+Foo :: struct
+	a: bool
+	b: bool
+	value: int
+	padding: i64
+	c: float
 
-main::()
-	foo:Foo
+main :: ()
+	foo: Foo
 	
-	offset_a:=offset_off(foo,"a")
-	offset_value:=offset_off(foo,"value")
-	offset_c:=offset_off(foo,"c")
+	offset_a := offset_off(foo, "a")
+	offset_value := offset_off(foo, "value")
+	offset_c := offset_off(foo, "c")
 	
-	assert(offset_a==0)
-	assert(offset_value==4)
-	assert(offset_c==16)
+	assert(offset_a == 0)
+	assert(offset_value == 4)
+	assert(offset_c == 16)

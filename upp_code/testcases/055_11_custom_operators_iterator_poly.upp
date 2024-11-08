@@ -1,9 +1,9 @@
 
-import"../dynamic_array.upp"
+import "../dynamic_array.upp"
 context import Dynamic_Array~Context
 
-main::()
-	values:=Dynamic_Array~create(T=int)
+main :: ()
+	values := Dynamic_Array~create(T = int)
 	defer
 		values.destroy()
 	
@@ -13,11 +13,11 @@ main::()
 	
 	//Double values
 	for v in values
-		v*=2
+		v *= 2
 	
 	//Sum up
-	sum:=0
+	sum := 0
 	for v in values
-		sum+=v
+		sum += v
 	
-	assert(sum==260)
+	assert(sum == 260)

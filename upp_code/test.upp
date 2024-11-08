@@ -1,8 +1,11 @@
 
-import "editor_text.upp"
+import Upp~type_of
+import Upp~type_info
+import Upp~u64
 
-add :: (a: int, b: int) -> int
-	x: int = false
-	return a + b
-
-
+main :: ()
+	
+	values := int.[1, 2, 3, 4]
+	ASDF :: [4] const int
+	
+	

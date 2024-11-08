@@ -1,20 +1,23 @@
 
-Node::struct($T:Type_Handle)
-	value:T
-	next:*Node(T)
+import Upp~Type_Handle
+import Upp~type_of
 
-make_node::()->Node($T)
-	result:Node(T)
-	result.next=*null
+Node :: struct ($T: Type_Handle)
+	value: T
+	next: ?*Node(T)
+
+make_node :: () -> Node($T)
+	result: Node(T)
+	result.next =* null
 	return result
 	
-main::()
-	a:Node(int)=make_node()
-	b:Node(bool)=make_node()
-	c:=make_node(T=int)
-	d:=make_node(T=bool)
+main :: ()
+	a: Node(int) = make_node()
+	b: Node(bool) = make_node()
+	c := make_node(T = int)
+	d := make_node(T = bool)
 	
-	assert(type_of(a.value)==int)
-	assert(type_of(b.value)==bool)
-	assert(type_of(c.value)==int)
-	assert(type_of(d.value)==bool)
+	assert(type_of(a.value) == int)
+	assert(type_of(b.value) == bool)
+	assert(type_of(c.value) == int)
+	assert(type_of(d.value) == bool)

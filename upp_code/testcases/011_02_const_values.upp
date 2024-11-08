@@ -1,0 +1,30 @@
+
+// Parameters are by default constant
+// but with the mut (mutable) keyword this can be ommited
+test :: (a: int, mut b: int) -> int
+	// a = 15 // error
+	return a + b
+
+main :: ()
+	// Using the const modifier, one can create const variables
+	c: const int = 15
+	
+	// The value of const variables cannot change after first initialization
+	// x = 15 --> error
+	
+	// Read accesses still work like with normal values
+	z := c * 3
+	assert(z == 45)
+	
+	// When defining variables, const is automatically removed
+	x := c
+	x = 3 // Can be modified again
+	
+	// If we only have reads/assignments, constants are converted to non-const types
+	x = test(c, c)
+	assert(x == 30)
+	x = 2
+	
+	// Assigning non-constant values to constant parameters also works
+	x = test(x, x)
+	assert(x == 4)

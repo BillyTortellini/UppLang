@@ -2375,18 +2375,12 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* delete_access = ir_generator_generate_expression(ir_block, statement->options.delete_expr);
         auto delete_type = datatype_get_non_const_type(delete_access->datatype);
         IR_Data_Access* size_access = nullptr;
+        IR_Data_Access* pointer_to_delete_access = nullptr;
         if (delete_type->type == Datatype_Type::SLICE) 
         {
             auto slice = downcast<Datatype_Slice>(delete_type);
-            delete_access = ir_data_access_create_member(delete_access, slice->data_member);
-            size_access =  ir_data_access_create_intermediate(ir_block, upcast(types.u64_type));
-
-            IR_Instruction cast_instr;
-            cast_instr.type = IR_Instruction_Type::CAST;
-            cast_instr.options.cast.type = IR_Cast_Type::INTEGERS;
-            cast_instr.options.cast.source = ir_data_access_create_member(delete_access, slice->size_member);
-            cast_instr.options.cast.destination = size_access;
-            dynamic_array_push_back(&ir_block->instructions, cast_instr);
+            pointer_to_delete_access = ir_data_access_create_member(delete_access, slice->data_member);
+            size_access = ir_data_access_create_member(delete_access, slice->size_member);
 
             IR_Instruction multiply_instr;
             multiply_instr.type = IR_Instruction_Type::BINARY_OP;
@@ -2402,6 +2396,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             assert(delete_type->type == Datatype_Type::POINTER, "Can only delete slices or pointers");
             u64 element_size_u64 = downcast<Datatype_Pointer>(delete_type)->element_type->memory_info.value.size;
             size_access = ir_data_access_create_constant_u64(element_size_u64);
+            pointer_to_delete_access = delete_access;
         }
 
         // Call delete function on current allocator
@@ -2416,7 +2411,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
         alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_global(analyser->global_allocator));
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, delete_access);
+        dynamic_array_push_back(&alloc_instr.options.call.arguments, pointer_to_delete_access);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, size_access);
         dynamic_array_push_back(&ir_block->instructions, alloc_instr);
         break;

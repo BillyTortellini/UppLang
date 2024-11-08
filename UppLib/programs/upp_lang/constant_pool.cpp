@@ -53,7 +53,7 @@ Constant_Pool_Result constant_pool_result_make_error(const char* error) {
 }
 
 // prototype
-void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, byte* memory, Constant_Pool_Result& result);
+void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result);
 
 void struct_memory_set_padding_to_zero_recursive(
     Struct_Content* content, byte* struct_memory_start, Subtype_Index* subtype_index, 
@@ -72,7 +72,7 @@ void struct_memory_set_padding_to_zero_recursive(
         next_member_offset = member->offset + member->type->memory_info.value.size;
 
         // Handle member types
-        datatype_memory_set_padding_bytes_to_zero_recursive(member->type, struct_memory_start + member->offset, result);
+        datatype_memory_check_correctness_and_set_padding_bytes_zero(member->type, struct_memory_start + member->offset, result);
         if (!result.success) return;
     }
 
@@ -117,16 +117,11 @@ void struct_memory_set_padding_to_zero_recursive(
     return;
 }
 
-void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, byte* memory, Constant_Pool_Result& result)
+void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
     auto& types = compiler.type_system.predefined_types;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
-
-    // Early exit if there's nothing to do
-    if (!memory_info.contains_padding_bytes) {
-        return;
-    }
 
     signature = datatype_get_non_const_type(signature); // We don't care for constants here
     switch (signature->type)
@@ -149,7 +144,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
     case Datatype_Type::FUNCTION: {
         // Check if function index is correct
         auto& slots = compiler.semantic_analyser->function_slots;
-        i64 function_index = ((int)*(i64*)memory) - 1;
+        i64 function_index = (*(i64*)memory) - 1;
         if (function_index < -1 || function_index >= slots.size) { // Note: -1 would mean nullptr in this context
             result = constant_pool_result_make_error("Found function pointer with invalid value");
             return;
@@ -190,7 +185,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
         // Handle all elements
         for (int i = 0; i < array->element_count; i++) {
             byte* element_memory = memory + array->element_type->memory_info.value.size * i;
-            datatype_memory_set_padding_bytes_to_zero_recursive(array->element_type, element_memory, result);
+            datatype_memory_check_correctness_and_set_padding_bytes_zero(array->element_type, element_memory, result);
             if (!result.success) return;
         }
         return;
@@ -204,7 +199,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
             memory_set_bytes(memory, opt->base.memory_info.value.size, 0);
         }
         else {
-            datatype_memory_set_padding_bytes_to_zero_recursive(opt->child_type, memory, result);
+            datatype_memory_check_correctness_and_set_padding_bytes_zero(opt->child_type, memory, result);
             int size = opt->base.memory_info.value.size;
             int end = opt->is_available_member.offset + 1;
             if (end < size) {
@@ -286,7 +281,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
     // Set padding to zero
     Constant_Pool_Result result;
     result.success = true;
-    datatype_memory_set_padding_bytes_to_zero_recursive(signature, bytes.data, result);
+    datatype_memory_check_correctness_and_set_padding_bytes_zero(signature, bytes.data, result);
     if (!result.success) {
         return result;
     }

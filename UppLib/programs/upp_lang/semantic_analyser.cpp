@@ -1182,7 +1182,13 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case Expression_Result_Type::FUNCTION: {
         auto function = info->options.function;
-        return comptime_result_make_available(&function->function_slot_index + 1, upcast(function->signature));
+        i64* result_buffer = (i64*) stack_allocator_allocate_size(
+            &analyser.comptime_value_allocator, 
+            function->signature->base.memory_info.value.size, 
+            function->signature->base.memory_info.value.alignment
+        );
+        *result_buffer = function->function_slot_index + 1;
+        return comptime_result_make_available(result_buffer, upcast(function->signature));
     }
     case Expression_Result_Type::DOT_CALL: {
         return comptime_result_make_not_comptime("Dot calls must be evaluated with bake for comptime values");
@@ -1877,7 +1883,7 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
             for (int i = 0; i < results.size; i++) {
                 auto symbol = results[i];
                 if (symbol->type == Symbol_Type::MODULE) {
-                    if (symbol == 0) {
+                    if (found_symbol == 0) {
                         found_symbol = symbol;
                     }
                     else {
@@ -3083,12 +3089,18 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
             return optional_make_failure<Overload_Candidate>();
         }
 
-        int function_index = (int)(*(i64*)constant.memory) - 1;
-        if (function_index < 0 || function_index >= semantic_analyser.program->functions.size) {
+        int function_slot_index = (int)(*(i64*)constant.memory) - 1;
+        auto& slots = semantic_analyser.function_slots;
+        if (function_slot_index < 0 || function_slot_index >= slots.size) {
             return optional_make_failure<Overload_Candidate>();
         }
 
-        ModTree_Function* function = semantic_analyser.program->functions[function_index];
+        ModTree_Function* function = slots[function_slot_index].modtree_function;
+        if (function == nullptr) {
+            // This is the case if we somehow managed to call a ir-generated function (entry, allocate, deallocate, reallocate)
+            // which shouldn't happen in normal circumstances, but can be made to happen
+            return optional_make_failure<Overload_Candidate>();
+        }
         candidate.matching_info.call_type = Call_Type::FUNCTION;
         candidate.matching_info.options.function = function;
         function_type = function->signature;
@@ -3373,9 +3385,16 @@ struct Parameter_Symbol_Lookup
     String* id;
 };
 
-bool check_if_expression_contains_inferred_parameters(AST::Expression* expression)
+bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* expression)
 {
     if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
+        Datatype_Template** template_param_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, expression);
+        if (template_param_opt == nullptr) return false;
+        Datatype_Template* template_param = *template_param_opt;
+        auto& value = semantic_analyser.current_workload->polymorphic_values[template_param->value_access_index];
+        if (value.type == Poly_Value_Type::SET) {
+            return false;
+        }
         return true;
     }
 
@@ -3395,25 +3414,25 @@ bool check_if_expression_contains_inferred_parameters(AST::Expression* expressio
     while (child_node != 0)
     {
         if (child_node->type == AST::Node_Type::EXPRESSION) {
-            if (check_if_expression_contains_inferred_parameters(downcast<AST::Expression>(child_node))) {
+            if (check_if_expression_contains_unset_inferred_parameters(downcast<AST::Expression>(child_node))) {
                 return true;
             }
         }
         else if (child_node->type == AST::Node_Type::ARGUMENTS) {
             auto args = downcast<AST::Arguments>(child_node);
             for (int i = 0; i < args->arguments.size; i++) {
-                check_if_expression_contains_inferred_parameters(args->arguments[i]->value);
+                check_if_expression_contains_unset_inferred_parameters(args->arguments[i]->value);
             }
         }
         else if (child_node->type == AST::Node_Type::ARGUMENT) {
             auto argument_node = downcast<AST::Argument>(child_node);
-            if (check_if_expression_contains_inferred_parameters(argument_node->value)) {
+            if (check_if_expression_contains_unset_inferred_parameters(argument_node->value)) {
                 return true;
             }
         }
         else if (child_node->type == AST::Node_Type::PARAMETER) {
             auto parameter_node = downcast<AST::Parameter>(child_node);
-            if (check_if_expression_contains_inferred_parameters(parameter_node->type)) {
+            if (check_if_expression_contains_unset_inferred_parameters(parameter_node->type)) {
                 return true;
             }
         }
@@ -3950,7 +3969,10 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                 continue;
             }
             else if (template_to_match.type == Poly_Value_Type::UNSET) {
-                // In struct template instances some implicit parameters may be error type (NOTE: This isn't tested and may be totally wrong)
+                // Struct-Instance-Templates may contain unset values, which can be ignored during matching.
+                // this currently happens for inferred parameters in struct instances, e.g.:
+                //      Foo :: struct(F: Filter($T))
+                //      check_filter :: (a: Foo($F)) --> Creates struct instance template where $T is not set
                 continue;
             }
             else if (template_to_match.type == Poly_Value_Type::TEMPLATED_TYPE)
@@ -4168,46 +4190,34 @@ Instanciation_Result instanciate_polymorphic_callable(
     // Check for errors (Instanciation limit + base is error-free)
     {
         auto workload = semantic_analyser.current_workload;
+
+        // Check instanciation limit
         {
             const int MAX_POLYMORPHIC_INSTANCIATION_DEPTH = 10;
-            int instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth + 1;
+            int instanciation_depth = workload->polymorphic_instanciation_depth + 1;
             if (instanciation_depth > MAX_POLYMORPHIC_INSTANCIATION_DEPTH) {
                 log_semantic_error("Polymorphic instanciation limit reached!", instanciation_node, error_report_section);
                 parameter_matching_analyse_in_unknown_context(param_matching_info);
                 return instanciation_result_make_error();
-
             }
         }
 
         bool base_contains_errors = false;
         {
             Workload_Base* header_workload = nullptr;
-            Workload_Base* base_instance_workload = nullptr;
             if (poly_header->is_function) {
                 Function_Progress* base_progress = polymorphic_base_info_to_function_progress(poly_header);
                 header_workload = upcast(base_progress->header_workload);
-                base_instance_workload = upcast(base_progress->body_workload);
             }
             else {
                 Workload_Structure_Polymorphic* poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
                 header_workload = upcast(poly_struct);
-                base_instance_workload = upcast(poly_struct->body_workload);
             }
 
             // Check if header has errors
             assert(header_workload->is_finished, "Header must be finished before we can instanciate");
             if (header_workload->real_error_count > 0 || header_workload->errors_due_to_unknown_count > 0) {
                 base_contains_errors = true;
-            }
-            else
-            {
-                // Wait for base instance to finish
-                analysis_workload_add_dependency_internal(workload, upcast(base_instance_workload));
-                workload_executer_wait_for_dependency_resolution();
-                assert(base_instance_workload->is_finished, "Should be finished after wait");
-                if (base_instance_workload->real_error_count > 0) {
-                    base_contains_errors = true;
-                }
             }
         }
 
@@ -4232,6 +4242,157 @@ Instanciation_Result instanciate_polymorphic_callable(
         instance_values[inferred.template_parameter->value_access_index] = poly_value_make_template_type(upcast(inferred.template_parameter));
     }
 
+    // STRUCT-Instance-Template (Custom code-path, may need to be improved in the future)
+    if (!poly_header->is_function)
+    {
+        bool create_struct_template = false;
+        auto workload = semantic_analyser.current_workload;
+        
+        Array<bool> param_contains_inferred = array_create<bool>(param_matching_info->matched_parameters.size);
+        SCOPE_EXIT(array_destroy(&param_contains_inferred));
+        // Search all arguments for implicit expressions, e.g. $T, if found, then we analyse as struct template
+        for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
+        {
+            auto& param_info = param_matching_info->matched_parameters[i];
+            param_contains_inferred[i] = false;
+            if (param_info.expression == 0) {
+                continue;
+            }
+            bool contains_inferred = check_if_expression_contains_unset_inferred_parameters(param_info.expression);
+            if (contains_inferred) {
+                create_struct_template = true;
+                param_contains_inferred[i] = true;
+            }
+        }
+        
+        if (create_struct_template)
+        {
+            for (int i = 0; i < instance_values.size; i++) {
+                instance_values[i] = poly_value_make_unset(types.unknown_type);
+            }
+        
+            // Currently, in struct_template every value is either comptime or a templated-type
+            for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
+            {
+                auto& param_info = param_matching_info->matched_parameters[i];
+                const int value_index = i;
+        
+                if (!param_info.is_set) {
+                    // Inferred parameters are ignored for now (and the values are unset in instance)
+                    if (param_info.requires_named_addressing) {
+                        continue;
+                    }
+                    // Note: ignore default values for now in struct templates
+                    success = false;
+                    break;
+                }
+        
+                // Figure out context
+                Expression_Context context = expression_context_make_unknown();
+                if (!param_info.requires_named_addressing && !param_contains_inferred[i]) {
+                    auto& base_parameter = poly_header->parameters[i];
+                    assert(base_parameter.is_comptime, "Must be the case for struct-parameter that isn't inferred");
+                    if (!base_parameter.depends_on_other_parameters && !base_parameter.contains_inferred_parameter) {
+                        context = expression_context_make_specific_type(base_parameter.infos.type);
+                    }
+                }
+        
+                auto argument_type = analyse_parameter_if_not_already_done(&param_info, context);
+                if (argument_type->contains_template) {
+                    instance_values[value_index] = poly_value_make_template_type(argument_type);
+                }
+                else if (datatype_is_unknown(argument_type)) {
+                    success = false;
+                    continue;
+                }
+        
+                // Calculate constant value
+                auto constant_result = expression_calculate_comptime_value(param_info.expression, "Struct arguments must be comptime");
+                if (!constant_result.available) {
+                    success = false;
+                    continue;
+                }
+                auto& constant = constant_result.value;
+                if (datatype_get_non_const_type(constant.type)->type == Datatype_Type::TYPE_HANDLE)
+                {
+                    Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
+                    if (handle.index >= (u32)compiler.type_system.types.size) {
+                        success = false;
+                        log_semantic_error("Invalid constant type handle index", upcast(param_info.expression));
+                        continue;
+                    }
+        
+                    Datatype* constant_type = compiler.type_system.types[handle.index];
+                    if (constant_type->contains_template) {
+                        instance_values[value_index] = poly_value_make_template_type(constant_type);
+                        continue;
+                    }
+                }
+        
+                instance_values[value_index] = poly_value_make_set(constant_result.value);
+            }
+        
+            if (!success) {
+                parameter_matching_analyse_in_unknown_context(param_matching_info);
+                return instanciation_result_make_error();
+            }
+        
+            auto poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+            auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
+            instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
+        
+            Instanciation_Result result;
+            result.type = Instanciation_Result_Type::STRUCT_INSTANCE_TEMPLATE;
+            result.options.instance_template = result_template_type;
+            return result;
+        }
+    }
+
+
+    // Check if normal instanciation is allowed/base analysis contained errors
+    {
+        auto workload = semantic_analyser.current_workload;
+
+        // Instanciations inside polymorphic base is disallowed (So it's possible to wait for child-workloads)
+        if (workload->is_polymorphic_base) {
+            semantic_analyser_set_error_flag(true);
+            return instanciation_result_make_error();
+        }
+        bool base_contains_errors = false;
+        {
+            Workload_Base* base_instance_workload = nullptr;
+            if (poly_header->is_function) {
+                Function_Progress* base_progress = polymorphic_base_info_to_function_progress(poly_header);
+                base_instance_workload = upcast(base_progress->body_workload);
+            }
+            else {
+                Workload_Structure_Polymorphic* poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+                base_instance_workload = upcast(poly_struct->body_workload);
+            }
+
+            // Check if header has errors
+            // Wait for base instance to finish
+            bool has_failed = false;
+            analysis_workload_add_dependency_internal(workload, upcast(base_instance_workload), dependency_failure_info_make(&has_failed));
+            workload_executer_wait_for_dependency_resolution();
+            if (has_failed) {
+                base_contains_errors = true;
+            }
+            else {
+                assert(base_instance_workload->is_finished, "Should be finished after wait");
+                if (base_instance_workload->real_error_count > 0) {
+                    base_contains_errors = true;
+                }
+            }
+        }
+
+        if (base_contains_errors) {
+            parameter_matching_analyse_in_unknown_context(param_matching_info);
+            return instanciation_result_make_error();
+        }
+    }
+
+    // Normal instanciation
     Matching_Info matching_info;
     matching_info.constraints = dynamic_array_create<Matching_Constraint>();
     matching_info.already_visited = hashset_create_pointer_empty<Datatype*>(1);
@@ -4250,116 +4411,11 @@ Instanciation_Result instanciate_polymorphic_callable(
         pass_creation_node = upcast(polymorphic_base_info_to_struct_workload(poly_header)->body_workload->struct_node);
     }
 
-    // Handle struct template instances (Custom code-path, may need to be improved in the future)
-    if (!poly_header->is_function)
-    {
-        bool create_struct_template = false;
-        auto workload = semantic_analyser.current_workload;
-        if (workload->type == Analysis_Workload_Type::STRUCT_POLYMORPHIC || workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-            // Search all arguments for implicit expressions, e.g. $T, if found, then we analyse as struct template
-            for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
-            {
-                auto& param_info = param_matching_info->matched_parameters[i];
-                if (param_info.expression == 0) {
-                    continue;
-                }
-                if (check_if_expression_contains_inferred_parameters(param_info.expression)) {
-                    create_struct_template = true;
-                    break;
-                }
-            }
-        }
-
-        if (create_struct_template)
-        {
-            for (int i = 0; i < instance_values.size; i++) {
-                instance_values[i] = poly_value_make_unset(types.unknown_type);
-            }
-
-            // Currently, in struct_template every value is either comptime or a templated-type
-            for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
-            {
-                auto& param_info = param_matching_info->matched_parameters[i];
-                const int value_index = i;
-
-                if (!param_info.is_set) {
-                    // Note: ignore default values for now in struct templates
-                    success = false;
-                    break;
-                }
-
-                // Figure out context
-                Expression_Context context = expression_context_make_unknown();
-                if (!param_info.requires_named_addressing) {
-                    auto& base_parameter = poly_header->parameters[i];
-                    assert(base_parameter.is_comptime, "Must be the case for struct-parameter that isn't inferred");
-                    if (!base_parameter.depends_on_other_parameters && !base_parameter.contains_inferred_parameter) {
-                        context = expression_context_make_specific_type(base_parameter.infos.type);
-                    }
-                }
-
-                auto argument_type = analyse_parameter_if_not_already_done(&param_info, context);
-                if (datatype_is_unknown(argument_type)) {
-                    success = false;
-                    continue;
-                }
-
-                // Calculate constant value
-                auto constant_result = expression_calculate_comptime_value(param_info.expression, "Struct arguments must be comptime");
-                if (!constant_result.available) {
-                    success = false;
-                    continue;
-                }
-                auto& constant = constant_result.value;
-                if (datatype_get_non_const_type(constant.type)->type == Datatype_Type::TYPE_HANDLE)
-                {
-                    Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
-                    if (handle.index >= (u32)compiler.type_system.types.size) {
-                        success = false;
-                        log_semantic_error("Invalid constant type handle index", upcast(param_info.expression));
-                        continue;
-                    }
-
-                    Datatype* constant_type = compiler.type_system.types[handle.index];
-                    if (constant_type->contains_template) {
-                        instance_values[value_index] = poly_value_make_template_type(constant_type);
-                        create_struct_template = true;
-                        continue;
-                    }
-                }
-
-                instance_values[value_index] = poly_value_make_set(constant_result.value);
-            }
-
-            if (!success) {
-                parameter_matching_analyse_in_unknown_context(param_matching_info);
-                return instanciation_result_make_error();
-            }
-
-            auto poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
-            auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
-            instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
-
-            Instanciation_Result result;
-            result.type = Instanciation_Result_Type::STRUCT_INSTANCE_TEMPLATE;
-            result.options.instance_template = result_template_type;
-            return result;
-        }
-    }
-
-    // Instanciations inside polymorphic base is disallowed (So it's possible to wait for child-workloads)
-    if (semantic_analyser.current_workload->is_polymorphic_base) {
-        semantic_analyser_set_error_flag(true);
-        return instanciation_result_make_error();
-    }
-
-
-
     Datatype* final_return_type = types.unknown_type;
     if (return_type_index != -1)
     {
         auto& base_return = poly_header->parameters[return_type_index];
-        if (!base_return.depends_on_other_parameters &&  !base_return.contains_inferred_parameter) {
+        if (!base_return.depends_on_other_parameters && !base_return.contains_inferred_parameter) {
             final_return_type = base_return.infos.type;
         }
     }
@@ -6981,7 +7037,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 operand_context = expression_context_make_specific_type(context.expected_type.type, cast->is_pointer_cast ? Cast_Mode::POINTER_INFERRED : Cast_Mode::INFERRED);
             }
             else {
-                log_semantic_error("No context is available for auto cast", expr);
+                if (!(context.type == Expression_Context_Type::UNKNOWN && context.unknown_due_to_error)) {
+                    log_semantic_error("No context is available for auto cast", expr);
+                }
                 operand_context = expression_context_make_unknown(true);
             }
         }
@@ -7178,7 +7236,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 bool is_const = context.expected_type.type->mods.is_constant;
                 Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
                 bool is_optional_pointer = false;
-                bool is_pointer = datatype_is_pointer(expected, &is_const);
+                bool is_pointer = datatype_is_pointer(expected, &is_optional_pointer);
 
                 // Special handling for null, so that we can assign null to values
                 // in cast_pointer null and cast_pointer{*int}null

@@ -591,6 +591,9 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
     if (tab_index == editor.main_tab_index) {
         editor.main_tab_index = -1;
     }
+    else if (editor.main_tab_index > tab_index) {
+        editor.main_tab_index -= 1;
+    }
 
     if (editor.open_tab_index < editor.tabs.size && editor.open_tab_index >= 0) {
         editor.code_changed_since_last_compile = true;
@@ -2058,18 +2061,25 @@ void code_completion_insert_suggestion()
 {
     auto& editor = syntax_editor;
     auto& tab = editor.tabs[editor.open_tab_index];
-    auto& suggestions = editor.suggestions;
 
-    string_reset(&editor.last_recorded_code_completion);
-
-    if (suggestions.size == 0) return;
+    String replace_string;
+    if (editor.record_insert_commands) 
+    {
+        auto& suggestions = editor.suggestions;
+        string_reset(&editor.last_recorded_code_completion);
+        if (suggestions.size == 0) return;
+        replace_string = *suggestions[0].text;
+        string_append_string(&editor.last_recorded_code_completion, &replace_string);
+    }
+    else {
+        replace_string = editor.last_recorded_code_completion;
+    }
+    if (replace_string.size == 0) return;
     if (tab.cursor.character == 0) return;
-    String replace_string = *suggestions[0].text;
-    auto line = source_code_get_line(tab.code, tab.cursor.line);
 
-    string_append_string(&editor.last_recorded_code_completion, &replace_string);
 
     // Remove current token
+    auto line = source_code_get_line(tab.code, tab.cursor.line);
     int start_pos = tab.cursor.character;
     if (get_cursor_char('!') != '.')
     {
@@ -3001,6 +3011,30 @@ namespace Parsing
         return parse_result_failure<Normal_Mode_Command>();
     }
 };
+
+int visible_line_difference(int line_start, int line_end)
+{
+    auto& code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+
+    line_start = math_clamp(line_start, 0, code->line_count - 1);
+    line_end = math_clamp(line_end, 0, code->line_count - 1);
+    int diff = 0;
+    bool first_fold = true;
+    for (int i = line_start; i < line_end; i++) {
+        auto line = source_code_get_line(code, i);
+        if (line->is_folded) {
+            if (first_fold) {
+                diff += 1;
+                first_fold = false;
+            }
+        }
+        else {
+            first_fold = true;
+            diff += 1;
+        }
+    }
+    return diff;
+}
 
 int move_visible_lines_up_or_down(int line_index, int steps)
 {
@@ -4422,13 +4456,7 @@ void insert_command_execute(Insert_Command input)
     switch (input.type)
     {
     case Insert_Command_Type::INSERT_CODE_COMPLETION: {
-        if (editor.record_insert_commands) {
-            code_completion_insert_suggestion();
-        }
-        else {
-            insert_text_with_particles(history, cursor, editor.last_recorded_code_completion);
-            auto_format_line(cursor.line);
-        }
+        code_completion_insert_suggestion();
         break;
     }
     case Insert_Command_Type::EXIT_INSERT_MODE: {
@@ -4852,7 +4880,8 @@ void syntax_editor_process_key_message(Key_Message& msg)
         }
 
         bool changed = false;
-        if (msg.key_code == Key_Code::TAB && msg.key_down && editor.suggestions.size > 0)
+        bool auto_complete = msg.key_down && ((msg.key_code == Key_Code::TAB) || (msg.key_code == Key_Code::SPACE && msg.shift_down));
+        if (auto_complete && msg.key_down && editor.suggestions.size > 0)
         {
             auto sugg = editor.suggestions[0];
             auto& search = editor.fuzzy_search_text;
@@ -4897,7 +4926,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
         }
 
         // Otherwise let line handler use key-message
-        if (!changed) {
+        if (!changed && !auto_complete) {
             changed = line_editor_feed_key_message(editor.search_text_edit, &editor.fuzzy_search_text, msg);
         }
 
@@ -5699,9 +5728,13 @@ void syntax_editor_render()
                 cam_start = move_visible_lines_up_or_down(cursor_line, -MIN_CURSOR_DISTANCE);
                 updated = true;
             }
-            if (cursor_line > cam_end - MIN_CURSOR_DISTANCE - 1 && cam_end <= code->line_count - 1) {
-                cam_start = move_visible_lines_up_or_down(cursor_line, -(line_count - MIN_CURSOR_DISTANCE - 1));
-                updated = true;
+            if (cam_start < cursor_line)
+            {
+                int line_diff = visible_line_difference(cam_start, cursor_line);
+                if (line_diff > line_count - (MIN_CURSOR_DISTANCE + 1)) {
+                    cam_start = move_visible_lines_up_or_down(cam_start, line_diff - (line_count - (MIN_CURSOR_DISTANCE + 1)));
+                    updated = true;
+                }
             }
 
             // Re-calculate cam_end
@@ -5714,6 +5747,9 @@ void syntax_editor_render()
         // Set screen index for all visible lines
         int on_screen_index = 0;
         bool last_was_fold = false;
+        for (int i = 0; i < code->line_count; i++) {
+            source_code_get_line(code, i)->on_screen_index = -1;
+        }
         for (int i = cam_start; i <= cam_end; i++)
         {
             auto line = source_code_get_line(code, i);
@@ -5769,6 +5805,9 @@ void syntax_editor_render()
             else {
                 last_was_fold = false;
             }
+            if (on_screen_index == -1) {
+                continue;
+            }
 
             float x = 0;
             int height = code_box.max.y;
@@ -5779,7 +5818,14 @@ void syntax_editor_render()
                 color = color * 1.6f;
             }
             else {
-                number = (on_screen_index)-cursor_on_screen_index;
+                number = 0;
+                if (cursor.line > i) {
+                    number = visible_line_difference(i, cursor.line);
+                }
+                else {
+                    number = visible_line_difference(cursor.line, i);
+                }
+
                 if (number < 0) {
                     number = -number;
                 }

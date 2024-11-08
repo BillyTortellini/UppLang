@@ -1,27 +1,29 @@
 
-Node::struct($T:Type_Handle)
-	a:T
-	b:struct
-		x:bool
-		y:T
+import Upp~Type_Handle
+
+Node :: struct ($T: Type_Handle)
+	a: T
+	b: struct
+		x: bool
+		y: T
 	
-	type:struct
-		z:enum
+	type: struct
+		z: enum
 			RED
 			GREEN
 			BLUE
 		
-		w:T
+		w: T
 
 
-main::()
-	a:Node(int)
-	a.b.x=false
-	a.b.y=15
-	a.type.z=.RED
-	a.type.w=21
+main :: ()
+	a: Node(int)
+	a.b.x = false
+	a.b.y = 15
+	a.type.z = .RED
+	a.type.w = 21
 	
-	assert(a.b.x==false)
-	assert(a.b.y==15)
-	assert(a.type.w==21)
+	assert(a.b.x == false)
+	assert(a.b.y == 15)
+	assert(a.type.w == 21)
 	

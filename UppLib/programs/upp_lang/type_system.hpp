@@ -472,6 +472,7 @@ struct Type_Deduplication
         } subtype;
         struct {
             Datatype* element_type;
+            bool element_constant;
             bool size_known;
             int element_count;
             Datatype_Template* polymorphic_count_variable; // May be null if it doesn't exist

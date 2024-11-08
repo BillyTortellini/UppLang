@@ -1,0 +1,43 @@
+
+import Upp~type_of
+import Upp~type_info
+import Upp~u64
+
+Player :: struct
+	age: int
+	alive: bool
+
+main :: ()
+	
+	// Slices can have constant values
+	values := int.[1, 2, 3, 4]
+	slice: []int = cast values
+	slice_const: const []int = cast values
+	const_const: const [] const int = cast values
+	
+	assert(type_of(slice.size) == u64)
+	assert(type_of(slice[0]) == int)
+	assert(type_of(slice_const.size) == const u64)
+	assert(type_of(slice_const[0]) == int)
+	assert(type_of(const_const.size) == const u64)
+	assert(type_of(const_const[0]) == const int)
+	
+	slice_const[1] = 5
+	slice[2] = 10
+	assert(values[1] == 5)
+	assert(values[2] == 10)
+	
+	// Arrays can also be constant, 
+	// and it doesn't matter if the array or the element_type is constant
+	ASDF :: [4] const int
+	// T2 :: const [4]int
+	type_a: Upp~Type_Handle = [4] const int
+	type_b: Upp~Type_Handle = const [4]int
+	type_c: Upp~Type_Handle = const [4] const int
+	assert(type_a == type_b)
+	// assert(type_b == type_c)
+	
+	const_array := ( const int).[1, 2, 3, 4]
+	
+	
+	p: const Player = .{15, true}

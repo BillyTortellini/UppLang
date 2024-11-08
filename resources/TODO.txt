@@ -1,16 +1,35 @@
 
-Let the fixing begin
-
-TODO:
- * Fix testcases
-
-// Sort errors by line-number?
 
 
-Check if instanciate still works?
+Missing-Testcases:
+------------------
+ * Constant pointers, constants, type-mods auto updates
+ * New assignment and definition syntax
+ * Multi assignments and definitions
+ * Optionals, Optional pointers, optional byte/function pointer, const
+
+ * Function overloading
+ * Allocators
+ * instanciate
+ * New custom operator import/resolve
+ * New block parsing/line parsing
+
+ * Struct Subtypes
+ * Struct Switch
+ * Struct inititalizer with subtypes
+ * Subtype Hierarchies
+ * Subtypes and polymorphism
+
+ * C-Backend + C-Imports --> Special testcases for C only?
+ * Struct unpacking --> not implemented?
 
 
 DONE:
+ * Fixed line numbers when camera not on screen
+ * Editor camera movement at bottom of file
+ * Fix C-Testcases
+ * Fixed code-completion and Vim-command-repeat .
+ * Sort errors by line-number
  * Line number digit count should depend on text size in whole file
  * Motions for paragraph (dip and dap) (line-motions)
  * Function Path-Lookup symbol not set when parameter mapping not correct 
@@ -25,24 +44,6 @@ DONE:
  * Array-Access accepting all ints
  * Closing tab does not automatically re-analyse the currently open tab
  * Opening windows does no auto-formatting
-    
-
-
-
-
-
-
-
-
-TODO:
- * Fix all testcases
- * Fix all C-generated testcases
- * Create new testcases for untested features
-
-DONE:
- * Poly-Header does not analyse parameters with dependencies
- * Instanciation must wait for base-workload to finish without real-errors
- * Poly-Base analysis should not instanciate other polymorphics
 
 
 
@@ -56,24 +57,6 @@ DONE:
     
 
 
-
-Missing-Testcases:
-------------------
- * Allocators
- * New custom operator import/resolve
- * Optionals, Optional pointers, optional byte/function pointer, const
- * Struct Subtypes
- * Struct Switch
- * Struct inititalizer with subtypes
- * Subtype Hierarchies
- * Constant pointers, constants, type-mods auto updates
- * New assignment and definition syntax
- * Multi assignments and definitions
- * Subtypes and polymorphism
- * Struct unpacking
- * Function overloading
- * C-Backend + C-Imports
- * New block parsing/line parsing
 
 --------------------
 - MISSING FEATURES -

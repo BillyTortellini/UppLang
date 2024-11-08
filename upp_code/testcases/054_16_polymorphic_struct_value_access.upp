@@ -1,8 +1,11 @@
 
-Foo :: struct($T: Type_Handle, $C: int)
+import Upp~Type_Handle
+import Upp~type_of
+
+Foo :: struct ($T: Type_Handle, $C: int)
 	data: [C]T
 	
-main::()
+main :: ()
 	b: Foo(bool, 15)
 	x: b.T = false
 	y: [b.C]int

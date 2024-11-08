@@ -1,6 +1,9 @@
 
+import Upp~c_string
+import Upp~Type_Handle
+
 Player :: struct
-	name: string
+	name: c_string
 	age: int
 
 Holder :: struct (T: Type_Handle, C: int)

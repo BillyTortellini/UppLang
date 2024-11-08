@@ -1,70 +1,72 @@
 
-Dynamic_Array::module
-	Dynamic_Array::struct(T:Type_Handle)
-		buffer:[]T
-		size:int
+import Upp~Type_Handle
+
+Dynamic_Array :: module
+	Dynamic_Array :: struct (T: Type_Handle)
+		buffer: []T
+		size: int
 	
-	create::(initial_capacity:int=0)->Dynamic_Array($T)
-		result:Dynamic_Array(T)
-		result.size=0
-		if initial_capacity==0
-			result.buffer.data=*null
-			result.buffer.size=0
+	create :: (initial_capacity: int = 0) -> Dynamic_Array($T)
+		result: Dynamic_Array(T)
+		result.size = 0
+		if initial_capacity == 0
+			result.buffer.data =* null
+			result.buffer.size = 0
 		else
-			result.buffer=new[initial_capacity]T
+			result.buffer = new [initial_capacity]T
 		return result
 	
-	destroy::(array:*Dynamic_Array($T))
-		if array.buffer.size!=0
+	destroy :: (array: *Dynamic_Array($T))
+		if array.buffer.size != 0
 			delete array.buffer
 	
-	resize::(array:*Dynamic_Array($T),new_capacity:int)
-		if array.buffer.size>=new_capacity
+	resize :: (array: *Dynamic_Array($T), new_capacity: int)
+		if cast array.buffer.size >= new_capacity
 			return
 		
-		if array.buffer.size==0
-			next_size:=1
-			while next_size<new_capacity
-				next_size*=2
-			array.buffer=new[next_size]T
+		if array.buffer.size == 0
+			next_size := 1
+			while next_size < new_capacity
+				next_size *= 2
+			array.buffer = new [next_size]T
 		else
-			next_size:=array.buffer.size
-			while next_size<new_capacity
-				next_size*=2
+			next_size := cast {int} array.buffer.size
+			while next_size < new_capacity
+				next_size *= 2
 			
-			new_buffer:=new[next_size]T
-			for i:=0;i<array.size;i+=1
-				new_buffer[i]=array.buffer[i]
+			new_buffer := new [next_size]T
+			for i := 0; i < array.size; i += 1
+				new_buffer[i] = array.buffer[i]
 			delete array.buffer
-			array.buffer=new_buffer
+			array.buffer = new_buffer
 	
-	push_back::(array:*Dynamic_Array($T),value:T)
-		resize(array,array.size+1)
-		array.buffer[array.size]=value
-		array.size+=1
+	push_back :: (array: *Dynamic_Array($T), value: T)
+		resize(array, array.size + 1)
+		array.buffer[array.size] = value
+		array.size += 1
 	
-	at::(array:Dynamic_Array($T),index:int)->*T
+	at :: (array: Dynamic_Array($T), index: int) -> *T
 		return array.buffer[index]
 	
-	Iterator::module
-		Array_Iter::struct($T:Type_Handle)
-			array:*Dynamic_Array(T)
-			index:int
+	Iterator :: module
+		Array_Iter :: struct ($T: Type_Handle)
+			array: *Dynamic_Array(T)
+			index: int
 		
-		make::(array:*Dynamic_Array($T))->Array_Iter(T)
-			return.{array,0}
+		make :: (array: *Dynamic_Array($T)) -> Array_Iter(T)
+			return .{array, 0}
 		
-		has_next::(iter:Array_Iter($T))->bool
-			return iter.index<iter.array.size
+		has_next :: (iter: Array_Iter($T)) -> bool
+			return iter.index < iter.array.size
 		
-		get_value::(iter:Array_Iter($T))->*T
+		get_value :: (iter: Array_Iter($T)) -> *T
 			return iter.array.buffer[iter.index]
 		
-		next::(iter:*Array_Iter($T))
-			iter.index+=1
+		next :: (iter: *Array_Iter($T))
+			iter.index += 1
 	
-	Context::module
-		context add_iterator(Iterator~make,Iterator~has_next,Iterator~next,Iterator~get_value)
+	Context :: module
+		context add_iterator(Iterator~make, Iterator~has_next, Iterator~next, Iterator~get_value)
 		context add_dot_call(destroy)
 		context add_dot_call(push_back)
 		context add_array_access(at)
