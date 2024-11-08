@@ -1,0 +1,25 @@
+
+empty_fn :: ()
+	x: int
+	y: int = 100
+	x = 10 * 20 + y
+
+function_with_params :: (a: int)
+	x := 2 * a
+
+function_with_return :: () -> int
+	return 15 * 2
+
+mul_add :: (base: int, fac1: int, fac2: int, ignore_fac2: bool) -> int
+	if !ignore_fac2
+		return base + (fac1 * fac2)
+	else
+		return base + fac1
+
+main :: ()
+	empty_fn()
+	function_with_params(15)
+	x := function_with_return()
+	assert(x == 30)
+	assert(mul_add(1, 2, 3, false) == 7)
+	assert(mul_add(1, 2, 3, true) == 3)

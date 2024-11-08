@@ -1,4 +1,5 @@
 
+import Upp~Type_Handle
 
 // Custom casts also work on polymorphic functions
 Optional::struct($T:Type_Handle)

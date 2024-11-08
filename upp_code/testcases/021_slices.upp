@@ -1,28 +1,31 @@
-main::()
+
+import Upp~u64
+
+main :: ()
 	// New operator with arrays creates a slice
-	arr:=new[20]int
-	i:=0
-	while i<arr.size
-		arr[i]=arr.size-i-1
-		i=i+1
+	arr := new [20]int
+	i: u64 = 0
+	while i < arr.size
+		arr[i] = cast (arr.size - i - 1)
+		i = i + 1
 	
 	array_bubble_sort(arr)
-	i=0
-	while i<arr.size-1
-		assert(arr[i]<arr[i+1])
-		i=i+1
+	i = 0
+	while i < arr.size - 1
+		assert(arr[i] < arr[i + 1])
+		i = i + 1
 	
 	// Deletion on slices
 	delete arr
 
-array_bubble_sort::(a:[]int)
-	i:=0
-	while(i<a.size)
-		j:=i+1
-		while(j<a.size)
-			if(a[j]<a[i])
-				swap:=a[i]
-				a[i]=a[j]
-				a[j]=swap
-			j=j+1
-		i=i+1
+array_bubble_sort :: (a: []int)
+	i: u64 = 0
+	while (i < a.size)
+		j := i + 1
+		while (j < a.size)
+			if (a[j] < a[i])
+				swap := a[i]
+				a[i] = a[j]
+				a[j] = swap
+			j = j + 1
+		i = i + 1

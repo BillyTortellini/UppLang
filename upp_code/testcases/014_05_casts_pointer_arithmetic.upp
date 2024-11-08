@@ -1,4 +1,6 @@
 
+import Upp~u64
+import Upp~type_info
 
 main::()
 	// Casting between pointers is done with cast_pointer keyword,

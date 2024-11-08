@@ -1,12 +1,13 @@
 
-foo::($C:int)->int
-	x:[C]i32
-	x[2]=15
-	return x[2]*C+1
+
+foo :: ($C: int) -> int
+	x: [C]int
+	x[2] = 15
+	return x[2]*C + 1
 	
-main::()
-	a:=foo(3)
-	b:=foo(4)
-	assert(a==46)
-	assert(b==61)
+main :: ()
+	a := foo(3)
+	b := foo(4)
+	assert(a == 46)
+	assert(b == 61)
 	

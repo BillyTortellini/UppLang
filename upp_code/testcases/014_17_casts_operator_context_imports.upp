@@ -2,22 +2,25 @@
 // As to not have to repeat the operator context,
 // It is possible to import all used operators from other modules
 
-Integer_Auto_Casts::module
-	context set_cast_option(.INTEGER_SIZE_UPCAST,.IMPLICIT)
-	context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED,.IMPLICIT)
-	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED,.IMPLICIT)
+import Upp~u32
+import Upp~i64
 
-is_even::(n:int)->bool
-	return n%2==0
+Integer_Auto_Casts :: module
+	context set_cast_option(.INTEGER_SIZE_UPCAST, .IMPLICIT)
+	context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED, .IMPLICIT)
+	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED, .IMPLICIT)
 
-Integer_Is_Even::module
-	context add_cast(is_even,.IMPLICIT)
+is_even :: (n: int) -> bool
+	return n % 2 == 0
 
-main::()
+Integer_Is_Even :: module
+	context add_cast(is_even, .IMPLICIT)
+
+main :: ()
 	context import Integer_Auto_Casts
 	context import Integer_Is_Even
 	
-	i:=15
-	u:u32=i*2
-	large:i64=i*100
-	test:bool=i
+	i := 15
+	u: u32 = i * 2
+	large: i64 = i * 100
+	test: bool = i

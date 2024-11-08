@@ -1,8 +1,12 @@
-main::()
-	x0:[5]int// Array type
-	x1:[]int// Slice type
-	x3:*int// Pointer type
-	x4:byte_pointer// Void ptr type
+
+//
+	Basic types can be combined with basic
+	type operators to create further types
+
+main :: ()
+	x0: [5]int // Array type
+	x1: []int // Slice type
+	x3: *int // Pointer type
 	
 	// Combinations
 	c0:*[5]int

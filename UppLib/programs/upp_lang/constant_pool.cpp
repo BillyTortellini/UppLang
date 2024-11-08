@@ -131,7 +131,7 @@ void datatype_memory_set_padding_bytes_to_zero_recursive(Datatype* signature, by
     signature = datatype_get_non_const_type(signature); // We don't care for constants here
     switch (signature->type)
     {
-    case Datatype_Type::TEMPLATE_PARAMETER:
+    case Datatype_Type::TEMPLATE_TYPE:
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
     case Datatype_Type::UNKNOWN_TYPE: {
         panic("Shouldn't happen");

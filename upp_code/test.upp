@@ -2,6 +2,7 @@
 import "editor_text.upp"
 
 add :: (a: int, b: int) -> int
+	x: int = false
 	return a + b
 
 

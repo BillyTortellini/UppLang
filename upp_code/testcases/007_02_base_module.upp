@@ -1,0 +1,28 @@
+
+//
+	In the Upp-module, all basic primitive types
+	are available (integers and floats of different sizes)
+
+main :: ()
+	// Here are all primitive types currently available
+	x0: int
+	x1: float
+	x_1: bool
+	
+	x2: Upp~u8
+	x3: Upp~u16
+	x4: Upp~u32
+	x5: Upp~u64
+	x6: Upp~i8
+	x7: Upp~i16
+	x8: Upp~i32
+	x9: Upp~i64
+	
+	x10: Upp~f32
+	x11: Upp~f64
+	
+	x12: Upp~byte
+	
+	p: Upp~byte_pointer
+
+

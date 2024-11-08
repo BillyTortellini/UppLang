@@ -1,29 +1,30 @@
 
+import Upp~*
 
-main::()
+main :: ()
 	// Casting from one type to another is done using the cast keyword, using the syntax cast {destination_type} value
 	// For primitive datatypes, the following casts are available
 	
 	// Integer size up and down casts
-	n0:i8=cast{i8}16
-	n1:i16=cast{i16}n0
-	n2:i32=cast{i32}n0
-	n3:i64=cast{i64}n0
-	n4:i16=cast{i16}n3
+	n0: i8 = cast {i8} 16
+	n1: i16 = cast {i16} n0
+	n2: i32 = cast {i32} n0
+	n3: i64 = cast {i64} n0
+	n4: i16 = cast {i16} n3
 	
 	// Unsigned to signed integers between integers of same size
-	n5:u32=cast{u32}n2
-	n6:i32=cast{i32}n5
-	n7:u8=cast{u8}n0
-	n8:i8=cast{i8}n7
+	n5: u32 = cast {u32} n2
+	n6: i32 = cast {i32} n5
+	n7: u8 = cast {u8} n0
+	n8: i8 = cast {i8} n7
 	
 	// Floats can also be upcast and downcast in size
-	f0:f32=10.5
-	f1:f64=cast{f64}f0
-	f2:f32=cast{f32}f1
+	f0: f32 = 10.5
+	f1: f64 = cast {f64} f0
+	f2: f32 = cast {f32} f1
 	
 	// Also float to integer casts are also supported
-	n9:i32=cast{i32}f2
-	f3:f64=cast{f64}n0
+	n9: i32 = cast {i32} f2
+	f3: f64 = cast {f64} n0
 
 

@@ -1,25 +1,27 @@
-Player::struct
-	name:string
-	level:int
-	alive:bool
+import Upp~c_string
 
-init_fn::()->int
-	return 15+20*2
+Player :: struct
+	name: c_string
+	level: int
+	alive: bool
+
+init_fn :: () -> int
+	return 15 + 20 * 2
 
 //
 	In Theory the global initialization order is determined by the way
 	in which they reference each other,but it may currently be the case
 	that this does not work correctly
-global_x:int
-global_y:i32=5
-global_w:=init_fn()
-global_player:Player
-global_pointer:*int
+global_x: int
+global_y: int = 5
+global_w := init_fn()
+global_player: Player
+global_pointer: *int
 
-main::()
+main :: ()
 	// Test globals
-	global_x=15+global_y
-	assert(global_x==20)
+	global_x = 15 + global_y
+	assert(global_x == 20)
 	assert(global_w==55)
 	
 	global_player.name="Fred"

@@ -42,24 +42,24 @@ main::()
 		a :=~ i --> a is an int
 		a :=~ *i --> a is a pointer
 	
-	a:int=15
-	ap:=*a
-	app:=**ap
-	appp:=**app
+	a: int = 15
+	ap :=* a
+	app :=* *ap
+	appp :=* *app
 	
 	// The pointers can be used like normal values
-	x:int=a+app+appp
-	assert(x==45)
+	x: int = a + app + appp
+	assert(x == 45)
 	
-	i:=5
-	j:=5
-	ip:=*i
-	jp:=*j
+	i := 5
+	j := 5
+	ip :=* i
+	jp :=* j
 	// Value comparison
-	assert(i==j)
+	assert(i == j)
 	// Value comparison with pointers
-	assert(ip==jp)
+	assert(ip == jp)
 	// Pointer comparison
-	assert(!(ip*==jp))
-	assert(ip*!=jp)
+	assert(!(ip *== jp))
+	assert(ip *!= jp)
 	

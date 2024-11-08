@@ -1,5 +1,7 @@
 
-foo::(a: [C]T, $C:int, $T: Type_Handle) -> int
+import Upp~Type_Handle
+
+foo :: (a: [C]T, $C: int, $T: Type_Handle) -> int
 	sum := 0
 	i := 0
 	while i < C
@@ -7,8 +9,8 @@ foo::(a: [C]T, $C:int, $T: Type_Handle) -> int
 		i = i + 1
 	return sum
 	
-main::()
-	values:=int.[1, 2, 3, 4]
+main :: ()
+	values := int.[1, 2, 3, 4]
 	sum := foo(values, 4, int)
 	assert(sum == 10)
 	

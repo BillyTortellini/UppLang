@@ -491,7 +491,7 @@ void gui_layout_calculate_min_size(int node_index, int dim)
     // Calculate min size
     if (node.size[dim].fit_at_least_children) {
         int padding_size = node.layout.padding[dim] * 2;
-        if (node.layout.pad_between_children) {
+        if (node.layout.pad_between_children && in_stacking_dimension) {
             padding_size += math_maximum(0, child_count - 1) * node.layout.padding[dim];
         }
         node.min_size[dim] = math_maximum(node.size[dim].min_size, node.min_child_size[dim] + padding_size);

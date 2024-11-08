@@ -291,10 +291,17 @@ void upp_lang_main()
         // Input Handling
         Input* input = window_get_input(window);
         {
-            if (!window_handle_messages(window, wait_for_messages)) {
+            int msg_count = 0;
+            if (!window_handle_messages(window, wait_for_messages, &msg_count)) {
                 break;
             }
-            if (input->close_request_issued || (input->key_pressed[(int)Key_Code::ESCAPE])) {
+            if (msg_count > 0) { // After a window message, animated for 10 frames
+                last_animation_required_frame = frame;
+            }
+
+            if (input->close_request_issued || 
+                (input->key_pressed[(int)Key_Code::ESCAPE] && (input->key_down[(int)Key_Code::SHIFT] || input->key_down[(int) Key_Code::CTRL]))) 
+            {
                 syntax_editor_save_state(string_create_static("upp_code/session.ses"));
                 window_save_position(window, "window_pos.set");
                 window_close(window);

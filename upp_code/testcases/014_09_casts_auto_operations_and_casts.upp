@@ -1,11 +1,12 @@
 
+import Upp~i64
 
-main::()
+main :: ()
 	// When using auto-address of and auto-dereference in combination
 	// with casts, it's important to note that the auto-operations
 	// are always applied first, and never after the cast
 	
-	i:int=15
-	ip:=*i
+	i: int = 15
+	ip :=* i
 	
-	num64:i64=cast{i64}ip
+	num64: i64 = cast {i64} ip

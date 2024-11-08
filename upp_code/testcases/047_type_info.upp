@@ -1,15 +1,20 @@
+import Upp~c_string
+import Upp~Type_Info
+import Upp~type_info
+import Upp~Type_Handle
+import Upp~u64
 
-Player::struct
-	age:int
-	name:string
-	alive:bool
+Player :: struct
+	age: int
+	name: c_string
+	alive: bool
 
-main::()
+main :: ()
 	// To conclude why the Type-Type is quite powerfull, lets look at the type_information type
-	info:Type_Info
+	info: Type_Info
 	
 	// To obtain information about any type, we can use the built-in type_info() function
-	info=type_info(int)
+	info = type_info(int)
 	
 	//
 		Type info contains all informations about a type,for example:
@@ -19,49 +24,49 @@ main::()
 		-enum members,with string names
 		-primitive type
 		-...
-	int_size:=info.size
-	int_alignment:=info.alignment
+	int_size := info.size
+	int_alignment := info.alignment
 	
-	assert(int_size==4)
-	assert(int_alignment==4)
-	assert(info.type==int)
+	assert(int_size == 4)
+	assert(int_alignment == 4)
+	assert(info.type == int)
 	
 	// To give an example of what could be done, lets search for a member and get its offset
-	name_offset:=member_offset(Player,"name")
-	assert(name_offset==8)
+	name_offset := member_offset(Player, "name")
+	assert(name_offset == 8)
 	
 	// With bake, this is a zero-cost operation
-	offset:=#bake member_offset(Player,"alive")
-	assert(offset==24)
+	offset := #bake member_offset(Player, "alive")
+	assert(offset == 24)
 	//
 		This still seems kinda inconvenient compared to C's'offset_of'
 		But in the future you will be able to get almost the same syntax with
 		Macros.There will also be the possiblility to report errors inside
 		bake,which will prevent the names from being invalid
 
-member_offset::(type:Type_Handle,name:string)->int
+member_offset :: (type: Type_Handle, name: c_string) -> int
 	
-	info:=type_info(type)
-	if info.tag!=.Struct
-		return-1
+	info := type_info(type)
+	if info.tag != .Struct
+		return -1
 	
-	members:=info.Struct.content.members
-	i:=0
-	offset:=-1
-	while i<members.size search_loop:
-		if string_compare(members[i].name,name)
-			offset=members[i].offset
+	members := info.Struct.content.members
+	i: u64 = 0
+	offset := -1
+	while i < members.size search_loop:
+		if string_compare(members[i].name, name)
+			offset = members[i].offset
 			break search_loop
-		i=i+1
+		i = i + 1
 	return offset
 
-string_compare::(str1:string,str2:string)->bool
-	if str1.bytes.size!=str2.bytes.size
+string_compare :: (str1: c_string, str2: c_string) -> bool
+	if str1.bytes.size != str2.bytes.size
 		return false
-	i:=0
-	while i<str1.bytes.size
-		if str1.bytes[i]!=str2.bytes[i]
+	i: u64 = 0
+	while i < str1.bytes.size
+		if str1.bytes[i] != str2.bytes[i]
 			return false
-		i=i+1
+		i = i + 1
 	return true
 	

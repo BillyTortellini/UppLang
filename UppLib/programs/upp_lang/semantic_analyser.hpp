@@ -31,7 +31,8 @@ struct Workload_Structure_Body;
 struct Function_Progress;
 struct Bake_Progress;
 struct Module_Progress;
-struct Datatype_Template_Parameter;
+struct Datatype_Template;
+struct Poly_Value;
 
 namespace Parser
 {
@@ -114,11 +115,19 @@ enum class Polymorphic_Analysis_Type
     POLYMORPHIC_INSTANCE
 };
 
-struct Polymorphic_Value
+enum class Poly_Value_Type
 {
-    bool only_datatype_known; // In base analysis/during instanciation only the datatype may be known
+    SET,
+    UNSET,
+    TEMPLATED_TYPE, // Used for header-analysis (inferred type reads and struct-template values)
+};
+
+struct Poly_Value
+{
+    Poly_Value_Type type;
     union {
-        Datatype* type;
+        Datatype* unset_type;
+        Datatype* template_type;
         Upp_Constant value;
     } options;
 };
@@ -169,8 +178,9 @@ struct Workload_Base
     // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
     //        * Re-analysing the header during poly-instanciation of functions
     //        * Accessing polymorphic-symbols inside child-workloads (Anonymous functions/anonymous structs, bake)
-    Array<Polymorphic_Value> polymorphic_values; // May be null, in which case we shouldn't be able to access polymorphics at all
+    Array<Poly_Value> polymorphic_values; // May be null, in which case we shouldn't be able to access polymorphics at all
     int polymorphic_instanciation_depth; 
+    bool is_polymorphic_base; // Polymorphic base workloads and children cannot create poly instances
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -272,59 +282,62 @@ struct Workload_Bake_Execution
 
 
 // Polymorphism
-struct Polymorphic_Parameter
+struct Poly_Parameter
 {
     Function_Parameter infos;
 
     // Polymorphic infos
+    bool depends_on_other_parameters;
+    bool contains_inferred_parameter;
+    bool has_self_dependency;
     bool is_comptime;
     union {
         int value_access_index; // For comptime parameters
         int index_in_non_polymorphic_signature; // For normal parameters
     } options;
-    Dynamic_Array<int> depends_on;
-    Dynamic_Array<int> dependees;
-    int dependency_count;
 };
 
-struct Implicit_Parameter_Infos
+struct Inferred_Parameter
 {
     int defined_in_parameter_index;
     AST::Expression* expression;
     String* id;
-    Datatype_Template_Parameter* template_parameter;
+    Datatype_Template* template_parameter;
 };
 
-struct Polymorphic_Base_Info;
-struct Polymorphic_Instance_Info
-{
-    Polymorphic_Base_Info* base_info;
-    Array<Polymorphic_Value> instance_parameter_values;
+struct Poly_Instance;
 
-    union {
-        Function_Progress* function_instance;
-        Workload_Structure_Body* struct_instance;
-    } options;
-};
-
-struct Polymorphic_Base_Info
+struct Poly_Header
 {
     String* name; // Either struct or function name
     bool is_function;
 
     // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
-    Array<Polymorphic_Parameter> parameters;
-    // Order in which arguments need to be evaluated in for instanciation
+    Array<Poly_Parameter> parameters;
+    int poly_value_count; // Number of comptime + inferred parameters
+
+    // Order in which arguments need to be evaluated in for instanciation, -1 for return value
     Dynamic_Array<int> parameter_analysis_order; 
-    Dynamic_Array<Implicit_Parameter_Infos> implicit_parameter_infos;
-    Array<Polymorphic_Value> base_parameter_values; // During base analysis only types of parameters are known
-    Dynamic_Array<Polymorphic_Instance_Info> instances;
+    Dynamic_Array<Inferred_Parameter> inferred_parameters;
+    Dynamic_Array<Poly_Instance> instances;
+    Array<Poly_Value> base_analysis_values;
 
     // For convenience
-    int return_type_index; // I guess -1 if no return type?
+    int return_type_index; // -1 if no return-type exists
     AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
     Symbol_Table* symbol_table;
+};
+
+struct Poly_Instance
+{
+    Poly_Header* header;
+    Array<Poly_Value> instance_values;
+    bool is_function;
+    union {
+        Function_Progress* function_instance;
+        Workload_Structure_Body* struct_instance;
+    } options;
 };
 
 
@@ -352,7 +365,7 @@ struct Workload_Structure_Polymorphic
     Workload_Base base;
     Workload_Structure_Body* body_workload;
 
-    Polymorphic_Base_Info info;
+    Poly_Header info;
 };
 
 
@@ -361,7 +374,7 @@ struct Workload_Structure_Polymorphic
 
 struct Polymorphic_Function_Base
 {
-    Polymorphic_Base_Info base;
+    Poly_Header base;
 };
 
 struct Function_Progress
@@ -524,7 +537,6 @@ struct Expression_Info
     Expression_Result_Type result_type;
     union
     {
-        Datatype* value_type;
         Datatype* type;
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
@@ -548,7 +560,7 @@ struct Expression_Info
         Upp_Constant constant;
     } options;
 
-    bool contains_errors; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
+    bool is_valid; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union {
         Datatype_Function* function_call_signature; // Used by code-generation for accessing default values
         Datatype_Primitive* bitwise_primitive_type;
@@ -920,7 +932,7 @@ struct Semantic_Analyser
     Module_Progress* root_module;
     Predefined_Symbols predefined_symbols;
     Workload_Executer* workload_executer;
-    Hashtable<AST::Expression*, Datatype_Template_Parameter*> valid_template_parameters;
+    Hashtable<AST::Expression*, Datatype_Template*> valid_template_parameters;
     ModTree_Global* global_allocator; // *Allocator
     ModTree_Global* default_allocator; // Allocator
 

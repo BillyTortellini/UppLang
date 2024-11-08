@@ -1,46 +1,38 @@
 
+import Upp~u64
+import Upp~Any
 
-add_numbers::(values:[]int)->int
-	sum:=0
-	i:=0
-	while i<values.size
-		sum=sum+values[i]
-		i=i+1
+add_numbers :: (values: []int) -> int
+	sum := 0
+	i: u64 = 0
+	while i < values.size
+		sum = sum + values[i]
+		i = i + 1
 	return sum
 
-primitive_type_value::(value:Any)->int
-	if value.type==int
+primitive_type_value :: (value: Any) -> int
+	if value.type == int
 		return 0
-	else if value.type==float
+	else if value.type == float
 		return 1
-	else if value.type==bool
+	else if value.type == bool
 		return 2
 	return 3
 
-main::()
+main :: ()
 	// The default options in the operator context also support
 	// more casts for some of the default datatype (pointers, slices, any,...)
 	
-	i:int=15
-	
-	// For example, pointers can be converted to bool for simple null checks
-		context set_cast_option(.POINTER_NULL_CHECK,.IMPLICIT)
-		ip:*int=*null
-		assert(ip*==null)
-		assert(!cast{bool}ip)
-		
-		ip=*i
-		assert(ip*!=null)
-		assert(ip)
+	i: int = 15
 	
 	// Arrays can be automatically-cast to slices
-		context set_cast_option(.ARRAY_TO_SLICE,.IMPLICIT)
-		values:[4]int=.[1,2,3,4]
-		sum:=add_numbers(values)
-		assert(sum==10)
+		context set_cast_option(.ARRAY_TO_SLICE, .IMPLICIT)
+		values: [4]int = .[1, 2, 3, 4]
+		sum := add_numbers(values)
+		assert(sum == 10)
 	
 	// To and from any could also be done as auto
-		context set_cast_option(.TO_ANY,.IMPLICIT)
-		assert(primitive_type_value(15)==0)
-		assert(primitive_type_value(2.5)==1)
-		assert(primitive_type_value(false)==2)
+		context set_cast_option(.TO_ANY, .IMPLICIT)
+		assert(primitive_type_value(15) == 0)
+		assert(primitive_type_value(2.5) == 1)
+		assert(primitive_type_value(false) == 2)

@@ -1,10 +1,12 @@
 
-foo::(a:T)->$T
-	return a*cast{T}2
+import Upp~type_of
+
+foo :: (a: T) -> $T
+	return a* cast {T} 2
 	
-main::()
-	a:int=foo(5)
-	b:=foo(5,T=int)
-	c:=foo(5,T=float)
-	assert(type_of(c)==float)
+main :: ()
+	a: int = foo(5)
+	b := foo(5, T = int)
+	c := foo(5, T = float)
+	assert(type_of(c) == float)
 	

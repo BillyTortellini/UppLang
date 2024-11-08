@@ -1,2 +1,6 @@
-main::()
-	x:int
+
+main :: ()
+	// The 3 basic types are: int, float, bool
+	x: int
+	y: float
+	z: bool

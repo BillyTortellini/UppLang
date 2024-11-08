@@ -1,14 +1,16 @@
 
-Node::struct(T:Type_Handle)
-	next:*Node(T)
-	prev:*Node(T)
-	value:T
+import Upp~Type_Handle
 
-main::()
-	a:Node(int)
-	b:Node(int)
+Node :: struct (T: Type_Handle)
+	next: *Node(T)
+	prev: *Node(T)
+	value: T
+
+main :: ()
+	a: Node(int)
+	b: Node(int)
 	
-	a.next=*b
-	b.value=15
+	a.next =* b
+	b.value = 15
 	
-	assert(a.next.value==15)
+	assert(a.next.value == 15)

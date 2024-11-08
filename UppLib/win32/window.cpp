@@ -838,12 +838,14 @@ bool window_handle_messages(Window* window, bool block_until_next_message, int* 
         else { // Handle message received from GetMessage
             TranslateMessage(&msg);
             DispatchMessage(&msg);
+            msg_count += 1;
         }
         // Handle all remaining available messages
         while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
+            msg_count += 1;
             if (msg.message == WM_QUIT) { // WM_QUIT was sent
                 return false;
             }

@@ -92,6 +92,7 @@ enum class Motion_Type
     // PARAGRAPH_WITH_INDENT, // p
     // PARAGRAPH_WITHOUT_INDENT, // P
     BLOCK, // b or B
+    PARAGRAPH, // b or B
     // 'Custom' motion used for dd, yy, Y, cc and also line-up/down movement motions
     // This is because yank/put handles lines different than other motions
     // Also deletes with up-down movement turn into line delets in Vim
@@ -170,6 +171,7 @@ enum class Normal_Command_Type
     GOTO_NEXT_TAB, // gt
     GOTO_PREV_TAB, // gT
     GOTO_DEFINITION, // F12
+    CLOSE_TAB, // :q or wq
 
     // Folding
     FOLD_CURRENT_BLOCK, // gb
@@ -367,6 +369,7 @@ bool auto_format_line(int line_index, int tab_index = -1);
 void syntax_editor_synchronize_with_compiler(bool generate_code);
 void syntax_editor_set_text(String string);
 void normal_command_execute(Normal_Mode_Command& command);
+void syntax_editor_save_text_file();
 Error_Display error_display_make(String msg, Token_Range range, Source_Code* code, bool is_token_range_duplicate, int semantic_error_index);
 
 
@@ -520,6 +523,35 @@ void syntax_editor_add_fold(int line_start, int line_end, int indentation)
     syntax_editor_update_line_fold_infos();
 }
 
+struct Comparator_Error_Display 
+{
+    bool operator()(const Error_Display& a, const Error_Display& b) 
+    {
+        auto& editor = syntax_editor;
+        int tab_a = -1;
+        int tab_b = -1;
+        for (int i = 0; i < editor.tabs.size; i++) {
+            auto code = editor.tabs[i].code;
+            if (a.code == code) {
+                tab_a = i;
+            }
+            if (b.code == code) {
+                tab_b = i;
+            }
+        }
+
+        if (tab_a != tab_b) {
+            // Return errors in current tab first
+            if (tab_a == editor.open_tab_index) return true;
+            else if (tab_b == editor.open_tab_index) return false;
+            // Otherwise return in open tab order
+            return tab_a < tab_b;
+        }
+
+        return a.range.start.line < b.range.start.line;
+    }
+};
+
 void syntax_editor_switch_tab(int new_tab_index)
 {
     auto& editor = syntax_editor;
@@ -529,8 +561,17 @@ void syntax_editor_switch_tab(int new_tab_index)
     editor.open_tab_index = new_tab_index;
     if (editor.main_tab_index == -1) {
         editor.code_changed_since_last_compile = true;
+        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
         syntax_editor_synchronize_with_compiler(false);
     }
+
+    auto& tab = editor.tabs[editor.open_tab_index];
+    source_code_tokenize(tab.code);
+    for (int i = 0; i < tab.code->line_count; i++) {
+        auto_format_line(i);
+    }
+    // Re-Sort errors since sorting depends on open tab
+    dynamic_array_sort(&editor.errors, Comparator_Error_Display());
 }
 
 void syntax_editor_close_tab(int tab_index, bool force_close = false)
@@ -538,6 +579,8 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
     auto& editor = syntax_editor;
     if (editor.tabs.size <= 1 && !force_close) return;
     if (tab_index < 0 || tab_index >= editor.tabs.size) return;
+
+    syntax_editor_save_text_file();
 
     Editor_Tab* tab = &editor.tabs[tab_index];
     tab->code->open_in_editor = false;
@@ -547,7 +590,11 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
     editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
     if (tab_index == editor.main_tab_index) {
         editor.main_tab_index = -1;
+    }
+
+    if (editor.open_tab_index < editor.tabs.size && editor.open_tab_index >= 0) {
         editor.code_changed_since_last_compile = true;
+        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
         syntax_editor_synchronize_with_compiler(false);
     }
 }
@@ -960,6 +1007,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
                 dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), range, code, j != 0, i));
             }
         }
+        dynamic_array_sort(&editor.errors, Comparator_Error_Display());
     }
 }
 
@@ -1653,7 +1701,8 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
         - Function (Parameter symbol are here
         - Code-Block
     */
-    Symbol_Table* table = compiler.semantic_analyser->root_symbol_table;
+    auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+    Symbol_Table* table = code->module_progress->module_analysis->symbol_table;
     Analysis_Pass* pass = code_query_get_analysis_pass(base);
     if (pass == 0) return table;
     while (base != 0)
@@ -2662,6 +2711,8 @@ namespace Parsing
             // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
         case 'b':
         case 'B': return parse_result_success(motion_make(Motion_Type::BLOCK, repeat_count, contains_edges));
+        case 'P': 
+        case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH, repeat_count, contains_edges));
         }
 
         index -= 1;
@@ -2765,7 +2816,7 @@ namespace Parsing
                         repeat_count = 0;
                     }
                     return parse_result_success(
-                        normal_mode_command_make((follow_char == 'T' ? Normal_Command_Type::GOTO_NEXT_TAB : Normal_Command_Type::GOTO_PREV_TAB), repeat_count)
+                        normal_mode_command_make((follow_char == 't' ? Normal_Command_Type::GOTO_NEXT_TAB : Normal_Command_Type::GOTO_PREV_TAB), repeat_count)
                     );
                 }
                 case 'b': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_CURRENT_BLOCK, repeat_count));
@@ -2861,6 +2912,16 @@ namespace Parsing
                 return parse_result_completable<Normal_Mode_Command>();
             }
             return parse_result_success(normal_mode_command_make_char(Normal_Command_Type::REPLACE_CHAR, 1, follow_char));
+        }
+        case ':':
+        {
+            if (!follow_char_valid) {
+                return parse_result_completable<Normal_Mode_Command>();
+            }
+            if (follow_char == 'q') {
+                return parse_result_success(normal_mode_command_make(Normal_Command_Type::CLOSE_TAB, 1));
+            }
+            return parse_result_failure<Normal_Mode_Command>();
         }
         case '>': command_type = Normal_Command_Type::ADD_INDENTATION; parse_motion_afterwards = true; break;
         case '<': command_type = Normal_Command_Type::REMOVE_INDENTATION; parse_motion_afterwards = true; break;
@@ -3483,6 +3544,38 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 
         break;
     }
+    case Motion_Type::PARAGRAPH:
+    {
+        int line_start = pos.line;
+        int start_indentation = source_code_get_line(code, line_start)->indentation - (motion.repeat_count - 1);
+        // Find previous empty line
+        while (line_start > 0) {
+            auto line = source_code_get_line(code, line_start);
+            if (line->text.size == 0) {
+                line_start = line_start + 1;
+                break;
+            }
+            line_start -= 1;
+        }
+        line_start = math_maximum(0, line_start);
+
+        // Find next empty line
+        int line_end = pos.line;
+        while (line_end < code->line_count) {
+            auto line = source_code_get_line(code, line_end);
+            if (line->text.size == 0) {
+                line_end = line_end - 1;
+                break;
+            }
+            line_end += 1;
+        }
+        line_end = math_minimum(code->line_count - 1, line_end);
+
+        result.start = text_index_make(line_start, 0);
+        result.end = text_index_make_line_end(code, line_end);
+
+        break;
+    }
     case Motion_Type::LINE:
     {
         // Note: The repeat count for line gives the final line offset
@@ -3538,7 +3631,10 @@ void delete_char_with_particles(Code_History* history, Text_Index index)
 }
 
 bool motion_is_line_motion(const Motion& motion) {
-    return motion.motion_type == Motion_Type::LINE || motion.motion_type == Motion_Type::BLOCK ||
+    return 
+        motion.motion_type == Motion_Type::LINE || 
+        motion.motion_type == Motion_Type::BLOCK ||
+        motion.motion_type == Motion_Type::PARAGRAPH ||
         (motion.motion_type == Motion_Type::MOVEMENT &&
             (motion.movement.type == Movement_Type::GOTO_START_OF_TEXT || 
              motion.movement.type == Movement_Type::GOTO_END_OF_TEXT ||
@@ -3764,7 +3860,8 @@ void center_cursor_on_error()
         return;
     }
 
-    auto& error = editor.errors[index_in_list];
+    // Note: We need to take the error out of the error list here, as tab-switching will change the error index
+    Error_Display error = editor.errors[index_in_list];
     if (error.code != editor.tabs[editor.open_tab_index].code) {
         int tab_index = syntax_editor_add_tab(error.code->file_path);
         syntax_editor_switch_tab(tab_index);
@@ -3811,7 +3908,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     // Start complex command for non-history commands
     bool execute_as_complex = command.type != Normal_Command_Type::UNDO && command.type != Normal_Command_Type::REDO &&
         command.type != Normal_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Command_Type::GOTO_PREV_TAB &&
-        command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE;
+        command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE && command.type != Normal_Command_Type::CLOSE_TAB;
     if (execute_as_complex) {
         history_start_complex_command(history);
     }
@@ -3819,6 +3916,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     SCOPE_EXIT(
         if (command.type != Normal_Command_Type::GOTO_NEXT_TAB &&
             command.type != Normal_Command_Type::GOTO_PREV_TAB &&
+            command.type != Normal_Command_Type::CLOSE_TAB && 
             command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE)
         {
             syntax_editor_sanitize_cursor();
@@ -4029,6 +4127,10 @@ void normal_command_execute(Normal_Mode_Command& command)
         }
 
         syntax_editor_switch_tab(next_tab_index);
+        break;
+    }
+    case Normal_Command_Type::CLOSE_TAB: {
+        syntax_editor_close_tab(editor.open_tab_index);
         break;
     }
     case Normal_Command_Type::GOTO_DEFINITION: {
@@ -5092,6 +5194,9 @@ void syntax_editor_update(bool& animations_running)
     }
     else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
         compiler_run_testcases(compiler.timer, true);
+        editor.code_changed_since_last_compile = true;
+        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
+        syntax_editor_synchronize_with_compiler(false);
     }
 
     // Handle Editor inputs
@@ -5549,7 +5654,6 @@ void syntax_editor_render()
         render_pass_draw(pass_particles, shader, mesh, Mesh_Topology::TRIANGLES, {});
     }
 
-    // Draw tabs with gui
     auto& tab = editor.tabs[editor.open_tab_index];
     auto code = tab.code;
     auto& cursor = tab.cursor;
@@ -5595,7 +5699,7 @@ void syntax_editor_render()
                 cam_start = move_visible_lines_up_or_down(cursor_line, -MIN_CURSOR_DISTANCE);
                 updated = true;
             }
-            if (cursor_line > cam_end - MIN_CURSOR_DISTANCE - 1 && cam_end < code->line_count - 1) {
+            if (cursor_line > cam_end - MIN_CURSOR_DISTANCE - 1 && cam_end <= code->line_count - 1) {
                 cam_start = move_visible_lines_up_or_down(cursor_line, -(line_count - MIN_CURSOR_DISTANCE - 1));
                 updated = true;
             }
@@ -5641,7 +5745,7 @@ void syntax_editor_render()
         };
 
         vec2 char_size = editor.text_display.char_size;
-        int line_num_digits = math_maximum(get_digits(cursor.line), 2) + 1;
+        int line_num_digits = math_maximum(get_digits(tab.code->line_count), 2) + 1;
 
         // Move code-box to the right
         code_box.min.x += char_size.x * (line_num_digits + 1);
@@ -6042,11 +6146,12 @@ void syntax_editor_render()
             case Symbol_Type::POLYMORPHIC_VALUE: {
                 assert(pass->origin_workload->polymorphic_values.data != nullptr, "");
                 const auto& value = pass->origin_workload->polymorphic_values[symbol->options.polymorphic_value.access_index];
-                if (value.only_datatype_known) {
-                    type = value.options.type;
-                }
-                else {
-                    type = value.options.value.type;
+                switch (value.type)
+                {
+                case Poly_Value_Type::SET: type = value.options.value.type; break;
+                case Poly_Value_Type::TEMPLATED_TYPE: type = value.options.template_type; break;
+                case Poly_Value_Type::UNSET: type = value.options.unset_type; break;
+                default: panic("");
                 }
                 break;
             }
@@ -6084,7 +6189,7 @@ void syntax_editor_render()
         {
             auto expr = AST::downcast<AST::Expression>(node);
             auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (expression_info != 0 && !expression_info->contains_errors)
+            if (expression_info != 0 && expression_info->is_valid)
             {
                 Rich_Text::add_seperator_line(text);
                 Rich_Text::add_line(text);

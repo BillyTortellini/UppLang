@@ -1,9 +1,13 @@
 main::()
-	x:=2+3+4
-	assert(x==9)
-	x=2+3*4
-	assert(x==14)
-	x=2*3+4
-	assert(x==10)
-	x=2*(3+4)
-	assert(x==14)
+	x: int
+	x = 2 + 3 + 4
+	assert(x == 9)
+	x = 2 + 3 * 4
+	assert(x == 14)
+	x = 2 * 3 + 4
+	assert(x == 10)
+	x = 2 * (3 + 4)
+	assert(x == 14)
+	
+	x = 1 * 2 + 3 * ((4 + 3) * 2) + 5
+	assert(x == 49)

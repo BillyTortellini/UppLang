@@ -1,4 +1,5 @@
 
+import Upp~*
 
 main::()
 	// With the operator-context it's possible to change the cast-mode of cast operations
@@ -26,7 +27,7 @@ context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED,.IMPLICIT)
 
 foo::()
 	// Context changes are inherited to module items
-	a:u32=cast{u32}15
-	b:int=cast a
+	a: u32 = cast {u32} 15
+	b: int = cast a
 
 

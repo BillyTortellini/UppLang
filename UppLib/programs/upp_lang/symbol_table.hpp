@@ -20,7 +20,7 @@ struct Module_Progress;
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
-struct Datatype_Template_Parameter;
+struct Datatype_Template;
 
 struct Function_Progress;
 struct Polymorphic_Function_Base;
@@ -180,7 +180,7 @@ enum class Symbol_Type
     PARAMETER,
 
     TYPE,
-    POLYMORPHIC_VALUE, // Either comptime parameter, implicit parameter, or struct parameter
+    POLYMORPHIC_VALUE, // Either comptime parameter or inferred parameter
     COMPTIME_VALUE,
     ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,

@@ -1,23 +1,26 @@
-Player::struct
-	name:string
-	age:int
-	alive:bool
 
-add_ints::(ints:[]int)->int
-	i:=0
-	sum:=0
-	while i<ints.size
-		sum=sum+ints[i]
-		i=i+1
+import Upp~c_string
+
+Player :: struct
+	name: c_string
+	age: int
+	alive: bool
+
+add_ints :: (ints: []int) -> int
+	i := 0
+	sum := 0
+	while cast i < ints.size
+		sum = sum + ints[i]
+		i = i + 1
 	return sum
 
-Color::enum
+Color :: enum
 	RED
 	GREEN
 	BLUE
 
-main::()
-	context set_cast_option(.ARRAY_TO_SLICE,.IMPLICIT)
+main :: ()
+	context set_cast_option(.ARRAY_TO_SLICE, .IMPLICIT)
 	//
 		The following Operations also have shorthand notations so
 		that the type is not necessary anymore
@@ -28,22 +31,22 @@ main::()
 		This only works if the type of the resulting value
 		can be infered from the usage context
 	
-	sum:=add_ints(.[1,2,3,4])
-	assert(sum==10)
+	sum := add_ints(.[1, 2, 3, 4])
+	assert(sum == 10)
 	
-	p:Player=.{name="What",age=17,alive=true}
-	assert(p.age==17)
+	p: Player = .{name = "What", age = 17, alive = true}
+	assert(p.age == 17)
 	
-	color:Color=.RED
-	assert(color==Color.RED)
+	color: Color = .RED
+	assert(color == Color.RED)
 	
-	value:=0
+	value := 0
 	switch color
 		.GREEN
-			value=2
+			value = 2
 		.BLUE
-			value=3
+			value = 3
 		.RED
-			value=1
-	assert(value==1)
+			value = 1
+	assert(value == 1)
 

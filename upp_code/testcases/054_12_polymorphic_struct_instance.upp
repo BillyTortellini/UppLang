@@ -1,9 +1,12 @@
 
-Foo::struct(T:Type_Handle)
+import Upp~Type_Handle
+import Upp~i64
+
+Foo :: struct (T: Type_Handle)
 	padding: i64
 	value: T
 	
-main::()
+main :: ()
 	a: Foo(int)
 	b: Foo(bool)
 	a.value = 15

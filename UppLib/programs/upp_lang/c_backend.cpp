@@ -547,7 +547,7 @@ void c_generator_output_type_reference(Datatype* type)
         break;
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-    case Datatype_Type::TEMPLATE_PARAMETER:
+    case Datatype_Type::TEMPLATE_TYPE:
     case Datatype_Type::UNKNOWN_TYPE:
     {
         string_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
@@ -1234,7 +1234,7 @@ void c_generator_generate()
             case Datatype_Type::TYPE_HANDLE:
             case Datatype_Type::BYTE_POINTER:
             case Datatype_Type::UNKNOWN_TYPE:
-            case Datatype_Type::TEMPLATE_PARAMETER:
+            case Datatype_Type::TEMPLATE_TYPE:
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
                 break; // Nothing to do on these types
             default: panic("");
@@ -1605,7 +1605,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             break;
         }
         case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-        case Datatype_Type::TEMPLATE_PARAMETER:
+        case Datatype_Type::TEMPLATE_TYPE:
         case Datatype_Type::UNKNOWN_TYPE: {
             panic("Should not happen, this should generate an error beforehand");
             break;

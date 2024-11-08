@@ -123,7 +123,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         string_append_formated(string, "]");
         break;
     }
-    case Datatype_Type::TEMPLATE_PARAMETER: {
+    case Datatype_Type::TEMPLATE_TYPE: {
         string_append_formated(string, "Polymorphic?");
         break;
     }
@@ -320,8 +320,8 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
 
     switch (signature->type)
     {
-    case Datatype_Type::TEMPLATE_PARAMETER: {
-        Datatype_Template_Parameter* polymorphic = downcast<Datatype_Template_Parameter>(signature);
+    case Datatype_Type::TEMPLATE_TYPE: {
+        Datatype_Template* polymorphic = downcast<Datatype_Template>(signature);
         assert(polymorphic->symbol != 0, "");
         if (!polymorphic->is_reference) {
             Rich_Text::append_formated(text, "$");
@@ -398,8 +398,11 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         {
         case Primitive_Type::BOOLEAN: Rich_Text::append_formated(text, "bool"); break;
         case Primitive_Type::INTEGER: {
-            if (memory.size == 4) {
+            if (memory.size == 4 && primitive->is_signed) {
                 Rich_Text::append(text, "int");
+            }
+            else if (primitive->is_c_char) {
+                Rich_Text::append(text, "c_char"); break;
             }
             else {
                 Rich_Text::append_formated(text, "%s%d", (primitive->is_signed ? "i" : "u"), memory.size * 8); break;
@@ -451,11 +454,11 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
                 Rich_Text::append_formated(text, "(");
                 SCOPE_EXIT(Rich_Text::append_formated(text, ")"));
                 auto& instance = struct_type->workload->polymorphic.instance;
-                auto instance_values = instance.parent->info.instances[instance.instance_index].instance_parameter_values;
+                auto instance_values = instance.parent->info.instances[instance.instance_index].instance_values;
                 for (int i = 0; i < instance_values.size; i++) 
                 {
                     auto& poly_value = instance_values[i];
-                    assert(!poly_value.only_datatype_known, "True for instances");
+                    assert(poly_value.type == Poly_Value_Type::SET, "True for instances");
                     auto& constant = poly_value.options.value;
 
                     auto string = Rich_Text::start_line_manipulation(text);
@@ -850,7 +853,6 @@ Internal_Type_Information* type_system_register_type(Datatype* datatype)
         }
         else if (datatype->base_type->type == Datatype_Type::CONSTANT)
         {
-            datatype->mods.constant_flags = datatype->mods.constant_flags | 1;
             datatype->base_type = downcast<Datatype_Constant>(datatype->base_type)->element_type;
             datatype->mods.is_constant = true;
         }
@@ -896,7 +898,7 @@ Datatype datatype_make_simple_base(Datatype_Type type, int size, int alignment) 
     result.mods.pointer_level = 0;
     result.mods.constant_flags = 0;
     result.type = type;
-    result.contains_type_template = false;
+    result.contains_template = false;
     result.memory_info_workload = 0;
     result.memory_info.available = true;
     result.memory_info.value.size = size;
@@ -922,11 +924,11 @@ Datatype_Primitive* type_system_make_primitive(Primitive_Type type, int size, bo
     return result;
 }
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index)
+Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_access_index, int defined_in_parameter_index)
 {
-    Datatype_Template_Parameter* result = new Datatype_Template_Parameter;
-    result->base = datatype_make_simple_base(Datatype_Type::TEMPLATE_PARAMETER, 1, 1);
-    result->base.contains_type_template = true;
+    Datatype_Template* result = new Datatype_Template;
+    result->base = datatype_make_simple_base(Datatype_Type::TEMPLATE_TYPE, 1, 1);
+    result->base.contains_template = true;
 
     result->symbol = symbol;
     result->is_reference = false;
@@ -938,7 +940,7 @@ Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol,
     internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
 
     // Create mirror type exactly the same way as normal type, but set mirror flag
-    Datatype_Template_Parameter* mirror_type = new Datatype_Template_Parameter;
+    Datatype_Template* mirror_type = new Datatype_Template;
     *mirror_type = *result;
     mirror_type->mirrored_type = result;
     mirror_type->is_reference = true;
@@ -951,11 +953,11 @@ Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol,
 }
 
 Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
-    Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values)
+    Workload_Structure_Polymorphic* base, Array<Poly_Value> instance_values)
 {
     Datatype_Struct_Instance_Template* result = new Datatype_Struct_Instance_Template;
     result->base = datatype_make_simple_base(Datatype_Type::STRUCT_INSTANCE_TEMPLATE, 1, 1);
-    result->base.contains_type_template = true;
+    result->base.contains_template = true;
 
     result->instance_values = instance_values;
     result->struct_base = base;
@@ -987,7 +989,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
     Datatype_Pointer* result = new Datatype_Pointer;
     result->base = datatype_make_simple_base(Datatype_Type::POINTER, 8, 8);
     result->base.memory_info.value.contains_reference = true;
-    result->base.contains_type_template = child_type->contains_type_template;
+    result->base.contains_template = child_type->contains_template;
     result->element_type = child_type;
     result->is_optional = is_optional;
 
@@ -1000,7 +1002,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
     return result;
 }
 
-Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable)
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template* polymorphic_count_variable)
 {
     auto& type_system = compiler.type_system;
     assert(!(count_known && element_count <= 0), "Hey");
@@ -1028,9 +1030,9 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 
     Datatype_Array* result = new Datatype_Array;
     result->base = datatype_make_simple_base(Datatype_Type::ARRAY, 1, 1);
-    result->base.contains_type_template = element_type->contains_type_template;
+    result->base.contains_template = element_type->contains_template;
     if (polymorphic_count_variable) {
-        result->base.contains_type_template = true;
+        result->base.contains_template = true;
     }
 
     result->element_type = element_type;
@@ -1099,11 +1101,11 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->base = datatype_make_simple_base(Datatype_Type::SLICE, 16, 8);
     result->base.memory_info.value.contains_reference = true;
     result->base.memory_info.value.contains_padding_bytes = true; // Currently slice is pointer + int32
-    result->base.contains_type_template = element_type->contains_type_template;
+    result->base.contains_template = element_type->contains_template;
 
     result->element_type = element_type;
     result->data_member.id = compiler.predefined_ids.data;
-    result->data_member.type = upcast(type_system_make_pointer(element_type));
+    result->data_member.type = upcast(type_system_make_pointer(element_type, true));
     result->data_member.offset = 0;
     result->data_member.content = 0;
     result->size_member.id = compiler.predefined_ids.size;
@@ -1139,7 +1141,7 @@ Datatype* type_system_make_constant(Datatype* datatype)
     Datatype_Constant* result = new Datatype_Constant;
     result->element_type = datatype;
     result->base = datatype_make_simple_base(Datatype_Type::CONSTANT, 1, 1);
-    result->base.contains_type_template = datatype->contains_type_template;
+    result->base.contains_template = datatype->contains_template;
 
     if (datatype->memory_info.available) {
         result->base.memory_info = datatype->memory_info;
@@ -1180,7 +1182,7 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
     Datatype_Optional* result = new Datatype_Optional;
     result->child_type = child_type;
     result->base = datatype_make_simple_base(Datatype_Type::OPTIONAL_TYPE, 1, 1);
-    result->base.contains_type_template = child_type->contains_type_template;
+    result->base.contains_template = child_type->contains_template;
 
     result->value_member.id = ids.value;
     result->value_member.type = child_type;
@@ -1244,7 +1246,7 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
     result->subtype_name = subtype_name;
     result->subtype_index = subtype_index;
     result->base = datatype_make_simple_base(Datatype_Type::SUBTYPE, 1, 1);
-    result->base.contains_type_template = base_type->contains_type_template;
+    result->base.contains_template = base_type->contains_template;
 
     if (base_type->memory_info.available) 
     {
@@ -1280,7 +1282,7 @@ Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods)
         base_type = type_system_make_constant(base_type);
     }
     for (int i = 0; i < mods.pointer_level; i++) {
-        base_type = upcast(type_system_make_pointer(base_type, type_mods_pointer_is_constant(mods, i)));
+        base_type = upcast(type_system_make_pointer(base_type, type_mods_pointer_is_optional(mods, i)));
         if (type_mods_pointer_is_constant(mods, i)) {
             base_type = type_system_make_constant(base_type);
         }
@@ -1304,12 +1306,12 @@ Datatype_Function* make_function_internal_no_dedup(Dynamic_Array<Function_Parame
     }
     for (int i = 0; i < parameters.size; i++) {
         auto& param = parameters[i];
-        if (param.type->contains_type_template) {
-            result->base.contains_type_template = true;
+        if (param.type->contains_template) {
+            result->base.contains_template = true;
         }
     }
-    if (result->return_type.available && result->return_type.value->contains_type_template) {
-        result->base.contains_type_template = true;
+    if (result->return_type.available && result->return_type.value->contains_template) {
+        result->base.contains_template = true;
     }
 
     auto& internal_info = type_system_register_type(upcast(result))->options.function;
@@ -2214,10 +2216,7 @@ bool types_are_equal(Datatype* a, Datatype* b) {
 }
 
 bool datatype_is_unknown(Datatype* a) {
-    return 
-        a->base_type->type == Datatype_Type::UNKNOWN_TYPE ||
-        a->base_type->type == Datatype_Type::TEMPLATE_PARAMETER || 
-        a->base_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE;
+    return a->base_type->type == Datatype_Type::UNKNOWN_TYPE;
 }
 
 bool type_size_is_unfinished(Datatype* a) {

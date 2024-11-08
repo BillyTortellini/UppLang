@@ -1,9 +1,11 @@
 
-foo::($C:int)
+import Upp~i64
+
+foo :: ($C: int)
 	x: [C]i64
-	y := C*2+5
+	y := C * 2 + 5
 	
-main::()
+main :: ()
 	foo(5)
 	foo(6)
 	foo(5)

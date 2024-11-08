@@ -16,8 +16,8 @@ struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
 struct Function_Progress;
-struct Polymorphic_Value;
-struct Datatype_Template_Parameter;
+struct Poly_Value;
+struct Datatype_Template;
 struct Struct_Content;
 struct Analysis_Pass;
 
@@ -82,7 +82,7 @@ enum class Datatype_Type
     UNKNOWN_TYPE, // For error propagation
 
     // Types for polymorphism
-    TEMPLATE_PARAMETER,
+    TEMPLATE_TYPE,
     STRUCT_INSTANCE_TEMPLATE
 };
 
@@ -122,7 +122,7 @@ struct Datatype
     // For some types (e.g. structs, arrays, etc), the memory info isn't always available after the type has been created
     Optional<Datatype_Memory_Info> memory_info;
     Workload_Structure_Body* memory_info_workload;
-    bool contains_type_template;
+    bool contains_template;
 
     // Some cached values so we don't have to always walk the type tree
     Datatype* base_type;
@@ -153,7 +153,7 @@ struct Datatype_Array
     bool count_known; // False in case of polymorphism (Comptime values) or when Errors occured
     u64 element_count;
 
-    Datatype_Template_Parameter* polymorphic_count_variable; // May be null if it doesn't exist
+    Datatype_Template* polymorphic_count_variable; // May be null if it doesn't exist
 };
 
 struct Datatype_Slice {
@@ -242,7 +242,7 @@ struct Datatype_Enum
     int sequence_start_value; // Usually 1
 };
 
-struct Datatype_Template_Parameter
+struct Datatype_Template
 {
     Datatype base;
     Symbol* symbol;
@@ -250,14 +250,14 @@ struct Datatype_Template_Parameter
     int defined_in_parameter_index;
 
     bool is_reference;
-    Datatype_Template_Parameter* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
+    Datatype_Template* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
 };
 
 struct Datatype_Struct_Instance_Template
 {
     Datatype base;
     Workload_Structure_Polymorphic* struct_base;
-    Array<Polymorphic_Value> instance_values; // These need to be stored somewhere else now...
+    Array<Poly_Value> instance_values; // These need to be stored somewhere else now...
 };
 
 struct Datatype_Format
@@ -474,7 +474,7 @@ struct Type_Deduplication
             Datatype* element_type;
             bool size_known;
             int element_count;
-            Datatype_Template_Parameter* polymorphic_count_variable; // May be null if it doesn't exist
+            Datatype_Template* polymorphic_count_variable; // May be null if it doesn't exist
         } array_type;
         struct {
             Dynamic_Array<Function_Parameter> parameters;
@@ -568,12 +568,12 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
-Datatype_Template_Parameter* type_system_make_template_parameter(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
-Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Polymorphic_Value> instance_values);
+Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
+Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Poly_Value> instance_values);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
-Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template_Parameter* polymorphic_count_variable = 0);
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template* polymorphic_count_variable = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
 Datatype_Optional* type_system_make_optional(Datatype* datatype);
 Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
@@ -623,7 +623,7 @@ inline Datatype* upcast(Datatype_Array* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Slice* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Primitive* value) { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Template_Parameter* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Template* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct_Instance_Template* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
@@ -637,7 +637,7 @@ inline Datatype_Type get_datatype_type(Datatype_Array* unused) { return Datatype
 inline Datatype_Type get_datatype_type(Datatype_Slice* unused) { return Datatype_Type::SLICE; }
 inline Datatype_Type get_datatype_type(Datatype_Primitive* unused) { return Datatype_Type::PRIMITIVE; }
 inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Datatype_Type::POINTER; }
-inline Datatype_Type get_datatype_type(Datatype_Template_Parameter* unused) { return Datatype_Type::TEMPLATE_PARAMETER; }
+inline Datatype_Type get_datatype_type(Datatype_Template* unused) { return Datatype_Type::TEMPLATE_TYPE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE; }
 inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
 inline Datatype_Type get_datatype_type(Datatype_Subtype* base) { return Datatype_Type::SUBTYPE; }

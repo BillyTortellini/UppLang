@@ -7,6 +7,7 @@
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression, IR_Data_Access* destination = 0);
 void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* ir_block);
+IR_Data_Access* ir_data_access_create_constant_u64(u64 value);
 
 
 
@@ -590,7 +591,7 @@ IR_Data_Access* ir_data_access_create_register(IR_Code_Block* block, int registe
 IR_Data_Access* ir_data_access_create_intermediate(IR_Code_Block* block, Datatype* signature)
 {
     assert(block != 0, "");
-    assert(signature->type != Datatype_Type::UNKNOWN_TYPE, "Cannot have register with unknown type");
+    assert(!datatype_is_unknown(signature), "Cannot have register with unknown type");
     assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
 
     // Note: I don't think there is ever the need to have constant intermediates...
@@ -657,7 +658,7 @@ IR_Data_Access* ir_data_access_create_member(IR_Data_Access* struct_access, Stru
     return access;
 }
 
-IR_Data_Access* ir_data_access_create_array_access(IR_Data_Access* array_access, IR_Data_Access* index_access)
+IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* array_access, IR_Data_Access* index_access, bool do_bounds_check, IR_Code_Block* ir_block)
 {
     Datatype* array_type = datatype_get_non_const_type(array_access->datatype);
     Datatype* element_type = 0;
@@ -669,6 +670,46 @@ IR_Data_Access* ir_data_access_create_array_access(IR_Data_Access* array_access,
     }
     else if (array_type->type == Datatype_Type::SLICE) {
         element_type = downcast<Datatype_Slice>(array_type)->element_type;
+    }
+    else {
+        panic("");
+    }
+
+    if (do_bounds_check)
+    {
+        IR_Data_Access* size_access = nullptr;
+        if (array_type->type == Datatype_Type::SLICE) {
+            auto slice = downcast<Datatype_Slice>(array_type);
+            size_access = ir_data_access_create_member(array_access, slice->size_member);
+        }
+        else {
+            auto arr = downcast<Datatype_Array>(array_type);
+            size_access = ir_data_access_create_constant_u64(arr->element_count);
+        }
+
+        assert(ir_block != 0, "");
+        IR_Data_Access* condition_access = ir_data_access_create_intermediate(ir_block, upcast(compiler.type_system.predefined_types.bool_type));
+        IR_Instruction cmp_instr;
+        cmp_instr.type = IR_Instruction_Type::BINARY_OP;
+        cmp_instr.options.binary_op.destination = condition_access;
+        cmp_instr.options.binary_op.operand_left = index_access;
+        cmp_instr.options.binary_op.operand_right = size_access;
+        cmp_instr.options.binary_op.type = IR_Binop::GREATER_OR_EQUAL;
+        dynamic_array_push_back(&ir_block->instructions, cmp_instr);
+
+        IR_Instruction if_instr;
+        if_instr.type = IR_Instruction_Type::IF;
+        if_instr.options.if_instr.condition = condition_access;
+        if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
+        if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
+
+        IR_Instruction exit_instr;
+        exit_instr.type = IR_Instruction_Type::RETURN;
+        exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+        exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Array out of bounds access");
+
+        dynamic_array_push_back(&if_instr.options.if_instr.true_branch->instructions, exit_instr);
+        dynamic_array_push_back(&ir_block->instructions, if_instr);
     }
 
     IR_Data_Access* access = new IR_Data_Access;
@@ -780,7 +821,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     auto result_type = expression_info_get_type(info, true);
     auto type_system = &compiler.type_system;
     auto& types = type_system->predefined_types;
-    assert(!info->contains_errors, "Cannot contain errors!"); 
+    assert(info->is_valid, "Cannot contain errors!"); 
 
     auto move_access_to_destination = [&](IR_Data_Access* access) -> IR_Data_Access* {
         if (destination == 0) {
@@ -827,6 +868,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     default: panic("");
     }
 
+    auto value_type = info->cast_info.initial_type;
     // Handle expression value
     switch (expression->type)
     {
@@ -850,7 +892,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 dynamic_array_push_back(&instr.options.call.arguments, left);
                 dynamic_array_push_back(&instr.options.call.arguments, right);
             }
-            instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
+            instr.options.call.destination = make_destination_access_on_demand(value_type);
             instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
@@ -861,7 +903,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
         instr.options.binary_op.operand_left = ir_generator_generate_expression(ir_block, binop.left);
         instr.options.binary_op.operand_right = ir_generator_generate_expression(ir_block, binop.right);
-        instr.options.binary_op.destination = make_destination_access_on_demand(info->options.value_type);
+        instr.options.binary_op.destination = make_destination_access_on_demand(value_type);
         dynamic_array_push_back(&ir_block->instructions, instr);
         return instr.options.binary_op.destination;
     }
@@ -876,7 +918,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&instr.options.call.arguments, access);
-            instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
+            instr.options.call.destination = make_destination_access_on_demand(value_type);
             instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
@@ -956,13 +998,14 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 if_instr.options.if_instr.condition = ir_generator_generate_expression(ir_block, call.arguments->arguments[0]->value);
                 if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
                 if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
-                dynamic_array_push_back(&ir_block->instructions, if_instr);
 
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
                 exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Assertion failed");
+
                 dynamic_array_push_back(&if_instr.options.if_instr.false_branch->instructions, exit_instr);
+                dynamic_array_push_back(&ir_block->instructions, if_instr);
 
                 call_instr.options.call.destination = ir_data_access_create_nothing();
                 return call_instr.options.call.destination;
@@ -1188,7 +1231,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             {
                 auto init_expr = array_init.values[i];
 
-                IR_Data_Access* element_access = ir_data_access_create_array_access(array_access, ir_data_access_create_constant_u64(i));
+                IR_Data_Access* element_access = ir_data_access_create_array_or_slice_access(array_access, ir_data_access_create_constant_u64(i), false, ir_block);
 
                 IR_Instruction move_instr;
                 move_instr.type = IR_Instruction_Type::MOVE;
@@ -1210,15 +1253,16 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(2);
             dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.array_expr));
             dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(ir_block, access.index_expr));
-            instr.options.call.destination = make_destination_access_on_demand(info->options.value_type);
+            instr.options.call.destination = make_destination_access_on_demand(value_type);
             instr.options.call.options.function = info->specifics.overload.function;
             dynamic_array_push_back(&ir_block->instructions, instr);
             return instr.options.call.destination;
         }
 
-        return move_access_to_destination(ir_data_access_create_array_access(
+        return move_access_to_destination(ir_data_access_create_array_or_slice_access(
             ir_generator_generate_expression(ir_block, expression->options.array_access.array_expr),
-            ir_generator_generate_expression(ir_block, expression->options.array_access.index_expr)
+            ir_generator_generate_expression(ir_block, expression->options.array_access.index_expr),
+            true, ir_block
         ));
     }
     case AST::Expression_Type::MEMBER_ACCESS:
@@ -1271,13 +1315,14 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
                 if_instr.options.if_instr.condition = condition_access;
                 if_instr.options.if_instr.true_branch = ir_code_block_create(ir_block->function);
                 if_instr.options.if_instr.false_branch = ir_code_block_create(ir_block->function);
-                dynamic_array_push_back(&ir_block->instructions, if_instr);
 
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
                 exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
+
                 dynamic_array_push_back(&if_instr.options.if_instr.true_branch->instructions, exit_instr);
+                dynamic_array_push_back(&ir_block->instructions, if_instr);
             }
 
             return source;
@@ -1300,7 +1345,11 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         {
             assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
             IR_Data_Access* result_access = ir_data_access_create_address_of(source);
-            return move_access_to_destination(ir_data_access_create_address_of(ir_data_access_create_array_access(source, ir_data_access_create_constant_u64(0))));
+            return move_access_to_destination(
+                ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(
+                    source, ir_data_access_create_constant_u64(0), false, ir_block
+                ))
+            );
         }
 
         // Handle normal member access
@@ -1534,7 +1583,7 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
         {
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::MOVE;
-            instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_access(source, ir_data_access_create_constant_u64(0)));
+            instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(source, ir_data_access_create_constant_u64(0), false, ir_block));
             instr.options.move.destination = ir_data_access_create_member(slice_access, slice_type->data_member);
             dynamic_array_push_back(&ir_block->instructions, instr);
         }
@@ -1737,7 +1786,7 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         else {
             IR_Instruction element_instr;
             element_instr.type = IR_Instruction_Type::MOVE;
-            element_instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_access(foreach.iterable_access, foreach.index_access));
+            element_instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(foreach.iterable_access, foreach.index_access, false, ir_block));
             element_instr.options.move.destination = foreach.loop_variable_access;
             dynamic_array_push_back(&ir_block->instructions, element_instr);
         }
@@ -2034,7 +2083,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 IR_Instruction element_instr;
                 element_instr.type = IR_Instruction_Type::MOVE;
                 element_instr.options.move.destination = loop_variable_access;
-                element_instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_access(iterable_access, index_access));
+                element_instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(iterable_access, index_access, false, ir_block));
                 dynamic_array_push_back(&ir_block->instructions, element_instr);
             }
         }

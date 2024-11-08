@@ -2490,6 +2490,9 @@ namespace Parser
                     dynamic_array_push_back(ranges, sub_range);
                 }
             }
+            if (ranges->size == 0) {
+                dynamic_array_push_back(ranges, range);
+            }
             break;
         }
         case Section::IDENTIFIER:

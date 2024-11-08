@@ -16,15 +16,6 @@ rec1 :: (n: int) -> bool
 		return true
 	return rec0(n - 1)
 
-// Multiple arguments, void return
-mul_add :: (base: int, fac1: int, fac2: int, ignore_fac2: bool) -> int
-	if !ignore_fac2
-		return base + (fac1 * fac2)
-	else
-		return base + fac1
-
 main :: ()
 	assert(fib(5) == 8)
 	assert(rec0(20))
-	assert(mul_add(1, 2, 3, false) == 7)
-	assert(mul_add(1, 2, 3, true) == 3)

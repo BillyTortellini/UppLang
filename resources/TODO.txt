@@ -1,56 +1,52 @@
 
+Let the fixing begin
+
+TODO:
+ * Fix testcases
+
+// Sort errors by line-number?
+
+
+Check if instanciate still works?
+
+
+DONE:
+ * Line number digit count should depend on text size in whole file
+ * Motions for paragraph (dip and dap) (line-motions)
+ * Function Path-Lookup symbol not set when parameter mapping not correct 
+ * u32 shown as int
+ * Close tab with :q
+ * Slice .data should be optional, as slice.size == should be a thing
+ * Array-Access size check
+ * Check if code-completion uses imported names correctly?
+ * Camera does not move correctly when at end of window size?
+ * Closing tab does not auto-reload current tab...
+ * GUI: Padding seems to be off when for children is set
+ * Array-Access accepting all ints
+ * Closing tab does not automatically re-analyse the currently open tab
+ * Opening windows does no auto-formatting
+    
+
+
+
+
+
+
+
+
 TODO:
  * Fix all testcases
  * Fix all C-generated testcases
  * Create new testcases for untested features
 
 DONE:
- * String literals are now null terminated and called c_string
- * Context should move if too far left
- * Context should grow if error message is too long (with indentation)
- * Semantic analyser needs to set the default-value expr + pass correctly on analysis
- * IR-Code needs to generate the expression when default value is required
- * Add expression + analysis-pass in function-parameter as default value
- * Maybe I still want has_default_value, as comptime parameters shouldn't have them.
+ * Poly-Header does not analyse parameters with dependencies
+ * Instanciation must wait for base-workload to finish without real-errors
+ * Poly-Base analysis should not instanciate other polymorphics
 
 
 
 
-Parameter default value as expression:
---------------------------------------
-Design:
- * Semantic-Analyse only needs to analyse expression once
- * IR-Code generates the expression again (in current IR-Block)
- * This will be the standard methon, as we can make default-comptime values easier
-
-Questions:
- - How does error-propagation work?
-    If parameter is not set, but default value exists, then I need to raise an error-flag if default-value has errors...
- - Handling polymorphism
-
-TODO:
- * Parameter default value as re-evaluateable argument...
-    - So we can have function calls as default arguments, or e.g.
-        create :: (capacity: int = 0, allocator: *Allocator = #eval global_allocator)
-        create(allocator = temp_allocator)
-        create()
-
- * Fix all testcases
- * Create tescases for all new features
-
-
-DONE:
- * Unions and union initializer
- * U64 for array/slice size, iterators, array-access, new[], malloc
- * Default allocator must be available in bakes
- * Test if new and delete with allocator works.
- * Fix all compiler errors with function-slots
- * Implement free with allocators
- * New and delete should use the global allocator
- * The global allocator should be inititalized at the start of the program to use malloc and free
- * Add global_allocator as global
- * Add Allocator as struct
- * Add Symbol for allocator
 
 
     
@@ -82,11 +78,6 @@ Missing-Testcases:
 --------------------
 - MISSING FEATURES -
 --------------------
-Core: (Required for programming)
-    * Language Features:
-        - Struct initializer for unions (If it isn't already done?)
-        - Put initial symbols (int, float, bool + hardcoded functions) into another namespace Upp/Compiler/custom thingy?
-
 Additional:
     * Debugger
     * Incremental compiler (Hot-code reloading?)
@@ -99,7 +90,9 @@ Additional:
         - Annotations (For automatization of print or serialization)
     * QoL Features
         - Default parameter values calculated on demand
-        - Template-Types could be detected if used without parenthesis, e.g. foo(array: Dynamic_Array, value: array.T)
+        - Template-Types could be detected if used without parenthesis, e.g. foo(array: Dynamic_Array, value: array.T) 
+            * Analyse header needs to analyse parameters + If one contains template type, make template...
+            * Handle polymorphic struct types as template instances?
         - Block-Expressions (Expressions which may include statements + return), something like ternary operator
         - Auto function? .-> e.g. search(array, .-> x.name == "What")
         - Varargs (Other syntax for pass as slice...)

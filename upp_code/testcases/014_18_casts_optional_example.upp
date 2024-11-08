@@ -46,7 +46,7 @@ main::()
 	assert(b1)
 	assert(!b2)
 	
-	i:int=cast x
-	assert(i==15)
+	i: int = cast x
+	assert(i == 15)
 	//i2:int=cast y
 

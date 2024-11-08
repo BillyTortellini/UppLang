@@ -1,5 +1,7 @@
-Player::struct
-	name:string
+
+
+Player :: struct
+	name: Upp~c_string
 	age:int
 	alive:bool
 

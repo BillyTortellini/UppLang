@@ -1,37 +1,41 @@
-Player::struct
-	name:string
-	age:int
-	alive:bool
 
-add_ints::(ints:[]int)->int
-	i:=0
-	sum:=0
-	while i<ints.size
-		sum=sum+ints[i]
-		i=i+1
+import Upp~u64
+import Upp~c_string
+
+Player :: struct
+	name: c_string
+	age: int
+	alive: bool
+
+add_ints :: (ints: []int) -> int
+	i: u64 = 0
+	sum := 0
+	while i < ints.size
+		sum = sum + ints[i]
+		i = i + 1
 	return sum
 
-main::()
-	context set_cast_option(.ARRAY_TO_SLICE,.IMPLICIT)
+main :: ()
+	context set_cast_option(.ARRAY_TO_SLICE, .IMPLICIT)
 	
 	// Array init syntax
-	x:[5]int=int.[0,1,2,3,4]
-	assert(x[0]==0&&x[1]==1&&x[2]==2)
-	assert(x.size==5)
-	y:=int.[1,2,3]
-	assert(y.size==3)
+	x: [5]int = int.[0, 1, 2, 3, 4]
+	assert(x[0] == 0 && x[1] == 1 && x[2] == 2)
+	assert(x.size == 5)
+	y := int.[1, 2, 3]
+	assert(y.size == 3)
 	
 	// This can be used to call functions,
 	// since arrays are automatically cast to slices
-	sum:=add_ints(int.[2,4,8,16])
-	assert(sum==30)
+	sum := add_ints(int.[2, 4, 8, 16])
+	assert(sum == 30)
 	
 	// Logically also works with structs and struct initializers
-	players:=Player.[Player.{name="Fred",age=5,alive=true},Player.{name="Mart",age=6,alive=false}]
-	assert(players[0].age==5&&!players[1].alive)
+	players := Player.[Player.{name = "Fred", age = 5, alive = true}, Player.{name = "Mart", age = 6, alive = false}]
+	assert(players[0].age == 5 && !players[1].alive)
 	
 	// Since there is no 0 sized array (Types without a size do no exist)
 	// empty array initializers return a Slice of size 0 and nullptr
-	slice:=int.[]
-	assert(slice.size==0&&slice.data*==null)
+	slice := int.[]
+	assert(slice.size == 0 && slice.data *== cast_pointer null)
 

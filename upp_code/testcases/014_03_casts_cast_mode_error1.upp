@@ -1,4 +1,6 @@
 
+import Upp~u32
+
 main::()
 	i:int=15
 	y:u32=i
