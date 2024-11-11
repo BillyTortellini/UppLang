@@ -2,6 +2,7 @@
 #include "../../win32/timing.hpp"
 #include "../../win32/windows_helper_functions.hpp"
 #include "../../utility/file_io.hpp"
+#include "../../utility/directory_crawler.hpp"
 
 #include "semantic_analyser.hpp"
 #include "ir_code.hpp"
@@ -19,7 +20,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
+bool enable_c_generation = false;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -27,7 +28,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = false;
 
@@ -40,7 +41,7 @@ bool run_testcases_compiled = false;
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = true;
+bool execute_binary = false;
 
 
 // This variable gets written to in compiler_compile
@@ -698,144 +699,43 @@ void compiler_run_testcases(Timer* timer, bool force_run)
     logg("STARTING ALL TESTS:\n-----------------------------\n");
 
     // Create testcases with expected result
-    Test_Case test_cases[] = {
-        test_case_make("000_empty.upp", false),
-        test_case_make("001_main.upp", true),
-        test_case_make("002_comments.upp", true),
-        test_case_make("002_comments_invalid.upp", false),
-        test_case_make("002_comments_valid.upp", true),
-        test_case_make("003_variables.upp", true),
-        test_case_make("004_types_pointers_arrays.upp", true),
-        test_case_make("005_operator_precedence.upp", true),
-        test_case_make("006_01_function_calls.upp", true),
-        test_case_make("006_02_recursive_calls.upp", true),
-        test_case_make("007_01_modules.upp", true),
-        test_case_make("007_02_base_module.upp", true),
-        test_case_make("008_imports_simple.upp", true),
-        test_case_make("008_imports_aliases.upp", true),
-        test_case_make("008_imports_star.upp", true),
-        test_case_make("008_imports_star_star.upp", true),
-        test_case_make("008_imports_import_order.upp", true),
-        test_case_make("008_imports_invalid_import_order.upp", false),
-        test_case_make("008_imports_as_statement.upp", true),
-        test_case_make("011_01_pointers.upp", true),
-        test_case_make("012_new_delete.upp", true),
-        test_case_make("013_structs.upp", true),
-
-        test_case_make("014_01_casts.upp", true),
-        test_case_make("014_02_casts_operator_context.upp", true),
-        test_case_make("014_03_casts_cast_mode_error1.upp", false),
-        test_case_make("014_04_casts_cast_mode_error2.upp", false),
-        test_case_make("014_05_casts_pointer_arithmetic.upp", true),
-        test_case_make("014_06_casts_auto_address_of.upp", true),
-        test_case_make("014_07_casts_auto_dereference.upp", true),
-        test_case_make("014_09_casts_auto_operations_and_casts.upp", true),
-        test_case_make("014_10_casts_auto_operations_and_casts_error.upp", false),
-        test_case_make("014_11_casts_more_context_options.upp", true),
-        test_case_make("014_12_casts_custom_casts.upp", true),
-        test_case_make("014_13_casts_custom_casts_error1.upp", false),
-        test_case_make("014_14_casts_custom_casts_error2.upp", false),
-        test_case_make("014_15_casts_custom_polymorphic_casts.upp", true),
-        test_case_make("014_16_casts_custom_polymorphic_cast_error.upp", false),
-        test_case_make("014_17_casts_operator_context_imports.upp", true),
-        test_case_make("014_18_casts_optional_example.upp", true),
-
-        test_case_make("015_defer.upp", true),
-        test_case_make("017_function_pointers.upp", true),
-        test_case_make("019_scopes.upp", true),
-        test_case_make("020_globals.upp", true),
-        test_case_make("021_slices.upp", true),
-        //test_case_make("022_dynamic_array.upp", true),
-        //test_case_make("023_invalid_recursive_template.upp", false),
-        test_case_make("024_expression_context.upp", true),
-        test_case_make("025_expression_context_limit.upp", false),
-        test_case_make("027_enums.upp", true),
-        test_case_make("028_invalid_enum.upp", false),
-        test_case_make("029_switch.upp", true),
-        test_case_make("030_invalid_switch_cases_missing.upp", false),
-        test_case_make("031_invalid_switch_case_not_constant.upp", false),
-        test_case_make("032_invalid_switch_value_not_in_range.upp", false),
-        test_case_make("033_constant_propagation.upp", true),
-        test_case_make("034_constant_propagation_invalid_reference.upp", false),
-        test_case_make("035_constant_propagation_control_flow.upp", false),
-        test_case_make("036_bake.upp", true),
-        test_case_make("037_bake_instruction_limit.upp", false),
-        test_case_make("038_bake_exception.upp", false),
-        test_case_make("039_struct_initializer.upp", true),
-        test_case_make("040_struct_initializer_exhaustive_error.upp", false),
-        test_case_make("041_struct_initializer_double_set_error.upp", false),
-        test_case_make("042_array_initializer.upp", true),
-        test_case_make("043_auto_syntax.upp", true),
-        test_case_make("044_unions.upp", true),
-        test_case_make("045_struct_subtypes.upp", true),
-        test_case_make("046_types_as_values.upp", true),
-        test_case_make("047_type_info.upp", true),
-        test_case_make("048_any_type.upp", true),
-        test_case_make("049_any_error.upp", false),
-        test_case_make("050_named_break_continue.upp", true),
-        test_case_make("051_invalid_continue_no_loop.upp", false),
-        test_case_make("052_invalid_lables.upp", false),
-        test_case_make("053_named_flow_defer.upp", true),
-        test_case_make("054_1_polymorphic_empty_function.upp", true),
-        test_case_make("054_2_polymorphic_simple_call.upp", true),
-        test_case_make("054_3_polymorphic_multiple_calls.upp", true),
-        test_case_make("054_4_polymorphic_using_polymorphic_values.upp", true),
-        test_case_make("054_5_polymorphic_polymorphic_calculation.upp", true),
-        test_case_make("054_6_polymorphic_parameter_dependencies.upp", true),
-        test_case_make("054_7_polymorphic_implicit_parameters.upp", true),
-        test_case_make("054_8_polymorphic_return_value.upp", true),
-        test_case_make("054_9_polymorphic_error_cyclic_dependency.upp", false),
-        test_case_make("054_10_polymorphic_error_recursive_instanciation.upp", false),
-        test_case_make("054_11_polymorphic_explicit_implicit.upp", true),
-        test_case_make("054_12_polymorphic_struct_instance.upp", true),
-        test_case_make("054_13_polymorphic_error_recursive_struct.upp", false),
-        test_case_make("054_14_polymorphic_recursive_struct.upp", true),
-        test_case_make("054_15_polymorphic_struct_templates.upp", true),
-        test_case_make("054_16_polymorphic_struct_value_access.upp", true),
-        test_case_make("054_17_polymorphic_struct_nested_templates.upp", true),
-        test_case_make("054_18_polymorphic_struct_nested_returns.upp", true),
-        test_case_make("054_19_polymorphic_parameter_self_dependency.upp", true),
-        test_case_make("054_20_polymorphic_error_self_dependency.upp", false),
-        test_case_make("054_21_polymorphic_anonymous_structs.upp", true),
-        test_case_make("054_22_polymorphic_lambdas.upp", true),
-        test_case_make("054_23_polymorphic_comptime_function_pointer.upp", true),
-        test_case_make("054_24_polymorphic_bake.upp", true),
-
-        test_case_make("055_01_custom_operators_binop.upp", true),
-        test_case_make("055_02_custom_operators_binop_errors.upp", false),
-        test_case_make("055_03_custom_operators_unop.upp", true),
-        test_case_make("055_04_custom_operators_unop_errors.upp", false),
-        test_case_make("055_05_custom_operators_array_access.upp", true),
-        test_case_make("055_06_custom_operators_array_access_error.upp", false),
-        test_case_make("055_07_custom_operators_array_access_poly.upp", true),
-        test_case_make("055_08_custom_operators_dot_call.upp", true),
-        test_case_make("055_09_custom_operators_dot_call_poly.upp", true),
-        test_case_make("055_10_custom_operators_iterator.upp", true),
-        test_case_make("055_11_custom_operators_iterator_poly.upp", true),
-    };
-    int test_case_count = sizeof(test_cases) / sizeof(Test_Case);
+    Directory_Crawler* crawler = directory_crawler_create();
+    SCOPE_EXIT(directory_crawler_destroy(crawler));
+    directory_crawler_set_path(crawler, string_create_static("upp_code/testcases"));
+    auto files = directory_crawler_get_content(crawler);
 
     bool errors_occured = false;
+    int test_case_count = 0;
     String result = string_create_empty(256);
     SCOPE_EXIT(string_destroy(&result));
-    for (int i = 0; i < test_case_count; i++)
+    for (int i = 0; i < files.size; i++)
     {
-        Test_Case* test_case = &test_cases[i];
-        logg("Testcase: %s\n", test_case->name);
-        String path = string_create_formated("upp_code/testcases/%s", test_case->name);
+        const auto& file = files[i];
+        if (file.is_directory) continue;
+
+        auto name = files[i].name;
+        bool case_should_succeed = string_contains_substring(name, 0, string_create_static("error")) == -1;
+        bool skip_file = string_contains_substring(name, 0, string_create_static("notest")) != -1;
+        if (skip_file) {
+            continue;
+        }
+        test_case_count += 1;
+
+        logg("Testcase: %s\n", name.characters);
+        String path = string_create_formated("upp_code/testcases/%s", name.characters);
         SCOPE_EXIT(string_destroy(&path));
         auto source_code = compiler_add_source(path, false, true);
         if (source_code == 0) {
-            string_append_formated(&result, "ERROR:   Test %s could not load test file\n", test_case->name);
+            string_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
             errors_occured = true;
             continue;
         }
 
         compiler_compile_clean(source_code, Compile_Type::BUILD_CODE);
         Exit_Code exit_code = compiler_execute();
-        if (exit_code.type != Exit_Code_Type::SUCCESS && test_case->should_succeed)
+        if (exit_code.type != Exit_Code_Type::SUCCESS && case_should_succeed)
         {
-            string_append_formated(&result, "ERROR:   Test %s exited with Code ", test_case->name);
+            string_append_formated(&result, "ERROR:   Test %s exited with Code ", name.characters);
             exit_code_append_to_string(&result, exit_code);
             string_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
@@ -851,15 +751,16 @@ void compiler_run_testcases(Timer* timer, bool force_run)
                 }
 
                 semantic_analyser_append_all_errors_to_string(&result, 1);
+                string_append_character(&result, '\n');
             }
             errors_occured = true;
         }
-        else if (exit_code.type == Exit_Code_Type::SUCCESS && !test_case->should_succeed) {
-            string_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", test_case->name);
+        else if (exit_code.type == Exit_Code_Type::SUCCESS && !case_should_succeed) {
+            string_append_formated(&result, "ERROR:   Test %s successfull, but should fail!\n", name.characters);
             errors_occured = true;
         }
         else {
-            string_append_formated(&result, "SUCCESS: Test %s\n", test_case->name);
+            string_append_formated(&result, "SUCCESS: Test %s\n", name.characters);
         }
     }
 

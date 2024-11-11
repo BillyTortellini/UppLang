@@ -5,9 +5,8 @@ import Upp~print_line
 import Upp~print_i32
 import Upp~c_string
 
-
+// Subtypes can form a hierarchy
 Node :: struct
-	name: c_string
 	Expression:
 		Binop:
 			a: int
@@ -20,30 +19,26 @@ Node :: struct
 			right: int
 		For:
 			condition: bool
+			value: int
 
-node_test :: (a: * const Node)
-	print_string(a.name)
-	print_line()
+node_test :: (a: * const Node) -> int
+	return 0
 
-stat_test :: (a: Node.Statement)
+stat_test :: (a: Node.Statement) -> int
 	if a.tag == .For
 		loop :=* a.For
-		print_string("For condition: ")
-		print_bool(loop.condition)
+		if loop.condition
+			return loop.value
+		return 0
 	else
 		ass :=* a.Assignment
-		print_string("Assignment ")
-		print_i32(ass.left + ass.right)
-	print_line()
+		return ass.left + ass.right
 
-assign_test :: (a: Node.Statement.Assignment)
-	print_string("Assign sum: ")
-	print_i32(a.left + a.right)
-	print_line()
+assign_test :: (a: Node.Statement.Assignment) -> int
+	return a.left + a.right
 
 main :: ()
 	node: Node
-	node.name = "Frank"
 	node.tag = .Statement
 	node.Statement.tag = .Assignment
 	node.Statement.Assignment.right = 5
@@ -63,5 +58,3 @@ main :: ()
 	assign_test(assign)
 	assign_test(stat.Assignment)
 	assign_test(node.Statement.Assignment)
-	
-	print_i32(node.Statement.Assignment.right)

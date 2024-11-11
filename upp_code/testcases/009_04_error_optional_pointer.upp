@@ -1,0 +1,6 @@
+
+main :: ()
+	i := 15
+	ptr: ?*int =* i
+	
+	x: int = 2 * i + ptr

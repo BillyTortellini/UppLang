@@ -1,0 +1,70 @@
+
+test :: (ptr: ?*int) -> int
+	if ptr?
+		return ptr.value + 1
+	else
+		return -1
+
+negate :: (x: int) -> int
+	return -x
+
+apply :: (value: int, fn: ?(x: int) -> int) -> int
+	if fn?
+		return fn.value(value)
+	return -1
+
+import Upp~byte_pointer
+
+test_bytes :: (ptr: ?byte_pointer) -> int
+	if ptr?
+		return ( cast_pointer {*int} ptr.value) + 1
+	return -1
+
+main :: ()
+	// Optional pointers differ from normal optionals,
+	// as pointers don't store a boolean, but rather use nullptr as the 
+	// unavailable type
+	assert(Upp~type_info(?*int).size == 8)
+	
+	x := 15
+	
+	// As optional pointers have the same size as normal pointers,
+	// we don't need a cast, unlike optional values
+	ip: ?*int =* x
+	
+	// Unlike normal pointers, optional pointers require a .value access
+	// to access the pointed-to value
+	//  ip = 1 // error
+	ip.value = 5
+	assert(x == 5)
+	assert(test(ip) == 6)
+	
+	// Like normal optionals, pointers can be set to null 
+	ip =* null
+	assert(test(ip) == -1)
+	
+	// Also, normal pointers auto-cast to optional pointers
+	x = 2
+	ptr :=* x
+	assert(test(ptr) == 3)
+	
+	// As function-ptrs and byte-pointer are also pointer-types
+	// they can also be used as optionals
+	fn_ptr: ?(x: int) -> int
+	fn_ptr = negate
+	assert(apply(10, fn_ptr) == -10)
+	fn_ptr = null
+	assert(apply(10, fn_ptr) == -1)
+	
+	// Same for byte-pointer
+		x = 5
+		ptr: ?byte_pointer
+		ptr =* cast_pointer *x
+		
+		assert(test_bytes(ptr) == 6)
+		ptr = null
+		assert(test_bytes(ptr) == -1)
+
+
+
+

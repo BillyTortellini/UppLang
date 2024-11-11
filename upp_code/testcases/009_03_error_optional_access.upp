@@ -1,0 +1,7 @@
+
+main :: ()
+	i := 15
+	x: ?int = cast i
+	
+	z: int
+	z = x // Cannot use optionals without .value

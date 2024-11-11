@@ -1,0 +1,40 @@
+
+sub :: (a: int, b: int) -> int
+	return a - b
+
+add_default :: (a: int, b: int = 1) -> int
+	return a + b
+
+g_counter: int
+
+get_tick :: () -> int
+	g_counter += 1
+	return g_counter
+
+add_with_tick :: (a: int, b: int = get_tick()) -> int
+	return a + b
+
+main :: ()
+	// Normal function call
+	x := sub(15, 5)
+	assert(x == 10)
+	
+	// All parameters have names in Upp, and you can always
+	// specify parameters by name
+	x = sub(b = 15, a = 5)
+	assert(x == -10)
+	
+	// Parameters with default values don't need to be specified
+	x = add_default(5)
+	assert(x == 6)
+	x = add_default(5, 10)
+	assert(x == 15)
+	
+	// The expression of default parameters gets evaluated on each call
+	g_counter = 0
+	x = add_with_tick(0)
+	assert(x == 1 && g_counter == 1)
+	x = add_with_tick(0)
+	assert(x == 2 && g_counter == 2)
+	x = add_with_tick(0, 1)
+	assert(x == 1 && g_counter == 2)

@@ -1,0 +1,26 @@
+
+Node :: struct
+	name: Upp~c_string
+	Expression:
+		is_normalized: bool
+		Binop:
+			a: int
+			b: int
+		Unop:
+			a: int
+	Statement:
+		Assignment:
+			left: int
+			right: int
+		For:
+			condition: bool
+			value: int
+
+main :: ()
+	n: Node = Node.{"Frank", .Expression = {false, .Binop = {2, 3}}}
+	assert(n.tag == .Expression)
+	assert(n.Expression.tag == .Binop)
+	assert(!n.Expression.is_normalized)
+
+
+

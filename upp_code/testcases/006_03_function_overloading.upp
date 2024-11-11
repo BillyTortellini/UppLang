@@ -1,0 +1,32 @@
+
+test :: (a: int) -> int
+	return a + 2
+
+test :: (a: bool) -> int
+	if a
+		return 1
+	return -1
+
+test :: (a: [2]int) -> int
+	return a[0] + a[1]
+
+test_return :: () -> int
+	return 1
+
+test_return :: () -> bool
+	return true
+
+main :: ()
+	i := 10
+	b := true
+	values := int.[1, 2]
+	
+	assert(test(i) == 12)
+	assert(test(b) == 1)
+	assert(test(values) == 3)
+	
+	i = test_return()
+	b = test_return()
+	assert(i == 1)
+	assert(b)
+	

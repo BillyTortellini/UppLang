@@ -1,7 +1,0 @@
-main :: ()
-	// If an address of a variable is taken,
-	// This variable is removed from constant propagation
-	x := 5
-	i: *int = *x
-	arr: [x]int
-

@@ -1434,22 +1434,29 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
     case AST::Expression_Type::CAST: {
         return ir_generator_generate_expression(ir_block, expression->options.cast.operand, destination);
     }
-    case AST::Expression_Type::OPTIONAL_CHECK: {
+    case AST::Expression_Type::OPTIONAL_CHECK: 
+    {
         auto check_access = ir_generator_generate_expression(ir_block, expression->options.optional_check_value);
         auto type = datatype_get_non_const_type(check_access->datatype);
-        assert(datatype_is_pointer(type), "");
 
-        destination = make_destination_access_on_demand(upcast(types.bool_type));
+        if (info->specifics.is_optional_pointer_check) {
+            destination = make_destination_access_on_demand(upcast(types.bool_type));
+            assert(datatype_is_pointer(type), "");
+            IR_Instruction check_instr;
+            check_instr.type = IR_Instruction_Type::BINARY_OP;
+            check_instr.options.binary_op.destination = destination;
+            check_instr.options.binary_op.operand_left = check_access;
+            void* null_val = nullptr;
+            check_instr.options.binary_op.operand_right = ir_data_access_create_constant(check_access->datatype, array_create_static_as_bytes(&null_val, 1));
+            check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
+            dynamic_array_push_back(&ir_block->instructions, check_instr);
+            return destination;
+        }
 
-        IR_Instruction check_instr;
-        check_instr.type = IR_Instruction_Type::BINARY_OP;
-        check_instr.options.binary_op.destination = destination;
-        check_instr.options.binary_op.operand_left = check_access;
-        void* null_val = nullptr;
-        check_instr.options.binary_op.operand_right = ir_data_access_create_constant(check_access->datatype, array_create_static_as_bytes(&null_val, 1));
-        check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-        dynamic_array_push_back(&ir_block->instructions, check_instr);
-        return destination;
+        assert(type->type == Datatype_Type::OPTIONAL_TYPE, "");
+        auto opt = downcast<Datatype_Optional>(type);
+        auto access = ir_data_access_create_member(check_access, opt->is_available_member);
+        return move_access_to_destination(access);
     }
     case AST::Expression_Type::OPTIONAL_POINTER:
     case AST::Expression_Type::OPTIONAL_TYPE:

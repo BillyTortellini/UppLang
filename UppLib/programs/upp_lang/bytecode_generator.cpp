@@ -971,8 +971,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             default: panic("");
             }
 
-            Datatype* operand_types = binary_op->operand_left->datatype;
-            if (operand_types->type == Datatype_Type::POINTER || operand_types->type == Datatype_Type::BYTE_POINTER) {
+            Datatype* operand_types = datatype_get_non_const_type(binary_op->operand_left->datatype);
+            if (datatype_is_pointer(operand_types)) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {

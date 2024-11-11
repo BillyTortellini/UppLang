@@ -1,6 +1,0 @@
-import"007_imports_file.upp"
-
-main::()
-	success()
-
-

@@ -1,0 +1,33 @@
+
+
+Node :: struct
+	a: int
+
+test :: (opt: ?int) -> int
+	if opt?
+		return opt.value + 1
+	else
+		return -1
+
+main :: ()
+	// Optionals are defined with ? before a type
+	opt: ?int
+	
+	// Optionals of non-pointer types have 2 members, available and value
+	opt.is_available = true
+	opt.value = 1
+	assert(test(opt) == 2)
+	
+	// Values can be cast to optionals (Which sets available to true)
+	opt = cast 12
+	assert(test(opt) == 13)
+	
+	// To make an optional not available, you can either set the member manually
+	opt.is_available = false
+	assert(test(opt) == -1)
+	
+	// Or use null
+	opt = null
+	assert(test(opt) == -1)
+	
+	

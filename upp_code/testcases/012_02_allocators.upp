@@ -1,0 +1,76 @@
+
+main :: ()
+	// New and delete actually only call the allocation function of the
+	// currently set allocator (Implemented as a global for now)
+	// The difference to calling the function directly is that
+	// new and delete expect the allocation to succeed (Otherwise panic),
+	// and that the type is already corrected
+	
+	alloc :=* Upp~global_allocator
+	ptr := alloc.allocate_fn(alloc, 100, 4)
+	assert(ptr?)
+	
+	ip: *int =* cast_pointer ptr.value
+	ip = 10
+	ip += 5
+	assert(ip == 15)
+	
+	alloc.free_fn(alloc, ptr.value, 100)
+	
+	
+	// Since the allocator is a global constant, it is possible to 
+	// create and set other allocators
+	
+	STACK_SIZE :: 256
+	import Upp~byte
+	import Upp~byte_pointer
+	import Upp~Allocator
+	import Upp~u64
+	import Upp~u32
+	Stack_Allocator :: struct
+		base: Allocator
+		memory: [STACK_SIZE]byte
+		stack_index: int
+		alloc_count: int
+	
+	custom_alloc :: (allocator_base: *Allocator, size: u64, alignment: u32) -> ?byte_pointer
+		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
+		if alloc.stack_index + cast size >= STACK_SIZE
+			return null
+		
+		alloc.alloc_count += 1
+		ptr: ?byte_pointer =* cast_pointer *alloc.memory[alloc.stack_index]
+		alloc.stack_index += cast {int} size
+		return ptr
+	
+	custom_dealloc :: (allocator_base: *Allocator, ptr: byte_pointer, size: u64) -> bool
+		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
+		alloc.alloc_count -= 1
+		return true
+	
+	custom_realloc :: (allocator: *Allocator, ptr: byte_pointer, prev: u64, next: u64) -> ?byte_pointer
+		return null
+	
+	stack_alloc := Stack_Allocator.{
+		.{custom_alloc, custom_dealloc, custom_realloc}
+		stack_index = 0
+		alloc_count = 0
+		_
+	}
+	
+	Upp~global_allocator =* stack_alloc.base
+	
+	values := new [5]int
+	assert(stack_alloc.alloc_count == 1)
+	x :=* new int
+	assert(stack_alloc.alloc_count == 2)
+	
+	x = 10
+	for a, i in values
+		a = cast i
+	assert(x == 10)
+	
+	delete x
+	assert(stack_alloc.alloc_count == 1)
+	delete values
+	assert(stack_alloc.alloc_count == 0)

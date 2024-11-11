@@ -6,6 +6,7 @@ import Upp~u64
 Player :: struct
 	age: int
 	alive: bool
+	reference_id: *int
 
 main :: ()
 	
@@ -35,9 +36,22 @@ main :: ()
 	type_b: Upp~Type_Handle = const [4]int
 	type_c: Upp~Type_Handle = const [4] const int
 	assert(type_a == type_b)
-	// assert(type_b == type_c)
+	assert(type_b == type_c)
 	
-	const_array := ( const int).[1, 2, 3, 4]
+	const_array: const [4]int = int.[1, 2, 3, 4]
+	assert(type_of(const_array[0]) == const int)
 	
+	// Structs must not contain constant members,
+	// But if the struct is constant, member accesses are also constant
+	ref_id := 15
+	p: const Player = .{15, true, ref_id}
 	
-	p: const Player = .{15, true}
+	assert(type_of(p.age) == const int)
+	assert(type_of(p.alive) == const bool)
+	assert(type_of(p.reference_id) == const *int)
+	
+	// But pointers can still be modified through constant structs
+	// e.g. the const modifier is not transitive
+	p.reference_id += 1
+	assert(ref_id == 16)
+	

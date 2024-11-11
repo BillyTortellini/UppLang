@@ -1,0 +1,44 @@
+
+
+
+main :: ()
+	//
+		Because Pointers are treated like normal values in this language,
+		a normal syntax for assignments/definition would cause ambiguities,
+		which is why there is new syntax for some of these things
+	
+	integer: int
+	pointer: *int
+	
+	// Assignment to normal values is done with '=', as expected
+	integer = 15
+	// But assigning an address to a pointer value is done with '=*'
+	pointer =* *integer
+	pointer =* integer // The * is optional, as address-of is deduced with =*
+	
+	assert(integer == 15)
+	assert(pointer == 15)
+	
+	// The same thing is also true for define_infer:
+		i := 15
+		ip :=* i
+		copy := i
+		i = 16
+		
+		assert(i == 16)
+		assert(ip == 16)
+		assert(copy == 15)
+	
+	// In some template-scenarios we may still want to have 
+	// the behavior of a C assignment, which is done with '=~'
+		i :=~ 1
+		ip :=~ *i
+		copy :=~ i
+		
+		i =~ 2
+		assert(ip == 2 && copy == 1)
+		
+		cp :=~ *copy
+		ip =~ copy
+		copy = 5
+		assert(ip == 5)

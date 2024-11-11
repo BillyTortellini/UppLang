@@ -3269,7 +3269,7 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
     bool argument_error_occured = false;
     bool named_argument_encountered = false;
     int unnamed_argument_count = 0;
-    for (int i = 0; i < args->arguments.size; i++)
+    for (int i = matching_info->call_type == Call_Type::INSTANCIATE ? 1 : 0; i < args->arguments.size; i++)
     {
         auto& arg = args->arguments[i];
 
@@ -4179,6 +4179,9 @@ Instanciation_Result instanciate_polymorphic_callable(
     else if (param_matching_info->call_type == Call_Type::POLYMORPHIC_STRUCT) {
         poly_header = &param_matching_info->options.poly_struct->info;
     }
+    else if (param_matching_info->call_type == Call_Type::INSTANCIATE) {
+        poly_header = &param_matching_info->options.instanciate->base;
+    }
     else {
         panic("");
     }
@@ -4568,7 +4571,7 @@ Instanciation_Result instanciate_polymorphic_callable(
             context = expression_context_make_specific_type(parameter_type);
         }
         auto argument_type = analyse_parameter_if_not_already_done(&param_info, context);
-        if (datatype_is_unknown(argument_type)) {
+        if (datatype_is_unknown(argument_type) && !param_info.expression == 0) { // On #instanciate or custom operations
             success = false;
             continue;
         }
@@ -6234,8 +6237,19 @@ void analyse_member_initializer_recursive(
     if (!found_ignore_symbol)
     {
         if (parent_content != 0 && !supertype_initializer_found && allowed_direction == 0) {
-            log_semantic_error(
-                "Base-Type members were not specified, use base-type initializer '. = {}' for this!", upcast(arguments), Parser::Section::ENCLOSURE);
+            bool parent_has_members = false;
+            Struct_Content* content = parent_content;
+            while (content != 0 && !parent_has_members) {
+                if (content->members.size != 0) {
+                    parent_has_members = true;
+                    break;
+                }
+                content = struct_content_get_parent(content);
+            }
+            if (parent_has_members) {
+                log_semantic_error(
+                    "Base-Type members were not specified, use base-type initializer '. = {}' for this!", upcast(arguments), Parser::Section::ENCLOSURE);
+            }
         }
         if (content->subtypes.size > 0 && !subtype_initializer_found && allowed_direction == 0) {
             log_semantic_error("Subtype was not specified, use subtype initializer '.SubName = {}' for this!", upcast(arguments), Parser::Section::ENCLOSURE);
@@ -6424,14 +6438,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                         auto& candidate = candidates[j];
                         candidate.overloading_arg_can_be_cast = false;
                         candidate.overloading_arg_matches_type = false;
-                        candidate.overloading_arg_matches_type = false;
+                        candidate.overloading_arg_type_mods_compatible = false;
                         Datatype* param_type = candidate.active_type;
                         if (types_are_equal(param_type, arg_type)) {
                             candidate.overloading_arg_matches_type = true;
                             matching_candidate_exists = true;
                         }
 
-                        if (!candidate.overloading_arg_matches_type) {
+                        if (!candidate.overloading_arg_matches_type && types_are_equal(param_type->base_type, arg_type->base_type)) {
                             Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, arg_is_temporary);
                             if (try_updating_type_mods(cast_info, param_type->mods)) {
                                 candidate.overloading_arg_type_mods_compatible = true;
@@ -6569,11 +6583,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 // Apply casts where necessary
                 for (int i = 0; i < arguments_missing_casts.size; i++)
                 {
-                    auto argument = call.arguments->arguments[arguments_missing_casts[i]];
+                    int arg_index = arguments_missing_casts[i];
+                    auto argument = call.arguments->arguments[arg_index];
                     Parameter_Match* param_info = 0;
                     for (int j = 0; j < candidate.matching_info.matched_parameters.size; j++) {
-                        auto info = candidate.matching_info.matched_parameters[j];
-                        if (info.argument_index == i) {
+                        auto& info = candidate.matching_info.matched_parameters[j];
+                        if (info.argument_index == arg_index) {
                             param_info = &info;
                             break;
                         }
@@ -6891,72 +6906,39 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
         // Generate matching info for further parameters
         Poly_Header* poly_base = &expression_info->options.polymorphic_function.base->base;
-        auto matching_info = get_info(instanciate.arguments);
+        auto matching_info = get_info(instanciate.arguments, true);
         *matching_info = parameter_matching_info_create_empty(Call_Type::INSTANCIATE, argument_nodes.size);
         matching_info->options.poly_function = expression_info->options.polymorphic_function.base;
-
-        auto find_and_add_parameter = [](Parameter_Matching_Info* info, AST::Arguments* arguments, String* param_name) -> bool
-        {
-            AST::Argument* argument_node = nullptr;
-            int index = 0;
-            // Note: We start at index 1, as the first argument is always the function to instanciate
-            for (int i = 1; i < arguments->arguments.size; i++)
-            {
-                auto arg = arguments->arguments[i];
-                if (arg->name.available && arg->name.value == param_name) {
-                    argument_node = arg;
-                    index = i;
-                    break;
-                }
-            }
-
-            // Check if argument could be found
-            if (argument_node == 0) {
-                parameter_matching_info_add_param(info, param_name, true, true, nullptr);
-                return false;
-            }
-
-            // Initialize arg info and add it to array
-            parameter_matching_info_add_param(info, param_name, true, true, nullptr);
-            auto& arg_info = info->matched_parameters[info->matched_parameters.size - 1];
-            arg_info.is_set = true;
-            arg_info.argument_index = index;
-            arg_info.expression = argument_node->value;
-            return true;
-        };
-
-        // Check that all comptime parameters are set
-        bool parameters_missing = false;
-        for (int i = 0; i < poly_base->parameter_nodes.size; i++)
+        for (int i = 0; i < poly_base->parameter_nodes.size; i++) // Note: parameter_nodes.size, because parameters may include return type
         {
             auto& poly_parameter = poly_base->parameters[i];
 
-            if (!poly_parameter.is_comptime)
+            Datatype* datatype = nullptr;
+            if (!poly_parameter.depends_on_other_parameters && !poly_parameter.contains_inferred_parameter) {
+                datatype = poly_parameter.infos.type;
+            }
+
+            if (poly_parameter.is_comptime) {
+                parameter_matching_info_add_param(matching_info, poly_parameter.infos.name, true, false, datatype);
+            }
+            else 
             {
-                parameter_matching_info_add_param(matching_info, poly_parameter.infos.name, true, false, nullptr);
-                auto& arg_info = matching_info->matched_parameters[matching_info->matched_parameters.size - 1];
-                // Only comptime parameters should be provided to instanciate, so in this case we have to "fake" the argument info, as no expression exists
-                arg_info.is_set = true;
-                arg_info.state = Parameter_State::ANALYSED;
-                arg_info.argument_is_temporary_value = false;
-                arg_info.argument_type = types.unknown_type; // Normally this value is never used
-            }
-            else {
-                if (!find_and_add_parameter(matching_info, instanciate.arguments, poly_parameter.infos.name)) {
-                    parameters_missing = true;
-                }
+                parameter_matching_info_add_param(matching_info, poly_parameter.infos.name, false, false, datatype);
+                auto& param_info = matching_info->matched_parameters[matching_info->matched_parameters.size - 1];
+                param_info.is_set = true;
+                param_info.state = Parameter_State::ANALYSED;
+                param_info.expression = nullptr;
+                param_info.argument_is_temporary_value = false;
             }
         }
 
-        // Check that all implicit parameters are set
+        // Add all implicit parameters
         for (int i = 0; i < poly_base->inferred_parameters.size; i++) {
-            auto& implicit = poly_base->inferred_parameters[i];
-            if (!find_and_add_parameter(matching_info, instanciate.arguments, implicit.id)) {
-                parameters_missing = true;
-            }
+            auto& inferred = poly_base->inferred_parameters[i];
+            parameter_matching_info_add_param(matching_info, inferred.id, true, true, nullptr);
         }
 
-        if (parameters_missing) {
+        if (!arguments_match_to_parameters(expr->options.instanciate.arguments, matching_info, true)) {
             parameter_matching_analyse_in_unknown_context(matching_info);
             EXIT_ERROR(types.unknown_type);
         }
@@ -7483,16 +7465,83 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto child_type = semantic_analyser_analyse_expression_type(expr->options.optional_child_type);
         EXIT_TYPE(upcast(type_system_make_pointer(child_type, true)));
     }
-    case AST::Expression_Type::OPTIONAL_CHECK: {
+    case AST::Expression_Type::OPTIONAL_CHECK: 
+    {
         auto value_type = semantic_analyser_analyse_expression_value(expr->options.optional_check_value, expression_context_make_unknown());
-        auto non_const = datatype_get_non_const_type(value_type);
-        bool is_pointer = datatype_is_pointer(non_const);
-        if (!is_pointer) {
-            log_semantic_error("Optional-Check is only valid on pointers currently", expr, Parser::Section::FIRST_TOKEN);
-            log_error_info_given_type(value_type);
-            EXIT_ERROR(upcast(types.bool_type));
+        info->specifics.is_optional_pointer_check = false;
+
+        // Optional pointer check
+        if (value_type->mods.pointer_level > 0 && value_type->mods.optional_flags != 0) 
+        {
+            // Dereference to first optional pointer type
+            Datatype* result_type = value_type;
+            bool found = false;
+            while (true) 
+            {
+                if (result_type->type == Datatype_Type::CONSTANT) {
+                    result_type = downcast<Datatype_Constant>(result_type)->element_type;
+                }
+                else if (result_type->type == Datatype_Type::POINTER) {
+                    auto ptr = downcast<Datatype_Pointer>(result_type);
+                    found = true;
+                    if (ptr->is_optional) break;
+                    result_type = ptr->element_type;
+                }
+                else {
+                    break;
+                }
+            }
+            assert(found, "Must be true when optional_flags are set");
+
+            // Update type mods
+            bool success = try_updating_expression_type_mods(expr->options.optional_check_value, result_type->mods);
+            assert(success, "Dereferencing constant pointers until we get optional should work");
+
+            info->specifics.is_optional_pointer_check = true;
+            EXIT_VALUE(upcast(types.bool_type), true);
         }
-        EXIT_VALUE(upcast(types.bool_type), true);
+        else if (value_type->base_type->type == Datatype_Type::OPTIONAL_TYPE) 
+        {
+            // Dereference to final level
+            bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
+            assert(success, "Dereferencing pointers to value should always work without optional flags");
+            info->specifics.is_optional_pointer_check = false;
+            EXIT_VALUE(upcast(types.bool_type), false);
+        }
+        else if (value_type->base_type->type == Datatype_Type::BYTE_POINTER) 
+        {
+            // Dereference to final level
+            bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
+            assert(success, "Dereferencing pointers to value should always work without optional flags");
+
+            auto ptr_type = downcast<Datatype_Bytepointer>(value_type->base_type);
+            if (!ptr_type->is_optional) {
+                log_semantic_error("Byte-pointer must be optional for optional-check (null-check) to work", expr);
+            }
+
+            info->specifics.is_optional_pointer_check = true;
+            EXIT_VALUE(upcast(types.bool_type), true);
+        }
+        else if (value_type->base_type->type == Datatype_Type::FUNCTION) 
+        {
+            // Dereference to final level
+            bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
+            assert(success, "Dereferencing pointers to value should always work without optional flags");
+
+            auto ptr_type = downcast<Datatype_Function>(value_type->base_type);
+            if (!ptr_type->is_optional) {
+                log_semantic_error("Function-pointer must be optional for optional-check (null-check) to work", expr);
+            }
+
+            info->specifics.is_optional_pointer_check = true;
+            EXIT_VALUE(upcast(types.bool_type), true);
+        }
+
+        if (!datatype_is_unknown(value_type)) {
+            log_semantic_error("Optional-Check is only valid on optional pointers/values", expr, Parser::Section::END_TOKEN);
+            log_error_info_given_type(value_type);
+        }
+        EXIT_ERROR(upcast(types.bool_type));
     }
     case AST::Expression_Type::NEW_EXPR:
     {
@@ -8602,9 +8651,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         {
             if (!try_updating_expression_type_mods(binop_node.left, expected_mods_left)) {
                 types_are_valid = false;
+                left_type = expression_info_get_type(get_info(binop_node.left), false);
             }
             if (!try_updating_expression_type_mods(binop_node.right, expected_mods_right)) {
                 types_are_valid = false;
+                right_type = expression_info_get_type(get_info(binop_node.right), false);
             }
         }
 
@@ -11245,6 +11296,15 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             auto symbol = get_info(symbol_nodes[i])->symbol;
             symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
             symbol->options.variable_type = compiler.type_system.predefined_types.unknown_type;
+
+            if (i >= types.size && types.size > 1) {
+                log_semantic_error("No type was specified for this symbol", upcast(symbol_nodes[i]), Parser::Section::IDENTIFIER);
+                symbol->type = Symbol_Type::ERROR_SYMBOL;
+            }
+            if (i >= values.size && values.size > 1) {
+                log_semantic_error("No value was specified for this symbol", upcast(symbol_nodes[i]), Parser::Section::IDENTIFIER);
+                symbol->type = Symbol_Type::ERROR_SYMBOL;
+            }
         }
 
         // Analyse types

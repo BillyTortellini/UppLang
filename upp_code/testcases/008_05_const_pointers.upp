@@ -7,7 +7,7 @@ return_inc :: (a: * const int) -> int
 	return a + 1
 
 main :: ()
-	// Points can be constant in two ways
+	// Pointers can be constant in two ways
 	i := 10
 	k := 100
 	ipc: * const int =* i

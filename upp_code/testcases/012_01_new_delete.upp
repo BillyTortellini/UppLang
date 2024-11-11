@@ -1,4 +1,4 @@
-main::()
+main :: ()
 	x :=* new int
 	x = 15
 	assert(x == 15)

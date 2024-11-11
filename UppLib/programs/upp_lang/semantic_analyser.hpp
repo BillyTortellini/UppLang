@@ -577,6 +577,7 @@ struct Expression_Info
                 int optional_deref_count;
             } options;
         } member_access;
+        bool is_optional_pointer_check;
         struct {
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;
@@ -624,8 +625,8 @@ enum class Call_Type
     POLYMORPHIC_STRUCT,
     POLYMORPHIC_FUNCTION,
     POLYMORPHIC_DOT_CALL,
-
     INSTANCIATE,
+
     CONTEXT_OPTION,
     STRUCT_INITIALIZER,
     UNION_INITIALIZER

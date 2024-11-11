@@ -1,10 +1,13 @@
-null_deref::()->int
-	ip:=cast_ptr{*int}cast{u64}0
-	return*ip
 
-main::()
+import Upp~u64
+
+null_deref :: () -> int
+	ip := cast_pointer {*int} cast {u64} 0
+	return *ip
+
+main :: ()
 	//
 		As mentioned in the previous testcase, the
 		interpreter also checks memory access for errors, so this should not crash
-	x:=#bake null_deref()
+	x := #bake null_deref()
 		

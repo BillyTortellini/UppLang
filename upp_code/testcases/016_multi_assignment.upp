@@ -1,0 +1,26 @@
+
+Node :: struct
+	value: int
+
+main :: ()
+	// Definitions and assignments of multiple variables:
+		x, y, z: int
+		x = 1
+		y = 2
+		z = 3
+	
+	// Definition with different types
+		a, b, c: int, bool, Node
+		a = 2
+		b = false
+		c = Node.{12}
+	
+	// Assignment and definition combined
+		x, y, z: int = 1, 2, 3
+		assert(x == 1 && y == 2 && z == 3)
+		
+		a, b, c: int, bool, Node = 1, false, Node.{1}
+		assert(a == 1 && !b && c.value == 1)
+		
+		x, y, z = 4, 5, 6
+		assert(x == 4 && y == 5 && z == 6)

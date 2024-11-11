@@ -1,9 +1,0 @@
-import"import_test/other.upp"
-
-success::()
-	res:=recursive_1(3)
-	assert(res==9)
-
-
-
-

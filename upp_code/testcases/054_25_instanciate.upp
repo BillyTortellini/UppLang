@@ -1,0 +1,31 @@
+
+import Upp~c_string
+import Upp~i64
+import Upp~type_info
+import Upp~Type_Handle as Type
+
+Vector :: struct (T: Type, C: int)
+	values: [C]T
+
+component_wise_binop :: (a: Vector($T, $C), b: Vector(T, C), $binop: (a: T, b: T) -> T) -> Vector(T, C)
+	result: Vector(T, C)
+	for i := 0; i < C; i += 1
+		result.values[i] = binop(a.values[i], b.values[i])
+	return result
+
+add :: (a: int, b: int) -> int
+	return a + b
+
+diff :: (a: int, b: int) -> int
+	return a - b
+
+main :: ()
+	// To get a function pointer without having to call a function, we can use #instanciate
+	instance := #instanciate (component_wise_binop, binop = add, T = int, C = 4)
+	subtract := #instanciate (component_wise_binop, binop = diff, T = int, C = 2)
+	scalar := #instanciate (component_wise_binop, binop = diff, T = int, C = 1)
+	
+	vec4 :: Vector(int, 4)
+	a: vec4 = .{.[1, 2, 3, 4]}
+	b: vec4 = .{.[1, 1, 1, 1]}
+	c := instance(a, b)

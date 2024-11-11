@@ -1,0 +1,6 @@
+import "007_12_file_to_import_notest.upp"
+
+main :: ()
+	success()
+
+

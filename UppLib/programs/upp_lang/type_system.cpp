@@ -550,8 +550,7 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
         return a.options.array_type.element_type == b.options.array_type.element_type &&
             a.options.array_type.element_count == b.options.array_type.element_count &&
             a.options.array_type.polymorphic_count_variable == b.options.array_type.polymorphic_count_variable &&
-            a.options.array_type.size_known == b.options.array_type.size_known &&
-            a.options.array_type.element_constant == b.options.array_type.element_constant;
+            a.options.array_type.size_known == b.options.array_type.size_known;
     }
     case Type_Deduplication_Type::CONSTANT: {
         return a.options.non_constant_type == b.options.non_constant_type;
@@ -644,7 +643,6 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
         hash = hash_bool(hash, infos.size_known);
         hash = hash_combine(hash, hash_pointer(infos.polymorphic_count_variable));
         hash = hash_combine(hash, hash_i32(&infos.element_count));
-        hash = hash_bool(hash, infos.element_constant);
         break;
     }
     case Type_Deduplication_Type::FUNCTION: {
@@ -1022,14 +1020,17 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
     dedup.options.array_type.element_type = element_type;
     dedup.options.array_type.polymorphic_count_variable = polymorphic_count_variable;
     dedup.options.array_type.size_known = count_known;
-    dedup.options.array_type.element_constant = element_type_is_const;
 
     // Check if type was already created
     {
         auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
         if (type_opt != nullptr) {
             Datatype* type = *type_opt;
+            assert(type->type == Datatype_Type::CONSTANT, "");
             assert(datatype_get_non_const_type(type)->type == Datatype_Type::ARRAY, "");
+            if (!element_type_is_const) {
+                return datatype_get_non_const_type(type);
+            }
             return type;
         }
     }
@@ -1071,18 +1072,17 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
     }
 
     auto& internal_info = type_system_register_type(upcast(result))->options.array;
-    bool is_const = element_type->type == Datatype_Type::CONSTANT;
     internal_info.element_type = element_type->type_handle;
     internal_info.size = result->element_count;
 
-    // If element type is const, then the array will also get the constant modifier
-    Datatype* final_type = upcast(result);
-    if (element_type_is_const) {
-        final_type = type_system_make_constant(upcast(result));
-    }
+    // We always store the constant array type in deduplication, and switch path depending on element type
+    Datatype* const_array_type = type_system_make_constant(upcast(result));
+    hashtable_insert_element(&type_system.deduplication_table, dedup, const_array_type);
 
-    hashtable_insert_element(&type_system.deduplication_table, dedup, final_type);
-    return final_type;
+    if (!element_type_is_const) {
+        return upcast(result);
+    }
+    return const_array_type;
 }
 
 Datatype_Slice* type_system_make_slice(Datatype* element_type)
