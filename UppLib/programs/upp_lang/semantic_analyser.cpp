@@ -10637,6 +10637,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& switch_node = statement->options.switch_statement;
 
         auto switch_type = semantic_analyser_analyse_expression_value(switch_node.condition, expression_context_make_auto_dereference());
+        bool is_constant = switch_type->mods.is_constant;
         switch_type = datatype_get_non_const_type(switch_type);
         auto& switch_info = get_info(statement)->specifics.switch_statement;
         switch_info.base_content = nullptr;
@@ -10674,6 +10675,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             auto case_info = get_info(case_node, true);
             case_info->is_valid = false;
             case_info->variable_symbol = 0;
+            case_info->case_value = -1;
 
             // Analyse case value
             if (case_node->value.available)
@@ -10681,9 +10683,21 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                 auto case_type = semantic_analyser_analyse_expression_value(case_node->value.value, case_context);
                 // Calculate case value
                 auto comptime = expression_calculate_comptime_value(case_node->value.value, "Switch case must be known at compile time");
-                if (comptime.available) {
-                    case_info->is_valid = true;
-                    case_info->case_value = upp_constant_to_value<int>(comptime.value);
+                if (comptime.available) 
+                {
+                    int case_value = upp_constant_to_value<int>(comptime.value);
+                    if (switch_type->type == Datatype_Type::ENUM) 
+                    {
+                        auto enum_member = enum_type_find_member_by_value(downcast<Datatype_Enum>(switch_type), case_value);
+                        if (enum_member.available) {
+                            case_info->is_valid = true;
+                            case_info->case_value = case_value;
+                        }
+                        else {
+                            log_semantic_error("Case value is not a valid enum member", case_node->value.value);
+                            log_error_info_expected_type(switch_type);
+                        }
+                    }
                 }
                 else {
                     case_info->is_valid = false;
@@ -10703,7 +10717,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
             // If a variable name is given, create a new symbol for it
             Symbol_Table* restore_table = semantic_analyser.current_workload->current_symbol_table;
             SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table = restore_table);
-            if (case_node->variable_definition.available && case_info->is_valid)
+            if (case_node->variable_definition.available)
             {
                 Symbol_Table* case_table = symbol_table_create_with_parent(restore_table, Symbol_Access_Level::INTERNAL);
                 semantic_analyser.current_workload->current_symbol_table = case_table;
@@ -10716,16 +10730,21 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
                 if (struct_content != nullptr)
                 {
-                    // Variable is a pointer to the subtype
-                    Struct_Content* subtype = struct_content->subtypes[case_info->case_value - 1];
-                    auto result_subtype = type_system_make_type_with_mods(
-                        condition_type->base_type,
-                        type_mods_make(condition_type->mods.is_constant, 1, 0, 0, subtype->index)
-                    );
-                    var_symbol->options.variable_type = result_subtype;
+                    if (case_info->is_valid)
+                    {
+                        // Variable is a pointer to the subtype
+                        Struct_Content* subtype = struct_content->subtypes[case_info->case_value - 1];
+                        auto result_subtype = type_system_make_type_with_mods(
+                            condition_type->base_type,
+                            type_mods_make(is_constant, 1, 0, 0, subtype->index)
+                        );
+                        var_symbol->options.variable_type = result_subtype;
+                    }
                 }
                 else {
-                    log_semantic_error("Case variables are only valid if the switch value is a struct with subtypes", upcast(case_node), Parser::Section::END_TOKEN);
+                    if (!datatype_is_unknown(switch_type)) {
+                        log_semantic_error("Case variables are only valid if the switch value is a struct with subtypes", upcast(case_node), Parser::Section::END_TOKEN);
+                    }
                 }
             }
 
@@ -10845,6 +10864,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         if (datatype_is_unknown(expr_type)) {
             EXIT(Control_Flow::SEQUENTIAL);
         }
+        bool is_constant = expr_type->mods.is_constant;
         Datatype* iterable_type = expr_type->base_type;
 
         // Create loop variable symbol
@@ -10861,15 +10881,20 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         {
             Datatype* element_type = nullptr;
             if (iterable_type->type == Datatype_Type::ARRAY) {
-                symbol->options.variable_type = upcast(type_system_make_pointer(downcast<Datatype_Array>(iterable_type)->element_type));
+                element_type = downcast<Datatype_Array>(iterable_type)->element_type;
+                if (is_constant) {
+                    element_type = type_system_make_constant(element_type);
+                }
             }
             else if (iterable_type->type == Datatype_Type::SLICE) {
-                symbol->options.variable_type = upcast(type_system_make_pointer(downcast<Datatype_Slice>(iterable_type)->element_type));
+                element_type = downcast<Datatype_Slice>(iterable_type)->element_type;
             }
             else {
                 log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
                 EXIT(Control_Flow::SEQUENTIAL);
             }
+
+            symbol->options.variable_type = upcast(type_system_make_pointer(element_type));
         }
         else
         {

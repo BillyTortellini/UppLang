@@ -18,7 +18,7 @@ test :: (a: Address) -> int
 		.IPv4 -> v4
 			sum := 0
 			for i in v4.bytes
-				sum += cast {int} i
+				sum = sum + cast i
 			return sum
 		.IPv6 -> v6
 			if v6.is_local

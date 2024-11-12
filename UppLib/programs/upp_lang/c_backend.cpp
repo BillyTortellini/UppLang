@@ -1130,7 +1130,7 @@ void c_generator_generate()
                 auto& internal_info = type_system.internal_type_infos[i]->options.optional;
                 string_append_formated(gen.text, "info->subtypes_.Optional.child_type = %d;\n", internal_info.child_type.index);
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Optional.is_available_offset = %d;\n", internal_info.available_offset);
+                string_append_formated(gen.text, "info->subtypes_.Optional.available_offset = %d;\n", internal_info.available_offset);
                 break;
             }
             case Datatype_Type::SUBTYPE: {
@@ -1555,7 +1555,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             bool is_available = *(bool*)(constant.memory + opt->is_available_member.offset);
             string_append(gen.text, "{.value = ");
             output_memory_as_new_constant(constant.memory, opt->child_type, false, 1);
-            string_append_formated(gen.text, ", is_available = %s}", is_available ? "true" : "false");
+            string_append_formated(gen.text, ", .is_available = %s}", is_available ? "true" : "false");
             break;
         }
         case Datatype_Type::STRUCT:

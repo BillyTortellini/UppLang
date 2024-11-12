@@ -2039,8 +2039,8 @@ void type_system_add_predefined_types(Type_System* system)
 
         // Optional
         {
-            add_member_cstr(subtype_pointer, "child_type", types->type_handle);
-            add_member_cstr(subtype_pointer, "available_offset", upcast(types->i32_type));
+            add_member_cstr(subtype_optional, "child_type", types->type_handle);
+            add_member_cstr(subtype_optional, "available_offset", upcast(types->i32_type));
         }
 
         // Primitive
