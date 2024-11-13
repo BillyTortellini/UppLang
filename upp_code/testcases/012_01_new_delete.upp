@@ -10,3 +10,10 @@ main :: ()
 		data = 1
 		delete data
 		i = i + 1
+	
+	// new cann also allocate slices with (size)
+	for i := 0; i < 10; i += 1
+		values := new(20) int
+		values[10] = 5
+		assert(values[10] == 5)
+		delete values

@@ -322,6 +322,18 @@ struct Loop_Increment
     } options;
 };
 
+struct Defer_Item
+{
+    bool is_block;
+    union {
+        AST::Code_Block* block;
+        struct {
+            IR_Data_Access* left_access;
+            IR_Data_Access* restore_value;
+        } defer_restore;
+    } options;
+};
+
 struct IR_Generator
 {
     IR_Program* program;
@@ -339,7 +351,7 @@ struct IR_Generator
 
     Dynamic_Array<int> queued_function_slot_indices;
 
-    Dynamic_Array<AST::Code_Block*> defer_stack;
+    Dynamic_Array<Defer_Item> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;
     Dynamic_Array<Unresolved_Goto> fill_out_breaks;
 

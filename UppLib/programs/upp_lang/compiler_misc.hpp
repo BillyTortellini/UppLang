@@ -46,6 +46,13 @@ enum class Hardcoded_Type
     TYPE_OF,
     TYPE_INFO,
     ASSERT_FN,
+    SIZE_OF,
+    ALIGN_OF,
+    PANIC_FN,
+
+    MEMORY_COPY,
+    MEMORY_ZERO,
+    MEMORY_COMPARE,
 
     BITWISE_NOT,
     BITWISE_AND,
@@ -56,6 +63,7 @@ enum class Hardcoded_Type
 
     MALLOC_SIZE_U64,
     FREE_POINTER,
+    REALLOCATE,
 
     PRINT_I32,
     PRINT_F32,

@@ -195,8 +195,8 @@ void fuzzy_search_add_item(String item_name, int user_index)
         }
 
         // Flag characters as already used
-        for (int i = sub_start_index; i < sub_length; i++) {
-            used_chars[i] = true;
+        for (int i = 0; i < sub_length; i++) {
+            used_chars[sub_start_index + i] = true;
         }
 
         // Add to statistic

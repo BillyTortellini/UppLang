@@ -1,6 +1,6 @@
 
 import "../dynamic_array.upp"
-context import Dynamic_Array~Context
+context import Dynamic_Array~Operators
 
 main :: ()
 	values := Dynamic_Array~create(T = int)

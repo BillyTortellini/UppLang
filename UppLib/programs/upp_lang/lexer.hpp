@@ -72,6 +72,7 @@ enum class Keyword
     ENUM,
     DELETE_KEYWORD,
     DEFER,
+    DEFER_RESTORE,
     CAST,
     CAST_POINTER,
     BAKE,

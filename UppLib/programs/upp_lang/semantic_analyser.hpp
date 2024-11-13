@@ -601,6 +601,7 @@ struct Parameter_Match
     Datatype* param_type; // May be null
     bool required; // Default values and implicit parameters don't require values
     bool requires_named_addressing; // Implicit arguments and #instanciate
+    bool must_not_be_set; // #instanciate must not set specific arguments
 
     // Argument info (Can be used to instanciate)
     AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the correspoding argument

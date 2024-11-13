@@ -38,6 +38,7 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::CONTINUE: return string_create_static("continue");
     case Keyword::DEFAULT: return string_create_static("default");
     case Keyword::DEFER: return string_create_static("defer");
+    case Keyword::DEFER_RESTORE: return string_create_static("defer_restore");
     case Keyword::DELETE_KEYWORD: return string_create_static("delete");
     case Keyword::ELSE: return string_create_static("else");
     case Keyword::IF: return string_create_static("if");

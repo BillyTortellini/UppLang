@@ -2,8 +2,8 @@
 import Upp~u64
 
 main :: ()
-	// New operator with arrays creates a slice
-	arr := new [20]int
+	// New operator with () creates a slice
+	arr := new(20) int
 	i: u64 = 0
 	while i < arr.size
 		arr[i] = cast (arr.size - i - 1)

@@ -1,11 +1,30 @@
 
+Fix all testcases
 
+DONE:
+ * #instanciate update
+ * reallocate function
+ * new should have () parenthesis
+ * Jump enclosure not working if multiple lines
+ * If errors are in folds, then make fold red?
+ * Don't show implicit parameters on dot-calls
+ * folds mess up particle effect position
+ * Motion inner/around block should work on block-start line
+ * Code-Completion not showing dot-calls for polymorphic things
+ * import Dynamic_Array~Dynamic_Array --> Not implemented
+
+
+Features:
+ * struct-initializer with hierarchy suggestions aren't shown correctly
+ * .? for Optional value access
+Missing Testcases:
+ * defer_restore
+ * new hardcoded functions
 
 
 --------------------
 - MISSING FEATURES -
 --------------------
-Additional:
     * Debugger
     * Incremental compiler (Hot-code reloading?)
     * Metaprogramming

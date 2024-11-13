@@ -60,7 +60,7 @@ main :: ()
 	
 	Upp~global_allocator =* stack_alloc.base
 	
-	values := new [5]int
+	values := new(5) int
 	assert(stack_alloc.alloc_count == 1)
 	x :=* new int
 	assert(stack_alloc.alloc_count == 2)

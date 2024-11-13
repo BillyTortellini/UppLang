@@ -517,14 +517,24 @@ struct Predefined_Types
     Datatype_Struct* allocator;
     Datatype_Function* allocate_function;
     Datatype_Function* free_function;
+    Datatype_Function* hardcoded_reallocate;
     Datatype_Function* reallocate_function;
 
     // Types for built-in/hardcoded functions
-    Datatype_Function* type_assert;
-    Datatype_Function* type_free;
     Datatype_Function* type_malloc;
+    Datatype_Function* type_free;
+
+    Datatype_Function* type_memory_copy;
+    Datatype_Function* type_memory_zero;
+    Datatype_Function* type_memory_compare;
+
+    Datatype_Function* type_assert;
     Datatype_Function* type_type_of;
     Datatype_Function* type_type_info;
+    Datatype_Function* type_size_of;
+    Datatype_Function* type_align_of;
+    Datatype_Function* type_panic;
+
     Datatype_Function* type_print_bool;
     Datatype_Function* type_print_i32;
     Datatype_Function* type_print_f32;

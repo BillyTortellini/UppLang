@@ -1926,6 +1926,15 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 case Hardcoded_Type::FREE_POINTER:
                     string_append_formated(gen.text, "free_pointer");
                     break;
+                case Hardcoded_Type::MEMORY_COPY:
+                    string_append_formated(gen.text, "memory_copy");
+                    break;
+                case Hardcoded_Type::MEMORY_COMPARE:
+                    string_append_formated(gen.text, "memory_compare");
+                    break;
+                case Hardcoded_Type::MEMORY_ZERO:
+                    string_append_formated(gen.text, "memory_zero");
+                    break;
                 case Hardcoded_Type::TYPE_INFO:
                 {
                     string_append(gen.text, "&type_infos_.infos[");

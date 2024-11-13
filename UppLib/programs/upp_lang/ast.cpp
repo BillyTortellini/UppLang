@@ -339,7 +339,7 @@ namespace AST
                 break;
             }
             case Expression_Type::INSTANCIATE: {
-                FILL(expr->options.instanciate.arguments);
+                FILL(expr->options.instanciate_expr);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -438,6 +438,12 @@ namespace AST
             case Statement_Type::DEFER: {
                 auto defer = stat->options.defer_block;
                 FILL(defer);
+                break;
+            }
+            case Statement_Type::DEFER_RESTORE: {
+                auto defer = stat->options.defer_restore;
+                FILL(defer.left_side);
+                FILL(defer.right_side);
                 break;
             }
             case Statement_Type::IMPORT: {
@@ -713,7 +719,7 @@ namespace AST
                 break;
             }
             case Expression_Type::INSTANCIATE: {
-                FILL(expr->options.instanciate.arguments);
+                FILL(expr->options.instanciate_expr);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -812,6 +818,12 @@ namespace AST
             case Statement_Type::DEFER: {
                 auto defer = stat->options.defer_block;
                 FILL(defer);
+                break;
+            }
+            case Statement_Type::DEFER_RESTORE: {
+                auto defer = stat->options.defer_restore;
+                FILL(defer.left_side);
+                FILL(defer.right_side);
                 break;
             }
             case Statement_Type::IMPORT: {
@@ -1078,6 +1090,7 @@ namespace AST
             case Statement_Type::BINOP_ASSIGNMENT: string_append_formated(str, "BINOP_ASSIGNMENT"); break;
             case Statement_Type::EXPRESSION_STATEMENT: string_append_formated(str, "EXPRESSION_STATEMENT"); break;
             case Statement_Type::DEFER: string_append_formated(str, "DEFER"); break;
+            case Statement_Type::DEFER_RESTORE: string_append_formated(str, "DEFER_RESTORE"); break;
             case Statement_Type::IMPORT: string_append_formated(str, "IMPORT"); break;
             case Statement_Type::IF_STATEMENT: string_append_formated(str, "IF_STATEMENT"); break;
             case Statement_Type::WHILE_STATEMENT: string_append_formated(str, "WHILE_STATEMENT"); break;

@@ -112,9 +112,18 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
     {
     case Hardcoded_Type::ASSERT_FN: return an.type_assert;
     case Hardcoded_Type::FREE_POINTER: return an.type_free;
+    case Hardcoded_Type::REALLOCATE: return an.hardcoded_reallocate;
     case Hardcoded_Type::MALLOC_SIZE_U64: return an.type_malloc;
     case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
     case Hardcoded_Type::TYPE_OF: return an.type_type_of;
+
+    case Hardcoded_Type::MEMORY_COPY: return an.type_memory_copy;
+    case Hardcoded_Type::MEMORY_COMPARE: return an.type_memory_compare;
+    case Hardcoded_Type::MEMORY_ZERO: return an.type_memory_zero;
+
+    case Hardcoded_Type::SIZE_OF: return an.type_size_of;
+    case Hardcoded_Type::ALIGN_OF: return an.type_align_of;
+    case Hardcoded_Type::PANIC_FN: return an.type_panic;
 
     case Hardcoded_Type::PRINT_BOOL: return an.type_print_bool;
     case Hardcoded_Type::PRINT_I32: return an.type_print_i32;
@@ -1758,15 +1767,12 @@ void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
     expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
-void expression_info_set_constant_single_item(Expression_Info* info, Datatype* type, void* value_ptr) {
-    Array<byte> memory;
-    memory.data = (byte*)value_ptr;
-    memory.size = type->memory_info.value.size;
-    expression_info_set_constant(info, type, memory, 0);
+void expression_info_set_constant_u64(Expression_Info* info, u64 value) {
+    expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.u64_type), array_create_static((byte*)&value, sizeof(u64)), 0);
 }
 
-void expression_info_set_constant_u64(Expression_Info* info, u64 value) {
-    expression_info_set_constant_single_item(info, upcast(compiler.type_system.predefined_types.u64_type), &value);
+void expression_info_set_constant_u32(Expression_Info* info, u32 value) {
+    expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.u32_type), array_create_static((byte*)&value, sizeof(u32)), 0);
 }
 
 // Returns result type of a value
@@ -2948,6 +2954,7 @@ void parameter_matching_info_add_param(Parameter_Matching_Info* info, String* na
     match.expression = nullptr;
     match.argument_type = compiler.type_system.predefined_types.unknown_type;
     match.argument_is_temporary_value = false;
+    match.must_not_be_set = false;
 
     match.state = Parameter_State::NOT_ANALYSED;
     match.reanalyse_param_type_flag = false;
@@ -3003,7 +3010,7 @@ void analyse_arguments_in_unknown_context(AST::Arguments* arguments) {
         auto& expr = arguments->arguments[i]->value;
         auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, expr, Info_Query::TRY_READ);
         if (info == 0) {
-            semantic_analyser_analyse_expression_value(expr, expression_context_make_unknown());
+            semantic_analyser_analyse_expression_value(expr, expression_context_make_unknown(true));
         }
     }
     for (int i = 0; i < arguments->subtype_initializers.size; i++) {
@@ -3016,7 +3023,7 @@ void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matc
     for (int i = 0; i < matching_info->matched_parameters.size; i++) {
         auto& param_info = matching_info->matched_parameters[i];
         if (param_info.state == Parameter_State::NOT_ANALYSED && param_info.expression != 0) {
-            Expression_Context context = expression_context_make_unknown();
+            Expression_Context context = expression_context_make_unknown(true);
             if (param_info.param_type != 0) {
                 context = expression_context_make_specific_type(param_info.param_type);
             }
@@ -3269,7 +3276,7 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
     bool argument_error_occured = false;
     bool named_argument_encountered = false;
     int unnamed_argument_count = 0;
-    for (int i = matching_info->call_type == Call_Type::INSTANCIATE ? 1 : 0; i < args->arguments.size; i++)
+    for (int i = 0; i < args->arguments.size; i++)
     {
         auto& arg = args->arguments[i];
 
@@ -3295,6 +3302,12 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
                     param_info.is_set = true;
                     param_info.argument_index = i;
                     param_info.expression = arg->value;
+                    if (param_info.must_not_be_set) {
+                        if (log_errors) {
+                            log_semantic_error("Argument must not be specified", upcast(arg), Parser::Section::IDENTIFIER);
+                        }
+                        argument_error_occured = true;
+                    }
                 }
                 else {
                     if (log_errors) {
@@ -3336,6 +3349,13 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
                     info.is_set = true;
                     info.argument_index = i;
                     info.expression = arg->value;
+
+                    if (info.must_not_be_set) {
+                        if (log_errors) {
+                            log_semantic_error("Argument must not be specified", upcast(arg));
+                        }
+                        argument_error_occured = true;
+                    }
                 }
             }
             else
@@ -6718,6 +6738,83 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 panic("");
                 EXIT_ERROR(arg_result->options.type);
             }
+            case Hardcoded_Type::REALLOCATE:
+            {
+                auto slice_param = &matching_info->matched_parameters[0];
+                auto size_param = &matching_info->matched_parameters[1];
+
+                analyse_index_accept_all_ints_as_u64(size_param->expression);
+                size_param->state = Parameter_State::ANALYSED;
+                size_param->argument_type = upcast(types.u64_type);
+                size_param->argument_is_temporary_value = true;
+
+                Datatype* arg_type = analyse_parameter_if_not_already_done(slice_param, expression_context_make_auto_dereference());
+                if (arg_type->base_type->type != Datatype_Type::SLICE) {
+                    log_semantic_error("Reallocate requires a slice as the first argument", slice_param->expression);
+                }
+                else {
+                    if (!try_updating_expression_type_mods(slice_param->expression, type_mods_make(false, 1, 1, 0))) {
+                        log_semantic_error("Reallocate argument must be a pointer to slice, as the slice is modified", slice_param->expression);
+                    }
+                }
+                expression_info_set_no_value(info);
+                return info;
+            }
+            case Hardcoded_Type::SIZE_OF: 
+            case Hardcoded_Type::ALIGN_OF: 
+            {
+                bool is_size_of = matching_info->options.hardcoded == Hardcoded_Type::SIZE_OF;
+                assert(matching_info->matched_parameters.size == 1, "");
+                auto param = &matching_info->matched_parameters[0];
+                auto expr = param->expression;
+                assert(expr != 0, "");
+
+                Datatype* expr_type = analyse_parameter_if_not_already_done(param, expression_context_make_specific_type(types.type_handle));
+                if (datatype_is_unknown(expr_type)) {
+                    if (is_size_of) {
+                        expression_info_set_constant_u64(info, 1);
+                    }
+                    else {
+                        expression_info_set_constant_u32(info, 1);
+                    }
+                    return info;
+                }
+
+                auto result = expression_calculate_comptime_value(
+                    matching_info->matched_parameters[0].expression, "size_of/align_of requires comptime type-handle");
+                if (!result.available) {
+                    if (is_size_of) {
+                        expression_info_set_constant_u64(info, 1);
+                    }
+                    else {
+                        expression_info_set_constant_u32(info, 1);
+                    }
+                    return info;
+                }
+
+                Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(result.value);
+                if (handle.index >= (u32) compiler.type_system.types.size) {
+                    log_semantic_error("Invalid type-handle value", matching_info->matched_parameters[0].expression);
+                    if (is_size_of) {
+                        expression_info_set_constant_u64(info, 1);
+                    }
+                    else {
+                        expression_info_set_constant_u32(info, 1);
+                    }
+                    return info;
+                }
+
+                auto type = compiler.type_system.types[handle.index];
+                type_wait_for_size_info_to_finish(type);
+                auto& memory = type->memory_info.value;
+                if (is_size_of) {
+                    expression_info_set_constant_u64(info, memory.size);
+                }
+                else {
+                    expression_info_set_constant_u32(info, memory.alignment);
+                }
+                return info;
+            }
             case Hardcoded_Type::BITWISE_NOT: 
             {
                 info->specifics.bitwise_primitive_type = types.i32_type;
@@ -6806,6 +6903,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 else if (call_expr_info->result_type == Expression_Result_Type::DOT_CALL) {
                     assert(call_expr_info->options.dot_call.is_polymorphic, "");
                     call_expr_info->options.dot_call.options.polymorphic.instance = function;
+                    call_expr_info->cast_info = cast_info_make_empty(upcast(function->signature), true);
                 }
                 else {
                     panic("Hey");
@@ -6880,33 +6978,33 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     }
     case AST::Expression_Type::INSTANCIATE:
     {
-        auto& instanciate = expr->options.instanciate;
-        auto& argument_nodes = expr->options.instanciate.arguments->arguments;
-        if (argument_nodes.size == 0) {
-            log_semantic_error("Instanciate must have at least one argument, first argument is the polymorphic function!", expr);
-            analyse_arguments_in_unknown_context(instanciate.arguments);
+        if (expr->options.instanciate_expr->type != AST::Expression_Type::FUNCTION_CALL) 
+        {
+            if (expr->options.instanciate_expr->type == AST::Expression_Type::ERROR_EXPR) {
+                semantic_analyser_set_error_flag(false);
+                EXIT_ERROR(types.unknown_type);
+            }
+
+            log_semantic_error("#instanciate expects a function call as next expression", expr, Parser::Section::FIRST_TOKEN);
+            semantic_analyser_analyse_expression_value(expr->options.instanciate_expr, expression_context_make_unknown(true));
             EXIT_ERROR(types.unknown_type);
         }
 
-        auto first_expr = argument_nodes[0]->value;
-        if (argument_nodes[0]->name.available) {
-            log_semantic_error("Instanciate first argument must not have a name", upcast(argument_nodes[0]), Parser::Section::FIRST_TOKEN);
-            analyse_arguments_in_unknown_context(instanciate.arguments);
-            EXIT_ERROR(types.unknown_type);
-        }
+        auto& instanciate_call = expr->options.instanciate_expr->options.call;
+        auto& argument_nodes = instanciate_call.arguments->arguments;
 
-        // Analyse first argument
-        auto expression_info = semantic_analyser_analyse_expression_any(first_expr, expression_context_make_unknown());
+        // Analyse function
+        auto expression_info = semantic_analyser_analyse_expression_any(instanciate_call.expr, expression_context_make_unknown());
         if (expression_info->result_type != Expression_Result_Type::POLYMORPHIC_FUNCTION) {
-            log_semantic_error("#instanciate only works on polymorphic functions", first_expr);
+            log_semantic_error("#instanciate only works on polymorphic functions", instanciate_call.expr);
             log_error_info_expression_result_type(expression_info->result_type);
-            analyse_arguments_in_unknown_context(instanciate.arguments);
+            analyse_arguments_in_unknown_context(instanciate_call.arguments);
             EXIT_ERROR(types.unknown_type);
         }
 
         // Generate matching info for further parameters
         Poly_Header* poly_base = &expression_info->options.polymorphic_function.base->base;
-        auto matching_info = get_info(instanciate.arguments, true);
+        auto matching_info = get_info(instanciate_call.arguments, true);
         *matching_info = parameter_matching_info_create_empty(Call_Type::INSTANCIATE, argument_nodes.size);
         matching_info->options.poly_function = expression_info->options.polymorphic_function.base;
         for (int i = 0; i < poly_base->parameter_nodes.size; i++) // Note: parameter_nodes.size, because parameters may include return type
@@ -6929,6 +7027,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 param_info.state = Parameter_State::ANALYSED;
                 param_info.expression = nullptr;
                 param_info.argument_is_temporary_value = false;
+                param_info.must_not_be_set = true;
             }
         }
 
@@ -6938,14 +7037,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             parameter_matching_info_add_param(matching_info, inferred.id, true, true, nullptr);
         }
 
-        if (!arguments_match_to_parameters(expr->options.instanciate.arguments, matching_info, true)) {
+        if (!arguments_match_to_parameters(instanciate_call.arguments, matching_info, true)) {
             parameter_matching_analyse_in_unknown_context(matching_info);
             EXIT_ERROR(types.unknown_type);
         }
 
         // Otherwise try to instanciate function
         auto result = instanciate_polymorphic_callable(
-            matching_info, expression_context_make_unknown(), upcast(instanciate.arguments), Parser::Section::ENCLOSURE
+            matching_info, expression_context_make_unknown(), upcast(instanciate_call.arguments), Parser::Section::ENCLOSURE
         );
         if (result.type == Instanciation_Result_Type::FUNCTION) {
             expression_info->options.polymorphic_function.instance_fn = result.options.function;
@@ -10592,6 +10691,35 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         }
         EXIT(Control_Flow::SEQUENTIAL);
     }
+    case AST::Statement_Type::DEFER_RESTORE:
+    {
+        auto& restore = statement->options.defer_restore;
+        if (inside_defer()) {
+            log_semantic_error("Currently nested defers aren't allowed", statement, Parser::Section::FIRST_TOKEN);
+        }
+
+        Expression_Context context = expression_context_make_unknown();
+        if (restore.assignment_type == AST::Assignment_Type::DEREFERENCE) {
+            context = expression_context_make_auto_dereference();
+        }
+        auto left_type = semantic_analyser_analyse_expression_value(restore.left_side, context);
+
+        // Check for errors
+        if (!expression_has_memory_address(restore.left_side)) {
+            log_semantic_error("Cannot assign to a temporary value", upcast(restore.left_side));
+        }
+        if (left_type->type == Datatype_Type::CONSTANT) {
+            log_semantic_error("Trying to assign to a constant value", restore.left_side);
+        }
+        bool is_pointer = datatype_is_pointer(left_type);
+        if (restore.assignment_type == AST::Assignment_Type::POINTER && !is_pointer && !datatype_is_unknown(left_type)) {
+            log_semantic_error("Pointer assignment requires left-side to be a pointer!", upcast(statement), Parser::Section::WHOLE_NO_CHILDREN);
+            left_type = upcast(type_system_make_pointer(left_type));
+        }
+
+        semantic_analyser_analyse_expression_value(restore.right_side, expression_context_make_specific_type(left_type));
+        EXIT(Control_Flow::SEQUENTIAL);
+    }
     case AST::Statement_Type::EXPRESSION_STATEMENT:
     {
         auto& expression_node = statement->options.expression;
@@ -11809,6 +11937,15 @@ void semantic_analyser_reset()
         symbols.hardcoded_type_of = define_hardcoded_symbol("type_of", Hardcoded_Type::TYPE_OF);
         symbols.hardcoded_type_info = define_hardcoded_symbol("type_info", Hardcoded_Type::TYPE_INFO);
         symbols.hardcoded_assert = define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
+
+        define_hardcoded_symbol("memory_copy", Hardcoded_Type::MEMORY_COPY);
+        define_hardcoded_symbol("memory_zero", Hardcoded_Type::MEMORY_ZERO);
+        define_hardcoded_symbol("memory_compare", Hardcoded_Type::MEMORY_COMPARE);
+        define_hardcoded_symbol("reallocate", Hardcoded_Type::REALLOCATE);
+
+        define_hardcoded_symbol("panic", Hardcoded_Type::PANIC_FN);
+        define_hardcoded_symbol("size_of", Hardcoded_Type::SIZE_OF);
+        define_hardcoded_symbol("align_of", Hardcoded_Type::ALIGN_OF);
 
         define_hardcoded_symbol("bitwise_not", Hardcoded_Type::BITWISE_NOT);
         define_hardcoded_symbol("bitwise_and", Hardcoded_Type::BITWISE_AND);

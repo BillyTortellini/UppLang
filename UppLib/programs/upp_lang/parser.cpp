@@ -1663,6 +1663,36 @@ namespace Parser
                     result->options.defer_block = parse_code_block(&result->base, 0);
                     PARSE_SUCCESS(result);
                 }
+                case Keyword::DEFER_RESTORE:
+                {
+                    advance_token();
+                    result->type = Statement_Type::DEFER_RESTORE;
+                    result->options.defer_restore.left_side = parse_expression_or_error_expr(upcast(result));
+                    Assignment_Type assignment_type = (Assignment_Type) -1;
+                    if (test_operator(Operator::ASSIGN_POINTER)) {
+                        assignment_type = Assignment_Type::POINTER;
+                    }
+                    else if (test_operator(Operator::ASSIGN)) {
+                        assignment_type = Assignment_Type::DEREFERENCE;
+                    }
+                    else if (test_operator(Operator::ASSIGN_RAW)) {
+                        assignment_type = Assignment_Type::RAW;
+                    }
+
+                    if ((int)assignment_type == -1) {
+                        auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+                        error_expr->type = Expression_Type::ERROR_EXPR;
+                        node_finalize_range(upcast(error_expr));
+                        result->options.defer_restore.assignment_type = Assignment_Type::RAW;
+                        result->options.defer_restore.right_side = error_expr;
+                        PARSE_SUCCESS(result);
+                    }
+
+                    advance_token();
+                    result->options.defer_restore.assignment_type = assignment_type;
+                    result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
+                    PARSE_SUCCESS(result);
+                }
                 case Keyword::SWITCH:
                 {
                     advance_token();
@@ -1962,7 +1992,7 @@ namespace Parser
         {
             advance_token();
             result->type = Expression_Type::INSTANCIATE;
-            result->options.instanciate.arguments = parse_arguments(upcast(result), Parenthesis_Type::PARENTHESIS);
+            result->options.instanciate_expr = parse_expression_or_error_expr(upcast(result));
             PARSE_SUCCESS(result);
         }
 
@@ -2134,10 +2164,10 @@ namespace Parser
             result->type = Expression_Type::NEW_EXPR;
             result->options.new_expr.count_expr.available = false;
             advance_token();
-            if (test_parenthesis_offset('[', 0)) {
+            if (test_parenthesis_offset('(', 0)) {
                 advance_token();
                 result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
-                if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
+                if (!finish_parenthesis<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
             }
             result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);

@@ -18,7 +18,8 @@ struct Bytecode_Thread
     byte* stack_pointer;
     byte return_register[256];
     byte stack[INTERPRETER_STACK_SIZE];
-    Stack_Allocator heap_allocator;
+    Hashtable<void*, int> heap_allocations;
+    int heap_memory_consumption;
 
     // Result infos
     Exit_Code exit_code;

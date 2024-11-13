@@ -76,7 +76,7 @@ struct Source_Line
 
     bool is_folded;
     int fold_index;
-    int on_screen_index; // May not be visible depending on cam_start/end
+    int visible_index; // Index including folds
 };
 
 struct Line_Bundle

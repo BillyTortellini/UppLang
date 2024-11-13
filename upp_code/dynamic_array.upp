@@ -1,51 +1,64 @@
 
-import Upp~Type_Handle
+Dynamic_Array :: struct (T: Upp~Type_Handle)
+	buffer: []T
+	allocator: *Upp~Allocator
+	size: int
 
 Dynamic_Array :: module
-	Dynamic_Array :: struct (T: Type_Handle)
-		buffer: []T
-		size: int
+	import Upp~Type_Handle
+	import Upp~Allocator
 	
-	create :: (initial_capacity: int = 0) -> Dynamic_Array($T)
+	create :: (initial_capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Dynamic_Array($T)
 		result: Dynamic_Array(T)
+		result.allocator =~ allocator
 		result.size = 0
+		
 		if initial_capacity == 0
 			result.buffer.data =* null
 			result.buffer.size = 0
 		else
-			result.buffer = new [initial_capacity]T
+			defer_restore Upp~global_allocator =~ allocator
+			result.buffer = new(initial_capacity) T
+		
 		return result
 	
 	destroy :: (array: *Dynamic_Array($T))
-		if array.buffer.size != 0
-			delete array.buffer
+		if array.buffer.size == 0
+			return
+		
+		defer_restore Upp~global_allocator =~ array.allocator
+		delete array.buffer
 	
-	resize :: (array: *Dynamic_Array($T), new_capacity: int)
+	reserve :: (array: *Dynamic_Array($T), new_capacity: int)
 		if cast array.buffer.size >= new_capacity
 			return
 		
 		if array.buffer.size == 0
+			defer_restore Upp~global_allocator =~ array.allocator
 			next_size := 1
 			while next_size < new_capacity
 				next_size *= 2
-			array.buffer = new [next_size]T
+			
+			array.buffer = new(next_size) T
 		else
 			next_size := cast {int} array.buffer.size
 			while next_size < new_capacity
 				next_size *= 2
 			
-			new_buffer := new [next_size]T
-			for i := 0; i < array.size; i += 1
-				new_buffer[i] = array.buffer[i]
-			delete array.buffer
-			array.buffer = new_buffer
+			import Upp~size_of
+			import Upp~align_of
+			array.buffer.data =~ cast_pointer array.allocator.reallocate_fn(
+				array.allocator, cast_pointer array.buffer.data.value, size_of(T) * array.buffer.size, size_of(T)* cast next_size
+			)
+			array.buffer.size = cast next_size
 	
 	push_back :: (array: *Dynamic_Array($T), value: T)
-		resize(array, array.size + 1)
+		reserve(array, array.size + 1)
 		array.buffer[array.size] = value
 		array.size += 1
 	
 	at :: (array: Dynamic_Array($T), index: int) -> *T
+		assert(index < array.size)
 		return array.buffer[index]
 	
 	Iterator :: module
@@ -65,9 +78,31 @@ Dynamic_Array :: module
 		next :: (iter: *Array_Iter($T))
 			iter.index += 1
 	
-	Context :: module
+	Operators :: module
 		context add_iterator(Iterator~make, Iterator~has_next, Iterator~next, Iterator~get_value)
 		context add_dot_call(destroy)
 		context add_dot_call(push_back)
+		context add_dot_call(at)
 		context add_array_access(at)
+
+main :: ()
+	context import Dynamic_Array~Operators
+	import Dynamic_Array~create
+	
+	x: Dynamic_Array(int) = create()
+	defer
+		x.destroy()
+	
+	x.push_back(1)
+	x.push_back(2)
+	x.push_back(3)
+	x.push_back(4)
+	x.push_back(12)
+	
+	import Upp~*
+	for v in x
+		print_i32(v)
+		print_string(", ")
+	print_line()
+
 

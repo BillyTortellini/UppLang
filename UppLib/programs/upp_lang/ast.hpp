@@ -375,9 +375,7 @@ namespace AST
                 Dynamic_Array<Structure_Member_Node*> members;
                 Structure_Type type;
             } structure;
-            struct {
-                Arguments* arguments;
-            } instanciate;
+            Expression* instanciate_expr; // Should be a function call...
             Dynamic_Array<Enum_Member_Node*> enum_members;
         } options;
     };
@@ -400,6 +398,7 @@ namespace AST
         // Keyword Statements
         IMPORT,
         DEFER,
+        DEFER_RESTORE,
         IF_STATEMENT,
         WHILE_STATEMENT,
         FOR_LOOP,
@@ -408,7 +407,7 @@ namespace AST
         BREAK_STATEMENT,
         CONTINUE_STATEMENT,
         RETURN_STATEMENT,
-        DELETE_STATEMENT,
+        DELETE_STATEMENT
     };
 
     struct Statement
@@ -445,6 +444,11 @@ namespace AST
                 Binop binop;
             } binop_assignment;
             Code_Block* defer_block;
+            struct {
+                Expression* left_side;
+                Expression* right_side;
+                Assignment_Type assignment_type;
+            } defer_restore;
             struct {
                 Expression* condition;
                 Code_Block* block;

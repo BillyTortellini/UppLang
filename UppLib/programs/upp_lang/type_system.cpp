@@ -2117,11 +2117,46 @@ void type_system_add_predefined_types(Type_System* system)
     // Hardcoded Functions
     {
         auto& ts = *system;
+
         types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
+        types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
+        types->type_size_of = type_system_make_function({ make_param(types->type_handle, "type") }, upcast(types->u64_type));
+        types->type_align_of = type_system_make_function({ make_param(types->type_handle, "type") }, upcast(types->u32_type));
+        types->type_panic = type_system_make_function({}, nullptr);
+        types->type_type_info = type_system_make_function(
+            { make_param(upcast(types->type_handle), "type_handle") }, 
+            upcast(type_system_make_pointer(upcast(types->type_information_type)))
+        );
+
+        types->type_memory_copy = type_system_make_function({
+                make_param(types->byte_pointer, "destination"), 
+                make_param(types->byte_pointer, "source"),
+                make_param(upcast(types->u64_type), "size")
+            }, 
+            nullptr
+        );
+        types->type_memory_zero = type_system_make_function({
+                make_param(types->byte_pointer, "destination"), 
+                make_param(upcast(types->u64_type), "size")
+            }, 
+            nullptr
+        );
+        types->type_memory_compare = type_system_make_function({
+                make_param(types->byte_pointer, "a"), 
+                make_param(types->byte_pointer, "b"),
+                make_param(upcast(types->u64_type), "size")
+            }, 
+            upcast(types->bool_type)
+        );
+
         types->type_free = type_system_make_function({ make_param(upcast(types->byte_pointer), "pointer") });
         types->type_malloc = type_system_make_function({ make_param(upcast(types->u64_type), "size") }, upcast(types->byte_pointer_optional));
-        types->type_type_info = type_system_make_function({ make_param(upcast(types->type_handle), "type_handle") }, upcast(type_system_make_pointer(upcast(types->type_information_type))));
-        types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
+        types->hardcoded_reallocate = type_system_make_function({ 
+                make_param(upcast(types->any_type), "slice"),
+                make_param(upcast(types->u64_type), "new_size") 
+            }
+        );
+
         types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });
         types->type_print_i32 = type_system_make_function({ make_param(upcast(types->i32_type), "value") });
         types->type_print_f32 = type_system_make_function({ make_param(upcast(types->f32_type), "value") });

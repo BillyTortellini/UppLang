@@ -24,15 +24,17 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
 {
     switch (hardcoded)
     {
-    case Hardcoded_Type::ASSERT_FN:
-        string_append_formated(string, "ASSERT");
-        break;
-    case Hardcoded_Type::TYPE_INFO:
-        string_append_formated(string, "TYPE_INFO");
-        break;
-    case Hardcoded_Type::TYPE_OF:
-        string_append_formated(string, "TYPE_OF");
-        break;
+    case Hardcoded_Type::ASSERT_FN: string_append_formated(string, "ASSERT"); break;
+    case Hardcoded_Type::TYPE_INFO: string_append_formated(string, "TYPE_INFO"); break;
+    case Hardcoded_Type::TYPE_OF: string_append_formated(string, "TYPE_OF");break;
+    case Hardcoded_Type::SIZE_OF: string_append_formated(string, "SIZE_OF");break;
+    case Hardcoded_Type::ALIGN_OF: string_append_formated(string, "ALIGN_OF");break;
+    case Hardcoded_Type::PANIC_FN: string_append_formated(string, "PANIC");break;
+
+    case Hardcoded_Type::MEMORY_COPY: string_append_formated(string, "MEMORY_COPY");break;
+    case Hardcoded_Type::MEMORY_COMPARE: string_append_formated(string, "MEMORY_COMPARE");break;
+    case Hardcoded_Type::MEMORY_ZERO: string_append_formated(string, "MEMORY_ZERO");break;
+
     case Hardcoded_Type::BITWISE_NOT: string_append_formated(string, "BITWISE_NOT"); break;
     case Hardcoded_Type::BITWISE_AND: string_append_formated(string, "BITWISE_AND"); break;
     case Hardcoded_Type::BITWISE_OR: string_append_formated(string, "BITWISE_OR"); break;

@@ -9,14 +9,21 @@
 Bytecode_Thread* bytecode_thread_create(int instruction_limit)
 {
     Bytecode_Thread* result = new Bytecode_Thread;
-    result->heap_allocator = stack_allocator_create_empty(1024);
+    result->heap_allocations = hashtable_create_pointer_empty<void*, int>(8);
+    result->heap_memory_consumption = 0;
     result->instruction_limit = instruction_limit;
     result->waiting_for_type_finish_type = 0;
     return result;
 }
 
 void bytecode_thread_destroy(Bytecode_Thread* thread) {
-    stack_allocator_destroy(&thread->heap_allocator);
+    auto iter = hashtable_iterator_create(&thread->heap_allocations);
+    while (hashtable_iterator_has_next(&iter)) {
+        void* allocation = *iter.key;
+        free(allocation);
+        hashtable_iterator_next(&iter);
+    }
+    hashtable_destroy(&thread->heap_allocations);
     delete thread;
 }
 
@@ -797,21 +804,83 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         memory_set_bytes(&thread->return_register[0], 256, 0);
         switch (hardcoded_type)
         {
-        case Hardcoded_Type::MALLOC_SIZE_U64: {
+        case Hardcoded_Type::MALLOC_SIZE_U64: 
+        {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             u64 size = *(u64*)argument_start;
-            assert(size != 0, "");
+            if (size == 0) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Called malloc with size 0");
+                return true;
+            }
+            if (thread->heap_memory_consumption + size > 1024 * 64) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Reached maximum heap allocations with 64kB memory");
+                return true;
+            }
+
             void* alloc_data = malloc(size);
+            hashtable_insert_element(&thread->heap_allocations, alloc_data, (int)size);
+            thread->heap_memory_consumption += size;
+
             // logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
-            memory_copy(thread->return_register, &alloc_data, 8);
+            memory_copy(thread->return_register, &alloc_data, sizeof(void*));
             break;
         }
-        case Hardcoded_Type::FREE_POINTER: {
+        case Hardcoded_Type::FREE_POINTER: 
+        {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             void* free_data = *(void**)argument_start;
-            // logg("Interpreter Free pointer: %p\n", free_data);
+
+            int* size_opt = hashtable_find_element(&thread->heap_allocations, free_data);
+            if (size_opt == 0) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Free called on invalid pointer");
+                return true;
+            }
+
+            thread->heap_memory_consumption -= *size_opt;
+            hashtable_remove_element(&thread->heap_allocations, free_data);
             free(free_data);
+
+            // logg("Interpreter Free pointer: %p\n", free_data);
             *(void**)argument_start = (void*)1;
+            break;
+        }
+        case Hardcoded_Type::MEMORY_COPY: 
+        {
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            void* destination = *(void**)argument_start;
+            void* source = *(void**)(argument_start + 8);
+            u64 size = *(u64*)(argument_start + 16);
+            if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory copy called with invalid pointers/size");
+                return true;
+            }
+            memcpy(destination, source, size);
+            break;
+        }
+        case Hardcoded_Type::MEMORY_COMPARE: 
+        {
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            void* destination = *(void**)argument_start;
+            void* source = *(void**)(argument_start + 8);
+            u64 size = *(u64*)(argument_start + 16);
+            if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory compare called with invalid pointers/size");
+                return true;
+            }
+            int cmp = memcmp(destination, source, size);
+            thread->return_register[0] = cmp == 0;
+            break;
+        }
+        case Hardcoded_Type::MEMORY_ZERO: 
+        {
+            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            void* destination = *(void**)argument_start;
+            u64 size = *(u64*)(argument_start + 8);
+            if (!memory_is_readable(destination, size)) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory zero called with invalid pointers/size");
+                return true;
+            }
+            memset(destination, 0, size);
             break;
         }
         case Hardcoded_Type::PRINT_I32: {
@@ -1079,6 +1148,16 @@ void bytecode_thread_set_initial_state(Bytecode_Thread* thread, int function_sta
     memory_set_bytes(&thread->stack[0], 16, 0); // Sets return address and old stack pointer to 0
     thread->stack_pointer = &thread->stack[0];
     thread->instruction_index = function_start_index;
+
+    // Reset heap allocations
+    auto iter = hashtable_iterator_create(&thread->heap_allocations);
+    while (hashtable_iterator_has_next(&iter)) {
+        void* allocation = *iter.key;
+        free(allocation);
+        hashtable_iterator_next(&iter);
+    }
+    hashtable_reset(&thread->heap_allocations);
+    thread->heap_memory_consumption = 0;
 }
 
 void bytecode_thread_execute(Bytecode_Thread* thread)
