@@ -1,6 +1,8 @@
 #include "hashset.hpp"
 
 int valid_primes[] = {
+    3,
+    5,
     11,
     23,
     47,

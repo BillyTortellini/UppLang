@@ -353,6 +353,11 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         break;
     }
     case Datatype_Type::SLICE: {
+        if (types_are_equal(signature, compiler.type_system.predefined_types.bytes)) {
+            Rich_Text::set_text_color(text, Syntax_Color::TYPE);
+            Rich_Text::append_formated(text, "Bytes");
+            break;
+        }
         auto slice_type = downcast<Datatype_Slice>(signature);
         Rich_Text::append_formated(text, "[]");
         datatype_append_to_rich_text(slice_type->element_type, text, format);
@@ -1106,7 +1111,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     Datatype_Slice* result = new Datatype_Slice;
     result->base = datatype_make_simple_base(Datatype_Type::SLICE, 16, 8);
     result->base.memory_info.value.contains_reference = true;
-    result->base.memory_info.value.contains_padding_bytes = true; // Currently slice is pointer + int32
+    result->base.memory_info.value.contains_padding_bytes = false;
     result->base.contains_template = element_type->contains_template;
 
     result->element_type = element_type;
@@ -1892,6 +1897,30 @@ void type_system_add_predefined_types(Type_System* system)
         byte_pointer_opt->is_optional = true;
         type_system_register_type(upcast(byte_pointer_opt))->options.byte_pointer.is_optional = true;
         types->byte_pointer_optional = upcast(byte_pointer_opt);
+
+        // Bytes types
+        {
+            Datatype_Slice* result = new Datatype_Slice;
+            result->base = datatype_make_simple_base(Datatype_Type::SLICE, 16, 8);
+            result->base.memory_info.value.contains_reference = true;
+            result->base.memory_info.value.contains_padding_bytes = false;
+            result->base.contains_template = false;
+
+            result->element_type = upcast(types->u8_type);
+            result->data_member.id = compiler.predefined_ids.data;
+            result->data_member.type = types->byte_pointer_optional;
+            result->data_member.offset = 0;
+            result->data_member.content = nullptr;
+            result->size_member.id = compiler.predefined_ids.size;
+            result->size_member.type = upcast(compiler.type_system.predefined_types.u64_type);
+            result->size_member.offset = 8;
+            result->size_member.content = nullptr;
+
+            auto& internal_info = type_system_register_type(upcast(result))->options.slice;
+            internal_info.element_type = types->u8_type->base.type_handle;
+
+            types->bytes = upcast(result);
+        }
     }
 
     {

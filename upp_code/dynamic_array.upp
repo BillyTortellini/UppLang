@@ -61,6 +61,26 @@ Dynamic_Array :: module
 		assert(index < array.size)
 		return array.buffer[index]
 	
+	test :: ()
+		context import Dynamic_Array~Operators
+		import Dynamic_Array~create
+		
+		x: Dynamic_Array(int) = create()
+		defer
+			x.destroy()
+		
+		x.push_back(1)
+		x.push_back(2)
+		x.push_back(3)
+		x.push_back(4)
+		x.push_back(12)
+		
+		import Upp~*
+		for v in x
+			print_i32(v)
+			print_string(", ")
+		print_line()
+	
 	Iterator :: module
 		Array_Iter :: struct ($T: Type_Handle)
 			array: *Dynamic_Array(T)
@@ -85,24 +105,5 @@ Dynamic_Array :: module
 		context add_dot_call(at)
 		context add_array_access(at)
 
-main :: ()
-	context import Dynamic_Array~Operators
-	import Dynamic_Array~create
-	
-	x: Dynamic_Array(int) = create()
-	defer
-		x.destroy()
-	
-	x.push_back(1)
-	x.push_back(2)
-	x.push_back(3)
-	x.push_back(4)
-	x.push_back(12)
-	
-	import Upp~*
-	for v in x
-		print_i32(v)
-		print_string(", ")
-	print_line()
 
 

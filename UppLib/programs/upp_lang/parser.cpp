@@ -687,8 +687,8 @@ namespace Parser
 
 
     // Prototypes
-    Optional<String*> block_label_from_expression(AST::Expression* related_expression);
-    Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression);
+    Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
+    Code_Block* parse_code_block(Node* parent, AST::Node* related_node);
     Path_Lookup* parse_path_lookup(Node* parent);
     Expression* parse_expression(Node* parent);
     Expression* parse_expression_or_error_expr(Node* parent);
@@ -1432,7 +1432,7 @@ namespace Parser
                     result->type = Statement_Type::IF_STATEMENT;
                     auto& if_stat = result->options.if_statement;
                     if_stat.condition = parse_expression_or_error_expr(&result->base);
-                    if_stat.block = parse_code_block(&result->base, if_stat.condition);
+                    if_stat.block = parse_code_block(&result->base, upcast(if_stat.condition));
                     if_stat.else_block.available = false;
 
                     auto last_if_stat = result;
@@ -1449,7 +1449,7 @@ namespace Parser
                         new_if_stat->type = Statement_Type::IF_STATEMENT;
                         auto& new_if = new_if_stat->options.if_statement;
                         new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
-                        new_if.block = parse_code_block(&last_if_stat->base, new_if.condition);
+                        new_if.block = parse_code_block(&last_if_stat->base, upcast(new_if.condition));
                         new_if.else_block.available = false;
                         SET_END_RANGE(implicit_else_block);
                         SET_END_RANGE(new_if_stat);
@@ -1473,7 +1473,7 @@ namespace Parser
                     result->type = Statement_Type::WHILE_STATEMENT;
                     auto& loop = result->options.while_statement;
                     loop.condition = parse_expression_or_error_expr(&result->base);
-                    loop.block = parse_code_block(&result->base, loop.condition);
+                    loop.block = parse_code_block(&result->base, upcast(loop.condition));
                     PARSE_SUCCESS(result);
                 }
                 case Keyword::FOR:
@@ -1534,7 +1534,7 @@ namespace Parser
                         loop.expression = parse_expression_or_error_expr(upcast(result));
 
                         // Parse body
-                        loop.body_block = parse_code_block(upcast(result), 0);
+                        loop.body_block = parse_code_block(upcast(result), upcast(loop_variable));
                         if (!loop.body_block->block_id.available) {
                             loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
                         }
@@ -1647,7 +1647,7 @@ namespace Parser
                         }
 
                         // Parse body
-                        loop.body_block = parse_code_block(upcast(result), 0);
+                        loop.body_block = parse_code_block(upcast(result), upcast(loop_variable));
                         if (!loop.body_block->block_id.available) {
                             loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
                         }
@@ -1700,7 +1700,7 @@ namespace Parser
                     auto& switch_stat = result->options.switch_statement;
                     switch_stat.condition = parse_expression_or_error_expr(&result->base);
                     switch_stat.cases = dynamic_array_create<Switch_Case*>(1);
-                    switch_stat.label = block_label_from_expression(switch_stat.condition);
+                    switch_stat.label = parse_block_label_or_use_related_node_id(upcast(switch_stat.condition));
                     auto add_to_switch = [](Node* parent, Node* child) {
                         dynamic_array_push_back(&downcast<Statement>(parent)->options.switch_statement.cases, downcast<Switch_Case>(child));
                     };
@@ -1782,7 +1782,7 @@ namespace Parser
     };
 
     // Parsing
-    Optional<String*> block_label_from_expression(AST::Expression* related_expression)
+    Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
     {
         Optional<String*> result = optional_make_failure<String*>();
         if (test_token(Token_Type::IDENTIFIER), test_operator_offset(Operator::COLON, 1)) {
@@ -1790,24 +1790,28 @@ namespace Parser
             advance_token();
             advance_token();
         }
-        else if (related_expression != 0 && related_expression->type == Expression_Type::PATH_LOOKUP && related_expression->options.path_lookup->parts.size == 1) {
-            // This is an experimental feature: give the block the base_name of the condition if possible,
-            // e.g. switch color
-            //      case .RED
-            //          break color
-            // In the future I also want to use this for loop variables, e.g.   loop a in array {break a}
-            result = optional_make_success<String*>(related_expression->options.path_lookup->last->name);
+        else if (related_node != 0) 
+        {
+            if (related_node->type == AST::Node_Type::EXPRESSION) {
+                auto expr = downcast<AST::Expression>(related_node);
+                if (expr->type == AST::Expression_Type::PATH_LOOKUP) {
+                    result = optional_make_success<String*>(expr->options.path_lookup->last->name);
+                }
+            }
+            else if (related_node->type == AST::Node_Type::DEFINITION_SYMBOL) {
+                result = optional_make_success<String*>(downcast<AST::Definition_Symbol>(related_node)->name);
+            }
         }
         return result;
     }
 
     // Always returns success, but if there is no follow block, there are errors
-    Code_Block* parse_code_block(Node* parent, AST::Expression* related_expression)
+    Code_Block* parse_code_block(Node* parent, AST::Node* related_node)
     {
         auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
-        result->statements = dynamic_array_create<Statement*>(1);
-        result->context_changes = dynamic_array_create<Context_Change*>(1);
-        result->block_id = block_label_from_expression(related_expression);
+        result->statements = dynamic_array_create<Statement*>();
+        result->context_changes = dynamic_array_create<Context_Change*>();
+        result->block_id = parse_block_label_or_use_related_node_id(related_node);
         parse_list_of_items(
             upcast(result), wrapper_parse_statement_or_context_change, code_block_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, true
         );

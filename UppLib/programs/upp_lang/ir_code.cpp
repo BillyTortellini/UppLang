@@ -2532,6 +2532,14 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         delete_fn_access = ir_data_access_create_dereference(delete_fn_access);
         delete_fn_access = ir_data_access_create_member(delete_fn_access, types.allocator->content.members[1]);
 
+        IR_Data_Access* byte_ptr_access = ir_data_access_create_intermediate(ir_block, types.byte_pointer);
+        IR_Instruction byte_ptr_cast;
+        byte_ptr_cast.type = IR_Instruction_Type::CAST;
+        byte_ptr_cast.options.cast.destination = byte_ptr_access;
+        byte_ptr_cast.options.cast.source = pointer_to_delete_access;
+        byte_ptr_cast.options.cast.type = IR_Cast_Type::POINTERS;
+        dynamic_array_push_back(&ir_block->instructions, byte_ptr_cast);
+
         IR_Instruction alloc_instr;
         alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
         alloc_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
@@ -2539,9 +2547,19 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         alloc_instr.options.call.destination = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
         alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_global(analyser->global_allocator));
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, pointer_to_delete_access);
+        dynamic_array_push_back(&alloc_instr.options.call.arguments, byte_ptr_access);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, size_access);
         dynamic_array_push_back(&ir_block->instructions, alloc_instr);
+
+        // Set pointer access to null
+        IR_Instruction set_null_instr;
+        set_null_instr.type = IR_Instruction_Type::CAST;
+        set_null_instr.options.cast.destination = pointer_to_delete_access;
+        void* null_val = nullptr;
+        set_null_instr.options.cast.source = ir_data_access_create_constant(types.byte_pointer, array_create_static_as_bytes(&null_val, 1));
+        set_null_instr.options.cast.type = IR_Cast_Type::POINTERS;
+        dynamic_array_push_back(&ir_block->instructions, set_null_instr);
+
         break;
     }
     default: panic("Statment type invalid!");

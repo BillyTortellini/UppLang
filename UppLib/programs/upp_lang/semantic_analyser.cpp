@@ -207,14 +207,14 @@ Function_Progress* polymorphic_function_base_to_function_progress(Polymorphic_Fu
     return base_progress;
 }
 
-Function_Progress* polymorphic_base_info_to_function_progress(Poly_Header* base_info) {
-    assert(base_info->is_function, "");
-    return polymorphic_function_base_to_function_progress((Polymorphic_Function_Base*)base_info);
+Function_Progress* polymorphic_header_to_function_progress(Poly_Header* poly_header) {
+    assert(poly_header->is_function, "");
+    return polymorphic_function_base_to_function_progress((Polymorphic_Function_Base*)poly_header);
 }
 
-Workload_Structure_Polymorphic* polymorphic_base_info_to_struct_workload(Poly_Header* base_info) {
-    assert(!base_info->is_function, "");
-    Workload_Structure_Polymorphic* workload = (Workload_Structure_Polymorphic*) (((byte*)base_info) - offsetof(Workload_Structure_Polymorphic, info));
+Workload_Structure_Polymorphic* polymorphic_header_to_struct_workload(Poly_Header* poly_header) {
+    assert(!poly_header->is_function, "");
+    Workload_Structure_Polymorphic* workload = (Workload_Structure_Polymorphic*) (((byte*)poly_header) - offsetof(Workload_Structure_Polymorphic, info));
     assert(workload->base.type == Analysis_Workload_Type::STRUCT_POLYMORPHIC, "");
     return workload;
 }
@@ -230,6 +230,9 @@ Analysis_Pass* analysis_pass_allocate(Workload_Base* origin, AST::Node* mapping_
     Analysis_Pass* result = new Analysis_Pass;
     dynamic_array_push_back(&semantic_analyser.allocated_passes, result);
     result->origin_workload = origin;
+    result->is_header_reanalysis = false;
+    result->instance_workload = nullptr;
+
     // Add mapping to workload 
     if (mapping_node) {
         Node_Passes* workloads_opt = hashtable_find_element(&semantic_analyser.ast_to_pass_mapping, mapping_node);
@@ -1176,6 +1179,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     if (!info->is_valid) {
         return comptime_result_make_unavailable(expression_info_get_type(info, true), "Analysis contained errors");
     }
+    else if (datatype_is_unknown(expression_info_get_type(info, true))) {
+        return comptime_result_make_unavailable(expression_info_get_type(info, true), "Analysis contained errors");
+    }
 
     switch (info->result_type)
     {
@@ -1470,9 +1476,25 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:
     {
+        result_type = datatype_get_non_const_type(result_type);
+        if (expr->options.array_initializer.values.size == 0) {
+            assert(result_type->type == Datatype_Type::SLICE, "");
+            if (datatype_is_unknown(downcast<Datatype_Slice>(result_type)->element_type)) {
+                return comptime_result_make_unavailable(types.unknown_type, "Array type is unknown");
+            }
+            void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+            Upp_Slice_Base* slice = (Upp_Slice_Base*) result_buffer;
+            slice->size = 0;
+            slice->data = nullptr;
+            return comptime_result_make_available(result_buffer, result_type);
+        }
+
         assert(result_type->type == Datatype_Type::ARRAY, "");
         auto array_type = downcast<Datatype_Array>(result_type);
         Datatype* element_type = array_type->element_type;
+        if (datatype_is_unknown(element_type)) {
+            return comptime_result_make_unavailable(element_type, "Array type is unknown");
+        }
         assert(element_type->memory_info.available, "");
         if (!array_type->count_known) {
             return comptime_result_make_unavailable(result_type, "Array count is unknown");
@@ -3441,7 +3463,9 @@ bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* exp
         else if (child_node->type == AST::Node_Type::ARGUMENTS) {
             auto args = downcast<AST::Arguments>(child_node);
             for (int i = 0; i < args->arguments.size; i++) {
-                check_if_expression_contains_unset_inferred_parameters(args->arguments[i]->value);
+                if (check_if_expression_contains_unset_inferred_parameters(args->arguments[i]->value)) {
+                    return true;
+                }
             }
         }
         else if (child_node->type == AST::Node_Type::ARGUMENT) {
@@ -4003,6 +4027,12 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                     auto param_type = downcast<Datatype_Template>(match_type);
                     match_polymorphic_type_to_constant(param_type, match_to_value);
                 }
+                else if (match_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE)
+                {
+                    if (!match_templated_type_internal(match_type, datatype_get_non_const_type(match_to_value.type), info)) {
+                        return false;
+                    }
+                }
                 else 
                 {
                     if (match_to_value.type->type == Datatype_Type::TYPE_HANDLE) {
@@ -4229,11 +4259,11 @@ Instanciation_Result instanciate_polymorphic_callable(
         {
             Workload_Base* header_workload = nullptr;
             if (poly_header->is_function) {
-                Function_Progress* base_progress = polymorphic_base_info_to_function_progress(poly_header);
+                Function_Progress* base_progress = polymorphic_header_to_function_progress(poly_header);
                 header_workload = upcast(base_progress->header_workload);
             }
             else {
-                Workload_Structure_Polymorphic* poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+                Workload_Structure_Polymorphic* poly_struct = polymorphic_header_to_struct_workload(poly_header);
                 header_workload = upcast(poly_struct);
             }
 
@@ -4360,7 +4390,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                 return instanciation_result_make_error();
             }
         
-            auto poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+            auto poly_struct = polymorphic_header_to_struct_workload(poly_header);
             auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
             instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
         
@@ -4385,11 +4415,11 @@ Instanciation_Result instanciate_polymorphic_callable(
         {
             Workload_Base* base_instance_workload = nullptr;
             if (poly_header->is_function) {
-                Function_Progress* base_progress = polymorphic_base_info_to_function_progress(poly_header);
+                Function_Progress* base_progress = polymorphic_header_to_function_progress(poly_header);
                 base_instance_workload = upcast(base_progress->body_workload);
             }
             else {
-                Workload_Structure_Polymorphic* poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+                Workload_Structure_Polymorphic* poly_struct = polymorphic_header_to_struct_workload(poly_header);
                 base_instance_workload = upcast(poly_struct->body_workload);
             }
 
@@ -4428,10 +4458,10 @@ Instanciation_Result instanciate_polymorphic_callable(
     AST::Node* pass_creation_node;
 
     if (poly_header->is_function) {
-        pass_creation_node = upcast(polymorphic_base_info_to_function_progress(poly_header)->header_workload->function_node);
+        pass_creation_node = upcast(polymorphic_header_to_function_progress(poly_header)->header_workload->function_node);
     }
     else {
-        pass_creation_node = upcast(polymorphic_base_info_to_struct_workload(poly_header)->body_workload->struct_node);
+        pass_creation_node = upcast(polymorphic_header_to_struct_workload(poly_header)->body_workload->struct_node);
     }
 
     Datatype* final_return_type = types.unknown_type;
@@ -4496,11 +4526,13 @@ Instanciation_Result instanciate_polymorphic_callable(
                 auto workload = semantic_analyser.current_workload;
                 if (comptime_evaluation_pass == 0) {
                     comptime_evaluation_pass = analysis_pass_allocate(workload, pass_creation_node);
+                    comptime_evaluation_pass->is_header_reanalysis = true;
                 }
                 RESTORE_ON_SCOPE_EXIT(workload->current_pass, comptime_evaluation_pass);
                 RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
                 RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
                 RESTORE_ON_SCOPE_EXIT(workload->ignore_unknown_errors, true);
+                RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
                 return_type = semantic_analyser_analyse_expression_type(poly_header->return_type_node);
             }
 
@@ -4565,11 +4597,13 @@ Instanciation_Result instanciate_polymorphic_callable(
             auto workload = semantic_analyser.current_workload;
             if (comptime_evaluation_pass == 0) {
                 comptime_evaluation_pass = analysis_pass_allocate(workload, pass_creation_node);
+                comptime_evaluation_pass->is_header_reanalysis = true;
             }
             RESTORE_ON_SCOPE_EXIT(workload->current_pass, comptime_evaluation_pass);
             RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
             RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
             RESTORE_ON_SCOPE_EXIT(workload->ignore_unknown_errors, true);
+            RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
             parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
 
             if (datatype_is_unknown(parameter_type)) {
@@ -4774,7 +4808,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                 instance_function_type = type_system_make_function(parameters, return_type);
             }
 
-            auto poly_progress = polymorphic_base_info_to_function_progress(poly_header);
+            auto poly_progress = polymorphic_header_to_function_progress(poly_header);
 
             // Create new instance progress
             auto instance_progress = function_progress_create_with_modtree_function(
@@ -4791,7 +4825,7 @@ Instanciation_Result instanciate_polymorphic_callable(
         }
         else
         {
-            auto poly_struct = polymorphic_base_info_to_struct_workload(poly_header);
+            auto poly_struct = polymorphic_header_to_struct_workload(poly_header);
 
             // Create new struct instance
             auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
@@ -4820,6 +4854,9 @@ Instanciation_Result instanciate_polymorphic_callable(
         result.type = Instanciation_Result_Type::FUNCTION;
         result.options.function = poly_header->instances[instance_index].options.function_instance->function;
         semantic_analyser_register_function_call(result.options.function);
+        if (comptime_evaluation_pass != 0) {
+            comptime_evaluation_pass->instance_workload = upcast(poly_header->instances[instance_index].options.function_instance->body_workload);
+        }
         return result;
     }
     else
@@ -4827,6 +4864,9 @@ Instanciation_Result instanciate_polymorphic_callable(
         Instanciation_Result result;
         result.type = Instanciation_Result_Type::STRUCTURE;
         result.options.struct_type = poly_header->instances[instance_index].options.struct_instance->struct_type;
+        if (comptime_evaluation_pass != 0) {
+            comptime_evaluation_pass->instance_workload = upcast(poly_header->instances[instance_index].options.struct_instance);
+        }
         return result;
     }
 }
@@ -7774,12 +7814,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     element_type = downcast<Datatype_Slice>(expected)->element_type;
                 }
                 else {
-                    element_type = 0;
+                    log_semantic_error("Expected type for array-initializer should be array or slice", expr);
+                    log_error_info_given_type(expected);
+                    element_type = types.unknown_type;
                 }
             }
-            if (element_type == 0) {
-                log_semantic_error("Could not determine array element type from context", expr);
+            else if (context.type == Expression_Context_Type::UNKNOWN){
+                if (!context.unknown_due_to_error) {
+                    log_semantic_error("Could not determine array element type from context", expr);
+                }
                 element_type = types.unknown_type;
+            }
+            else {
+                log_semantic_error("Could not determine array element type from context", expr);
             }
         }
 
@@ -10526,7 +10573,7 @@ bool code_block_is_loop(AST::Code_Block* block)
 {
     if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
         auto parent = (AST::Statement*) block->base.parent;
-        return parent->type == AST::Statement_Type::WHILE_STATEMENT || parent->type == AST::Statement_Type::FOR_LOOP;
+        return parent->type == AST::Statement_Type::WHILE_STATEMENT || parent->type == AST::Statement_Type::FOR_LOOP || parent->type == AST::Statement_Type::FOREACH_LOOP;
     }
     return false;
 }
@@ -11657,22 +11704,34 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
     {
         auto fn = semantic_analyser.current_workload->current_function;
 
-        bool dont_define_comptime_symbols = false;
-        if (fn->function_type == ModTree_Function_Type::NORMAL)
-        {
+        bool in_polymorphic_instance = false;
+        if (fn->function_type == ModTree_Function_Type::NORMAL) {
             auto progress = fn->options.normal.progress;
-            if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-                dont_define_comptime_symbols = true;
-            }
+            in_polymorphic_instance = progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
         }
 
+        bool add_import_to_base_table = false;
         for (int i = 0; i < block->statements.size; i++) {
             if (block->statements[i]->type == AST::Statement_Type::DEFINITION) {
                 auto definition = block->statements[i]->options.definition;
-                if (!(dont_define_comptime_symbols && definition->is_comptime)) {
+                if (definition->is_comptime && in_polymorphic_instance) {
+                    add_import_to_base_table = true;
+                }
+                else {
                     analyser_create_symbol_and_workload_for_definition(definition, upcast(last_import_workload));
                 }
             }
+        }
+
+        if (add_import_to_base_table) {
+            auto progress = fn->options.normal.progress;
+            assert(progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "");
+            Function_Progress* base_progress = polymorphic_header_to_function_progress(&progress->polymorphic.instance_poly_base->base);
+            assert(base_progress->body_workload->base.is_finished, "Must be finished by now");
+            auto base_pass = base_progress->body_workload->base.current_pass;
+            auto base_block_info = pass_get_node_info(base_pass, block, Info_Query::READ_NOT_NULL);
+
+            symbol_table_add_include_table(block_info->symbol_table, base_block_info->symbol_table, false, Symbol_Access_Level::GLOBAL, upcast(block));
         }
     }
 
@@ -11910,7 +11969,7 @@ void semantic_analyser_reset()
         symbols.type_i64 = define_type_symbol("i64", upcast(types.i64_type));
         symbols.type_f32 = define_type_symbol("f32", upcast(types.f32_type));
         symbols.type_f64 = define_type_symbol("f64", upcast(types.f64_type));
-        symbols.type_byte = define_type_symbol("byte", upcast(types.u8_type));
+        define_type_symbol("Bytes", types.bytes);
         symbols.type_c_string = define_type_symbol("c_string", types.c_string);
         symbols.type_allocator = define_type_symbol("Allocator", upcast(types.allocator));
         symbols.type_type = define_type_symbol("Type_Handle", types.type_handle);

@@ -984,6 +984,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     compiler_compile_clean(main_tab.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
 
     // Collect errors from all compiler stages
+    dynamic_array_reset(&editor.suggestions);
     {
         for (int i = 0; i < editor.errors.size; i++) {
             string_destroy(&editor.errors[i].message);
@@ -1727,6 +1728,7 @@ Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
         - Code-Block
     */
     auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+    if (code->module_progress == 0) return compiler.semantic_analyser->root_symbol_table ;
     Symbol_Table* table = code->module_progress->module_analysis->symbol_table;
     Analysis_Pass* pass = code_query_get_analysis_pass(base);
     if (pass == 0) return table;
@@ -3257,7 +3259,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         }
         case Movement_Type::PREVIOUS_WORD: {
             int prev = pos.character;
-            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); // Move backwards until start of word
+            Motions::move_while_in_set(pos, char_is_whitespace, nullptr, false, false); // Move backwards until start of word
             pos = Motions::text_range_get_word(pos).start;
             if (pos.character != prev) break;
 
@@ -5666,7 +5668,7 @@ void syntax_editor_render()
 
         int last_visual_line_index = source_code_get_line(code, code->line_count - 1)->visible_index;
         // Set cam-start to first line in fold
-        cam_start = math_clamp(cam_start, 0, last_visual_line_index);
+        cam_start = math_clamp(cam_start, 0, code->line_count - 1);
         cam_start = Line_Movement::move_to_fold_boundary(cam_start, -1, false);
         cam_end = Line_Movement::move_visible_lines_up_or_down(cam_start, line_count);
         cam_end = Line_Movement::move_to_fold_boundary(cam_end, 1, false);
@@ -6133,9 +6135,18 @@ void syntax_editor_render()
                 after_text = "Parameter";
                 break;
             }
-            case Symbol_Type::POLYMORPHIC_VALUE: {
-                assert(pass->origin_workload->polymorphic_values.data != nullptr, "");
-                const auto& value = pass->origin_workload->polymorphic_values[symbol->options.polymorphic_value.access_index];
+            case Symbol_Type::POLYMORPHIC_VALUE: 
+            {
+                auto poly_values = pass->origin_workload->polymorphic_values;
+                if (pass->is_header_reanalysis) {
+                    if (pass->instance_workload == nullptr) {
+                        break;
+                    }
+                    poly_values = pass->instance_workload->polymorphic_values;
+                }
+                assert(poly_values.data != nullptr, "");
+
+                const auto& value = poly_values[symbol->options.polymorphic_value.access_index];
                 switch (value.type)
                 {
                 case Poly_Value_Type::SET: type = value.options.value.type; break;

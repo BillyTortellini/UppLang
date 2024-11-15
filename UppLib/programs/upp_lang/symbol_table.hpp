@@ -252,7 +252,7 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
-void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* include_node);
+void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node);
 // Note: when id == 0, all symbols that are possible will be added
 void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results);
 

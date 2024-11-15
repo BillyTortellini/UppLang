@@ -795,7 +795,6 @@ struct Predefined_Symbols
     Symbol* type_i64;
     Symbol* type_f32;
     Symbol* type_f64;
-    Symbol* type_byte;
     Symbol* type_c_string;
     Symbol* type_allocator;
     Symbol* global_allocator_symbol;
@@ -830,6 +829,8 @@ struct Predefined_Symbols
 struct Analysis_Pass 
 {
     Workload_Base* origin_workload;
+    bool is_header_reanalysis;
+    Workload_Base* instance_workload; // e.g. for reanalysed headers, this is set..., otherwise 0
 };
 
 struct AST_Info_Key

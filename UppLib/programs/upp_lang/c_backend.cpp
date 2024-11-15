@@ -582,8 +582,8 @@ void c_generator_output_type_reference(Datatype* type)
 
         gen.text = &tmp;
         string_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
-        c_generator_output_type_reference(slice_type->element_type);
-        string_append_formated(gen.text, "* data;\n    i32 size;\n    i32 padding;\n};\n\n");
+        c_generator_output_type_reference(slice_type->data_member.type);
+        string_append_formated(gen.text, " data;\n    u64 size;\n};\n\n");
 
         // Now we write to struct section
         gen.text = section_structs;
@@ -1636,6 +1636,7 @@ void output_memory_as_new_constant(byte* base_memory, Datatype* base_type, bool 
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops)
 {
     auto& gen = c_generator;
+    auto& types = compiler.type_system.predefined_types;
 
     switch (access->type)
     {
@@ -1765,8 +1766,17 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         auto array_type = datatype_get_non_const_type(access->option.array_access.array_access->datatype);
         if (array_type->type == Datatype_Type::SLICE)
         {
-            c_generator_output_data_access(access->option.array_access.array_access, true);
-            string_append(gen.text, ".data[");
+            if (types_are_equal(array_type, types.bytes)) {
+                // Convert to u8
+                string_append(gen.text, "((u8*)");
+                c_generator_output_data_access(access->option.array_access.array_access, true);
+                string_append(gen.text, ".data)[");
+            }
+            else {
+                c_generator_output_data_access(access->option.array_access.array_access, true);
+                string_append(gen.text, ".data[");
+            }
+
             c_generator_output_data_access(access->option.array_access.index_access);
             string_append(gen.text, "]");
         }

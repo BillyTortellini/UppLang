@@ -505,6 +505,7 @@ struct Predefined_Types
     Datatype* type_handle;
     Datatype* byte_pointer;
     Datatype* byte_pointer_optional;
+    Datatype* bytes; // Slice with byte_pointer
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* internal_struct_content_type;

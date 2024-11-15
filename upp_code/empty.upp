@@ -21,3 +21,33 @@ main :: ()
 	
 	print_line()
 	print_i32( cast small)
+
+
+import Upp~*
+import Upp~Type_Handle as Type
+
+Comparable :: struct (T: Type)
+	equals: (a: T, b: T) -> bool
+
+int_equals :: (a: int, b: int) -> bool
+	return a == b
+
+Holder :: struct (C: Comparable($T))
+	value: T
+
+holder_compare :: (h: *Holder(Comparable($T)), value: T) -> bool
+	return h.C.equals(h.value, value)
+
+main :: ()
+	
+	INT_COMPARE :: Comparable(int).{int_equals}
+	
+	holder: Holder(INT_COMPARE)
+	holder.value = 10
+	
+	b := holder_compare(holder, 10)
+	Upp~print_bool(b)
+	
+
+
+

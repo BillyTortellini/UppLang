@@ -1,0 +1,371 @@
+
+
+Hashset :: struct (H: Hash_Functions~Hashable($T))
+	entries: []Hashset~Entry(T)
+	allocator: *Upp~Allocator
+	size: Upp~u64
+
+Hash_Functions :: module
+	import Upp~u64
+	import Upp~Bytes
+	
+	hash_memory :: (bytes: Bytes) -> u64
+		import Upp~bitwise_xor as xor
+		import Upp~bitwise_shift_right as rshift
+		import Upp~bitwise_shift_left as lshift
+		
+		MIX_CONSTANT :: cast {u64} 0x2127599bf4325c37
+		MULT_CONSTANT :: cast {u64} 0x480355f21e6d1965
+		SEED :: cast {u64} 271
+		
+		// Function to mix up bytes/spread bits evenly
+		mix :: ( mut h: u64) -> u64
+			h = xor(h, rshift(h, 23))
+			h *= MIX_CONSTANT
+			h = xor(h, rshift(h, 47))
+			return h
+		
+		// Initialize hash based on byte-length
+		h: u64 = xor(SEED, bytes.size * MULT_CONSTANT)
+		
+		// Hash memory in 8 byte chunks
+			values: []u64
+			values.data =* cast_pointer bytes.data.value
+			values.size = bytes.size / 8
+			for v in values
+				h = xor(h, mix(v))
+				h = h * MULT_CONSTANT
+		
+		// Convert final bytes (if size not divisible by 8) into another u64 and add to hash
+			remaining: int = cast {int} bytes.size % 8
+			v: u64 = 0
+			for i := 0; i < remaining; i += 1
+				rem: u64 = cast bytes[ cast bytes.size - i - 1]
+				rem = lshift(rem, cast (i * 8))
+				v = xor(v, rem)
+			
+			// Mix in last value
+			h = xor(h, mix(v))
+			h = h * MULT_CONSTANT
+		
+		return h
+	
+	hash_primitive :: (value: $T) -> u64
+		slice: Bytes
+		slice.data =* cast_pointer *value
+		slice.size = Upp~size_of(T)
+		return hash_memory(slice)
+	
+	Hashable :: struct (T: Upp~Type_Handle)
+		hash_fn: (value: T) -> Upp~u64
+		equals_fn: (a: T, b: T) -> bool
+	
+	hashable_make_primitive :: ($T: Upp~Type_Handle) -> Hashable(T)
+		equals_primitive :: (a: $T, b: T) -> bool
+			return a == b
+		
+		return .{
+			#instanciate hash_primitive(T = T)
+			#instanciate equals_primitive(T = T)
+		}
+	
+	hashable_make_pointer :: ($T: Upp~Type_Handle) -> Hashable(*T)
+		equals_pointer :: (a: $T, b: T) -> bool
+			return a *== b
+		
+		return .{
+			#instanciate hash_primitive(T = *T)
+			#instanciate equals_pointer(T = *T)
+		}
+
+Hashset :: module
+	import Upp~u64
+	import Upp~Type_Handle as Type
+	import Upp~Allocator
+	import Hash_Functions~Hashable
+	
+	Entry :: struct (T: Type)
+		value: T
+		hash: u64
+		next: ?*Entry(T)
+		valid: bool
+	
+	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Hashset($H)
+		result: Hashset(H) = .{_, allocator = allocator, size = 0}
+		if capacity == 0
+			result.entries = .[]
+		else
+			defer_restore Upp~global_allocator =* allocator
+			result.entries = new(next_prime_table_size( cast capacity)) Entry(H.T)
+			for e in result.entries
+				e.valid = false;
+				e.next =* null
+		return result
+	
+	destroy :: (set: *Hashset($H))
+		defer_restore Upp~global_allocator =* set.allocator
+		for entry in set.entries
+			next :=* entry.next
+			while next?
+				next_ptr :=* next.value.next
+				delete next
+				next =* next_ptr
+		if set.entries.size != 0
+			delete set.entries
+	
+	// Returns if element was already inside hashtable or not
+	insert :: (set: *Hashset(Hashable($T)), element: T, overwrite: bool = false) -> bool
+		hash := set.H.hash_fn(element)
+		slot_index := hash % set.entries.size
+		reserve(set, cast {u64} set.size + 1)
+		
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			entry.valid = true
+			entry.hash = hash
+			entry.value =~ element
+			entry.next =* null
+			set.size += cast {u64} 1
+			return false
+		
+		// Otherwise check if entry contains the same element
+		while true loop:
+			assert(entry.valid)
+			if entry.hash == hash
+				if set.H.equals_fn(element, entry.value)
+					if overwrite
+						entry.value =~ element
+					return true
+			
+			if entry.next?
+				entry =* entry.next.value
+			else
+				break loop
+		
+		// Set entry.next to new entry
+		new_entry :=* new Entry(T)
+		new_entry = .{element, hash, null, true}
+		entry.next =* new_entry
+		set.size += cast {u64} 1
+		
+		return false
+	
+	find :: (set: Hashset(Hashable($T)), value: T) -> ?*T
+		hash: u64 = set.H.hash_fn(value)
+		
+		slot_index := hash % set.entries.size
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			return null
+		
+		// Otherwise check if entry contains the same element
+		while true loop:
+			assert(entry.valid)
+			if entry.hash == hash
+				if set.H.equals_fn(value, entry.value)
+					return entry.value
+			
+			if entry.next?
+				entry =* entry.next.value
+			else
+				break loop
+		
+		return null
+	
+	// Returns true if element was found
+	remove :: (set: Hashset(Hashable($T)), value: T) -> bool
+		hash: u64 = set.H.hash_fn(value)
+		
+		slot_index := hash % set.entries.size
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			return false
+		
+		// Otherwise check if entry contains the same element
+		if entry.hash == hash && set.H.equals_fn(value, entry.value)
+			if entry.next?
+				entry = entry.next.value
+			else
+				entry.valid = false
+			return true
+		
+		// Check if entry list contains entry
+		next :=* entry.next
+		while next?loop:
+			next_ptr :=* next.value
+			assert(next_ptr.valid)
+			if next_ptr.hash == hash && set.H.equals_fn(value, next_ptr.value)
+				entry.next =* next_ptr.next
+				defer_restore Upp~global_allocator =* set.allocator
+				delete next_ptr
+				return true
+			
+			next =* next_ptr.next
+		
+		return false
+	
+	next_prime_table_size :: (size: u64) -> u64
+		HASH_PRIMES :: u64.[
+			1, 3, 5, 11, 23, 47, 97, 197, 397, 797
+			1597, 3203, 6421, 12853, 25717, 51437, 102877
+			205759, 411527, 823117, 1646237, 7990481
+			34254761, 936162379
+		]
+		
+		for prime in HASH_PRIMES
+			if prime >= size
+				return prime
+		
+		Upp~panic()
+		return size
+	
+	reserve :: (set: *Hashset($H), expected_element_count: u64)
+		RESIZE_FACTOR :: 0.7
+		new_size := next_prime_table_size(expected_element_count)
+		while cast expected_element_count / cast {float} new_size > RESIZE_FACTOR
+			new_size = next_prime_table_size(new_size + 1)
+		
+		if set.entries.size >= cast new_size
+			return
+		
+		defer_restore Upp~global_allocator =* set.allocator
+		new_entries := new(new_size) Entry(H.T)
+		for entry in new_entries
+			entry.valid = false
+			entry.next =* null
+		
+		for entry in set.entries
+			if entry.valid
+				continue entry
+			
+			new_slot_index := entry.hash % new_size
+			new_entries[new_slot_index] = entry
+		
+		if set.entries.size != 0
+			delete set.entries
+		set.entries = new_entries
+	
+	Iterator :: module
+		Iter :: struct (H: Hashable($T))
+			set: *Hashset(H)
+			entry: ?*Entry(T)
+			entry_index: u64
+		
+		create :: (set: *Hashset($H)) -> Iter(H)
+			result: Iter(H) = .{set, null, 0}
+			for e, i in set.entries
+				if e.valid
+					result.entry =* e
+					result.entry_index = i
+					break e
+			
+			return result
+		
+		has_next :: (iter: Iter($H)) -> bool
+			return iter.entry?
+		
+		next :: (iter: *Iter($H))
+			if iter.entry.value.next?
+				iter.entry =* iter.entry.value.next
+				return
+			
+			for i := iter.entry_index + 1; i < iter.set.entries.size; i += cast {u64} 1
+				if iter.set.entries[i].valid
+					iter.entry_index = i
+					iter.entry =* iter.set.entries[i]
+					return
+			
+			iter.entry =* null
+		
+		get_value :: (iter: Iter($H)) -> *H.T
+			return iter.entry.value.value
+	
+	Operators :: module
+		context add_dot_call(insert)
+		context add_dot_call(remove)
+		context add_dot_call(reserve)
+		context add_dot_call(destroy)
+		context add_dot_call(find)
+		
+		context add_iterator(
+			Iterator~create, Iterator~has_next, Iterator~next, Iterator~get_value
+		)
+	
+	test :: ()
+		INT_HASHABLE :: #bake Hash_Functions~hashable_make_primitive(int)
+		
+		context import Operators
+		
+		set: Hashset(INT_HASHABLE) = create()
+		defer
+			set.destroy()
+		
+		assert(set.size == 0)
+		set.reserve(10)
+		assert(set.entries.size >= 10)
+		
+		b := false
+		b = set.insert(15)
+		assert(!b)
+		b = set.insert(15)
+		assert(b)
+		
+		set.insert(8)
+		set.insert(2)
+		Upp~print_string("hello, i'm still here!\n")
+		assert(set.size == 3)
+		sum := 0
+		for v in set
+			sum += v
+		Upp~print_i32(sum)
+		Upp~print_line()
+		assert(sum == 25)
+		
+		diff_count := 0
+		for e in set.entries
+			if e.valid
+				diff_count += 1
+		
+		b = set.find(15)?
+		assert(b)
+		
+		b = set.remove(15)
+		assert(b)
+		
+		b = set.find(15)?
+		assert(!b)
+		
+		b = set.remove(15)
+		assert(!b)
+	
+
+Hashtable :: struct (H: Hash_Functions~Hashable($T), V: Upp~Type_Handle)
+	set: Hashset( #bake Hashtable~make_key_value_hashable(H, V))
+
+Hashtable :: module
+	import Upp~Type_Handle as Type
+	import Upp~u64
+	import Hash_Functions~Hashable
+	
+	Key_Value_Pair :: struct ($K: Type, $V: Type)
+		key: K
+		value: V
+	
+	make_key_value_hashable :: ($H: Hashable($T), $V: Type) -> Hashable(Key_Value_Pair(T, V))
+		apply_hash_on_key :: (pair: Key_Value_Pair($K, $V), $hashable: Hashable(K)) -> u64
+			return hashable.hash_fn(pair.key)
+		
+		apply_equals_on_key :: (a: Key_Value_Pair($K, $V), b: Key_Value_Pair(K, V), $hashable: Hashable(K)) -> bool
+			return hashable.equals_fn(a.key, b.key)
+		
+		return .{
+			#instanciate apply_hash_on_key(K = H.T, V = V, hashable = H)
+			#instanciate apply_equals_on_key(K = H.T, V = V, hashable = H)
+		}
+	
+	test :: ()
+		INT_HASHABLE :: #bake Hash_Functions~hashable_make_primitive(int)
+		x: Hashtable(INT_HASHABLE, int)
+		
+		KV_HASH := #bake make_key_value_hashable(INT_HASHABLE, int)
+

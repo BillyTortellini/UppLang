@@ -1,22 +1,42 @@
 
-Fix all testcases
+Hashtable: 
+    Should hashtable have own implementation, or use hashset?
+
+Dynamic_Array:
+    insert_ordered
+    swap_remove
+    remove_ordered
+    reverse
+    last
+
+
+TODO:
+ * Hashtable, hashset and basic hashing functions
 
 DONE:
- * #instanciate update
- * reallocate function
- * new should have () parenthesis
- * Jump enclosure not working if multiple lines
- * If errors are in folds, then make fold red?
- * Don't show implicit parameters on dot-calls
- * folds mess up particle effect position
- * Motion inner/around block should work on block-start line
- * Code-Completion not showing dot-calls for polymorphic things
- * import Dynamic_Array~Dynamic_Array --> Not implemented
+ * Fixed b movement 
+ * Hashset iterator
+ * Fixed camera movement bugs with fold
+ * Fixed contine and block label for foreach and for loops
+ * Polymorphic Instances can now properly access constant definitions of base analysis
+ * Calculate comptime checks for unknown types...
 
 
-Features:
+Language/Editor Miscallenious:
+ * Pressing Shift-Enter after Shift enter should just do a tab delete...
+ * Code-Completion for continue/break (Block-Ids)
+ * Assign-Binops (+=, -=) should deduce context for integers...
+ * Normal-Binops should use expected type when both sides require context (e.g. y: u64 = cast x == 15)
+ * Raw-Equals ~== and ~!=, like *== and *!=
+ * Generated C-Code should be more readable
+ * Code-Completion on file imports (fuzzy find files)
+ * If comment is on line before definition, show comment in context...
  * struct-initializer with hierarchy suggestions aren't shown correctly
  * .? for Optional value access
+ * Comment in/out range of lines
+ * Alias handling in editor
+ * Folds on end of line instead of next line?
+
 Missing Testcases:
  * defer_restore
  * new hardcoded functions
@@ -35,7 +55,6 @@ Missing Testcases:
         - Some way to communicate between bakes
         - Annotations (For automatization of print or serialization)
     * QoL Features
-        - Default parameter values calculated on demand
         - Template-Types could be detected if used without parenthesis, e.g. foo(array: Dynamic_Array, value: array.T) 
             * Analyse header needs to analyse parameters + If one contains template type, make template...
             * Handle polymorphic struct types as template instances?
@@ -55,9 +74,8 @@ Missing Testcases:
            * GUI to look at/delete marks
            * Named marks + fuzzy jumps
            * Store marks after exit
-        - More Motions
-           * Parameters, arguments as Motions (, or ; and parenthesis as seperators)
-        - Aliases and paths should be handled correctly
+        - Argument/Parameter Motions, more motions, surround
+        - Aliases and paths should be displayed correctly
         - Yank and Put with Registers
            * Store multiple yanks and puts/last used
            * when using p" to access register, show list in gui
@@ -73,7 +91,7 @@ Missing Testcases:
         - Visual modes
            * Visual line
            * Visual mode
-        - Call-Hierarchy mode
+        - Call-Hierarchy Analysis mode
 
 -----------------
 Code improvements:
