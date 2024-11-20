@@ -2491,6 +2491,10 @@ namespace Parser
         case Section::NONE: break;
         case Section::WHOLE:
         {
+            if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
+                dynamic_array_push_back(ranges, base->bounding_range);
+                break;
+            }
             dynamic_array_push_back(ranges, range);
             break;
         }

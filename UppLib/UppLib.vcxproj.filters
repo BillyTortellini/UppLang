@@ -115,6 +115,12 @@
     <Filter Include="Header Files\Programs\Proc_City">
       <UniqueIdentifier>{b438c3f2-8a56-409a-8b47-f0fc5e099085}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Game">
+      <UniqueIdentifier>{1494a384-8ad0-43c0-b0e3-0081a51de021}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Game">
+      <UniqueIdentifier>{64cb08b6-117d-4706-99c8-11ed25762b00}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -339,6 +345,9 @@
     <ClInclude Include="utility\line_edit.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="programs\game\game.hpp">
+      <Filter>Header Files\Programs\Game</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -547,6 +556,9 @@
     </ClCompile>
     <ClCompile Include="utility\line_edit.cpp">
       <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\game\game.cpp">
+      <Filter>Source Files\Programs\Game</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

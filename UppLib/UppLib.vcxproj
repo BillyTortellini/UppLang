@@ -38,6 +38,7 @@
     <ClInclude Include="programs\c_importer\c_importer.hpp" />
     <ClInclude Include="programs\c_importer\c_lexer.hpp" />
     <ClInclude Include="programs\c_importer\import_gui.hpp" />
+    <ClInclude Include="programs\game\game.hpp" />
     <ClInclude Include="programs\proc_city\proc_city.hpp" />
     <ClInclude Include="programs\render_rework\render_rework.hpp" />
     <ClInclude Include="programs\text_editor\text.hpp" />
@@ -111,6 +112,7 @@
     <ClCompile Include="programs\c_importer\c_importer.cpp" />
     <ClCompile Include="programs\c_importer\c_lexer.cpp" />
     <ClCompile Include="programs\c_importer\import_gui.cpp" />
+    <ClCompile Include="programs\game\game.cpp" />
     <ClCompile Include="programs\proc_city\proc_city.cpp" />
     <ClCompile Include="programs\render_rework\render_rework.cpp" />
     <ClCompile Include="programs\text_editor\text.cpp" />

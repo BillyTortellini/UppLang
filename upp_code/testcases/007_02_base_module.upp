@@ -21,8 +21,6 @@ main :: ()
 	x10: Upp~f32
 	x11: Upp~f64
 	
-	x12: Upp~byte
-	
 	p: Upp~byte_pointer
 
 

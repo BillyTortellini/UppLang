@@ -22,14 +22,14 @@ main :: ()
 	// create and set other allocators
 	
 	STACK_SIZE :: 256
-	import Upp~byte
 	import Upp~byte_pointer
 	import Upp~Allocator
 	import Upp~u64
 	import Upp~u32
+	import Upp~u8
 	Stack_Allocator :: struct
 		base: Allocator
-		memory: [STACK_SIZE]byte
+		memory: [STACK_SIZE]u8
 		stack_index: int
 		alloc_count: int
 	

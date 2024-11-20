@@ -1,5 +1,4 @@
 
-import Upp~byte
 import Upp~c_string
 import Upp~u8
 import Upp~u32
@@ -16,7 +15,7 @@ C_Style :: module
 		IPV6
 	
 	C_Address :: union
-		ipv4: [4]byte
+		ipv4: [4]u8
 		ipv5: bool
 		ipv6: c_string
 		tag: C_Address_Tag
@@ -32,7 +31,7 @@ C_Style :: module
 
 Address :: struct
 	IPv4:
-		bytes: [4]byte
+		bytes: [4]u8
 	IPv5:
 		normalized: bool
 	IPv6:
@@ -79,7 +78,7 @@ main :: ()
 	
 	// Struct initialization syntax also works with unions, but only one member can be specified
 		val1 := cast {u8} cast {u32} 1
-		addr_v4: Address = .{.IPv4 = {byte.[val1, val1, val1, val1]}}
+		addr_v4: Address = .{.IPv4 = {u8.[val1, val1, val1, val1]}}
 		addr_v5: Address = .{.IPv5 = {false}}
 		addr_v6: Address = .{.IPv6 = {"COFFEF"}}
 		

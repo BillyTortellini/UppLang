@@ -1,108 +1,37 @@
 
+import "hashset.upp"
 
-Hashset :: struct (H: Hash_Functions~Hashable($T))
-	entries: []Hashset~Entry(T)
+Hashtable :: struct (H: Hash_Functions~Hashable($T), V: Upp~Type_Handle)
+	entries: []Hashtable~Entry(T, V)
 	allocator: *Upp~Allocator
 	size: Upp~u64
 
-Hash_Functions :: module
-	import Upp~u64
-	import Upp~Bytes
-	
-	hash_memory :: (bytes: Bytes) -> u64
-		import Upp~bitwise_xor as xor
-		import Upp~bitwise_shift_right as rshift
-		import Upp~bitwise_shift_left as lshift
-		
-		MIX_CONSTANT :: cast {u64} 0x2127599bf4325c37
-		MULT_CONSTANT :: cast {u64} 0x480355f21e6d1965
-		SEED :: cast {u64} 271
-		
-		// Function to mix up bytes/spread bits evenly
-		mix :: ( mut h: u64) -> u64
-			h = xor(h, rshift(h, 23))
-			h *= MIX_CONSTANT
-			h = xor(h, rshift(h, 47))
-			return h
-		
-		// Initialize hash based on byte-length
-		h: u64 = xor(SEED, bytes.size * MULT_CONSTANT)
-		
-		// Hash memory in 8 byte chunks
-			values: []u64
-			values.data =* cast_pointer bytes.data.value
-			values.size = bytes.size / 8
-			for v in values
-				h = xor(h, mix(v))
-				h = h * MULT_CONSTANT
-		
-		// Convert final bytes (if size not divisible by 8) into another u64 and add to hash
-			remaining: int = cast {int} bytes.size % 8
-			v: u64 = 0
-			for i := 0; i < remaining; i += 1
-				rem: u64 = cast bytes[ cast bytes.size - i - 1]
-				rem = lshift(rem, cast (i * 8))
-				v = xor(v, rem)
-			
-			// Mix in last value
-			h = xor(h, mix(v))
-			h = h * MULT_CONSTANT
-		
-		return h
-	
-	hash_primitive :: (value: $T) -> u64
-		slice: Bytes
-		slice.data =* cast_pointer *value
-		slice.size = Upp~size_of(T)
-		return hash_memory(slice)
-	
-	Hashable :: struct (T: Upp~Type_Handle)
-		hash_fn: (value: T) -> Upp~u64
-		equals_fn: (a: T, b: T) -> bool
-	
-	hashable_make_primitive :: ($T: Upp~Type_Handle) -> Hashable(T)
-		equals_primitive :: (a: $T, b: T) -> bool
-			return a == b
-		
-		return .{
-			#instanciate hash_primitive(T = T)
-			#instanciate equals_primitive(T = T)
-		}
-	
-	hashable_make_pointer :: ($T: Upp~Type_Handle) -> Hashable(*T)
-		equals_pointer :: (a: $T, b: T) -> bool
-			return a *== b
-		
-		return .{
-			#instanciate hash_primitive(T = *T)
-			#instanciate equals_pointer(T = *T)
-		}
-
-Hashset :: module
+Hashtable :: module
 	import Upp~u64
 	import Upp~Type_Handle as Type
 	import Upp~Allocator
 	import Hash_Functions~Hashable
 	
-	Entry :: struct (T: Type)
-		value: T
+	Entry :: struct (K: Type, V: Type)
+		key: K
+		value: V
 		hash: u64
-		next: ?*Entry(T)
+		next: ?*Entry(K, V)
 		valid: bool
 	
-	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Hashset($H)
-		result: Hashset(H) = .{_, allocator = allocator, size = 0}
+	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Hashtable($H, $V)
+		result: Hashtable(H, V) = .{_, allocator = allocator, size = 0}
 		if capacity == 0
 			result.entries = .[]
 		else
 			defer_restore Upp~global_allocator =* allocator
-			result.entries = new(next_prime_table_size( cast capacity)) Entry(H.T)
+			result.entries = new(Hashset~next_prime_table_size( cast capacity)) Entry(H.T, V)
 			for e in result.entries
 				e.valid = false;
 				e.next =* null
 		return result
 	
-	destroy :: (set: *Hashset($H))
+	destroy :: (set: *Hashtable($H, $V))
 		defer_restore Upp~global_allocator =* set.allocator
 		for entry in set.entries
 			next :=* entry.next
@@ -114,8 +43,8 @@ Hashset :: module
 			delete set.entries
 	
 	// Returns if element was already inside hashtable or not
-	insert :: (set: *Hashset(Hashable($T)), element: T, overwrite: bool = false) -> bool
-		hash := set.H.hash_fn(element)
+	insert :: (set: *Hashtable(Hashable($T), $V), key: T, value: V, overwrite: bool = false) -> bool
+		hash := set.H.hash_fn(key)
 		slot_index := hash % set.entries.size
 		reserve(set, cast {u64} set.size + 1)
 		
@@ -123,7 +52,8 @@ Hashset :: module
 		if !entry.valid
 			entry.valid = true
 			entry.hash = hash
-			entry.value =~ element
+			entry.key =~ key
+			entry.value =~ value
 			entry.next =* null
 			set.size += cast {u64} 1
 			return false
@@ -132,9 +62,10 @@ Hashset :: module
 		while true loop:
 			assert(entry.valid)
 			if entry.hash == hash
-				if set.H.equals_fn(element, entry.value)
+				if set.H.equals_fn(key, entry.key)
 					if overwrite
-						entry.value =~ element
+						entry.value =~ value
+						entry.key =~ key
 					return true
 			
 			if entry.next?
@@ -143,15 +74,19 @@ Hashset :: module
 				break loop
 		
 		// Set entry.next to new entry
-		new_entry :=* new Entry(T)
-		new_entry = .{element, hash, null, true}
+		new_entry :=* new Entry(T, V)
+		new_entry = .{key, value, hash, null, true}
 		entry.next =* new_entry
 		set.size += cast {u64} 1
 		
 		return false
 	
-	find :: (set: Hashset(Hashable($T)), value: T) -> ?*T
-		hash: u64 = set.H.hash_fn(value)
+	Key_Value_Pointer :: struct ($K: Type, $V: Type)
+		key: *K
+		value: *V
+	
+	find :: (set: Hashtable(Hashable($K), $V), key: K) -> ?Key_Value_Pointer(K, V)
+		hash: u64 = set.H.hash_fn(key)
 		
 		slot_index := hash % set.entries.size
 		entry :=* set.entries[slot_index]
@@ -162,8 +97,8 @@ Hashset :: module
 		while true loop:
 			assert(entry.valid)
 			if entry.hash == hash
-				if set.H.equals_fn(value, entry.value)
-					return entry.value
+				if set.H.equals_fn(key, entry.key)
+					return cast Key_Value_Pointer(K, V).{entry.key, entry.value}
 			
 			if entry.next?
 				entry =* entry.next.value
@@ -173,8 +108,8 @@ Hashset :: module
 		return null
 	
 	// Returns true if element was found
-	remove :: (set: Hashset(Hashable($T)), value: T) -> bool
-		hash: u64 = set.H.hash_fn(value)
+	remove :: (set: Hashtable(Hashable($K), $V), key: K) -> bool
+		hash: u64 = set.H.hash_fn(key)
 		
 		slot_index := hash % set.entries.size
 		entry :=* set.entries[slot_index]
@@ -182,7 +117,7 @@ Hashset :: module
 			return false
 		
 		// Otherwise check if entry contains the same element
-		if entry.hash == hash && set.H.equals_fn(value, entry.value)
+		if entry.hash == hash && set.H.equals_fn(key, entry.key)
 			if entry.next?
 				entry = entry.next.value
 			else
@@ -194,7 +129,7 @@ Hashset :: module
 		while next?loop:
 			next_ptr :=* next.value
 			assert(next_ptr.valid)
-			if next_ptr.hash == hash && set.H.equals_fn(value, next_ptr.value)
+			if next_ptr.hash == hash && set.H.equals_fn(key, next_ptr.key)
 				entry.next =* next_ptr.next
 				defer_restore Upp~global_allocator =* set.allocator
 				delete next_ptr
@@ -204,33 +139,18 @@ Hashset :: module
 		
 		return false
 	
-	next_prime_table_size :: (size: u64) -> u64
-		HASH_PRIMES :: u64.[
-			1, 3, 5, 11, 23, 47, 97, 197, 397, 797
-			1597, 3203, 6421, 12853, 25717, 51437, 102877
-			205759, 411527, 823117, 1646237, 7990481
-			34254761, 936162379
-		]
-		
-		for prime in HASH_PRIMES
-			if prime >= size
-				return prime
-		
-		Upp~panic()
-		return size
-	
-	reserve :: (set: *Hashset($H), expected_element_count: u64)
+	reserve :: (set: *Hashtable($H, $V), expected_element_count: u64)
 		RESIZE_FACTOR :: 0.7
-		new_size := next_prime_table_size(expected_element_count)
+		new_size := Hashset~next_prime_table_size(expected_element_count)
 		while cast expected_element_count / cast {float} new_size > RESIZE_FACTOR
-			new_size = next_prime_table_size(new_size + 1)
+			new_size = Hashset~next_prime_table_size(new_size + 1)
 		
 		if set.entries.size >= cast new_size
 			return
 		
 		old_entries := set.entries
 		defer_restore Upp~global_allocator =* set.allocator
-		set.entries = new(new_size) Entry(H.T)
+		set.entries = new(new_size) Entry(H.T, V)
 		for entry in set.entries
 			entry.valid = false
 			entry.next =* null
@@ -239,19 +159,19 @@ Hashset :: module
 		for entry in old_entries
 			if entry.valid
 				continue entry
-			insert(set, entry.value)
+			insert(set, entry.key, entry.value)
 		
 		if old_entries.size > 0
 			delete old_entries
 	
 	Iterator :: module
-		Iter :: struct (H: Hashable($T))
-			set: *Hashset(H)
-			entry: ?*Entry(T)
+		Iter :: struct (H: Hashable($K), V: Upp~Type_Handle)
+			set: *Hashtable(H, V)
+			entry: ?*Entry(K, V)
 			entry_index: u64
 		
-		create :: (set: *Hashset($H)) -> Iter(H)
-			result: Iter(H) = .{set, null, 0}
+		create :: (set: *Hashtable($H, $V)) -> Iter(H, V)
+			result: Iter(H, V) = .{set, null, 0}
 			for e, i in set.entries
 				if e.valid
 					result.entry =* e
@@ -260,10 +180,10 @@ Hashset :: module
 			
 			return result
 		
-		has_next :: (iter: Iter($H)) -> bool
+		has_next :: (iter: Iter($H, $V)) -> bool
 			return iter.entry?
 		
-		next :: (iter: *Iter($H))
+		next :: (iter: *Iter($H, $V))
 			if iter.entry.value.next?
 				iter.entry =* iter.entry.value.next
 				return
@@ -276,8 +196,8 @@ Hashset :: module
 			
 			iter.entry =* null
 		
-		get_value :: (iter: Iter($H)) -> *H.T
-			return iter.entry.value.value
+		get_value :: (iter: Iter($H, $V)) -> Key_Value_Pointer(H.T, V)
+			return .{iter.entry.value.key, iter.entry.value.value}
 	
 	Operators :: module
 		context add_dot_call(insert)
@@ -285,7 +205,6 @@ Hashset :: module
 		context add_dot_call(reserve)
 		context add_dot_call(destroy)
 		context add_dot_call(find)
-		
 		context add_iterator(
 			Iterator~create, Iterator~has_next, Iterator~next, Iterator~get_value
 		)
@@ -295,7 +214,7 @@ Hashset :: module
 		
 		context import Operators
 		
-		set: Hashset(INT_HASHABLE) = create()
+		set: Hashtable(INT_HASHABLE, int) = create()
 		defer
 			set.destroy()
 		
@@ -304,21 +223,21 @@ Hashset :: module
 		assert(set.entries.size >= 10)
 		
 		b := false
-		b = set.insert(15)
+		b = set.insert(15, 5)
 		assert(!b)
-		b = set.insert(15)
+		b = set.insert(15, 10)
 		assert(b)
 		
-		set.insert(8)
-		set.insert(2)
+		set.insert(8, 12)
+		set.insert(2, 13)
 		Upp~print_string("hello, i'm still here!\n")
 		assert(set.size == 3)
 		sum := 0
 		for v in set
-			sum += v
+			sum += v.value
 		Upp~print_i32(sum)
 		Upp~print_line()
-		assert(sum == 25)
+		assert(sum == 30)
 		
 		diff_count := 0
 		for e in set.entries

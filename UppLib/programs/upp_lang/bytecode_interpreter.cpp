@@ -47,14 +47,14 @@ void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* 
         default: panic("what the frigg\n");
         }
         switch (dest_type) {
-        case Bytecode_Type::INT8:   *(i8*)(dest) = (i8)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::INT16:  *(i16*)(dest) = (i16)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::INT32:  *(i32*)(dest) = (i32)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::INT64:  *(i64*)(dest) = (i64)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::UINT8:  *(u8*)(dest) = (u8)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::UINT16: *(u16*)(dest) = (u16)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::UINT32: *(u32*)(dest) = (u32)source_is_signed ? source_signed : source_unsigned; break;
-        case Bytecode_Type::UINT64: *(u64*)(dest) = (u64)source_is_signed ? source_signed : source_unsigned; break;
+        case Bytecode_Type::INT8:   *(i8*)(dest)  = (i8) (source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT16:  *(i16*)(dest) = (i16)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT32:  *(i32*)(dest) = (i32)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT64:  *(i64*)(dest) = (i64)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT8:  *(u8*)(dest)  = (u8) (source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT16: *(u16*)(dest) = (u16)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT32: *(u32*)(dest) = (u32)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT64: *(u64*)(dest) = (u64)(source_is_signed ? source_signed : source_unsigned); break;
         default: panic("what the frigg\n");
         }
         break;

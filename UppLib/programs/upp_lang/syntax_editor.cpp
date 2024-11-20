@@ -328,6 +328,7 @@ struct Syntax_Editor
     Text_Index search_start_pos;
     int search_start_cam_start;
     bool search_reverse;
+    bool last_insert_was_shift_enter;
 
     int visible_line_count;
     int visual_block_start_line;
@@ -369,6 +370,11 @@ void syntax_editor_save_text_file();
 void syntax_editor_update_line_visible_and_fold_info(int tab_index);
 Error_Display error_display_make(String msg, Token_Range range, Source_Code* code, bool is_token_range_duplicate, int semantic_error_index);
 
+namespace Line_Movement
+{
+     int move_to_fold_boundary(int line_index, int dir, bool move_out_of_fold);
+     int move_visible_lines_up_or_down(int line_index, int steps);
+};
 
 
 // Editor
@@ -622,7 +628,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     memory_zero(&syntax_editor);
     gui_initialize(text_renderer, window);
 
-
+    syntax_editor.last_insert_was_shift_enter = false;
     syntax_editor.random = random_make_time_initalized();
     syntax_editor.last_update_time = timer_current_time_in_seconds(timer);
     syntax_editor.timer = timer;
@@ -808,6 +814,7 @@ void syntax_editor_synchronize_tokens()
         auto& folds = tab.folds;
         bool folds_changed = false;
         bool jump_list_changed = false;
+        bool update_camera = false;
         for (int i = 0; i < changes.size; i++)
         {
             auto& change = changes[i];
@@ -818,6 +825,7 @@ void syntax_editor_synchronize_tokens()
             {
                 int line = change.options.line_insert.line_index;
                 helper_add_delete_line_item(line, change.apply_forwards);
+                update_camera = true;
 
                 // Update folds
                 folds_changed = true;
@@ -897,6 +905,26 @@ void syntax_editor_synchronize_tokens()
             }
             default: panic("");
             }
+        }
+
+        if (update_camera)
+        {
+            auto& tab = editor.tabs[tab_index];
+            auto code = tab.code;
+
+            auto& cam_start = tab.cam_start;
+            auto& cam_end = tab.cam_end;
+            auto& code_box = editor.code_box;
+
+            auto& line_count = editor.visible_line_count;
+            line_count = (int)((code_box.max.y - code_box.min.y) / editor.text_display.char_size.y) + 1;
+
+            int last_visual_line_index = source_code_get_line(code, code->line_count - 1)->visible_index;
+            // Set cam-start to first line in fold
+            cam_start = math_clamp(cam_start, 0, code->line_count - 1);
+            cam_start = Line_Movement::move_to_fold_boundary(cam_start, -1, false);
+            cam_end = Line_Movement::move_visible_lines_up_or_down(cam_start, line_count);
+            cam_end = Line_Movement::move_to_fold_boundary(cam_end, 1, false);
         }
 
         // Update line_changed lines
@@ -1306,7 +1334,7 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
         out_space_before = true;
         out_space_after = true;
         if (token.options.keyword == Keyword::NEW && token_index + 1 < line->tokens.size) {
-            auto next = line->tokens[token_index + 1];
+            const auto& next = line->tokens[token_index + 1];
             if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
                 out_space_after = false;
             }
@@ -1418,6 +1446,16 @@ void token_expects_space_before_or_after(Source_Line* line, int token_index, boo
             }
             if (t.type == Token_Type::OPERATOR) { // Operators usually indicate values, but this is just an approximation
                 next_is_value = true;
+            }
+            if (t.type == Token_Type::KEYWORD) {
+                switch (t.options.keyword)
+                {
+                case Keyword::CAST:
+                case Keyword::CAST_POINTER:
+                case Keyword::INSTANCIATE:
+                case Keyword::NEW:
+                    next_is_value = true;
+                }
             }
         }
 
@@ -1706,13 +1744,19 @@ Analysis_Pass* code_query_get_analysis_pass(AST::Node* base)
     auto& mappings = compiler.semantic_analyser->ast_to_pass_mapping;
     while (base != 0)
     {
-        auto passes = hashtable_find_element(&mappings, base);
-        if (passes != 0) {
-            assert(passes->passes.size != 0, "");
-            if (passes->passes.size > 1) {
-                return passes->passes[1];
+        auto passes_opt = hashtable_find_element(&mappings, base);
+        if (passes_opt != 0) {
+            auto& passes = passes_opt->passes;
+            assert(passes.size != 0, "");
+            for (int i = 0; i < passes.size; i++) {
+                auto pass = passes[i];
+                if (pass->is_header_reanalysis && pass->instance_workload != nullptr) return pass;
             }
-            return passes->passes[0];
+
+            if (passes.size > 1) {
+                return passes[1];
+            }
+            return passes[0];
         }
         base = base->parent;
     }
@@ -1810,6 +1854,60 @@ void code_completion_find_dotcalls_in_context_recursive(
     for (int i = 0; i < context->context_imports.size; i++) {
         auto other_context = context->context_imports[i];
         code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions);
+    }
+}
+
+void suggestions_fill_with_file_directory(String search_path)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    Array<String> path_parts = string_split(search_path, '/');
+    SCOPE_EXIT(string_split_destroy(path_parts));
+
+    Directory_Crawler* crawler = editor.directory_crawler;
+    directory_crawler_set_path_to_file_dir(crawler, tab.code->file_path);
+
+    bool success = true;
+    for (int i = 0; i < path_parts.size - 1 && success; i++)
+    {
+        String part = path_parts[i];
+        auto files = directory_crawler_get_content(crawler);
+        bool found = false;
+        for (int j = 0; j < files.size; j++) {
+            auto file = files[j];
+            if (string_equals(&file.name, &part)) {
+                directory_crawler_go_down_one_directory(crawler, j);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            success = false;
+        }
+    }
+    if (!success) {
+        return;
+    }
+
+    // Fuzzy find file
+    auto files = directory_crawler_get_content(crawler);
+    fuzzy_search_start_search(path_parts[path_parts.size - 1], 10);
+    for (int i = 0; i < files.size; i++) {
+        auto& file = files[i];
+        if (!file.is_directory) {
+            if (!string_ends_with(file.name.characters, ".upp")) {
+                continue;
+            }
+        }
+        fuzzy_search_add_item(file.name, i);
+    }
+
+    auto items = fuzzy_search_get_results(true, 3);
+    auto& suggestions = editor.suggestions;
+    dynamic_array_reset(&suggestions);
+    for (int i = 0; i < items.size; i++) {
+        dynamic_array_push_back(&suggestions, suggestion_make_file(items[i].user_index));
     }
 }
 
@@ -1948,7 +2046,7 @@ void code_completion_find_suggestions()
             }
 
             // Search for dot-calls
-            if (type->type == Datatype_Type::STRUCT) 
+            if (type->type == Datatype_Type::STRUCT)
             {
                 auto struct_type = downcast<Datatype_Struct>(type);
                 if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
@@ -1961,7 +2059,7 @@ void code_completion_find_suggestions()
             code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions);
         }
     }
-    else if (node->type == AST::Node_Type::PATH_LOOKUP) 
+    else if (node->type == AST::Node_Type::PATH_LOOKUP)
     {
         // This probably only happens if the last token was ~
         int cursor_token_index = get_cursor_token_index(false);
@@ -2009,7 +2107,8 @@ void code_completion_find_suggestions()
             }
         }
     }
-    else {
+    else
+    {
         // Check if we should fill context options
         bool fill_context_options = false;
         auto& tokens = source_code_get_line(tab.code, cursor.line)->tokens;
@@ -2043,6 +2142,49 @@ void code_completion_find_suggestions()
             dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_array_access));
             fuzzy_search_add_item(*ids.add_iterator, unranked_suggestions.size);
             dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_iterator));
+        }
+
+        bool add_block_id_suggestions = false;
+        auto cursor_token = get_cursor_token(false);
+        if (cursor_token.type == Token_Type::IDENTIFIER) {
+            if (token_index > 0) {
+                const auto& prev_token = tokens[token_index - 1];
+                if (prev_token.type == Token_Type::KEYWORD && (prev_token.options.keyword == Keyword::BREAK || prev_token.options.keyword == Keyword::CONTINUE)) {
+                    add_block_id_suggestions = true;
+                }
+            }
+        }
+        else if (cursor_token.type == Token_Type::KEYWORD && (cursor_token.options.keyword == Keyword::BREAK || cursor_token.options.keyword == Keyword::CONTINUE)) {
+            add_block_id_suggestions = cursor.character > cursor_token.end_index;
+        }
+
+        if (add_block_id_suggestions && !fill_context_options)
+        {
+            // Add block labels in parent blocks as suggestions
+            AST::Node* iter = node->parent;
+            while (node->parent != 0)
+            {
+                if (node->type == AST::Node_Type::CODE_BLOCK) {
+                    auto block = downcast<AST::Code_Block>(node);
+                    if (block->block_id.available) {
+                        fuzzy_search_add_item(*block->block_id.value, unranked_suggestions.size);
+                        dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(block->block_id.value));
+                    }
+                }
+                else if (node->type == AST::Node_Type::MODULE || node->type == AST::Node_Type::DEFINITION) {
+                    break;
+                }
+                node = node->parent;
+            }
+        }
+
+        if (tokens.size > 0 && token_index > 0 && token_index < tokens.size &&
+            tokens[token_index - 1].type == Token_Type::KEYWORD && tokens[token_index - 1].options.keyword == Keyword::IMPORT &&
+            cursor_token.type == Token_Type::LITERAL && cursor_token.options.literal_value.type == Literal_Type::STRING)
+        {
+            String* path = cursor_token.options.literal_value.options.string;
+            suggestions_fill_with_file_directory(*path);
+            return;
         }
     }
 
@@ -2081,12 +2223,16 @@ void code_completion_insert_suggestion()
     auto& tab = editor.tabs[editor.open_tab_index];
 
     String replace_string;
-    if (editor.record_insert_commands) 
+    bool is_file_replacement = false;
+    if (editor.record_insert_commands)
     {
         auto& suggestions = editor.suggestions;
         string_reset(&editor.last_recorded_code_completion);
         if (suggestions.size == 0) return;
         replace_string = *suggestions[0].text;
+        if (suggestions[0].type == Suggestion_Type::FILE) {
+            is_file_replacement = true;
+        }
         string_append_string(&editor.last_recorded_code_completion, &replace_string);
     }
     else {
@@ -2103,6 +2249,18 @@ void code_completion_insert_suggestion()
     {
         int token_index = get_cursor_token_index(false);
         start_pos = line->tokens[token_index].start_index;
+        if (is_file_replacement) {
+            // Find last / or token start "
+            Optional<int> quote_pos = string_find_character_index_reverse(&line->text, '\"', tab.cursor.character - 1);
+            Optional<int> slash_pos = string_find_character_index_reverse(&line->text, '/', tab.cursor.character - 1);
+            if (quote_pos.available) {
+                start_pos = math_maximum(start_pos, quote_pos.value + 1);
+            }
+            if (slash_pos.available) {
+                start_pos = math_maximum(start_pos, slash_pos.value + 1);
+            }
+        }
+        
         history_delete_text(&tab.history, text_index_make(tab.cursor.line, start_pos), tab.cursor.character);
     }
 
@@ -2183,7 +2341,7 @@ namespace Line_Movement
 
     typedef bool (*line_condition_fn)(Source_Line* line, int cond_value);
 
-    int move_while_condition(int line_index, int dir, line_condition_fn condition, bool invert_condition, int cond_value, bool move_out_of_condition) 
+    int move_while_condition(int line_index, int dir, line_condition_fn condition, bool invert_condition, int cond_value, bool move_out_of_condition)
     {
         auto& code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
         line_index = math_clamp(line_index, 0, code->line_count - 1);
@@ -2224,20 +2382,55 @@ namespace Line_Movement
 
     int move_visible_lines_up_or_down(int line_index, int steps)
     {
-        auto& code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+        auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+        auto& code = tab.code;
+
+        int dir = steps >= 0 ? 1 : -1;
         line_index = math_clamp(line_index, 0, code->line_count - 1);
-        auto line = source_code_get_line(code, line_index);
-    
-        auto visible_index_not_equals = [](Source_Line* line, int visible_index) -> bool {
-            return line->visible_index != visible_index;
-        };
-        int target_visible_index = line->visible_index + steps;
-        return move_while_condition(line_index, (steps > 0 ? 1 : -1), visible_index_not_equals, false, target_visible_index, true);
+        for (int i = 0; i < math_absolute(steps); i++)
+        {
+            if (line_index < 0) {
+                return 0;
+            }
+            else if (line_index >= code->line_count) {
+                return code->line_count - 1;
+            }
+
+            // Step
+            auto line = source_code_get_line(code, line_index);
+            if (line->is_folded)
+            {
+                auto& fold = tab.folds[line->fold_index];
+                if (dir > 0) {
+                    line_index = fold.line_end + 1;
+                }
+                else {
+                    line_index = fold.line_start - 1;
+                }
+            }
+            else {
+                line_index += dir;
+            }
+        }
+        line_index = math_clamp(line_index, 0, code->line_count - 1);
+        return line_index;
     }
 
-    int move_to_fold_boundary(int line_index, int dir, bool move_out_of_fold) {
-        auto line_in_fold = [](Source_Line* line, int _unused) -> bool { return line->is_folded; };
-        return move_while_condition(line_index, dir, line_in_fold, false, 0, move_out_of_fold);
+    int move_to_fold_boundary(int line_index, int dir, bool move_out_of_fold)
+    {
+        auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+        auto& code = tab.code;
+        auto line = source_code_get_line(code, math_clamp(line_index, 0, code->line_count - 1));
+        if (line->is_folded) {
+            auto& fold = tab.folds[line->fold_index];
+            if (dir >= 0) {
+                line_index = fold.line_end + (move_out_of_fold ? 1 : 0);
+            }
+            else {
+                line_index = fold.line_start - (move_out_of_fold ? 1 : 0);
+            }
+        }
+        return math_clamp(line_index, 0, code->line_count - 1);
     }
 
     int move_to_block_boundary(int line_index, int dir, bool move_outside_block, int block_indent) {
@@ -2833,7 +3026,7 @@ namespace Parsing
             // case 'P': return parse_result_success(motion_make(Motion_Type::PARAGRAPH_WITH_INDENT, repeat_count, contains_edges));
         case 'b':
         case 'B': return parse_result_success(motion_make(Motion_Type::BLOCK, repeat_count, contains_edges));
-        case 'P': 
+        case 'P':
         case 'p': return parse_result_success(motion_make(Motion_Type::PARAGRAPH, repeat_count, contains_edges));
         }
 
@@ -3322,7 +3515,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
                 int line_index = pos.line;
                 line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, false, 0, true); // Skip if we are on empty lines
                 line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, true, 0, false); // Goto paragraph end
-                if (line_index == pos.line) { 
+                if (line_index == pos.line) {
                     line_index = pos.line + 1;
                     line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, false, 0, true);
                     line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, true, 0, false);
@@ -3631,15 +3824,15 @@ void delete_char_with_particles(Code_History* history, Text_Index index)
 }
 
 bool motion_is_line_motion(const Motion& motion) {
-    return 
+    return
         motion.motion_type == Motion_Type::BLOCK ||
         motion.motion_type == Motion_Type::PARAGRAPH ||
         (motion.motion_type == Motion_Type::MOVEMENT &&
-            (motion.movement.type == Movement_Type::GOTO_START_OF_TEXT || 
-             motion.movement.type == Movement_Type::GOTO_END_OF_TEXT ||
-             motion.movement.type == Movement_Type::GOTO_LINE_NUMBER ||
-             motion.movement.type == Movement_Type::MOVE_UP ||
-             motion.movement.type == Movement_Type::MOVE_DOWN));
+            (motion.movement.type == Movement_Type::GOTO_START_OF_TEXT ||
+                motion.movement.type == Movement_Type::GOTO_END_OF_TEXT ||
+                motion.movement.type == Movement_Type::GOTO_LINE_NUMBER ||
+                motion.movement.type == Movement_Type::MOVE_UP ||
+                motion.movement.type == Movement_Type::MOVE_DOWN));
 }
 
 void text_range_delete(Text_Range range, bool is_line_motion)
@@ -3921,7 +4114,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     SCOPE_EXIT(
         if (command.type != Normal_Command_Type::GOTO_NEXT_TAB &&
             command.type != Normal_Command_Type::GOTO_PREV_TAB &&
-            command.type != Normal_Command_Type::CLOSE_TAB && 
+            command.type != Normal_Command_Type::CLOSE_TAB &&
             command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE)
         {
             syntax_editor_sanitize_cursor();
@@ -4390,6 +4583,10 @@ void insert_command_execute(Insert_Command input)
         dynamic_array_push_back(&editor.last_insert_commands, input);
     }
 
+    if (input.type != Insert_Command_Type::ENTER_REMOVE_ONE_INDENT) {
+        editor.last_insert_was_shift_enter = false;
+    }
+
     // Experimental: Automatically complete identifier if we are about to enter some seperation afterwards
     if (false)
     {
@@ -4440,7 +4637,15 @@ void insert_command_execute(Insert_Command input)
         break;
     }
     case Insert_Command_Type::ENTER_REMOVE_ONE_INDENT: {
-        editor_split_line_at_cursor(-1);
+        if (editor.last_insert_was_shift_enter) {
+            if (line->indentation > 0) {
+                history_change_indent(history, cursor.line, line->indentation - 1);
+            }
+        }
+        else {
+            editor_split_line_at_cursor(-1);
+        }
+        editor.last_insert_was_shift_enter = true;
         break;
     }
     case Insert_Command_Type::ADD_INDENTATION: {
@@ -4482,7 +4687,7 @@ void insert_command_execute(Insert_Command input)
         text_range_delete(text_range_make(cursor, to), false);
         break;
     }
-    // Letters
+                                                  // Letters
     case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;
@@ -4920,57 +5125,9 @@ void syntax_editor_process_key_message(Key_Message& msg)
             syntax_editor_synchronize_with_compiler(false);
 
             String search = editor.fuzzy_search_text;
-            if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/')
-            {
+            if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/') {
                 search = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size);
-                Array<String> path_parts = string_split(search, '/');
-                SCOPE_EXIT(string_split_destroy(path_parts));
-
-                Directory_Crawler* crawler = editor.directory_crawler;
-                directory_crawler_set_path_to_file_dir(crawler, tab.code->file_path);
-
-                bool success = true;
-                for (int i = 0; i < path_parts.size - 1 && success; i++)
-                {
-                    String part = path_parts[i];
-                    auto files = directory_crawler_get_content(crawler);
-                    bool found = false;
-                    for (int j = 0; j < files.size; j++) {
-                        auto file = files[j];
-                        if (string_equals(&file.name, &part)) {
-                            directory_crawler_go_down_one_directory(crawler, j);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        success = false;
-                    }
-                }
-                if (!success) {
-                    break;
-                }
-
-                // Fuzzy find file
-                auto files = directory_crawler_get_content(crawler);
-                fuzzy_search_start_search(path_parts[path_parts.size - 1], 10);
-                for (int i = 0; i < files.size; i++) {
-                    auto& file = files[i];
-                    if (!file.is_directory) {
-                        if (!string_ends_with(file.name.characters, ".upp")) {
-                            continue;
-                        }
-                    }
-                    fuzzy_search_add_item(file.name, i);
-                }
-
-                auto items = fuzzy_search_get_results(true, 3);
-                auto& suggestions = editor.suggestions;
-                dynamic_array_reset(&suggestions);
-                for (int i = 0; i < items.size; i++) {
-                    dynamic_array_push_back(&suggestions, suggestion_make_file(items[i].user_index));
-                }
-
+                suggestions_fill_with_file_directory(search);
                 break;
             }
 
@@ -5353,7 +5510,7 @@ void particles_add_in_range(Text_Range range, vec3 base_color)
 
     auto& line_count = editor.visible_line_count;
     int cam_start_visual = source_code_get_line(tab.code, tab.cam_start)->visible_index;
-    int cam_end_visual   = source_code_get_line(tab.code, tab.cam_end)->visible_index;
+    int cam_end_visual = source_code_get_line(tab.code, tab.cam_end)->visible_index;
     int last_line_visible_index = -1;
     for (int i = range.start.line; i <= range.end.line; i++)
     {
@@ -5390,8 +5547,8 @@ void particles_add_in_range(Text_Range range, vec3 base_color)
                 p.color.y += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
                 p.color.z += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
 
-                p.position.x = min.x + (x / (float) x_count) * (max.x - min.x);
-                p.position.y = min.y + (y / (float) y_count) * (max.y - min.y);
+                p.position.x = min.x + (x / (float)x_count) * (max.x - min.x);
+                p.position.y = min.y + (y / (float)y_count) * (max.y - min.y);
                 p.radius = radius + (random_next_float(&editor.random) * 5) - 2;
                 p.creation_time = editor.last_update_time;
                 p.life_time = 0.3f + random_next_float(&editor.random) * 1.5f;
@@ -5619,7 +5776,7 @@ void syntax_editor_render()
         auto colors = mesh_push_attribute_slice(mesh, predef.color4, particles.size * 4);
         auto indices = mesh_push_attribute_slice(mesh, predef.index, particles.size * 6);
         vec2 screen_size_half = vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height) / 2;
-        for (int i = 0; i < particles.size; i++) 
+        for (int i = 0; i < particles.size; i++)
         {
             auto& particle = particles[i];
             vec2 min = particle.position - vec2(particle.radius / 2.0f);
@@ -5766,11 +5923,11 @@ void syntax_editor_render()
         // Handle folds
         Source_Line* line = source_code_get_line(code, i);
         if (line->is_folded) {
-            if (!last_was_fold) 
+            if (!last_was_fold)
             {
                 auto& fold = tab.folds[line->fold_index];
                 bool contains_errors = false;
-                
+
                 for (int i = 0; i < editor.errors.size; i++) {
                     const auto& error = editor.errors[i];
                     if (error.code != tab.code) {
@@ -5921,8 +6078,8 @@ void syntax_editor_render()
     if (editor.mode == Editor_Mode::NORMAL && !cursor_is_on_fold && cursor.line >= cam_start && cursor.line <= cam_end) {
         auto cursor_line = source_code_get_line(code, cursor.line);
         Rich_Text::mark_line(
-            &editor.editor_text, 
-            Mark_Type::BACKGROUND_COLOR, vec3(0.25f), 
+            &editor.editor_text,
+            Mark_Type::BACKGROUND_COLOR, vec3(0.25f),
             cursor_line->visible_index - cam_start_visible, cursor.character, cursor.character + 1
         );
     }
@@ -6135,7 +6292,7 @@ void syntax_editor_render()
                 after_text = "Parameter";
                 break;
             }
-            case Symbol_Type::POLYMORPHIC_VALUE: 
+            case Symbol_Type::POLYMORPHIC_VALUE:
             {
                 auto poly_values = pass->origin_workload->polymorphic_values;
                 if (pass->is_header_reanalysis) {
@@ -6244,7 +6401,7 @@ void syntax_editor_render()
                 case Call_Type::STRUCT_INITIALIZER:
                 case Call_Type::UNION_INITIALIZER: {
                     if (info->options.struct_init.valid) {
-                        name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE; 
+                        name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE;
                         color = Syntax_Color::TYPE;
                         break;
                     }
@@ -6352,7 +6509,7 @@ void syntax_editor_render()
 
         vec2 context_size = vec2(0);
         vec2 call_info_size = vec2(0);
-        if (draw_context) 
+        if (draw_context)
         {
             auto text = &context_text;
             int max_line_char_count = 0;
@@ -6364,7 +6521,7 @@ void syntax_editor_render()
             context_size = char_size * vec2(math_maximum(30, max_line_char_count), text->lines.size);
             context_size = context_size + 2 * (BORDER_SIZE + PADDING);
         }
-        if (draw_call_info) 
+        if (draw_call_info)
         {
             auto text = &call_info_text;
             int max_line_char_count = 0;

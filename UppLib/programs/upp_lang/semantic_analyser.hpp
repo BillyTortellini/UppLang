@@ -171,9 +171,10 @@ struct Workload_Base
     Analysis_Pass* current_pass;
     Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
 
+    // Errors
     int real_error_count;
     int errors_due_to_unknown_count;
-    bool ignore_unknown_errors;
+    int error_checkpoint_count; // If error_checkpoint_count > 0, then errors aren't logged...
 
     // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
     //        * Re-analysing the header during poly-instanciation of functions

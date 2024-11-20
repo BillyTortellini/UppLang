@@ -1,11 +1,11 @@
 
 import Upp~i32
-import Upp~byte
+import Upp~u8
 import Upp~type_info
 
 RGBA :: union
 	value: i32
-	raw: [4]byte
+	raw: [4]u8
 
 main :: ()
 	// Also this should really never work in a release build, as this is

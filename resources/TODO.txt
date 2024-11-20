@@ -1,6 +1,35 @@
 
-Hashtable: 
-    Should hashtable have own implementation, or use hashset?
+
+
+TODO:
+ * Bug when only importing hashtable, maybe something with imports, check it out
+
+ * Editor/Compiler Threads
+ * String handling and string builder in Upp
+
+DONE:
+ * If comment is on line before definition, show comment in context...
+ * Code-Completion on file imports (fuzzy find files)
+ * Code-Completion for continue/break (Block-Ids)
+ * Pressing Shift-Enter after Shift enter should just do a tab delete...
+ * Normal-Binops should use expected type when both sides require context (e.g. y: u64 = 2 * x)
+ * Assign-Binops (+=, -=) should deduce context for integers... (e.g. += 1 should work on all integers!)
+ * Fixed release bug (operator_context_key_equals was invalid)
+ * Implemented hash-table by copying hashset
+ * Improved analysis-passes
+ * Fix bake bug (See screenshot)
+ * Fixed cam_end invalid index bug (Cam_start/end are updated on synchronize)
+
+
+Check how fast syntax_editor_update is (without compilation)
+ --> E.g. with particle effects and sheet
+ --> Check optimized version
+
+Think about editor-speed/lag:
+ * 2 Threads for compiler + editor
+ * Incremental compilation
+
+
 
 Dynamic_Array:
     insert_ordered
@@ -9,28 +38,9 @@ Dynamic_Array:
     reverse
     last
 
-
-TODO:
- * Hashtable, hashset and basic hashing functions
-
-DONE:
- * Fixed b movement 
- * Hashset iterator
- * Fixed camera movement bugs with fold
- * Fixed contine and block label for foreach and for loops
- * Polymorphic Instances can now properly access constant definitions of base analysis
- * Calculate comptime checks for unknown types...
-
-
 Language/Editor Miscallenious:
- * Pressing Shift-Enter after Shift enter should just do a tab delete...
- * Code-Completion for continue/break (Block-Ids)
- * Assign-Binops (+=, -=) should deduce context for integers...
- * Normal-Binops should use expected type when both sides require context (e.g. y: u64 = cast x == 15)
  * Raw-Equals ~== and ~!=, like *== and *!=
  * Generated C-Code should be more readable
- * Code-Completion on file imports (fuzzy find files)
- * If comment is on line before definition, show comment in context...
  * struct-initializer with hierarchy suggestions aren't shown correctly
  * .? for Optional value access
  * Comment in/out range of lines

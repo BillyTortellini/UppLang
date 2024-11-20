@@ -38,6 +38,8 @@ layout (std140, binding = 1) uniform Camera
     float field_of_view_y;
 } u_camera;
 
+uniform vec2 sphere_pos;
+
 in vec2 uv_coords;
 out vec4 output_color;
 
@@ -54,7 +56,8 @@ float sdf_plane(vec3 position, vec3 plane_normal, float dist) {
 }
 
 float sdf_scene(vec3 position) {
-	float d = sdf_sphere(position, vec3(0.0), 0.5);
+    float r = 0.2;
+	float d = sdf_sphere(position, vec3(sphere_pos.x, r, sphere_pos.y), r);
 	d = min(d, sdf_sphere(position, vec3(0.0, 1.0, 1.0), 0.2));
 	float platform_sdf = max(sdf_plane(position, vec3(0.0, 1.0, 0.0), 0.0), sdf_sphere(position, vec3(0.0), 1.0));
 	d = min(d, platform_sdf);
@@ -64,7 +67,8 @@ float sdf_scene(vec3 position) {
 int scene_material_index(vec3 position) 
 {
 	int index = 0;
-	float d = sdf_sphere(position, vec3(0.0), 0.5);
+    float r = 0.2;
+	float d = sdf_sphere(position, vec3(sphere_pos.x, r, sphere_pos.y), r);
 	if (d > MAX_DISTANCE) {
 		return 0; // Out of scene is material 0
 	}
