@@ -8,8 +8,17 @@
 struct Module_Progress;
 struct Source_Code;
 struct Source_Line;
+struct Parameter_Matching_Info;
+struct Symbol;
+struct Symbol_Table;
+struct Compilation_Unit;
+struct Datatype;
+struct Analysis_Pass;
+struct Datatype_Enum;
+
 namespace AST
 {
+    struct Symbol_Lookup;
     struct Node;
     struct Module;
 }
@@ -34,6 +43,7 @@ Text_Index text_index_make_line_end(Source_Code* code, int line);
 bool text_index_equal(const Text_Index& a, const Text_Index& b);
 bool text_index_in_order(const Text_Index& a, const Text_Index& b);
 Text_Range text_range_make(Text_Index start, Text_Index end);
+bool text_range_contains(Text_Range range, Text_Index index);
 
 struct Token_Index
 {
@@ -59,13 +69,99 @@ bool token_range_contains(Token_Range range, Token_Index index);
 
 
 
+// Analysis Info
+enum class Member_Access_Type
+{
+    STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
+    STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
+    ENUM_MEMBER_ACCESS,
+    DOT_CALL_AS_MEMBER,
+    DOT_CALL,
+    OPTIONAL_PTR_ACCESS,
+    STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
+    STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
+};
+
+enum class Code_Analysis_Item_Type
+{
+    SYMBOL_LOOKUP,
+    MEMBER_ACCESS,
+    AUTO_ENUM,
+    CALL_INFORMATION,
+    ARGUMENT_NODE,
+    EXPRESSION_INFO,
+    MARKUP,
+    ERROR_ITEM,
+};
+
+union Code_Analysis_Item_Option
+{
+    Code_Analysis_Item_Option() {};
+    struct {
+        Member_Access_Type access_type;
+        Datatype* final_type;
+        Datatype* initial_type;
+    } member_access; 
+    Parameter_Matching_Info* call_information;
+    struct {
+        Symbol* symbol;
+        bool is_definition;
+        Analysis_Pass* pass;
+        AST::Symbol_Lookup* lookup;
+    } symbol;
+    Datatype_Enum* auto_enum_type;
+    int argument_index;
+    struct {
+        Datatype* before_cast_type;
+        Datatype* after_cast_type;
+    } expression_info;
+    vec3 markup_color;
+    int error_index;
+};
+
+struct Code_Analysis_Item
+{
+    Code_Analysis_Item_Type type;
+    int start_char;
+    int end_char;
+    int tree_depth;
+    Code_Analysis_Item_Option options;
+};
+
+struct Compiler_Error_Info
+{
+    const char* message;
+    Compilation_Unit* unit;
+    Text_Index text_index; // For goto-error
+    int semantic_error_index; // -1 if parsing error
+};
+
+struct Symbol_Table_Range
+{
+    Text_Range range;
+    Symbol_Table* symbol_table;
+    int tree_depth;
+};
+
+struct Block_ID_Range
+{
+    Text_Range range;
+    String* block_id;
+    int tree_depth;
+};
+
+
+
 // Source Code
 struct Source_Line
 {
     // Content
     String text;
-    Dynamic_Array<Token> tokens;
     int indentation;
+
+    // Analysis Info
+    Dynamic_Array<Token> tokens;
+    Dynamic_Array<Code_Analysis_Item> item_infos;
 
     // Comment/Lexing info
     bool is_comment; // True if we are inside a comment block or if the line starts with //
@@ -97,20 +193,14 @@ struct Source_Code
     Dynamic_Array<Line_Bundle> bundles;
     int line_count;
 
-    // Origin info
-    String file_path;
-    bool used_in_last_compile; // All files that weren't used in last compile + aren't open in editor are removed
-    bool open_in_editor;
-    bool code_changed_since_last_compile;
-
-    // Analysis-Info
-    AST::Module* root;
-    Dynamic_Array<AST::Node*> allocated_nodes;
-    Dynamic_Array<Error_Message> error_messages; // Parsing errors, not semantic-errors!
-    Module_Progress* module_progress; // Analysis progress, may be 0 if not analysed yet
+    // Analysis info
+    Symbol_Table* root_table;
+    Dynamic_Array<Symbol_Table_Range> symbol_table_ranges;
+    Dynamic_Array<Block_ID_Range> block_id_range;
 };
 
-Source_Code* source_code_create(String file_path, bool used_in_last_compile, bool open_in_editor); // Takes ownership of file-path
+Source_Code* source_code_create(); 
+Source_Code* source_code_copy(Source_Code* copy_from); 
 void source_code_destroy(Source_Code* code);
 void source_code_reset(Source_Code* code);
 void source_code_print_bundles(Source_Code* code);
@@ -135,6 +225,10 @@ bool source_line_is_multi_line_comment_start(Source_Line* line);
 // Index Functions
 int source_code_get_line_bundle_index(Source_Code* code, int line_index);
 Source_Line* source_code_get_line(Source_Code* code, int line_index);
+
+Text_Range token_range_to_text_range(Token_Range range, Source_Code* code);
+Token_Range text_range_to_token_range(Text_Range range, Source_Code* code);
+Text_Index token_index_to_text_index(Token_Index index, Source_Code* code, bool token_start);
 
 
 

@@ -2,6 +2,7 @@
 
 #include "compiler.hpp"
 #include "semantic_analyser.hpp"
+#include "editor_analysis_info.hpp"
 
 bool deduplication_info_is_equal(Deduplication_Info* a, Deduplication_Info* b) {
     if (!types_are_equal(a->type, b->type) || a->memory.size != b->memory.size) return false;
@@ -119,7 +120,7 @@ void struct_memory_set_padding_to_zero_recursive(
 
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
 
@@ -143,7 +144,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
     }
     case Datatype_Type::FUNCTION: {
         // Check if function index is correct
-        auto& slots = compiler.semantic_analyser->function_slots;
+        auto& slots = compiler.analysis_data->function_slots;
         i64 function_index = (*(i64*)memory) - 1;
         if (function_index < -1 || function_index >= slots.size) { // Note: -1 would mean nullptr in this context
             result = constant_pool_result_make_error("Found function pointer with invalid value");
@@ -215,7 +216,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         if (types_are_equal(signature, upcast(types.any_type)))
         {
             Upp_Any any = *(Upp_Any*)memory;
-            if (any.type.index >= (u32)compiler.type_system.types.size) {
+            if (any.type.index >= (u32)compiler.analysis_data->type_system.types.size) {
                 result = constant_pool_result_make_error("Found any type with invalid type-handle index");
                 return;
             }
@@ -267,7 +268,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
 
 Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes)
 {
-    Constant_Pool& pool = compiler.constant_pool;
+    Constant_Pool& pool = compiler.analysis_data->constant_pool;
     signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;

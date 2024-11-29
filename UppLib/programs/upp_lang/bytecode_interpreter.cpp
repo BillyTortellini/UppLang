@@ -5,12 +5,14 @@
 #include "compiler.hpp"
 #include <Windows.h>
 #include "ir_code.hpp"
+#include "editor_analysis_info.hpp"
 
-Bytecode_Thread* bytecode_thread_create(int instruction_limit)
+Bytecode_Thread* bytecode_thread_create(Compiler_Analysis_Data* analysis_data, int instruction_limit)
 {
     Bytecode_Thread* result = new Bytecode_Thread;
     result->heap_allocations = hashtable_create_pointer_empty<void*, int>(8);
     result->heap_memory_consumption = 0;
+    result->analysis_data = analysis_data;
     result->instruction_limit = instruction_limit;
     result->waiting_for_type_finish_type = 0;
     return result;
@@ -643,8 +645,8 @@ void interpreter_safe_memcopy(Bytecode_Thread* thread, void* dst, void* src, int
 // Returns true if we need to stop execution, e.g. on exit instruction
 bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
 {
-    auto& globals = compiler.semantic_analyser->program->globals;
-    auto& constant_pool = compiler.constant_pool;
+    auto& globals = thread->analysis_data->program->globals;
+    auto& constant_pool = thread->analysis_data->constant_pool;
     auto& generator = compiler.bytecode_generator;
     auto& instructions = compiler.bytecode_generator->instructions;
 
@@ -746,7 +748,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         int jmp_to_instr_index;
         {
             int function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
-            auto& slots = compiler.semantic_analyser->function_slots;
+            auto& slots = thread->analysis_data->function_slots;
             if (function_index < 0 || function_index >= slots.size) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, pointer does not point to valid function");
                 return true;
@@ -972,22 +974,24 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         }
         case Hardcoded_Type::TYPE_INFO: 
         {
+            auto& type_system = thread->analysis_data->type_system;
+
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             int type_index = *(int*)(argument_start);
-            if (type_index > compiler.type_system.types.size || type_index < 0) {
+            if (type_index > type_system.types.size || type_index < 0) {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "type_info failed, type-handle was invalid value");
                 return true;
             }
-            if (type_size_is_unfinished(compiler.type_system.types[type_index])) {
+            if (type_size_is_unfinished(type_system.types[type_index])) {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED);
-                thread->waiting_for_type_finish_type = compiler.type_system.types[type_index];
+                thread->waiting_for_type_finish_type = type_system.types[type_index];
                 return true;
             }
-            *((Internal_Type_Information**)&thread->return_register[0]) = compiler.type_system.internal_type_infos[type_index];
+            *((Internal_Type_Information**)&thread->return_register[0]) = type_system.internal_type_infos[type_index];
             break;
         }
         default: {panic("What"); }

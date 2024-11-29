@@ -11,6 +11,8 @@
 #include "../../utility/fuzzy_search.hpp"
 #include "../../utility/gui.hpp"
 #include "../../utility/directory_crawler.hpp"
+#include "../../win32/thread.hpp"
+#include "../../win32/process.hpp"
 
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
@@ -21,6 +23,7 @@
 #include "parser.hpp"
 #include "source_code.hpp"
 #include "code_history.hpp"
+#include "editor_analysis_info.hpp"
 
 #include "../../utility/rich_text.hpp"
 #include "../../utility/line_edit.hpp"
@@ -34,7 +37,7 @@ struct Error_Display
     String message;
     Token_Range range;
 
-    Source_Code* code;
+    Compilation_Unit* unit;
     bool is_token_range_duplicate;
     int semantic_error_index; // -1 if parsing error
 };
@@ -207,17 +210,6 @@ enum class Editor_Mode
     ERROR_NAVIGATION,
 };
 
-struct Input_Replay
-{
-    String code_state_initial;
-    String code_state_afterwards;
-    Dynamic_Array<Key_Message> recorded_inputs;
-    bool currently_recording;
-    bool currently_replaying;
-    Editor_Mode start_mode;
-    Text_Index cursor_start;
-};
-
 struct Code_Fold
 {
     int line_start;
@@ -227,9 +219,15 @@ struct Code_Fold
 
 struct Editor_Tab
 {
-    Source_Code* code;
+    Source_Code* code; // Note: This is different than the code in the compilation unit
     Code_History history;
-    History_Timestamp last_token_synchronized;
+    Compilation_Unit* compilation_unit;
+    History_Timestamp last_code_info_synch;
+    History_Timestamp last_compiler_synchronized;
+    History_Timestamp last_code_completion_query;
+    History_Timestamp last_code_completion_compiler_timestamp;
+    Text_Index last_code_completion_query_pos;
+    bool requires_recompile; // E.g. when loaded from a file, or otherwise modified
 
     Dynamic_Array<Code_Fold> folds;
 
@@ -296,11 +294,14 @@ struct Syntax_Editor
     float normal_text_size_pixel;
 
     bool last_compile_was_with_code_gen;
-    bool code_changed_since_last_compile;
+    Source_Code* last_compile_main_code;
 
-    Input_Replay input_replay;
     String yank_string;
     bool yank_was_line;
+
+    // Compiler Info
+    Compiler_Analysis_Data* analysis_data;
+    Identifier_Pool auto_format_identifier_pool; // Requires as we cannot use normal lexing for compilation...
 
     // Command repeating
     Normal_Mode_Command last_normal_command;
@@ -330,18 +331,16 @@ struct Syntax_Editor
     bool search_reverse;
     bool last_insert_was_shift_enter;
 
+    // Misc
     int visible_line_count;
     int visual_block_start_line;
 
     Text_Index navigate_error_mode_cursor_before;
     int navigate_error_mode_tab_before;
     int navigate_error_cam_start;
-    int navigate_error_item_count;
     int navigate_error_index;
 
     // Rendering
-    Dynamic_Array<Error_Display> errors;
-    Dynamic_Array<Token_Range> token_range_buffer;
     Dynamic_Array<Particle> particles;
     double last_update_time;
     Random random;
@@ -353,1982 +352,34 @@ struct Syntax_Editor
     Timer* timer;
     Text_Renderer* text_renderer;
     int frame_index;
+
+    // Compiler thread
+    Thread compiler_thread;
+    Semaphore compiler_wait_semaphore;
+    Semaphore compilation_finish_semaphore;
+    bool compiler_thread_should_close;
+    bool compiler_work_started;
+
+    bool compiler_build_code;
+    Compilation_Unit* compiler_main_unit;
 };
 
-
+// Globals
+static Syntax_Editor syntax_editor;
 
 // Prototypes
-void insert_text_with_particles(Code_History* history, Text_Index index, String str);
-void insert_char_with_particles(Code_History* history, Text_Index index, char c);
-void delete_char_with_particles(Code_History* history, Text_Index index);
-void particles_add_in_range(Text_Range range, vec3 base_color);
-bool auto_format_line(int line_index, int tab_index = -1);
 void syntax_editor_synchronize_with_compiler(bool generate_code);
-void syntax_editor_set_text(String string);
 void normal_command_execute(Normal_Mode_Command& command);
 void syntax_editor_save_text_file();
 void syntax_editor_update_line_visible_and_fold_info(int tab_index);
-Error_Display error_display_make(String msg, Token_Range range, Source_Code* code, bool is_token_range_duplicate, int semantic_error_index);
+Text_Range motion_evaluate(const Motion& motion, Text_Index pos);
+Error_Display error_display_make(String msg, Token_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index);
+void syntax_editor_sanitize_cursor();
+Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time);
+unsigned long compiler_thread_start_fn(void* userdata);
 
-namespace Line_Movement
-{
-     int move_to_fold_boundary(int line_index, int dir, bool move_out_of_fold);
-     int move_visible_lines_up_or_down(int line_index, int steps);
-};
 
-
-// Editor
-static Syntax_Editor syntax_editor;
-
-Editor_Suggestion suggestion_make_symbol(Symbol* symbol) {
-    Editor_Suggestion result;
-    result.type = Suggestion_Type::SYMBOL;
-    result.options.symbol = symbol;
-    result.text = symbol->id;
-    return result;
-}
-
-Editor_Suggestion suggestion_make_id(String* id, vec3 color = vec3(1.0f)) {
-    Editor_Suggestion result;
-    result.type = Suggestion_Type::ID;
-    result.text = id;
-    result.options.id_color.r = color.x;
-    result.options.id_color.g = color.y;
-    result.options.id_color.b = color.z;
-    return result;
-}
-
-Editor_Suggestion suggestion_make_file(int file_index) {
-    Editor_Suggestion result;
-    result.type = Suggestion_Type::FILE;
-    result.options.file_index_in_crawler = file_index;
-    result.text = &directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].name;
-    return result;
-}
-
-Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, String* id) {
-    Editor_Suggestion result;
-    result.type = Suggestion_Type::STRUCT_MEMBER;
-    result.options.struct_member.structure = struct_type;
-    result.options.struct_member.member_type = member_type;
-    result.text = id;
-    return result;
-}
-
-Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* id) {
-    Editor_Suggestion result;
-    result.type = Suggestion_Type::ENUM_MEMBER;
-    result.options.enum_member.enumeration = enum_type;
-    result.text = id;
-    return result;
-}
-
-// Returns new tab index
-int syntax_editor_add_tab(String file_path)
-{
-    auto& editor = syntax_editor;
-
-    Source_Code* code = compiler_add_source(file_path, true, false);
-    if (code == 0) { // Could not load file
-        return editor.open_tab_index;
-    }
-
-    // Check if code is already opened in tab
-    for (int i = 0; i < editor.tabs.size; i++) {
-        auto& tab = editor.tabs[i];
-        if (tab.code == code) {
-            return i;
-        }
-    }
-
-    // Otherwise create new tab
-    Editor_Tab tab;
-    tab.code = code;
-    tab.history = code_history_create(tab.code);
-    tab.folds = dynamic_array_create<Code_Fold>();
-    tab.last_token_synchronized = history_get_timestamp(&tab.history);
-    tab.last_render_timestamp = history_get_timestamp(&tab.history);
-    tab.last_render_cursor_pos = text_index_make(0, 0);
-    tab.cursor = text_index_make(0, 0);
-    tab.last_line_x_pos = 0;
-    tab.cam_start = 0;
-    tab.cam_end = 0;
-    tab.last_jump_index = -1;
-    tab.jump_list = dynamic_array_create<Text_Index>();
-    dynamic_array_push_back(&syntax_editor.tabs, tab);
-    syntax_editor_update_line_visible_and_fold_info(syntax_editor.tabs.size - 1);
-
-    editor.code_changed_since_last_compile = true;
-    return syntax_editor.tabs.size - 1;
-}
-
-void editor_tab_destroy(Editor_Tab* tab) {
-    code_history_destroy(&tab->history);
-    dynamic_array_destroy(&tab->folds);
-    dynamic_array_destroy(&tab->jump_list);
-}
-
-void syntax_editor_update_line_visible_and_fold_info(int tab_index)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[tab_index];
-    auto& folds = tab.folds;
-    auto code = tab.code;
-
-    Code_Fold dummy_fold;
-    dummy_fold.line_start = -1;
-    dummy_fold.line_end = -1;
-    dummy_fold.indentation = 0;
-
-    int fold_index = 0;
-    int visible_index = 0;
-    bool last_was_fold = false;
-    Code_Fold* fold = folds.size > 0 ? &folds[0] : &dummy_fold;
-    for (int i = 0; i < code->line_count; i++)
-    {
-        auto line = source_code_get_line(code, i);
-
-        // Get fold for line
-        while (i > fold->line_end && fold_index + 1 < folds.size) {
-            fold = &folds[fold_index + 1];
-            fold_index += 1;
-        }
-        line->is_folded = i >= fold->line_start && i <= fold->line_end;
-        if (line->is_folded) {
-            line->fold_index = fold_index;
-        }
-
-        if (last_was_fold && !line->is_folded) {
-            visible_index += 1;
-        }
-        line->visible_index = visible_index;
-        if (!line->is_folded) {
-            visible_index += 1;
-        }
-        last_was_fold = line->is_folded;
-    }
-}
-
-void syntax_editor_add_fold(int line_start, int line_end, int indentation)
-{
-    auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-    auto& folds = tab.folds;
-
-    // Find insertion index
-    int i = 0;
-    for (i = 0; i < folds.size; i++) {
-        auto& fold = folds[i];
-        if (line_start < fold.line_start) {
-            if (line_end >= fold.line_start) {
-                assert(line_end >= fold.line_end, "Folds should not overlap");
-            }
-            break;
-        }
-        else if (line_start == fold.line_start) {
-            if (line_start == line_end) return; // Fold already exists
-            if (line_end > fold.line_end) {
-                break;
-            }
-        }
-    }
-
-    Code_Fold fold;
-    fold.line_start = line_start;
-    fold.line_end = line_end;
-    fold.indentation = indentation;
-    dynamic_array_insert_ordered(&folds, fold, i);
-
-    syntax_editor_update_line_visible_and_fold_info(syntax_editor.open_tab_index);
-}
-
-struct Comparator_Error_Display 
-{
-    bool operator()(const Error_Display& a, const Error_Display& b) 
-    {
-        auto& editor = syntax_editor;
-        int tab_a = -1;
-        int tab_b = -1;
-        for (int i = 0; i < editor.tabs.size; i++) {
-            auto code = editor.tabs[i].code;
-            if (a.code == code) {
-                tab_a = i;
-            }
-            if (b.code == code) {
-                tab_b = i;
-            }
-        }
-
-        if (tab_a != tab_b) {
-            // Return errors in current tab first
-            if (tab_a == editor.open_tab_index) return true;
-            else if (tab_b == editor.open_tab_index) return false;
-            // Otherwise return in open tab order
-            return tab_a < tab_b;
-        }
-
-        return a.range.start.line < b.range.start.line;
-    }
-};
-
-void syntax_editor_switch_tab(int new_tab_index)
-{
-    auto& editor = syntax_editor;
-    if (editor.open_tab_index == new_tab_index) return;
-    if (new_tab_index < 0 || new_tab_index >= editor.tabs.size) return;
-
-    editor.open_tab_index = new_tab_index;
-    if (editor.main_tab_index == -1) {
-        editor.code_changed_since_last_compile = true;
-        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
-        syntax_editor_synchronize_with_compiler(false);
-    }
-
-    auto& tab = editor.tabs[editor.open_tab_index];
-    source_code_tokenize(tab.code);
-    for (int i = 0; i < tab.code->line_count; i++) {
-        auto_format_line(i);
-    }
-    // Re-Sort errors since sorting depends on open tab
-    dynamic_array_sort(&editor.errors, Comparator_Error_Display());
-}
-
-void syntax_editor_close_tab(int tab_index, bool force_close = false)
-{
-    auto& editor = syntax_editor;
-    if (editor.tabs.size <= 1 && !force_close) return;
-    if (tab_index < 0 || tab_index >= editor.tabs.size) return;
-
-    syntax_editor_save_text_file();
-
-    Editor_Tab* tab = &editor.tabs[tab_index];
-    tab->code->open_in_editor = false;
-    editor_tab_destroy(&editor.tabs[tab_index]);
-    dynamic_array_remove_ordered(&editor.tabs, tab_index);
-
-    editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
-    if (tab_index == editor.main_tab_index) {
-        editor.main_tab_index = -1;
-    }
-    else if (editor.main_tab_index > tab_index) {
-        editor.main_tab_index -= 1;
-    }
-
-    if (editor.open_tab_index < editor.tabs.size && editor.open_tab_index >= 0) {
-        editor.code_changed_since_last_compile = true;
-        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
-        syntax_editor_synchronize_with_compiler(false);
-    }
-}
-
-
-
-
-void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer)
-{
-    memory_zero(&syntax_editor);
-    gui_initialize(text_renderer, window);
-
-    syntax_editor.last_insert_was_shift_enter = false;
-    syntax_editor.random = random_make_time_initalized();
-    syntax_editor.last_update_time = timer_current_time_in_seconds(timer);
-    syntax_editor.timer = timer;
-    syntax_editor.particles = dynamic_array_create<Particle>();
-    syntax_editor.directory_crawler = directory_crawler_create();
-    syntax_editor.frame_index = 1;
-    syntax_editor.last_compile_was_with_code_gen = false;
-    syntax_editor.code_changed_since_last_compile = true;
-    syntax_editor.editor_text = Rich_Text::create(vec3(1.0f));
-    syntax_editor.normal_text_size_pixel = convertHeight(0.48f, Unit::CENTIMETER);
-    syntax_editor.text_display = Text_Display::make(
-        &syntax_editor.editor_text, renderer_2D, text_renderer, text_renderer_get_aligned_char_size(text_renderer, syntax_editor.normal_text_size_pixel), 4
-    );
-    Text_Display::set_padding(&syntax_editor.text_display, 2);
-    Text_Display::set_block_outline(&syntax_editor.text_display, 3, vec3(0.5f));
-
-    syntax_editor.visible_line_count = (int)(rendering_core.render_information.backbuffer_height / syntax_editor.text_display.char_size.y) + 1;
-
-    syntax_editor.errors = dynamic_array_create<Error_Display>(1);
-    syntax_editor.token_range_buffer = dynamic_array_create<Token_Range>(1);
-    syntax_editor.command_buffer = string_create();
-
-    syntax_editor.fuzzy_search_text = string_create();
-    syntax_editor.suggestions = dynamic_array_create<Editor_Suggestion>();
-    syntax_editor.search_text = string_create();
-
-    syntax_editor.yank_string = string_create();
-    syntax_editor.yank_was_line = false;
-
-    syntax_editor.last_normal_command.type = Normal_Command_Type::MOVEMENT;
-    syntax_editor.last_normal_command.options.movement.type = Movement_Type::MOVE_LEFT;
-    syntax_editor.last_normal_command.options.movement.repeat_count = 0;
-    syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
-    syntax_editor.record_insert_commands = true;
-    syntax_editor.last_recorded_code_completion = string_create();
-
-    syntax_editor.text_renderer = text_renderer;
-    syntax_editor.renderer_2D = renderer_2D;
-    syntax_editor.input = input;
-    syntax_editor.mode = Editor_Mode::NORMAL;
-
-    syntax_editor.last_search_char = '\0';
-    syntax_editor.last_search_was_forward = false;
-    syntax_editor.last_search_was_to = false;
-
-    // Init input replay
-    {
-        auto replay = syntax_editor.input_replay;
-        replay.code_state_initial = string_create_empty(1);
-        replay.code_state_afterwards = string_create_empty(1);
-        replay.recorded_inputs = dynamic_array_create<Key_Message>(1);
-        replay.currently_recording = false;
-        replay.currently_replaying = false;
-    }
-
-    compiler_initialize(timer);
-
-    String default_filename = string_create_static("upp_code/editor_text.upp");
-    int tab_index = syntax_editor_add_tab(default_filename);
-    syntax_editor_switch_tab(tab_index);
-    assert(tab_index != -1, "");
-    syntax_editor.open_tab_index = 0;
-    syntax_editor.main_tab_index = 0;
-}
-
-void syntax_editor_destroy()
-{
-    auto& editor = syntax_editor;
-    directory_crawler_destroy(editor.directory_crawler);
-    dynamic_array_destroy(&editor.particles);
-    dynamic_array_destroy(&editor.suggestions);
-    Rich_Text::destroy(&editor.editor_text);
-    string_destroy(&syntax_editor.command_buffer);
-    string_destroy(&syntax_editor.yank_string);
-    string_destroy(&syntax_editor.fuzzy_search_text);
-    string_destroy(&syntax_editor.search_text);
-    compiler_destroy();
-    for (int i = 0; i < editor.errors.size; i++) {
-        string_destroy(&editor.errors[i].message);
-    }
-    dynamic_array_destroy(&editor.errors);
-    dynamic_array_destroy(&editor.token_range_buffer);
-
-    dynamic_array_destroy(&editor.last_insert_commands);
-    string_destroy(&editor.last_recorded_code_completion);
-
-    dynamic_array_for_each(editor.tabs, editor_tab_destroy);
-    dynamic_array_destroy(&editor.tabs);
-
-    {
-        auto& replay = editor.input_replay;
-        string_destroy(&replay.code_state_afterwards);
-        string_destroy(&replay.code_state_initial);
-        dynamic_array_destroy(&replay.recorded_inputs);
-    }
-}
-
-void syntax_editor_set_text(String string)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    tab.cursor = text_index_make(0, 0);
-    source_code_fill_from_string(tab.code, string);
-    source_code_tokenize(tab.code);
-    for (int i = 0; i < tab.code->line_count; i++) {
-        auto_format_line(i);
-    }
-    code_history_reset(&tab.history);
-    tab.last_token_synchronized = history_get_timestamp(&tab.history);
-    tab.code->code_changed_since_last_compile = true;
-    editor.code_changed_since_last_compile = true;
-    tab.last_render_cursor_pos = tab.cursor;
-    tab.last_render_timestamp = tab.last_token_synchronized;
-    // compiler_compile_clean(editor.code, Compile_Type::ANALYSIS_ONLY, string_create(syntax_editor.file_path));
-}
-
-void syntax_editor_save_text_file()
-{
-    auto& editor = syntax_editor;
-    for (int i = 0; i < editor.tabs.size; i++)
-    {
-        auto& tab = editor.tabs[i];
-        String whole_text = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&whole_text));
-        source_code_append_to_string(tab.code, &whole_text);
-        auto path = tab.code->file_path;
-        auto success = file_io_write_file(path.characters, array_create_static((byte*)whole_text.characters, whole_text.size));
-        if (!success) {
-            logg("Saving file failed for path \"%s\"\n", path.characters);
-        }
-        else {
-            logg("Saved file \"%s\"!\n", path.characters);
-        }
-    }
-}
-
-void syntax_editor_synchronize_tokens()
-{
-    auto& editor = syntax_editor;
-
-    for (int tab_index = 0; tab_index < editor.tabs.size; tab_index++)
-    {
-        auto& tab = editor.tabs[tab_index];
-
-        // Get changes since last sync
-        Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>(1);
-        SCOPE_EXIT(dynamic_array_destroy(&changes));
-        auto now = history_get_timestamp(&tab.history);
-        history_get_changes_between(&tab.history, tab.last_token_synchronized, now, &changes);
-        tab.last_token_synchronized = now;
-        if (changes.size != 0) {
-            tab.code->code_changed_since_last_compile = true;
-            editor.code_changed_since_last_compile = true;
-        }
-
-        // Find out which lines were line_changed
-        auto line_changes = dynamic_array_create<int>();
-        SCOPE_EXIT(dynamic_array_destroy(&line_changes));
-        auto helper_add_delete_line_item = [&line_changes](int new_line_index, bool is_insert) -> void
-        {
-            for (int i = 0; i < line_changes.size; i++) {
-                auto& line_index = line_changes[i];
-                if (is_insert) {
-                    if (line_index >= new_line_index) {
-                        line_index += 1;
-                    }
-                }
-                else {
-                    if (line_index == new_line_index) {
-                        dynamic_array_swap_remove(&line_changes, i);
-                        i = i - 1;
-                        continue;
-                    }
-                    if (line_index > new_line_index) {
-                        line_index -= 1;
-                    }
-                }
-            }
-            // Note: Only changed lines need to be added to line_changes, so we don't add additions here
-        };
-
-        auto& folds = tab.folds;
-        bool folds_changed = false;
-        bool jump_list_changed = false;
-        bool update_camera = false;
-        for (int i = 0; i < changes.size; i++)
-        {
-            auto& change = changes[i];
-            int line_index = -1;
-            switch (change.type)
-            {
-            case Code_Change_Type::LINE_INSERT: 
-            {
-                int line = change.options.line_insert.line_index;
-                helper_add_delete_line_item(line, change.apply_forwards);
-                update_camera = true;
-
-                // Update folds
-                folds_changed = true;
-                for (int j = 0; j < folds.size; j++) 
-                {
-                    auto& fold = folds[j];
-
-                    bool inside_fold = false;
-                    bool before_fold = false;
-                    if (change.apply_forwards) {
-                        inside_fold = line > fold.line_start && line <= fold.line_end;
-                        before_fold = line <= fold.line_start;
-                    }
-                    else {
-                        inside_fold = line >= fold.line_start && line <= fold.line_end;
-                        before_fold = line < fold.line_start;
-                    }
-
-                    if (inside_fold) {
-                        dynamic_array_remove_ordered(&folds, j);
-                        j = j - 1;
-                    }
-                    else if (before_fold) {
-                        int diff = change.apply_forwards ? 1 : -1;
-                        fold.line_start += diff;
-                        fold.line_end += diff;
-                    }
-                }
-
-                // Update jump list
-                for (int j = 0; j < tab.jump_list.size; j++) 
-                {
-                    auto& pos = tab.jump_list[j];
-                    if (change.apply_forwards) {
-                        if (line <= pos.line) {
-                            pos.line += 1;
-                            jump_list_changed = true;
-                        }
-                    }
-                    else
-                    {
-                        if (line <= pos.line) {
-                            pos.line -= 1;
-                            jump_list_changed = true;
-                        }
-                    }
-                }
-                break;
-            }
-            case Code_Change_Type::CHAR_INSERT:
-            case Code_Change_Type::TEXT_INSERT:
-            case Code_Change_Type::LINE_INDENTATION_CHANGE:
-            {
-                int changed_line;
-                if (change.type == Code_Change_Type::CHAR_INSERT) {
-                    changed_line = change.options.char_insert.index.line;
-                }
-                else if (change.type == Code_Change_Type::TEXT_INSERT) {
-                    changed_line = change.options.text_insert.index.line;
-                }
-                else {
-                    changed_line = change.options.indentation_change.line_index;
-                    folds_changed = true;
-                }
-
-                bool found = false;
-                for (int j = 0; j < line_changes.size; j++) {
-                    if (line_changes[j] == changed_line) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    dynamic_array_push_back(&line_changes, changed_line);
-                }
-                break;
-            }
-            default: panic("");
-            }
-        }
-
-        if (update_camera)
-        {
-            auto& tab = editor.tabs[tab_index];
-            auto code = tab.code;
-
-            auto& cam_start = tab.cam_start;
-            auto& cam_end = tab.cam_end;
-            auto& code_box = editor.code_box;
-
-            auto& line_count = editor.visible_line_count;
-            line_count = (int)((code_box.max.y - code_box.min.y) / editor.text_display.char_size.y) + 1;
-
-            int last_visual_line_index = source_code_get_line(code, code->line_count - 1)->visible_index;
-            // Set cam-start to first line in fold
-            cam_start = math_clamp(cam_start, 0, code->line_count - 1);
-            cam_start = Line_Movement::move_to_fold_boundary(cam_start, -1, false);
-            cam_end = Line_Movement::move_visible_lines_up_or_down(cam_start, line_count);
-            cam_end = Line_Movement::move_to_fold_boundary(cam_end, 1, false);
-        }
-
-        // Update line_changed lines
-        for (int i = 0; i < line_changes.size; i++)
-        {
-            auto& index = line_changes[i];
-            // Tokenization is done by auto_format_line
-            bool changed = auto_format_line(index, tab_index);
-
-            // Remove-folds if lines inside where changed
-            for (int j = 0; j < folds.size; j++) {
-                auto& fold = folds[j];
-                if (index >= fold.line_start && index <= fold.line_end) {
-                    dynamic_array_remove_ordered(&folds, j);
-                    folds_changed = true;
-                    j = j - 1;
-                }
-            }
-        }
-
-        if (jump_list_changed)
-        {
-            auto code = tab.code;
-            // Prune jumps with same 
-            for (int i = 0; i < tab.jump_list.size; i++)
-            {
-                auto& jump = tab.jump_list[i];
-                Text_Index prev;
-                if (i > 0) {
-                    prev = tab.jump_list[i - 1];
-                }
-                else {
-                    prev = text_index_make(-20, -20);
-                }
-
-                bool should_delete = false;
-                if (jump.line < 0 || jump.line >= code->line_count) {
-                    should_delete = true;
-                }
-                else {
-                    auto line = source_code_get_line(code, jump.line);
-                    jump.character = math_clamp(jump.character, 0, line->text.size);
-                    if (jump.line == prev.line) {
-                        should_delete = true;
-                    }
-                }
-
-                if (should_delete)
-                {
-                    dynamic_array_remove_ordered(&tab.jump_list, i);
-                    if (tab.last_jump_index >= tab.jump_list.size) {
-                        tab.last_jump_index = math_maximum(0, tab.jump_list.size - 1);
-                    }
-                    i = i - 1;
-                }
-            }
-        }
-
-        if (folds_changed) {
-            syntax_editor_update_line_visible_and_fold_info(tab_index);
-        }
-    }
-}
-
-void syntax_editor_synchronize_with_compiler(bool generate_code)
-{
-    syntax_editor_synchronize_tokens();
-    auto& editor = syntax_editor;
-
-    if (!editor.code_changed_since_last_compile)
-    {
-        if (generate_code) {
-            if (editor.last_compile_was_with_code_gen) {
-                return;
-            }
-        }
-        else {
-            return;
-        }
-    }
-    syntax_editor.code_changed_since_last_compile = false;
-    syntax_editor.last_compile_was_with_code_gen = generate_code;
-
-    auto& main_tab = syntax_editor.tabs[editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index];
-    compiler_compile_clean(main_tab.code, (generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY));
-
-    // Collect errors from all compiler stages
-    dynamic_array_reset(&editor.suggestions);
-    {
-        for (int i = 0; i < editor.errors.size; i++) {
-            string_destroy(&editor.errors[i].message);
-        }
-        dynamic_array_reset(&editor.errors);
-
-        // Parse Errors
-        for (int i = 0; i < compiler.program_sources.size; i++)
-        {
-            auto code = compiler.program_sources[i];
-            auto& parse_errors = code->error_messages;
-            for (int j = 0; j < parse_errors.size; j++) {
-                auto& error = parse_errors[j];
-                dynamic_array_push_back(
-                    &editor.errors,
-                    error_display_make(string_create_static(error.msg), error.range, code, false, -1)
-                );
-            }
-        }
-
-        auto error_ranges = dynamic_array_create<Token_Range>(1);
-        SCOPE_EXIT(dynamic_array_destroy(&error_ranges));
-
-        // Semantic Analysis Errors
-        for (int i = 0; i < compiler.semantic_analyser->errors.size; i++)
-        {
-            auto& error = compiler.semantic_analyser->errors[i];
-            auto node = error.error_node;
-            assert(node != 0, "");
-            auto code = compiler_find_ast_source_code(node);
-
-            dynamic_array_reset(&error_ranges);
-            Parser::ast_base_get_section_token_range(code, node, error.section, &error_ranges);
-            for (int j = 0; j < error_ranges.size; j++) {
-                auto& range = error_ranges[j];
-                assert(token_index_compare(range.start, range.end) >= 0, "hey");
-                dynamic_array_push_back(&editor.errors, error_display_make(string_create_static(error.msg), range, code, j != 0, i));
-            }
-        }
-        dynamic_array_sort(&editor.errors, Comparator_Error_Display());
-    }
-}
-
-void syntax_editor_save_state(String file_path) 
-{
-    auto& editor = syntax_editor;
-
-    String output = string_create();
-    SCOPE_EXIT(string_destroy(&output));
-    string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
-    string_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
-
-    for (int i = 0; i < editor.tabs.size; i++)
-    {
-        auto& tab = editor.tabs[i];
-        string_append_formated(&output, "tab=%s\n", tab.code->file_path.characters);
-        string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
-        string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
-        string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
-        for (int j = 0; j < tab.folds.size; j++) {
-            auto& fold = tab.folds[j];
-            string_append_formated(&output, "fold=%d;%d;%d\n", fold.line_start, fold.line_end, fold.indentation);
-        }
-    }
-    file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
-}
-
-void syntax_editor_load_state(String file_path)
-{
-    auto& editor = syntax_editor;
-    editor.mode = Editor_Mode::NORMAL;
-
-    auto file_opt = file_io_load_text_file(file_path.characters);
-    SCOPE_EXIT(file_io_unload_text_file(&file_opt));
-    if (!file_opt.available) {
-        return;
-    }
-
-    String session = file_opt.value;
-    Array<String> lines = string_split(session, '\n');
-    SCOPE_EXIT(string_split_destroy(lines));
-
-    bool last_tab_valid = false;
-    int last_tab_index = -1;
-    bool first_tab = true;
-    int open_tab_index = -5;
-    int main_tab_index = -5;
-    for (int i = 0; i < lines.size; i++)
-    {
-        String line = lines[i];
-        auto seperator = string_find_character_index(&line, '=', 0);
-        if (!seperator.available) {
-            continue;
-        }
-        String setting = string_create_substring_static(&line, 0, seperator.value);
-        String value = string_create_substring_static(&line, seperator.value + 1, line.size);
-        if (setting.size == 0 || value.size == 0) continue;
-
-        int* int_value_to_set = nullptr;
-        if (string_equals_cstring(&setting, "open_tab")) {
-            int_value_to_set = &open_tab_index;
-        }
-        else if (string_equals_cstring(&setting, "main_tab")) {
-            int_value_to_set = &main_tab_index;
-        }
-        else if (string_equals_cstring(&setting, "tab")) 
-        {
-            if (first_tab) {
-                first_tab = false;
-                editor.main_tab_index = -100; // See close tab to check why
-                for (int i = 0; i < editor.tabs.size; i++) {
-                    syntax_editor_close_tab(0, true);
-                }
-                editor.main_tab_index = -1;
-            }
-
-            syntax_editor_switch_tab(syntax_editor_add_tab(value));
-            last_tab_valid = true;
-        }
-        else if (string_equals_cstring(&setting, "cursor_char")) {
-            if (last_tab_valid) {
-                int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.character;
-            }
-        }
-        else if (string_equals_cstring(&setting, "cursor_line")) {
-            if (last_tab_valid) {
-                int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.line;
-            }
-        }
-        else if (string_equals_cstring(&setting, "cam_start")) {
-            if (last_tab_valid) {
-                int_value_to_set = &editor.tabs[editor.open_tab_index].cam_start;
-            }
-        }
-        else if (string_equals_cstring(&setting, "fold")) 
-        {
-            auto parts = string_split(value, ';');
-            SCOPE_EXIT(string_split_destroy(parts));
-            if (parts.size != 3) {
-                continue;
-            }
-
-            int start, end, indentation;
-            bool success = true;
-
-            auto int_parse = string_parse_int(&parts[0]);
-            success = success && int_parse.available;
-            if (int_parse.available) { start = int_parse.value; }
-            int_parse = string_parse_int(&parts[1]);
-            success = success && int_parse.available;
-            if (int_parse.available) { end = int_parse.value; }
-            int_parse = string_parse_int(&parts[2]);
-            success = success && int_parse.available;
-            if (int_parse.available) { indentation = int_parse.value; }
-
-            if (!last_tab_valid) {
-                success = false;
-            }
-
-            // Sanity check (File may have been changed since last session)
-            if (success) 
-            {
-                auto& tab = editor.tabs[editor.open_tab_index];
-                if (start < 0 || start >= tab.code->line_count) {
-                    success = false;
-                }
-                if (end < 0 || end >= tab.code->line_count) {
-                    success = false;
-                }
-                int min_indent = 99999;
-                for (int i = start; i <= end && success && i < tab.code->line_count; i++) {
-                    auto src_line = source_code_get_line(tab.code, i);
-                    min_indent = math_minimum(min_indent, src_line->indentation);
-                }
-                if (min_indent != indentation) {
-                    success = false;
-                }
-            }
-
-            if (success) {
-                syntax_editor_add_fold(start, end, indentation);
-            }
-        }
-        else {
-            logg("Unrecognized session option: %s\n", setting.characters);
-        }
-
-        if (int_value_to_set != nullptr)
-        {
-            auto int_parse = string_parse_int(&value);
-            if (int_parse.available) {
-                *int_value_to_set = int_parse.value;
-            }
-        }
-    }
-
-    if (editor.tabs.size == 0) {
-        syntax_editor_switch_tab(syntax_editor_add_tab(string_create_static("upp_code/editor_text.upp")));
-        editor.main_tab_index = -1;
-    }
-    else
-    {
-        if (open_tab_index < editor.tabs.size) {
-            editor.open_tab_index = open_tab_index;
-        }
-        if (main_tab_index == -1 || (main_tab_index < editor.tabs.size && main_tab_index >= 0)) {
-            editor.main_tab_index = main_tab_index;
-        }
-    }
-    editor.code_changed_since_last_compile = true;
-    syntax_editor_synchronize_with_compiler(false);
-}
-
-
-// Helpers
-Error_Display error_display_make(String msg, Token_Range range, Source_Code* code, bool is_token_range_duplicate, int semantic_error_index)
-{
-    Error_Display result;
-    result.message = msg;
-    result.range = range;
-    result.code = code;
-    result.is_token_range_duplicate = is_token_range_duplicate;
-    result.semantic_error_index = semantic_error_index;
-    return result;
-}
-
-Token token_make_dummy() {
-    Token t;
-    t.type = Token_Type::INVALID;
-    t.start_index = 0;
-    t.end_index = 0;
-    return t;
-}
-
-int get_cursor_token_index(bool after_cursor) {
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& c = tab.cursor;
-
-    auto line = source_code_get_line(tab.code, c.line);
-    return character_index_to_token(&line->tokens, c.character, after_cursor);
-}
-
-Token get_cursor_token(bool after_cursor)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& c = tab.cursor;
-
-    int tok_index = get_cursor_token_index(after_cursor);
-    auto tokens = source_code_get_line(tab.code, c.line)->tokens;
-    if (tok_index >= tokens.size) return token_make_dummy();
-    return tokens[tok_index];
-}
-
-char get_cursor_char(char dummy_char)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& c = tab.cursor;
-
-    int index = c.character;
-    if (editor.mode == Editor_Mode::INSERT) {
-        index -= 1;
-    }
-    Source_Line* line = source_code_get_line(tab.code, c.line);
-    if (index >= line->text.size || index < 0) return dummy_char;
-    return line->text.characters[index];
-}
-
-Text_Index sanitize_index(Text_Index index) {
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto code = tab.code;
-
-    if (index.line < 0) index.line = 0;
-    if (index.line >= code->line_count) {
-        index.line = code->line_count - 1;
-    }
-    auto& text = source_code_get_line(code, index.line)->text;
-    index.character = math_clamp(index.character, 0, text.size);
-    return index;
-}
-
-void syntax_editor_sanitize_cursor() {
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& code = tab.code;
-    auto& index = tab.cursor;
-
-    if (index.line < 0) index.line = 0;
-    if (index.line >= code->line_count) {
-        index.line = code->line_count - 1;
-    }
-    auto& text = source_code_get_line(code, index.line)->text;
-    index.character = math_clamp(index.character, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
-}
-
-
-
-// Auto formating
-void token_expects_space_before_or_after(Source_Line* line, int token_index, bool& out_space_before, bool& out_space_after)
-{
-    out_space_after = false;
-    out_space_before = false;
-    if (token_index >= line->tokens.size) return;
-
-    // Handle different token types
-    const auto& token = line->tokens[token_index];
-    switch (token.type)
-    {
-    case Token_Type::COMMENT: {
-        out_space_before = true;
-        out_space_after = false;
-        return;
-    }
-    case Token_Type::INVALID:
-    case Token_Type::KEYWORD: {
-        out_space_before = true;
-        out_space_after = true;
-        if (token.options.keyword == Keyword::NEW && token_index + 1 < line->tokens.size) {
-            const auto& next = line->tokens[token_index + 1];
-            if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
-                out_space_after = false;
-            }
-        }
-        return;
-    }
-    case Token_Type::OPERATOR: {
-        // Rest of this function
-        break;
-    }
-    default: {
-        out_space_before = false;
-        out_space_after = false;
-        return;
-    }
-    }
-
-    // Handle different operator types
-    switch (token.options.op)
-    {
-        // Operators that always have spaces before and after
-    case Operator::ADDITION:
-    case Operator::DIVISON:
-    case Operator::LESS_THAN:
-    case Operator::GREATER_THAN:
-    case Operator::LESS_EQUAL:
-    case Operator::GREATER_EQUAL:
-    case Operator::EQUALS:
-    case Operator::NOT_EQUALS:
-    case Operator::POINTER_EQUALS:
-    case Operator::POINTER_NOT_EQUALS:
-    case Operator::DEFINE_COMPTIME:
-    case Operator::DEFINE_INFER:
-    case Operator::DEFINE_INFER_POINTER:
-    case Operator::DEFINE_INFER_RAW:
-    case Operator::AND:
-    case Operator::OR:
-    case Operator::ARROW:
-    case Operator::ASSIGN:
-    case Operator::ASSIGN_RAW:
-    case Operator::ASSIGN_POINTER:
-    case Operator::ASSIGN_ADD:
-    case Operator::ASSIGN_SUB:
-    case Operator::ASSIGN_DIV:
-    case Operator::ASSIGN_MULT:
-    case Operator::ASSIGN_MODULO:
-    case Operator::MODULO: {
-        out_space_after = true;
-        out_space_before = true;
-        break;
-    }
-
-                         // No spaces before or after
-    case Operator::DOT:
-    case Operator::TILDE:
-    case Operator::NOT:
-    case Operator::AMPERSAND:
-    case Operator::UNINITIALIZED:
-    case Operator::QUESTION_MARK:
-    case Operator::OPTIONAL_POINTER:
-    case Operator::DOLLAR: {
-        out_space_after = false;
-        out_space_before = false;
-        break;
-    }
-
-                         // Only space after
-    case Operator::COMMA:
-    case Operator::TILDE_STAR:
-    case Operator::TILDE_STAR_STAR:
-    case Operator::COLON:
-    case Operator::SEMI_COLON: {
-        out_space_after = true;
-        out_space_before = false;
-        break;
-    }
-
-                             // Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
-    case Operator::MULTIPLY: // Could also be pointer dereference...
-    case Operator::SUBTRACTION:
-    {
-        // If we don't have a token before or after, assume that it's a Unop
-        if (token_index <= 0 || token_index + 1 >= line->tokens.size) {
-            out_space_after = false;
-            out_space_before = false;
-            break;
-        }
-
-        // Otherwise use heuristic to check if it is a binop
-        // The heuristic currently used: Check if previous and next are 'values' (e.g. literals/identifiers or parenthesis), if both are, then binop
-        bool prev_is_value = false;
-        {
-            const auto& t = line->tokens[token_index - 1];
-            if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
-                prev_is_value = true;
-            }
-            if (t.type == Token_Type::PARENTHESIS && !t.options.parenthesis.is_open && t.options.parenthesis.type != Parenthesis_Type::BRACKETS) {
-                prev_is_value = true;
-            }
-        }
-        bool next_is_value = false;
-        {
-            const auto& t = line->tokens[token_index + 1];
-            if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
-                next_is_value = true;
-            }
-            if (t.type == Token_Type::PARENTHESIS && t.options.parenthesis.is_open) {
-                next_is_value = true;
-            }
-            if (t.type == Token_Type::OPERATOR) { // Operators usually indicate values, but this is just an approximation
-                next_is_value = true;
-            }
-            if (t.type == Token_Type::KEYWORD) {
-                switch (t.options.keyword)
-                {
-                case Keyword::CAST:
-                case Keyword::CAST_POINTER:
-                case Keyword::INSTANCIATE:
-                case Keyword::NEW:
-                    next_is_value = true;
-                }
-            }
-        }
-
-        if (prev_is_value && next_is_value) {
-            out_space_after = true;
-            out_space_before = true;
-        }
-        else {
-            out_space_after = false;
-            out_space_before = false;
-        }
-
-        break;
-    }
-
-    default: panic("");
-    }
-
-    return;
-}
-
-// If tab index == -1, then take current tab
-bool auto_format_line(int line_index, int tab_index)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[tab_index == -1 ? editor.open_tab_index : tab_index];
-    auto code = tab.code;
-
-    source_code_tokenize_line(code, line_index);
-    Source_Line* line = source_code_get_line(code, line_index);
-    if (line->is_comment) {
-        return false;
-    }
-
-    auto& text = line->text;
-    bool cursor_on_line = tab.cursor.line == line_index;
-    bool respect_cursor_space = editor.mode == Editor_Mode::INSERT && cursor_on_line;
-    auto& pos = tab.cursor.character;
-
-    // The auto-formater does the following things
-    //  * Removes whitespaces between non-space critical characters, e.g. x : int  -->  x: int
-    //  * Adds whitespaces between specific tokens,                  e.g. 5+15     -->  5 + 15
-    //  * For writing, spaces before/after cursor aren't removed or added
-    bool line_changed = false;
-
-    // Delete whitespaces before first token
-    {
-        int delete_until = line->text.size;
-        if (line->tokens.size > 0) {
-            delete_until = line->tokens[0].start_index;
-        }
-        for (int i = 0; i < delete_until; i++) {
-            delete_char_with_particles(&tab.history, text_index_make(line_index, 0));
-            line_changed = true;
-            pos = math_maximum(0, pos - 1);
-        }
-        // Update token ranges
-        for (int i = 0; i < line->tokens.size; i++) {
-            line->tokens[i].start_index -= delete_until;
-            line->tokens[i].end_index -= delete_until;
-        }
-    }
-
-    // Go through tokens and check whitespaces between
-    for (int i = 0; i < line->tokens.size - 1; i++)
-    {
-        Token& curr = line->tokens[i];
-        Token& next = line->tokens[i + 1];
-
-        // Check if spacing is expected between tokens
-        bool space_between_tokens_expected = false;
-        {
-            bool space_before, space_after;
-            token_expects_space_before_or_after(line, i, space_before, space_after);
-            if (space_after) space_between_tokens_expected = true;
-            token_expects_space_before_or_after(line, i + 1, space_before, space_after);
-            if (space_before) space_between_tokens_expected = true;
-
-            // Special handling for closing parenthesis, as I want a space there
-            if (curr.type == Token_Type::PARENTHESIS && !curr.options.parenthesis.is_open && curr.options.parenthesis.type != Parenthesis_Type::BRACKETS &&
-                next.type != Token_Type::OPERATOR && next.type != Token_Type::PARENTHESIS) {
-                space_between_tokens_expected = true;
-            }
-        }
-
-        // Check if spacing is as expected
-        int index_shift_for_tokens_after_current = 0;
-        if (curr.end_index == next.start_index)
-        {
-            if (space_between_tokens_expected) {
-                // Insert space between tokens
-                history_insert_char(&tab.history, text_index_make(line_index, curr.end_index), ' ');
-                index_shift_for_tokens_after_current = 1;
-            }
-        }
-        else if (curr.end_index != next.start_index)
-        {
-            char end = line->text.characters[curr.end_index - 1];
-            char start = line->text.characters[next.start_index];
-
-            // Remove excessive spaces (More than 1 space)
-            {
-                int space_count = next.start_index - curr.end_index;
-                int delete_count = space_count - 1;
-                if (respect_cursor_space && pos == curr.end_index + 1) {
-                    delete_count = 0;
-                }
-                for (int i = 0; i < delete_count; i++) {
-                    delete_char_with_particles(&tab.history, text_index_make(line_index, curr.end_index));
-                    index_shift_for_tokens_after_current -= 1;
-                }
-            }
-
-            // Check if the final space should be removed
-            bool remove_space = !space_between_tokens_expected;
-
-            // Don't remove space if it's critical
-            if (remove_space && char_is_space_critical(start) && char_is_space_critical(end)) {
-                remove_space = false;
-            }
-
-            // Don't remove space if it's just before the cursor token
-            if (curr.end_index + 1 == pos && respect_cursor_space) {
-                remove_space = false;
-            }
-
-            // Don't remove space if it could cause lexing to change
-            // Therefore check all operators if they contain a substring of the two added letters
-            for (int j = 0; j < (int)Operator::MAX_ENUM_VALUE && remove_space; j++)
-            {
-                String op_str = operator_get_string((Operator)j);
-                for (int k = 0; k + 1 < op_str.size; k++) {
-                    if (op_str.characters[k] == end && op_str.characters[k + 1] == start) {
-                        remove_space = false;
-                        break;
-                    }
-                }
-            }
-
-            if (remove_space) {
-                delete_char_with_particles(&tab.history, text_index_make(line_index, curr.end_index));
-                index_shift_for_tokens_after_current -= 1;
-            }
-        }
-
-        // Update cursor + follow tokens in space was removed
-        if (index_shift_for_tokens_after_current != 0)
-        {
-            line_changed = true;
-            if (pos > curr.end_index && cursor_on_line) {
-                pos = math_maximum(curr.end_index, pos + index_shift_for_tokens_after_current);
-                syntax_editor_sanitize_cursor();
-            }
-            for (int j = i + 1; j < line->tokens.size; j++) {
-                line->tokens[j].start_index += index_shift_for_tokens_after_current;
-                line->tokens[j].end_index += index_shift_for_tokens_after_current;
-            }
-        }
-    }
-
-    // Delete whitespaces after last token
-    if (line->tokens.size > 0)
-    {
-        const auto& last = line->tokens[line->tokens.size - 1];
-        if (last.type == Token_Type::COMMENT) {
-            return line_changed;
-        }
-
-        int delete_count = line->text.size - last.end_index; // Line text size changes, so store this first
-        bool keep_cursor_space = cursor_on_line && pos > last.end_index;
-        if (keep_cursor_space) delete_count -= 1;
-        for (int i = 0; i < delete_count; i++) {
-            delete_char_with_particles(&tab.history, text_index_make(line_index, line->text.size - 1));
-            line_changed = true;
-        }
-
-        if (keep_cursor_space) {
-            pos = last.end_index + 1;
-        }
-    }
-
-    return line_changed;
-}
-
-
-
-// Not sure what this is yet
-bool syntax_editor_add_position_to_jump_list()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& cursor = tab.cursor;
-
-    auto& jump_list = tab.jump_list;
-    auto& last_jump_index = tab.last_jump_index;
-    if (jump_list.size == 0) {
-        dynamic_array_push_back(&jump_list, cursor);
-        last_jump_index = 0;
-        return true;
-    }
-
-    if (last_jump_index >= 0)
-    {
-        Text_Index last_pos = jump_list.data[last_jump_index];
-        if (math_absolute(last_pos.line - cursor.line) <= 7) {
-            return false;
-        }
-
-        if (last_jump_index - 1 >= 0) {
-            Text_Index pre_pre_pos = jump_list.data[last_jump_index - 1];
-            if (pre_pre_pos.line == cursor.line) {
-                return false;
-            }
-        }
-        dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, last_jump_index + 1));
-    }
-    else {
-        dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, 1));
-    }
-
-    dynamic_array_push_back(&jump_list, cursor);
-    last_jump_index = jump_list.size - 1;
-    return true;
-}
-
-void syntax_editor_goto_node(AST::Node* node)
-{
-    auto& editor = syntax_editor;
-
-    // Switch tab to file with symbol
-    Source_Code* code = compiler_find_ast_source_code(node);
-    int index = syntax_editor_add_tab(code->file_path); // Doesn't add a tab if already open
-    syntax_editor_switch_tab(index);
-
-    auto& tab = editor.tabs[editor.open_tab_index];
-    Token_Index token = node->range.start;
-    auto line = source_code_get_line(tab.code, token.line);
-    tab.cursor.line = token.line;
-    if (token.token < line->tokens.size) {
-        tab.cursor.character = line->tokens[token.token].start_index;
-    }
-    else {
-        tab.cursor.character = 0;
-    }
-}
-
-
-// Code Queries
-Analysis_Pass* code_query_get_analysis_pass(AST::Node* base);
-Symbol* code_query_get_ast_node_symbol(AST::Node* base)
-{
-    if (base->type != AST::Node_Type::DEFINITION_SYMBOL &&
-        base->type != AST::Node_Type::PATH_LOOKUP &&
-        base->type != AST::Node_Type::SYMBOL_LOOKUP &&
-        base->type != AST::Node_Type::PARAMETER) {
-        return 0;
-    }
-
-    auto pass = code_query_get_analysis_pass(base);
-    if (pass == 0) return 0;
-    switch (base->type)
-    {
-    case AST::Node_Type::DEFINITION_SYMBOL: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(base), Info_Query::TRY_READ);
-        return info == 0 ? 0 : info->symbol;
-    }
-    case AST::Node_Type::SYMBOL_LOOKUP: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Lookup>(base), Info_Query::TRY_READ);
-        return info == 0 ? 0 : info->symbol;
-    }
-    case AST::Node_Type::PATH_LOOKUP: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Path_Lookup>(base), Info_Query::TRY_READ);
-        return info == 0 ? 0 : info->symbol;
-    }
-    case AST::Node_Type::PARAMETER: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(base), Info_Query::TRY_READ);
-        return info == 0 ? 0 : info->symbol;
-    }
-    }
-    panic("");
-    return 0;
-}
-
-Analysis_Pass* code_query_get_analysis_pass(AST::Node* base)
-{
-    auto& mappings = compiler.semantic_analyser->ast_to_pass_mapping;
-    while (base != 0)
-    {
-        auto passes_opt = hashtable_find_element(&mappings, base);
-        if (passes_opt != 0) {
-            auto& passes = passes_opt->passes;
-            assert(passes.size != 0, "");
-            for (int i = 0; i < passes.size; i++) {
-                auto pass = passes[i];
-                if (pass->is_header_reanalysis && pass->instance_workload != nullptr) return pass;
-            }
-
-            if (passes.size > 1) {
-                return passes[1];
-            }
-            return passes[0];
-        }
-        base = base->parent;
-    }
-    return 0;
-}
-
-Symbol_Table* code_query_get_ast_node_symbol_table(AST::Node* base)
-{
-    /*
-    The three Nodes that have Symbol tables are:
-        - Module
-        - Function (Parameter symbol are here
-        - Code-Block
-    */
-    auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
-    if (code->module_progress == 0) return compiler.semantic_analyser->root_symbol_table ;
-    Symbol_Table* table = code->module_progress->module_analysis->symbol_table;
-    Analysis_Pass* pass = code_query_get_analysis_pass(base);
-    if (pass == 0) return table;
-    while (base != 0)
-    {
-        switch (base->type)
-        {
-        case AST::Node_Type::MODULE: {
-            auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(base), Info_Query::TRY_READ);
-            if (info == 0) { break; }
-            return info->symbol_table;
-        }
-        case AST::Node_Type::CODE_BLOCK: {
-            auto block = pass_get_node_info(pass, AST::downcast<AST::Code_Block>(base), Info_Query::TRY_READ);
-            if (block == 0) { break; }
-            return block->symbol_table;
-        }
-        case AST::Node_Type::EXPRESSION: {
-            auto expr = AST::downcast<AST::Expression>(base);
-            if (expr->type == AST::Expression_Type::FUNCTION) {
-                if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                    return ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
-                }
-            }
-            break;
-        }
-        }
-        base = base->parent;
-    }
-    return table;
-}
-
-
-
-// Code Completion
-String code_completion_get_partially_typed_word()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    syntax_editor_synchronize_tokens();
-    auto token = get_cursor_token(false);
-    String result;
-    if (token.type == Token_Type::IDENTIFIER) {
-        result = *token.options.identifier;
-    }
-    else {
-        return string_create_static("");
-    }
-
-    auto pos = tab.cursor.character;
-    if (pos < token.end_index) {
-        result = string_create_substring_static(&result, 0, pos - token.start_index);
-    }
-    return result;
-}
-
-void code_completion_find_dotcalls_in_context_recursive(
-    Operator_Context* context, Hashset<Operator_Context*>* visited, Datatype* datatype, Dynamic_Array<Editor_Suggestion>* unranked_suggestions
-)
-{
-    if (hashset_contains(visited, context)) {
-        return;
-    }
-    hashset_insert_element(visited, context);
-
-    auto iter = hashtable_iterator_create(&context->custom_operators);
-    while (hashtable_iterator_has_next(&iter)) {
-        Custom_Operator_Key* key = iter.key;
-        Custom_Operator* op = iter.value;
-        if (key->type == AST::Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
-            String* id = key->options.dot_call.id;
-            fuzzy_search_add_item(*id, unranked_suggestions->size);
-            dynamic_array_push_back(unranked_suggestions, suggestion_make_id(id, Syntax_Color::FUNCTION));
-        }
-        hashtable_iterator_next(&iter);
-    }
-
-    for (int i = 0; i < context->context_imports.size; i++) {
-        auto other_context = context->context_imports[i];
-        code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions);
-    }
-}
-
-void suggestions_fill_with_file_directory(String search_path)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    Array<String> path_parts = string_split(search_path, '/');
-    SCOPE_EXIT(string_split_destroy(path_parts));
-
-    Directory_Crawler* crawler = editor.directory_crawler;
-    directory_crawler_set_path_to_file_dir(crawler, tab.code->file_path);
-
-    bool success = true;
-    for (int i = 0; i < path_parts.size - 1 && success; i++)
-    {
-        String part = path_parts[i];
-        auto files = directory_crawler_get_content(crawler);
-        bool found = false;
-        for (int j = 0; j < files.size; j++) {
-            auto file = files[j];
-            if (string_equals(&file.name, &part)) {
-                directory_crawler_go_down_one_directory(crawler, j);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            success = false;
-        }
-    }
-    if (!success) {
-        return;
-    }
-
-    // Fuzzy find file
-    auto files = directory_crawler_get_content(crawler);
-    fuzzy_search_start_search(path_parts[path_parts.size - 1], 10);
-    for (int i = 0; i < files.size; i++) {
-        auto& file = files[i];
-        if (!file.is_directory) {
-            if (!string_ends_with(file.name.characters, ".upp")) {
-                continue;
-            }
-        }
-        fuzzy_search_add_item(file.name, i);
-    }
-
-    auto items = fuzzy_search_get_results(true, 3);
-    auto& suggestions = editor.suggestions;
-    dynamic_array_reset(&suggestions);
-    for (int i = 0; i < items.size; i++) {
-        dynamic_array_push_back(&suggestions, suggestion_make_file(items[i].user_index));
-    }
-}
-
-void code_completion_find_suggestions()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& suggestions = editor.suggestions;
-    auto& cursor = tab.cursor;
-
-    dynamic_array_reset(&suggestions);
-    if (editor.mode != Editor_Mode::INSERT || cursor.character == 0) {
-        return;
-    }
-
-    if (editor.input_replay.currently_recording || editor.input_replay.currently_replaying) {
-        return;
-    }
-
-    // Exit early if we are not in a completion context (Comments etc...)
-    {
-        syntax_editor_synchronize_tokens();
-        auto current_token = get_cursor_token(false);
-        if (current_token.type == Token_Type::COMMENT) {
-            return;
-        }
-    }
-
-    Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
-    SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
-    auto& ids = compiler.predefined_ids;
-
-    auto partially_typed = code_completion_get_partially_typed_word();
-    fuzzy_search_start_search(partially_typed, 10);
-
-    // Check if we are on special node
-    syntax_editor_synchronize_with_compiler(false);
-    Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(false));
-    auto node = Parser::find_smallest_enclosing_node(upcast(tab.code->root), cursor_token_index);
-
-    Symbol_Table* specific_table = 0;
-
-    // Check for specific contexts where we can fill the suggestions more smartly (e.g. when typing struct member, module-path, auto-enum, ...)
-    if (node->type == AST::Node_Type::EXPRESSION)
-    {
-        auto expr = AST::downcast<AST::Expression>(node);
-        auto pass = code_query_get_analysis_pass(node);
-
-        // Check if Expression is Member-Access
-        Datatype* type = 0;
-        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0) {
-            auto info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
-            if (info != 0) {
-                type = expression_info_get_type(info, false);
-                if (info->result_type == Expression_Result_Type::TYPE) {
-                    type = info->options.type;
-                }
-                if (info->cast_info.initial_type->mods.optional_flags != 0) {
-                    fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
-                    type = nullptr;
-                }
-            }
-        }
-        else if (expr->type == AST::Expression_Type::AUTO_ENUM && pass != 0) {
-            auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (info != 0) {
-                type = expression_info_get_type(info, false);
-            }
-        }
-
-        if (type != 0)
-        {
-            auto original = type;
-            type = type->base_type;
-            switch (type->type)
-            {
-            case Datatype_Type::ARRAY:
-            case Datatype_Type::SLICE: {
-                fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
-                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
-                fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
-                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
-                break;
-            }
-            case Datatype_Type::OPTIONAL_TYPE: {
-                fuzzy_search_add_item(*ids.value, unranked_suggestions.size);
-                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
-                fuzzy_search_add_item(*ids.is_available, unranked_suggestions.size);
-                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.is_available));
-                break;
-            }
-            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-            case Datatype_Type::STRUCT:
-            {
-                Datatype_Struct* structure = 0;
-                if (type->type == Datatype_Type::STRUCT) {
-                    structure = downcast<Datatype_Struct>(type);
-                }
-                else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
-                    structure = downcast<Datatype_Struct_Instance_Template>(type)->struct_base->body_workload->struct_type;
-                }
-
-                Struct_Content* content = type_mods_get_subtype(structure, original->mods);
-                auto& members = content->members;
-                for (int i = 0; i < members.size; i++) {
-                    auto& mem = members[i];
-                    fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
-                }
-                if (content->subtypes.size > 0) {
-                    fuzzy_search_add_item(*ids.tag, unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, content->tag_member.type, ids.tag));
-                }
-                for (int i = 0; i < content->subtypes.size; i++) {
-                    auto sub = content->subtypes[i];
-                    fuzzy_search_add_item(*sub->name, unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(sub->name));
-                }
-                // Add base name if available
-                if (original->mods.subtype_index->indices.size > 0) {
-                    Struct_Content* content = type_mods_get_subtype(structure, type->mods, type->mods.subtype_index->indices.size - 1);
-                    fuzzy_search_add_item(*content->name, unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(content->name));
-                }
-                break;
-            }
-            case Datatype_Type::ENUM:
-                auto& members = downcast<Datatype_Enum>(type)->members;
-                for (int i = 0; i < members.size; i++) {
-                    auto& mem = members[i];
-                    fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
-                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_enum_member(downcast<Datatype_Enum>(type), mem.name));
-                }
-                break;
-            }
-
-            // Search for dot-calls
-            if (type->type == Datatype_Type::STRUCT)
-            {
-                auto struct_type = downcast<Datatype_Struct>(type);
-                if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-                    type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-                }
-            }
-            auto context = code_query_get_ast_node_symbol_table(node)->operator_context;
-            Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
-            SCOPE_EXIT(hashset_destroy(&visited));
-            code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions);
-        }
-    }
-    else if (node->type == AST::Node_Type::PATH_LOOKUP)
-    {
-        // This probably only happens if the last token was ~
-        int cursor_token_index = get_cursor_token_index(false);
-        auto prev_token = get_cursor_token(false);
-        if (prev_token.type == Token_Type::OPERATOR && prev_token.options.op == Operator::TILDE && cursor_token_index > 0) {
-            // Try to get token before ~, which should be an identifier...
-            Token_Index prev = token_index_make(cursor.line, cursor_token_index - 1);
-            auto node = Parser::find_smallest_enclosing_node(upcast(tab.code->root), prev);
-            auto pass = code_query_get_analysis_pass(node);
-            if (node->type == AST::Node_Type::SYMBOL_LOOKUP && pass != 0) {
-                auto info = pass_get_node_info(pass, AST::downcast<AST::Symbol_Lookup>(node), Info_Query::TRY_READ);
-                if (info != 0) {
-                    auto symbol = info->symbol;
-                    if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module.symbol_table;
-                    }
-                }
-            }
-        }
-    }
-    else if (node->type == AST::Node_Type::SYMBOL_LOOKUP)
-    {
-        auto lookup = AST::downcast<AST::Symbol_Lookup>(node);
-        auto path = AST::downcast<AST::Path_Lookup>(node->parent);
-        auto pass = code_query_get_analysis_pass(node);
-        if (pass != 0)
-        {
-            // Find previous part of the current path
-            int prev_index = -1;
-            for (int i = 0; i < path->parts.size; i++) {
-                if (path->parts[i] == lookup) {
-                    prev_index = i - 1;
-                    break;
-                }
-            }
-            // Try to get symbol table from there
-            if (prev_index != -1) {
-                auto info = pass_get_node_info(pass, path->parts[prev_index], Info_Query::TRY_READ);
-                if (info != 0) {
-                    auto symbol = info->symbol;
-                    if (symbol->type == Symbol_Type::MODULE) {
-                        specific_table = symbol->options.module.symbol_table;
-                    }
-                }
-            }
-        }
-    }
-    else
-    {
-        // Check if we should fill context options
-        bool fill_context_options = false;
-        auto& tokens = source_code_get_line(tab.code, cursor.line)->tokens;
-        int token_index = get_cursor_token_index(false);
-        if (tokens.size != 0 && tokens[0].type == Token_Type::KEYWORD && tokens[0].options.keyword == Keyword::CONTEXT) {
-            if (cursor.character == 8) {
-                fill_context_options = true;
-            }
-            else if (token_index == 1) {
-                auto token = get_cursor_token(false);
-                if (cursor.character <= token.end_index) {
-                    fill_context_options = true;
-                }
-            }
-        }
-
-        if (fill_context_options) {
-            fuzzy_search_add_item(*ids.set_cast_option, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.set_cast_option));
-            fuzzy_search_add_item(*ids.id_import, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.id_import));
-            fuzzy_search_add_item(*ids.add_binop, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_binop));
-            fuzzy_search_add_item(*ids.add_unop, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_unop));
-            fuzzy_search_add_item(*ids.add_cast, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_cast));
-            fuzzy_search_add_item(*ids.add_dot_call, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_dot_call));
-            fuzzy_search_add_item(*ids.add_array_access, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_array_access));
-            fuzzy_search_add_item(*ids.add_iterator, unranked_suggestions.size);
-            dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_iterator));
-        }
-
-        bool add_block_id_suggestions = false;
-        auto cursor_token = get_cursor_token(false);
-        if (cursor_token.type == Token_Type::IDENTIFIER) {
-            if (token_index > 0) {
-                const auto& prev_token = tokens[token_index - 1];
-                if (prev_token.type == Token_Type::KEYWORD && (prev_token.options.keyword == Keyword::BREAK || prev_token.options.keyword == Keyword::CONTINUE)) {
-                    add_block_id_suggestions = true;
-                }
-            }
-        }
-        else if (cursor_token.type == Token_Type::KEYWORD && (cursor_token.options.keyword == Keyword::BREAK || cursor_token.options.keyword == Keyword::CONTINUE)) {
-            add_block_id_suggestions = cursor.character > cursor_token.end_index;
-        }
-
-        if (add_block_id_suggestions && !fill_context_options)
-        {
-            // Add block labels in parent blocks as suggestions
-            AST::Node* iter = node->parent;
-            while (node->parent != 0)
-            {
-                if (node->type == AST::Node_Type::CODE_BLOCK) {
-                    auto block = downcast<AST::Code_Block>(node);
-                    if (block->block_id.available) {
-                        fuzzy_search_add_item(*block->block_id.value, unranked_suggestions.size);
-                        dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(block->block_id.value));
-                    }
-                }
-                else if (node->type == AST::Node_Type::MODULE || node->type == AST::Node_Type::DEFINITION) {
-                    break;
-                }
-                node = node->parent;
-            }
-        }
-
-        if (tokens.size > 0 && token_index > 0 && token_index < tokens.size &&
-            tokens[token_index - 1].type == Token_Type::KEYWORD && tokens[token_index - 1].options.keyword == Keyword::IMPORT &&
-            cursor_token.type == Token_Type::LITERAL && cursor_token.options.literal_value.type == Literal_Type::STRING)
-        {
-            String* path = cursor_token.options.literal_value.options.string;
-            suggestions_fill_with_file_directory(*path);
-            return;
-        }
-    }
-
-    // If no text has been written yet and we aren't on some special context (e.g. no suggestions), return
-    if (specific_table == nullptr && fuzzy_search_get_item_count() == 0 && partially_typed.size == 0) {
-        return;
-    }
-
-    // Search symbols
-    if (fuzzy_search_get_item_count() == 0)
-    {
-        bool search_includes = specific_table == 0;
-        if (specific_table == 0) {
-            specific_table = code_query_get_ast_node_symbol_table(node);
-        }
-        if (specific_table != 0) {
-            auto results = dynamic_array_create<Symbol*>(1);
-            SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_query_id(specific_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &results);
-            for (int i = 0; i < results.size; i++) {
-                fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
-                dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
-            }
-        }
-    }
-
-    auto results = fuzzy_search_get_results(true, 3);
-    for (int i = 0; i < results.size; i++) {
-        dynamic_array_push_back(&syntax_editor.suggestions, unranked_suggestions[results[i].user_index]);
-    }
-}
-
-void code_completion_insert_suggestion()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    String replace_string;
-    bool is_file_replacement = false;
-    if (editor.record_insert_commands)
-    {
-        auto& suggestions = editor.suggestions;
-        string_reset(&editor.last_recorded_code_completion);
-        if (suggestions.size == 0) return;
-        replace_string = *suggestions[0].text;
-        if (suggestions[0].type == Suggestion_Type::FILE) {
-            is_file_replacement = true;
-        }
-        string_append_string(&editor.last_recorded_code_completion, &replace_string);
-    }
-    else {
-        replace_string = editor.last_recorded_code_completion;
-    }
-    if (replace_string.size == 0) return;
-    if (tab.cursor.character == 0) return;
-
-
-    // Remove current token
-    auto line = source_code_get_line(tab.code, tab.cursor.line);
-    int start_pos = tab.cursor.character;
-    if (get_cursor_char('!') != '.')
-    {
-        int token_index = get_cursor_token_index(false);
-        start_pos = line->tokens[token_index].start_index;
-        if (is_file_replacement) {
-            // Find last / or token start "
-            Optional<int> quote_pos = string_find_character_index_reverse(&line->text, '\"', tab.cursor.character - 1);
-            Optional<int> slash_pos = string_find_character_index_reverse(&line->text, '/', tab.cursor.character - 1);
-            if (quote_pos.available) {
-                start_pos = math_maximum(start_pos, quote_pos.value + 1);
-            }
-            if (slash_pos.available) {
-                start_pos = math_maximum(start_pos, slash_pos.value + 1);
-            }
-        }
-        
-        history_delete_text(&tab.history, text_index_make(tab.cursor.line, start_pos), tab.cursor.character);
-    }
-
-    // Insert suggestion instead
-    tab.cursor.character = start_pos;
-    insert_text_with_particles(&tab.history, tab.cursor, replace_string);
-    tab.cursor.character += replace_string.size;
-    auto_format_line(tab.cursor.line);
-}
-
-
-
-// Editor update
-void editor_enter_insert_mode()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    if (syntax_editor.mode == Editor_Mode::INSERT) {
-        return;
-    }
-    if (syntax_editor.record_insert_commands) {
-        dynamic_array_reset(&syntax_editor.last_insert_commands);
-    }
-    syntax_editor.mode = Editor_Mode::INSERT;
-    history_start_complex_command(&tab.history);
-}
-
-void editor_leave_insert_mode()
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    if (syntax_editor.mode != Editor_Mode::INSERT) {
-        return;
-    }
-    syntax_editor.mode = Editor_Mode::NORMAL;
-    history_stop_complex_command(&tab.history);
-    history_set_cursor_pos(&tab.history, tab.cursor);
-    dynamic_array_reset(&editor.suggestions);
-    auto_format_line(tab.cursor.line);
-}
-
-void editor_split_line_at_cursor(int indentation_offset)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto& mode = editor.mode;
-    auto& cursor = tab.cursor;
-
-    Source_Line* line = source_code_get_line(tab.code, cursor.line);
-    auto& text = line->text;
-    int line_size = text.size; // Text may be invalid after applying history changes
-    String cutout = string_create_substring_static(&text, cursor.character, text.size);
-
-    history_start_complex_command(&tab.history);
-    SCOPE_EXIT(history_stop_complex_command(&tab.history));
-
-    int new_line_index = cursor.line + 1;
-    history_insert_line(&tab.history, new_line_index, math_maximum(0, line->indentation + indentation_offset));
-
-    if (cursor.character != line_size) {
-        history_insert_text(&tab.history, text_index_make(new_line_index, 0), cutout);
-        history_delete_text(&tab.history, cursor, line_size);
-    }
-    cursor = text_index_make(new_line_index, 0);
-}
-
+// Helper Namespaces
 namespace Line_Movement
 {
     int move_lines_up_or_down(int line_index, int steps)
@@ -2439,7 +490,6 @@ namespace Line_Movement
     }
 }
 
-
 namespace Motions
 {
     Source_Line* get_line(const Text_Index& pos) {
@@ -2499,6 +549,40 @@ namespace Motions
 
         if (pos.line == 0) return;
         pos = text_index_make_line_end(code, pos.line - 1);
+    }
+
+    int move_while_condition(String text, int char_index, bool forward, char_test_fn condition, void* userdata, bool invert_condition, bool move_out_of_condition)
+    {
+        if (text.size == 0) return 0;
+        char_index = math_clamp(char_index, 0, text.size);
+        bool cond = condition(text.characters[char_index], condition);
+        if (invert_condition) {
+            cond = !cond;
+        }
+        if (!cond) return char_index;
+
+        const int dir = forward ? 1 : -1;
+        while (true)
+        {
+            int next_char_index = char_index + dir;
+            if (next_char_index < 0) {
+                return 0;
+            }
+            else if (next_char_index > text.size) {
+                return text.size;
+            }
+            char next_char = text[next_char_index];
+
+            bool cond = condition(next_char, userdata);
+            if (invert_condition) {
+                cond = !cond;
+            }
+            if (!cond) {
+                return move_out_of_condition ? next_char_index : char_index;
+            }
+            char_index = next_char_index;
+        }
+        return 0;
     }
 
     char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
@@ -3047,7 +1131,7 @@ namespace Parsing
             input.type = Insert_Command_Type::DELETE_TO_LINE_START;
         }
         else if (msg.key_code == Key_Code::SPACE && msg.key_down) {
-            if (msg.shift_down && syntax_editor.suggestions.size > 0) {
+            if (msg.shift_down) {
                 input.type = Insert_Command_Type::INSERT_CODE_COMPLETION;
             }
             else {
@@ -3306,6 +1390,2345 @@ namespace Parsing
     }
 };
 
+namespace Text_Editing
+{
+    void particles_add_in_range(Text_Range range, vec3 base_color)
+    {
+        auto& editor = syntax_editor;
+        auto& tab = editor.tabs[editor.open_tab_index];
+    
+        auto& line_count = editor.visible_line_count;
+        int cam_start_visual = source_code_get_line(tab.code, tab.cam_start)->visible_index;
+        int cam_end_visual = source_code_get_line(tab.code, tab.cam_end)->visible_index;
+        int last_line_visible_index = -1;
+        for (int i = range.start.line; i <= range.end.line; i++)
+        {
+            auto line = source_code_get_line(tab.code, i);
+            if (line->visible_index == last_line_visible_index) continue;
+            last_line_visible_index = line->visible_index;
+            if (line->visible_index < cam_start_visual) continue;
+            if (line->visible_index > cam_end_visual) break;
+    
+            int start = range.start.line == i ? range.start.character : 0;
+            int end = range.end.line == i ? range.end.character : line->text.size;
+            if (line->is_folded) {
+                start = 0;
+                end = 4;
+            }
+            start += line->indentation * 4;
+            end += line->indentation * 4;
+    
+            auto char_size = editor.text_display.char_size;
+            vec2 min = vec2(editor.code_box.min.x, editor.code_box.max.y - char_size.y * (line->visible_index - cam_start_visual + 1)) + vec2(char_size.x * start, 0.0f);
+            vec2 max = vec2(editor.code_box.min.x, editor.code_box.max.y - char_size.y * (line->visible_index - cam_start_visual)) + vec2(char_size.x * end, 0.0f);
+    
+            float radius = 10;
+            float dist_between = 4;
+            int x_count = (max.x - min.x) / dist_between;
+            int y_count = (max.y - min.y) / dist_between;
+            for (int x = 0; x < x_count; x++) {
+                for (int y = 0; y < y_count; y++) {
+                    if (random_next_float(&editor.random) < 0.1f) continue;
+    
+                    Particle p;
+                    p.color = base_color;
+                    p.color.x += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
+                    p.color.y += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
+                    p.color.z += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
+    
+                    p.position.x = min.x + (x / (float)x_count) * (max.x - min.x);
+                    p.position.y = min.y + (y / (float)y_count) * (max.y - min.y);
+                    p.radius = radius + (random_next_float(&editor.random) * 5) - 2;
+                    p.creation_time = editor.last_update_time;
+                    p.life_time = 0.3f + random_next_float(&editor.random) * 1.5f;
+    
+                    vec2 vel = vec2(random_next_float(&editor.random) - 0.5f, random_next_float(&editor.random) - 0.5f) * 2.0f;
+                    vel = vector_normalize_safe(vel);
+                    vel = vel * (30 + random_next_float(&editor.random) * 100);
+                    p.velocity = vel;
+                    dynamic_array_push_back(&editor.particles, p);
+                }
+            }
+        }
+    }
+
+    void insert_char(Text_Index index, char c, bool with_particles) 
+    {
+        auto& editor = syntax_editor;
+        auto history = &editor.tabs[editor.open_tab_index].history;
+        history_insert_char(history, index, c);
+
+        if (with_particles)
+        {
+            Text_Range range;
+            range.start = index;
+            range.end = index;
+            range.end.character += 1;
+            particles_add_in_range(range, vec3(0.5f, 0.5f, 0.5f));
+        }
+    }
+
+    void insert_text(Text_Index index, String str, bool with_particles)
+    {
+        auto& editor = syntax_editor;
+        auto history = &editor.tabs[editor.open_tab_index].history;
+        history_insert_text(history, index, str);
+
+        if (with_particles) {
+            Text_Range range;
+            range.start = index;
+            range.end = index;
+            range.end.character += str.size;
+            particles_add_in_range(range, vec3(0.5f, 0.5f, 0.5f));
+        }
+    }
+    
+    void delete_text(Text_Index index, int char_end, bool with_particles)
+    {
+        if (with_particles) {
+            Text_Range range = text_range_make(index, text_index_make(index.line, char_end));
+            particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
+        }
+
+        auto& editor = syntax_editor;
+        auto history = &editor.tabs[editor.open_tab_index].history;
+        history_delete_text(history, index, char_end);
+    }
+
+    void delete_char(Text_Index index, bool with_particles)
+    {
+        if (with_particles) {
+            particles_add_in_range(text_range_make(index, text_index_make(index.line, index.character + 1)), vec3(0.8f, 0.2f, 0.2f));
+        }
+
+        auto& editor = syntax_editor;
+        auto history = &editor.tabs[editor.open_tab_index].history;
+        history_delete_char(history, index);
+    }
+
+    void remove_line(int line_index, bool with_particles)
+    {
+        auto& editor = syntax_editor;
+        auto& tab = editor.tabs[editor.open_tab_index];
+        auto history = &tab.history;
+
+        if (with_particles) {
+            Text_Range range = text_range_make(text_index_make(line_index, 0), text_index_make_line_end(tab.code, line_index));
+            particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
+        }
+
+        history_remove_line(history, line_index);
+    }
+
+    // Note: Does not yank text
+    void delete_text_range(Text_Range range, bool is_line_motion, bool with_particles)
+    {
+        auto& editor = syntax_editor;
+        auto& tab = editor.tabs[editor.open_tab_index];
+        auto code = tab.code;
+        auto history = &tab.history;
+    
+        if (is_line_motion) {
+            range.start.character = 0;
+            range.end = text_index_make_line_end(code, range.end.line);
+        }
+        if (with_particles) {
+            particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
+        }
+        history_start_complex_command(history);
+        SCOPE_EXIT(history_stop_complex_command(history));
+    
+        if (is_line_motion) {
+            for (int i = range.start.line; i <= range.end.line; i++) {
+                remove_line(range.start.line, false);
+            }
+            return;
+        }
+    
+        // Handle single line case
+        if (range.start.line == range.end.line) {
+            delete_text(range.start, range.end.character, false);
+            return;
+        }
+    
+        // Delete text in first line
+        auto line = Motions::get_line(range.start);
+        auto end_line = Motions::get_line(range.end);
+        if (end_line == nullptr || line == nullptr) return;
+        delete_text(range.start, line->text.size, false);
+    
+        // Append remaining text of last-line into first line
+        String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
+        insert_text(range.start, remainder, false);
+        if (line->indentation != end_line->indentation && range.start.character == 0) {
+            history_change_indent(history, range.start.line, end_line->indentation);
+        }
+    
+        // Delete all lines inbetween
+        for (int i = range.start.line + 1; range.start.line + 1 < code->line_count && i <= range.end.line; i++) {
+            remove_line(range.start.line + 1, false);
+        }
+    }
+
+    // If tab index == -1, then take current tab
+    bool auto_format_line(int line_index, int tab_index)
+    {
+        auto& editor = syntax_editor;
+        auto& tab = editor.tabs[tab_index == -1 ? editor.open_tab_index : tab_index];
+        auto code = tab.code;
+    
+        Source_Line* line = source_code_get_line(code, line_index);
+        if (line->is_comment) {
+            return false;
+        }
+
+        Dynamic_Array<Token> tokens = dynamic_array_create<Token>();
+        SCOPE_EXIT(dynamic_array_destroy(&tokens));
+        lexer_tokenize_line(line->text, &tokens, &editor.auto_format_identifier_pool);
+
+        auto token_expects_space_before_or_after = [](Dynamic_Array<Token> tokens, int token_index, bool& out_space_before, bool& out_space_after, bool& out_ignore_lex_changes)
+        {
+            out_space_after = false;
+            out_space_before = false;
+            if (token_index >= tokens.size) return;
+        
+            // Handle different token types
+            const auto& token = tokens[token_index];
+            switch (token.type)
+            {
+            case Token_Type::COMMENT: {
+                out_space_before = true;
+                out_space_after = false;
+                return;
+            }
+            case Token_Type::INVALID:
+            case Token_Type::KEYWORD: {
+                out_space_before = true;
+                out_space_after = true;
+                if (token.options.keyword == Keyword::NEW && token_index + 1 < tokens.size) {
+                    const auto& next = tokens[token_index + 1];
+                    if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
+                        out_space_after = false;
+                    }
+                }
+                return;
+            }
+            case Token_Type::OPERATOR: {
+                // Rest of this function
+                break;
+            }
+            default: {
+                out_space_before = false;
+                out_space_after = false;
+                return;
+            }
+            }
+        
+            // Handle different operator types
+            switch (token.options.op)
+            {
+            // Operators that always have spaces before and after
+            case Operator::ADDITION:
+            case Operator::DIVISON:
+            case Operator::LESS_THAN:
+            case Operator::GREATER_THAN:
+            case Operator::LESS_EQUAL:
+            case Operator::GREATER_EQUAL:
+            case Operator::EQUALS:
+            case Operator::NOT_EQUALS:
+            case Operator::POINTER_EQUALS:
+            case Operator::POINTER_NOT_EQUALS:
+            case Operator::DEFINE_COMPTIME:
+            case Operator::DEFINE_INFER:
+            case Operator::DEFINE_INFER_POINTER:
+            case Operator::DEFINE_INFER_RAW:
+            case Operator::AND:
+            case Operator::OR:
+            case Operator::ARROW:
+            case Operator::ASSIGN_RAW:
+            case Operator::ASSIGN_POINTER:
+            case Operator::ASSIGN_ADD:
+            case Operator::ASSIGN_SUB:
+            case Operator::ASSIGN_DIV:
+            case Operator::ASSIGN_MULT:
+            case Operator::ASSIGN_MODULO:
+            case Operator::MODULO: {
+                out_space_after = true;
+                out_space_before = true;
+                break;
+            }
+        
+                                 // No spaces before or after
+            case Operator::DOT:
+            case Operator::TILDE:
+            case Operator::NOT:
+            case Operator::AMPERSAND:
+            case Operator::UNINITIALIZED:
+            case Operator::QUESTION_MARK:
+            case Operator::OPTIONAL_POINTER:
+            case Operator::DOLLAR: {
+                out_space_after = false;
+                out_space_before = false;
+                break;
+            }
+
+            // Special case for : = and : : 
+            case Operator::ASSIGN: {
+                out_space_after = true;
+                out_space_before = true;
+                if (token_index - 1 >= 0) {
+                    auto& prev = tokens[token_index - 1];
+                    if (prev.type == Token_Type::OPERATOR && (prev.options.op == Operator::COLON)) {
+                        out_space_before = false;
+                        out_ignore_lex_changes = true;
+                    }
+                }
+            }
+            case Operator::COLON: {
+                out_space_after = true;
+                out_space_before = false;
+                if (token_index + 1 < tokens.size) {
+                    auto& next = tokens[token_index + 1];
+                    if (next.type == Token_Type::OPERATOR && (next.options.op == Operator::ASSIGN || next.options.op == Operator::COLON)) {
+                        out_space_after = false;
+                        out_ignore_lex_changes = true;
+                    }
+                }
+                break;
+            }
+        
+            // Only space after
+            case Operator::COMMA:
+            case Operator::TILDE_STAR:
+            case Operator::TILDE_STAR_STAR:
+            case Operator::SEMI_COLON: {
+                out_space_after = true;
+                out_space_before = false;
+                break;
+            }
+        
+                                     // Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
+            case Operator::MULTIPLY: // Could also be pointer dereference...
+            case Operator::SUBTRACTION:
+            {
+                // If we don't have a token before or after, assume that it's a Unop
+                if (token_index <= 0 || token_index + 1 >= tokens.size) {
+                    out_space_after = false;
+                    out_space_before = false;
+                    break;
+                }
+        
+                // Otherwise use heuristic to check if it is a binop
+                // The heuristic currently used: Check if previous and next are 'values' (e.g. literals/identifiers or parenthesis), if both are, then binop
+                bool prev_is_value = false;
+                {
+                    const auto& t = tokens[token_index - 1];
+                    if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
+                        prev_is_value = true;
+                    }
+                    if (t.type == Token_Type::PARENTHESIS && !t.options.parenthesis.is_open && t.options.parenthesis.type != Parenthesis_Type::BRACKETS) {
+                        prev_is_value = true;
+                    }
+                }
+                bool next_is_value = false;
+                {
+                    const auto& t = tokens[token_index + 1];
+                    if (t.type == Token_Type::IDENTIFIER || t.type == Token_Type::LITERAL) {
+                        next_is_value = true;
+                    }
+                    if (t.type == Token_Type::PARENTHESIS && t.options.parenthesis.is_open) {
+                        next_is_value = true;
+                    }
+                    if (t.type == Token_Type::OPERATOR) { // Operators usually indicate values, but this is just an approximation
+                        next_is_value = true;
+                    }
+                    if (t.type == Token_Type::KEYWORD) {
+                        switch (t.options.keyword)
+                        {
+                        case Keyword::CAST:
+                        case Keyword::CAST_POINTER:
+                        case Keyword::INSTANCIATE:
+                        case Keyword::NEW:
+                            next_is_value = true;
+                        }
+                    }
+                }
+        
+                if (prev_is_value && next_is_value) {
+                    out_space_after = true;
+                    out_space_before = true;
+                }
+                else {
+                    out_space_after = false;
+                    out_space_before = false;
+                }
+        
+                break;
+            }
+        
+            default: panic("");
+            }
+        
+            return;
+        };
+    
+        auto& text = line->text;
+        bool cursor_on_line = tab.cursor.line == line_index;
+        bool respect_cursor_space = editor.mode == Editor_Mode::INSERT && cursor_on_line;
+        auto& pos = tab.cursor.character;
+    
+        // The auto-formater does the following things
+        //  * Removes whitespaces between non-space critical characters, e.g. x : int  -->  x: int
+        //  * Adds whitespaces between specific tokens,                  e.g. 5+15     -->  5 + 15
+        //  * For writing, spaces before/after cursor aren't removed or added
+        bool line_changed = false;
+    
+        // Delete whitespaces before first token
+        {
+            int delete_until = line->text.size;
+            if (tokens.size > 0) {
+                delete_until = tokens[0].start_index;
+            }
+            for (int i = 0; i < delete_until; i++) {
+                history_delete_char(&tab.history, text_index_make(line_index, 0));
+                line_changed = true;
+                pos = math_maximum(0, pos - 1);
+            }
+            // Update token ranges
+            for (int i = 0; i < tokens.size; i++) {
+                tokens[i].start_index -= delete_until;
+                tokens[i].end_index -= delete_until;
+            }
+        }
+    
+        // Go through tokens and check whitespaces between
+        for (int i = 0; i < tokens.size - 1; i++)
+        {
+            Token& curr = tokens[i];
+            Token& next = tokens[i + 1];
+    
+            // Check if spacing is expected between tokens
+            bool space_between_tokens_expected = false;
+            bool ignore_lex_changes = false;
+            {
+                bool space_before, space_after;
+                token_expects_space_before_or_after(tokens, i, space_before, space_after, ignore_lex_changes);
+                if (space_after) space_between_tokens_expected = true;
+                token_expects_space_before_or_after(tokens, i + 1, space_before, space_after, ignore_lex_changes);
+                if (space_before) space_between_tokens_expected = true;
+    
+                // Special handling for closing parenthesis, as I want a space there
+                if (curr.type == Token_Type::PARENTHESIS && !curr.options.parenthesis.is_open && curr.options.parenthesis.type != Parenthesis_Type::BRACKETS &&
+                    next.type != Token_Type::OPERATOR && next.type != Token_Type::PARENTHESIS) {
+                    space_between_tokens_expected = true;
+                }
+            }
+    
+            // Check if spacing is as expected
+            int index_shift_for_tokens_after_current = 0;
+            if (curr.end_index == next.start_index)
+            {
+                if (space_between_tokens_expected) {
+                    // Insert space between tokens
+                    history_insert_char(&tab.history, text_index_make(line_index, curr.end_index), ' ');
+                    index_shift_for_tokens_after_current = 1;
+                }
+            }
+            else if (curr.end_index != next.start_index)
+            {
+                char end = line->text.characters[curr.end_index - 1];
+                char start = line->text.characters[next.start_index];
+    
+                // Remove excessive spaces (More than 1 space)
+                {
+                    int space_count = next.start_index - curr.end_index;
+                    int delete_count = space_count - 1;
+                    if (respect_cursor_space && pos == curr.end_index + 1) {
+                        delete_count = 0;
+                    }
+                    for (int i = 0; i < delete_count; i++) {
+                        history_delete_char(&tab.history, text_index_make(line_index, curr.end_index));
+                        index_shift_for_tokens_after_current -= 1;
+                    }
+                }
+    
+                // Check if the final space should be removed
+                bool remove_space = !space_between_tokens_expected;
+    
+                // Don't remove space if it's critical
+                if (remove_space && char_is_space_critical(start) && char_is_space_critical(end)) {
+                    remove_space = false;
+                }
+    
+                // Don't remove space if it's just before the cursor token
+                if (curr.end_index + 1 == pos && respect_cursor_space) {
+                    remove_space = false;
+                }
+    
+                // Don't remove space if it could cause lexing to change
+                // Therefore check all operators if they contain a substring of the two added letters
+                if (!ignore_lex_changes)
+                {
+                    for (int j = 0; j < (int)Operator::MAX_ENUM_VALUE && remove_space; j++)
+                    {
+                        String op_str = operator_get_string((Operator)j);
+                        for (int k = 0; k + 1 < op_str.size; k++) {
+                            if (op_str.characters[k] == end && op_str.characters[k + 1] == start) {
+                                remove_space = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+    
+                if (remove_space) {
+                    history_delete_char(&tab.history, text_index_make(line_index, curr.end_index));
+                    index_shift_for_tokens_after_current -= 1;
+                }
+            }
+    
+            // Update cursor + follow tokens if space was removed
+            if (index_shift_for_tokens_after_current != 0)
+            {
+                line_changed = true;
+                if (pos > curr.end_index && cursor_on_line) {
+                    pos = math_maximum(curr.end_index, pos + index_shift_for_tokens_after_current);
+                    syntax_editor_sanitize_cursor();
+                }
+                for (int j = i + 1; j < tokens.size; j++) {
+                    tokens[j].start_index += index_shift_for_tokens_after_current;
+                    tokens[j].end_index += index_shift_for_tokens_after_current;
+                }
+            }
+        }
+    
+        // Delete whitespaces after last token
+        if (tokens.size > 0)
+        {
+            const auto& last = tokens[tokens.size - 1];
+            if (last.type == Token_Type::COMMENT) {
+                return line_changed;
+            }
+    
+            int delete_count = line->text.size - last.end_index; // Line text size changes, so store this first
+            bool keep_cursor_space = cursor_on_line && pos > last.end_index;
+            if (keep_cursor_space) delete_count -= 1;
+            for (int i = 0; i < delete_count; i++) {
+                history_delete_char(&tab.history, text_index_make(line_index, line->text.size - 1));
+                line_changed = true;
+            }
+    
+            if (keep_cursor_space) {
+                pos = last.end_index + 1;
+            }
+        }
+    
+        return line_changed;
+    }
+}
+
+
+
+// Suggestions
+Editor_Suggestion suggestion_make_symbol(Symbol* symbol) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::SYMBOL;
+    result.options.symbol = symbol;
+    result.text = symbol->id;
+    return result;
+}
+
+Editor_Suggestion suggestion_make_id(String* id, vec3 color = vec3(1.0f)) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::ID;
+    result.text = id;
+    result.options.id_color.r = color.x;
+    result.options.id_color.g = color.y;
+    result.options.id_color.b = color.z;
+    return result;
+}
+
+Editor_Suggestion suggestion_make_file(int file_index) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::FILE;
+    result.options.file_index_in_crawler = file_index;
+    result.text = &directory_crawler_get_content(syntax_editor.directory_crawler)[file_index].name;
+    return result;
+}
+
+Editor_Suggestion suggestion_make_struct_member(Datatype_Struct* struct_type, Datatype* member_type, String* id) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::STRUCT_MEMBER;
+    result.options.struct_member.structure = struct_type;
+    result.options.struct_member.member_type = member_type;
+    result.text = id;
+    return result;
+}
+
+Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* id) {
+    Editor_Suggestion result;
+    result.type = Suggestion_Type::ENUM_MEMBER;
+    result.options.enum_member.enumeration = enum_type;
+    result.text = id;
+    return result;
+}
+
+
+
+// Tabs
+// Returns new tab index
+int syntax_editor_add_tab(String file_path)
+{
+    auto& editor = syntax_editor;
+
+    Compilation_Unit* unit = compiler_add_compilation_unit(file_path, true, false);
+    if (unit == nullptr) {
+        return editor.open_tab_index;
+    }
+    if (unit->editor_tab_index != -1) {
+        return unit->editor_tab_index;
+    }
+
+    // Otherwise create new tab
+    Editor_Tab tab;
+    tab.compilation_unit = unit;
+    tab.code = source_code_copy(tab.compilation_unit->code);
+    tab.requires_recompile = true;
+    tab.history = code_history_create(tab.code);
+    tab.folds = dynamic_array_create<Code_Fold>();
+    tab.last_code_info_synch = history_get_timestamp(&tab.history);
+    tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
+    tab.last_render_timestamp = history_get_timestamp(&tab.history);
+    tab.last_code_completion_query = history_get_timestamp(&tab.history);
+    tab.last_code_completion_compiler_timestamp = history_get_timestamp(&tab.history);
+    tab.last_code_completion_query_pos = text_index_make(-1, -1);
+    tab.last_render_cursor_pos = text_index_make(0, 0);
+    tab.cursor = text_index_make(0, 0);
+    tab.last_line_x_pos = 0;
+    tab.cam_start = 0;
+    tab.cam_end = 0;
+    tab.last_jump_index = -1;
+    tab.jump_list = dynamic_array_create<Text_Index>();
+    dynamic_array_push_back(&syntax_editor.tabs, tab);
+    unit->editor_tab_index = syntax_editor.tabs.size - 1;
+
+    syntax_editor_update_line_visible_and_fold_info(syntax_editor.tabs.size - 1);
+    // Auto format all lines
+    for (int i = 0; i < tab.code->line_count; i++) {
+        Text_Editing::auto_format_line(i, syntax_editor.tabs.size - 1);
+    }
+
+    return syntax_editor.tabs.size - 1;
+}
+
+void editor_tab_destroy(Editor_Tab* tab) {
+    code_history_destroy(&tab->history);
+    dynamic_array_destroy(&tab->folds);
+    dynamic_array_destroy(&tab->jump_list);
+    if (tab->compilation_unit != nullptr) {
+        tab->compilation_unit->open_in_editor = false;
+    }
+    source_code_destroy(tab->code);
+}
+
+void syntax_editor_update_line_visible_and_fold_info(int tab_index)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[tab_index];
+    auto& folds = tab.folds;
+    auto code = tab.code;
+
+    Code_Fold dummy_fold;
+    dummy_fold.line_start = -1;
+    dummy_fold.line_end = -1;
+    dummy_fold.indentation = 0;
+
+    int fold_index = 0;
+    int visible_index = 0;
+    bool last_was_fold = false;
+    Code_Fold* fold = folds.size > 0 ? &folds[0] : &dummy_fold;
+    for (int i = 0; i < code->line_count; i++)
+    {
+        auto line = source_code_get_line(code, i);
+
+        // Get fold for line
+        while (i > fold->line_end && fold_index + 1 < folds.size) {
+            fold = &folds[fold_index + 1];
+            fold_index += 1;
+        }
+        line->is_folded = i >= fold->line_start && i <= fold->line_end;
+        if (line->is_folded) {
+            line->fold_index = fold_index;
+        }
+
+        if (last_was_fold && !line->is_folded) {
+            visible_index += 1;
+        }
+        line->visible_index = visible_index;
+        if (!line->is_folded) {
+            visible_index += 1;
+        }
+        last_was_fold = line->is_folded;
+    }
+}
+
+void syntax_editor_add_fold(int line_start, int line_end, int indentation)
+{
+    auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+    auto& folds = tab.folds;
+
+    // Find insertion index
+    int i = 0;
+    for (i = 0; i < folds.size; i++) {
+        auto& fold = folds[i];
+        if (line_start < fold.line_start) {
+            if (line_end >= fold.line_start) {
+                assert(line_end >= fold.line_end, "Folds should not overlap");
+            }
+            break;
+        }
+        else if (line_start == fold.line_start) {
+            if (line_start == line_end) return; // Fold already exists
+            if (line_end > fold.line_end) {
+                break;
+            }
+        }
+    }
+
+    Code_Fold fold;
+    fold.line_start = line_start;
+    fold.line_end = line_end;
+    fold.indentation = indentation;
+    dynamic_array_insert_ordered(&folds, fold, i);
+
+    syntax_editor_update_line_visible_and_fold_info(syntax_editor.open_tab_index);
+}
+
+struct Comparator_Error_Display 
+{
+    bool operator()(const Compiler_Error_Info& a, const Compiler_Error_Info& b) 
+    {
+        auto& editor = syntax_editor;
+        int tab_a = -1;
+        int tab_b = -1;
+        for (int i = 0; i < editor.tabs.size; i++) {
+            auto unit = editor.tabs[i].compilation_unit;
+            if (a.unit == unit) {
+                tab_a = i;
+            }
+            if (b.unit == unit) {
+                tab_b = i;
+            }
+        }
+
+        if (tab_a != tab_b) {
+            // Return errors in current tab first
+            if (tab_a == editor.open_tab_index) return true;
+            else if (tab_b == editor.open_tab_index) return false;
+            // Otherwise return in open tab order
+            return tab_a < tab_b;
+        }
+
+        if (a.text_index.line != b.text_index.line) {
+            return a.text_index.line < b.text_index.line;
+        }
+        return a.text_index.character < b.text_index.character;
+    }
+};
+
+void syntax_editor_switch_tab(int new_tab_index)
+{
+    auto& editor = syntax_editor;
+    if (editor.open_tab_index == new_tab_index) return;
+    if (new_tab_index < 0 || new_tab_index >= editor.tabs.size) return;
+
+    editor.open_tab_index = new_tab_index;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    source_code_tokenize(tab.code);
+    // Re-Sort errors since sorting depends on open tab
+    if (editor.analysis_data != nullptr) {
+        dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
+    }
+}
+
+void syntax_editor_close_tab(int tab_index, bool force_close = false)
+{
+    auto& editor = syntax_editor;
+    if (editor.tabs.size <= 1 && !force_close) return;
+    if (tab_index < 0 || tab_index >= editor.tabs.size) return;
+
+    syntax_editor_save_text_file();
+
+    Editor_Tab* tab = &editor.tabs[tab_index];
+    tab->compilation_unit->open_in_editor = false;
+    tab->compilation_unit->editor_tab_index = -1;
+    editor_tab_destroy(&editor.tabs[tab_index]);
+    dynamic_array_remove_ordered(&editor.tabs, tab_index);
+
+    // Update tab index for all compilation units
+    for (int i = 0; i < editor.tabs.size; i++) {
+        auto& tab = editor.tabs[i];
+        tab.compilation_unit->editor_tab_index = i;
+    }
+
+    editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
+    if (tab_index == editor.main_tab_index) {
+        editor.main_tab_index = -1;
+    }
+    else if (editor.main_tab_index > tab_index) {
+        editor.main_tab_index -= 1;
+    }
+}
+
+
+
+
+void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer)
+{
+    memory_zero(&syntax_editor);
+    gui_initialize(text_renderer, window);
+
+    syntax_editor.auto_format_identifier_pool = identifier_pool_create();
+    syntax_editor.last_insert_was_shift_enter = false;
+    syntax_editor.random = random_make_time_initalized();
+    syntax_editor.last_update_time = timer_current_time_in_seconds(timer);
+    syntax_editor.timer = timer;
+    syntax_editor.particles = dynamic_array_create<Particle>();
+    syntax_editor.directory_crawler = directory_crawler_create();
+    syntax_editor.frame_index = 1;
+    syntax_editor.last_compile_was_with_code_gen = false;
+    syntax_editor.analysis_data = nullptr;
+    syntax_editor.editor_text = Rich_Text::create(vec3(1.0f));
+    syntax_editor.normal_text_size_pixel = convertHeight(0.48f, Unit::CENTIMETER);
+    syntax_editor.text_display = Text_Display::make(
+        &syntax_editor.editor_text, renderer_2D, text_renderer, text_renderer_get_aligned_char_size(text_renderer, syntax_editor.normal_text_size_pixel), 4
+    );
+    Text_Display::set_padding(&syntax_editor.text_display, 2);
+    Text_Display::set_block_outline(&syntax_editor.text_display, 3, vec3(0.5f));
+
+    syntax_editor.visible_line_count = (int)(rendering_core.render_information.backbuffer_height / syntax_editor.text_display.char_size.y) + 1;
+    syntax_editor.command_buffer = string_create();
+
+    syntax_editor.fuzzy_search_text = string_create();
+    syntax_editor.suggestions = dynamic_array_create<Editor_Suggestion>();
+    syntax_editor.search_text = string_create();
+
+    syntax_editor.yank_string = string_create();
+    syntax_editor.yank_was_line = false;
+
+    syntax_editor.last_normal_command.type = Normal_Command_Type::MOVEMENT;
+    syntax_editor.last_normal_command.options.movement.type = Movement_Type::MOVE_LEFT;
+    syntax_editor.last_normal_command.options.movement.repeat_count = 0;
+    syntax_editor.last_insert_commands = dynamic_array_create<Insert_Command>();
+    syntax_editor.record_insert_commands = true;
+    syntax_editor.last_recorded_code_completion = string_create();
+
+    syntax_editor.text_renderer = text_renderer;
+    syntax_editor.renderer_2D = renderer_2D;
+    syntax_editor.input = input;
+    syntax_editor.mode = Editor_Mode::NORMAL;
+
+    syntax_editor.last_search_char = '\0';
+    syntax_editor.last_search_was_forward = false;
+    syntax_editor.last_search_was_to = false;
+
+    compiler_initialize(timer);
+
+    String default_filename = string_create_static("upp_code/editor_text.upp");
+    int tab_index = syntax_editor_add_tab(default_filename);
+    syntax_editor_switch_tab(tab_index);
+    assert(tab_index != -1, "");
+    syntax_editor.open_tab_index = 0;
+    syntax_editor.main_tab_index = 0;
+
+    syntax_editor.compiler_build_code = false;
+    syntax_editor.compiler_main_unit = nullptr;
+    syntax_editor.compiler_work_started = false;
+    syntax_editor.compiler_thread_should_close = false;
+    syntax_editor.compiler_wait_semaphore = semaphore_create(0, 1);
+    syntax_editor.compilation_finish_semaphore = semaphore_create(0, 1);
+    syntax_editor.compiler_thread = thread_create(compiler_thread_start_fn, nullptr);
+}
+
+void syntax_editor_destroy()
+{
+    auto& editor = syntax_editor;
+    directory_crawler_destroy(editor.directory_crawler);
+    dynamic_array_destroy(&editor.particles);
+    dynamic_array_destroy(&editor.suggestions);
+    Rich_Text::destroy(&editor.editor_text);
+    string_destroy(&syntax_editor.command_buffer);
+    string_destroy(&syntax_editor.yank_string);
+    string_destroy(&syntax_editor.fuzzy_search_text);
+    string_destroy(&syntax_editor.search_text);
+    compiler_destroy();
+
+    identifier_pool_destroy(&syntax_editor.auto_format_identifier_pool);
+    dynamic_array_destroy(&editor.last_insert_commands);
+    string_destroy(&editor.last_recorded_code_completion);
+
+    dynamic_array_for_each(editor.tabs, editor_tab_destroy);
+    dynamic_array_destroy(&editor.tabs);
+}
+
+void syntax_editor_save_text_file()
+{
+    auto& editor = syntax_editor;
+    for (int i = 0; i < editor.tabs.size; i++)
+    {
+        auto& tab = editor.tabs[i];
+        String whole_text = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&whole_text));
+        source_code_append_to_string(tab.code, &whole_text);
+        auto path = tab.compilation_unit->filepath;
+        auto success = file_io_write_file(path.characters, array_create_static((byte*)whole_text.characters, whole_text.size));
+        if (!success) {
+            logg("Saving file failed for path \"%s\"\n", path.characters);
+        }
+        else {
+            logg("Saved file \"%s\"!\n", path.characters);
+        }
+    }
+}
+
+struct Line_Change
+{
+    int line_index;
+    Dynamic_Array<int> text_change_indices;
+};
+
+void syntax_editor_update_code_infos_from_changes(int tab_index, Dynamic_Array<Code_Change> changes, bool update_folds_and_jumps)
+{
+    auto line_changes = dynamic_array_create<Line_Change>();
+    SCOPE_EXIT(
+        for (int i = 0; i < line_changes.size; i++) {
+            dynamic_array_destroy(&line_changes[i].text_change_indices);
+        }
+        dynamic_array_destroy(&line_changes)
+    );
+    auto store_changed_line_index = [&](int line_index, int change_index) {
+        for (int i = 0; i < line_changes.size; i++) {
+            if (line_changes[i].line_index == line_index) {
+                dynamic_array_push_back(&line_changes[i].text_change_indices, change_index);
+                return;
+            }
+        }
+        Line_Change change;
+        change.line_index = line_index;
+        change.text_change_indices = dynamic_array_create<int>(1);
+        dynamic_array_push_back(&change.text_change_indices, change_index);
+        dynamic_array_push_back(&line_changes, change);
+    };
+
+    auto& tab = syntax_editor.tabs[tab_index];
+    auto& folds = tab.folds;
+
+    bool folds_changed = false;
+    bool jump_list_changed = false;
+    for (int i = 0; i < changes.size; i++)
+    {
+        auto& change = changes[i];
+        int line_index = -1;
+        switch (change.type)
+        {
+        case Code_Change_Type::LINE_INSERT: 
+        {
+            int line_index = change.options.line_insert.line_index;
+
+            // Update line change infos
+            for (int j = 0; j < line_changes.size; j++) 
+            {
+                auto& line_change = line_changes[j];
+                if (change.apply_forwards) {
+                    if (line_index < line_change.line_index) {
+                        line_change.line_index += 1;
+                    }
+                }
+                else 
+                {
+                    if (line_index == line_change.line_index) {
+                        dynamic_array_destroy(&line_change.text_change_indices);
+                        dynamic_array_swap_remove(&line_changes, j);
+                        j = j - 1;
+                        continue;
+                    }
+                    else if (line_index < line_change.line_index) {
+                        line_change.line_index -= 1;
+                    }
+                }
+            }
+
+            if (!update_folds_and_jumps) {
+                break;
+            }
+
+            // Update folds
+            folds_changed = true;
+            for (int j = 0; j < folds.size; j++) 
+            {
+                auto& fold = folds[j];
+
+                bool inside_fold = false;
+                bool before_fold = false;
+                if (change.apply_forwards) {
+                    inside_fold = line_index > fold.line_start && line_index <= fold.line_end;
+                    before_fold = line_index <= fold.line_start;
+                }
+                else {
+                    inside_fold = line_index >= fold.line_start && line_index <= fold.line_end;
+                    before_fold = line_index < fold.line_start;
+                }
+
+                // Remove fold if change was made inside
+                if (inside_fold) {
+                    dynamic_array_remove_ordered(&folds, j);
+                    j = j - 1;
+                }
+                else if (before_fold) {
+                    int diff = change.apply_forwards ? 1 : -1;
+                    fold.line_start += diff;
+                    fold.line_end += diff;
+                }
+            }
+
+            // Update jump list
+            for (int j = 0; j < tab.jump_list.size; j++) 
+            {
+                auto& pos = tab.jump_list[j];
+                if (change.apply_forwards) {
+                    if (line_index <= pos.line) {
+                        pos.line += 1;
+                        jump_list_changed = true;
+                    }
+                }
+                else
+                {
+                    if (line_index <= pos.line) {
+                        pos.line -= 1;
+                        jump_list_changed = true;
+                    }
+                }
+            }
+            break;
+        }
+        case Code_Change_Type::CHAR_INSERT: store_changed_line_index(change.options.char_insert.index.line, i); break;
+        case Code_Change_Type::TEXT_INSERT: store_changed_line_index(change.options.text_insert.index.line, i); break;
+        case Code_Change_Type::LINE_INDENTATION_CHANGE: store_changed_line_index(change.options.indentation_change.line_index, i); break;  
+        default: panic("");
+        }
+    }
+
+    // Update changed lines
+    for (int i = 0; i < line_changes.size; i++)
+    {
+        auto line_change = line_changes[i];
+        auto line = source_code_get_line(tab.code, line_change.line_index);
+        source_code_tokenize_line(line);
+
+        // Update analysis infos
+        for (int j = 0; j < line_change.text_change_indices.size; j++)
+        {
+            const auto& change = changes[line_change.text_change_indices[j]];
+            int insert_index = -1;
+            int insert_length = 1;
+            switch (change.type)
+            {
+            case Code_Change_Type::CHAR_INSERT: {
+                insert_index = change.options.char_insert.index.character;
+                insert_length = 1;
+                break;
+            }
+            case Code_Change_Type::TEXT_INSERT: {
+                insert_index = change.options.text_insert.index.character;
+                insert_length = change.options.text_insert.text.size;
+                break;
+            }
+            case Code_Change_Type::LINE_INDENTATION_CHANGE:
+                continue;
+            case Code_Change_Type::LINE_INSERT:
+            default: panic(""); break;
+            }
+
+            // Update analysis infos
+            for (int k = 0; k < line->item_infos.size; k++) 
+            {
+                auto& item_info = line->item_infos[k];
+                if (change.apply_forwards)
+                {
+                    if (insert_index <= item_info.start_char) { // Inserted before item
+                        item_info.start_char += insert_length;
+                        item_info.end_char += insert_length;
+                    }
+                    else if (insert_index <= item_info.end_char) { // Inserted inside item
+                        item_info.end_char += insert_length;
+                    }
+                    else { // Inserted after item
+                    }
+                }
+                else 
+                {
+                    const int delete_start = insert_index;
+                    const int delete_length = insert_length;
+                    const int delete_end = insert_index + insert_length;
+
+                    // Figure out new start-char position
+                    auto& start_char = item_info.start_char;
+                    if (delete_end <= start_char) {
+                        start_char -= delete_length;
+                    }
+                    else if (delete_start <= start_char) {
+                        start_char = delete_start;
+                    }
+
+                    // Figure out new end_char position
+                    auto& end_char = item_info.end_char;
+                    if (delete_end <= end_char) {
+                        end_char -= delete_length;
+                    }
+                    else if (delete_start <= end_char) {
+                        end_char = delete_start;
+                    }
+
+                    // Remove token if it was completely removed...
+                    if (start_char >= end_char) {
+                        dynamic_array_swap_remove(&line->item_infos, k);
+                        k -= 1;
+                    }
+                }
+            }
+        }
+
+        // Remove-folds where changes happened
+        if (update_folds_and_jumps)
+        {
+            for (int j = 0; j < folds.size; j++) {
+                auto& fold = folds[j];
+                if (line_change.line_index >= fold.line_start && line_change.line_index <= fold.line_end) {
+                    dynamic_array_remove_ordered(&folds, j);
+                    folds_changed = true;
+                    j = j - 1;
+                }
+            }
+        }
+    }
+
+    if (!update_folds_and_jumps) {
+        return;
+    }
+
+    // Update fold-infos and visible indices
+    if (folds_changed) {
+        syntax_editor_update_line_visible_and_fold_info(tab_index);
+    }
+
+    if (jump_list_changed)
+    {
+        auto code = tab.code;
+        // Prune jumps with same position
+        for (int i = 0; i < tab.jump_list.size; i++)
+        {
+            auto& jump = tab.jump_list[i];
+            Text_Index prev;
+            if (i > 0) {
+                prev = tab.jump_list[i - 1];
+            }
+            else {
+                prev = text_index_make(-20, -20);
+            }
+
+            bool should_delete = false;
+            if (jump.line < 0 || jump.line >= code->line_count) {
+                should_delete = true;
+            }
+            else {
+                auto line = source_code_get_line(code, jump.line);
+                jump.character = math_clamp(jump.character, 0, line->text.size);
+                if (jump.line == prev.line) {
+                    should_delete = true;
+                }
+            }
+
+            if (should_delete)
+            {
+                dynamic_array_remove_ordered(&tab.jump_list, i);
+                if (tab.last_jump_index >= tab.jump_list.size) {
+                    tab.last_jump_index = math_maximum(0, tab.jump_list.size - 1);
+                }
+                i = i - 1;
+            }
+        }
+    }
+}
+
+// Synchronizes lexing, folds + visible-indices, jump-positions and code-analysis-information
+void syntax_editor_synchronize_code_information()
+{
+    auto& editor = syntax_editor;
+
+    for (int tab_index = 0; tab_index < editor.tabs.size; tab_index++)
+    {
+        auto& tab = editor.tabs[tab_index];
+
+        // Get changes since last sync
+        auto now = history_get_timestamp(&tab.history);
+        if (tab.last_code_info_synch.node_index == now.node_index) {
+            continue;
+        }
+
+        Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
+        SCOPE_EXIT(dynamic_array_destroy(&changes));
+        history_get_changes_between(&tab.history, tab.last_code_info_synch, now, &changes);
+        tab.last_code_info_synch = now;
+        syntax_editor_update_code_infos_from_changes(tab_index, changes, true);
+    }
+}
+
+unsigned long compiler_thread_start_fn(void* userdata)
+{
+    auto& editor = syntax_editor;
+    
+    bool worked = fiber_initialize();
+    assert(worked, "panic");
+    semaphore_wait(editor.compiler_wait_semaphore);
+    while (!editor.compiler_thread_should_close)
+    {
+        logg("Compiler thread waiting now\n");
+        Compilation_Unit* compilation_unit = editor.compiler_main_unit;
+        bool generate_code = editor.compiler_build_code;
+        logg("Compiler thread signaled\n");
+
+        // Compile here
+        compiler_compile(compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
+        compiler_analysis_update_source_code_information();
+        semaphore_increment(editor.compilation_finish_semaphore, 1);
+        semaphore_wait(editor.compiler_wait_semaphore);
+    }
+
+    semaphore_destroy(editor.compilation_finish_semaphore);
+    semaphore_destroy(editor.compiler_wait_semaphore);
+    thread_destroy(editor.compiler_thread);
+    return 0;
+}
+
+void syntax_editor_synchronize_with_compiler(bool generate_code)
+{
+    syntax_editor_synchronize_code_information();
+    auto& editor = syntax_editor;
+
+    // Check if code has changed
+    Editor_Tab& main_tab = syntax_editor.tabs[editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index];
+    bool should_compile = true;
+    {
+        bool code_has_changed = false;
+        for (int i = 0; i < editor.tabs.size; i++) {
+            auto& tab = editor.tabs[i];
+            if (tab.history.current != tab.last_compiler_synchronized.node_index || tab.requires_recompile) {
+                code_has_changed = true;
+            }
+        }
+        auto main_code = main_tab.code;
+        if (editor.last_compile_main_code != main_code) {
+            code_has_changed = true;
+        }
+
+        if (!code_has_changed && !(generate_code && !editor.last_compile_was_with_code_gen)) {
+            should_compile = false;
+        }
+    }
+
+    // Get latest compiler work
+    bool got_compiler_update = editor.compiler_work_started;
+    if (editor.compiler_work_started)
+    {
+        bool compiler_finished_compile = semaphore_try_wait(editor.compilation_finish_semaphore);
+        if (!compiler_finished_compile) {
+            return;
+        }
+        editor.compiler_work_started = false;
+    }
+
+    if (got_compiler_update)
+    {
+        if (editor.analysis_data != nullptr) {
+            compiler_analysis_data_destroy(editor.analysis_data);
+        }
+        editor.analysis_data = compiler.analysis_data;
+        compiler.analysis_data = nullptr;
+        dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
+    }
+
+    if (got_compiler_update || should_compile)
+    {
+        // Update compiler with new code (Swap out editor and compiler source-code)
+        Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
+        SCOPE_EXIT(dynamic_array_destroy(&changes));
+        for (int i = 0; i < editor.tabs.size; i++)
+        {
+            auto& tab = editor.tabs[i];
+
+            Source_Code* swap = tab.code;
+            tab.code = tab.compilation_unit->code;
+            tab.compilation_unit->code = swap;
+            tab.history.code = tab.code;
+
+            // Now we have the old version, so we re-apply the previous code-changes
+            auto now = history_get_timestamp(&tab.history);
+            if (tab.last_compiler_synchronized.node_index != now.node_index)
+            {
+                dynamic_array_reset(&changes);
+                history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+                for (int i = 0; i < changes.size; i++) {
+                    code_change_apply(tab.code, &changes[i], true);
+                }
+                syntax_editor_update_code_infos_from_changes(i, changes, false);
+                syntax_editor_update_line_visible_and_fold_info(i);
+                tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
+            }
+        }
+    }
+
+    if (should_compile)
+    {
+        for (int i = 0; i < editor.tabs.size; i++) {
+            auto& tab = editor.tabs[i];
+            editor.tabs[i].requires_recompile = false;
+        }
+        editor.last_compile_main_code = main_tab.code;
+        editor.last_compile_was_with_code_gen = generate_code;
+
+        // Start work in compile thread
+        editor.compiler_main_unit = main_tab.compilation_unit;
+        editor.compiler_build_code = generate_code;
+        semaphore_increment(editor.compiler_wait_semaphore, 1);
+        editor.compiler_work_started = true;
+    }
+}
+
+void syntax_editor_wait_for_newest_compiler_info(bool build_code)
+{
+    auto& editor = syntax_editor;
+    if (editor.compiler_work_started) {
+        semaphore_wait(editor.compilation_finish_semaphore);
+        semaphore_increment(editor.compilation_finish_semaphore, 1);
+    }
+    syntax_editor_synchronize_with_compiler(build_code);
+    if (editor.compiler_work_started) {
+        semaphore_wait(editor.compilation_finish_semaphore);
+        semaphore_increment(editor.compilation_finish_semaphore, 1);
+        syntax_editor_synchronize_with_compiler(build_code);
+    }
+}
+
+void syntax_editor_save_state(String file_path) 
+{
+    auto& editor = syntax_editor;
+
+    String output = string_create();
+    SCOPE_EXIT(string_destroy(&output));
+    string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
+    string_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
+
+    for (int i = 0; i < editor.tabs.size; i++)
+    {
+        auto& tab = editor.tabs[i];
+        string_append_formated(&output, "tab=%s\n", tab.compilation_unit->filepath.characters);
+        string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
+        string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
+        string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
+        for (int j = 0; j < tab.folds.size; j++) {
+            auto& fold = tab.folds[j];
+            string_append_formated(&output, "fold=%d;%d;%d\n", fold.line_start, fold.line_end, fold.indentation);
+        }
+    }
+    file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
+}
+
+void syntax_editor_load_state(String file_path)
+{
+    auto& editor = syntax_editor;
+    editor.mode = Editor_Mode::NORMAL;
+
+    auto file_opt = file_io_load_text_file(file_path.characters);
+    SCOPE_EXIT(file_io_unload_text_file(&file_opt));
+    if (!file_opt.available) {
+        return;
+    }
+
+    String session = file_opt.value;
+    Array<String> lines = string_split(session, '\n');
+    SCOPE_EXIT(string_split_destroy(lines));
+
+    bool last_tab_valid = false;
+    int last_tab_index = -1;
+    bool first_tab = true;
+    int open_tab_index = -5;
+    int main_tab_index = -5;
+    for (int i = 0; i < lines.size; i++)
+    {
+        String line = lines[i];
+        auto seperator = string_find_character_index(&line, '=', 0);
+        if (!seperator.available) {
+            continue;
+        }
+        String setting = string_create_substring_static(&line, 0, seperator.value);
+        String value = string_create_substring_static(&line, seperator.value + 1, line.size);
+        if (setting.size == 0 || value.size == 0) continue;
+
+        int* int_value_to_set = nullptr;
+        if (string_equals_cstring(&setting, "open_tab")) {
+            int_value_to_set = &open_tab_index;
+        }
+        else if (string_equals_cstring(&setting, "main_tab")) {
+            int_value_to_set = &main_tab_index;
+        }
+        else if (string_equals_cstring(&setting, "tab")) 
+        {
+            if (first_tab) {
+                first_tab = false;
+                editor.main_tab_index = -100; // See close tab to check why
+                for (int i = 0; i < editor.tabs.size; i++) {
+                    syntax_editor_close_tab(0, true);
+                }
+                editor.main_tab_index = -1;
+            }
+
+            syntax_editor_switch_tab(syntax_editor_add_tab(value));
+            last_tab_valid = true;
+        }
+        else if (string_equals_cstring(&setting, "cursor_char")) {
+            if (last_tab_valid) {
+                int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.character;
+            }
+        }
+        else if (string_equals_cstring(&setting, "cursor_line")) {
+            if (last_tab_valid) {
+                int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.line;
+            }
+        }
+        else if (string_equals_cstring(&setting, "cam_start")) {
+            if (last_tab_valid) {
+                int_value_to_set = &editor.tabs[editor.open_tab_index].cam_start;
+            }
+        }
+        else if (string_equals_cstring(&setting, "fold")) 
+        {
+            auto parts = string_split(value, ';');
+            SCOPE_EXIT(string_split_destroy(parts));
+            if (parts.size != 3) {
+                continue;
+            }
+
+            int start, end, indentation;
+            bool success = true;
+
+            auto int_parse = string_parse_int(&parts[0]);
+            success = success && int_parse.available;
+            if (int_parse.available) { start = int_parse.value; }
+            int_parse = string_parse_int(&parts[1]);
+            success = success && int_parse.available;
+            if (int_parse.available) { end = int_parse.value; }
+            int_parse = string_parse_int(&parts[2]);
+            success = success && int_parse.available;
+            if (int_parse.available) { indentation = int_parse.value; }
+
+            if (!last_tab_valid) {
+                success = false;
+            }
+
+            // Sanity check (File may have been changed since last session)
+            if (success) 
+            {
+                auto& tab = editor.tabs[editor.open_tab_index];
+                if (start < 0 || start >= tab.code->line_count) {
+                    success = false;
+                }
+                if (end < 0 || end >= tab.code->line_count) {
+                    success = false;
+                }
+                int min_indent = 99999;
+                for (int i = start; i <= end && success && i < tab.code->line_count; i++) {
+                    auto src_line = source_code_get_line(tab.code, i);
+                    min_indent = math_minimum(min_indent, src_line->indentation);
+                }
+                if (min_indent != indentation) {
+                    success = false;
+                }
+            }
+
+            if (success) {
+                syntax_editor_add_fold(start, end, indentation);
+            }
+        }
+        else {
+            logg("Unrecognized session option: %s\n", setting.characters);
+        }
+
+        if (int_value_to_set != nullptr)
+        {
+            auto int_parse = string_parse_int(&value);
+            if (int_parse.available) {
+                *int_value_to_set = int_parse.value;
+            }
+        }
+    }
+
+    if (editor.tabs.size == 0) {
+        syntax_editor_switch_tab(syntax_editor_add_tab(string_create_static("upp_code/editor_text.upp")));
+        editor.main_tab_index = -1;
+    }
+    else
+    {
+        if (open_tab_index < editor.tabs.size) {
+            editor.open_tab_index = open_tab_index;
+        }
+        if (main_tab_index == -1 || (main_tab_index < editor.tabs.size && main_tab_index >= 0)) {
+            editor.main_tab_index = main_tab_index;
+        }
+    }
+}
+
+
+
+// Helpers
+Error_Display error_display_make(String msg, Token_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index)
+{
+    Error_Display result;
+    result.message = msg;
+    result.range = range;
+    result.unit = unit;
+    result.is_token_range_duplicate = is_token_range_duplicate;
+    result.semantic_error_index = semantic_error_index;
+    return result;
+}
+
+char get_cursor_char(char dummy_char)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto& c = tab.cursor;
+
+    int index = c.character;
+    if (editor.mode == Editor_Mode::INSERT) {
+        index -= 1;
+    }
+    Source_Line* line = source_code_get_line(tab.code, c.line);
+    if (index >= line->text.size || index < 0) return dummy_char;
+    return line->text.characters[index];
+}
+
+Text_Index sanitize_index(Text_Index index) {
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto code = tab.code;
+
+    if (index.line < 0) index.line = 0;
+    if (index.line >= code->line_count) {
+        index.line = code->line_count - 1;
+    }
+    auto& text = source_code_get_line(code, index.line)->text;
+    index.character = math_clamp(index.character, 0, text.size);
+    return index;
+}
+
+void syntax_editor_sanitize_cursor() {
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto& code = tab.code;
+    auto& index = tab.cursor;
+
+    if (index.line < 0) index.line = 0;
+    if (index.line >= code->line_count) {
+        index.line = code->line_count - 1;
+    }
+    auto& text = source_code_get_line(code, index.line)->text;
+    index.character = math_clamp(index.character, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
+}
+
+
+
+// Auto formating
+bool syntax_editor_add_position_to_jump_list()
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto& cursor = tab.cursor;
+
+    auto& jump_list = tab.jump_list;
+    auto& last_jump_index = tab.last_jump_index;
+    if (jump_list.size == 0) {
+        dynamic_array_push_back(&jump_list, cursor);
+        last_jump_index = 0;
+        return true;
+    }
+
+    if (last_jump_index >= 0)
+    {
+        Text_Index last_pos = jump_list.data[last_jump_index];
+        if (math_absolute(last_pos.line - cursor.line) <= 7) {
+            return false;
+        }
+
+        if (last_jump_index - 1 >= 0) {
+            Text_Index pre_pre_pos = jump_list.data[last_jump_index - 1];
+            if (pre_pre_pos.line == cursor.line) {
+                return false;
+            }
+        }
+        dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, last_jump_index + 1));
+    }
+    else {
+        dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, 1));
+    }
+
+    dynamic_array_push_back(&jump_list, cursor);
+    last_jump_index = jump_list.size - 1;
+    return true;
+}
+
+void syntax_editor_goto_node(AST::Node* node)
+{
+    auto& editor = syntax_editor;
+
+    // Switch tab to file with symbol
+    Compilation_Unit* unit = compiler_find_ast_compilation_unit(node);
+    int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
+    syntax_editor_switch_tab(index);
+
+    auto& tab = editor.tabs[editor.open_tab_index];
+    Text_Index text_index = node->range.start;
+    tab.cursor = code_query_text_index_at_last_synchronize(text_index, editor.open_tab_index, true);
+    syntax_editor_sanitize_cursor();
+}
+
+
+
+// Code Queries
+struct Position_Info
+{
+    Code_Analysis_Item* symbol_info;
+    Code_Analysis_Item* expression_info;
+    Code_Analysis_Item* member_access;
+    Datatype_Enum* auto_enum_type;
+    Parameter_Matching_Info* call_info;
+    int call_argument_index;
+};
+
+Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time)
+{
+    auto& tab = syntax_editor.tabs[tab_index];
+
+    // Get changes since last sync
+    auto now = history_get_timestamp(&tab.history);
+    if (tab.last_compiler_synchronized.node_index == now.node_index) {
+        return text_index;
+    }
+
+    Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
+    SCOPE_EXIT(dynamic_array_destroy(&changes));
+    if (move_forwards_in_time) {
+        history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+    }
+    else {
+        history_get_changes_between(&tab.history, now, tab.last_compiler_synchronized, &changes);
+    }
+
+    // Go through changes and update infos
+    for (int i = 0; i < changes.size; i++)
+    {
+        auto& change = changes[i];
+        int line_index = -1;
+        switch (change.type)
+        {
+        case Code_Change_Type::LINE_INSERT:
+        {
+            int line_index = change.options.line_insert.line_index;
+            if (change.apply_forwards) {
+                if (line_index <= text_index.line) {
+                    text_index.line += 1;
+                }
+            }
+            else {
+                if (line_index < text_index.line) {
+                    text_index.line -= 1;
+                }
+                else if (line_index == text_index.line) {
+                    text_index.line = math_maximum(text_index.line - 1, 0);
+                    text_index.character = 0;
+                }
+            }
+            break;
+        }
+        case Code_Change_Type::CHAR_INSERT:
+        case Code_Change_Type::TEXT_INSERT:
+        {
+            int insert_index = -1;
+            int insert_length = 1;
+            int line_index = -1;
+            if (change.type == Code_Change_Type::CHAR_INSERT) {
+                line_index = change.options.char_insert.index.line;
+                insert_index = change.options.char_insert.index.character;
+                insert_length = 1;
+            }
+            else {
+                line_index = change.options.text_insert.index.line;
+                insert_index = change.options.text_insert.index.character;
+                insert_length = change.options.text_insert.text.size;
+            }
+            if (text_index.line != line_index) continue;
+
+            if (change.apply_forwards) {
+                if (insert_index <= text_index.character) {
+                    text_index.character += insert_length;
+                }
+            }
+            else {
+                if (text_index.character >= insert_index && text_index.character <= insert_index + insert_length) {
+                    text_index.character = insert_index;
+                }
+                else if (insert_index + insert_length < text_index.character) {
+                    text_index.character -= insert_length;
+                }
+            }
+            break;
+        }
+        case Code_Change_Type::LINE_INDENTATION_CHANGE: {
+            break;
+        }
+        default: panic("");
+        }
+    }
+    return text_index;
+}
+
+Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int>* errors_to_fill)
+{
+    Position_Info result;
+    result.symbol_info = nullptr;
+    result.expression_info = nullptr;
+    result.call_info = nullptr;
+    result.call_argument_index = -1;
+    result.member_access = nullptr;
+    result.auto_enum_type = nullptr;
+
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    auto& infos = source_code_get_line(tab.code, index.line)->item_infos;
+    int previous_expr_depth = -1;
+    int previous_call_depth = -1;
+    for (int i = 0; i < infos.size; i++)
+    {
+        auto info = infos[i];
+        if (index.character < info.start_char || index.character >= info.end_char) continue;
+        switch (info.type)
+        {
+        case Code_Analysis_Item_Type::CALL_INFORMATION: {
+            if (info.tree_depth > previous_call_depth) {
+                result.call_info = info.options.call_information;
+                previous_call_depth = info.tree_depth;
+            }
+            break;
+        }
+        case Code_Analysis_Item_Type::ARGUMENT_NODE: {
+            result.call_argument_index = info.options.argument_index;
+            break;
+        }
+        case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
+            result.symbol_info = &infos[i];
+            break;
+        }
+        case Code_Analysis_Item_Type::AUTO_ENUM: {
+            result.auto_enum_type = info.options.auto_enum_type;
+            break;
+        }
+        case Code_Analysis_Item_Type::ERROR_ITEM: {
+            if (errors_to_fill != nullptr) {
+                dynamic_array_push_back(errors_to_fill, info.options.error_index);
+            }
+            break;
+        }
+        case Code_Analysis_Item_Type::EXPRESSION_INFO: {
+            if (info.tree_depth > previous_expr_depth) {
+                result.expression_info = &infos[i];
+                previous_expr_depth = info.tree_depth;
+            }
+            break;
+        }
+        case Code_Analysis_Item_Type::MEMBER_ACCESS: {
+            result.member_access = &infos[i];
+            break;
+        }
+        case Code_Analysis_Item_Type::MARKUP: {
+            break;
+        }
+        default: panic("");
+        }
+    }
+
+    return result;
+}
+
+Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    if (editor.analysis_data == nullptr) return nullptr;
+
+    index = code_query_text_index_at_last_synchronize(index, editor.open_tab_index, false);
+
+    auto& table_ranges = tab.code->symbol_table_ranges;
+    Symbol_Table* closest_table = tab.code->root_table;
+    int deepest_level = -1;
+    for (int i = 0; i < table_ranges.size; i++) {
+        auto table_range = table_ranges[i];
+        if (text_range_contains(table_range.range, index) && table_range.tree_depth > deepest_level) {
+            closest_table = table_range.symbol_table;
+            deepest_level = table_range.tree_depth;
+        }
+    }
+    return closest_table;
+}
+
+
+
+// Code Completion
+void code_completion_find_dotcalls_in_context_recursive(
+    Operator_Context* context, Hashset<Operator_Context*>* visited, Datatype* datatype, Dynamic_Array<Editor_Suggestion>* unranked_suggestions
+)
+{
+    if (hashset_contains(visited, context)) {
+        return;
+    }
+    hashset_insert_element(visited, context);
+
+    auto iter = hashtable_iterator_create(&context->custom_operators);
+    while (hashtable_iterator_has_next(&iter)) {
+        Custom_Operator_Key* key = iter.key;
+        Custom_Operator* op = iter.value;
+        if (key->type == AST::Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
+            String* id = key->options.dot_call.id;
+            fuzzy_search_add_item(*id, unranked_suggestions->size);
+            dynamic_array_push_back(unranked_suggestions, suggestion_make_id(id, Syntax_Color::FUNCTION));
+        }
+        hashtable_iterator_next(&iter);
+    }
+
+    for (int i = 0; i < context->context_imports.size; i++) {
+        auto other_context = context->context_imports[i];
+        code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions);
+    }
+}
+
+void suggestions_fill_with_file_directory(String search_path)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    Array<String> path_parts = string_split(search_path, '/');
+    SCOPE_EXIT(string_split_destroy(path_parts));
+
+    Directory_Crawler* crawler = editor.directory_crawler;
+    directory_crawler_set_path_to_file_dir(crawler, tab.compilation_unit->filepath);
+
+    bool success = true;
+    for (int i = 0; i < path_parts.size - 1 && success; i++)
+    {
+        String part = path_parts[i];
+        auto files = directory_crawler_get_content(crawler);
+        bool found = false;
+        for (int j = 0; j < files.size; j++) {
+            auto file = files[j];
+            if (string_equals(&file.name, &part)) {
+                directory_crawler_go_down_one_directory(crawler, j);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            success = false;
+        }
+    }
+    if (!success) {
+        return;
+    }
+
+    // Fuzzy find file
+    auto files = directory_crawler_get_content(crawler);
+    fuzzy_search_start_search(path_parts[path_parts.size - 1], 10);
+    for (int i = 0; i < files.size; i++) {
+        auto& file = files[i];
+        if (!file.is_directory) {
+            if (!string_ends_with(file.name.characters, ".upp")) {
+                continue;
+            }
+        }
+        fuzzy_search_add_item(file.name, i);
+    }
+
+    auto items = fuzzy_search_get_results(true, 3);
+    auto& suggestions = editor.suggestions;
+    dynamic_array_reset(&suggestions);
+    for (int i = 0; i < items.size; i++) {
+        dynamic_array_push_back(&suggestions, suggestion_make_file(items[i].user_index));
+    }
+}
+
+bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_inside_literal)
+{
+    auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+    auto line = source_code_get_line(code, index.line);
+    out_inside_literal = false;
+    if (line->is_comment) {
+        return true;
+    }
+
+    bool in_literal = false;
+    bool prev_was_backslash = false;
+    bool prev_was_slash = false;
+    for (int i = 0; i < index.character; i++)
+    {
+        char curr = line->text.characters[i];
+        if (curr == '\"') {
+            if (!prev_was_backslash) {
+                in_literal = !in_literal;
+            }
+            prev_was_backslash = false;
+            prev_was_slash = false;
+        }
+        else if (curr == '\\') {
+            prev_was_backslash = !prev_was_backslash;
+            prev_was_slash = false;
+        }
+        else if (curr == '/') {
+            if (!in_literal && prev_was_slash) {
+                return true; // Inside comment
+            }
+            prev_was_backslash = false;
+            prev_was_slash = true;
+        }
+    }
+
+    if (in_literal) {
+        out_inside_literal = true;
+        return true;
+    }
+    return false;
+}
+
+void code_completion_find_suggestions()
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto& suggestions = editor.suggestions;
+    auto& cursor = tab.cursor;
+
+    if (tab.last_code_completion_query.node_index == tab.history.current && 
+        text_index_equal(tab.last_code_completion_query_pos, cursor) &&
+        tab.last_compiler_synchronized.node_index == tab.last_code_completion_compiler_timestamp.node_index) 
+    {
+        return;
+    }
+    tab.last_code_completion_query = history_get_timestamp(&tab.history);
+    tab.last_code_completion_query_pos = cursor;
+    tab.last_code_completion_compiler_timestamp = tab.last_compiler_synchronized;
+
+    dynamic_array_reset(&suggestions);
+
+    // Early exit if we aren't in completion context
+    auto line = source_code_get_line(tab.code, cursor.line);
+    bool inside_string_literal = false;
+    {
+        if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || tab.compilation_unit == nullptr || line->is_comment || line->is_folded) {
+            return;
+        }
+
+        // Check if we are inside line comment
+        if (text_index_inside_comment_or_string_literal(cursor, inside_string_literal)) {
+            if (!inside_string_literal) {
+                return;
+            }
+        }
+    }
+
+    auto test_char = [](String str, int index, char c) -> bool {
+        if (index < 0 || index >= str.size) return false;
+        return str.characters[index] == c;
+    };
+
+    // Import file code completion
+    if (inside_string_literal)
+    {
+        bool add_file_suggestion = false;
+
+        int word_end = cursor.character;
+        auto char_is_quotation = [](char c, void* userdata) -> bool {return c == '\"'; };
+        word_end = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_quotation, nullptr, true, true);
+        String file_path = string_create_substring_static(&line->text, word_end + 1, cursor.character);
+        if (test_char(line->text, word_end, '\"'))
+        {
+            word_end -= 1;
+            // Skip whitespaces
+            word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
+            int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
+            if (word_start != word_end) {
+                String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
+                if (string_equals_cstring(&substring, "import")) {
+                    add_file_suggestion = true;
+                }
+            }
+        }
+
+        if (add_file_suggestion) {
+            suggestions_fill_with_file_directory(file_path);
+        }
+
+        return;
+    }
+
+    Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
+    SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
+    auto& ids = compiler.identifier_pool.predefined_ids;
+
+    // Get partially typed word
+    String partially_typed = string_create_static("");
+    bool is_member_access = false;
+    bool is_path_lookup = false;
+    {
+        int word_start = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
+        partially_typed = string_create_substring_static(&line->text, word_start, cursor.character);
+        if (partially_typed.size == 1 && !char_is_valid_identifier(partially_typed.characters[0])) {
+            partially_typed = string_create_static("");
+        }
+        is_member_access = test_char(line->text, word_start - 1, '.');
+        is_path_lookup = test_char(line->text, word_start - 1, '~');
+    }
+    fuzzy_search_start_search(partially_typed, 10);
+
+    // Check if we are on special node
+    syntax_editor_synchronize_code_information();
+
+    Text_Index cursor_char_index = tab.cursor;
+    if (cursor_char_index.character > 0) {
+        cursor_char_index.character -= 1;
+    }
+    Position_Info position_info = code_query_find_position_infos(cursor_char_index, nullptr);
+
+    // Member-Access code completion
+    if (is_member_access)
+    {
+        Datatype* type = nullptr;
+        if (position_info.member_access != nullptr)
+        {
+            auto& access = position_info.member_access->options.member_access;
+            type = access.final_type;
+            if (access.initial_type->mods.optional_flags != 0) {
+                fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
+                type = nullptr;
+            }
+        }
+        if (type == nullptr && position_info.auto_enum_type != nullptr) {
+            type = upcast(position_info.auto_enum_type);
+        }
+
+        if (type != 0)
+        {
+            auto original = type;
+            type = type->base_type;
+            switch (type->type)
+            {
+            case Datatype_Type::ARRAY:
+            case Datatype_Type::SLICE: {
+                fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
+                fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
+                break;
+            }
+            case Datatype_Type::OPTIONAL_TYPE: {
+                fuzzy_search_add_item(*ids.value, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
+                fuzzy_search_add_item(*ids.is_available, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.is_available));
+                break;
+            }
+            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+            case Datatype_Type::STRUCT:
+            {
+                Datatype_Struct* structure = 0;
+                if (type->type == Datatype_Type::STRUCT) {
+                    structure = downcast<Datatype_Struct>(type);
+                }
+                else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
+                    structure = downcast<Datatype_Struct_Instance_Template>(type)->struct_base->body_workload->struct_type;
+                }
+
+                Struct_Content* content = type_mods_get_subtype(structure, original->mods);
+                auto& members = content->members;
+                for (int i = 0; i < members.size; i++) {
+                    auto& mem = members[i];
+                    fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
+                }
+                if (content->subtypes.size > 0) {
+                    fuzzy_search_add_item(*ids.tag, unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, content->tag_member.type, ids.tag));
+                }
+                for (int i = 0; i < content->subtypes.size; i++) {
+                    auto sub = content->subtypes[i];
+                    fuzzy_search_add_item(*sub->name, unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(sub->name));
+                }
+                // Add base name if available
+                if (original->mods.subtype_index->indices.size > 0) {
+                    Struct_Content* content = type_mods_get_subtype(structure, type->mods, type->mods.subtype_index->indices.size - 1);
+                    fuzzy_search_add_item(*content->name, unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(content->name));
+                }
+                break;
+            }
+            case Datatype_Type::ENUM:
+                auto& members = downcast<Datatype_Enum>(type)->members;
+                for (int i = 0; i < members.size; i++) {
+                    auto& mem = members[i];
+                    fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+                    dynamic_array_push_back(&unranked_suggestions, suggestion_make_enum_member(downcast<Datatype_Enum>(type), mem.name));
+                }
+                break;
+            }
+
+            // Search for dot-calls
+            if (type->type == Datatype_Type::STRUCT)
+            {
+                auto struct_type = downcast<Datatype_Struct>(type);
+                if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+                    type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
+                }
+            }
+            Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
+            if (symbol_table != nullptr)
+            {
+                auto context = symbol_table->operator_context;
+                Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
+                SCOPE_EXIT(hashset_destroy(&visited));
+                code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions);
+            }
+        }
+    }
+    else if (is_path_lookup)
+    {
+        Symbol_Table* symbol_table = nullptr;
+
+        auto text = line->text;
+        int char_index = cursor.character - 1;
+        // Move backwards to ~
+        char_index = Motions::move_while_condition(text, char_index, false, char_is_valid_identifier, nullptr, false, true);
+        if (test_char(text, char_index, '~')) {
+            Position_Info position_info = code_query_find_position_infos(text_index_make(cursor.line, char_index - 1), nullptr);
+            if (position_info.symbol_info != nullptr) {
+                auto& symbol = position_info.symbol_info->options.symbol.symbol;
+                if (symbol->type == Symbol_Type::MODULE) {
+                    symbol_table = symbol->options.module.symbol_table;
+                }
+            }
+        }
+
+        if (symbol_table != nullptr)
+        {
+            auto results = dynamic_array_create<Symbol*>();
+            SCOPE_EXIT(dynamic_array_destroy(&results));
+            symbol_table_query_id(symbol_table, 0, false, Symbol_Access_Level::INTERNAL, &results);
+            for (int i = 0; i < results.size; i++) {
+                fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
+            }
+        }
+    }
+    else
+    {
+        // Auto-Complete context _option_()
+        if (unranked_suggestions.size == 0)
+        {
+            // Check if we should fill context options
+            bool fill_context_options = false;
+            int word_end = cursor.character - 1;
+            word_end = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, true);
+            word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
+            int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
+            if (word_start != word_end) {
+                String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
+                if (string_equals_cstring(&substring, "context")) {
+                    fill_context_options = true;
+                }
+            }
+
+            if (fill_context_options) {
+                fuzzy_search_add_item(*ids.set_cast_option, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.set_cast_option));
+                fuzzy_search_add_item(*ids.id_import, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.id_import));
+                fuzzy_search_add_item(*ids.add_binop, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_binop));
+                fuzzy_search_add_item(*ids.add_unop, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_unop));
+                fuzzy_search_add_item(*ids.add_cast, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_cast));
+                fuzzy_search_add_item(*ids.add_dot_call, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_dot_call));
+                fuzzy_search_add_item(*ids.add_array_access, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_array_access));
+                fuzzy_search_add_item(*ids.add_iterator, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_iterator));
+            }
+        }
+
+        // Auto complete continue/break
+        if (unranked_suggestions.size == 0)
+        {
+            bool add_block_id_suggestions = false;
+            int word_end = cursor.character - 1;
+            word_end = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, true);
+            word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
+            int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
+            if (word_start != word_end) {
+                String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
+                if (string_equals_cstring(&substring, "continue") || string_equals_cstring(&substring, "break")) {
+                    add_block_id_suggestions = true;
+                }
+            }
+
+            if (add_block_id_suggestions)
+            {
+                auto& id_ranges = tab.code->block_id_range;
+                auto prev_cursor_index = code_query_text_index_at_last_synchronize(cursor, editor.open_tab_index, false);
+                for (int i = 0; i < id_ranges.size; i++) {
+                    auto id_range = id_ranges[i];
+                    if (text_range_contains(id_range.range, prev_cursor_index)) {
+                        fuzzy_search_add_item(*id_range.block_id, unranked_suggestions.size);
+                        dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id_range.block_id));
+                    }
+                }
+            }
+        }
+
+        // Exit if nothing specific was found
+        if (unranked_suggestions.size == 0 && partially_typed.size == 0) {
+            return;
+        }
+
+        // Search symbols
+        Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
+        if (unranked_suggestions.size == 0 && symbol_table != nullptr)
+        {
+            auto results = dynamic_array_create<Symbol*>();
+            SCOPE_EXIT(dynamic_array_destroy(&results));
+            symbol_table_query_id(symbol_table, 0, true, Symbol_Access_Level::INTERNAL, &results);
+            for (int i = 0; i < results.size; i++) {
+                fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
+                dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
+            }
+        }
+    }
+
+    // Add results to suggestions
+    auto results = fuzzy_search_get_results(true, 3);
+    for (int i = 0; i < results.size; i++) {
+        dynamic_array_push_back(&syntax_editor.suggestions, unranked_suggestions[results[i].user_index]);
+    }
+}
+
+void code_completion_insert_suggestion()
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    String replace_string;
+    if (editor.record_insert_commands)
+    {
+        auto& suggestions = editor.suggestions;
+        string_reset(&editor.last_recorded_code_completion);
+        if (suggestions.size == 0) return;
+        replace_string = *suggestions[0].text;
+        string_append_string(&editor.last_recorded_code_completion, &replace_string);
+    }
+    else {
+        replace_string = editor.last_recorded_code_completion;
+    }
+    if (replace_string.size == 0) return;
+    if (tab.cursor.character == 0) return;
+
+
+    // Remove current token
+    auto line = source_code_get_line(tab.code, tab.cursor.line);
+    int start_pos = tab.cursor.character;
+    if (char_is_valid_identifier(get_cursor_char('!'))) {
+        start_pos = Motions::move_while_condition(line->text, tab.cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
+        Text_Editing::delete_text(text_index_make(tab.cursor.line, start_pos), tab.cursor.character, true);
+    }
+
+    // Insert suggestion instead
+    tab.cursor.character = start_pos;
+    Text_Editing::insert_text(tab.cursor, replace_string, true);
+    tab.cursor.character += replace_string.size;
+}
+
+
+
+// Editor update
+void editor_enter_insert_mode()
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    if (syntax_editor.mode == Editor_Mode::INSERT) {
+        return;
+    }
+    if (syntax_editor.record_insert_commands) {
+        dynamic_array_reset(&syntax_editor.last_insert_commands);
+    }
+    syntax_editor.mode = Editor_Mode::INSERT;
+    history_start_complex_command(&tab.history);
+}
+
+void editor_leave_insert_mode()
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    if (syntax_editor.mode != Editor_Mode::INSERT) {
+        return;
+    }
+    syntax_editor.mode = Editor_Mode::NORMAL;
+    history_stop_complex_command(&tab.history);
+    history_set_cursor_pos(&tab.history, tab.cursor);
+    dynamic_array_reset(&editor.suggestions);
+}
+
+void editor_split_line_at_cursor(int indentation_offset)
+{
+    auto& editor = syntax_editor;
+    auto& tab = editor.tabs[editor.open_tab_index];
+    auto& mode = editor.mode;
+    auto& cursor = tab.cursor;
+
+    Source_Line* line = source_code_get_line(tab.code, cursor.line);
+    auto& text = line->text;
+    int line_size = text.size; // Text may be invalid after applying history changes
+    String cutout = string_create_substring_static(&text, cursor.character, text.size);
+
+    history_start_complex_command(&tab.history);
+    SCOPE_EXIT(history_stop_complex_command(&tab.history));
+
+    int new_line_index = cursor.line + 1;
+    history_insert_line(&tab.history, new_line_index, math_maximum(0, line->indentation + indentation_offset));
+
+    if (cursor.character != line_size) {
+        history_insert_text(&tab.history, text_index_make(new_line_index, 0), cutout);
+        history_delete_text(&tab.history, cursor, line_size);
+    }
+    cursor = text_index_make(new_line_index, 0);
+}
+
 Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 {
     auto& editor = syntax_editor;
@@ -3338,6 +3761,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
         {
         case Movement_Type::MOVE_DOWN:
         case Movement_Type::MOVE_UP: {
+            syntax_editor_synchronize_code_information(); // Synchronize visible indices of lines
             int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
             pos = sanitize_index(pos);
             pos.line = Line_Movement::move_visible_lines_up_or_down(pos.line, movement.repeat_count * dir);
@@ -3793,36 +4217,6 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
     return result;
 }
 
-void insert_text_with_particles(Code_History* history, Text_Index index, String str)
-{
-    history_insert_text(history, index, str);
-    Text_Range range;
-    range.start = index;
-    range.end = index;
-    range.end.character += str.size;
-    particles_add_in_range(range, vec3(0.5f, 0.5f, 0.5f));
-}
-
-void insert_char_with_particles(Code_History* history, Text_Index index, char c)
-{
-    history_insert_char(history, index, c);
-    Text_Range range;
-    range.start = index;
-    range.end = index;
-    range.end.character += 1;
-    particles_add_in_range(range, vec3(0.5f, 0.5f, 0.5f));
-}
-
-void delete_char_with_particles(Code_History* history, Text_Index index)
-{
-    history_delete_char(history, index);
-    Text_Range range;
-    range.start = index;
-    range.end = index;
-    range.end.character += 1;
-    particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
-}
-
 bool motion_is_line_motion(const Motion& motion) {
     return
         motion.motion_type == Motion_Type::BLOCK ||
@@ -3833,53 +4227,6 @@ bool motion_is_line_motion(const Motion& motion) {
                 motion.movement.type == Movement_Type::GOTO_LINE_NUMBER ||
                 motion.movement.type == Movement_Type::MOVE_UP ||
                 motion.movement.type == Movement_Type::MOVE_DOWN));
-}
-
-void text_range_delete(Text_Range range, bool is_line_motion)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto code = tab.code;
-    auto history = &tab.history;
-
-    if (is_line_motion) {
-        range.start.character = 0;
-        range.end.character = source_code_get_line(code, range.end.line)->text.size;
-    }
-    particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
-    history_start_complex_command(history);
-    SCOPE_EXIT(history_stop_complex_command(history));
-
-    if (is_line_motion) {
-        for (int i = range.start.line; i <= range.end.line; i++) {
-            history_remove_line(history, range.start.line);
-        }
-        return;
-    }
-
-    // Handle single line case
-    if (range.start.line == range.end.line) {
-        history_delete_text(history, range.start, range.end.character);
-        return;
-    }
-
-    // Delete text in first line
-    auto line = Motions::get_line(range.start);
-    auto end_line = Motions::get_line(range.end);
-    if (end_line == nullptr || line == nullptr) return;
-    history_delete_text(history, range.start, line->text.size);
-
-    // Append remaining text of last-line into first line
-    String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
-    history_insert_text(history, range.start, remainder);
-    if (line->indentation != end_line->indentation && range.start.character == 0) {
-        history_change_indent(history, range.start.line, end_line->indentation);
-    }
-
-    // Delete all lines inbetween
-    for (int i = range.start.line + 1; range.start.line + 1 < code->line_count && i <= range.end.line; i++) {
-        history_remove_line(history, range.start.line + 1);
-    }
 }
 
 void text_range_append_to_string(Text_Range range, String* str)
@@ -4004,7 +4351,7 @@ void syntax_editor_insert_yank(bool before_cursor)
             auto& yank_line = yank_lines[i];
             history_insert_line_with_text(history, line_insert_index + i, yank_line.indentation + indent, yank_line.text);
             auto range = text_range_make(text_index_make(line_insert_index + i, 0), text_index_make(line_insert_index + i, yank_line.text.size));
-            particles_add_in_range(range, vec3(0.2f, 0.5f, 0.2f));
+            Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.5f, 0.2f));
         }
         cursor = text_index_make(line_insert_index, 0);
     }
@@ -4015,7 +4362,7 @@ void syntax_editor_insert_yank(bool before_cursor)
         auto& pos = cursor;
         pos.character += before_cursor ? 0 : 1;
         pos = sanitize_index(pos);
-        insert_text_with_particles(history, pos, first_line.text);
+        Text_Editing::insert_text(pos, first_line.text, true);
 
         if (yank_lines.size > 1)
         {
@@ -4035,44 +4382,26 @@ void syntax_editor_insert_yank(bool before_cursor)
     }
 }
 
-void center_cursor_on_error()
+void center_cursor_on_error(int error_index)
 {
     auto& editor = syntax_editor;
     auto& index = editor.navigate_error_index;
-    auto& errors = editor.errors;
 
-    int index_in_list = -1;
-    int real_error_count = 0;
-    for (int i = 0; i < editor.errors.size; i++) {
-        auto& e = errors[i];
-        if (!e.is_token_range_duplicate) {
-            if (real_error_count == index) {
-                index_in_list = i;
-                break;
-            }
-            real_error_count += 1;
-        }
-    }
-
-    if (index_in_list == -1) {
+    if (editor.analysis_data == nullptr) {
         return;
     }
+    auto& errors = editor.analysis_data->compiler_errors;
+    if (error_index < 0 || error_index >= errors.size) return;
 
     // Note: We need to take the error out of the error list here, as tab-switching will change the error index
-    Error_Display error = editor.errors[index_in_list];
-    if (error.code != editor.tabs[editor.open_tab_index].code) {
-        int tab_index = syntax_editor_add_tab(error.code->file_path);
+    Compiler_Error_Info error = errors[error_index];
+    if (error.unit != editor.tabs[editor.open_tab_index].compilation_unit) {
+        int tab_index = syntax_editor_add_tab(error.unit->filepath);
         syntax_editor_switch_tab(tab_index);
     }
     auto& tab = editor.tabs[editor.open_tab_index];
-    auto line = source_code_get_line(tab.code, error.range.start.line);
-    tab.cursor.line = error.range.start.line;
-    if (error.range.start.token < line->tokens.size) {
-        tab.cursor.character = line->tokens[error.range.start.token].start_index;
-    }
-    else {
-        tab.cursor.character = 0;
-    }
+    tab.cursor = code_query_text_index_at_last_synchronize(error.text_index, editor.open_tab_index, true);
+    tab.cursor = sanitize_index(tab.cursor);
     auto cmd = Parsing::normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, 1);
     normal_command_execute(cmd);
 }
@@ -4086,7 +4415,6 @@ void normal_command_execute(Normal_Mode_Command& command)
     auto history = &tab.history;
 
     auto line = source_code_get_line(code, cursor.line);
-    auto& tokens = line->tokens;
 
     // Save cursor pos
     history_set_cursor_pos(history, cursor);
@@ -4106,24 +4434,21 @@ void normal_command_execute(Normal_Mode_Command& command)
     // Start complex command for non-history commands
     bool execute_as_complex = command.type != Normal_Command_Type::UNDO && command.type != Normal_Command_Type::REDO &&
         command.type != Normal_Command_Type::GOTO_NEXT_TAB && command.type != Normal_Command_Type::GOTO_PREV_TAB &&
-        command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE && command.type != Normal_Command_Type::CLOSE_TAB;
+        command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE && command.type != Normal_Command_Type::CLOSE_TAB &&
+        command.type != Normal_Command_Type::GOTO_DEFINITION;
     if (execute_as_complex) {
         history_start_complex_command(history);
     }
 
+    Source_Code* previous_code = tab.code;
     SCOPE_EXIT(
-        if (command.type != Normal_Command_Type::GOTO_NEXT_TAB &&
-            command.type != Normal_Command_Type::GOTO_PREV_TAB &&
-            command.type != Normal_Command_Type::CLOSE_TAB &&
-            command.type != Normal_Command_Type::ENTER_SHOW_ERROR_MODE)
-        {
+        if (previous_code == editor.tabs[editor.open_tab_index].code) {
             syntax_editor_sanitize_cursor();
             history_set_cursor_pos(history, cursor);
-            auto_format_line(cursor.line);
-            if (execute_as_complex) {
-                history_stop_complex_command(history);
-            }
         }
+    if (execute_as_complex) {
+        history_stop_complex_command(history);
+    }
     );
 
     switch (command.type)
@@ -4182,7 +4507,7 @@ void normal_command_execute(Normal_Mode_Command& command)
             editor.yank_was_line = true;
             auto range = motion_evaluate(motion, cursor);
             if (command.type == Normal_Command_Type::YANK_MOTION) {
-                particles_add_in_range(range, vec3(0.2f, 0.2f, 0.8f));
+                Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.2f, 0.8f));
             }
 
             int start_line = range.start.line;
@@ -4210,7 +4535,7 @@ void normal_command_execute(Normal_Mode_Command& command)
             editor.yank_was_line = false;
             auto range = motion_evaluate(command.options.motion, cursor);
             if (command.type == Normal_Command_Type::YANK_MOTION) {
-                particles_add_in_range(range, vec3(0.2f, 0.2f, 0.8f));
+                Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.2f, 0.8f));
             }
             string_reset(&editor.yank_string);
             text_range_append_to_string(range, &editor.yank_string);
@@ -4220,7 +4545,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         // Delete if necessary
         if (command.type == Normal_Command_Type::DELETE_MOTION) {
             auto range = motion_evaluate(command.options.motion, cursor);
-            text_range_delete(range, is_line_motion);
+            Text_Editing::delete_text_range(range, is_line_motion, true);
             cursor = range.start;
         }
         break;
@@ -4230,7 +4555,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         cursor = range.start;
         editor_enter_insert_mode();
         // bool is_line_motion = command.options.motion.motion_type == Motion_Type::LINE || command.options.motion.motion_type == Motion_Type::BLOCK;
-        text_range_delete(range, false);
+        Text_Editing::delete_text_range(range, false, true);
         break;
     }
     case Normal_Command_Type::PUT_AFTER_CURSOR:
@@ -4241,8 +4566,8 @@ void normal_command_execute(Normal_Mode_Command& command)
     case Normal_Command_Type::REPLACE_CHAR: {
         auto curr_char = Motions::get_char(cursor);
         if (curr_char == '\0' || curr_char == command.options.character) break;
-        delete_char_with_particles(history, cursor);
-        insert_char_with_particles(history, cursor, command.options.character);
+        Text_Editing::delete_char(cursor, true);
+        Text_Editing::insert_char(cursor, command.options.character, true);
         break;
     }
     case Normal_Command_Type::REPLACE_MOTION_WITH_YANK: {
@@ -4252,7 +4577,7 @@ void normal_command_execute(Normal_Mode_Command& command)
             break;
         }
         bool is_line_motion = motion_is_line_motion(command.options.motion);
-        text_range_delete(range, is_line_motion);
+        Text_Editing::delete_text_range(range, is_line_motion, true);
         syntax_editor_insert_yank(true);
         break;
     }
@@ -4331,14 +4656,17 @@ void normal_command_execute(Normal_Mode_Command& command)
         syntax_editor_close_tab(editor.open_tab_index);
         break;
     }
-    case Normal_Command_Type::GOTO_DEFINITION: {
-        syntax_editor_synchronize_with_compiler(false);
-        Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(true));
-        AST::Node* node = Parser::find_smallest_enclosing_node(upcast(code->root), cursor_token_index);
-        Symbol* symbol = code_query_get_ast_node_symbol(node); // May be null
-        if (symbol != 0 && symbol->definition_node != 0) {
-            syntax_editor_goto_node(symbol->definition_node);
-            syntax_editor_add_position_to_jump_list();
+    case Normal_Command_Type::GOTO_DEFINITION: 
+    {
+        syntax_editor_synchronize_code_information();
+        Position_Info position_info = code_query_find_position_infos(cursor, nullptr);
+        if (position_info.symbol_info != nullptr) 
+        {
+            Symbol* symbol = position_info.symbol_info->options.symbol.symbol;
+            if (symbol->definition_node != 0) {
+                syntax_editor_goto_node(symbol->definition_node);
+                syntax_editor_add_position_to_jump_list();
+            }
         }
         break;
     }
@@ -4356,6 +4684,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         break;
     }
     case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
+        syntax_editor_wait_for_newest_compiler_info(false);
         string_reset(&editor.fuzzy_search_text);
         editor.search_text_edit = line_editor_make();
         dynamic_array_reset(&editor.suggestions);
@@ -4363,23 +4692,20 @@ void normal_command_execute(Normal_Mode_Command& command)
         break;
     }
     case Normal_Command_Type::ENTER_SHOW_ERROR_MODE: {
-        syntax_editor_synchronize_with_compiler(false);
-        if (editor.errors.size <= 0) {
+        syntax_editor_wait_for_newest_compiler_info(false);
+        if (editor.analysis_data == nullptr) {
             break;
         }
+        else if (editor.analysis_data->compiler_errors.size == 0) {
+            break;
+        }
+
         editor.mode = Editor_Mode::ERROR_NAVIGATION;
         editor.navigate_error_mode_cursor_before = tab.cursor;
         editor.navigate_error_mode_tab_before = editor.open_tab_index;
         editor.navigate_error_cam_start = 0;
-        editor.navigate_error_item_count = 0;
         editor.navigate_error_index = 0;
-        for (int i = 0; i < editor.errors.size; i++) {
-            if (!editor.errors[i].is_token_range_duplicate) {
-                editor.navigate_error_item_count += 1;
-            }
-        }
-
-        center_cursor_on_error();
+        center_cursor_on_error(editor.navigate_error_index);
         break;
     }
     case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE: {
@@ -4400,8 +4726,6 @@ void normal_command_execute(Normal_Mode_Command& command)
     }
     case Normal_Command_Type::SEARCH_IDENTIFER_UNDER_CURSOR:
     {
-        syntax_editor_synchronize_tokens();
-        Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(true));
         Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::WORD, 1, false), cursor);
         if (text_index_equal(range.start, range.end)) break;
 
@@ -4552,7 +4876,7 @@ void normal_command_execute(Normal_Mode_Command& command)
             break;
         }
 
-        particles_add_in_range(range, vec3(1.0f));
+        Text_Editing::particles_add_in_range(range, vec3(1.0f));
         break;
     }
     default: panic("");
@@ -4577,7 +4901,7 @@ void insert_command_execute(Insert_Command input)
     assert(mode == Editor_Mode::INSERT, "");
     syntax_editor_sanitize_cursor();
     SCOPE_EXIT(syntax_editor_sanitize_cursor());
-    SCOPE_EXIT(code_completion_find_suggestions());
+    SCOPE_EXIT(Text_Editing::auto_format_line(cursor.line, editor.open_tab_index));
 
     if (editor.record_insert_commands) {
         dynamic_array_push_back(&editor.last_insert_commands, input);
@@ -4587,43 +4911,16 @@ void insert_command_execute(Insert_Command input)
         editor.last_insert_was_shift_enter = false;
     }
 
-    // Experimental: Automatically complete identifier if we are about to enter some seperation afterwards
-    if (false)
-    {
-        bool complete_current = false;
-        switch (input.type)
-        {
-        case Insert_Command_Type::ADD_INDENTATION:
-        case Insert_Command_Type::ENTER:
-        case Insert_Command_Type::ENTER_REMOVE_ONE_INDENT:
-        case Insert_Command_Type::SPACE:
-        {
-            syntax_editor_synchronize_tokens();
-            auto after_token = get_cursor_token(true);
-            complete_current = line->tokens.size != 1;
-            if (!complete_current) {
-                complete_current =
-                    !(after_token.type == Token_Type::OPERATOR &&
-                        (after_token.options.op == Operator::DEFINE_COMPTIME ||
-                            after_token.options.op == Operator::DEFINE_INFER ||
-                            after_token.options.op == Operator::COLON));
-            }
-            break;
-        }
-        case Insert_Command_Type::DELIMITER_LETTER:
-            complete_current = input.letter != ':';
-            break;
-        }
-
-        if (complete_current) {
-            code_completion_insert_suggestion();
-        }
-    }
-
     // Handle Universal Inputs
     switch (input.type)
     {
     case Insert_Command_Type::INSERT_CODE_COMPLETION: {
+        syntax_editor_synchronize_code_information();
+        code_completion_find_suggestions();
+        if (editor.suggestions.size == 0) {
+            syntax_editor_wait_for_newest_compiler_info(false);
+            code_completion_find_suggestions();
+        }
         code_completion_insert_suggestion();
         break;
     }
@@ -4676,7 +4973,7 @@ void insert_command_execute(Insert_Command input)
         if (!text_index_equal(start, cursor)) {
             Text_Index end = cursor;
             cursor = start;
-            text_range_delete(text_range_make(start, end), false);
+            Text_Editing::delete_text_range(text_range_make(start, end), false, true);
         }
         break;
     }
@@ -4684,10 +4981,10 @@ void insert_command_execute(Insert_Command input)
         if (cursor.character == 0) break;
         auto to = cursor;
         cursor.character = 0;
-        text_range_delete(text_range_make(cursor, to), false);
+        Text_Editing::delete_text_range(text_range_make(cursor, to), false, true);
         break;
     }
-                                                  // Letters
+    // Letters
     case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;
@@ -4696,7 +4993,7 @@ void insert_command_execute(Insert_Command input)
         if (char_is_parenthesis(input.letter))
         {
             Parenthesis p = char_to_parenthesis(input.letter);
-            // Check if line_index is properly parenthesised with regards to the one token I currently am on
+            // Check if line is properly parenthesised with regards to the one token I currently am on
             // This is easy to check, but design wise I feel like I only want to check the token I am on
             if (p.is_open)
             {
@@ -4743,45 +5040,34 @@ void insert_command_execute(Insert_Command input)
             break;
         }
         if (insert_double_after) {
-            insert_char_with_particles(history, cursor, double_char);
+            Text_Editing::insert_char(cursor, double_char, true);
         }
-        insert_char_with_particles(history, cursor, input.letter);
+        Text_Editing::insert_char(cursor, input.letter, true);
         pos += 1;
-        // Inserting delimiters between space critical tokens can lead to spaces beeing removed
-        auto_format_line(cursor.line);
         break;
     }
     case Insert_Command_Type::SPACE:
     {
         // Handle strings and comments, where we always just add a space
         if (line->is_comment) {
-            insert_char_with_particles(history, cursor, ' ');
+            Text_Editing::insert_char(cursor, ' ', true);
             pos += 1;
             break;
         }
         if (pos == 0) break;
-        syntax_editor_synchronize_tokens();
-        auto token = get_cursor_token(false);
-        if (token.type == Token_Type::COMMENT) {
-            if (pos > token.start_index + 1) {
-                insert_char_with_particles(history, cursor, ' ');
-                pos += 1;
-            }
-            break;
-        }
-        if (token.type == Token_Type::LITERAL && token.options.literal_value.type == Literal_Type::STRING) {
-            if (pos > token.start_index && pos < token.end_index) {
-                insert_char_with_particles(history, cursor, ' ');
-                pos += 1;
-            }
+
+        // Check if inside comment or string literal
+        bool _unused;
+        if (text_index_inside_comment_or_string_literal(cursor, _unused)) {
+            Text_Editing::insert_char(cursor, ' ', true);
+            pos += 1;
             break;
         }
 
         char prev = text[pos - 1];
         if ((char_is_space_critical(prev)) || (pos == text.size && prev != ' ')) {
-            insert_char_with_particles(history, cursor, ' ');
+            Text_Editing::insert_char(cursor, ' ', true);
             pos += 1;
-            auto_format_line(cursor.line);
         }
 
         break;
@@ -4800,21 +5086,29 @@ void insert_command_execute(Insert_Command input)
             history_insert_text(history, insert_index, text);
             history_remove_line(history, cursor.line);
             cursor = insert_index;
-            auto_format_line(cursor.line);
             break;
         }
 
-        delete_char_with_particles(history, text_index_make(cursor.line, pos - 1));
+        if (pos - 2 >= 0 && pos - 1 < text.size) {
+            auto char_on = text.characters[pos - 1];
+            auto char_prev = text.characters[pos - 2];
+            if (char_on == ' ' && char_is_operator(char_prev)) {
+                Text_Editing::delete_char(text_index_make(cursor.line, pos - 2), true);
+                Text_Editing::delete_char(text_index_make(cursor.line, pos - 2), true);
+                pos -= 2;
+                break;
+            }
+        }
+
+        Text_Editing::delete_char(text_index_make(cursor.line, pos - 1), true);
         pos -= 1;
-        auto_format_line(cursor.line);
         break;
     }
     case Insert_Command_Type::NUMBER_LETTER:
     case Insert_Command_Type::IDENTIFIER_LETTER:
     {
-        insert_char_with_particles(history, cursor, input.letter);
+        Text_Editing::insert_char(cursor, input.letter, true);
         pos += 1;
-        auto_format_line(cursor.line);
         break;
     }
     default: panic("");
@@ -5122,7 +5416,6 @@ void syntax_editor_process_key_message(Key_Message& msg)
             }
 
             auto& tab = editor.tabs[editor.open_tab_index];
-            syntax_editor_synchronize_with_compiler(false);
 
             String search = editor.fuzzy_search_text;
             if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/') {
@@ -5138,16 +5431,12 @@ void syntax_editor_process_key_message(Key_Message& msg)
             bool is_intern = true;
             if (path_parts[0].size == 0) { // E.g. first term is a ~
                 search = string_create_substring_static(&editor.fuzzy_search_text, 1, editor.fuzzy_search_text.size);
-                symbol_table = compiler.main_source->module_progress->module_analysis->symbol_table;
+                symbol_table = tab.code->root_table;
                 is_intern = false;
             }
             else
             {
-                Token_Index cursor_token_index = token_index_make(tab.cursor.line, get_cursor_token_index(true));
-                AST::Node* node = Parser::find_smallest_enclosing_node(upcast(tab.code->root), cursor_token_index);
-                Analysis_Pass* pass = code_query_get_analysis_pass(node); // Note: May be null?
-                assert(pass != 0, "After compile the module discory should always execute with normal pass...");
-                symbol_table = code_query_get_ast_node_symbol_table(node);
+                symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
                 is_intern = true;
             }
             assert(symbol_table != 0, "At least root table should always be available");
@@ -5229,13 +5518,13 @@ void syntax_editor_process_key_message(Key_Message& msg)
         if (msg.character == 'j' || msg.character == 'k')
         {
             auto& index = editor.navigate_error_index;
-            auto& errors = editor.errors;
+            auto& errors = editor.analysis_data->compiler_errors;
             index += msg.character == 'j' ? 1 : -1;
-            index = math_clamp(index, 0, editor.navigate_error_item_count - 1);
-            center_cursor_on_error();
+            index = math_clamp(index, 0, errors.size - 1);
+            center_cursor_on_error(index);
         }
         else if (msg.character == 'l' || msg.character == 'h') {
-            center_cursor_on_error();
+            center_cursor_on_error(editor.navigate_error_index);
         }
 
         break;
@@ -5293,57 +5582,6 @@ void syntax_editor_update(bool& animations_running)
         }
     }
 
-    // Handle input replay
-    {
-        auto& tab = editor.tabs[editor.open_tab_index];
-        auto& replay = editor.input_replay;
-        if (editor.input->key_pressed[(int)Key_Code::F9]) {
-            if (replay.currently_recording) {
-                logg("Ending recording of inputs, captures: %d messages!\n", replay.recorded_inputs.size);
-                replay.currently_recording = false;
-                string_reset(&replay.code_state_afterwards);
-                source_code_append_to_string(tab.code, &replay.code_state_afterwards);
-            }
-            else {
-                logg("Started recording keyboard inputs!", replay.recorded_inputs.size);
-                replay.currently_recording = true;
-                replay.cursor_start = tab.cursor;
-                replay.start_mode = editor.mode;
-                string_reset(&replay.code_state_initial);
-                source_code_append_to_string(tab.code, &replay.code_state_initial);
-                dynamic_array_reset(&replay.recorded_inputs);
-            }
-        }
-        if (editor.input->key_pressed[(int)Key_Code::F10]) {
-            if (replay.currently_recording) {
-                logg("Cannot replay recorded inputs, since we are CURRENTLY RECORDING!\n");
-            }
-            else {
-                replay.currently_replaying = true;
-                SCOPE_EXIT(replay.currently_replaying = false);
-                // Set new state
-                syntax_editor_set_text(replay.code_state_initial);
-                tab.cursor = replay.cursor_start;
-                editor.mode = replay.start_mode;
-                for (int i = 0; i < replay.recorded_inputs.size; i++) {
-                    syntax_editor_process_key_message(replay.recorded_inputs[i]);
-                }
-                auto text_afterwards = string_create_empty(256);
-                SCOPE_EXIT(string_destroy(&text_afterwards));
-                source_code_append_to_string(tab.code, &text_afterwards);
-                if (!string_equals(&text_afterwards, &replay.code_state_afterwards)) {
-                    logg("Replaying the events did not end in the same output!\n");
-                }
-                else {
-                    logg("Replay successfull, everything happened as expected");
-                }
-            }
-        }
-        if (replay.currently_recording) {
-            dynamic_array_append_other(&replay.recorded_inputs, &input->key_messages);
-        }
-    }
-
     // Check shortcuts pressed
     if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL] && syntax_editor.input->key_down[(int)Key_Code::SHIFT]) {
         String filename = string_create();
@@ -5358,10 +5596,8 @@ void syntax_editor_update(bool& animations_running)
         syntax_editor_save_text_file();
     }
     else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
+        syntax_editor_wait_for_newest_compiler_info(false);
         compiler_run_testcases(compiler.timer, true);
-        editor.code_changed_since_last_compile = true;
-        editor.tabs[editor.open_tab_index].code->code_changed_since_last_compile = true;
-        syntax_editor_synchronize_with_compiler(false);
     }
 
     // Handle Editor inputs
@@ -5381,7 +5617,7 @@ void syntax_editor_update(bool& animations_running)
             for (int i = 0; i < editor.tabs.size; i++)
             {
                 auto& tab = editor.tabs[i];
-                String name = tab.code->file_path;
+                String name = tab.compilation_unit->filepath;
                 int start = 0;
                 int end = name.size;
 
@@ -5415,8 +5651,6 @@ void syntax_editor_update(bool& animations_running)
                         }
                         else {
                             editor.main_tab_index = i;
-                            editor.code_changed_since_last_compile = true;
-                            syntax_editor_synchronize_with_compiler(false);
                         }
                     }
                     else {
@@ -5457,271 +5691,66 @@ void syntax_editor_update(bool& animations_running)
     }
 
     // Handle error navigation mode
-    if (mode == Editor_Mode::ERROR_NAVIGATION && editor.errors.size == 0) {
+    if (mode == Editor_Mode::ERROR_NAVIGATION && editor.analysis_data != 0 && editor.analysis_data->compiler_errors.size == 0) {
         mode = Editor_Mode::NORMAL;
     }
 
+    bool synch_with_compiler = syntax_editor.input->key_pressed[(int)Key_Code::B] && syntax_editor.input->key_down[(int)Key_Code::CTRL];
     bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
-    syntax_editor_synchronize_with_compiler(build_and_run);
-
-    if (build_and_run && editor.errors.size > 0) {
-        auto cmd = Parsing::normal_mode_command_make(Normal_Command_Type::ENTER_SHOW_ERROR_MODE, 1);
-        normal_command_execute(cmd);
-        build_and_run = false;
+    if (editor.compiler_work_started) {
+        animations_running = true;
     }
 
-    if (build_and_run)
+    // For now always wait for newest compiler information
+    if (build_and_run || synch_with_compiler) {
+        syntax_editor_wait_for_newest_compiler_info(build_and_run);
+    }
+
+    if (!build_and_run) {
+        return;
+    }
+    if (editor.analysis_data == nullptr) return;
+
+    auto& errors = editor.analysis_data->compiler_errors;
+    // Display error messages or run the program
+    if (errors.size == 0)
     {
-        // Display error messages or run the program
-        if (!compiler_errors_occured()) {
-            auto exit_code = compiler_execute();
-            String output = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&output));
-            exit_code_append_to_string(&output, exit_code);
-            logg("\nProgram Exit with Code: %s\n", output.characters);
-        }
-        else {
-            // Print errors
-            logg("Could not run program, there were errors:\n");
-            String tmp = string_create();
-            SCOPE_EXIT(string_destroy(&tmp));
+        auto exit_code = compiler_execute(editor.analysis_data);
+        String output = string_create_empty(256);
+        SCOPE_EXIT(string_destroy(&output));
+        exit_code_append_to_string(&output, exit_code);
+        logg("\nProgram Exit with Code: %s\n", output.characters);
+    }
+    else
+    {
+        // Print errors
+        logg("Could not run program, there were errors:\n");
+        String tmp = string_create();
+        SCOPE_EXIT(string_destroy(&tmp));
 
-            for (int i = 0; i < editor.errors.size; i++) {
-                auto error = editor.errors[i];
-                if (error.semantic_error_index != -1) {
-                    continue;
-                }
-                string_append_formated(&tmp, "\t%s\n", error.message.characters);
+        // Append Parser errors
+        for (int i = 0; i < errors.size; i++)
+        {
+            const auto& error = errors[i];
+            if (error.semantic_error_index != -1) {
+                continue;
             }
-
-            semantic_analyser_append_all_errors_to_string(&tmp, 1);
-            logg(tmp.characters);
+            string_append_formated(&tmp, "\t%s\n", error.message);
         }
+
+        // Append semantic errors
+        semantic_analyser_append_semantic_errors_to_string(editor.analysis_data, &tmp, 1);
+        logg(tmp.characters);
+
+        // Enter error-show mode
+        auto cmd = Parsing::normal_mode_command_make(Normal_Command_Type::ENTER_SHOW_ERROR_MODE, 1);
+        normal_command_execute(cmd);
     }
 }
 
 
 
 // Syntax Highlighting
-void particles_add_in_range(Text_Range range, vec3 base_color)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    auto& line_count = editor.visible_line_count;
-    int cam_start_visual = source_code_get_line(tab.code, tab.cam_start)->visible_index;
-    int cam_end_visual = source_code_get_line(tab.code, tab.cam_end)->visible_index;
-    int last_line_visible_index = -1;
-    for (int i = range.start.line; i <= range.end.line; i++)
-    {
-        auto line = source_code_get_line(tab.code, i);
-        if (line->visible_index == last_line_visible_index) continue;
-        last_line_visible_index = line->visible_index;
-        if (line->visible_index < cam_start_visual) continue;
-        if (line->visible_index > cam_end_visual) break;
-
-        int start = range.start.line == i ? range.start.character : 0;
-        int end = range.end.line == i ? range.end.character : line->text.size;
-        if (line->is_folded) {
-            start = 0;
-            end = 4;
-        }
-        start += line->indentation * 4;
-        end += line->indentation * 4;
-
-        auto char_size = editor.text_display.char_size;
-        vec2 min = vec2(editor.code_box.min.x, editor.code_box.max.y - char_size.y * (line->visible_index - cam_start_visual + 1)) + vec2(char_size.x * start, 0.0f);
-        vec2 max = vec2(editor.code_box.min.x, editor.code_box.max.y - char_size.y * (line->visible_index - cam_start_visual)) + vec2(char_size.x * end, 0.0f);
-
-        float radius = 10;
-        float dist_between = 4;
-        int x_count = (max.x - min.x) / dist_between;
-        int y_count = (max.y - min.y) / dist_between;
-        for (int x = 0; x < x_count; x++) {
-            for (int y = 0; y < y_count; y++) {
-                if (random_next_float(&editor.random) < 0.1f) continue;
-
-                Particle p;
-                p.color = base_color;
-                p.color.x += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
-                p.color.y += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
-                p.color.z += (2 * random_next_float(&editor.random) - 1.0f) * 0.3f;
-
-                p.position.x = min.x + (x / (float)x_count) * (max.x - min.x);
-                p.position.y = min.y + (y / (float)y_count) * (max.y - min.y);
-                p.radius = radius + (random_next_float(&editor.random) * 5) - 2;
-                p.creation_time = editor.last_update_time;
-                p.life_time = 0.3f + random_next_float(&editor.random) * 1.5f;
-
-                vec2 vel = vec2(random_next_float(&editor.random) - 0.5f, random_next_float(&editor.random) - 0.5f) * 2.0f;
-                vel = vector_normalize_safe(vel);
-                vel = vel * (30 + random_next_float(&editor.random) * 100);
-                p.velocity = vel;
-                dynamic_array_push_back(&editor.particles, p);
-            }
-        }
-    }
-}
-
-void syntax_highlighting_mark_range(Token_Range range, vec3 normal_color, vec3 empty_range_color, Mark_Type mark_type)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto code = tab.code;
-    const auto& cam_start = tab.cam_start;
-    const auto& cam_end = tab.cam_end;
-    const int cam_start_visual = source_code_get_line(code, cam_start)->visible_index;
-
-    auto index = range.start;
-    auto end = range.end;
-
-    // Handle empty ranges
-    assert(token_index_compare(index, end) >= 0, "token indices must be in order");
-
-    // Return if range is not on screen
-    if (range.start.line > tab.cam_end || range.end.line < tab.cam_start) {
-        return;
-    }
-
-    if (token_index_equal(index, end))
-    {
-        auto line = source_code_get_line(code, index.line);
-        if (line->is_folded) {
-            return;
-        }
-
-        int line_index = line->visible_index - cam_start_visual;
-        // Draw range at end of line
-        if (index.token >= line->tokens.size) {
-            Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, empty_range_color, line_index, line->text.size, line->text.size + 1);
-            return;
-        }
-
-        // Otherwise draw range one after cursor?
-        auto& token = line->tokens[index.token];
-        Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, empty_range_color, line_index, token.start_index, token.start_index + 1);
-        return;
-    }
-
-    // Otherwise draw mark on all affected lines
-    bool quit_loop = false;
-    for (int i = range.start.line; i <= range.end.line && i < code->line_count; i += 1)
-    {
-        auto line = source_code_get_line(code, i);
-        if (line->is_folded) continue;
-        int char_start = 0;
-        int char_end = line->text.size;
-
-        if (i == range.start.line && range.start.token < line->tokens.size) {
-            char_start = line->tokens[range.start.token].start_index;
-        }
-        if (i == range.end.line && range.end.token - 1 < line->tokens.size) {
-            if (range.end.token - 1 >= 0) {
-                char_end = line->tokens[range.end.token - 1].end_index;
-            }
-            else {
-                char_end = 0;
-            }
-        }
-        if (char_start >= char_end) continue;
-        Rich_Text::mark_line(&syntax_editor.editor_text, mark_type, normal_color, line->visible_index - cam_start_visual, char_start, char_end);
-    }
-}
-
-void syntax_highlighting_mark_section(AST::Node* base, Parser::Section section, vec3 normal_color, vec3 empty_range_color, Mark_Type mark_type)
-{
-    auto& editor = syntax_editor;
-    auto& tab = editor.tabs[editor.open_tab_index];
-    auto code = tab.code;
-
-    assert(base != 0, "");
-    auto ranges = syntax_editor.token_range_buffer;
-    dynamic_array_reset(&ranges);
-
-    auto& node = base;
-    Parser::ast_base_get_section_token_range(code, node, section, &ranges);
-    for (int i = 0; i < ranges.size; i++) {
-        syntax_highlighting_mark_range(ranges[i], normal_color, empty_range_color, mark_type);
-    }
-}
-
-void syntax_highlighting_highlight_identifiers_recursive(AST::Node* base)
-{
-    // Highlight symbols
-    Symbol* symbol = code_query_get_ast_node_symbol(base);
-    if (symbol != 0) {
-        vec3 color = symbol_type_to_color(symbol->type);
-        syntax_highlighting_mark_section(base, Parser::Section::IDENTIFIER, color, color, Mark_Type::TEXT_COLOR);
-    }
-
-    // Highlight member-accesses
-    if (base->type == AST::Node_Type::EXPRESSION)
-    {
-        auto expr = downcast<AST::Expression>(base);
-        auto pass = code_query_get_analysis_pass(base);
-        if (expr->type == AST::Expression_Type::MEMBER_ACCESS && pass != 0)
-        {
-            auto info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (info != nullptr)
-            {
-                vec3 color;
-                bool mark = false;
-                switch (info->specifics.member_access.type)
-                {
-                case Member_Access_Type::DOT_CALL:
-                case Member_Access_Type::DOT_CALL_AS_MEMBER: mark = true; color = Syntax_Color::FUNCTION; break;
-                case Member_Access_Type::STRUCT_MEMBER_ACCESS:
-                case Member_Access_Type::STRUCT_UP_OR_DOWNCAST:
-                case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: mark = true; color = Syntax_Color::MEMBER; break;
-                case Member_Access_Type::STRUCT_SUBTYPE: mark = true; color = Syntax_Color::SUBTYPE; break;
-                case Member_Access_Type::ENUM_MEMBER_ACCESS: mark = true; color = Syntax_Color::ENUM_MEMBER; break;
-                case Member_Access_Type::OPTIONAL_PTR_ACCESS: mark = true; color = Syntax_Color::MEMBER; break;
-                default: panic("");
-                }
-
-                if (mark) {
-                    syntax_highlighting_mark_section(base, Parser::Section::END_TOKEN, color, color, Mark_Type::TEXT_COLOR);
-                }
-            }
-        }
-        else if (expr->type == AST::Expression_Type::AUTO_ENUM) {
-            vec3 color = Syntax_Color::ENUM_MEMBER;
-            syntax_highlighting_mark_section(base, Parser::Section::END_TOKEN, color, color, Mark_Type::TEXT_COLOR);
-        }
-    }
-
-    // Highlight struct content
-    if (base->type == AST::Node_Type::STRUCT_MEMBER) {
-        auto member = downcast<AST::Structure_Member_Node>(base);
-        vec3 color = member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE;
-        syntax_highlighting_mark_section(base, Parser::Section::FIRST_TOKEN, color, color, Mark_Type::TEXT_COLOR);
-    }
-
-    // Highlight parameters
-    if (base->type == AST::Node_Type::PARAMETER) {
-        vec3 color = Syntax_Color::VARIABLE;
-        syntax_highlighting_mark_section(base, Parser::Section::FIRST_TOKEN, color, color, Mark_Type::TEXT_COLOR);
-    }
-
-    // Highlight enum-members
-    if (base->type == AST::Node_Type::ENUM_MEMBER) {
-        vec3 color = Syntax_Color::ENUM_MEMBER;
-        syntax_highlighting_mark_section(base, Parser::Section::FIRST_TOKEN, color, color, Mark_Type::TEXT_COLOR);
-    }
-
-    // Do syntax highlighting for children
-    int index = 0;
-    auto child = AST::base_get_child(base, index);
-    while (child != 0)
-    {
-        syntax_highlighting_highlight_identifiers_recursive(child);
-        index += 1;
-        child = AST::base_get_child(base, index);
-    }
-}
-
-
-
 // Rendering
 void syntax_editor_render()
 {
@@ -5729,6 +5758,7 @@ void syntax_editor_render()
     editor.frame_index += 1;
 
     // Prepare Render
+    syntax_editor_synchronize_code_information();
     syntax_editor_sanitize_cursor();
 
     auto state_2D = pipeline_state_make_alpha_blending();
@@ -5915,28 +5945,41 @@ void syntax_editor_render()
     // Push Source-Code into Rich-Text
     Text_Display::set_frame(&editor.text_display, code_box.min, Anchor::BOTTOM_LEFT, code_box.max - code_box.min);
     Rich_Text::reset(&editor.editor_text);
-    bool last_was_fold = false;
-    for (int i = cam_start; i <= cam_end; i++)
     {
-        auto text = &editor.editor_text;
+        int line_index = cam_start;
+        bool condition = true;
+        while (condition)
+        {
+            auto text = &editor.editor_text;
+            SCOPE_EXIT(
+                if (line_index == cam_end) {
+                    condition = false;
+                }
+                else {
+                    line_index = Line_Movement::move_visible_lines_up_or_down(line_index, 1);
+                }
+            );
 
-        // Handle folds
-        Source_Line* line = source_code_get_line(code, i);
-        if (line->is_folded) {
-            if (!last_was_fold)
+            // Handle fold rendering
+            Source_Line* line = source_code_get_line(code, line_index);
+            if (line->is_folded)
             {
                 auto& fold = tab.folds[line->fold_index];
                 bool contains_errors = false;
 
-                for (int i = 0; i < editor.errors.size; i++) {
-                    const auto& error = editor.errors[i];
-                    if (error.code != tab.code) {
-                        continue;
-                    }
-                    // Check if error range has lines in 
-                    if (!(error.range.end.line < fold.line_start || error.range.start.line > fold.line_end)) {
-                        contains_errors = true;
-                        break;
+                if (editor.analysis_data != 0)
+                {
+                    auto& errors = editor.analysis_data->compiler_errors;
+                    for (int i = 0; i < errors.size; i++) {
+                        const auto& error = errors[i];
+                        if (error.unit != tab.compilation_unit) {
+                            continue;
+                        }
+                        // Check if error range has lines in 
+                        if (error.text_index.line >= fold.line_start && error.text_index.line <= fold.line_end) {
+                            contains_errors = true;
+                            break;
+                        }
                     }
                 }
 
@@ -5948,129 +5991,207 @@ void syntax_editor_render()
                     Rich_Text::set_bg(text, vec3(0.4f));
                 }
                 Rich_Text::append(text, "|...|");
+                continue;
             }
-            last_was_fold = true;
-            continue;
-        }
-        else {
-            last_was_fold = false;
-        }
 
-        // Push line
-        Rich_Text::add_line(text, false, line->indentation);
-        Rich_Text::append(text, line->text);
-        Rich_Text::append(text, " "); // So that we can have a underline if something is missing at end of line
+            // Push line
+            Rich_Text::add_line(text, false, line->indentation);
+            Rich_Text::append(text, line->text);
+            Rich_Text::append(text, " "); // So that we can have a underline if something is missing at end of line
 
-        // Color tokens based on type (Initial coloring, syntax highlighting is done later)
-        for (int j = 0; j < line->tokens.size; j++)
-        {
-            auto& token = line->tokens[j];
-
-            vec3 color = Syntax_Color::TEXT;
-            switch (token.type)
+            // Color tokens based on type (Initial coloring, syntax highlighting is done later)
+            for (int j = 0; j < line->tokens.size; j++)
             {
-            case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
-            case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
-            case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
-            case Token_Type::IDENTIFIER: color = Syntax_Color::IDENTIFIER_FALLBACK; break;
-            case Token_Type::LITERAL: {
-                switch (token.options.literal_value.type)
+                auto& token = line->tokens[j];
+
+                vec3 color = Syntax_Color::TEXT;
+                switch (token.type)
                 {
-                case Literal_Type::BOOLEAN: color = vec3(0.5f, 0.5f, 1.0f); break;
-                case Literal_Type::STRING: color = Syntax_Color::STRING; break;
-                case Literal_Type::INTEGER:
-                case Literal_Type::FLOAT_VAL:
-                case Literal_Type::NULL_VAL:
-                    color = Syntax_Color::LITERAL_NUMBER; break;
-                default: panic("");
+                case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
+                case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
+                case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
+                case Token_Type::IDENTIFIER: color = Syntax_Color::IDENTIFIER_FALLBACK; break;
+                case Token_Type::LITERAL: {
+                    switch (token.options.literal_value.type)
+                    {
+                    case Literal_Type::BOOLEAN: color = vec3(0.5f, 0.5f, 1.0f); break;
+                    case Literal_Type::STRING: color = Syntax_Color::STRING; break;
+                    case Literal_Type::INTEGER:
+                    case Literal_Type::FLOAT_VAL:
+                    case Literal_Type::NULL_VAL:
+                        color = Syntax_Color::LITERAL_NUMBER; break;
+                    default: panic("");
+                    }
+                    break;
+                }
+                default: continue;
+                }
+
+                Rich_Text::line_set_text_color_range(text, color, line->visible_index - cam_start_visible, token.start_index, token.end_index);
+            }
+        }
+    }
+
+    // Get hover infos
+    Dynamic_Array<int> hover_errors = dynamic_array_create<int>();
+    SCOPE_EXIT(dynamic_array_destroy(&hover_errors));
+    Symbol* hover_symbol = nullptr;
+    Analysis_Pass* hover_symbol_pass = nullptr;
+    Parameter_Matching_Info* hover_call_info = nullptr;
+    Code_Analysis_Item* hover_expression_info = nullptr;
+    int hover_call_argument = -1;
+    {
+        auto& infos = source_code_get_line(tab.code, cursor.line)->item_infos;
+        int previous_expr_depth = -1;
+        int previous_call_depth = -1;
+        for (int i = 0; i < infos.size; i++)
+        {
+            auto info = infos[i];
+            if (cursor.character < info.start_char || cursor.character >= info.end_char) continue;
+            switch (info.type)
+            {
+            case Code_Analysis_Item_Type::CALL_INFORMATION: {
+                if (info.tree_depth > previous_call_depth) {
+                    hover_call_info = info.options.call_information;
+                    previous_call_depth = info.tree_depth;
                 }
                 break;
             }
-            default: continue;
+            case Code_Analysis_Item_Type::ARGUMENT_NODE: {
+                hover_call_argument = info.options.argument_index;
+                break;
             }
-
-            Rich_Text::line_set_text_color_range(text, color, line->visible_index - cam_start_visible, token.start_index, token.end_index);
+            case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
+                hover_symbol = info.options.symbol.symbol;
+                hover_symbol_pass = info.options.symbol.pass;
+                break;
+            }
+            case Code_Analysis_Item_Type::ERROR_ITEM: {
+                dynamic_array_push_back(&hover_errors, info.options.error_index);
+                break;
+            }
+            case Code_Analysis_Item_Type::EXPRESSION_INFO: {
+                if (info.tree_depth > previous_expr_depth) {
+                    hover_expression_info = &infos[i];
+                    previous_expr_depth = info.tree_depth;
+                }
+                break;
+            }
+            }
         }
     }
 
-    // Find objects under cursor for Syntax highlighting
-    Token_Index cursor_token_index = token_index_make(cursor.line, get_cursor_token_index(true));
-    AST::Node* node = Parser::find_smallest_enclosing_node(upcast(code->root), cursor_token_index);
-    Analysis_Pass* pass = code_query_get_analysis_pass(node); // Note: May be null?
-    Symbol* symbol = code_query_get_ast_node_symbol(node); // May be null
-
+    // Text-Highlighting
     bool cursor_is_on_fold = source_code_get_line(code, cursor.line)->is_folded;
-
-    // Show search results in editor
-    if (editor.mode == Editor_Mode::TEXT_SEARCH && editor.search_text.size != 0)
     {
-        auto text = &editor.editor_text;
-        auto& search_text = editor.search_text;
-        for (int i = 0; i < text->lines.size; i++)
+        // Highlight search results in editor
+        if (editor.mode == Editor_Mode::TEXT_SEARCH && editor.search_text.size != 0)
         {
-            if (text->lines[i].is_seperator) continue;
-            String str = text->lines[i].text;
-            int substring_start = string_contains_substring(str, 0, search_text);
-            while (substring_start != -1) {
-                Rich_Text::mark_line(text, Rich_Text::Mark_Type::BACKGROUND_COLOR, vec3(0.3f), i, substring_start, substring_start + search_text.size);
-                substring_start = string_contains_substring(str, substring_start + search_text.size, search_text);
-            }
-        }
-    }
-
-    if (editor.mode == Editor_Mode::VISUAL_BLOCK)
-    {
-        int start = math_minimum(cursor.line, editor.visual_block_start_line);
-        int end = math_maximum(cursor.line, editor.visual_block_start_line);
-        for (int i = start; i <= end; i++) {
-            auto line = source_code_get_line(code, i);
-            if (!line->is_folded) {
-                Rich_Text::set_line_bg(&editor.editor_text, vec3(0.4f), line->visible_index - cam_start_visible);
-            }
-        }
-    }
-
-    // Syntax Highlighting
-    if (true)
-    {
-        syntax_highlighting_highlight_identifiers_recursive(upcast(code->root));
-
-        // Highlight selected symbol occurances
-        if (symbol != 0 && editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION && editor.mode != Editor_Mode::TEXT_SEARCH && !cursor_is_on_fold)
-        {
-            // Highlight all instances of the symbol
-            vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
-            for (int i = 0; i < symbol->references.size; i++) {
-                auto node = &symbol->references[i]->base;
-                if (compiler_find_ast_source_code(node) != code)
-                    continue;
-                syntax_highlighting_mark_section(node, Parser::Section::IDENTIFIER, color, color, Mark_Type::BACKGROUND_COLOR);
-            }
-
-            // Highlight Definition
-            if (symbol->definition_node != 0 && compiler_find_ast_source_code(symbol->definition_node) == code) {
-                syntax_highlighting_mark_section(symbol->definition_node, Parser::Section::IDENTIFIER, color, color, Mark_Type::BACKGROUND_COLOR);
-            }
-        }
-
-        if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.suggestions.size > 0) {
-            auto& sugg = editor.suggestions[0];
-            if (sugg.type == Suggestion_Type::SYMBOL) {
-                auto symbol = sugg.options.symbol;
-                Source_Code* code = compiler_find_ast_source_code(symbol->definition_node);
-                if (code == tab.code) {
-                    vec3 color = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
-                    syntax_highlighting_mark_range(symbol->definition_node->range, color, color, Rich_Text::Mark_Type::BACKGROUND_COLOR);
+            auto text = &editor.editor_text;
+            auto& search_text = editor.search_text;
+            for (int i = 0; i < text->lines.size; i++)
+            {
+                if (text->lines[i].is_seperator) continue;
+                String str = text->lines[i].text;
+                int substring_start = string_contains_substring(str, 0, search_text);
+                while (substring_start != -1) {
+                    Rich_Text::mark_line(text, Rich_Text::Mark_Type::BACKGROUND_COLOR, vec3(0.3f), i, substring_start, substring_start + search_text.size);
+                    substring_start = string_contains_substring(str, substring_start + search_text.size, search_text);
                 }
             }
         }
 
-        // Error messages 
-        for (int i = 0; i < editor.errors.size; i++)
+        // Highlight visual block lines
+        if (editor.mode == Editor_Mode::VISUAL_BLOCK)
         {
-            auto& error = editor.errors[i];
-            if (error.code != tab.code) continue;
-            syntax_highlighting_mark_range(error.range, vec3(1.0f, 0.0f, 0.0f), vec3(1.0f, 1.0f, 0.0f), Mark_Type::UNDERLINE);
+            int start_index = math_minimum(cursor.line, editor.visual_block_start_line);
+            int end_index = math_maximum(cursor.line, editor.visual_block_start_line);
+            int index = source_code_get_line(code, start_index)->visible_index;
+            end_index = source_code_get_line(code, end_index)->visible_index;
+            while (true)
+            {
+                auto line = source_code_get_line(code, index);
+                if (!line->is_folded) {
+                    Rich_Text::set_line_bg(&editor.editor_text, vec3(0.4f), line->visible_index - cam_start_visible);
+                }
+                if (index == end_index) break;
+                index = Line_Movement::move_visible_lines_up_or_down(index, 1);
+            }
+        }
+
+        // Syntax Highlighting
+        {
+            auto text = &editor.editor_text;
+
+            Symbol* highlight_symbol = hover_symbol;
+            bool highlight_only_definition = false;
+            if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH || cursor_is_on_fold) {
+                highlight_symbol = nullptr;
+            }
+            else if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION && editor.suggestions.size > 0) {
+                highlight_symbol = nullptr;
+                auto& sugg = editor.suggestions[0];
+                if (sugg.type == Suggestion_Type::SYMBOL) {
+                    highlight_symbol = sugg.options.symbol;
+                    highlight_only_definition = true;
+                }
+            }
+
+            // Loop over all visible lines
+            int line_index = cam_start;
+            while (true)
+            {
+                auto line = source_code_get_line(code, line_index);
+                if (line->is_folded) {
+                    return;
+                }
+
+                auto& infos = line->item_infos;
+                for (int i = 0; i < infos.size; i++)
+                {
+                    auto info = infos[i];
+                    vec3 color;
+                    Rich_Text::Mark_Type mark_type = Rich_Text::Mark_Type::TEXT_COLOR;
+                    switch (info.type)
+                    {
+                    case Code_Analysis_Item_Type::MEMBER_ACCESS: {
+                        switch (info.options.member_access.access_type)
+                        {
+                        case Member_Access_Type::DOT_CALL:
+                        case Member_Access_Type::DOT_CALL_AS_MEMBER: color = Syntax_Color::FUNCTION; break;
+                        case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
+                        case Member_Access_Type::OPTIONAL_PTR_ACCESS:
+                        case Member_Access_Type::STRUCT_MEMBER_ACCESS: color = Syntax_Color::MEMBER; break;
+                        case Member_Access_Type::STRUCT_SUBTYPE:
+                        case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: color = Syntax_Color::SUBTYPE; break;
+                        case Member_Access_Type::ENUM_MEMBER_ACCESS: Syntax_Color::ENUM_MEMBER; break;
+                        default: panic("");
+                        }
+                        break;
+                    }
+                    case Code_Analysis_Item_Type::SYMBOL_LOOKUP:
+                    {
+                        auto symbol = info.options.symbol.symbol;
+                        color = symbol_type_to_color(symbol->type);
+                        // Highlight background if hover symbol
+                        if (symbol == hover_symbol && !(highlight_only_definition && !info.options.symbol.is_definition)) {
+                            Rich_Text::mark_line(
+                                text, Rich_Text::Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT,
+                                line->visible_index - cam_start_visible, info.start_char, info.end_char
+                            );
+                        }
+                        break;
+                    }
+                    case Code_Analysis_Item_Type::MARKUP: color = info.options.markup_color; break;
+                    case Code_Analysis_Item_Type::ERROR_ITEM: color = vec3(1.0f, 0.0f, 0.0f); mark_type = Rich_Text::Mark_Type::UNDERLINE; break;
+                    default: continue;
+                    }
+                    Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, info.end_char);
+                }
+
+                if (line_index == cam_end) break;
+                line_index = Line_Movement::move_visible_lines_up_or_down(line_index, 1);
+            }
         }
     }
 
@@ -6086,6 +6207,8 @@ void syntax_editor_render()
 
     // Render Code
     Text_Display::render(&editor.text_display, pass_2D);
+
+
 
     // Draw Cursor
     if (cursor.line >= cam_start && cursor.line <= cam_end)
@@ -6117,6 +6240,7 @@ void syntax_editor_render()
         renderer_2D_draw(editor.renderer_2D, pass_2D);
     }
 
+    // Calculate context
     auto suggestions_append_to_rich_text = [](Rich_Text::Rich_Text* text)
     {
         auto suggestions = syntax_editor.suggestions;
@@ -6181,7 +6305,7 @@ void syntax_editor_render()
             }
         }
     };
-    auto error_append_to_rich_text = [](Error_Display error, Rich_Text::Rich_Text* text, bool with_info) {
+    auto error_append_to_rich_text = [](Compiler_Error_Info error, Rich_Text::Rich_Text* text, bool with_info) {
         Rich_Text::set_text_color(text, vec3(1.0f, 0.5f, 0.5f));
         Rich_Text::set_underline(text, vec3(1.0f, 0.5f, 0.5f));
         Rich_Text::append(text, "Error:");
@@ -6191,7 +6315,7 @@ void syntax_editor_render()
 
         // Add error infos
         if (error.semantic_error_index != -1 && with_info) {
-            auto& semantic_error = compiler.semantic_analyser->errors[error.semantic_error_index];
+            auto& semantic_error = syntax_editor.analysis_data->semantic_errors[error.semantic_error_index];
             for (int j = 0; j < semantic_error.information.size; j++) {
                 auto& error_info = semantic_error.information[j];
                 Rich_Text::add_line(text, false, 1);
@@ -6207,7 +6331,6 @@ void syntax_editor_render()
         (cursor.line >= cam_start && cursor.line <= cam_end) &&
         !cursor_is_on_fold;
 
-    // Calculate context
     Rich_Text::Rich_Text context_text = Rich_Text::create(vec3(1));
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
     Rich_Text::Rich_Text call_info_text = Rich_Text::create(vec3(1));
@@ -6216,60 +6339,42 @@ void syntax_editor_render()
     if (show_context)
     {
         Rich_Text::Rich_Text* text = &context_text;
-
-        // If we are in Insert-Mode, prioritize code-completion
         bool show_normal_mode_context = true;
-        if (editor.suggestions.size != 0 && editor.mode == Editor_Mode::INSERT)
-        {
-            Rich_Text::add_seperator_line(text);
-            show_normal_mode_context = false;
-            suggestions_append_to_rich_text(text);
-        }
 
-        // Error messages (If cursor is directly on error)
-        if (editor.errors.size > 0 && show_normal_mode_context && editor.mode == Editor_Mode::NORMAL)
+        // Code-Completion Suggestions
+        if (editor.mode == Editor_Mode::INSERT)
         {
-            bool first_error = true;
-            for (int i = 0; i < editor.errors.size; i++)
+            code_completion_find_suggestions();
+            if (editor.suggestions.size != 0)
             {
-                auto& error = editor.errors[i];
-                if (error.code != tab.code) continue;
-
-                auto line = source_code_get_line(code, cursor.line);
-                bool inside_error = token_range_contains(error.range, cursor_token_index);
-                // Special handling for empty error-ranges
-                if (token_index_equal(error.range.start, error.range.end) && token_index_equal(cursor_token_index, error.range.start)) {
-                    inside_error = true;
-                }
-                // Special handling for error on last token
-                if (editor.mode == Editor_Mode::NORMAL &&
-                    cursor_token_index.token == math_maximum(0, line->tokens.size - 1) &&
-                    error.range.start.token == line->tokens.size && cursor_token_index.line == error.range.start.line)
-                {
-                    inside_error = true;
-                }
-
-                if (inside_error)
-                {
-                    show_normal_mode_context = false;
-                    if (first_error) {
-                        Rich_Text::add_seperator_line(text);
-                    }
-                    Rich_Text::add_line(text);
-                    error_append_to_rich_text(error, text, first_error);
-                    first_error = false;
-                }
+                Rich_Text::add_seperator_line(text);
+                show_normal_mode_context = false;
+                suggestions_append_to_rich_text(text);
             }
         }
 
+        // Show hover errors
+        for (int i = 0; i < hover_errors.size; i++)
+        {
+            auto& error = editor.analysis_data->compiler_errors[hover_errors[i]];
+            show_normal_mode_context = false;
+            if (i == 0) {
+                Rich_Text::add_seperator_line(text);
+            }
+            Rich_Text::add_line(text);
+            error_append_to_rich_text(error, text, i == 0);
+        }
+
         // Symbol Info
-        if (show_normal_mode_context && symbol != 0 && pass != 0)
+        if (show_normal_mode_context && hover_symbol != 0)
         {
             Rich_Text::add_seperator_line(text);
             Rich_Text::add_line(text);
 
             Datatype* type = 0;
             const char* after_text = nullptr;
+            Symbol* symbol = hover_symbol;
+            Analysis_Pass* pass = hover_symbol_pass;
             switch (symbol->type)
             {
             case Symbol_Type::COMPTIME_VALUE:
@@ -6343,148 +6448,103 @@ void syntax_editor_render()
         }
 
         // Analysis-Info
-        if (node->type == AST::Node_Type::EXPRESSION && pass != 0 && show_normal_mode_context)
+        if (hover_expression_info != nullptr && show_normal_mode_context)
         {
-            auto expr = AST::downcast<AST::Expression>(node);
-            auto expression_info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-            if (expression_info != 0 && expression_info->is_valid)
-            {
-                Rich_Text::add_seperator_line(text);
-                Rich_Text::add_line(text);
-                Rich_Text::append(text, "Expr: ");
-                datatype_append_to_rich_text(expression_info_get_type(expression_info, false), text);
-            }
+            Rich_Text::add_seperator_line(text);
+            Rich_Text::add_line(text);
+            Rich_Text::append(text, "Expr: ");
+            datatype_append_to_rich_text(hover_expression_info->options.expression_info.after_cast_type, text);
         }
 
         // Call-info
-        AST::Node* iter = node;
-        AST::Arguments* args = nullptr;
-        AST::Argument* arg = nullptr;
-        while (iter != 0) {
-            if (iter->type == AST::Node_Type::ARGUMENTS) {
-                args = downcast<AST::Arguments>(iter);
-                break;
-            }
-            else if (iter->type == AST::Node_Type::ARGUMENT) {
-                arg = downcast<AST::Argument>(iter);
-                args = downcast<AST::Arguments>(iter->parent);
-                break;
-            }
-            iter = iter->parent;
-        }
-
-        if (args != nullptr)
+        if (hover_call_info != nullptr)
         {
-            int arg_index = -1;
-            if (arg != 0) {
-                for (int i = 0; i < args->arguments.size; i++) {
-                    if (args->arguments[i] == arg) {
-                        arg_index = i;
-                        break;
-                    }
-                }
-            }
+            Rich_Text::Rich_Text* text = &call_info_text;
+            Rich_Text::add_line(text);
 
-            auto info = pass_get_node_info(pass, args, Info_Query::TRY_READ);
-            if (info != nullptr)
+            auto info = hover_call_info;
+            int arg_index = hover_call_argument;
+
+            String* name = nullptr;
+            vec3 color = Syntax_Color::IDENTIFIER_FALLBACK;
+            bool is_dot_call = info->call_type == Call_Type::DOT_CALL || info->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
+            switch (info->call_type)
             {
-                Rich_Text::Rich_Text* text = &call_info_text;
-                Rich_Text::add_line(text);
-
-                String* name = nullptr;
-                vec3 color = Syntax_Color::IDENTIFIER_FALLBACK;
-                bool is_dot_call = info->call_type == Call_Type::DOT_CALL || info->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
-                switch (info->call_type)
-                {
-                case Call_Type::FUNCTION: name = info->options.function->name; color = Syntax_Color::FUNCTION; break;
-                case Call_Type::DOT_CALL: name = info->options.dot_call_function->name; color = Syntax_Color::FUNCTION; break;
-                case Call_Type::STRUCT_INITIALIZER:
-                case Call_Type::UNION_INITIALIZER: {
-                    if (info->options.struct_init.valid) {
-                        name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE;
-                        color = Syntax_Color::TYPE;
-                        break;
-                    }
+            case Call_Type::FUNCTION: name = info->options.function->name; color = Syntax_Color::FUNCTION; break;
+            case Call_Type::DOT_CALL: name = info->options.dot_call_function->name; color = Syntax_Color::FUNCTION; break;
+            case Call_Type::STRUCT_INITIALIZER:
+            case Call_Type::UNION_INITIALIZER: {
+                if (info->options.struct_init.valid) {
+                    name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE;
+                    color = Syntax_Color::TYPE;
+                    break;
                 }
-                }
-
-                bool is_struct_init = info->call_type == Call_Type::STRUCT_INITIALIZER;
-                if (name != nullptr) {
-                    Rich_Text::set_text_color(text, color);
-                    Rich_Text::append(text, *name);
-                }
-                else {
-                    Rich_Text::set_text_color(text, Syntax_Color::IDENTIFIER_FALLBACK);
-                    Rich_Text::append(text, "Params:");
-                }
-
-                if (is_struct_init) {
-                    Rich_Text::append_character(text, '.');
-                }
-                else {
-                    Rich_Text::append_character(text, ' ');
-                }
-
-                Rich_Text::set_text_color(text);
-                Rich_Text::append(text, is_struct_init ? "{" : "(");
-                bool first = true;
-                for (int i = is_dot_call ? 1 : 0; i < info->matched_parameters.size; i += 1)
-                {
-                    const auto& param_info = info->matched_parameters[i];
-
-                    if (is_dot_call && param_info.requires_named_addressing) {
-                        continue;
-                    }
-                    if (info->call_type == Call_Type::INSTANCIATE && (!param_info.requires_named_addressing || !param_info.required)) {
-                        continue;
-                    }
-
-                    if (!first) {
-                        Rich_Text::append(text, ", ");
-                    }
-                    first = false;
-
-                    bool highlight = param_info.argument_index == arg_index && arg_index != -1;
-                    if (highlight) {
-                        Rich_Text::set_bg(text, vec3(0.2f, 0.3f, 0.3f));
-                        Rich_Text::set_underline(text, vec3(0.8f));
-                    }
-
-                    vec3 name_color = Syntax_Color::IDENTIFIER_FALLBACK;
-                    if (!param_info.is_set && param_info.required) {
-                        name_color = vec3(1.0f, 0.5f, 0.5f);
-                    }
-
-                    Rich_Text::set_text_color(text, name_color);
-                    Rich_Text::append(text, *param_info.name);
-                    if (param_info.param_type != nullptr) {
-                        Rich_Text::append(text, ": ");
-                        datatype_append_to_rich_text(param_info.param_type, text);
-                    }
-                    Rich_Text::set_text_color(text, vec3(1.0f));
-
-                    if (highlight) {
-                        Rich_Text::stop_bg(text);
-                        Rich_Text::stop_underline(text);
-                    }
-                }
-                Rich_Text::append(text, is_struct_init ? "}" : ")");
             }
+            }
+
+            bool is_struct_init = info->call_type == Call_Type::STRUCT_INITIALIZER;
+            if (name != nullptr) {
+                Rich_Text::set_text_color(text, color);
+                Rich_Text::append(text, *name);
+            }
+            else {
+                Rich_Text::set_text_color(text, Syntax_Color::IDENTIFIER_FALLBACK);
+                Rich_Text::append(text, "Params:");
+            }
+
+            if (is_struct_init) {
+                Rich_Text::append_character(text, '.');
+            }
+            else {
+                Rich_Text::append_character(text, ' ');
+            }
+
+            Rich_Text::set_text_color(text);
+            Rich_Text::append(text, is_struct_init ? "{" : "(");
+            bool first = true;
+            for (int i = is_dot_call ? 1 : 0; i < info->matched_parameters.size; i += 1)
+            {
+                const auto& param_info = info->matched_parameters[i];
+
+                if (is_dot_call && param_info.requires_named_addressing) {
+                    continue;
+                }
+                if (info->call_type == Call_Type::INSTANCIATE && (!param_info.requires_named_addressing || !param_info.required)) {
+                    continue;
+                }
+
+                if (!first) {
+                    Rich_Text::append(text, ", ");
+                }
+                first = false;
+
+                bool highlight = param_info.argument_index == arg_index && arg_index != -1;
+                if (highlight) {
+                    Rich_Text::set_bg(text, vec3(0.2f, 0.3f, 0.3f));
+                    Rich_Text::set_underline(text, vec3(0.8f));
+                }
+
+                vec3 name_color = Syntax_Color::IDENTIFIER_FALLBACK;
+                if (!param_info.is_set && param_info.required) {
+                    name_color = vec3(1.0f, 0.5f, 0.5f);
+                }
+
+                Rich_Text::set_text_color(text, name_color);
+                Rich_Text::append(text, *param_info.name);
+                if (param_info.param_type != nullptr) {
+                    Rich_Text::append(text, ": ");
+                    datatype_append_to_rich_text(param_info.param_type, text);
+                }
+                Rich_Text::set_text_color(text, vec3(1.0f));
+
+                if (highlight) {
+                    Rich_Text::stop_bg(text);
+                    Rich_Text::stop_underline(text);
+                }
+            }
+            Rich_Text::append(text, is_struct_init ? "}" : ")");
+
         }
-    }
-
-    // Push some example text for testing
-    if (false)
-    {
-        const vec3 COLOR_BG = vec3(0.2f);
-        const vec3 COLOR_TEXT = vec3(1.0f);
-        const vec3 COLOR_ERROR_TEXT = vec3(1.0f, 0.5f, 0.5f);
-
-        Rich_Text::Rich_Text* text = &context_text;
-        Rich_Text::add_line(text);
-        Rich_Text::append(text, "Hello there, this is the final thing of the final thingy");
-        Rich_Text::mark_line(text, Mark_Type::TEXT_COLOR, COLOR_ERROR_TEXT, 0, 6, 11);
-        Rich_Text::mark_line(text, Mark_Type::TEXT_COLOR, COLOR_TEXT, 0, 7, 8);
     }
 
     // Position context and call_info text
@@ -6619,7 +6679,7 @@ void syntax_editor_render()
         Text_Display::render(&display, pass_context);
     }
 
-    // Draw Fuzzy-Find
+    // Draw mode overlays
     if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH || editor.mode == Editor_Mode::ERROR_NAVIGATION)
     {
         auto& line_edit = editor.search_text_edit;
@@ -6629,15 +6689,9 @@ void syntax_editor_render()
 
         if (editor.mode == Editor_Mode::ERROR_NAVIGATION)
         {
-            // Rich_Text::add_line(&rich_text);
-            // Rich_Text::set_underline(&rich_text, vec3(0.0f));
-            // Rich_Text::append(&rich_text, "Errors: ");
-            // Rich_Text::add_seperator_line(&rich_text);
-
-            auto& errors = editor.errors;
+            auto& errors = editor.analysis_data->compiler_errors;
             int& index = editor.navigate_error_index;
             int& cam_start = editor.navigate_error_cam_start;
-            int& item_count = editor.navigate_error_item_count;
             const int& MAX_LINES = 5;
 
             if (cam_start > index) cam_start = index;
@@ -6648,27 +6702,21 @@ void syntax_editor_render()
                 Rich_Text::append(&rich_text, "...");
             }
 
-            int real_error_index = 0;
             for (int i = 0; i < errors.size; i++) {
                 auto& error = errors[i];
-                if (error.is_token_range_duplicate) continue;
-                if (real_error_index < cam_start) {
-                    real_error_index += 1;
-                    continue;
-                }
 
                 int error_line_index = rich_text.lines.size;
                 Rich_Text::add_line(&rich_text);
-                Rich_Text::append_formated(&rich_text, "#%2d: ", real_error_index + 1);
-                error_append_to_rich_text(error, &rich_text, real_error_index == index);
-                if (real_error_index == index) {
+                Rich_Text::append_formated(&rich_text, "#%2d: ", i + 1);
+                error_append_to_rich_text(error, &rich_text, i == index);
+                if (i == index) {
                     Rich_Text::set_line_bg(&rich_text, vec3(0.65f), error_line_index);
                 }
 
-                real_error_index += 1;
-                if (real_error_index >= MAX_LINES && i != errors.size - 1) {
+                if (i >= MAX_LINES && i != errors.size - 1) {
                     Rich_Text::add_line(&rich_text);
                     Rich_Text::append(&rich_text, "...");
+                    break;
                 }
             }
         }

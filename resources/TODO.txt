@@ -1,13 +1,153 @@
 
+Compiler_Data
+
+Next Tasks:
+ * Share AST-Data between compilation_unit and tab
+ * Wait for newest compilation version
+ * Synchronization
+    - Identifier_Pool synchronization
+    - Symbol_Lookup_Visited table --> Querying symbol table needs this, e.g. both editor-completions and compilord
+    - Open_Tab/Close_Tab load file (open_in_tab_index)
+
+TODO:
+ * AST-Data?
+    --> Share between Compilation-Unit and Source-Code...
+        Compiler does not re-parse if data already exists
+        When changes are made the source-code takes the tree...
+
+ * Synchronization:
+
+ * Pressing run/compile (F5) needs to wait for compilation
+
+ * Compiler/Editor decoupling
+
+DONE:
+ * Calculate suggestions only on render, or on insert_suggestions
+ * If we are on a Symbol-Lookup or Member-Access Suggestions (previous was . or ~), don't show suggestions if we didn't find symobl/member access
+ * On insert suggestion synchronize with compiler if no suggestions are available
+
+
+Current problems and solutions:
+ * Identifier_Pool shared by both Compiler and Editor (For lexing/auto-formating)
+    Solution:
+        - Add all predefined IDs beforehand
+        - Before lexing/auto-formating, use semaphore
+
+Question:
+ - When do we do token-synchronization
+ - When do we doe auto-formating of lines/text
+
+Tokens required for:
+ - AST-Lookup (used for symbol-table ranges)
+
+ - Syntax-Editor uses Auto-Formating
+ - Auto-Formating needs Lexing (e.g. if.What)
+ - Lexing needs Identifer_Pool (Strings/Identifiers)
+
+Compiler also needs Identifier_Pool
+ - Compiler may load files which aren't open in Editor
+ - After loading files they need to be lexed before parsing
+ - Requires Identifier Pool
+
 
 
 TODO:
- * Bug when only importing hashtable, maybe something with imports, check it out
+ * Code-Completion from analysis-info, not from passes
+ * Use history for updating
 
- * Editor/Compiler Threads
+General Idea:
+ 1. Keep line markups updated with history
+ 2. Symbol tables and Error-Positions need to go back/forth in history (Positions
+
+ * Compilation_Units shouldn't re-parse if nothing changed
+
+
+TODO:
+ 0. Update Source_Code to be owned by editor --> Kinda done
+ 1. Editor_Analysis_Info
+    Created after Compilation/Semantic_Analyser executes from analysed code.
+ 2. Use Analysis_Info in code-editor instead of direct querying
+ 3. Use History to only analyse every few seconds after something has changed (Compiler_Info needs to keep constant-pool/type system in memory)
+ 
+ 4. Rewrite Code-Source so that Editor has 2 versions of source, and compiler takes list of code-sources
+ 5. Decouple Compiler into another thread, and query Editor_Analysis_Infos after compiler finishes
+
+Arguably we need to keep 
+ * Type_System
+ * Constant_Pool
+ * Identifier_Pool
+To still use the symbols and all...
+
+
+
+Maybe new Approach:
+ * After compilation Editor-Info package is created, containing:
+    - Symbol-Infos
+    - Symbol-Table Hierarchy (For Code-completion/Goto-Definition/Querying)
+    - All used datatypes as strings?
+    - Expression Result infos?
+    - Errors
+
+Let's see what I'm currently using in syntax_editor:
+    Suggestion-Types:
+        Symbols
+        IDs
+        Struct Member
+        Enum Member
+    Syntax Highlighting:
+        Errors
+    Others:
+        Goto Symbol definition
+        Symbol table in current context
+    Suggestions:
+        Member-Access:
+            Auto-Enum
+            Struct Members + Subtypes
+            Array/Slice members
+            Optional members
+            Struct/Instance-Template Members
+            Enum Memmbers
+        Path-Lookup
+        Symbol-Lookup
+        Context functions
+        Break/Continue Labels
+        Import Functions
+        DEFAULT: If all empty, add symbols from current symbol table
+    Rendering:
+        Coloring can be done on a line-by line basis...
+        Initial coloring based on token type
+        Highlight all references to symbol under cursor
+        Highlight all symbols by their symbol-type
+        Member-Access get colored based on member-type
+        Auto-Enum gets enum color
+        Struct-Members/Parameters/Enum members get colored
+        
+
+
+            
+
+Also some thoughts:
+ * Removing token access in syntax editor would be nice, so
+    lexing and auto-formating can happen at render time...
+
+
+
+
+Editor and Compiler Threads:
+ 1. Create Compilation_Data structure
+        Everything from one compilation will be added here
+ 2. Rewrite Source_Code so that Editor has 2 versions, and compilation will add one
+ 3. Decouple Editor from Compiler (Only update every 1 second or something for starters)
+
+
+TODO:
+
+
  * String handling and string builder in Upp
 
 DONE:
+ * Fixed bug with importing symbols and workload dependencies (Single line of code, last_import_workload = nullptr)
+ * Fixed goto in different files
  * If comment is on line before definition, show comment in context...
  * Code-Completion on file imports (fuzzy find files)
  * Code-Completion for continue/break (Block-Ids)

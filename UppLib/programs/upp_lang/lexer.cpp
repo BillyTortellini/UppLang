@@ -143,17 +143,12 @@ struct Source_Lexer
 {
     Hashtable<String, Keyword> keyword_table;
     String operator_strings[(int)Operator::MAX_ENUM_VALUE];
-    Identifier_Pool* identifier_pool;
-    String line_buffer;
-    int line_index;
 };
 
 static Source_Lexer lexer;
 
-void lexer_initialize(Identifier_Pool* pool)
+void lexer_initialize()
 {
-    lexer.identifier_pool = pool;
-    lexer.line_buffer = string_create_empty(128);
     auto& keyword_table = lexer.keyword_table;
     keyword_table = hashtable_create_empty<String, Keyword>(8, hash_string, string_equals);
     for (int i = 0; i < (int)Keyword::MAX_ENUM_VALUE; i++) {
@@ -208,10 +203,9 @@ void lexer_initialize(Identifier_Pool* pool)
 
 void lexer_shutdown() {
     hashtable_destroy(&lexer.keyword_table);
-    string_destroy(&lexer.line_buffer);
 }
 
-void lexer_tokenize_text_as_comment(String text, Dynamic_Array<Token>* tokens)
+void lexer_tokenize_line_as_comment(String text, Dynamic_Array<Token>* tokens)
 {
     dynamic_array_reset(tokens);
     if (text.size == 0) return;
@@ -222,7 +216,7 @@ void lexer_tokenize_text_as_comment(String text, Dynamic_Array<Token>* tokens)
     dynamic_array_push_back(tokens, token);
 }
 
-void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
+void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool* identifier_pool)
 {
     dynamic_array_reset(tokens);
     int index = 0;
@@ -240,29 +234,31 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
             while (index < text.size && char_is_valid_identifier(text[index])) {
                 index += 1;
             }
-            token.type = Token_Type::IDENTIFIER;
-            token.options.identifier = identifier_pool_add(lexer.identifier_pool, string_create_substring_static(&text, start_index, index));
 
-            // Determine if its a keyword
-            Keyword* keyword = hashtable_find_element(&lexer.keyword_table, *token.options.identifier);
+            String substring = string_create_substring_static(&text, start_index, index);
+            Keyword* keyword = hashtable_find_element(&lexer.keyword_table, substring);
             if (keyword != 0) {
                 token.type = Token_Type::KEYWORD;
                 token.options.keyword = *keyword;
             }
-            else if (string_equals_cstring(token.options.identifier, "null")) {
+            else if (string_equals_cstring(&substring, "null")) {
                 token.type = Token_Type::LITERAL;
                 token.options.literal_value.type = Literal_Type::NULL_VAL;
                 token.options.literal_value.options.null_ptr = 0;
             }
-            else if (string_equals_cstring(token.options.identifier, "true")) {
+            else if (string_equals_cstring(&substring, "true")) {
                 token.type = Token_Type::LITERAL;
                 token.options.literal_value.type = Literal_Type::BOOLEAN;
                 token.options.literal_value.options.boolean = true;
             }
-            else if (string_equals_cstring(token.options.identifier, "false")) {
+            else if (string_equals_cstring(&substring, "false")) {
                 token.type = Token_Type::LITERAL;
                 token.options.literal_value.type = Literal_Type::BOOLEAN;
                 token.options.literal_value.options.boolean = false;
+            }
+            else {
+                token.type = Token_Type::IDENTIFIER;
+                token.options.identifier = identifier_pool_add(identifier_pool, substring);
             }
         }
         else if (c == '"')
@@ -334,7 +330,7 @@ void lexer_tokenize_text(String text, Dynamic_Array<Token>* tokens)
                     }
                 }
                 if (!invalid_escape_found) {
-                    parsed_string = identifier_pool_add(lexer.identifier_pool, result_str);
+                    parsed_string = identifier_pool_add(identifier_pool, result_str);
                 }
             }
 

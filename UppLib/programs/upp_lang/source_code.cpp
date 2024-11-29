@@ -23,6 +23,7 @@ void add_first_bundle_and_line(Source_Code* code)
     first_line.indentation = 0;
     first_line.text = string_create();
     first_line.tokens = dynamic_array_create<Token>();
+    first_line.item_infos = dynamic_array_create<Code_Analysis_Item>();
     first_line.is_comment = false;
     first_line.comment_block_indentation = -1;
     first_line.is_folded = false;
@@ -33,22 +34,37 @@ void add_first_bundle_and_line(Source_Code* code)
 }
 
 // Source Code
-Source_Code* source_code_create(String file_path, bool used_in_last_compile, bool open_in_editor)
+Source_Code* source_code_create()
 {
     Source_Code* result = new Source_Code;
-    result->file_path = file_path;
-    result->used_in_last_compile = used_in_last_compile;
-    result->open_in_editor = open_in_editor;
-    result->code_changed_since_last_compile = true;
-
-    result->module_progress = 0;
-    result->root = 0;
-    result->allocated_nodes = dynamic_array_create<AST::Node*>();
-    result->error_messages = dynamic_array_create<Error_Message>();
-
     result->line_count = 0;
     result->bundles = dynamic_array_create<Line_Bundle>();
+    result->block_id_range = dynamic_array_create<Block_ID_Range>();
+    result->symbol_table_ranges = dynamic_array_create<Symbol_Table_Range>();
+    result->root_table = nullptr;
     add_first_bundle_and_line(result);
+    return result;
+}
+
+Source_Code* source_code_copy(Source_Code* copy_from)
+{
+    Source_Code* result = new Source_Code;
+    *result = *copy_from;
+    result->line_count = copy_from->line_count;
+    result->bundles = dynamic_array_create_copy<Line_Bundle>(copy_from->bundles.data, copy_from->bundles.size);
+    for (int i = 0; i < result->bundles.size; i++) {
+        auto& bundle = result->bundles[i];
+        bundle.lines = dynamic_array_create_copy<Source_Line>(bundle.lines.data, bundle.lines.size);
+        for (int j = 0; j < bundle.lines.size; j++) {
+            auto& line = bundle.lines[j];
+            line.text = string_copy(line.text);
+            line.tokens = dynamic_array_create_copy<Token>(line.tokens.data, line.tokens.size);
+            line.item_infos = dynamic_array_create_copy(line.item_infos.data, line.item_infos.size);
+        }
+    }
+
+    result->symbol_table_ranges = dynamic_array_create_copy(copy_from->symbol_table_ranges.data, copy_from->symbol_table_ranges.size);
+    result->block_id_range = dynamic_array_create_copy(copy_from->block_id_range.data, copy_from->block_id_range.size);
 
     return result;
 }
@@ -56,6 +72,7 @@ Source_Code* source_code_create(String file_path, bool used_in_last_compile, boo
 void source_line_destroy(Source_Line* line)
 {
     dynamic_array_destroy(&line->tokens);
+    dynamic_array_destroy(&line->item_infos);
     string_destroy(&line->text);
 }
 
@@ -67,27 +84,14 @@ void source_code_destroy(Source_Code* code)
         dynamic_array_destroy(&bundle.lines);
     }
     dynamic_array_destroy(&code->bundles);
-    dynamic_array_destroy(&code->error_messages);
-
-    for (int i = 0; i < code->allocated_nodes.size; i++) {
-        AST::base_destroy(code->allocated_nodes[i]);
-    }
-    dynamic_array_destroy(&code->allocated_nodes);
-
+    dynamic_array_destroy(&code->symbol_table_ranges);
+    dynamic_array_destroy(&code->block_id_range);
     code->line_count = 0;
     delete code;
 }
 
 void source_code_reset(Source_Code* code)
 {
-    for (int i = 0; i < code->allocated_nodes.size; i++) {
-        AST::base_destroy(code->allocated_nodes[i]);
-    }
-    dynamic_array_reset(&code->allocated_nodes);
-    code->module_progress = 0;
-    code->root = 0;
-    dynamic_array_reset(&code->error_messages);
-
     for (int i = 0; i < code->bundles.size; i++) {
         auto& bundle = code->bundles[i];
         dynamic_array_for_each(bundle.lines, source_line_destroy);
@@ -228,7 +232,6 @@ void update_line_block_comment_information(Source_Code* code, int line_index)
         else {
             line->is_comment = expected_is_comment;
             line->comment_block_indentation = expected_comment_indentation;
-            source_code_tokenize_line(line);
         }
     }
 }
@@ -276,6 +279,7 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         line.indentation = indentation;
         line.text = string_create();
         line.tokens = dynamic_array_create<Token>();
+        line.item_infos = dynamic_array_create<Code_Analysis_Item>();
         line.is_comment = false;
         line.is_folded = false;
         line.comment_block_indentation = -1;
@@ -479,11 +483,9 @@ void source_text_remove_invalid_whitespaces(String& text)
 void source_code_tokenize_line(Source_Line* line)
 {
     if (line->is_comment) {
-        lexer_tokenize_text_as_comment(line->text, &line->tokens);
+        return;
     }
-    else {
-        lexer_tokenize_text(line->text, &line->tokens);
-    }
+    lexer_tokenize_line(line->text, &line->tokens, &compiler.identifier_pool);
 }
 
 void source_code_tokenize_line(Source_Code* code, int line_index)
@@ -579,6 +581,10 @@ Text_Range text_range_make(Text_Index start, Text_Index end) {
     return { start, end };
 }
 
+bool text_range_contains(Text_Range range, Text_Index index) {
+    return text_index_in_order(range.start, index) && text_index_in_order(index, range.end);
+}
+
 // Token Indices
 Token_Index token_index_make(int line, int token)
 {
@@ -649,3 +655,108 @@ bool token_range_contains(Token_Range range, Token_Index index)
     return cmp_start != -1 && cmp_end == 1; // End is not inclusive
 }
 
+
+
+// Conversion functions
+Text_Range token_range_to_text_range(Token_Range range, Source_Code* code)
+{
+    Text_Range result;
+    result.start.line = range.start.line;
+    result.end.line = range.end.line;
+    auto start_line = source_code_get_line(code, range.start.line);
+    auto end_line = source_code_get_line(code, range.end.line);
+    if (range.start.token < start_line->tokens.size) {
+        result.start.character = start_line->tokens[range.start.token].start_index;
+    }
+    else {
+        if (range.start.token == 0) {
+            result.start.character = 0;
+        }
+        else {
+            result.start.character = start_line->text.size;
+        }
+    }
+
+    if (range.end.token >= end_line->tokens.size) {
+        result.end.character = end_line->text.size;
+    }
+    else if (range.end.token - 1 >= 0) {
+        result.end.character = end_line->tokens[range.end.token - 1].end_index;
+    }
+    else {
+        result.end.character = 0;
+    }
+    return result;
+}
+
+Token_Range text_range_to_token_range(Text_Range range, Source_Code* code)
+{
+    Token_Range result;
+    result.start.line = range.start.line;
+    result.end.line = range.end.line;
+
+    auto start_line = source_code_get_line(code, range.start.line);
+    if (range.start.character == 0) {
+        result.start.token = 0;
+    }
+    else if (range.start.character >= start_line->text.size) {
+        result.start.token = math_maximum(0, start_line->tokens.size - 1);
+    }
+    else {
+        auto& tokens = start_line->tokens;
+        result.start.token = 0;
+        for (int i = 0; i < tokens.size; i++) {
+            auto& token = tokens[i];
+            if (token.start_index <= range.start.character) {
+                result.start.token = i;
+            }
+            else {
+                break;
+            }
+        }
+    }
+
+    auto end_line = source_code_get_line(code, range.end.line);
+    if (range.end.character == 0) {
+        result.end.token = 0;
+    }
+    else if (range.end.character >= end_line->text.size) {
+        result.end.token = math_maximum(0, end_line->tokens.size);
+    }
+    else {
+        auto& tokens = end_line->tokens;
+        result.end.token = 0;
+        for (int i = 0; i < tokens.size; i++) {
+            auto& token = tokens[i];
+            if (token.start_index < range.end.character) {
+                result.end.token = i;
+            }
+            else {
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+Text_Index token_index_to_text_index(Token_Index index, Source_Code* code, bool token_start)
+{
+    if (index.line >= code->line_count) {
+        return text_index_make_line_end(code, code->line_count - 1);
+    }
+
+    auto line = source_code_get_line(code, index.line);
+    if (line->tokens.size == 0) {
+        return text_index_make(index.line, 0);
+    }
+    else if (index.token >= line->tokens.size) {
+        return text_index_make(index.line, line->text.size);
+    }
+
+    auto& token = line->tokens[index.token];
+    if (token_start) {
+        return text_index_make(index.line, token.start_index);
+    }
+    return text_index_make(index.line, token.end_index);
+}

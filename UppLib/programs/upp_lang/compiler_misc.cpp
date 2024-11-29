@@ -138,6 +138,94 @@ Identifier_Pool identifier_pool_create()
 {
     Identifier_Pool result;
     result.identifier_lookup_table = hashtable_create_empty<String, String*>(128, hash_string, string_equals);
+
+    // Add predefined IDs
+    {
+        auto& ids = result.predefined_ids;
+        auto add_id = [&](const char* id) -> String* {
+            return identifier_pool_add(&result, string_create_static(id));
+        };
+
+        ids.size = add_id("size");
+        ids.data = add_id("data");
+        ids.tag = add_id("tag");
+        ids.anon_struct = add_id("Anonymous");
+        ids.anon_enum = add_id("Anon_Enum");
+        ids.main = add_id("main");
+        ids.type_of = add_id("type_of");
+        ids.type_info = add_id("type_info");
+        ids.empty_string = add_id("");
+        ids.invalid_symbol_name = add_id("__INVALID_SYMBOL_NAME");
+        ids.id_struct = add_id("Struct");
+        ids.byte = add_id("byte");
+        ids.value = add_id("value");
+        ids.is_available = add_id("is_available");
+        ids.uninitialized_token = add_id("_");
+        ids.c_string = add_id("c_string");
+        ids.allocator = add_id("Allocator");
+        ids.bytes = add_id("bytes");
+        ids.lambda_function = add_id("lambda_function");
+        ids.bake_function = add_id("bake_function");
+
+        ids.function = add_id("function");
+        ids.create_fn = add_id("create_fn");
+        ids.next_fn = add_id("next_fn");
+        ids.has_next_fn = add_id("has_next_fn");
+        ids.value_fn = add_id("value_fn");
+        ids.name = add_id("name");
+        ids.as_member_access = add_id("as_member_access");
+        ids.commutative = add_id("commutative");
+        ids.binop = add_id("binop");
+        ids.unop = add_id("unop");
+        ids.option = add_id("option");
+        ids.global = add_id("global");
+        ids.lib = add_id("lib");
+        ids.lib_dir = add_id("lib_dir");
+        ids.source = add_id("source");
+        ids.header = add_id("header");
+        ids.header_dir = add_id("header_dir");
+        ids.definition = add_id("definition");
+
+        ids.cast_mode = add_id("Cast_Mode");
+        ids.cast_mode_none = add_id("NONE");
+        ids.cast_mode_explicit = add_id("EXPLICIT");
+        ids.cast_mode_inferred = add_id("INFERRED");
+        ids.cast_mode_implicit = add_id("IMPLICIT");
+        ids.cast_mode_pointer_explicit = add_id("POINTER_EXPLICIT");
+        ids.cast_mode_pointer_inferred = add_id("POINTER_INFERRED");
+
+        ids.id_import = add_id("import");
+        ids.set_option = add_id("set_option");
+        ids.set_cast_option = add_id("set_cast_option");
+        ids.add_binop = add_id("add_binop");
+        ids.add_unop = add_id("add_unop");
+        ids.add_cast = add_id("add_cast");
+        ids.add_array_access = add_id("add_array_access");
+        ids.add_dot_call = add_id("add_dot_call");
+        ids.add_iterator = add_id("add_iterator");
+
+        ids.cast_option = add_id("Cast_Option");
+        ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+        ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIZE_UPCAST] = add_id("INTEGER_SIZE_UPCAST");
+        ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIZE_DOWNCAST] = add_id("INTEGER_SIZE_DOWNCAST");
+        ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIGNED_TO_UNSIGNED] = add_id("INTEGER_SIGNED_TO_UNSIGNED");
+        ids.cast_option_enum_values[(int)Cast_Option::INTEGER_UNSIGNED_TO_SIGNED] = add_id("INTEGER_UNSIGNED_TO_SIGNED");
+        ids.cast_option_enum_values[(int)Cast_Option::FLOAT_SIZE_UPCAST] = add_id("FLOAT_SIZE_UPCAST");
+        ids.cast_option_enum_values[(int)Cast_Option::FLOAT_SIZE_DOWNCAST] = add_id("FLOAT_SIZE_DOWNCAST");
+        ids.cast_option_enum_values[(int)Cast_Option::INT_TO_FLOAT] = add_id("INT_TO_FLOAT");
+        ids.cast_option_enum_values[(int)Cast_Option::FLOAT_TO_INT] = add_id("FLOAT_TO_INT");
+        ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_POINTER] = add_id("POINTER_TO_POINTER");
+        ids.cast_option_enum_values[(int)Cast_Option::FROM_BYTE_POINTER] = add_id("FROM_BYTE_POINTER");
+        ids.cast_option_enum_values[(int)Cast_Option::TO_BYTE_POINTER] = add_id("TO_BYTE_POINTER");
+        ids.cast_option_enum_values[(int)Cast_Option::TO_ANY] = add_id("TO_ANY");
+        ids.cast_option_enum_values[(int)Cast_Option::FROM_ANY] = add_id("FROM_ANY");
+        ids.cast_option_enum_values[(int)Cast_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
+        ids.cast_option_enum_values[(int)Cast_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
+        ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+        ids.cast_option_enum_values[(int)Cast_Option::TO_SUBTYPE] = add_id("TO_SUBTYPE");
+        ids.cast_option_enum_values[(int)Cast_Option::TO_OPTIONAL] = add_id("TO_OPTIONAL");
+    }
+
     return result;
 }
 
@@ -219,6 +307,11 @@ Fiber_Pool* fiber_pool_create() {
     }
     pool->main_fiber = fiber_get_current();
     return pool;
+}
+
+void fiber_pool_set_current_fiber_to_main(Fiber_Pool* pool)
+{
+    pool->main_fiber = fiber_get_current();
 }
 
 void fiber_pool_destroy(Fiber_Pool* pool) {

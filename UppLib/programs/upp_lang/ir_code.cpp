@@ -3,6 +3,7 @@
 #include "bytecode_generator.hpp"
 #include "ast.hpp"
 #include "symbol_table.hpp"
+#include "editor_analysis_info.hpp"
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::Expression* expression, IR_Data_Access* destination = 0);
@@ -84,7 +85,7 @@ IR_Function* ir_function_create(Datatype_Function* signature, int slot_index = -
     function->program = ir_generator.program;
     dynamic_array_push_back(&ir_generator.program->functions, function);
 
-    auto& slots = compiler.semantic_analyser->function_slots;
+    auto& slots = compiler.analysis_data->function_slots;
     if (slot_index == -1) {
         Function_Slot slot;
         slot.modtree_function = nullptr;
@@ -134,7 +135,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     {
     case IR_Data_Access_Type::CONSTANT: {
         auto const_index = access->option.constant_index;
-        Upp_Constant* constant = &compiler.constant_pool.constants[const_index];
+        Upp_Constant* constant = &compiler.analysis_data->constant_pool.constants[const_index];
         string_append_formated(string, "Constant #%d ", const_index);
         datatype_append_to_string(string, constant->type);
         string_append_formated(string, " ");
@@ -214,7 +215,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     {
         IR_Instruction_Function_Address* function_address = &instruction->options.function_address;
         const char* name = "predefined_function";
-        auto& modtree = compiler.semantic_analyser->function_slots[function_address->function_slot_index].modtree_function;
+        auto& modtree = compiler.analysis_data->function_slots[function_address->function_slot_index].modtree_function;
         if (modtree != nullptr) {
             name = modtree->name->characters;
         }
@@ -539,7 +540,7 @@ void ir_program_append_to_string(IR_Program* program, String* string, bool print
     for (int i = 0; i < program->functions.size; i++)
     {
         auto function = program->functions[i];
-        const auto& slot = compiler.semantic_analyser->function_slots[function->function_slot_index];
+        const auto& slot = compiler.analysis_data->function_slots[function->function_slot_index];
         if (slot.modtree_function == nullptr && !print_generated_functions) {
             continue;
         }
@@ -660,6 +661,8 @@ IR_Data_Access* ir_data_access_create_member(IR_Data_Access* struct_access, Stru
 
 IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* array_access, IR_Data_Access* index_access, bool do_bounds_check, IR_Code_Block* ir_block)
 {
+    auto& types = compiler.analysis_data->type_system.predefined_types;
+
     Datatype* array_type = datatype_get_non_const_type(array_access->datatype);
     Datatype* element_type = 0;
     if (array_type->type == Datatype_Type::ARRAY) {
@@ -688,7 +691,7 @@ IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* arra
         }
 
         assert(ir_block != 0, "");
-        IR_Data_Access* condition_access = ir_data_access_create_intermediate(ir_block, upcast(compiler.type_system.predefined_types.bool_type));
+        IR_Data_Access* condition_access = ir_data_access_create_intermediate(ir_block, upcast(types.bool_type));
         IR_Instruction cmp_instr;
         cmp_instr.type = IR_Instruction_Type::BINARY_OP;
         cmp_instr.options.binary_op.destination = condition_access;
@@ -746,20 +749,20 @@ IR_Data_Access* ir_data_access_create_constant(Upp_Constant constant)
 
 IR_Data_Access* ir_data_access_create_constant_i32(i32 value) {
     return ir_data_access_create_constant(
-        upcast(compiler.type_system.predefined_types.i32_type),
+        upcast(compiler.analysis_data->type_system.predefined_types.i32_type),
         array_create_static((byte*)&value, sizeof(i32))
     );
 }
 
 IR_Data_Access* ir_data_access_create_constant_u64(u64 value) {
     return ir_data_access_create_constant(
-        upcast(compiler.type_system.predefined_types.u64_type),
+        upcast(compiler.analysis_data->type_system.predefined_types.u64_type),
         array_create_static_as_bytes(&value, 1)
     );
 }
 
 IR_Data_Access* ir_data_access_create_constant_bool(bool value) {
-    return ir_data_access_create_constant(upcast(compiler.type_system.predefined_types.bool_type), array_create_static_as_bytes(&value, 1));
+    return ir_data_access_create_constant(upcast(compiler.analysis_data->type_system.predefined_types.bool_type), array_create_static_as_bytes(&value, 1));
 }
 
 
@@ -819,7 +822,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
 {
     auto info = get_info(expression);
     auto result_type = expression_info_get_type(info, true);
-    auto type_system = &compiler.type_system;
+    auto type_system = &compiler.analysis_data->type_system;
     auto& types = type_system->predefined_types;
     assert(info->is_valid, "Cannot contain errors!"); 
 
@@ -1425,7 +1428,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
         auto source = ir_generator_generate_expression(ir_block, mem_access.expr);
         if (src_type->base_type->type == Datatype_Type::ARRAY)
         {
-            assert(mem_access.name == compiler.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
+            assert(mem_access.name == compiler.identifier_pool.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
             IR_Data_Access* result_access = ir_data_access_create_address_of(source);
             return move_access_to_destination(
                 ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(
@@ -1448,7 +1451,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(IR_Code_Block* ir_block
 
         auto allocate_from_global_allocator = [](IR_Code_Block* ir_block, IR_Data_Access* size, IR_Data_Access* alignment, IR_Data_Access* destination) 
         {
-            auto& types = compiler.type_system.predefined_types;
+            auto& types = compiler.analysis_data->type_system.predefined_types;
             auto& analyser = compiler.semantic_analyser;
             
             IR_Data_Access* alloc_fn_access = ir_data_access_create_global(analyser->global_allocator);
@@ -1602,7 +1605,7 @@ IR_Data_Access* ir_generator_generate_expression(IR_Code_Block* ir_block, AST::E
         return destination;
     }
 
-    auto type_system = &compiler.type_system;
+    auto type_system = &compiler.analysis_data->type_system;
     auto& types = type_system->predefined_types;
     auto source_type = source->datatype;
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -2162,7 +2165,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     {
         auto& foreach_loop = statement->options.foreach_loop;
         auto& loop_info = get_info(statement)->specifics.foreach_loop;
-        auto& types = compiler.type_system.predefined_types;
+        auto& types = compiler.analysis_data->type_system.predefined_types;
 
         // Create and initialize index data-access (Always available)
         IR_Data_Access* index_access = ir_data_access_create_intermediate(ir_block, upcast(types.u64_type));
@@ -2497,7 +2500,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     }
     case AST::Statement_Type::DELETE_STATEMENT:
     {
-        auto& types = compiler.type_system.predefined_types;
+        auto& types = compiler.analysis_data->type_system.predefined_types;
         auto& analyser = compiler.semantic_analyser;
 
         IR_Data_Access* delete_access = ir_generator_generate_expression(ir_block, statement->options.delete_expr);
@@ -2591,7 +2594,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
     // Generate Blocks
     for (int i = 0; i < ir_generator.queued_function_slot_indices.size; i++)
     {
-        auto& slot = compiler.semantic_analyser->function_slots[ir_generator.queued_function_slot_indices[i]];
+        auto& slot = compiler.analysis_data->function_slots[ir_generator.queued_function_slot_indices[i]];
         ModTree_Function* mod_func = slot.modtree_function;
         IR_Function* ir_func = slot.ir_function;
         if (mod_func == 0) {
@@ -2683,7 +2686,7 @@ void ir_generator_queue_function(ModTree_Function* function)
         assert((function->options.normal.progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
     }
 
-    auto& slots = compiler.semantic_analyser->function_slots;
+    auto& slots = compiler.analysis_data->function_slots;
     auto& slot = slots[function->function_slot_index];
     if (slot.ir_function != nullptr) return; // Already queued
     ir_function_create(function->signature, function->function_slot_index);
@@ -2699,10 +2702,10 @@ void ir_generator_finish(bool gen_bytecode)
 
     // Generate entry function
     {
-        auto& type_system = compiler.type_system;
+        auto& type_system = compiler.analysis_data->type_system;
         auto& types = type_system.predefined_types;
 
-        auto& slots = compiler.semantic_analyser->function_slots;
+        auto& slots = compiler.analysis_data->function_slots;
         auto entry_function = ir_function_create(type_system_make_function({}), -1);
         ir_generator.program->entry_function = entry_function;
 
@@ -2734,7 +2737,7 @@ void ir_generator_finish(bool gen_bytecode)
         }
 
         // Initialize all globals
-        auto& globals = compiler.semantic_analyser->program->globals;
+        auto& globals = compiler.analysis_data->program->globals;
         for (int i = 0; i < globals.size; i++)
         {
             auto global = globals[i];
@@ -2781,7 +2784,7 @@ IR_Generator* ir_generator_initialize()
     ir_generator.next_label_index = 0;
 
     ir_generator.nothing_access.type = IR_Data_Access_Type::NOTHING;
-    ir_generator.nothing_access.datatype = compiler.type_system.predefined_types.unknown_type;
+    ir_generator.nothing_access.datatype = nullptr;
 
     ir_generator.data_accesses = dynamic_array_create<IR_Data_Access*>();
     ir_generator.loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, Loop_Increment>(8);
@@ -2807,9 +2810,10 @@ void ir_generator_reset()
         ir_program_destroy(ir_generator.program);
     }
 
-    ir_generator.program = ir_program_create(&compiler.type_system);
+    ir_generator.nothing_access.datatype = compiler.analysis_data->type_system.predefined_types.unknown_type;
+    ir_generator.program = ir_program_create(&compiler.analysis_data->type_system);
     ir_generator.next_label_index = 0;
-    ir_generator.modtree = compiler.semantic_analyser->program;
+    ir_generator.modtree = compiler.analysis_data->program;
 
     hashtable_reset(&ir_generator.variable_mapping);
     hashtable_reset(&ir_generator.labels_break);
@@ -2826,10 +2830,10 @@ void ir_generator_reset()
     dynamic_array_reset(&ir_generator.fill_out_continues);
 
     {
-        auto& type_system = compiler.type_system;
+        auto& type_system = compiler.analysis_data->type_system;
         auto& types = type_system.predefined_types;
 
-        auto& slots = compiler.semantic_analyser->function_slots;
+        auto& slots = compiler.analysis_data->function_slots;
 
         // Create default alloc function
         IR_Function* default_alloc_function = ir_function_create(types.allocate_function, -1);

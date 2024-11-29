@@ -4,6 +4,7 @@
 #include "../../utility/hash_functions.hpp"
 #include "ir_code.hpp"
 #include "ast.hpp"
+#include "editor_analysis_info.hpp"
 
 int align_offset_next_multiple(int offset, int alignment) 
 {
@@ -184,8 +185,8 @@ int data_access_is_completely_on_stack(Bytecode_Generator* generator, IR_Data_Ac
             return -1;
         }
 
-        auto& index_constant = compiler.constant_pool.constants[index_access->option.constant_index];
-        if (!types_are_equal(index_constant.type, upcast(compiler.type_system.predefined_types.i32_type))) {
+        auto& index_constant = compiler.analysis_data->constant_pool.constants[index_access->option.constant_index];
+        if (!types_are_equal(index_constant.type, upcast(compiler.analysis_data->type_system.predefined_types.i32_type))) {
             return -1;
         }
         int index = *(int*)index_constant.memory;
@@ -210,7 +211,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     Datatype* access_type = access->datatype;
     assert(access_type->memory_info.available, "");
     auto& memory_info = access_type->memory_info.value;
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Check if it's on stack
     {
@@ -333,7 +334,7 @@ int data_access_read_value(Bytecode_Generator* generator, IR_Data_Access* access
     Datatype* access_type = access->datatype;
     assert(access_type->memory_info.available, "");
     auto& memory_info = access_type->memory_info.value;
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Check if it's on stack
     {
@@ -621,7 +622,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
     }
 
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     const int PLACEHOLDER = 0;
     // Generate instructions
     for (int i = 0; i < code_block->instructions.size; i++)
@@ -687,7 +688,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                     break;
                 }
 
-                auto& slots = compiler.semantic_analyser->function_slots;
+                auto& slots = compiler.analysis_data->function_slots;
                 auto ir_function = slots[call->options.function->function_slot_index].ir_function;
                 assert(ir_function != nullptr, "");
                 
@@ -929,7 +930,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
             IR_Instruction_Function_Address* function_address = &instr->options.function_address;
-            auto& slots = compiler.semantic_analyser->function_slots;
+            auto& slots = compiler.analysis_data->function_slots;
             auto& slot = slots[function_address->function_slot_index];
 
             if (slot.modtree_function != nullptr && slot.modtree_function->function_type == ModTree_Function_Type::EXTERN) {

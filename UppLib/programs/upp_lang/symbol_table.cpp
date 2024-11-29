@@ -5,13 +5,14 @@
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "ast.hpp"
+#include "editor_analysis_info.hpp"
 
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create()
 {
     auto analyser = compiler.semantic_analyser;
     Symbol_Table* result = new Symbol_Table;
-    dynamic_array_push_back(&analyser->allocated_symbol_tables, result);
+    dynamic_array_push_back(&compiler.analysis_data->allocated_symbol_tables, result);
     result->included_tables = dynamic_array_create<Included_Table>(1);
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
     result->operator_context = 0;
@@ -71,7 +72,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
     // Create new symbol
     Symbol* new_sym = new Symbol;
-    dynamic_array_push_back(&compiler.semantic_analyser->allocated_symbols, new_sym);
+    dynamic_array_push_back(&compiler.analysis_data->allocated_symbols, new_sym);
     new_sym->definition_node = definition_node;
     new_sym->id = id;
     new_sym->type = type;
@@ -132,7 +133,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         if (!overload_valid) {
             // Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
             log_semantic_error("Symbol already defined in this scope", definition_node);
-            new_sym->id = compiler.predefined_ids.invalid_symbol_name;
+            new_sym->id = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
             return new_sym;
         }
     }

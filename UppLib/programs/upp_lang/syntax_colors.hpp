@@ -23,7 +23,7 @@ namespace Syntax_Color
 
     extern vec4 BG_NORMAL;
     extern vec4 BG_ERROR;
-    extern vec4 BG_HIGHLIGHT;
+    extern vec3 BG_HIGHLIGHT;
 };
 
 enum class Symbol_Type;

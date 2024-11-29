@@ -27,6 +27,32 @@ enum class Timing_Task
     FINISH,
 };
 
+enum class Cast_Option
+{
+    INTEGER_SIZE_UPCAST = 1,
+    INTEGER_SIZE_DOWNCAST,
+    INTEGER_SIGNED_TO_UNSIGNED,
+    INTEGER_UNSIGNED_TO_SIGNED,
+    FLOAT_SIZE_UPCAST,
+    FLOAT_SIZE_DOWNCAST,
+    INT_TO_FLOAT,
+    FLOAT_TO_INT,
+
+    POINTER_TO_POINTER, // Includes casts between pointer, byte_pointer, function-pointer and u64 (But only with cast_pointer)
+    TO_BYTE_POINTER, // Does not affect cast_pointer
+    FROM_BYTE_POINTER, // Does not affect cast_pointer
+
+    TO_ANY,
+    FROM_ANY,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+    ARRAY_TO_SLICE,
+    TO_SUBTYPE,
+    TO_OPTIONAL,
+
+    MAX_ENUM_VALUE
+};
+
 const char* timing_task_to_string(Timing_Task task);
 
 enum class Extern_Compiler_Setting
@@ -120,9 +146,80 @@ void extern_sources_destroy(Extern_Sources* sources);
 
 
 // Identifier Pool
+struct Predefined_IDs
+{
+    // Other
+    String* main;
+    String* id_struct;
+    String* empty_string;
+    String* invalid_symbol_name;
+    String* cast_mode;
+    String* cast_mode_none;
+    String* cast_mode_explicit;
+    String* cast_mode_inferred;
+    String* cast_mode_implicit;
+    String* cast_mode_pointer_explicit;
+    String* cast_mode_pointer_inferred;
+    String* byte;
+    String* value;
+    String* is_available;
+    String* uninitialized_token; // _
+
+    String* lambda_function;
+    String* bake_function;
+
+    String* function;
+    String* create_fn;
+    String* next_fn;
+    String* has_next_fn;
+    String* value_fn;
+    String* name;
+    String* as_member_access;
+    String* commutative;
+    String* binop;
+    String* unop;
+    String* global;
+    String* option;
+    String* lib;
+    String* lib_dir;
+    String* source;
+    String* header;
+    String* header_dir;
+    String* definition;
+
+    // Hardcoded functions
+    String* type_of;
+    String* type_info;
+
+    // Members
+    String* data;
+    String* size;
+    String* tag;
+    String* anon_struct;
+    String* anon_enum;
+    String* c_string;
+    String* allocator;
+    String* bytes;
+
+    // Context members 
+    String* id_import;
+    String* set_option;
+    String* set_cast_option;
+    String* add_binop;
+    String* add_unop;
+    String* add_cast;
+    String* add_array_access;
+    String* add_dot_call;
+    String* add_iterator;
+
+    String* cast_option;
+    String* cast_option_enum_values[(int)Cast_Option::MAX_ENUM_VALUE];
+};
+
 struct Identifier_Pool
 {
     Hashtable<String, String*> identifier_lookup_table;
+    Predefined_IDs predefined_ids;
 };
 
 Identifier_Pool identifier_pool_create();
@@ -142,6 +239,7 @@ struct Fiber_Pool_Handle { // Handle to a fiber from a fiber pool
 Fiber_Pool* fiber_pool_create();
 void fiber_pool_destroy(Fiber_Pool* pool);
 Fiber_Pool_Handle fiber_pool_get_handle(Fiber_Pool* pool, fiber_entry_fn entry_fn, void* userdata);
+void fiber_pool_set_current_fiber_to_main(Fiber_Pool* pool);
 bool fiber_pool_switch_to_handel(Fiber_Pool_Handle handle); // Returns true if fiber finished, or if fiber waits for more stuff to happen
 void fiber_pool_switch_to_main_fiber(Fiber_Pool* pool);
 void fiber_pool_check_all_handles_completed(Fiber_Pool* pool);

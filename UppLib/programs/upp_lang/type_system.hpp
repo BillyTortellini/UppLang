@@ -309,32 +309,6 @@ struct Upp_Allocator
     i64 reallocate_fn_index_plus_one;
 };
 
-enum class Cast_Option
-{
-    INTEGER_SIZE_UPCAST = 1,
-    INTEGER_SIZE_DOWNCAST,
-    INTEGER_SIGNED_TO_UNSIGNED,
-    INTEGER_UNSIGNED_TO_SIGNED,
-    FLOAT_SIZE_UPCAST,
-    FLOAT_SIZE_DOWNCAST,
-    INT_TO_FLOAT,
-    FLOAT_TO_INT,
-
-    POINTER_TO_POINTER, // Includes casts between pointer, byte_pointer, function-pointer and u64 (But only with cast_pointer)
-    TO_BYTE_POINTER, // Does not affect cast_pointer
-    FROM_BYTE_POINTER, // Does not affect cast_pointer
-
-    TO_ANY,
-    FROM_ANY,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ARRAY_TO_SLICE,
-    TO_SUBTYPE,
-    TO_OPTIONAL,
-
-    MAX_ENUM_VALUE
-};
-
 
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive

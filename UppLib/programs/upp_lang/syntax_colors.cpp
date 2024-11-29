@@ -35,7 +35,7 @@ namespace Syntax_Color
 
     vec4 BG_NORMAL = vec4(0);
     vec4 BG_ERROR = vec4(0.7f, 0.0f, 0.0f, 1.0f);
-    vec4 BG_HIGHLIGHT = vec4(0.3f, 0.3f, 0.3f, 1.0f);
+    vec3 BG_HIGHLIGHT = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
 };
 
 vec3 symbol_type_to_color(Symbol_Type type)

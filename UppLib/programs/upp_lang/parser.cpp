@@ -27,6 +27,7 @@ namespace Parser
 
     struct Parser
     {
+        Compilation_Unit* unit;
         Source_Code* code;
         Parse_State state;
         // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
@@ -39,8 +40,8 @@ namespace Parser
     // Parser Functions
     void parser_rollback(Parse_State checkpoint)
     {
-        auto& nodes = parser.code->allocated_nodes;
-        auto& errors = parser.code->error_messages;
+        auto& nodes = parser.unit->allocated_nodes;
+        auto& errors = parser.unit->parser_errors;
 
         assert(checkpoint.allocated_count <= nodes.size, "");
         for (int i = checkpoint.allocated_count; i < nodes.size; i++) {
@@ -60,7 +61,7 @@ namespace Parser
         Node* base = &result->base;
         base->parent = parent;
         base->type = type;
-        base->range.start = parser.state.pos;
+        base->range.start = token_index_to_text_index(parser.state.pos, parser.code, true);
         base->range.end = base->range.start;
 
         return result;
@@ -74,8 +75,8 @@ namespace Parser
         Error_Message err;
         err.msg = msg;
         err.range = range;
-        dynamic_array_push_back(&parser.code->error_messages, err);
-        parser.state.error_count = parser.code->error_messages.size;
+        dynamic_array_push_back(&parser.unit->parser_errors, err);
+        parser.state.error_count = parser.unit->parser_errors.size;
     }
 
     void log_error_to_pos(const char* msg, Token_Index pos) {
@@ -197,10 +198,10 @@ namespace Parser
         while (child != 0) 
         {
             auto child_range = child->bounding_range;
-            if (token_index_compare(bounding_range.start, child_range.start) < 0) {
+            if (!text_index_in_order(bounding_range.start, child_range.start)) {
                 bounding_range.start = child_range.start;
             }
-            if (token_index_compare(child_range.end, bounding_range.end) < 0) {
+            if (!text_index_in_order(child_range.end, bounding_range.end)) {
                 bounding_range.end = child_range.end;
             }
 
@@ -215,26 +216,37 @@ namespace Parser
         // Now it does 3 things: 
         //      * Sanity checks
         //      * Sets the end of the node
-        //      * Calcualtes bounding-ranges (for editor)
+        //      * Calculates bounding-ranges (for editor)
         auto code = parser.code;
 
         // Set end of node
         auto& range = node->range;
-        range.end = parser.state.pos;
-        if (range.end.line > code->line_count) {
-            range.end = token_index_make_line_end(code, code->line_count - 1);
+        if (parser.state.pos.line >= code->line_count) {
+            range.end = text_index_make_line_end(code, code->line_count - 1);
         }
-        else if (range.start.line != range.end.line && range.end.token == 0 && range.end.line > 0) {
+        else
+        {
+            auto line = parser.state.line;
+            range.end.line = parser.state.pos.line;
+            if (parser.state.pos.token >= line->tokens.size) {
+                range.end.character = line->text.size;
+            }
+            else {
+                range.end.character = line->tokens[parser.state.pos.token].end_index;
+            }
+
             // Here we have the difference between next line token zero or end of line last token
-            range.end = token_index_make_line_end(code, range.end.line - 1);
+            if (range.start.line != range.end.line && range.end.character == 0 && range.end.line > 0) {
+                range.end = text_index_make_line_end(code, range.end.line - 1);
+            }
         }
-        
+
         // Calculate bounding range
         node_calculate_bounding_range(node);
 
         // Sanity-Check that start/end is in order
-        int order = token_index_compare(range.start, range.end);
-        assert(order != -1, "Ranges must be in order");
+        bool in_order = text_index_in_order(range.start, range.end);
+        assert(in_order, "Ranges must be in order");
     }
 
 
@@ -477,7 +489,7 @@ namespace Parser
                         block_indent + 1, true
                     );
 
-                    Token_Range range = token_range_make(token_index_make(block_start_line, 0), token_index_make_line_end(code, parser.state.pos.line-1));
+                    Text_Range range = text_range_make(text_index_make(block_start_line, 0), text_index_make_line_end(code, parser.state.pos.line-1));
                     code_block->base.range = range;
                     code_block->base.bounding_range = range;
                     statement->base.range = range;
@@ -848,7 +860,7 @@ namespace Parser
 
             if (test_token(Token_Type::IDENTIFIER))
             {
-                auto& ids = compiler.predefined_ids;
+                auto& ids = compiler.identifier_pool.predefined_ids;
                 String* id = get_token()->options.identifier;
                 if (id == ids.function) {
                     result->type = Extern_Type::FUNCTION;
@@ -1003,7 +1015,7 @@ namespace Parser
 
         Context_Change* parse_context_change(Node* parent)
         {
-            auto& ids = compiler.predefined_ids;
+            auto& ids = compiler.identifier_pool.predefined_ids;
 
             CHECKPOINT_SETUP;
             if (!test_keyword_offset(Keyword::CONTEXT, 0)) {
@@ -1033,7 +1045,7 @@ namespace Parser
             Context_Change_Type change_type = Context_Change_Type::INVALID;
             if (test_token(Token_Type::IDENTIFIER)) 
             {
-                auto& ids = compiler.predefined_ids;
+                auto& ids = compiler.identifier_pool.predefined_ids;
                 auto id = get_token()->options.identifier;
 
                 if (id == ids.add_array_access) { change_type = Context_Change_Type::ARRAY_ACCESS; }
@@ -1486,7 +1498,7 @@ namespace Parser
                     AST::Definition_Symbol* loop_variable = parse_definition_symbol(upcast(result));
                     if (loop_variable == 0) {
                         auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                        definition_node->name = compiler.predefined_ids.invalid_symbol_name;
+                        definition_node->name = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
                         node_finalize_range(upcast(definition_node));
                         loop_variable = definition_node;
                         if (!error_logged) {
@@ -1511,7 +1523,7 @@ namespace Parser
                             loop.index_variable_definition.value = parse_definition_symbol(upcast(result));
                             if (loop.index_variable_definition.value == 0) {
                                 auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                                definition_node->name = compiler.predefined_ids.invalid_symbol_name;
+                                definition_node->name = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
                                 node_finalize_range(upcast(definition_node));
                                 loop.index_variable_definition.value = definition_node;
                                 if (!error_logged) {
@@ -1921,7 +1933,7 @@ namespace Parser
             }
             else {
                 log_error("Expected identifier", token_range_make_offset(parser.state.pos, -1)); // Put error on the ~
-                lookup->name = compiler.predefined_ids.empty_string;
+                lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
             }
             SET_END_RANGE(lookup);
 
@@ -2093,7 +2105,7 @@ namespace Parser
                 }
                 else {
                     log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.auto_enum = compiler.predefined_ids.empty_string;
+                    result->options.auto_enum = compiler.identifier_pool.predefined_ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -2279,7 +2291,7 @@ namespace Parser
                 }
                 else {
                     log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.member_access.name = compiler.predefined_ids.empty_string;
+                    result->options.member_access.name = compiler.identifier_pool.predefined_ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -2359,9 +2371,8 @@ namespace Parser
                 expr = result;
 
                 auto& range = result->base.range;
-                range.start = link.token_index; 
-                range.end = link.token_index;
-                range.end.token += 1;
+                range.start = token_index_to_text_index(link.token_index, parser.code, true); 
+                range.end = token_index_to_text_index(link.token_index, parser.code, false);
                 node_calculate_bounding_range(AST::upcast(result->options.binop.left));
                 node_calculate_bounding_range(AST::upcast(result));
             }
@@ -2451,7 +2462,7 @@ namespace Parser
 
         // Create root
         auto root = allocate_base<Module>(0, Node_Type::MODULE);
-        code->root = root;
+        parser.unit->root = root;
         root->definitions = dynamic_array_create<Definition*>();
         root->import_nodes = dynamic_array_create<Import*>();
         root->context_changes = dynamic_array_create<Context_Change*>();
@@ -2460,39 +2471,41 @@ namespace Parser
         parse_block_of_items(upcast(root), wrapper_parse_module_item, module_add_child, Operator::SEMI_COLON, 0, false);
 
         // Set range
-        Token_Range range = token_range_make(token_index_make(0, 0), token_index_make_line_end(code, code->line_count-1));
+        Text_Range range = text_range_make(text_index_make(0, 0), text_index_make_line_end(code, code->line_count-1));
         root->base.range = range;
         root->base.bounding_range = range;
     }
 
-    void execute_clean(Source_Code* code)
+    void execute_clean(Compilation_Unit* unit)
     {
-        for (int i = 0; i < code->allocated_nodes.size; i++) {
-            AST::base_destroy(code->allocated_nodes[i]);
+        for (int i = 0; i < unit->allocated_nodes.size; i++) {
+            AST::base_destroy(unit->allocated_nodes[i]);
         }
-        dynamic_array_reset(&code->allocated_nodes);
-        dynamic_array_reset(&code->error_messages);
-        code->root = 0;
+        dynamic_array_reset(&unit->allocated_nodes);
+        dynamic_array_reset(&unit->parser_errors);
+        unit->root = 0;
 
-        parser.code = code;
+        parser.code = unit->code;
+        parser.unit = unit;
+        parser.unit->root = 0;
         parser.state.allocated_count = 0;
         parser.state.error_count = 0;
         parser.state.pos = token_index_make(0, 0);
-        parser.state.line = source_code_get_line(code, 0);
+        parser.state.line = source_code_get_line(unit->code, 0);
         parse_root();
     }
 
     // AST queries based on Token-Indices
     void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges)
     {
-        auto range = base->range;
+        auto range = text_range_to_token_range(base->range, code);
         switch (section)
         {
         case Section::NONE: break;
         case Section::WHOLE:
         {
             if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
-                dynamic_array_push_back(ranges, base->bounding_range);
+                dynamic_array_push_back(ranges, text_range_to_token_range(base->bounding_range, code));
                 break;
             }
             dynamic_array_push_back(ranges, range);
@@ -2508,7 +2521,7 @@ namespace Parser
             auto child = AST::base_get_child(base, index);
             while (child != 0)
             {
-                auto child_range = child->range;
+                auto child_range = text_range_to_token_range(child->range, code);
                 if (token_index_compare(sub_range.start, child_range.start) == 0) {
                     sub_range.end = child_range.start;
                     // Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
@@ -2548,6 +2561,7 @@ namespace Parser
             // Find next (), {} or [], and add the tokens to the ranges
             auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
             if (!result.available) {
+                dynamic_array_push_back(ranges, token_range_make(range.start, range.start));
                 break;
             }
             dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
@@ -2592,7 +2606,7 @@ namespace Parser
         }
     }
 
-    AST::Node* find_smallest_enclosing_node(AST::Node* base, Token_Index index)
+    AST::Node* find_smallest_enclosing_node(AST::Node* base, Text_Index index)
     {
         int child_index = 0;
         AST::Node* child = AST::base_get_child(base, child_index);
@@ -2601,7 +2615,7 @@ namespace Parser
         }
         while (child != 0) {
             auto child_range = child->bounding_range;
-            if (token_range_contains(child_range, index)) {
+            if (text_range_contains(child_range, index)) {
                 return find_smallest_enclosing_node(child, index);
             }
             child_index += 1;

@@ -115,14 +115,13 @@ void code_history_sanity_check(Code_History* history)
 
 
 // Code Changes
-void code_change_apply(Code_History* history, Code_Change* change, bool forwards)
+void code_change_apply(Source_Code* code, Code_Change* change, bool forwards)
 {
     bool apply_change_forward = forwards;
     if (!change->apply_forwards) {
         apply_change_forward = !apply_change_forward;
     }
 
-    auto code = history->code;
     switch (change->type)
     {
     case Code_Change_Type::LINE_INSERT:
@@ -201,7 +200,7 @@ int history_insert_and_apply_change(Code_History* history, Code_Change change)
 
     history->current = history->nodes.size;
     dynamic_array_push_back(&history->nodes, node);
-    code_change_apply(history, &history->nodes[change_index].change, true);
+    code_change_apply(history->code, &history->nodes[change_index].change, true);
     return change_index;
 }
 
@@ -216,7 +215,7 @@ void history_undo(Code_History* history)
     {
     case History_Node_Type::COMPLEX_START: panic("Should not happen");
     case History_Node_Type::NORMAL: {
-        code_change_apply(history, &node->change, false);
+        code_change_apply(history->code, &node->change, false);
         history->current = node->prev_change;
         break;
     }
@@ -229,13 +228,13 @@ void history_undo(Code_History* history)
         {
             assert(history->current != 0, "");
             node = &history->nodes[history->current];
-            code_change_apply(history, &node->change, false);
+            code_change_apply(history->code, &node->change, false);
             history->current = node->prev_change;
         }
 
         assert(history->current != 0, "Complex command cannot start with the base node!");
         node = &history->nodes[history->current];
-        code_change_apply(history, &node->change, false);
+        code_change_apply(history->code, &node->change, false);
         history->current = node->prev_change;
         break;
     }
@@ -257,7 +256,7 @@ void history_redo(Code_History* history)
     {
     case History_Node_Type::COMPLEX_END: panic("Shouldn't happen");
     case History_Node_Type::NORMAL: {
-        code_change_apply(history, &node->change, true);
+        code_change_apply(history->code, &node->change, true);
         break;
     }
     case History_Node_Type::COMPLEX_START:
@@ -268,12 +267,12 @@ void history_redo(Code_History* history)
         while (history->current != goto_index)
         {
             assert(history->current != 0, "");
-            code_change_apply(history, &node->change, true);
+            code_change_apply(history->code, &node->change, true);
             history->current = node->next_change;
             node = &history->nodes[history->current];
         }
         // Apply the latest change
-        code_change_apply(history, &node->change, true);
+        code_change_apply(history->code, &node->change, true);
         break;
     }
     default:panic("");

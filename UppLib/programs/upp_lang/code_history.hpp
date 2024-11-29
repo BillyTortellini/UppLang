@@ -114,3 +114,4 @@ struct History_Timestamp
 
 History_Timestamp history_get_timestamp(Code_History* history);
 void history_get_changes_between(Code_History* history, History_Timestamp start, History_Timestamp end, Dynamic_Array<Code_Change>* changes);
+void code_change_apply(Source_Code* code, Code_Change* change, bool forwards);

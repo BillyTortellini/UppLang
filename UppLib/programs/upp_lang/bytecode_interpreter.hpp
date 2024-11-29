@@ -9,6 +9,7 @@
 
 struct Bytecode_Generator;
 struct Bytecode_Instruction;
+struct Compiler_Analysis_Data;
 
 const int INTERPRETER_STACK_SIZE = 8192;
 
@@ -20,6 +21,7 @@ struct Bytecode_Thread
     byte stack[INTERPRETER_STACK_SIZE];
     Hashtable<void*, int> heap_allocations;
     int heap_memory_consumption;
+    Compiler_Analysis_Data* analysis_data;
 
     // Result infos
     Exit_Code exit_code;
@@ -30,7 +32,7 @@ struct Bytecode_Thread
     int instruction_limit;
 };
 
-Bytecode_Thread* bytecode_thread_create(int instruction_limit = -1);
+Bytecode_Thread* bytecode_thread_create(Compiler_Analysis_Data* analysis_data, int instruction_limit = -1);
 void bytecode_thread_destroy(Bytecode_Thread* thread);
 
 void bytecode_thread_set_initial_state(Bytecode_Thread* thread, int function_start_index);

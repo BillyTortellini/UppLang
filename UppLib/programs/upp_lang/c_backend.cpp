@@ -10,6 +10,7 @@
 #include "../../win32/process.hpp"
 #include "ir_code.hpp"
 #include "symbol_table.hpp"
+#include "editor_analysis_info.hpp"
 
 // --------------
 // - C_COMPILER -
@@ -104,27 +105,28 @@ void c_compiler_compile()
         string_append_formated(&command, "\"cl\" ");
         string_append_formated(&command, compiler_options);
 
+        auto& extern_sources = compiler.analysis_data->extern_sources;
         // Defines
-        Dynamic_Array<String*> defines = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::DEFINITION];
+        Dynamic_Array<String*> defines = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::DEFINITION];
         for (int i = 0; i < defines.size; i++) {
             string_append_formated(&command, " /D \"%s\"", defines[i]->characters);
         }
 
         // Include directories
-        Dynamic_Array<String*> includes = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::INCLUDE_DIRECTORY];
+        Dynamic_Array<String*> includes = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::INCLUDE_DIRECTORY];
         for (int i = 0; i < includes.size; i++) {
             string_append_formated(&command, " /I \"%s\"", includes[i]->characters);
         }
 
         // Forced includes (Header files)
-        Dynamic_Array<String*> header_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::HEADER_FILE];
+        Dynamic_Array<String*> header_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::HEADER_FILE];
         for (int i = 0; i < header_files.size; i++) {
             string_append_formated(&command, " /FI \"%s\"", header_files[i]->characters);
         }
 
         // Source files
         string_append(&command, " backend/src/main.cpp backend/hardcoded/hardcoded_functions.cpp");
-        Dynamic_Array<String*> source_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::SOURCE_FILE];
+        Dynamic_Array<String*> source_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::SOURCE_FILE];
         for (int i = 0; i < source_files.size; i++) {
             string_append_formated(&command, " \"%s\"", source_files[i]->characters);
         }
@@ -133,13 +135,13 @@ void c_compiler_compile()
         string_append_formated(&command, " /link %s", linker_options);
 
         // Library directories
-        auto lib_dirs = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY_DIRECTORY];
+        auto lib_dirs = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY_DIRECTORY];
         for (int i = 0; i < lib_dirs.size; i++) {
             string_append_formated(&command, " /LIBPATH:\"%s\"", lib_dirs[i]->characters);
         }
 
         // Libraries 
-        Dynamic_Array<String*> lib_files = compiler.extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY];
+        Dynamic_Array<String*> lib_files = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY];
         for (int i = 0; i < lib_files.size; i++) {
             string_append_formated(&command, " \"%s\"", lib_files[i]->characters);
         }
@@ -766,7 +768,7 @@ void c_generator_output_type_reference(Datatype* type)
 void type_info_append_struct_content(Internal_Type_Struct_Content* content, int indentation_level)
 {
     auto& gen = c_generator;
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Create a new block, because we need to keep the content pointer available to avoid having to use recursive functions for this
     string_add_indentation(gen.text, indentation_level);
@@ -849,8 +851,8 @@ void c_generator_generate()
 {
     auto& gen = c_generator;
     IR_Program* program = compiler.ir_generator->program;
-    auto& types = compiler.type_system.predefined_types;
-    auto& ids = compiler.predefined_ids;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     // Reset generator data 
     {
@@ -914,7 +916,7 @@ void c_generator_generate()
     // Create globals Translations
     {
         gen.text = &gen.sections[(int)Generator_Section::GLOBALS];
-        auto& globals = compiler.semantic_analyser->program->globals;
+        auto& globals = compiler.analysis_data->program->globals;
         for (int i = 0; i < globals.size; i++) 
         {
             auto global = globals[i];
@@ -974,7 +976,7 @@ void c_generator_generate()
                 continue;
             }
 
-            const auto& slot = compiler.semantic_analyser->function_slots[function->function_slot_index];
+            const auto& slot = compiler.analysis_data->function_slots[function->function_slot_index];
             if (slot.modtree_function != 0) {
                 assert(slot.modtree_function->function_type != ModTree_Function_Type::EXTERN, "Extern functions should not be generated by ir_code");
             }
@@ -1001,9 +1003,9 @@ void c_generator_generate()
         }
 
         // Generate extern function translations (Aren't included in ir functions)
-        for (int i = 0; i < compiler.extern_sources.extern_functions.size; i++) 
+        for (int i = 0; i < compiler.analysis_data->extern_sources.extern_functions.size; i++) 
         {
-            auto extern_function = compiler.extern_sources.extern_functions[i];
+            auto extern_function = compiler.analysis_data->extern_sources.extern_functions[i];
             assert(extern_function->function_type == ModTree_Function_Type::EXTERN, "Should be extern");
 
             String access_name = string_create();
@@ -1056,7 +1058,7 @@ void c_generator_generate()
         gen.text = &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS];
         string_append(gen.text, "struct Type_Information_Holder_ {\n    ");
         c_generator_output_type_reference(upcast(types.type_information_type));
-        string_append_formated(gen.text, " infos[%d];\n};\n", compiler.type_system.types.size);
+        string_append_formated(gen.text, " infos[%d];\n};\n", compiler.analysis_data->type_system.types.size);
 
         // Create constant
         gen.text = &gen.sections[(int)Generator_Section::CONSTANTS];
@@ -1075,7 +1077,7 @@ void c_generator_generate()
         string_append(gen.text, "* content = nullptr;\n\n");
 
 
-        auto& type_system = compiler.type_system;
+        auto& type_system = compiler.analysis_data->type_system;
         for (int i = 0; i < type_system.types.size; i++) 
         {
             auto type = type_system.types[i];
@@ -1370,7 +1372,7 @@ void output_struct_content_block_recursive(Struct_Content* content, byte* struct
 
 void c_generator_output_constant_access(Upp_Constant& constant, bool requires_memory_address, int indentation_level)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     auto& gen = c_generator;
     String* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
@@ -1636,7 +1638,7 @@ void output_memory_as_new_constant(byte* base_memory, Datatype* base_type, bool 
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops)
 {
     auto& gen = c_generator;
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     switch (access->type)
     {
@@ -1678,7 +1680,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
     }
     case IR_Data_Access_Type::GLOBAL_DATA:
     {
-        auto global = compiler.semantic_analyser->program->globals[access->option.global_index];
+        auto global = compiler.analysis_data->program->globals[access->option.global_index];
 
         if (global->is_extern) {
             string_append(gen.text, global->symbol->id->characters);
@@ -1695,7 +1697,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
     }
     case IR_Data_Access_Type::CONSTANT:
     {
-        Upp_Constant* constant = &compiler.constant_pool.constants[access->option.constant_index];
+        Upp_Constant* constant = &compiler.analysis_data->constant_pool.constants[access->option.constant_index];
         c_generator_output_constant_access(*constant, false, 0);
         break;
     }

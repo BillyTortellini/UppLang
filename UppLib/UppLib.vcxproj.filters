@@ -348,6 +348,12 @@
     <ClInclude Include="programs\game\game.hpp">
       <Filter>Header Files\Programs\Game</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="win32\thread.hpp">
+      <Filter>Header Files\Win32</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -559,6 +565,12 @@
     </ClCompile>
     <ClCompile Include="programs\game\game.cpp">
       <Filter>Source Files\Programs\Game</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
+    <ClCompile Include="win32\thread.cpp">
+      <Filter>Source Files\Win32</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

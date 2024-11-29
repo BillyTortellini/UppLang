@@ -1,0 +1,259 @@
+
+import "hashset.upp"
+
+Hashtable :: struct (H: Hash_Functions~Hashable($T), V: Upp~Type_Handle)
+	entries: []Hashtable~Entry(T, V)
+	allocator: *Upp~Allocator
+	size: Upp~u64
+
+Hashtable :: module
+	import Upp~u64
+	import Upp~Type_Handle as Type
+	import Upp~Allocator
+	import Hash_Functions~Hashable
+	
+	Entry :: struct (K: Type, V: Type)
+		key: K
+		value: V
+		hash: u64
+		next: ?*Entry(K, V)
+		valid: bool
+	
+	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Hashtable($H, $V)
+		result: Hashtable(H, V) = .{_, allocator = allocator, size = 0}
+		if capacity == 0
+			result.entries = .[]
+		else
+			defer_restore Upp~global_allocator =* allocator
+			result.entries = new(Hashset~next_prime_table_size( cast capacity)) Entry(H.T, V)
+			for e in result.entries
+				e.valid = false;
+				e.next =* null
+		return result
+	
+	destroy :: (set: *Hashtable($H, $V))
+		defer_restore Upp~global_allocator =* set.allocator
+		for entry in set.entries
+			next :=* entry.next
+			while next?
+				next_ptr :=* next.value.next
+				delete next
+				next =* next_ptr
+		if set.entries.size != 0
+			delete set.entries
+	
+	// Returns if element was already inside hashtable or not
+	insert :: (set: *Hashtable(Hashable($T), $V), key: T, value: V, overwrite: bool = false) -> bool
+		hash := set.H.hash_fn(key)
+		slot_index := hash % set.entries.size
+		reserve(set, cast {u64} set.size + 1)
+		
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			entry.valid = true
+			entry.hash = hash
+			entry.key =~ key
+			entry.value =~ value
+			entry.next =* null
+			set.size += cast {u64} 1
+			return false
+		
+		// Otherwise check if entry contains the same element
+		while true loop:
+			assert(entry.valid)
+			if entry.hash == hash
+				if set.H.equals_fn(key, entry.key)
+					if overwrite
+						entry.value =~ value
+						entry.key =~ key
+					return true
+			
+			if entry.next?
+				entry =* entry.next.value
+			else
+				break loop
+		
+		// Set entry.next to new entry
+		new_entry :=* new Entry(T, V)
+		new_entry = .{key, value, hash, null, true}
+		entry.next =* new_entry
+		set.size += cast {u64} 1
+		
+		return false
+	
+	Key_Value_Pointer :: struct ($K: Type, $V: Type)
+		key: *K
+		value: *V
+	
+	find :: (set: Hashtable(Hashable($K), $V), key: K) -> ?Key_Value_Pointer(K, V)
+		hash: u64 = set.H.hash_fn(key)
+		
+		slot_index := hash % set.entries.size
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			return null
+		
+		// Otherwise check if entry contains the same element
+		while true loop:
+			assert(entry.valid)
+			if entry.hash == hash
+				if set.H.equals_fn(key, entry.key)
+					return cast Key_Value_Pointer(K, V).{entry.key, entry.value}
+			
+			if entry.next?
+				entry =* entry.next.value
+			else
+				break loop
+		
+		return null
+	
+	// Returns true if element was found
+	remove :: (set: Hashtable(Hashable($K), $V), key: K) -> bool
+		hash: u64 = set.H.hash_fn(key)
+		
+		slot_index := hash % set.entries.size
+		entry :=* set.entries[slot_index]
+		if !entry.valid
+			return false
+		
+		// Otherwise check if entry contains the same element
+		if entry.hash == hash && set.H.equals_fn(key, entry.key)
+			if entry.next?
+				entry = entry.next.value
+			else
+				entry.valid = false
+			return true
+		
+		// Check if entry list contains entry
+		next :=* entry.next
+		while next?loop:
+			next_ptr :=* next.value
+			assert(next_ptr.valid)
+			if next_ptr.hash == hash && set.H.equals_fn(key, next_ptr.key)
+				entry.next =* next_ptr.next
+				defer_restore Upp~global_allocator =* set.allocator
+				delete next_ptr
+				return true
+			
+			next =* next_ptr.next
+		
+		return false
+	
+	reserve :: (set: *Hashtable($H, $V), expected_element_count: u64)
+		RESIZE_FACTOR :: 0.7
+		new_size := Hashset~next_prime_table_size(expected_element_count)
+		while cast expected_element_count / cast {float} new_size > RESIZE_FACTOR
+			new_size = Hashset~next_prime_table_size(new_size + 1)
+		
+		if set.entries.size >= cast new_size
+			return
+		
+		old_entries := set.entries
+		defer_restore Upp~global_allocator =* set.allocator
+		set.entries = new(new_size) Entry(H.T, V)
+		for entry in set.entries
+			entry.valid = false
+			entry.next =* null
+		
+		set.size = 0 // Will be set by insert calls
+		for entry in old_entries
+			if entry.valid
+				continue entry
+			insert(set, entry.key, entry.value)
+		
+		if old_entries.size > 0
+			delete old_entries
+	
+	Iterator :: module
+		Iter :: struct (H: Hashable($K), V: Upp~Type_Handle)
+			set: *Hashtable(H, V)
+			entry: ?*Entry(K, V)
+			entry_index: u64
+		
+		create :: (set: *Hashtable($H, $V)) -> Iter(H, V)
+			result: Iter(H, V) = .{set, null, 0}
+			for e, i in set.entries
+				if e.valid
+					result.entry =* e
+					result.entry_index = i
+					break e
+			
+			return result
+		
+		has_next :: (iter: Iter($H, $V)) -> bool
+			return iter.entry?
+		
+		next :: (iter: *Iter($H, $V))
+			if iter.entry.value.next?
+				iter.entry =* iter.entry.value.next
+				return
+			
+			for i := iter.entry_index + 1; i < iter.set.entries.size; i += cast {u64} 1
+				if iter.set.entries[i].valid
+					iter.entry_index = i
+					iter.entry =* iter.set.entries[i]
+					return
+			
+			iter.entry =* null
+		
+		get_value :: (iter: Iter($H, $V)) -> Key_Value_Pointer(H.T, V)
+			return .{iter.entry.value.key, iter.entry.value.value}
+	
+	Operators :: module
+		context add_dot_call(insert)
+		context add_dot_call(remove)
+		context add_dot_call(reserve)
+		context add_dot_call(destroy)
+		context add_dot_call(find)
+		context add_iterator(
+			Iterator~create, Iterator~has_next, Iterator~next, Iterator~get_value
+		)
+	
+	test :: ()
+		INT_HASHABLE :: #bake Hash_Functions~hashable_make_primitive(int)
+		
+		context import Operators
+		
+		set: Hashtable(INT_HASHABLE, int) = create()
+		defer
+			set.destroy()
+		
+		assert(set.size == 0)
+		set.reserve(10)
+		assert(set.entries.size >= 10)
+		
+		b := false
+		b = set.insert(15, 5)
+		assert(!b)
+		b = set.insert(15, 10)
+		assert(b)
+		
+		set.insert(8, 12)
+		set.insert(2, 13)
+		Upp~print_string("hello, i'm still here!\n")
+		assert(set.size == 3)
+		sum := 0
+		for v in set
+			sum += v.value
+		Upp~print_i32(sum)
+		Upp~print_line()
+		assert(sum == 30)
+		
+		diff_count := 0
+		for e in set.entries
+			if e.valid
+				diff_count += 1
+		
+		b = set.find(15)?
+		assert(b)
+		
+		b = set.remove(15)
+		assert(b)
+		
+		b = set.find(15)?
+		assert(!b)
+		
+		b = set.remove(15)
+		assert(!b)
+	
+

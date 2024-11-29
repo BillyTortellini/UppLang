@@ -33,6 +33,7 @@ struct Bake_Progress;
 struct Module_Progress;
 struct Datatype_Template;
 struct Poly_Value;
+struct Compiler_Analysis_Data;
 
 namespace Parser
 {
@@ -406,7 +407,7 @@ struct Bake_Progress
 struct Module_Progress
 {
     Workload_Module_Analysis* module_analysis;
-    Workload_Event* event_symbol_table_ready; // After all using workloads have ended
+    Workload_Event* event_symbol_table_ready; // After all import workloads have ended
     Symbol* symbol; // May be 0 if root
 };
 
@@ -437,7 +438,6 @@ struct Dependency_Information
 
 struct Workload_Executer
 {
-    Dynamic_Array<Workload_Base*> all_workloads;
     Dynamic_Array<Workload_Base*> runnable_workloads;
     Dynamic_Array<Workload_Base*> finished_workloads;
     bool progress_was_made;
@@ -505,18 +505,6 @@ struct Expression_Cast_Info
         ModTree_Function* custom_cast_function;
         const char* error_msg; // Null, except if the cast is invalid
     } options;
-};
-
-enum class Member_Access_Type
-{
-    STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
-    STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
-    ENUM_MEMBER_ACCESS,
-    DOT_CALL_AS_MEMBER,
-    DOT_CALL,
-    OPTIONAL_PTR_ACCESS,
-    STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
-    STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };
 
 enum class Expression_Result_Type
@@ -779,53 +767,6 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 
 
 // HELPERS
-struct Predefined_Symbols
-{
-    // Symbols for primitive types
-    Symbol* type_c_char;
-    Symbol* type_bool;
-    Symbol* type_int;
-    Symbol* type_float;
-    Symbol* type_u8;
-    Symbol* type_u16;
-    Symbol* type_u32;
-    Symbol* type_u64;
-    Symbol* type_i8;
-    Symbol* type_i16;
-    Symbol* type_i32;
-    Symbol* type_i64;
-    Symbol* type_f32;
-    Symbol* type_f64;
-    Symbol* type_c_string;
-    Symbol* type_allocator;
-    Symbol* global_allocator_symbol;
-    Symbol* default_allocator_symbol;
-
-    // Symbols for 'compiler' provided structs
-    Symbol* type_type;
-    Symbol* type_type_information;
-    Symbol* type_any;
-    Symbol* type_empty;
-    Symbol* type_void_pointer;
-
-    // Symbols for hardcoded types
-    Symbol* hardcoded_type_info;
-    Symbol* hardcoded_type_of;
-    Symbol* hardcoded_assert;
-    Symbol* hardcoded_print_bool;
-    Symbol* hardcoded_print_i32;
-    Symbol* hardcoded_print_f32;
-    Symbol* hardcoded_print_string;
-    Symbol* hardcoded_print_line;
-    Symbol* hardcoded_read_i32;
-    Symbol* hardcoded_read_f32;
-    Symbol* hardcoded_read_bool;
-    Symbol* hardcoded_random_i32;
-
-    // Error-Symbol (Used when Symbol-Reads cannot be resolved, e.g. symbol not defined)
-    Symbol* error_symbol;
-};
-
 // I currently need this so that a workload can analyse the same node multiple times
 struct Analysis_Pass 
 {
@@ -907,7 +848,7 @@ void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_s
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format = datatype_format_make_default());
 void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
-void semantic_analyser_append_all_errors_to_string(String* string, int indentation);
+void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation);
 
 
 
@@ -925,34 +866,17 @@ struct Function_Slot
 struct Semantic_Analyser
 {
     // Result
-    Dynamic_Array<Semantic_Error> errors;
-    ModTree_Program* program;
-    Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
-    Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
-
-    // Other
-    Dynamic_Array<Function_Slot> function_slots;
     Workload_Base* current_workload;
     Module_Progress* root_module;
-    Predefined_Symbols predefined_symbols;
+    Symbol* error_symbol;
     Workload_Executer* workload_executer;
-    Hashtable<AST::Expression*, Datatype_Template*> valid_template_parameters;
-    ModTree_Global* global_allocator; // *Allocator
-    ModTree_Global* default_allocator; // Allocator
-
-    // Symbol tables
+    ModTree_Global* global_allocator; // Datatype: *Allocator
+    ModTree_Global* default_allocator; // Datatype: Allocator
     Symbol_Table* root_symbol_table;
-    Hashset<Symbol_Table*> symbol_lookup_visited;
 
-    // Allocations
+    Hashtable<AST::Expression*, Datatype_Template*> valid_template_parameters;
+    Hashset<Symbol_Table*> symbol_lookup_visited;
     Stack_Allocator comptime_value_allocator;
-    Stack_Allocator global_variable_memory_pool;
-    Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
-    Dynamic_Array<Symbol*> allocated_symbols;
-    Dynamic_Array<Analysis_Pass*> allocated_passes;
-    Dynamic_Array<Function_Progress*> allocated_function_progresses;
-    Dynamic_Array<Operator_Context*> allocated_operator_contexts;
-    Stack_Allocator progress_allocator;
 };
 
 Semantic_Analyser* semantic_analyser_initialize();
@@ -965,3 +889,8 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type);
 
 
 
+ModTree_Program* modtree_program_create();
+void modtree_program_destroy(ModTree_Program* program);
+void parameter_matching_info_destroy(Parameter_Matching_Info* info);
+void function_progress_destroy(Function_Progress* progress);
+void analysis_workload_destroy(Workload_Base* workload);

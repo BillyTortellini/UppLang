@@ -14,10 +14,12 @@ namespace AST
     struct Module;
 }
 
+struct Compilation_Unit;
+
 namespace Parser 
 {
     // PARSER
-    void execute_clean(Source_Code* code);
+    void execute_clean(Compilation_Unit* unit);
 
     // Utility
     enum class Section
@@ -33,5 +35,5 @@ namespace Parser
     };
 
     void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
-    AST::Node* find_smallest_enclosing_node(AST::Node* base, Token_Index index);
+    AST::Node* find_smallest_enclosing_node(AST::Node* base, Text_Index index);
 }

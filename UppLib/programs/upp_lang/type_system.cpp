@@ -2,6 +2,7 @@
 #include "compiler.hpp"
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
+#include "editor_analysis_info.hpp"
 
 #include "syntax_colors.hpp"
 
@@ -9,8 +10,8 @@ using AST::Structure_Type;
 
 Function_Parameter function_parameter_make_empty() {
     Function_Parameter result;
-    result.name = compiler.predefined_ids.empty_string;
-    result.type = compiler.type_system.predefined_types.unknown_type;
+    result.name = compiler.identifier_pool.predefined_ids.empty_string;
+    result.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     result.default_value_exists = false;
     result.value_expr = nullptr;
     result.value_pass = nullptr;
@@ -164,8 +165,8 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     case Datatype_Type::TYPE_HANDLE: 
     {
         Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
-        if (handle.index < (u32) compiler.type_system.types.size) {
-            Datatype* type = compiler.type_system.types[handle.index];
+        if (handle.index < (u32) compiler.analysis_data->type_system.types.size) {
+            Datatype* type = compiler.analysis_data->type_system.types[handle.index];
             datatype_append_to_string(string, type);
         }
         else {
@@ -353,7 +354,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         break;
     }
     case Datatype_Type::SLICE: {
-        if (types_are_equal(signature, compiler.type_system.predefined_types.bytes)) {
+        if (types_are_equal(signature, compiler.analysis_data->type_system.predefined_types.bytes)) {
             Rich_Text::set_text_color(text, Syntax_Color::TYPE);
             Rich_Text::append_formated(text, "Bytes");
             break;
@@ -733,14 +734,14 @@ bool subtype_index_equals(Subtype_Index** a_ptr, Subtype_Index** b_ptr)
 Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices)
 {
     if (indices.size == 0) {
-        return &compiler.type_system.subtype_base_index;
+        return &compiler.analysis_data->type_system.subtype_base_index;
     }
 
     Subtype_Index index;
     index.indices = indices;
     Subtype_Index* ptr = &index;
 
-    auto deduplicated = hashset_find(&compiler.type_system.subtype_index_deduplication, ptr);
+    auto deduplicated = hashset_find(&compiler.analysis_data->type_system.subtype_index_deduplication, ptr);
     if (deduplicated != 0) {
         dynamic_array_destroy(&indices);
         return *deduplicated;
@@ -748,7 +749,7 @@ Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices)
     else {
         Subtype_Index* new_index = new Subtype_Index;
         new_index->indices = indices;
-        hashset_insert_element(&compiler.type_system.subtype_index_deduplication, new_index);
+        hashset_insert_element(&compiler.analysis_data->type_system.subtype_index_deduplication, new_index);
         return new_index;
     }
 }
@@ -829,7 +830,7 @@ void type_system_reset(Type_System* system)
 // Type_System takes ownership of base_type pointer afterwards
 Internal_Type_Information* type_system_register_type(Datatype* datatype)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     // Finish type info
     Dynamic_Array<Named_Index> subtype_indices = dynamic_array_create<Named_Index>();
@@ -974,7 +975,7 @@ Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
 
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::POINTER;
@@ -1009,7 +1010,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
 
 Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template* polymorphic_count_variable)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     assert(!(count_known && element_count <= 0), "Hey");
 
     if (!count_known) {
@@ -1092,7 +1093,7 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 
 Datatype_Slice* type_system_make_slice(Datatype* element_type)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::SLICE;
@@ -1115,12 +1116,12 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->base.contains_template = element_type->contains_template;
 
     result->element_type = element_type;
-    result->data_member.id = compiler.predefined_ids.data;
+    result->data_member.id = compiler.identifier_pool.predefined_ids.data;
     result->data_member.type = upcast(type_system_make_pointer(element_type, true));
     result->data_member.offset = 0;
     result->data_member.content = 0;
-    result->size_member.id = compiler.predefined_ids.size;
-    result->size_member.type = upcast(compiler.type_system.predefined_types.u64_type);
+    result->size_member.id = compiler.identifier_pool.predefined_ids.size;
+    result->size_member.type = upcast(compiler.analysis_data->type_system.predefined_types.u64_type);
     result->size_member.offset = 8;
     result->size_member.content = 0;
 
@@ -1133,7 +1134,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
 
 Datatype* type_system_make_constant(Datatype* datatype)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     if (datatype->type == Datatype_Type::CONSTANT) return datatype;
 
     Type_Deduplication dedup;
@@ -1172,8 +1173,8 @@ Datatype* type_system_make_constant(Datatype* datatype)
 
 Datatype_Optional* type_system_make_optional(Datatype* child_type)
 {
-    auto& type_system = compiler.type_system;
-    auto& ids = compiler.predefined_ids;
+    auto& type_system = compiler.analysis_data->type_system;
+    auto& ids = compiler.identifier_pool.predefined_ids;
     bool child_is_constant = child_type->type == Datatype_Type::CONSTANT;
     child_type = datatype_get_non_const_type(child_type);
 
@@ -1228,7 +1229,7 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
 
 Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, int subtype_index)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::SUBTYPE;
@@ -1350,7 +1351,7 @@ Datatype_Function* make_function_internal_no_dedup(Dynamic_Array<Function_Parame
 
 Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::FUNCTION;
@@ -1384,7 +1385,7 @@ Datatype_Function* type_system_make_function(std::initializer_list<Function_Para
 
 Datatype_Function* type_system_make_function_optional(Datatype_Function* function)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     if (function->is_optional) return function;
 
@@ -1436,7 +1437,7 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
     result->content.tag_member.offset = 0;
     result->content.tag_member.content = &result->content;
     result->content.structure = result;
-    result->content.index = &compiler.type_system.subtype_base_index;
+    result->content.index = &compiler.analysis_data->type_system.subtype_base_index;
     result->content.members = dynamic_array_create<Struct_Member>();
     result->content.subtypes = dynamic_array_create<Struct_Content*>();
 
@@ -1460,9 +1461,9 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
     subtype->members = dynamic_array_create<Struct_Member>();
     subtype->subtypes = dynamic_array_create<Struct_Content*>();
     subtype->name = id;
-    subtype->tag_member.id = compiler.predefined_ids.tag;
+    subtype->tag_member.id = compiler.identifier_pool.predefined_ids.tag;
     subtype->tag_member.offset = -1;
-    subtype->tag_member.type = compiler.type_system.predefined_types.unknown_type;
+    subtype->tag_member.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     subtype->tag_member.content = subtype;
     subtype->max_alignment = 0;
     subtype->structure = content->structure;
@@ -1487,7 +1488,7 @@ Struct_Content* struct_content_get_parent(Struct_Content* content)
 
 void type_system_finish_array(Datatype_Array* array)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& base = array->base;
     assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
@@ -1590,7 +1591,7 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
             memory.contains_padding_bytes = true;
         }
         content->tag_member.offset = memory_offset;
-        content->tag_member.id = compiler.predefined_ids.tag;
+        content->tag_member.id = compiler.identifier_pool.predefined_ids.tag;
         content->tag_member.type = upcast(tag_type);
 
         memory_offset += tag_type->base.memory_info.value.size;
@@ -1620,7 +1621,7 @@ void struct_content_mirror_internal_info(Struct_Content* content, Internal_Type_
     else {
         internal->tag_member.name = upp_c_string_empty();
         internal->tag_member.offset = 0;
-        internal->tag_member.type = compiler.type_system.predefined_types.unknown_type->type_handle;
+        internal->tag_member.type = compiler.analysis_data->type_system.predefined_types.unknown_type->type_handle;
     }
 
     // Copy members
@@ -1676,7 +1677,7 @@ int struct_content_find_max_alignment_recursive(Struct_Content* content)
 
 void type_system_finish_struct(Datatype_Struct* structure)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& base = structure->base;
     assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
     assert(type_system.internal_type_infos.size == type_system.types.size, "");
@@ -1800,7 +1801,7 @@ Datatype_Enum* type_system_make_enum_empty(String* name)
 
 void type_system_finish_enum(Datatype_Enum* enum_type)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& base = enum_type->base;
     auto& members = enum_type->members;
     assert(base.type_handle.index < (u32)type_system.internal_type_infos.size, "");
@@ -1861,7 +1862,7 @@ void test_type_similarity(Datatype* signature) {
 
 void type_system_add_predefined_types(Type_System* system)
 {
-    auto& ids = compiler.predefined_ids;
+    auto& ids = compiler.identifier_pool.predefined_ids;
     Predefined_Types* types = &system->predefined_types;
 
     types->c_char_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, false);
@@ -1907,12 +1908,12 @@ void type_system_add_predefined_types(Type_System* system)
             result->base.contains_template = false;
 
             result->element_type = upcast(types->u8_type);
-            result->data_member.id = compiler.predefined_ids.data;
+            result->data_member.id = compiler.identifier_pool.predefined_ids.data;
             result->data_member.type = types->byte_pointer_optional;
             result->data_member.offset = 0;
             result->data_member.content = nullptr;
-            result->size_member.id = compiler.predefined_ids.size;
-            result->size_member.type = upcast(compiler.type_system.predefined_types.u64_type);
+            result->size_member.id = compiler.identifier_pool.predefined_ids.size;
+            result->size_member.type = upcast(compiler.analysis_data->type_system.predefined_types.u64_type);
             result->size_member.offset = 8;
             result->size_member.content = nullptr;
 
@@ -2323,7 +2324,7 @@ Type_Mods type_mods_make(bool is_constant, int pointer_level, u32 const_flags, u
     result.optional_flags = optional_flags;
     result.subtype_index = subtype;
     if (subtype == 0) {
-        result.subtype_index = &compiler.type_system.subtype_base_index;
+        result.subtype_index = &compiler.analysis_data->type_system.subtype_base_index;
     }
     return result;
 }

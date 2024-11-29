@@ -19,6 +19,7 @@
 #include "source_code.hpp"
 #include "symbol_table.hpp"
 #include "syntax_colors.hpp"
+#include "editor_analysis_info.hpp"
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
@@ -105,7 +106,7 @@ T* downcast(Workload_Base* workload) {
 // Helpers
 Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
 {
-    auto& an = compiler.type_system.predefined_types;
+    auto& an = compiler.analysis_data->type_system.predefined_types;
     switch (type)
     {
     case Hardcoded_Type::ASSERT_FN: return an.type_assert;
@@ -181,14 +182,6 @@ Poly_Value poly_value_make_template_type(Datatype* template_type) {
     return access;
 }
 
-u64 ast_info_key_hash(AST_Info_Key* key) {
-    return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
-}
-
-bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
-    return a->base == b->base && a->pass == b->pass;
-}
-
 Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload)
 {
     switch (workload->type) {
@@ -226,20 +219,20 @@ Workload_Structure_Polymorphic* polymorphic_header_to_struct_workload(Poly_Heade
 Analysis_Pass* analysis_pass_allocate(Workload_Base* origin, AST::Node* mapping_node)
 {
     Analysis_Pass* result = new Analysis_Pass;
-    dynamic_array_push_back(&semantic_analyser.allocated_passes, result);
+    dynamic_array_push_back(&compiler.analysis_data->allocated_passes, result);
     result->origin_workload = origin;
     result->is_header_reanalysis = false;
     result->instance_workload = nullptr;
 
     // Add mapping to workload 
     if (mapping_node) {
-        Node_Passes* workloads_opt = hashtable_find_element(&semantic_analyser.ast_to_pass_mapping, mapping_node);
+        Node_Passes* workloads_opt = hashtable_find_element(&compiler.analysis_data->ast_to_pass_mapping, mapping_node);
         if (workloads_opt == 0) {
             Node_Passes passes;
             passes.base = mapping_node;
             passes.passes = dynamic_array_create<Analysis_Pass*>(1);
             dynamic_array_push_back(&passes.passes, result);
-            hashtable_insert_element(&semantic_analyser.ast_to_pass_mapping, mapping_node, passes);
+            hashtable_insert_element(&compiler.analysis_data->ast_to_pass_mapping, mapping_node, passes);
         }
         else {
             dynamic_array_push_back(&workloads_opt->passes, result);
@@ -252,18 +245,20 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     AST_Info_Key key;
     key.pass = pass;
     key.base = node;
+
+    auto& info_mapping = compiler.analysis_data->ast_to_info_mapping;
     switch (query)
     {
     case Info_Query::CREATE: {
         Analysis_Info* new_info = new Analysis_Info;
         memory_zero(new_info);
-        bool inserted = hashtable_insert_element(&semantic_analyser.ast_to_info_mapping, key, new_info);
+        bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
         assert(inserted, "Must not happen");
         return new_info;
     }
     case Info_Query::CREATE_IF_NULL: {
         // Check if already there
-        Analysis_Info** already_there = hashtable_find_element(&semantic_analyser.ast_to_info_mapping, key);
+        Analysis_Info** already_there = hashtable_find_element(&info_mapping, key);
         if (already_there != 0) {
             assert(*already_there != 0, "Somewhere nullptr was inserted into hashmap");
             return *already_there;
@@ -271,18 +266,18 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
         // Otherwise create new
         Analysis_Info* new_info = new Analysis_Info;
         memory_zero(new_info);
-        bool inserted = hashtable_insert_element(&semantic_analyser.ast_to_info_mapping, key, new_info);
+        bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
         assert(inserted, "Must not happen");
         return new_info;
     }
     case Info_Query::READ_NOT_NULL: {
-        Analysis_Info** result = hashtable_find_element(&semantic_analyser.ast_to_info_mapping, key);
+        Analysis_Info** result = hashtable_find_element(&info_mapping, key);
         assert(result != 0, "Not inserted yet");
         assert(*result != 0, "Somewhere nullptr was inserted into hashmap");
         return *result;
     }
     case Info_Query::TRY_READ: {
-        Analysis_Info** result = hashtable_find_element(&semantic_analyser.ast_to_info_mapping, key);
+        Analysis_Info** result = hashtable_find_element(&info_mapping, key);
         if (result == 0) {
             return 0;
         }
@@ -458,7 +453,7 @@ void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_s
 
     auto workload = semantic_analyser.current_workload;
     if (!(workload != 0 && workload->error_checkpoint_count > 0)) {
-        dynamic_array_push_back(&semantic_analyser.errors, error);
+        dynamic_array_push_back(&compiler.analysis_data->semantic_errors, error);
     }
     semantic_analyser_set_error_flag(false);
 }
@@ -484,7 +479,7 @@ void add_error_info_to_last_error(Error_Information info)
         return;
     }
 
-    auto& errors = semantic_analyser.errors;
+    auto& errors = compiler.analysis_data->semantic_errors;
     assert(errors.size > 0, "");
     dynamic_array_push_back(&errors[errors.size-1].information, info);
 }
@@ -616,7 +611,7 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
     }
 
     // Add to workload queue
-    dynamic_array_push_back(&executer.all_workloads, workload);
+    dynamic_array_push_back(&compiler.analysis_data->all_workloads, workload);
     dynamic_array_push_back(&executer.runnable_workloads, workload); // Note: There exists a check for dependencies before executing runnable workloads, so this is ok
 
     return result;
@@ -625,7 +620,7 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
 template<typename T>
 T* analysis_progress_allocate_internal()
 {
-    auto progress = stack_allocator_allocate<T>(&semantic_analyser.progress_allocator);
+    auto progress = stack_allocator_allocate<T>(&compiler.analysis_data->progress_allocator);
     memory_zero(progress);
     return progress;
 }
@@ -648,7 +643,7 @@ Function_Progress* function_progress_create_with_modtree_function(
 
     // Create progress
     auto progress = new Function_Progress;
-    dynamic_array_push_back(&semantic_analyser.allocated_function_progresses, progress);
+    dynamic_array_push_back(&compiler.analysis_data->allocated_function_progresses, progress);
     progress->type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
     progress->function = modtree_function_create_normal(function_type, symbol, progress, parameter_table);
 
@@ -712,7 +707,7 @@ void add_struct_members_empty_recursive(
     {
         auto member_node = member_nodes[i];
         if (member_node->is_expression) {
-            struct_add_member(content, member_node->name, compiler.type_system.predefined_types.unknown_type);
+            struct_add_member(content, member_node->name, compiler.analysis_data->type_system.predefined_types.unknown_type);
         }
         else {
             auto subtype = struct_add_subtype(content, member_node->name);
@@ -751,10 +746,11 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 {
     assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
     auto& struct_info = struct_node->options.structure;
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     // Create body workload
     auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(upcast(struct_node));
-    body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? compiler.predefined_ids.anon_struct : symbol->id), body_workload);
+    body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? ids.anon_struct : symbol->id), body_workload);
     add_struct_members_empty_recursive(
         &body_workload->struct_type->content, struct_info.members, !is_polymorphic_instance, nullptr, struct_info.parameters
     );
@@ -798,9 +794,10 @@ Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Datatype* expect
 {
     assert(bake_expr->type == AST::Expression_Type::BAKE_EXPR ||
         bake_expr->type == AST::Expression_Type::BAKE_BLOCK, "Must be bake!");
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     auto progress = analysis_progress_allocate_internal<Bake_Progress>();
-    progress->bake_function = modtree_function_create_empty(type_system_make_function({}), compiler.predefined_ids.bake_function);
+    progress->bake_function = modtree_function_create_empty(type_system_make_function({}), ids.bake_function);
     progress->bake_function->function_type = ModTree_Function_Type::BAKE;
     progress->bake_function->options.bake = progress;
     progress->result = optional_make_failure<Upp_Constant>();
@@ -939,12 +936,12 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
             // Add dependencies between parent and child module
             if (semantic_analyser.current_workload->type == Analysis_Workload_Type::MODULE_ANALYSIS)
             {
-                auto current = downcast<Workload_Module_Analysis>(semantic_analyser.current_workload);
-                module_progress->module_analysis->parent_analysis = current;
+                auto parent_analysis = downcast<Workload_Module_Analysis>(semantic_analyser.current_workload);
+                module_progress->module_analysis->parent_analysis = parent_analysis;
                 // Add Parent-Dependency for Symbol-Ready (e.g. normal workloads can run and do symbol lookups)
-                module_progress->module_analysis->last_import_workload = current->last_import_workload;
-                if (current->last_import_workload != 0) {
-                    analysis_workload_add_dependency_internal(upcast(module_progress->event_symbol_table_ready), upcast(current->last_import_workload));
+                module_progress->module_analysis->last_import_workload = parent_analysis->last_import_workload;
+                if (parent_analysis->last_import_workload != 0) {
+                    analysis_workload_add_dependency_internal(upcast(module_progress->event_symbol_table_ready), upcast(parent_analysis->last_import_workload));
                 }
             }
             return;
@@ -959,7 +956,11 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
         }
         case AST::Expression_Type::STRUCTURE_TYPE: {
             // Note: Creating the progress also sets the symbol type
-            auto workload = upcast(workload_structure_create(value, symbol, false));
+            auto struct_workload = workload_structure_create(value, symbol, false);
+            Workload_Base* workload = upcast(struct_workload);
+            if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+                workload = upcast(struct_workload->polymorphic.base);
+            }
             if (wait_for_workload != 0) {
                 analysis_workload_add_dependency_internal(workload, wait_for_workload);
             }
@@ -998,29 +999,31 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 // MOD_TREE (Note: Doesn't set symbol to anything!)
 ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, String* name)
 {
+    auto& slots = compiler.analysis_data->function_slots;
+
     ModTree_Function* function = new ModTree_Function;
     function->signature = signature;
-    function->function_slot_index = semantic_analyser.function_slots.size;
+    function->function_slot_index = slots.size;
     function->name = name;
 
     Function_Slot slot;
-    slot.index = semantic_analyser.function_slots.size;
+    slot.index = slots.size;
     slot.modtree_function = function;
     slot.ir_function = nullptr;
-    dynamic_array_push_back(&semantic_analyser.function_slots, slot);
+    dynamic_array_push_back(&slots, slot);
 
     function->called_from = dynamic_array_create<ModTree_Function*>();
     function->calls = dynamic_array_create<ModTree_Function*>();
     function->contains_errors = false;
     function->is_runnable = true;
 
-    dynamic_array_push_back(&semantic_analyser.program->functions, function);
+    dynamic_array_push_back(&compiler.analysis_data->program->functions, function);
     return function;
 }
 
 ModTree_Function* modtree_function_create_normal(Datatype_Function* signature, Symbol* symbol, Function_Progress* progress, Symbol_Table* param_table)
 {
-    auto& ids = compiler.predefined_ids;
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     ModTree_Function* function = modtree_function_create_empty(signature, symbol == nullptr ? ids.lambda_function : symbol->id);
     function->function_type = ModTree_Function_Type::NORMAL;
@@ -1041,15 +1044,17 @@ ModTree_Global* modtree_program_add_global(Datatype* type, Symbol* symbol, bool 
 {
     auto type_size = type_wait_for_size_info_to_finish(type);
 
+    auto program = compiler.analysis_data->program;
+
     auto global = new ModTree_Global;
     global->symbol = symbol;
     global->type = type;
     global->has_initial_value = false;
     global->init_expr = 0;
     global->is_extern = is_extern;
-    global->index = semantic_analyser.program->globals.size;
-    global->memory = stack_allocator_allocate_size(&semantic_analyser.global_variable_memory_pool, type_size->size, type_size->alignment);
-    dynamic_array_push_back(&semantic_analyser.program->globals, global);
+    global->index = program->globals.size;
+    global->memory = stack_allocator_allocate_size(&compiler.analysis_data->global_variable_memory_pool, type_size->size, type_size->alignment);
+    dynamic_array_push_back(&program->globals, global);
     return global;
 }
 
@@ -1062,9 +1067,8 @@ ModTree_Program* modtree_program_create()
     return result;
 }
 
-void modtree_program_destroy()
+void modtree_program_destroy(ModTree_Program* program)
 {
-    auto& program = semantic_analyser.program;
     for (int i = 0; i < program->globals.size; i++) {
         delete program->globals[i];
     }
@@ -1164,10 +1168,10 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast
     }
     case Cast_Type::FROM_ANY: {
         Upp_Any* given = (Upp_Any*)value.data;
-        if (given->type.index >= (u32)compiler.type_system.types.size) {
+        if (given->type.index >= (u32)compiler.analysis_data->type_system.types.size) {
             return comptime_result_make_not_comptime("Any contained invalid type_id");
         }
-        Datatype* any_type = compiler.type_system.types[given->type.index];
+        Datatype* any_type = compiler.analysis_data->type_system.types[given->type.index];
         if (!types_are_equal(any_type, value.data_type)) {
             return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
@@ -1230,7 +1234,7 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(Datatype* dataty
 Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Expression* expr)
 {
     auto& analyser = semantic_analyser;
-    Predefined_Types& types = compiler.type_system.predefined_types;
+    Predefined_Types& types = compiler.analysis_data->type_system.predefined_types;
 
     auto info = get_info(expr);
     if (!info->is_valid) {
@@ -1733,8 +1737,8 @@ void expression_info_set_dot_call(Expression_Info* info, AST::Expression* first_
     else {
         info->options.dot_call.options.function = op->dot_call.options.function;
     }
-    info->cast_info.result_type = compiler.type_system.predefined_types.unknown_type;
-    info->cast_info.initial_type = compiler.type_system.predefined_types.unknown_type;
+    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+    info->cast_info.initial_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     info->cast_info.initial_value_is_temporary = false;
     info->cast_info.result_value_is_temporary = false;
 }
@@ -1777,7 +1781,7 @@ void expression_info_set_type(Expression_Info* info, Datatype* type)
     info->result_type = Expression_Result_Type::TYPE;
     info->is_valid = true;
     info->options.type = type;
-    info->cast_info.result_type = compiler.type_system.predefined_types.type_handle;
+    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.type_handle;
     info->cast_info.initial_type = info->cast_info.result_type;
     info->cast_info.initial_value_is_temporary = true;
     info->cast_info.result_value_is_temporary = true;
@@ -1796,8 +1800,8 @@ void expression_info_set_type(Expression_Info* info, Datatype* type)
 void expression_info_set_no_value(Expression_Info* info) {
     info->result_type = Expression_Result_Type::NOTHING;
     info->is_valid = true;
-    info->options.type = compiler.type_system.predefined_types.unknown_type;
-    info->cast_info.result_type = compiler.type_system.predefined_types.unknown_type;
+    info->options.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     info->cast_info.initial_type = info->cast_info.result_type;
     info->cast_info.initial_value_is_temporary = true;
     info->cast_info.result_value_is_temporary = true;
@@ -1808,7 +1812,7 @@ void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic
     info->is_valid = true;
     info->options.polymorphic_function.base = poly_base;
     info->options.polymorphic_function.instance_fn = instance;
-    info->cast_info.result_type = compiler.type_system.predefined_types.unknown_type; // Not sure if this is correct for function pointers, but should be fine
+    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type; // Not sure if this is correct for function pointers, but should be fine
     info->cast_info.initial_type = info->cast_info.result_type;
     info->cast_info.initial_value_is_temporary = true;
     info->cast_info.result_value_is_temporary = true;
@@ -1844,15 +1848,15 @@ void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_typ
 }
 
 void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
-    expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
+    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
 void expression_info_set_constant_u64(Expression_Info* info, u64 value) {
-    expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.u64_type), array_create_static((byte*)&value, sizeof(u64)), 0);
+    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.u64_type), array_create_static((byte*)&value, sizeof(u64)), 0);
 }
 
 void expression_info_set_constant_u32(Expression_Info* info, u32 value) {
-    expression_info_set_constant(info, upcast(compiler.type_system.predefined_types.u32_type), array_create_static((byte*)&value, sizeof(u32)), 0);
+    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.u32_type), array_create_static((byte*)&value, sizeof(u32)), 0);
 }
 
 // Returns result type of a value
@@ -1871,7 +1875,7 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 // This will set the read + the non-resolved symbol paths to error
 void path_lookup_set_info_to_error_symbol(AST::Path_Lookup* path, Workload_Base* workload)
 {
-    auto error_symbol = semantic_analyser.predefined_symbols.error_symbol;
+    auto error_symbol = semantic_analyser.error_symbol;
     // Set unset path nodes to error
     for (int i = 0; i < path->parts.size; i++) {
         auto part = path->parts[i];
@@ -1944,10 +1948,10 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
     AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false)
 {
     auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
-    auto error = semantic_analyser.predefined_symbols.error_symbol;
+    auto error = semantic_analyser.error_symbol;
 
     // Find all overloads
-    auto results = dynamic_array_create<Symbol*>(1);
+    auto results = dynamic_array_create<Symbol*>();
     SCOPE_EXIT(dynamic_array_destroy(&results));
     symbol_lookup_resolve(lookup, symbol_table, search_parents, access_level, results);
 
@@ -2023,7 +2027,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
     auto& analyser = semantic_analyser;
     auto table = semantic_analyser.current_workload->current_symbol_table;
     auto workload = semantic_analyser.current_workload;
-    auto error = semantic_analyser.predefined_symbols.error_symbol;
+    auto error = semantic_analyser.error_symbol;
 
     // Resolve path
     for (int i = 0; i < path->parts.size - 1; i++)
@@ -2084,7 +2088,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
 bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols)
 {
     auto& analyser = semantic_analyser;
-    auto error = semantic_analyser.predefined_symbols.error_symbol;
+    auto error = semantic_analyser.error_symbol;
 
     // Resolve path
     auto symbol_table = path_lookup_resolve_only_path_parts(path);
@@ -2106,7 +2110,7 @@ bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols
 Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, bool prefer_module_symbols_on_overload)
 {
     auto& analyser = semantic_analyser;
-    auto error = semantic_analyser.predefined_symbols.error_symbol;
+    auto error = semantic_analyser.error_symbol;
 
     // Resolve path
     auto symbol_table = path_lookup_resolve_only_path_parts(path);
@@ -2146,9 +2150,8 @@ bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
 
 Workload_Executer* workload_executer_initialize()
 {
-    workload_executer.all_workloads = dynamic_array_create<Workload_Base*>(8);
-    workload_executer.runnable_workloads = dynamic_array_create<Workload_Base*>(8);
-    workload_executer.finished_workloads = dynamic_array_create<Workload_Base*>(8);
+    workload_executer.runnable_workloads = dynamic_array_create<Workload_Base*>();
+    workload_executer.finished_workloads = dynamic_array_create<Workload_Base*>();
     workload_executer.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
 
     workload_executer.progress_was_made = false;
@@ -2158,10 +2161,6 @@ Workload_Executer* workload_executer_initialize()
 void workload_executer_destroy()
 {
     auto& executer = workload_executer;
-    for (int i = 0; i < executer.all_workloads.size; i++) {
-        analysis_workload_destroy(executer.all_workloads[i]);
-    }
-    dynamic_array_destroy(&executer.all_workloads);
     dynamic_array_destroy(&executer.runnable_workloads);
     dynamic_array_destroy(&executer.finished_workloads);
 
@@ -2474,6 +2473,8 @@ void workload_executer_resolve()
     double last_timestamp = timer_current_time_in_seconds(compiler.timer);
 
     auto& executer = workload_executer;
+    auto& all_workloads = compiler.analysis_data->all_workloads;
+
     int round_no = 0;
     while (true)
     {
@@ -2508,12 +2509,12 @@ void workload_executer_resolve()
                 }
             }
 
-            for (int i = 0; i < executer.all_workloads.size; i++)
+            for (int i = 0; i < all_workloads.size; i++)
             {
                 if (i == 0) {
                     string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
                 }
-                Workload_Base* workload = executer.all_workloads[i];
+                Workload_Base* workload = all_workloads[i];
                 if (workload->is_finished || workload->dependencies.count == 0) continue;
                 string_append_formated(&tmp, "  ");
                 analysis_workload_append_to_string(workload, &tmp);
@@ -2612,8 +2613,8 @@ void workload_executer_resolve()
         // Check if all workloads finished
         {
             bool all_finished = true;
-            for (int i = 0; i < executer.all_workloads.size; i++) {
-                if (!executer.all_workloads[i]->is_finished) {
+            for (int i = 0; i < all_workloads.size; i++) {
+                if (!all_workloads[i]->is_finished) {
                     all_finished = false;
                     break;
                 }
@@ -2640,8 +2641,8 @@ void workload_executer_resolve()
             SCOPE_EXIT(hashtable_destroy(&workload_to_layer));
             Hashset<Workload_Base*> unvisited = hashset_create_pointer_empty<Workload_Base*>(4);
             SCOPE_EXIT(hashset_destroy(&unvisited));
-            for (int i = 0; i < executer.all_workloads.size; i++) {
-                Workload_Base* workload = executer.all_workloads[i];
+            for (int i = 0; i < all_workloads.size; i++) {
+                Workload_Base* workload = all_workloads[i];
                 if (!workload->is_finished) {
                     hashset_insert_element(&unvisited, workload);
                 }
@@ -3015,7 +3016,7 @@ Parameter_Matching_Info parameter_matching_info_create_empty(Call_Type call_type
     info.arguments = nullptr;
     info.matched_parameters = dynamic_array_create<Parameter_Match>(expected_parameter_count);
     info.has_return_value = false;
-    info.return_type = compiler.type_system.predefined_types.unknown_type;
+    info.return_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     return info;
 }
 
@@ -3033,7 +3034,7 @@ void parameter_matching_info_add_param(Parameter_Matching_Info* info, String* na
     match.is_set = false;
     match.argument_index = -1;
     match.expression = nullptr;
-    match.argument_type = compiler.type_system.predefined_types.unknown_type;
+    match.argument_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
     match.argument_is_temporary_value = false;
     match.must_not_be_set = false;
 
@@ -3046,7 +3047,7 @@ void parameter_matching_info_add_param(Parameter_Matching_Info* info, String* na
 void parameter_matching_info_add_analysed_param(Parameter_Matching_Info* info, AST::Expression* expr)
 {
     auto expr_info = get_info(expr);
-    parameter_matching_info_add_param(info, compiler.predefined_ids.value, true, false, nullptr);
+    parameter_matching_info_add_param(info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
     auto& param_info = info->matched_parameters[info->matched_parameters.size - 1];
     param_info.state = Parameter_State::ANALYSED;
     param_info.is_set = true;
@@ -3057,7 +3058,7 @@ void parameter_matching_info_add_analysed_param(Parameter_Matching_Info* info, A
 
 void parameter_matching_info_add_unanalysed_param(Parameter_Matching_Info* info,AST::Expression* expr)
 {
-    parameter_matching_info_add_param(info, compiler.predefined_ids.value, true, false, nullptr);
+    parameter_matching_info_add_param(info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
     auto& param_info = info->matched_parameters[info->matched_parameters.size - 1];
     param_info.is_set = true;
     param_info.expression = expr;
@@ -3065,7 +3066,7 @@ void parameter_matching_info_add_unanalysed_param(Parameter_Matching_Info* info,
 
 void parameter_matching_info_add_known_type(Parameter_Matching_Info* info, Datatype* argument_type, bool is_temporary)
 {
-    parameter_matching_info_add_param(info, compiler.predefined_ids.value, true, false, nullptr);
+    parameter_matching_info_add_param(info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
     auto& param_info = info->matched_parameters[info->matched_parameters.size - 1];
     param_info.is_set = true;
     param_info.expression = nullptr;
@@ -3182,7 +3183,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
         }
 
         int function_slot_index = (int)(*(i64*)constant.memory) - 1;
-        auto& slots = semantic_analyser.function_slots;
+        auto& slots = compiler.analysis_data->function_slots;
         if (function_slot_index < 0 || function_slot_index >= slots.size) {
             return optional_make_failure<Overload_Candidate>();
         }
@@ -3253,7 +3254,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
         }
         else {
             candidate.matching_info.has_return_value = false;
-            candidate.matching_info.return_type = compiler.type_system.predefined_types.unknown_type;
+            candidate.matching_info.return_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
         }
     }
 
@@ -3296,12 +3297,12 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
                 candidate.matching_info.return_type = param.infos.type;
             }
             else {
-                candidate.matching_info.return_type = compiler.type_system.predefined_types.unknown_type;
+                candidate.matching_info.return_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
             }
         }
         else {
             candidate.matching_info.has_return_value = false;
-            candidate.matching_info.return_type = compiler.type_system.predefined_types.unknown_type;
+            candidate.matching_info.return_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
         }
     }
 
@@ -3636,7 +3637,7 @@ struct Parameter_Dependency
 Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
     Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, Function_Progress* progress = 0, AST::Expression* return_type = 0)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Define parameter symbols and search for symbol-lookups and implicit parameters
     Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
@@ -3887,7 +3888,12 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
         // Log error if param does not contain template
         if (param.contains_inferred_parameter) {
             if (!param.infos.type->contains_template) {
-                log_semantic_error("Parameter contains inferred parameter, but type does not contain template", node);
+                if (!datatype_is_unknown(param.infos.type)) {
+                    log_semantic_error("Parameter contains inferred parameter, but type does not contain template", node);
+                }
+                else {
+                    semantic_analyser_set_error_flag(true);
+                }
             }
         }
         else {
@@ -4014,7 +4020,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
     {
         auto poly_type = downcast<Datatype_Template>(polymorphic_type);
         auto pool_result = constant_pool_add_constant(
-            compiler.type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
+            compiler.analysis_data->type_system.predefined_types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1));
         assert(pool_result.success, "Type handle must work as constant!");
         match_polymorphic_type_to_constant(poly_type, pool_result.options.constant);
         return true; // Don't match references
@@ -4083,10 +4089,10 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                 {
                     if (match_to_value.type->type == Datatype_Type::TYPE_HANDLE) {
                         Upp_Type_Handle handle_value = upp_constant_to_value<Upp_Type_Handle>(match_to_value);
-                        if (handle_value.index >= (u32)compiler.type_system.types.size) {
+                        if (handle_value.index >= (u32)compiler.analysis_data->type_system.types.size) {
                             return false;
                         }
-                        Datatype* match_against = compiler.type_system.types[handle_value.index];
+                        Datatype* match_against = compiler.analysis_data->type_system.types[handle_value.index];
                         assert(!match_against->contains_template, "The instanciated type shouldn't be polymorphic");
                         bool success = match_templated_type_internal(match_type, match_against, info);
                         if (!success) {
@@ -4123,7 +4129,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
         if (this_array->polymorphic_count_variable != 0) {
             // Match implicit parameter to element count
             auto pool_result = constant_pool_add_constant(
-                upcast(compiler.type_system.predefined_types.i32_type), array_create_static_as_bytes(&other_array->element_count, 1));
+                upcast(compiler.analysis_data->type_system.predefined_types.i32_type), array_create_static_as_bytes(&other_array->element_count, 1));
             assert(pool_result.success, "I32 type must work as constant");
             match_polymorphic_type_to_constant(this_array->polymorphic_count_variable, pool_result.options.constant);
         }
@@ -4282,7 +4288,7 @@ Instanciation_Result instanciate_polymorphic_callable(
         panic("");
     }
 
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     auto& parameter_nodes = poly_header->parameter_nodes;
     const int return_type_index = poly_header->return_type_index;
 
@@ -4418,13 +4424,13 @@ Instanciation_Result instanciate_polymorphic_callable(
                 if (datatype_get_non_const_type(constant.type)->type == Datatype_Type::TYPE_HANDLE)
                 {
                     Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
-                    if (handle.index >= (u32)compiler.type_system.types.size) {
+                    if (handle.index >= (u32)compiler.analysis_data->type_system.types.size) {
                         success = false;
                         log_semantic_error("Invalid constant type handle index", upcast(param_info.expression));
                         continue;
                     }
         
-                    Datatype* constant_type = compiler.type_system.types[handle.index];
+                    Datatype* constant_type = compiler.analysis_data->type_system.types[handle.index];
                     if (constant_type->contains_template) {
                         instance_values[value_index] = poly_value_make_template_type(constant_type);
                         continue;
@@ -4967,7 +4973,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 
 void analyse_structure_member_nodes_recursive(Struct_Content* content, Dynamic_Array<AST::Structure_Member_Node*> member_nodes)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     int member_index = 0;
     int subtype_index = 0;
@@ -5005,7 +5011,7 @@ void analysis_workload_entry(void* userdata)
 {
     Workload_Base* workload = (Workload_Base*)userdata;
     auto& analyser = semantic_analyser;
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
     analyser.current_workload = workload;
 
@@ -5021,7 +5027,6 @@ void analysis_workload_entry(void* userdata)
         RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, analysis->symbol_table);
 
         // Create import symbols and workloads
-        analysis->last_import_workload = 0;
         for (int i = 0; i < module_node->import_nodes.size; i++) {
             auto import_workload = create_import_workload(module_node->import_nodes[i]);
             if (import_workload == 0) {
@@ -5099,7 +5104,7 @@ void analysis_workload_entry(void* userdata)
             }
             case AST::Extern_Type::COMPILER_SETTING:
             {
-                Dynamic_Array<String*>& values = compiler.extern_sources.compiler_settings[(int)extern_import->options.setting.type];
+                Dynamic_Array<String*>& values = compiler.analysis_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
                 String* id = extern_import->options.setting.value;
 
                 // Check if unique
@@ -5149,7 +5154,7 @@ void analysis_workload_entry(void* userdata)
             auto module_progress = compiler_import_and_queue_analysis_workload(node);
             if (module_progress == 0) {
                 log_semantic_error("Could not load file", upcast(node));
-                import_workload->alias_for_symbol = semantic_analyser.predefined_symbols.error_symbol;
+                import_workload->alias_for_symbol = semantic_analyser.error_symbol;
                 break;
             }
 
@@ -5380,7 +5385,7 @@ void analysis_workload_entry(void* userdata)
                 }
 
                 // Check if function already exists in extern functions...
-                auto& extern_functions = compiler.extern_sources.extern_functions;
+                auto& extern_functions = compiler.analysis_data->extern_sources.extern_functions;
                 {
                     bool found = false;
                     for (int i = 0; i < extern_functions.size; i++) {
@@ -5421,9 +5426,11 @@ void analysis_workload_entry(void* userdata)
 
                 // Deduplicate if we already added this global
                 {
+                    auto program = compiler.analysis_data->program;
+                    
                     bool found = false;
-                    for (int i = 0; i < semantic_analyser.program->globals.size; i++) {
-                        auto global = semantic_analyser.program->globals[i];
+                    for (int i = 0; i < program->globals.size; i++) {
+                        auto global = program->globals[i];
                         if (!global->is_extern) continue;
                         if (global->symbol->id == symbol->id && types_are_equal(global->type, datatype)) {
                             symbol->type = Symbol_Type::GLOBAL;
@@ -5726,11 +5733,11 @@ void analysis_workload_entry(void* userdata)
         ir_generator_generate_queued_items(true);
 
         // Execute
-        auto& slots = semantic_analyser.function_slots;
+        auto& slots = compiler.analysis_data->function_slots;
         IR_Function* ir_func = slots[bake_function->function_slot_index].ir_function;
         int func_start_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_func);
 
-        Bytecode_Thread* thread = bytecode_thread_create(10000);
+        Bytecode_Thread* thread = bytecode_thread_create(compiler.analysis_data, 10000);
         SCOPE_EXIT(bytecode_thread_destroy(thread));
         bytecode_thread_set_initial_state(thread, func_start_instr_index);
         while (true)
@@ -5783,7 +5790,7 @@ void analysis_workload_entry(void* userdata)
 void semantic_analyser_register_function_call(ModTree_Function* call_to)
 {
     auto& analyser = semantic_analyser;
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
 
     auto workload = analyser.current_workload;
     if (workload->current_function != 0) {
@@ -5819,7 +5826,7 @@ void semantic_analyser_register_function_call(ModTree_Function* call_to)
 
 Expression_Info expression_info_make_empty(Expression_Context context)
 {
-    auto unknown_type = compiler.type_system.predefined_types.unknown_type;
+    auto unknown_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
 
     Expression_Info info;
     info.is_valid = false;
@@ -5990,7 +5997,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 {
     auto& executer = semantic_analyser.workload_executer;
     auto workload = semantic_analyser.current_workload;
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     auto unknown_type = types.unknown_type;
 
     Expression_Info result = expression_info_make_empty(context);
@@ -6218,7 +6225,7 @@ void analyse_member_initializers_in_unknown_context_recursive(AST::Arguments* ar
 void analyse_member_initializer_recursive(
     AST::Arguments* arguments, Datatype_Struct* structure, Struct_Content* content, int allowed_direction, Subtype_Index** final_subtype_index)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Match arguments to struct members
     auto matching_info = get_info(arguments, true);
@@ -6356,7 +6363,7 @@ void analyse_member_initializer_recursive(
 
 void analyse_index_accept_all_ints_as_u64(AST::Expression* expr)
 {
-    auto& types = compiler.type_system.predefined_types;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     if (expr->type == AST::Expression_Type::LITERAL_READ && expr->options.literal_read.type == Literal_Type::INTEGER) {
         semantic_analyser_analyse_expression_value(expr, expression_context_make_specific_type(upcast(types.u64_type)));
         return;
@@ -6395,7 +6402,7 @@ void analyse_index_accept_all_ints_as_u64(AST::Expression* expr)
 Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
 {
     auto& analyser = semantic_analyser;
-    auto type_system = &compiler.type_system;
+    auto type_system = &compiler.analysis_data->type_system;
     auto& types = type_system->predefined_types;
 
     // Initialize expression info
@@ -6874,7 +6881,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 }
 
                 Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(result.value);
-                if (handle.index >= (u32) compiler.type_system.types.size) {
+                if (handle.index >= (u32) compiler.analysis_data->type_system.types.size) {
                     log_semantic_error("Invalid type-handle value", matching_info->matched_parameters[0].expression);
                     if (is_size_of) {
                         expression_info_set_constant_u64(info, 1);
@@ -6885,7 +6892,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                     return info;
                 }
 
-                auto type = compiler.type_system.types[handle.index];
+                auto type = compiler.analysis_data->type_system.types[handle.index];
                 type_wait_for_size_info_to_finish(type);
                 auto& memory = type->memory_info.value;
                 if (is_size_of) {
@@ -7436,7 +7443,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
     {
         auto& members = expr->options.enum_members;
 
-        String* enum_name = compiler.predefined_ids.anon_enum;
+        String* enum_name = compiler.identifier_pool.predefined_ids.anon_enum;
         if (expr->base.parent->type == AST::Node_Type::DEFINITION) {
             AST::Definition* definition = downcast<AST::Definition>(expr->base.parent);
             if (definition->is_comptime && definition->symbols.size == 1) {
@@ -7994,7 +8001,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         auto& member_node = expr->options.member_access;
         auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_unknown());
         bool result_is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
-        auto& ids = compiler.predefined_ids;
+        auto& ids = compiler.identifier_pool.predefined_ids;
 
         info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
         auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant> {
@@ -8897,7 +8904,7 @@ bool cast_possible_in_mode(Cast_Mode mode, Cast_Mode allowed_mode)
 Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_value, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
 {
     auto& analyser = semantic_analyser;
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
     auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
 
@@ -9287,7 +9294,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 
 void expression_context_apply(Expression_Info* info, Expression_Context context, AST::Expression* expression, Parser::Section error_section)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
     auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
 
@@ -9352,7 +9359,7 @@ void expression_context_apply(Expression_Info* info, Expression_Context context,
 
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto result = semantic_analyser_analyse_expression_internal(expression, context);
     SET_ACTIVE_EXPR_INFO(result);
 
@@ -9364,7 +9371,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
 
 Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
     auto result = semantic_analyser_analyse_expression_any(expression, expression_context_make_auto_dereference());
     SET_ACTIVE_EXPR_INFO(result);
@@ -9447,7 +9454,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 
 Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context, bool no_value_expected)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
 
     auto result = semantic_analyser_analyse_expression_any(expression, context);
@@ -9716,15 +9723,15 @@ Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
         context->workloads[(int)change->type] = workload;
     }
 
-    dynamic_array_push_back(&semantic_analyser.allocated_operator_contexts, context);
+    dynamic_array_push_back(&compiler.analysis_data->allocated_operator_contexts, context);
     symbol_table->operator_context = context;
     return context;
 }
 
 void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context)
 {
-    auto& ids = compiler.predefined_ids;
-    auto& types = compiler.type_system.predefined_types;
+    auto& ids = compiler.identifier_pool.predefined_ids;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
     bool success = true;
 
     auto parameter_set_analysed = [](Parameter_Match& param) {
@@ -9762,7 +9769,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
         if (!param.is_set) return false;
 
         param.argument_type = semantic_analyser_analyse_expression_value(
-            param.expression, expression_context_make_specific_type(upcast(compiler.type_system.predefined_types.bool_type))
+            param.expression, expression_context_make_specific_type(upcast(compiler.analysis_data->type_system.predefined_types.bool_type))
         );
         param.state = Parameter_State::ANALYSED;
         auto result = expression_calculate_comptime_value(param.expression, "Argument has to be comptime known");
@@ -10637,7 +10644,7 @@ bool inside_defer()
 
 Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 {
-    auto& type_system = compiler.type_system;
+    auto& type_system = compiler.analysis_data->type_system;
     auto& types = type_system.predefined_types;
     auto& analyser = semantic_analyser;
     auto info = get_info(statement, true);
@@ -11137,7 +11144,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
                     SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
 
                     // Prepare instanciation data
-                    parameter_matching_info_add_param(&matching_info, compiler.predefined_ids.value, true, false, nullptr);
+                    parameter_matching_info_add_param(&matching_info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
                     auto expr_info = get_info(for_loop.expression);
                     auto& param_info = matching_info.matched_parameters[0];
                     param_info.state = Parameter_State::ANALYSED;
@@ -11519,7 +11526,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         auto& types = definition->types;
         auto& symbol_nodes = definition->symbols;
         auto& values = definition->values;
-        auto& predefined_types = compiler.type_system.predefined_types;
+        auto& predefined_types = compiler.analysis_data->type_system.predefined_types;
         info->specifics.is_struct_split = false; // Note: removed currently
 
         // Check if this was already handled at block start
@@ -11531,7 +11538,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
         for (int i = 0; i < symbol_nodes.size; i++) {
             auto symbol = get_info(symbol_nodes[i])->symbol;
             symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
-            symbol->options.variable_type = compiler.type_system.predefined_types.unknown_type;
+            symbol->options.variable_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
 
             if (i >= types.size && types.size > 1) {
                 log_semantic_error("No type was specified for this symbol", upcast(symbol_nodes[i]), Parser::Section::IDENTIFIER);
@@ -11822,14 +11829,15 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
 // ANALYSER
 void semantic_analyser_finish()
 {
-    auto& type_system = compiler.type_system;
-    auto& ids = compiler.predefined_ids;
+    auto& type_system = compiler.analysis_data->type_system;
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     // Check if main is defined
-    semantic_analyser.program->main_function = 0;
+    auto program = compiler.analysis_data->program;
+    program->main_function = 0;
     Dynamic_Array<Symbol*>* main_symbols = hashtable_find_element(&semantic_analyser.root_module->module_analysis->symbol_table->symbols, ids.main);
     if (main_symbols == 0) {
-        log_semantic_error("Main function not defined", upcast(compiler.main_source->root), Parser::Section::END_TOKEN);
+        log_semantic_error("Main function not defined", upcast(compiler.main_unit->root), Parser::Section::END_TOKEN);
         return;
     }
     if (main_symbols->size > 1) {
@@ -11851,7 +11859,7 @@ void semantic_analyser_finish()
         log_error_info_symbol(main_symbol);
         return;
     }
-    semantic_analyser.program->main_function = main_symbol->options.function;
+    program->main_function = main_symbol->options.function;
 }
 
 void function_progress_destroy(Function_Progress* progress) {
@@ -11863,94 +11871,31 @@ void function_progress_destroy(Function_Progress* progress) {
 
 void semantic_analyser_reset()
 {
-    auto& type_system = compiler.type_system;
-    auto& types = compiler.type_system.predefined_types;
+    auto& type_system = compiler.analysis_data->type_system;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     // Reset analyser data
     {
-        semantic_analyser.root_module = 0;
-        semantic_analyser.current_workload = 0;
+        semantic_analyser.current_workload = nullptr;
+        semantic_analyser.root_module = nullptr;
+        semantic_analyser.error_symbol = nullptr;
+        semantic_analyser.workload_executer = nullptr;
+        semantic_analyser.global_allocator = nullptr;
+        semantic_analyser.default_allocator = nullptr;
+        semantic_analyser.root_symbol_table = nullptr;
+
         hashtable_reset(&semantic_analyser.valid_template_parameters);
-        dynamic_array_reset(&semantic_analyser.function_slots);
-
-        // Errors
-        for (int i = 0; i < semantic_analyser.errors.size; i++) {
-            dynamic_array_destroy(&semantic_analyser.errors[i].information);
-        }
-        dynamic_array_reset(&semantic_analyser.errors);
-
-        // Allocators
         stack_allocator_reset(&semantic_analyser.comptime_value_allocator);
-        stack_allocator_reset(&semantic_analyser.progress_allocator);
-        stack_allocator_reset(&semantic_analyser.global_variable_memory_pool);
-
-        // Modtree-Program
-        for (int i = 0; i < semantic_analyser.allocated_function_progresses.size; i++) {
-            function_progress_destroy(semantic_analyser.allocated_function_progresses[i]);
-        }
-        dynamic_array_reset(&semantic_analyser.allocated_function_progresses);
-
-        for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
-            delete semantic_analyser.allocated_operator_contexts[i];
-        }
-        dynamic_array_reset(&semantic_analyser.allocated_operator_contexts);
-
-        if (semantic_analyser.program != 0) {
-            modtree_program_destroy();
-        }
-        semantic_analyser.program = modtree_program_create();
+        hashset_reset(&semantic_analyser.symbol_lookup_visited);
 
         // Workload Executer
         workload_executer_destroy();
         semantic_analyser.workload_executer = workload_executer_initialize();
-
-        // Symbol Tables
-        for (int i = 0; i < semantic_analyser.allocated_symbol_tables.size; i++) {
-            symbol_table_destroy(semantic_analyser.allocated_symbol_tables[i]);
-        }
-        dynamic_array_reset(&semantic_analyser.allocated_symbol_tables);
-
-        for (int i = 0; i < semantic_analyser.allocated_symbols.size; i++) {
-            symbol_destroy(semantic_analyser.allocated_symbols[i]);
-        }
-        dynamic_array_reset(&semantic_analyser.allocated_symbols);
-
-        // AST-Mappings
-        {
-            auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_info_mapping);
-            while (hashtable_iterator_has_next(&iter)) {
-                Analysis_Info* info = *iter.value;
-                AST_Info_Key* key = iter.key;
-                if (key->base->type == AST::Node_Type::ARGUMENTS) {
-                    parameter_matching_info_destroy(&info->parameter_matching_info);
-                }
-
-                delete* iter.value;
-                hashtable_iterator_next(&iter);
-            }
-            hashtable_reset(&semantic_analyser.ast_to_info_mapping);
-        }
-        {
-            auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_pass_mapping);
-            while (hashtable_iterator_has_next(&iter)) {
-                Node_Passes* passes = iter.value;
-                dynamic_array_destroy(&passes->passes);
-                hashtable_iterator_next(&iter);
-            }
-            hashtable_reset(&semantic_analyser.ast_to_pass_mapping);
-        }
-        {
-            for (int i = 0; i < semantic_analyser.allocated_passes.size; i++) {
-                delete semantic_analyser.allocated_passes[i];
-            }
-            dynamic_array_reset(&semantic_analyser.allocated_passes);
-        }
     }
 
     // Create root tables and predefined Symbols 
     {
         auto pool = &compiler.identifier_pool;
-        auto& symbols = semantic_analyser.predefined_symbols;
 
         // Create root table and default operator context
         {
@@ -11994,25 +11939,25 @@ void semantic_analyser_reset()
             result->options.type = type;
             return result;
         };
-        symbols.type_c_char = define_type_symbol("c_char", upcast(types.c_char_type));
-        symbols.type_u8 = define_type_symbol("u8", upcast(types.u8_type));
-        symbols.type_u16 = define_type_symbol("u16", upcast(types.u16_type));
-        symbols.type_u32 = define_type_symbol("u32", upcast(types.u32_type));
-        symbols.type_u64 = define_type_symbol("u64", upcast(types.u64_type));
-        symbols.type_i8 = define_type_symbol("i8", upcast(types.i8_type));
-        symbols.type_i16 = define_type_symbol("i16", upcast(types.i16_type));
-        symbols.type_i32 = define_type_symbol("i32", upcast(types.i32_type));
-        symbols.type_i64 = define_type_symbol("i64", upcast(types.i64_type));
-        symbols.type_f32 = define_type_symbol("f32", upcast(types.f32_type));
-        symbols.type_f64 = define_type_symbol("f64", upcast(types.f64_type));
+        define_type_symbol("c_char", upcast(types.c_char_type));
+        define_type_symbol("u8", upcast(types.u8_type));
+        define_type_symbol("u16", upcast(types.u16_type));
+        define_type_symbol("u32", upcast(types.u32_type));
+        define_type_symbol("u64", upcast(types.u64_type));
+        define_type_symbol("i8", upcast(types.i8_type));
+        define_type_symbol("i16", upcast(types.i16_type));
+        define_type_symbol("i32", upcast(types.i32_type));
+        define_type_symbol("i64", upcast(types.i64_type));
+        define_type_symbol("f32", upcast(types.f32_type));
+        define_type_symbol("f64", upcast(types.f64_type));
         define_type_symbol("Bytes", types.bytes);
-        symbols.type_c_string = define_type_symbol("c_string", types.c_string);
-        symbols.type_allocator = define_type_symbol("Allocator", upcast(types.allocator));
-        symbols.type_type = define_type_symbol("Type_Handle", types.type_handle);
-        symbols.type_type_information = define_type_symbol("Type_Info", upcast(types.type_information_type));
-        symbols.type_any = define_type_symbol("Any", upcast(types.any_type));
-        symbols.type_empty = define_type_symbol("_", upcast(types.empty_struct_type));
-        symbols.type_void_pointer = define_type_symbol("byte_pointer", upcast(types.byte_pointer));
+        define_type_symbol("c_string", types.c_string);
+        define_type_symbol("Allocator", upcast(types.allocator));
+        define_type_symbol("Type_Handle", types.type_handle);
+        define_type_symbol("Type_Info", upcast(types.type_information_type));
+        define_type_symbol("Any", upcast(types.any_type));
+        define_type_symbol("_", upcast(types.empty_struct_type));
+        define_type_symbol("byte_pointer", upcast(types.byte_pointer));
 
         auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
             Symbol* result = symbol_table_define_symbol(
@@ -12020,18 +11965,18 @@ void semantic_analyser_reset()
             result->options.hardcoded = type;
             return result;
         };
-        symbols.hardcoded_print_bool = define_hardcoded_symbol("print_bool", Hardcoded_Type::PRINT_BOOL);
-        symbols.hardcoded_print_i32 = define_hardcoded_symbol("print_i32", Hardcoded_Type::PRINT_I32);
-        symbols.hardcoded_print_f32 = define_hardcoded_symbol("print_f32", Hardcoded_Type::PRINT_F32);
-        symbols.hardcoded_print_string = define_hardcoded_symbol("print_string", Hardcoded_Type::PRINT_STRING);
-        symbols.hardcoded_print_line = define_hardcoded_symbol("print_line", Hardcoded_Type::PRINT_LINE);
-        symbols.hardcoded_read_i32 = define_hardcoded_symbol("read_i32", Hardcoded_Type::PRINT_I32);
-        symbols.hardcoded_read_f32 = define_hardcoded_symbol("read_f32", Hardcoded_Type::READ_F32);
-        symbols.hardcoded_read_bool = define_hardcoded_symbol("read_bool", Hardcoded_Type::READ_BOOL);
-        symbols.hardcoded_random_i32 = define_hardcoded_symbol("random_i32", Hardcoded_Type::RANDOM_I32);
-        symbols.hardcoded_type_of = define_hardcoded_symbol("type_of", Hardcoded_Type::TYPE_OF);
-        symbols.hardcoded_type_info = define_hardcoded_symbol("type_info", Hardcoded_Type::TYPE_INFO);
-        symbols.hardcoded_assert = define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
+        define_hardcoded_symbol("print_bool", Hardcoded_Type::PRINT_BOOL);
+        define_hardcoded_symbol("print_i32", Hardcoded_Type::PRINT_I32);
+        define_hardcoded_symbol("print_f32", Hardcoded_Type::PRINT_F32);
+        define_hardcoded_symbol("print_string", Hardcoded_Type::PRINT_STRING);
+        define_hardcoded_symbol("print_line", Hardcoded_Type::PRINT_LINE);
+        define_hardcoded_symbol("read_i32", Hardcoded_Type::PRINT_I32);
+        define_hardcoded_symbol("read_f32", Hardcoded_Type::READ_F32);
+        define_hardcoded_symbol("read_bool", Hardcoded_Type::READ_BOOL);
+        define_hardcoded_symbol("random_i32", Hardcoded_Type::RANDOM_I32);
+        define_hardcoded_symbol("type_of", Hardcoded_Type::TYPE_OF);
+        define_hardcoded_symbol("type_info", Hardcoded_Type::TYPE_INFO);
+        define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
 
         define_hardcoded_symbol("memory_copy", Hardcoded_Type::MEMORY_COPY);
         define_hardcoded_symbol("memory_zero", Hardcoded_Type::MEMORY_ZERO);
@@ -12054,50 +11999,38 @@ void semantic_analyser_reset()
         //       current little 'hack' is to use the identifier 0_ERROR and because it starts with a 0, it
         //       can never be used as a symbol read. Other approaches would be to have a custom symbol-table for the error symbol
         //       that isn't connected to anything.
-        symbols.error_symbol = define_type_symbol("0_ERROR_SYMBOL", types.unknown_type);
-        symbols.error_symbol->type = Symbol_Type::ERROR_SYMBOL;
+        semantic_analyser.error_symbol = define_type_symbol("0_ERROR_SYMBOL", types.unknown_type);
+        semantic_analyser.error_symbol->type = Symbol_Type::ERROR_SYMBOL;
 
         // Add global allocator symbol
-        symbols.global_allocator_symbol = symbol_table_define_symbol(
+        auto global_allocator_symbol = symbol_table_define_symbol(
             upp_table, 
             identifier_pool_add(pool, string_create_static("global_allocator")), 
             Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
         );
         semantic_analyser.global_allocator = modtree_program_add_global(
-            upcast(type_system_make_pointer(upcast(types.allocator))), symbols.global_allocator_symbol, false
+            upcast(type_system_make_pointer(upcast(types.allocator))), global_allocator_symbol, false
         );
-        symbols.global_allocator_symbol->options.global = semantic_analyser.global_allocator;
+        global_allocator_symbol->options.global = semantic_analyser.global_allocator;
 
         // Add default allocator
-        symbols.default_allocator_symbol = symbol_table_define_symbol(
+        auto default_allocator_symbol = symbol_table_define_symbol(
             upp_table, 
             identifier_pool_add(pool, string_create_static("default_allocator")), 
             Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
         );
         semantic_analyser.default_allocator = modtree_program_add_global(
-            upcast(upcast(types.allocator)), symbols.default_allocator_symbol, false
+            upcast(upcast(types.allocator)), default_allocator_symbol, false
         );
-        symbols.default_allocator_symbol->options.global = semantic_analyser.default_allocator;
+        default_allocator_symbol->options.global = semantic_analyser.default_allocator;
     }
 }
 
 Semantic_Analyser* semantic_analyser_initialize()
 {
-    semantic_analyser.function_slots = dynamic_array_create<Function_Slot>();
-    semantic_analyser.errors = dynamic_array_create<Semantic_Error>(64);
     semantic_analyser.comptime_value_allocator = stack_allocator_create_empty(2048);
     semantic_analyser.workload_executer = workload_executer_initialize();
-    semantic_analyser.allocated_function_progresses = dynamic_array_create<Function_Progress*>();
-    semantic_analyser.allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
-    semantic_analyser.progress_allocator = stack_allocator_create_empty(2048);
-    semantic_analyser.global_variable_memory_pool = stack_allocator_create_empty(1024);
-    semantic_analyser.program = 0;
-    semantic_analyser.ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(1);
     semantic_analyser.symbol_lookup_visited = hashset_create_pointer_empty<Symbol_Table*>(1);
-    semantic_analyser.allocated_passes = dynamic_array_create<Analysis_Pass*>();
-    semantic_analyser.ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(1, ast_info_key_hash, ast_info_equals);
-    semantic_analyser.allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
-    semantic_analyser.allocated_symbols = dynamic_array_create<Symbol*>();
     semantic_analyser.valid_template_parameters = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template*>(1);
     return &semantic_analyser;
 }
@@ -12106,72 +12039,7 @@ void semantic_analyser_destroy()
 {
     hashset_destroy(&semantic_analyser.symbol_lookup_visited);
     hashtable_destroy(&semantic_analyser.valid_template_parameters);
-    stack_allocator_destroy(&semantic_analyser.global_variable_memory_pool);
-    dynamic_array_destroy(&semantic_analyser.function_slots);
-
-    for (int i = 0; i < semantic_analyser.errors.size; i++) {
-        dynamic_array_destroy(&semantic_analyser.errors[i].information);
-    }
-    dynamic_array_destroy(&semantic_analyser.errors);
-
-    for (int i = 0; i < semantic_analyser.allocated_symbol_tables.size; i++) {
-        symbol_table_destroy(semantic_analyser.allocated_symbol_tables[i]);
-    }
-    dynamic_array_destroy(&semantic_analyser.allocated_symbol_tables);
-
-    for (int i = 0; i < semantic_analyser.allocated_symbols.size; i++) {
-        symbol_destroy(semantic_analyser.allocated_symbols[i]);
-    }
-    dynamic_array_destroy(&semantic_analyser.allocated_symbols);
-
-    {
-        auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_info_mapping);
-        while (hashtable_iterator_has_next(&iter)) {
-            Analysis_Info* info = *iter.value;
-            AST_Info_Key* key = iter.key;
-            if (key->base->type == AST::Node_Type::ARGUMENTS) {
-                parameter_matching_info_destroy(&info->parameter_matching_info);
-            }
-            delete* iter.value;
-            hashtable_iterator_next(&iter);
-        }
-        hashtable_destroy(&semantic_analyser.ast_to_info_mapping);
-    }
-    {
-        auto iter = hashtable_iterator_create(&semantic_analyser.ast_to_pass_mapping);
-        while (hashtable_iterator_has_next(&iter)) {
-            Node_Passes* workloads = iter.value;
-            dynamic_array_destroy(&workloads->passes);
-            hashtable_iterator_next(&iter);
-        }
-        hashtable_destroy(&semantic_analyser.ast_to_pass_mapping);
-    }
-    {
-        for (int i = 0; i < semantic_analyser.allocated_passes.size; i++) {
-            delete semantic_analyser.allocated_passes[i];
-        }
-        dynamic_array_destroy(&semantic_analyser.allocated_passes);
-    }
-
-    for (int i = 0; i < semantic_analyser.allocated_function_progresses.size; i++) {
-        function_progress_destroy(semantic_analyser.allocated_function_progresses[i]);
-    }
-    dynamic_array_destroy(&semantic_analyser.allocated_function_progresses);
-
-    for (int i = 0; i < semantic_analyser.allocated_operator_contexts.size; i++) {
-        auto context = semantic_analyser.allocated_operator_contexts[i];
-        dynamic_array_destroy(&context->context_imports);
-        hashtable_destroy(&context->custom_operators);
-        delete semantic_analyser.allocated_operator_contexts[i];
-    }
-    dynamic_array_destroy(&semantic_analyser.allocated_operator_contexts);
-
     stack_allocator_destroy(&semantic_analyser.comptime_value_allocator);
-    stack_allocator_destroy(&semantic_analyser.progress_allocator);
-
-    if (semantic_analyser.program != 0) {
-        modtree_program_destroy();
-    }
 }
 
 
@@ -12284,9 +12152,9 @@ void error_information_append_to_string(const Error_Information& info, String* s
     Rich_Text::append_to_string(&text, string, 2);
 }
 
-void semantic_analyser_append_all_errors_to_string(String* string, int indentation)
+void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation)
 {
-    auto& errors = semantic_analyser.errors;
+    auto& errors = analysis_data->semantic_errors;
     for (int i = 0; i < errors.size; i++)
     {
         auto& e = errors[i];
