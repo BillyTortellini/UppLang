@@ -138,12 +138,13 @@ Identifier_Pool identifier_pool_create()
 {
     Identifier_Pool result;
     result.identifier_lookup_table = hashtable_create_empty<String, String*>(128, hash_string, string_equals);
+    result.add_identifier_semaphore = semaphore_create(1, 1);
 
     // Add predefined IDs
     {
         auto& ids = result.predefined_ids;
         auto add_id = [&](const char* id) -> String* {
-            return identifier_pool_add(&result, string_create_static(id));
+            return identifier_pool_add_unsafe(&result, string_create_static(id));
         };
 
         ids.size = add_id("size");
@@ -239,9 +240,10 @@ void identifier_pool_destroy(Identifier_Pool* pool)
         hashtable_iterator_next(&iter);
     }
     hashtable_destroy(&pool->identifier_lookup_table);
+    semaphore_destroy(pool->add_identifier_semaphore);
 }
 
-String* identifier_pool_add(Identifier_Pool* pool, String identifier)
+String* identifier_pool_add_unsafe(Identifier_Pool* pool, String identifier)
 {
     String** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
     if (found != 0) {
@@ -254,6 +256,14 @@ String* identifier_pool_add(Identifier_Pool* pool, String identifier)
         hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
         return copy;
     }
+}
+
+String* identifier_pool_add(Identifier_Pool* pool, String identifier)
+{
+    semaphore_wait(pool->add_identifier_semaphore);
+    String* result = identifier_pool_add_unsafe(pool, identifier);
+    semaphore_increment(pool->add_identifier_semaphore, 1);
+    return result;
 }
 
 void identifier_pool_print(Identifier_Pool* pool)

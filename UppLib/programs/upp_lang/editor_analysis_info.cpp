@@ -146,11 +146,8 @@ void find_editor_infos_recursive(
             Code_Analysis_Item_Option option;
             option.expression_info.after_cast_type  = info->cast_info.result_type;
             option.expression_info.before_cast_type = info->cast_info.initial_type;
+            option.expression_info.cast_type = info->cast_info.cast_type;
             add_code_analysis_item(Code_Analysis_Item_Type::EXPRESSION_INFO, option, node->range, code, tree_depth);
-        }
-
-        if (info != nullptr)
-        {
         }
 
         break;
@@ -247,10 +244,10 @@ void find_editor_infos_recursive(
         if (symbol != nullptr) {
             // Add symbol lookup info
             Code_Analysis_Item_Option option;
-            option.symbol.symbol = symbol;
-            option.symbol.is_definition = is_definition;
-            option.symbol.pass = pass;
-            option.symbol.lookup = lookup;
+            option.symbol_info.symbol = symbol;
+            option.symbol_info.is_definition = is_definition;
+            option.symbol_info.pass = pass;
+            option.symbol_info.lookup = lookup;
             add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
         }
 

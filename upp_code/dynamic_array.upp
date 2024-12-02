@@ -8,17 +8,17 @@ Dynamic_Array :: module
 	import Upp~Type_Handle
 	import Upp~Allocator
 	
-	create :: (initial_capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Dynamic_Array($T)
+	create :: (initial_capacity: int= 0, allocator: *Allocator= Upp~global_allocator) -> Dynamic_Array($T)
 		result: Dynamic_Array(T)
 		result.allocator =~ allocator
-		result.size = 0
+		result.size= 0
 		
 		if initial_capacity == 0
 			result.buffer.data =* null
-			result.buffer.size = 0
+			result.buffer.size= 0
 		else
 			defer_restore Upp~global_allocator =~ allocator
-			result.buffer = new(initial_capacity) T
+			result.buffer= new(initial_capacity) T
 		
 		return result
 	
@@ -39,7 +39,7 @@ Dynamic_Array :: module
 			while next_size < new_capacity
 				next_size *= 2
 			
-			array.buffer = new(next_size) T
+			array.buffer= new(next_size) T
 		else
 			next_size := cast {int} array.buffer.size
 			while next_size < new_capacity
@@ -50,11 +50,11 @@ Dynamic_Array :: module
 			array.buffer.data =~ cast_pointer array.allocator.reallocate_fn(
 				array.allocator, cast_pointer array.buffer.data.value, size_of(T) * array.buffer.size, size_of(T) * cast next_size
 			)
-			array.buffer.size = cast next_size
+			array.buffer.size= cast next_size
 	
 	push_back :: (array: *Dynamic_Array($T), value: T)
 		reserve(array, array.size + 1)
-		array.buffer[array.size] = value
+		array.buffer[array.size]= value
 		array.size += 1
 	
 	at :: (array: Dynamic_Array($T), index: int) -> *T
@@ -65,7 +65,7 @@ Dynamic_Array :: module
 		context import Dynamic_Array~Operators
 		import Dynamic_Array~create
 		
-		x: Dynamic_Array(int) = create()
+		x: Dynamic_Array(int)= create()
 		defer
 			x.destroy()
 		

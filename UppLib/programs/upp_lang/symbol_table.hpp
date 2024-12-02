@@ -218,9 +218,12 @@ struct Symbol
 
     String* id;
     Symbol_Table* origin_table;
-    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter, AST::Import or AST::Expression::Polymorphic_Symbol
     Symbol_Access_Level access_level;
     Dynamic_Array<AST::Symbol_Lookup*> references;
+
+    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter, AST::Import or AST::Expression::Polymorphic_Symbol
+    Compilation_Unit* definition_unit; // May be null
+    Text_Index definition_text_index;
 };
 
 
@@ -254,7 +257,8 @@ void symbol_destroy(Symbol* symbol);
 Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
 void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node);
 // Note: when id == 0, all symbols that are possible will be added
-void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results);
+void symbol_table_query_id(
+    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);

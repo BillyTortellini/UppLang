@@ -483,6 +483,7 @@ void source_text_remove_invalid_whitespaces(String& text)
 void source_code_tokenize_line(Source_Line* line)
 {
     if (line->is_comment) {
+        lexer_tokenize_line_as_comment(line->text, &line->tokens);
         return;
     }
     lexer_tokenize_line(line->text, &line->tokens, &compiler.identifier_pool);

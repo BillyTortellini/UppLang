@@ -468,28 +468,6 @@ struct Expression_Context
     } expected_type;
 };
 
-enum class Cast_Type
-{
-    INTEGERS,
-    FLOATS,
-    FLOAT_TO_INT,
-    INT_TO_FLOAT,
-    POINTERS,
-    POINTER_TO_U64,
-    U64_TO_POINTER,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ARRAY_TO_SLICE, 
-    TO_ANY,
-    FROM_ANY,
-    TO_OPTIONAL,
-    CUSTOM_CAST,
-
-    NO_CAST, // No cast needed, source-type == destination-type
-    UNKNOWN, // Either source or destination type are/contain error/unknown type
-    INVALID, // Cast is not valid
-};
-
 // The dereferences/address_of is applied before the cast
 struct Expression_Cast_Info
 {

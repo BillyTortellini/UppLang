@@ -131,27 +131,28 @@ void ir_program_destroy(IR_Program* program)
 // To_String
 void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_Code_Block* current_block)
 {
+    auto type_system = &compiler.analysis_data->type_system;
     switch (access->type)
     {
     case IR_Data_Access_Type::CONSTANT: {
         auto const_index = access->option.constant_index;
         Upp_Constant* constant = &compiler.analysis_data->constant_pool.constants[const_index];
         string_append_formated(string, "Constant #%d ", const_index);
-        datatype_append_to_string(string, constant->type);
+        datatype_append_to_string(string, type_system, constant->type);
         string_append_formated(string, " ");
-        datatype_append_value_to_string(constant->type, constant->memory, string);
+        datatype_append_value_to_string(constant->type, type_system, constant->memory, string);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
         string_append_formated(string, "Global #%d, type: ", access->option.global_index);
-        datatype_append_to_string(string, access->datatype);
+        datatype_append_to_string(string, type_system, access->datatype);
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
         auto& param = param_info.function->function_type->parameters[param_info.index];
         string_append_formated(string, "Param #%s, type: ", param.name->characters);
-        datatype_append_to_string(string, param.type);
+        datatype_append_to_string(string, type_system, param.type);
         break;
     }
     case IR_Data_Access_Type::REGISTER: {
@@ -163,7 +164,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         else {
             string_append_formated(string, "Register #%d, type: ", reg_access.index);
         }
-        datatype_append_to_string(string, reg.type);
+        datatype_append_to_string(string, type_system, reg.type);
         if (reg_access.definition_block != current_block) {
             string_append_formated(string, " (Non local)");
         }
@@ -503,6 +504,8 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
 
 void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, int indentation)
 {
+    auto type_system = &compiler.analysis_data->type_system;
+
     indent_string(string, indentation);
     string_append_formated(string, "Registers:\n");
     for (int i = 0; i < code_block->registers.size; i++) {
@@ -514,7 +517,7 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, i
         else {
             string_append_formated(string, "#%d: ", i);
         }
-        datatype_append_to_string(string, reg.type);
+        datatype_append_to_string(string, type_system, reg.type);
         string_append_formated(string, "\n");
     }
     indent_string(string, indentation);
@@ -527,9 +530,11 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, i
 
 void ir_function_append_to_string(IR_Function* function, String* string, int indentation)
 {
+    auto type_system = &compiler.analysis_data->type_system;
+
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
-    datatype_append_to_string(string, upcast(function->function_type));
+    datatype_append_to_string(string, type_system, upcast(function->function_type));
     string_append_formated(string, "\n");
     ir_code_block_append_to_string(function->code, string, indentation);
 }

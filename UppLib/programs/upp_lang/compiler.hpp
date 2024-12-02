@@ -8,6 +8,7 @@
 #include "type_system.hpp"
 #include "compiler_misc.hpp"
 #include "constant_pool.hpp"
+#include "../../win32/thread.hpp"
 
 struct Compiler;
 struct AST_Parser;
@@ -71,6 +72,7 @@ struct Compiler
     Bytecode_Generator* bytecode_generator;
     C_Generator* c_generator;
     C_Compiler* c_compiler;
+    Semaphore add_compilation_unit_semaphore;
 
     // Timing stuff
     Timer* timer;

@@ -53,7 +53,7 @@ void type_base_destroy(Datatype* base)
     }
 }
 
-void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* string)
+void datatype_append_value_to_string(Datatype* type, Type_System* type_system, byte* value_ptr, String* string)
 {
     if (!type->memory_info.available) {
         string_append_formated(string, "Type size not finished yet");
@@ -73,7 +73,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         break;
     case Datatype_Type::CONSTANT: {
         auto constant = downcast<Datatype_Constant>(type);
-        datatype_append_value_to_string(constant->element_type, value_ptr, string);
+        datatype_append_value_to_string(constant->element_type, type_system, value_ptr, string);
         break;
     }
     case Datatype_Type::ARRAY:
@@ -113,7 +113,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         string_append_formated(string, "[#%d ", element_count);
         for (int i = 0; i < element_count && i < 3; i++) {
             byte* element_ptr = value_ptr + (i * element_type->memory_info.value.alignment);
-            datatype_append_value_to_string(element_type, element_ptr, string);
+            datatype_append_value_to_string(element_type, type_system, element_ptr, string);
             if (i != element_count - 1) {
                 string_append_formated(string, ", ");
             }
@@ -155,7 +155,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
         bool available = *(bool*)(((byte*)value_ptr) + opt->is_available_member.offset);
         if (available) {
             string_append_formated(string, "Opt: ");
-            datatype_append_value_to_string(opt->child_type, value_ptr, string);
+            datatype_append_value_to_string(opt->child_type, type_system, value_ptr, string);
         }
         else {
             string_append_formated(string, "Optional Unavailable");
@@ -165,9 +165,9 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     case Datatype_Type::TYPE_HANDLE: 
     {
         Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
-        if (handle.index < (u32) compiler.analysis_data->type_system.types.size) {
-            Datatype* type = compiler.analysis_data->type_system.types[handle.index];
-            datatype_append_to_string(string, type);
+        if (handle.index < (u32) type_system->types.size) {
+            Datatype* type = type_system->types[handle.index];
+            datatype_append_to_string(string, type_system, type);
         }
         else {
             string_append_formated(string, "Invalid_Type_Handle(#%d)", handle.index);
@@ -177,7 +177,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
     case Datatype_Type::SUBTYPE: 
     {
         auto subtype = downcast<Datatype_Subtype>(type);
-        datatype_append_value_to_string(subtype->base_type, value_ptr, string);
+        datatype_append_value_to_string(subtype->base_type, type_system, value_ptr, string);
         break;
     }
     case Datatype_Type::STRUCT:
@@ -198,7 +198,7 @@ void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* st
             {
                 Struct_Member* mem = &content->members[i];
                 byte* mem_ptr = value_ptr + mem->offset;
-                datatype_append_value_to_string(mem->type, mem_ptr, string);
+                datatype_append_value_to_string(mem->type, type_system, mem_ptr, string);
                 if (i != content->members.size - 1) {
                     string_append_formated(string, ", ");
                 }
@@ -315,7 +315,7 @@ Datatype_Format datatype_format_make_default()
     return format;
 }
 
-void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* text, Datatype_Format format)
+void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system, Rich_Text::Rich_Text* text, Datatype_Format format)
 {
     Rich_Text::set_text_color(text, Syntax_Color::TEXT);
 
@@ -335,7 +335,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         Datatype_Constant* constant = downcast<Datatype_Constant>(signature);
         Rich_Text::set_text_color(text, Syntax_Color::KEYWORD);
         Rich_Text::append_formated(text, "const ");
-        datatype_append_to_rich_text(constant->element_type, text, format);
+        datatype_append_to_rich_text(constant->element_type, type_system, text, format);
         break;
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
@@ -350,18 +350,18 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         else {
             Rich_Text::append_formated(text, "[Unknown]");
         }
-        datatype_append_to_rich_text(array_type->element_type, text, format);
+        datatype_append_to_rich_text(array_type->element_type, type_system, text, format);
         break;
     }
     case Datatype_Type::SLICE: {
-        if (types_are_equal(signature, compiler.analysis_data->type_system.predefined_types.bytes)) {
+        if (types_are_equal(signature, type_system->predefined_types.bytes)) {
             Rich_Text::set_text_color(text, Syntax_Color::TYPE);
             Rich_Text::append_formated(text, "Bytes");
             break;
         }
         auto slice_type = downcast<Datatype_Slice>(signature);
         Rich_Text::append_formated(text, "[]");
-        datatype_append_to_rich_text(slice_type->element_type, text, format);
+        datatype_append_to_rich_text(slice_type->element_type, type_system, text, format);
         break;
     }
     case Datatype_Type::UNKNOWN_TYPE:
@@ -373,13 +373,13 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
             Rich_Text::append_character(text, '?');
         }
         Rich_Text::append_formated(text, "*");
-        datatype_append_to_rich_text(pointer_type->element_type, text, format);
+        datatype_append_to_rich_text(pointer_type->element_type, type_system, text, format);
         break;
     }
     case Datatype_Type::OPTIONAL_TYPE: {
         auto opt = downcast<Datatype_Optional>(signature);
         Rich_Text::append_character(text, '?');
-        datatype_append_to_rich_text(opt->child_type, text, format);
+        datatype_append_to_rich_text(opt->child_type, type_system, text, format);
         break;
     }
     case Datatype_Type::BYTE_POINTER: {
@@ -439,7 +439,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
     }
     case Datatype_Type::SUBTYPE: {
         auto subtype = downcast<Datatype_Subtype>(signature);
-        datatype_append_to_rich_text(upcast(subtype->base_type), text, format);
+        datatype_append_to_rich_text(upcast(subtype->base_type), type_system, text, format);
         Rich_Text::set_text_color(text, Syntax_Color::TEXT);
         Rich_Text::append_character(text, '.');
         Rich_Text::set_text_color(text, Syntax_Color::SUBTYPE);
@@ -468,7 +468,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
                     auto& constant = poly_value.options.value;
 
                     auto string = Rich_Text::start_line_manipulation(text);
-                    datatype_append_value_to_string(constant.type, constant.memory, string);
+                    datatype_append_value_to_string(constant.type, type_system, constant.memory, string);
                     Rich_Text::stop_line_manipulation(text);
                     if (i != instance_values.size - 1) {
                         Rich_Text::append_formated(text, ", ");
@@ -501,7 +501,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
                 Rich_Text::set_bg(text, format.highlight_color);
             }
             Rich_Text::append_formated(text, "%s: ", param.name->characters);
-            datatype_append_to_rich_text(param_type, text, format);
+            datatype_append_to_rich_text(param_type, type_system, text, format);
             Rich_Text::set_text_color(text, Syntax_Color::TEXT);
             if (highlight_index == i) {
                 Rich_Text::stop_bg(text);
@@ -517,7 +517,7 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
         Rich_Text::append_formated(text, ")");
         if (function_type->return_type.available) {
             Rich_Text::append(text, " -> ");
-            datatype_append_to_rich_text(function_type->return_type.value, text, format);
+            datatype_append_to_rich_text(function_type->return_type.value, type_system, text, format);
             Rich_Text::set_text_color(text, Syntax_Color::TEXT);
         }
         break;
@@ -526,12 +526,12 @@ void datatype_append_to_rich_text(Datatype* signature, Rich_Text::Rich_Text* tex
     }
 }
 
-void datatype_append_to_string(String* string, Datatype* signature, Datatype_Format format)
+void datatype_append_to_string(String* string, Type_System* type_system, Datatype* signature, Datatype_Format format)
 {
     Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
     SCOPE_EXIT(Rich_Text::destroy(&text));
     Rich_Text::add_line(&text);
-    datatype_append_to_rich_text(signature, &text, format);
+    datatype_append_to_rich_text(signature, type_system, &text, format);
     Rich_Text::append_to_string(&text, string, 2);
 }
 
@@ -2255,7 +2255,7 @@ void type_system_print(Type_System* system)
     {
         Datatype* type = system->types[i];
         string_append_formated(&msg, "\n\t%d: ", i);
-        datatype_append_to_string(&msg, type);
+        datatype_append_to_string(&msg, system, type);
         if (type->memory_info.available) {
             string_append_formated(&msg, " size: %d, alignment: %d", type->memory_info.value.size, type->memory_info.value.alignment);
         }

@@ -1910,7 +1910,7 @@ void symbol_lookup_resolve(
     AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>& results)
 {
     // Find all symbols with this id
-    symbol_table_query_id(symbol_table, lookup->name, search_parents, access_level, &results);
+    symbol_table_query_id(symbol_table, lookup->name, search_parents, access_level, &results, &semantic_analyser.symbol_lookup_visited);
 
     // Wait for alias symbols to finish their resolution
     for (int i = 0; i < results.size; i++)
@@ -3777,7 +3777,7 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
         {
             auto& lookup = symbol_lookups[i];
             dynamic_array_reset(&symbols);
-            symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::POLYMORPHIC, &symbols);
+            symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::POLYMORPHIC, &symbols, &semantic_analyser.symbol_lookup_visited);
             if (symbols.size == 0) {
                 continue; // Symbol lookups in header may also go outside of the parameter-table
             }
@@ -12047,6 +12047,7 @@ void semantic_analyser_destroy()
 // ERRORS
 void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format)
 {
+    auto type_system = &compiler.analysis_data->type_system;
     Rich_Text::set_text_color(text, Syntax_Color::TEXT);
     switch (info.type)
     {
@@ -12083,22 +12084,22 @@ void error_information_append_to_rich_text(const Error_Information& info, Rich_T
     }
     case Error_Information_Type::GIVEN_TYPE:
         Rich_Text::append_formated(text, "Given Type:    ");
-        datatype_append_to_rich_text(info.options.type, text, format);
+        datatype_append_to_rich_text(info.options.type, type_system, text, format);
         break;
     case Error_Information_Type::EXPECTED_TYPE:
         Rich_Text::append_formated(text, "Expected Type: ");
-        datatype_append_to_rich_text(info.options.type, text, format);
+        datatype_append_to_rich_text(info.options.type, type_system, text, format);
         break;
     case Error_Information_Type::FUNCTION_TYPE:
         Rich_Text::append_formated(text, "Function Type: ");
-        datatype_append_to_rich_text(info.options.type, text, format);
+        datatype_append_to_rich_text(info.options.type, type_system, text, format);
         break;
     case Error_Information_Type::BINARY_OP_TYPES:
         Rich_Text::append_formated(text, "Left: ");
-        datatype_append_to_rich_text(info.options.binary_op_types.left_type, text, format);
+        datatype_append_to_rich_text(info.options.binary_op_types.left_type, type_system, text, format);
         Rich_Text::set_text_color(text);
         Rich_Text::append_formated(text, ", Right: ");
-        datatype_append_to_rich_text(info.options.binary_op_types.right_type, text, format);
+        datatype_append_to_rich_text(info.options.binary_op_types.right_type, type_system, text, format);
         break;
     case Error_Information_Type::EXPRESSION_RESULT_TYPE:
     {

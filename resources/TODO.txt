@@ -1,13 +1,21 @@
 
-Compiler_Data
+Bug 1:
+ * Text-Range must be in order
+
+TODO:
+ * Auto-format line does not update tokens?
+ * Fix Bugs
+ * Don't reparse if no changes...
+ * Member-Access and Symbol-Lookup re-implementation in editor
+
+- Symbol_Lookup_Visited table --> Querying symbol table needs this, e.g. both editor-completions and compilord
 
 Next Tasks:
- * Share AST-Data between compilation_unit and tab
- * Wait for newest compilation version
  * Synchronization
     - Identifier_Pool synchronization
     - Symbol_Lookup_Visited table --> Querying symbol table needs this, e.g. both editor-completions and compilord
     - Open_Tab/Close_Tab load file (open_in_tab_index)
+ * No Parsing if code didn't change?
 
 TODO:
  * AST-Data?

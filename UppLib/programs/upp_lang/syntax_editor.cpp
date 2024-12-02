@@ -224,8 +224,7 @@ struct Editor_Tab
     Compilation_Unit* compilation_unit;
     History_Timestamp last_code_info_synch;
     History_Timestamp last_compiler_synchronized;
-    History_Timestamp last_code_completion_query;
-    History_Timestamp last_code_completion_compiler_timestamp;
+    int last_code_completion_info_index;
     Text_Index last_code_completion_query_pos;
     bool requires_recompile; // E.g. when loaded from a file, or otherwise modified
 
@@ -292,9 +291,10 @@ struct Syntax_Editor
     int open_tab_index;
     int main_tab_index; // If -1, use the currently open tab for compiling
     float normal_text_size_pixel;
+    int compile_count;
 
     bool last_compile_was_with_code_gen;
-    Source_Code* last_compile_main_code;
+    Compilation_Unit* last_compile_main_unit;
 
     String yank_string;
     bool yank_was_line;
@@ -322,8 +322,10 @@ struct Syntax_Editor
     // Search and Fuzzy-Find
     String fuzzy_search_text;
     Line_Editor search_text_edit;
+    int last_code_completion_tab;
     Dynamic_Array<Editor_Suggestion> suggestions; // Used both for fuzzy-find and code-completion
     Directory_Crawler* directory_crawler;
+    Hashset<Symbol_Table*> symbol_table_already_visited;
 
     String search_text;
     Text_Index search_start_pos;
@@ -376,7 +378,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos);
 Error_Display error_display_make(String msg, Token_Range range, Compilation_Unit* unit, bool is_token_range_duplicate, int semantic_error_index);
 void syntax_editor_sanitize_cursor();
 Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time);
-unsigned long compiler_thread_start_fn(void* userdata);
+unsigned long compiler_thread_entry_fn(void* userdata);
 
 
 // Helper Namespaces
@@ -1683,6 +1685,7 @@ namespace Text_Editing
                         out_ignore_lex_changes = true;
                     }
                 }
+                break;
             }
             case Operator::COLON: {
                 out_space_after = true;
@@ -1998,9 +2001,8 @@ int syntax_editor_add_tab(String file_path)
     tab.folds = dynamic_array_create<Code_Fold>();
     tab.last_code_info_synch = history_get_timestamp(&tab.history);
     tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
+    tab.last_code_completion_info_index = -1;
     tab.last_render_timestamp = history_get_timestamp(&tab.history);
-    tab.last_code_completion_query = history_get_timestamp(&tab.history);
-    tab.last_code_completion_compiler_timestamp = history_get_timestamp(&tab.history);
     tab.last_code_completion_query_pos = text_index_make(-1, -1);
     tab.last_render_cursor_pos = text_index_make(0, 0);
     tab.cursor = text_index_make(0, 0);
@@ -2144,7 +2146,6 @@ void syntax_editor_switch_tab(int new_tab_index)
 
     editor.open_tab_index = new_tab_index;
     auto& tab = editor.tabs[editor.open_tab_index];
-    source_code_tokenize(tab.code);
     // Re-Sort errors since sorting depends on open tab
     if (editor.analysis_data != nullptr) {
         dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
@@ -2160,7 +2161,6 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
     syntax_editor_save_text_file();
 
     Editor_Tab* tab = &editor.tabs[tab_index];
-    tab->compilation_unit->open_in_editor = false;
     tab->compilation_unit->editor_tab_index = -1;
     editor_tab_destroy(&editor.tabs[tab_index]);
     dynamic_array_remove_ordered(&editor.tabs, tab_index);
@@ -2188,6 +2188,9 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     memory_zero(&syntax_editor);
     gui_initialize(text_renderer, window);
 
+    syntax_editor.last_code_completion_tab = -1;
+    syntax_editor.compile_count = 0;
+    syntax_editor.symbol_table_already_visited = hashset_create_pointer_empty<Symbol_Table*>(4);
     syntax_editor.auto_format_identifier_pool = identifier_pool_create();
     syntax_editor.last_insert_was_shift_enter = false;
     syntax_editor.random = random_make_time_initalized();
@@ -2247,12 +2250,13 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.compiler_thread_should_close = false;
     syntax_editor.compiler_wait_semaphore = semaphore_create(0, 1);
     syntax_editor.compilation_finish_semaphore = semaphore_create(0, 1);
-    syntax_editor.compiler_thread = thread_create(compiler_thread_start_fn, nullptr);
+    syntax_editor.compiler_thread = thread_create(compiler_thread_entry_fn, nullptr);
 }
 
 void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
+    hashset_destroy(&editor.symbol_table_already_visited);
     directory_crawler_destroy(editor.directory_crawler);
     dynamic_array_destroy(&editor.particles);
     dynamic_array_destroy(&editor.suggestions);
@@ -2583,24 +2587,39 @@ void syntax_editor_synchronize_code_information()
     }
 }
 
-unsigned long compiler_thread_start_fn(void* userdata)
+unsigned long compiler_thread_entry_fn(void* userdata)
 {
     auto& editor = syntax_editor;
     
     bool worked = fiber_initialize();
     assert(worked, "panic");
+
+    logg("Compiler thread waiting now\n");
     semaphore_wait(editor.compiler_wait_semaphore);
     while (!editor.compiler_thread_should_close)
     {
-        logg("Compiler thread waiting now\n");
         Compilation_Unit* compilation_unit = editor.compiler_main_unit;
         bool generate_code = editor.compiler_build_code;
-        logg("Compiler thread signaled\n");
+        // logg("Compiler thread signaled\n");
 
         // Compile here
         compiler_compile(compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
         compiler_analysis_update_source_code_information();
+
+        int analysis_info_count = 0;
+        for (int i = 0; i < compiler.compilation_units.size; i++)
+        {
+            auto code = compiler.compilation_units[i]->code;
+            for (int j = 0; j < code->line_count; j++) {
+                auto line = source_code_get_line(code, j);
+                analysis_info_count += line->item_infos.size;
+            }
+        }
+
+        //timer_sleep_for(compiler.timer, 1.0);
+
         semaphore_increment(editor.compilation_finish_semaphore, 1);
+        //logg("Compiler thread waiting now\n");
         semaphore_wait(editor.compiler_wait_semaphore);
     }
 
@@ -2626,8 +2645,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
                 code_has_changed = true;
             }
         }
-        auto main_code = main_tab.code;
-        if (editor.last_compile_main_code != main_code) {
+        if (editor.last_compile_main_unit != main_tab.compilation_unit) {
             code_has_changed = true;
         }
 
@@ -2645,7 +2663,21 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
             return;
         }
         editor.compiler_work_started = false;
+
+        // Update open_in_editor info
+        for (int i = 0; i < compiler.compilation_units.size; i++) {
+            compiler.compilation_units[i]->open_in_editor = false;
+        }
+        for (int i = 0; i < editor.tabs.size; i++) {
+            editor.tabs[i].compilation_unit->open_in_editor = true;
+        }
     }
+
+    assert(!editor.compiler_work_started, "");
+    if (!should_compile && !got_compiler_update) {
+        return;
+    }
+    logg("Synchronize with compiler: text-updated: %s, compiler-update_received: %s\n", (should_compile ? "TRUE" : "FALSE"), (got_compiler_update ? "TRUE" : "FALSE"));
 
     if (got_compiler_update)
     {
@@ -2655,6 +2687,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         editor.analysis_data = compiler.analysis_data;
         compiler.analysis_data = nullptr;
         dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
+        dynamic_array_reset(&editor.suggestions);
+        editor.compile_count += 1;
     }
 
     if (got_compiler_update || should_compile)
@@ -2665,35 +2699,48 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         for (int i = 0; i < editor.tabs.size; i++)
         {
             auto& tab = editor.tabs[i];
+            assert(tab.code != tab.compilation_unit->code, "");
 
-            Source_Code* swap = tab.code;
-            tab.code = tab.compilation_unit->code;
-            tab.compilation_unit->code = swap;
-            tab.history.code = tab.code;
-
-            // Now we have the old version, so we re-apply the previous code-changes
+            // Update code if necessary
             auto now = history_get_timestamp(&tab.history);
-            if (tab.last_compiler_synchronized.node_index != now.node_index)
+            if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile) 
             {
                 dynamic_array_reset(&changes);
                 history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
                 for (int i = 0; i < changes.size; i++) {
-                    code_change_apply(tab.code, &changes[i], true);
+                    code_change_apply(tab.compilation_unit->code, &changes[i], true);
                 }
+                tab.last_compiler_synchronized = now;
+                tab.requires_recompile = false;
+            }
+
+            if (got_compiler_update) {
+                // Swap out code so we get newest analysis infos
+                Source_Code* swap = tab.code;
+                tab.code = tab.compilation_unit->code;
+                tab.compilation_unit->code = swap;
+                tab.history.code = tab.code;
+
                 syntax_editor_update_code_infos_from_changes(i, changes, false);
                 syntax_editor_update_line_visible_and_fold_info(i);
-                tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
+            }
+        }
+
+        // Count analysis infos
+        int analysis_info_count = 0;
+        for (int i = 0; i < editor.tabs.size; i++)
+        {
+            auto code = editor.tabs[i].code;
+            for (int j = 0; j < code->line_count; j++) {
+                auto line = source_code_get_line(code, j);
+                analysis_info_count += line->item_infos.size;
             }
         }
     }
 
     if (should_compile)
     {
-        for (int i = 0; i < editor.tabs.size; i++) {
-            auto& tab = editor.tabs[i];
-            editor.tabs[i].requires_recompile = false;
-        }
-        editor.last_compile_main_code = main_tab.code;
+        editor.last_compile_main_unit = main_tab.compilation_unit;
         editor.last_compile_was_with_code_gen = generate_code;
 
         // Start work in compile thread
@@ -2985,18 +3032,18 @@ bool syntax_editor_add_position_to_jump_list()
     return true;
 }
 
-void syntax_editor_goto_node(AST::Node* node)
+void syntax_editor_goto_symbol_definition(Symbol* symbol)
 {
     auto& editor = syntax_editor;
 
     // Switch tab to file with symbol
-    Compilation_Unit* unit = compiler_find_ast_compilation_unit(node);
+    auto unit = symbol->definition_unit;
+    if (unit == nullptr) return;
     int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
     syntax_editor_switch_tab(index);
 
     auto& tab = editor.tabs[editor.open_tab_index];
-    Text_Index text_index = node->range.start;
-    tab.cursor = code_query_text_index_at_last_synchronize(text_index, editor.open_tab_index, true);
+    tab.cursor = code_query_text_index_at_last_synchronize(symbol->definition_text_index, editor.open_tab_index, true);
     syntax_editor_sanitize_cursor();
 }
 
@@ -3005,9 +3052,9 @@ void syntax_editor_goto_node(AST::Node* node)
 // Code Queries
 struct Position_Info
 {
-    Code_Analysis_Item* symbol_info;
-    Code_Analysis_Item* expression_info;
-    Code_Analysis_Item* member_access;
+    Code_Analysis_Item_Symbol_Info* symbol_info;
+    Code_Analysis_Item_Expression* expression_info;
+    Code_Analysis_Item_Member_Access* member_access;
     Datatype_Enum* auto_enum_type;
     Parameter_Matching_Info* call_info;
     int call_argument_index;
@@ -3134,7 +3181,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
             break;
         }
         case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
-            result.symbol_info = &infos[i];
+            result.symbol_info = &infos[i].options.symbol_info;
             break;
         }
         case Code_Analysis_Item_Type::AUTO_ENUM: {
@@ -3149,13 +3196,13 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
         }
         case Code_Analysis_Item_Type::EXPRESSION_INFO: {
             if (info.tree_depth > previous_expr_depth) {
-                result.expression_info = &infos[i];
+                result.expression_info = &infos[i].options.expression_info;
                 previous_expr_depth = info.tree_depth;
             }
             break;
         }
         case Code_Analysis_Item_Type::MEMBER_ACCESS: {
-            result.member_access = &infos[i];
+            result.member_access = &infos[i].options.member_access;
             break;
         }
         case Code_Analysis_Item_Type::MARKUP: {
@@ -3322,15 +3369,16 @@ void code_completion_find_suggestions()
     auto& suggestions = editor.suggestions;
     auto& cursor = tab.cursor;
 
-    if (tab.last_code_completion_query.node_index == tab.history.current && 
-        text_index_equal(tab.last_code_completion_query_pos, cursor) &&
-        tab.last_compiler_synchronized.node_index == tab.last_code_completion_compiler_timestamp.node_index) 
+    syntax_editor_synchronize_code_information();
+    if (text_index_equal(tab.last_code_completion_query_pos, cursor) &&
+        editor.last_code_completion_tab == editor.open_tab_index &&
+        tab.last_code_completion_info_index == editor.compile_count)
     {
         return;
     }
-    tab.last_code_completion_query = history_get_timestamp(&tab.history);
+    tab.last_code_completion_info_index = editor.compile_count;
     tab.last_code_completion_query_pos = cursor;
-    tab.last_code_completion_compiler_timestamp = tab.last_compiler_synchronized;
+    editor.last_code_completion_tab = editor.open_tab_index;
 
     dynamic_array_reset(&suggestions);
 
@@ -3419,7 +3467,7 @@ void code_completion_find_suggestions()
         Datatype* type = nullptr;
         if (position_info.member_access != nullptr)
         {
-            auto& access = position_info.member_access->options.member_access;
+            auto& access = *position_info.member_access;
             type = access.final_type;
             if (access.initial_type->mods.optional_flags != 0) {
                 fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
@@ -3526,7 +3574,7 @@ void code_completion_find_suggestions()
         if (test_char(text, char_index, '~')) {
             Position_Info position_info = code_query_find_position_infos(text_index_make(cursor.line, char_index - 1), nullptr);
             if (position_info.symbol_info != nullptr) {
-                auto& symbol = position_info.symbol_info->options.symbol.symbol;
+                auto& symbol = position_info.symbol_info->symbol;
                 if (symbol->type == Symbol_Type::MODULE) {
                     symbol_table = symbol->options.module.symbol_table;
                 }
@@ -3537,7 +3585,7 @@ void code_completion_find_suggestions()
         {
             auto results = dynamic_array_create<Symbol*>();
             SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_query_id(symbol_table, 0, false, Symbol_Access_Level::INTERNAL, &results);
+            symbol_table_query_id(symbol_table, 0, false, Symbol_Access_Level::INTERNAL, &results, &editor.symbol_table_already_visited);
             for (int i = 0; i < results.size; i++) {
                 fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
                 dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
@@ -3622,7 +3670,7 @@ void code_completion_find_suggestions()
         {
             auto results = dynamic_array_create<Symbol*>();
             SCOPE_EXIT(dynamic_array_destroy(&results));
-            symbol_table_query_id(symbol_table, 0, true, Symbol_Access_Level::INTERNAL, &results);
+            symbol_table_query_id(symbol_table, 0, true, Symbol_Access_Level::INTERNAL, &results, &editor.symbol_table_already_visited);
             for (int i = 0; i < results.size; i++) {
                 fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
                 dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
@@ -4660,13 +4708,9 @@ void normal_command_execute(Normal_Mode_Command& command)
     {
         syntax_editor_synchronize_code_information();
         Position_Info position_info = code_query_find_position_infos(cursor, nullptr);
-        if (position_info.symbol_info != nullptr) 
-        {
-            Symbol* symbol = position_info.symbol_info->options.symbol.symbol;
-            if (symbol->definition_node != 0) {
-                syntax_editor_goto_node(symbol->definition_node);
-                syntax_editor_add_position_to_jump_list();
-            }
+        if (position_info.symbol_info != nullptr) {
+            syntax_editor_goto_symbol_definition(position_info.symbol_info->symbol);
+            syntax_editor_add_position_to_jump_list();
         }
         break;
     }
@@ -4921,7 +4965,16 @@ void insert_command_execute(Insert_Command input)
             syntax_editor_wait_for_newest_compiler_info(false);
             code_completion_find_suggestions();
         }
-        code_completion_insert_suggestion();
+
+        if (editor.suggestions.size != 0) {
+            code_completion_insert_suggestion();
+        }
+        else {
+            Insert_Command cmd;
+            cmd.letter = ' ';
+            cmd.type = Insert_Command_Type::SPACE;
+            insert_command_execute(cmd);
+        }
         break;
     }
     case Insert_Command_Type::EXIT_INSERT_MODE: {
@@ -5336,7 +5389,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
             editor.mode = Editor_Mode::NORMAL;
             auto suggestion = editor.suggestions[0];
             if (suggestion.type == Suggestion_Type::SYMBOL) {
-                syntax_editor_goto_node(suggestion.options.symbol->definition_node);
+                syntax_editor_goto_symbol_definition(suggestion.options.symbol);
             }
             else
             {
@@ -5455,7 +5508,9 @@ void syntax_editor_process_key_message(Key_Message& msg)
 
                     String* id = identifier_pool_add(&compiler.identifier_pool, part);
                     dynamic_array_reset(&symbols);
-                    symbol_table_query_id(symbol_table, id, search_includes, (is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &symbols);
+                    symbol_table_query_id(
+                        symbol_table, id, search_includes, (is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &symbols, &editor.symbol_table_already_visited
+                    );
                     search_includes = false;
                     is_intern = false;
 
@@ -5477,12 +5532,12 @@ void syntax_editor_process_key_message(Key_Message& msg)
 
             // Add all symbols to fuzzy search
             dynamic_array_reset(&symbols);
-            symbol_table_query_id(symbol_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &symbols);
+            symbol_table_query_id(symbol_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &symbols, &editor.symbol_table_already_visited);
             String last = path_parts[path_parts.size - 1];
             fuzzy_search_start_search(last, 10);
             for (int i = 0; i < symbols.size; i++) {
                 auto symbol = symbols[i];
-                if (symbol->definition_node != 0) {
+                if (symbol->definition_unit != 0) {
                     fuzzy_search_add_item(*symbol->id, i);
                 }
             }
@@ -5604,6 +5659,7 @@ void syntax_editor_update(bool& animations_running)
     for (int i = 0; i < input->key_messages.size; i++) {
         syntax_editor_process_key_message(input->key_messages[i]);
     }
+    syntax_editor_synchronize_with_compiler(false);
 
     // Generate GUI (Tabs)
     {
@@ -6035,51 +6091,7 @@ void syntax_editor_render()
     // Get hover infos
     Dynamic_Array<int> hover_errors = dynamic_array_create<int>();
     SCOPE_EXIT(dynamic_array_destroy(&hover_errors));
-    Symbol* hover_symbol = nullptr;
-    Analysis_Pass* hover_symbol_pass = nullptr;
-    Parameter_Matching_Info* hover_call_info = nullptr;
-    Code_Analysis_Item* hover_expression_info = nullptr;
-    int hover_call_argument = -1;
-    {
-        auto& infos = source_code_get_line(tab.code, cursor.line)->item_infos;
-        int previous_expr_depth = -1;
-        int previous_call_depth = -1;
-        for (int i = 0; i < infos.size; i++)
-        {
-            auto info = infos[i];
-            if (cursor.character < info.start_char || cursor.character >= info.end_char) continue;
-            switch (info.type)
-            {
-            case Code_Analysis_Item_Type::CALL_INFORMATION: {
-                if (info.tree_depth > previous_call_depth) {
-                    hover_call_info = info.options.call_information;
-                    previous_call_depth = info.tree_depth;
-                }
-                break;
-            }
-            case Code_Analysis_Item_Type::ARGUMENT_NODE: {
-                hover_call_argument = info.options.argument_index;
-                break;
-            }
-            case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
-                hover_symbol = info.options.symbol.symbol;
-                hover_symbol_pass = info.options.symbol.pass;
-                break;
-            }
-            case Code_Analysis_Item_Type::ERROR_ITEM: {
-                dynamic_array_push_back(&hover_errors, info.options.error_index);
-                break;
-            }
-            case Code_Analysis_Item_Type::EXPRESSION_INFO: {
-                if (info.tree_depth > previous_expr_depth) {
-                    hover_expression_info = &infos[i];
-                    previous_expr_depth = info.tree_depth;
-                }
-                break;
-            }
-            }
-        }
-    }
+    Position_Info hover_info = code_query_find_position_infos(cursor, &hover_errors);
 
     // Text-Highlighting
     bool cursor_is_on_fold = source_code_get_line(code, cursor.line)->is_folded;
@@ -6123,7 +6135,10 @@ void syntax_editor_render()
         {
             auto text = &editor.editor_text;
 
-            Symbol* highlight_symbol = hover_symbol;
+            Symbol* highlight_symbol = nullptr;
+            if (hover_info.symbol_info != nullptr) {
+                highlight_symbol = hover_info.symbol_info->symbol;
+            }
             bool highlight_only_definition = false;
             if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH || cursor_is_on_fold) {
                 highlight_symbol = nullptr;
@@ -6171,10 +6186,10 @@ void syntax_editor_render()
                     }
                     case Code_Analysis_Item_Type::SYMBOL_LOOKUP:
                     {
-                        auto symbol = info.options.symbol.symbol;
+                        auto symbol = info.options.symbol_info.symbol;
                         color = symbol_type_to_color(symbol->type);
                         // Highlight background if hover symbol
-                        if (symbol == hover_symbol && !(highlight_only_definition && !info.options.symbol.is_definition)) {
+                        if (symbol == highlight_symbol && !(highlight_only_definition && !info.options.symbol_info.is_definition)) {
                             Rich_Text::mark_line(
                                 text, Rich_Text::Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT,
                                 line->visible_index - cam_start_visible, info.start_char, info.end_char
@@ -6243,6 +6258,7 @@ void syntax_editor_render()
     // Calculate context
     auto suggestions_append_to_rich_text = [](Rich_Text::Rich_Text* text)
     {
+        auto type_system = &syntax_editor.analysis_data->type_system;
         auto suggestions = syntax_editor.suggestions;
         for (int i = 0; i < suggestions.size; i++)
         {
@@ -6279,7 +6295,7 @@ void syntax_editor_render()
                 Rich_Text::append(text, *sugg.text);
                 Rich_Text::set_text_color(text);
                 Rich_Text::append(text, ": ");
-                datatype_append_to_rich_text(sugg.options.struct_member.member_type, text);
+                datatype_append_to_rich_text(sugg.options.struct_member.member_type, type_system, text);
                 break;
             }
             case Suggestion_Type::ENUM_MEMBER: {
@@ -6287,7 +6303,7 @@ void syntax_editor_render()
                 Rich_Text::append(text, *sugg.text);
                 Rich_Text::set_text_color(text);
                 Rich_Text::append(text, ": ");
-                datatype_append_to_rich_text(upcast(sugg.options.enum_member.enumeration), text);
+                datatype_append_to_rich_text(upcast(sugg.options.enum_member.enumeration), type_system, text);
                 break;
             }
             case Suggestion_Type::FILE: {
@@ -6336,6 +6352,7 @@ void syntax_editor_render()
     Rich_Text::Rich_Text call_info_text = Rich_Text::create(vec3(1));
     SCOPE_EXIT(Rich_Text::destroy(&context_text));
 
+    auto type_system = &syntax_editor.analysis_data->type_system;
     if (show_context)
     {
         Rich_Text::Rich_Text* text = &context_text;
@@ -6366,15 +6383,15 @@ void syntax_editor_render()
         }
 
         // Symbol Info
-        if (show_normal_mode_context && hover_symbol != 0)
+        if (show_normal_mode_context && hover_info.symbol_info != 0)
         {
             Rich_Text::add_seperator_line(text);
             Rich_Text::add_line(text);
 
             Datatype* type = 0;
             const char* after_text = nullptr;
-            Symbol* symbol = hover_symbol;
-            Analysis_Pass* pass = hover_symbol_pass;
+            Symbol* symbol = hover_info.symbol_info->symbol;
+            Analysis_Pass* pass = hover_info.symbol_info->pass;
             switch (symbol->type)
             {
             case Symbol_Type::COMPTIME_VALUE:
@@ -6429,7 +6446,7 @@ void syntax_editor_render()
             }
 
             if (type != 0) {
-                datatype_append_to_rich_text(type, text);
+                datatype_append_to_rich_text(type, type_system, text);
                 Rich_Text::set_text_color(text);
             }
 
@@ -6448,22 +6465,22 @@ void syntax_editor_render()
         }
 
         // Analysis-Info
-        if (hover_expression_info != nullptr && show_normal_mode_context)
+        if (hover_info.expression_info != nullptr && show_normal_mode_context)
         {
             Rich_Text::add_seperator_line(text);
             Rich_Text::add_line(text);
             Rich_Text::append(text, "Expr: ");
-            datatype_append_to_rich_text(hover_expression_info->options.expression_info.after_cast_type, text);
+            datatype_append_to_rich_text(hover_info.expression_info->after_cast_type, type_system, text);
         }
 
         // Call-info
-        if (hover_call_info != nullptr)
+        if (hover_info.call_info != nullptr)
         {
             Rich_Text::Rich_Text* text = &call_info_text;
             Rich_Text::add_line(text);
 
-            auto info = hover_call_info;
-            int arg_index = hover_call_argument;
+            auto info = hover_info.call_info;
+            int arg_index = hover_info.call_argument_index;
 
             String* name = nullptr;
             vec3 color = Syntax_Color::IDENTIFIER_FALLBACK;
@@ -6533,7 +6550,7 @@ void syntax_editor_render()
                 Rich_Text::append(text, *param_info.name);
                 if (param_info.param_type != nullptr) {
                     Rich_Text::append(text, ": ");
-                    datatype_append_to_rich_text(param_info.param_type, text);
+                    datatype_append_to_rich_text(param_info.param_type, type_system, text);
                 }
                 Rich_Text::set_text_color(text, vec3(1.0f));
 
@@ -6543,7 +6560,6 @@ void syntax_editor_render()
                 }
             }
             Rich_Text::append(text, is_struct_init ? "}" : ")");
-
         }
     }
 

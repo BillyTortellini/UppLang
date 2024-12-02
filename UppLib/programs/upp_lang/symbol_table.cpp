@@ -73,12 +73,21 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     // Create new symbol
     Symbol* new_sym = new Symbol;
     dynamic_array_push_back(&compiler.analysis_data->allocated_symbols, new_sym);
-    new_sym->definition_node = definition_node;
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
     new_sym->access_level = access_level;
-    new_sym->references = dynamic_array_create<AST::Symbol_Lookup*>(1);
+    new_sym->references = dynamic_array_create<AST::Symbol_Lookup*>();
+
+    new_sym->definition_node = definition_node;
+    if (definition_node != nullptr) {
+        new_sym->definition_unit = compiler_find_ast_compilation_unit(new_sym->definition_node);
+        new_sym->definition_text_index = definition_node->range.start;
+    }
+    else {
+        new_sym->definition_unit = nullptr;
+        new_sym->definition_text_index = text_index_make(0, 0);
+    }
 
     // Check if symbol is already defined
     bool add_to_symbol_table = true;
@@ -145,15 +154,14 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 
 void symbol_table_query_id_recursive(
-    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results
+    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
 )
 {
     // Check if already visited
-    auto visited = compiler.semantic_analyser->symbol_lookup_visited;
-    if (hashset_contains(&visited, table)) {
+    if (hashset_contains(already_visited, table)) {
         return;
     }
-    hashset_insert_element(&visited, table);
+    hashset_insert_element(already_visited, table);
 
     // Check if all symbols should be added (If id parameter == 0)
     bool stop_further_lookup = false;
@@ -196,14 +204,17 @@ void symbol_table_query_id_recursive(
             id,
             included.transitive,
             (Symbol_Access_Level)(math_minimum((int) access_level, (int) included.access_level)),
-            results
+            results,
+            already_visited
         );
     }
 }
 
-void symbol_table_query_id(Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results) {
-    hashset_reset(&compiler.semantic_analyser->symbol_lookup_visited);
-    return symbol_table_query_id_recursive(table, id, search_includes, access_level, results);
+void symbol_table_query_id(
+    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited) 
+{
+    hashset_reset(already_visited);
+    return symbol_table_query_id_recursive(table, id, search_includes, access_level, results, already_visited);
 }
 
 void symbol_type_append_to_string(Symbol_Type type, String* string)

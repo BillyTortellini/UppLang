@@ -56,6 +56,7 @@ Compiler compiler;
 // COMPILER
 Compiler* compiler_initialize(Timer* timer)
 {
+    compiler.add_compilation_unit_semaphore = semaphore_create(1, 1);
     compiler.timer = timer;
     compiler.identifier_pool = identifier_pool_create();
     compiler.analysis_data = nullptr;
@@ -90,6 +91,7 @@ void compilation_unit_destroy(Compilation_Unit* unit)
 
 void compiler_destroy()
 {
+    semaphore_destroy(compiler.add_compilation_unit_semaphore);
     lexer_shutdown();
     fiber_pool_destroy(compiler.fiber_pool);
     compiler.fiber_pool = 0;
@@ -120,6 +122,9 @@ Compilation_Unit* compiler_add_compilation_unit(String file_path_param, bool ope
     String full_file_path = string_copy(file_path_param);
     file_io_relative_to_full_path(&full_file_path);
     SCOPE_EXIT(string_destroy(&full_file_path));
+
+    semaphore_wait(compiler.add_compilation_unit_semaphore);
+    SCOPE_EXIT(semaphore_increment(compiler.add_compilation_unit_semaphore, 1););
 
     // Check if file is already loaded
     Compilation_Unit* unit = nullptr;

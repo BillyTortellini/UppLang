@@ -5,8 +5,7 @@
 #include "../../datastructures/stack_allocator.hpp"
 #include "../../datastructures/string.hpp"
 #include "../../win32/process.hpp"
-
-#include "lexer.hpp"
+#include "../../win32/thread.hpp"
 
 struct Datatype;
 struct String;
@@ -14,6 +13,28 @@ struct Type_System;
 struct Module_Progress;
 struct ModTree_Function;
 struct Datatype_Struct;
+
+enum class Cast_Type
+{
+    INTEGERS,
+    FLOATS,
+    FLOAT_TO_INT,
+    INT_TO_FLOAT,
+    POINTERS,
+    POINTER_TO_U64,
+    U64_TO_POINTER,
+    ENUM_TO_INT,
+    INT_TO_ENUM,
+    ARRAY_TO_SLICE, 
+    TO_ANY,
+    FROM_ANY,
+    TO_OPTIONAL,
+    CUSTOM_CAST,
+
+    NO_CAST, // No cast needed, source-type == destination-type
+    UNKNOWN, // Either source or destination type are/contain error/unknown type
+    INVALID, // Cast is not valid
+};
 
 enum class Timing_Task
 {
@@ -220,11 +241,13 @@ struct Identifier_Pool
 {
     Hashtable<String, String*> identifier_lookup_table;
     Predefined_IDs predefined_ids;
+    Semaphore add_identifier_semaphore;
 };
 
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
 String* identifier_pool_add(Identifier_Pool* pool, String identifier);
+String* identifier_pool_add_unsafe(Identifier_Pool* pool, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
 

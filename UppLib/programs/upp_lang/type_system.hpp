@@ -269,9 +269,9 @@ struct Datatype_Format
 };
 Datatype_Format datatype_format_make_default();
 
-void datatype_append_to_rich_text(Datatype* type, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
-void datatype_append_to_string(String* string, Datatype* signature, Datatype_Format format = datatype_format_make_default());
-void datatype_append_value_to_string(Datatype* type, byte* value_ptr, String* string);
+void datatype_append_to_rich_text(Datatype* type, Type_System* type_system, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
+void datatype_append_to_string(String* string, Type_System* type_system, Datatype* signature, Datatype_Format format = datatype_format_make_default());
+void datatype_append_value_to_string(Datatype* type, Type_System* type_system, byte* value_ptr, String* string);
 
 
 

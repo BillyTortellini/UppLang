@@ -11,7 +11,6 @@ struct Timer;
 struct Renderer_2D;
 struct Window;
 
-// Tokens
 // Functions
 void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer);
 void syntax_editor_destroy();

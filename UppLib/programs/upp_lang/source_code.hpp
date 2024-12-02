@@ -4,6 +4,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
 #include "lexer.hpp"
+#include "compiler_misc.hpp"
 
 struct Module_Progress;
 struct Source_Code;
@@ -15,6 +16,7 @@ struct Compilation_Unit;
 struct Datatype;
 struct Analysis_Pass;
 struct Datatype_Enum;
+struct Compilation_Unit;
 
 namespace AST
 {
@@ -94,27 +96,35 @@ enum class Code_Analysis_Item_Type
     ERROR_ITEM,
 };
 
+struct Code_Analysis_Item_Member_Access
+{
+    Member_Access_Type access_type;
+    Datatype* final_type;
+    Datatype* initial_type;
+};
+
+struct Code_Analysis_Item_Symbol_Info{
+    Symbol* symbol;
+    bool is_definition;
+    Analysis_Pass* pass;
+    AST::Symbol_Lookup* lookup;
+};
+
+struct Code_Analysis_Item_Expression{
+    Datatype* before_cast_type;
+    Datatype* after_cast_type;
+    Cast_Type cast_type;
+};
+
 union Code_Analysis_Item_Option
 {
     Code_Analysis_Item_Option() {};
-    struct {
-        Member_Access_Type access_type;
-        Datatype* final_type;
-        Datatype* initial_type;
-    } member_access; 
+    Code_Analysis_Item_Member_Access member_access; 
+    Code_Analysis_Item_Expression expression_info;
+    Code_Analysis_Item_Symbol_Info symbol_info;
     Parameter_Matching_Info* call_information;
-    struct {
-        Symbol* symbol;
-        bool is_definition;
-        Analysis_Pass* pass;
-        AST::Symbol_Lookup* lookup;
-    } symbol;
     Datatype_Enum* auto_enum_type;
     int argument_index;
-    struct {
-        Datatype* before_cast_type;
-        Datatype* after_cast_type;
-    } expression_info;
     vec3 markup_color;
     int error_index;
 };
