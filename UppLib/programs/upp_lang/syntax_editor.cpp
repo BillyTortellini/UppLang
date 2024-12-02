@@ -2295,236 +2295,223 @@ void syntax_editor_save_text_file()
     }
 }
 
-struct Line_Change
+struct Line_Diff_Item
 {
-    int line_index;
-    Dynamic_Array<int> text_change_indices;
+    bool is_insert; // otherwise delete
+    int char_index;
+    int length;
 };
 
-void syntax_editor_update_code_infos_from_changes(int tab_index, Dynamic_Array<Code_Change> changes, bool update_folds_and_jumps)
+struct Line_Diff
 {
-    auto line_changes = dynamic_array_create<Line_Change>();
-    SCOPE_EXIT(
-        for (int i = 0; i < line_changes.size; i++) {
-            dynamic_array_destroy(&line_changes[i].text_change_indices);
+    int new_line_index;
+    Dynamic_Array<Line_Diff_Item> items;
+    bool indent_changed;
+};
+
+struct Line_Insert_Or_Delete
+{
+    int line_index;
+    bool is_insert;
+};
+
+struct Code_Diff
+{
+    Dynamic_Array<Line_Insert_Or_Delete> line_inserts_and_deletes;
+    Dynamic_Array<Line_Diff> line_diffs;
+};
+
+Line_Diff* code_diff_get_or_add_line_diff(Code_Diff* code_diff, int line_index)
+{
+    auto& line_diffs = code_diff->line_diffs;
+
+    Line_Diff* line_diff = nullptr;
+    for (int i = 0; i < line_diffs.size; i++) {
+        auto& diff = line_diffs[i];
+        if (diff.new_line_index == line_index) {
+            return &diff;
         }
-        dynamic_array_destroy(&line_changes)
-    );
-    auto store_changed_line_index = [&](int line_index, int change_index) {
-        for (int i = 0; i < line_changes.size; i++) {
-            if (line_changes[i].line_index == line_index) {
-                dynamic_array_push_back(&line_changes[i].text_change_indices, change_index);
-                return;
-            }
-        }
-        Line_Change change;
-        change.line_index = line_index;
-        change.text_change_indices = dynamic_array_create<int>(1);
-        dynamic_array_push_back(&change.text_change_indices, change_index);
-        dynamic_array_push_back(&line_changes, change);
+    }
+
+    Line_Diff new_diff;
+    new_diff.new_line_index = line_index;
+    new_diff.items = dynamic_array_create<Line_Diff_Item>();
+    new_diff.indent_changed = false;
+    dynamic_array_push_back(&line_diffs, new_diff);
+    return &line_diffs[line_diffs.size - 1];
+}
+
+Code_Diff code_diff_create_from_changes(Dynamic_Array<Code_Change> changes)
+{
+    Code_Diff result;
+    result.line_diffs = dynamic_array_create<Line_Diff>();
+    result.line_inserts_and_deletes = dynamic_array_create<Line_Insert_Or_Delete>();
+
+    auto store_changed_line_index = [&](int line_index, bool is_insert, int char_index, int length)
+    {
+        Line_Diff_Item item;
+        item.char_index = char_index;
+        item.is_insert = is_insert;
+        item.length = length;
+        Line_Diff* line_diff = code_diff_get_or_add_line_diff(&result, line_index);
+        dynamic_array_push_back(&line_diff->items, item);
     };
 
-    auto& tab = syntax_editor.tabs[tab_index];
-    auto& folds = tab.folds;
-
-    bool folds_changed = false;
-    bool jump_list_changed = false;
     for (int i = 0; i < changes.size; i++)
     {
         auto& change = changes[i];
         int line_index = -1;
         switch (change.type)
         {
-        case Code_Change_Type::LINE_INSERT: 
+        case Code_Change_Type::LINE_INSERT:
         {
             int line_index = change.options.line_insert.line_index;
 
             // Update line change infos
-            for (int j = 0; j < line_changes.size; j++) 
+            for (int j = 0; j < result.line_diffs.size; j++)
             {
-                auto& line_change = line_changes[j];
+                auto& diff = result.line_diffs[j];
                 if (change.apply_forwards) {
-                    if (line_index < line_change.line_index) {
-                        line_change.line_index += 1;
-                    }
-                }
-                else 
-                {
-                    if (line_index == line_change.line_index) {
-                        dynamic_array_destroy(&line_change.text_change_indices);
-                        dynamic_array_swap_remove(&line_changes, j);
-                        j = j - 1;
-                        continue;
-                    }
-                    else if (line_index < line_change.line_index) {
-                        line_change.line_index -= 1;
-                    }
-                }
-            }
-
-            if (!update_folds_and_jumps) {
-                break;
-            }
-
-            // Update folds
-            folds_changed = true;
-            for (int j = 0; j < folds.size; j++) 
-            {
-                auto& fold = folds[j];
-
-                bool inside_fold = false;
-                bool before_fold = false;
-                if (change.apply_forwards) {
-                    inside_fold = line_index > fold.line_start && line_index <= fold.line_end;
-                    before_fold = line_index <= fold.line_start;
-                }
-                else {
-                    inside_fold = line_index >= fold.line_start && line_index <= fold.line_end;
-                    before_fold = line_index < fold.line_start;
-                }
-
-                // Remove fold if change was made inside
-                if (inside_fold) {
-                    dynamic_array_remove_ordered(&folds, j);
-                    j = j - 1;
-                }
-                else if (before_fold) {
-                    int diff = change.apply_forwards ? 1 : -1;
-                    fold.line_start += diff;
-                    fold.line_end += diff;
-                }
-            }
-
-            // Update jump list
-            for (int j = 0; j < tab.jump_list.size; j++) 
-            {
-                auto& pos = tab.jump_list[j];
-                if (change.apply_forwards) {
-                    if (line_index <= pos.line) {
-                        pos.line += 1;
-                        jump_list_changed = true;
+                    if (line_index < diff.new_line_index) {
+                        diff.new_line_index += 1;
                     }
                 }
                 else
                 {
-                    if (line_index <= pos.line) {
-                        pos.line -= 1;
-                        jump_list_changed = true;
+                    if (line_index == diff.new_line_index) {
+                        dynamic_array_destroy(&diff.items);
+                        dynamic_array_swap_remove(&result.line_diffs, j);
+                        j = j - 1;
+                        continue;
+                    }
+                    else if (line_index < diff.new_line_index) {
+                        diff.new_line_index -= 1;
                     }
                 }
             }
+
+            Line_Insert_Or_Delete insert;
+            insert.is_insert = change.apply_forwards;
+            insert.line_index = line_index;
+            dynamic_array_push_back(&result.line_inserts_and_deletes, insert);
             break;
         }
-        case Code_Change_Type::CHAR_INSERT: store_changed_line_index(change.options.char_insert.index.line, i); break;
-        case Code_Change_Type::TEXT_INSERT: store_changed_line_index(change.options.text_insert.index.line, i); break;
-        case Code_Change_Type::LINE_INDENTATION_CHANGE: store_changed_line_index(change.options.indentation_change.line_index, i); break;  
+        case Code_Change_Type::CHAR_INSERT: {
+            auto insert = change.options.char_insert;
+            store_changed_line_index(insert.index.line, change.apply_forwards, insert.index.character, 1);
+            break;
+        }
+        case Code_Change_Type::TEXT_INSERT: {
+            auto insert = change.options.text_insert;
+            store_changed_line_index(insert.index.line, change.apply_forwards, insert.index.character, insert.text.size);
+            break;
+        }
+        case Code_Change_Type::LINE_INDENTATION_CHANGE: {
+            auto line_diff = code_diff_get_or_add_line_diff(&result, change.options.indentation_change.line_index);
+            line_diff->indent_changed = true;
+            break;
+        }
         default: panic("");
         }
     }
 
-    // Update changed lines
-    for (int i = 0; i < line_changes.size; i++)
+    return result;
+}
+
+void code_diff_destroy(Code_Diff* code_diff)
+{
+    for (int i = 0; i < code_diff->line_diffs.size; i++) {
+        dynamic_array_destroy(&code_diff->line_diffs[i].items);
+    }
+    dynamic_array_destroy(&code_diff->line_diffs);
+    dynamic_array_destroy(&code_diff->line_inserts_and_deletes);
+}
+
+void code_diff_update_folds_and_jumps(Code_Diff code_diff, int tab_index)
+{
+    auto& tab = syntax_editor.tabs[tab_index];
+    auto& folds = tab.folds;
+    auto& jump_list = tab.jump_list;
+    bool folds_changed = false;
+    bool jump_list_changed = false;
+
+    // Update folds and jump indices
+    for (int i = 0; i < code_diff.line_inserts_and_deletes.size; i++) 
     {
-        auto line_change = line_changes[i];
-        auto line = source_code_get_line(tab.code, line_change.line_index);
-        source_code_tokenize_line(line);
+        const auto& line_insert = code_diff.line_inserts_and_deletes[i];
+        auto line_index = line_insert.line_index;
 
-        // Update analysis infos
-        for (int j = 0; j < line_change.text_change_indices.size; j++)
+        folds_changed = true;
+        // Update fold line-range
+        for (int j = 0; j < folds.size; j++)
         {
-            const auto& change = changes[line_change.text_change_indices[j]];
-            int insert_index = -1;
-            int insert_length = 1;
-            switch (change.type)
-            {
-            case Code_Change_Type::CHAR_INSERT: {
-                insert_index = change.options.char_insert.index.character;
-                insert_length = 1;
-                break;
+            auto& fold = folds[j];
+
+            bool inside_fold = false;
+            bool before_fold = false;
+            if (line_insert.is_insert) {
+                inside_fold = line_index > fold.line_start && line_index <= fold.line_end;
+                before_fold = line_index <= fold.line_start;
             }
-            case Code_Change_Type::TEXT_INSERT: {
-                insert_index = change.options.text_insert.index.character;
-                insert_length = change.options.text_insert.text.size;
-                break;
-            }
-            case Code_Change_Type::LINE_INDENTATION_CHANGE:
-                continue;
-            case Code_Change_Type::LINE_INSERT:
-            default: panic(""); break;
+            else {
+                inside_fold = line_index >= fold.line_start && line_index <= fold.line_end;
+                before_fold = line_index < fold.line_start;
             }
 
-            // Update analysis infos
-            for (int k = 0; k < line->item_infos.size; k++) 
-            {
-                auto& item_info = line->item_infos[k];
-                if (change.apply_forwards)
-                {
-                    if (insert_index <= item_info.start_char) { // Inserted before item
-                        item_info.start_char += insert_length;
-                        item_info.end_char += insert_length;
-                    }
-                    else if (insert_index <= item_info.end_char) { // Inserted inside item
-                        item_info.end_char += insert_length;
-                    }
-                    else { // Inserted after item
-                    }
-                }
-                else 
-                {
-                    const int delete_start = insert_index;
-                    const int delete_length = insert_length;
-                    const int delete_end = insert_index + insert_length;
-
-                    // Figure out new start-char position
-                    auto& start_char = item_info.start_char;
-                    if (delete_end <= start_char) {
-                        start_char -= delete_length;
-                    }
-                    else if (delete_start <= start_char) {
-                        start_char = delete_start;
-                    }
-
-                    // Figure out new end_char position
-                    auto& end_char = item_info.end_char;
-                    if (delete_end <= end_char) {
-                        end_char -= delete_length;
-                    }
-                    else if (delete_start <= end_char) {
-                        end_char = delete_start;
-                    }
-
-                    // Remove token if it was completely removed...
-                    if (start_char >= end_char) {
-                        dynamic_array_swap_remove(&line->item_infos, k);
-                        k -= 1;
-                    }
-                }
+            // Remove fold if change was made inside
+            if (inside_fold) {
+                dynamic_array_remove_ordered(&folds, j);
+                j = j - 1;
+            }
+            else if (before_fold) {
+                int diff = line_insert.is_insert ? 1 : -1;
+                fold.line_start += diff;
+                fold.line_end += diff;
             }
         }
 
-        // Remove-folds where changes happened
-        if (update_folds_and_jumps)
+        // Update jump list line indices
+        for (int j = 0; j < tab.jump_list.size; j++)
         {
-            for (int j = 0; j < folds.size; j++) {
-                auto& fold = folds[j];
-                if (line_change.line_index >= fold.line_start && line_change.line_index <= fold.line_end) {
-                    dynamic_array_remove_ordered(&folds, j);
-                    folds_changed = true;
-                    j = j - 1;
+            auto& pos = tab.jump_list[j];
+            if (line_insert.is_insert) {
+                if (line_index <= pos.line) {
+                    pos.line += 1;
+                    jump_list_changed = true;
+                }
+            }
+            else
+            {
+                if (line_index <= pos.line) {
+                    pos.line -= 1;
+                    jump_list_changed = true;
                 }
             }
         }
     }
 
-    if (!update_folds_and_jumps) {
-        return;
+    // Remove-folds where changes happened
+    for (int i = 0; i < code_diff.line_diffs.size; i++)
+    {
+        auto line = code_diff.line_diffs[i];
+        if (line.items.size == 0 && !line.indent_changed) continue;
+
+        int line_index = line.new_line_index;
+        for (int j = 0; j < folds.size; j++) {
+            auto& fold = folds[j];
+            if (line_index >= fold.line_start && line_index <= fold.line_end) {
+                dynamic_array_remove_ordered(&folds, j);
+                folds_changed = true;
+                j = j - 1;
+            }
+        }
     }
 
-    // Update fold-infos and visible indices
     if (folds_changed) {
         syntax_editor_update_line_visible_and_fold_info(tab_index);
     }
 
+    // Prune jump list if positions are close to one another
     if (jump_list_changed)
     {
         auto code = tab.code;
@@ -2564,6 +2551,82 @@ void syntax_editor_update_code_infos_from_changes(int tab_index, Dynamic_Array<C
     }
 }
 
+void code_diff_update_tokenization(Code_Diff code_diff, Source_Code* code)
+{
+    for (int i = 0; i < code_diff.line_diffs.size; i++)
+    {
+        auto line = code_diff.line_diffs[i];
+        if (line.items.size == 0) continue;
+        source_code_tokenize_line(source_code_get_line(code, line.new_line_index));
+    }
+}
+
+void code_diff_update_analysis_infos(Code_Diff code_diff, Source_Code* code)
+{
+    for (int line_index = 0; line_index < code_diff.line_diffs.size; line_index++)
+    {
+        auto line_diff = code_diff.line_diffs[line_index];
+        if (line_diff.items.size == 0) continue;
+        auto line = source_code_get_line(code, line_diff.new_line_index);
+
+        // Update analysis infos
+        for (int item_index = 0; item_index < line_diff.items.size; item_index++)
+        {
+            const auto& change = line_diff.items[item_index];
+            int insert_index = change.char_index;
+            int insert_length = change.length;
+
+            // Update analysis infos
+            for (int i = 0; i < line->item_infos.size; i++)
+            {
+                auto& item_info = line->item_infos[i];
+                if (change.is_insert)
+                {
+                    if (insert_index <= item_info.start_char) { // Inserted before item
+                        item_info.start_char += insert_length;
+                        item_info.end_char += insert_length;
+                    }
+                    else if (insert_index <= item_info.end_char) { // Inserted inside item
+                        item_info.end_char += insert_length;
+                    }
+                    else { // Inserted after item
+                    }
+                }
+                else
+                {
+                    const int delete_start = insert_index;
+                    const int delete_length = insert_length;
+                    const int delete_end = insert_index + insert_length;
+
+                    // Figure out new start-char position
+                    auto& start_char = item_info.start_char;
+                    if (delete_end <= start_char) {
+                        start_char -= delete_length;
+                    }
+                    else if (delete_start <= start_char) {
+                        start_char = delete_start;
+                    }
+
+                    // Figure out new end_char position
+                    auto& end_char = item_info.end_char;
+                    if (delete_end <= end_char) {
+                        end_char -= delete_length;
+                    }
+                    else if (delete_start <= end_char) {
+                        end_char = delete_start;
+                    }
+
+                    // Remove token if it was completely removed...
+                    if (start_char >= end_char) {
+                        dynamic_array_swap_remove(&line->item_infos, i);
+                        i -= 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Synchronizes lexing, folds + visible-indices, jump-positions and code-analysis-information
 void syntax_editor_synchronize_code_information()
 {
@@ -2582,19 +2645,23 @@ void syntax_editor_synchronize_code_information()
         Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
         SCOPE_EXIT(dynamic_array_destroy(&changes));
         history_get_changes_between(&tab.history, tab.last_code_info_synch, now, &changes);
+        Code_Diff code_diff = code_diff_create_from_changes(changes);
+        SCOPE_EXIT(code_diff_destroy(&code_diff));
+        code_diff_update_tokenization(code_diff, tab.code);
+        code_diff_update_analysis_infos(code_diff, tab.code);
+        code_diff_update_folds_and_jumps(code_diff, tab_index);
         tab.last_code_info_synch = now;
-        syntax_editor_update_code_infos_from_changes(tab_index, changes, true);
     }
 }
 
 unsigned long compiler_thread_entry_fn(void* userdata)
 {
     auto& editor = syntax_editor;
-    
+
     bool worked = fiber_initialize();
     assert(worked, "panic");
 
-    logg("Compiler thread waiting now\n");
+    // logg("Compiler thread waiting now\n");
     semaphore_wait(editor.compiler_wait_semaphore);
     while (!editor.compiler_thread_should_close)
     {
@@ -2606,16 +2673,7 @@ unsigned long compiler_thread_entry_fn(void* userdata)
         compiler_compile(compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
         compiler_analysis_update_source_code_information();
 
-        int analysis_info_count = 0;
-        for (int i = 0; i < compiler.compilation_units.size; i++)
-        {
-            auto code = compiler.compilation_units[i]->code;
-            for (int j = 0; j < code->line_count; j++) {
-                auto line = source_code_get_line(code, j);
-                analysis_info_count += line->item_infos.size;
-            }
-        }
-
+        // Artificial sleep, to see how 'sluggish' editor becomes...
         //timer_sleep_for(compiler.timer, 1.0);
 
         semaphore_increment(editor.compilation_finish_semaphore, 1);
@@ -2677,7 +2735,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     if (!should_compile && !got_compiler_update) {
         return;
     }
-    logg("Synchronize with compiler: text-updated: %s, compiler-update_received: %s\n", (should_compile ? "TRUE" : "FALSE"), (got_compiler_update ? "TRUE" : "FALSE"));
+    // logg("Synchronize with compiler: text-updated: %s, compiler-update_received: %s\n", (should_compile ? "TRUE" : "FALSE"), (got_compiler_update ? "TRUE" : "FALSE"));
 
     if (got_compiler_update)
     {
@@ -2694,8 +2752,6 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
     if (got_compiler_update || should_compile)
     {
         // Update compiler with new code (Swap out editor and compiler source-code)
-        Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
-        SCOPE_EXIT(dynamic_array_destroy(&changes));
         for (int i = 0; i < editor.tabs.size; i++)
         {
             auto& tab = editor.tabs[i];
@@ -2703,13 +2759,18 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
             // Update code if necessary
             auto now = history_get_timestamp(&tab.history);
-            if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile) 
+            Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
+            SCOPE_EXIT(dynamic_array_destroy(&changes));
+            history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+            Code_Diff code_diff = code_diff_create_from_changes(changes);
+            SCOPE_EXIT(code_diff_destroy(&code_diff));
+
+            if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile)
             {
-                dynamic_array_reset(&changes);
-                history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
                 for (int i = 0; i < changes.size; i++) {
                     code_change_apply(tab.compilation_unit->code, &changes[i], true);
                 }
+                code_diff_update_tokenization(code_diff, tab.compilation_unit->code);
                 tab.last_compiler_synchronized = now;
                 tab.requires_recompile = false;
             }
@@ -2721,19 +2782,10 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
                 tab.compilation_unit->code = swap;
                 tab.history.code = tab.code;
 
-                syntax_editor_update_code_infos_from_changes(i, changes, false);
+                code_diff_update_tokenization(code_diff, tab.compilation_unit->code);
+                code_diff_update_analysis_infos(code_diff, tab.code);
+                // Note: Don't do code_diff_update_folds_and_jumps, as this is data in tab, and is already up-to-date
                 syntax_editor_update_line_visible_and_fold_info(i);
-            }
-        }
-
-        // Count analysis infos
-        int analysis_info_count = 0;
-        for (int i = 0; i < editor.tabs.size; i++)
-        {
-            auto code = editor.tabs[i].code;
-            for (int j = 0; j < code->line_count; j++) {
-                auto line = source_code_get_line(code, j);
-                analysis_info_count += line->item_infos.size;
             }
         }
     }
@@ -2766,7 +2818,7 @@ void syntax_editor_wait_for_newest_compiler_info(bool build_code)
     }
 }
 
-void syntax_editor_save_state(String file_path) 
+void syntax_editor_save_state(String file_path)
 {
     auto& editor = syntax_editor;
 
@@ -2828,7 +2880,7 @@ void syntax_editor_load_state(String file_path)
         else if (string_equals_cstring(&setting, "main_tab")) {
             int_value_to_set = &main_tab_index;
         }
-        else if (string_equals_cstring(&setting, "tab")) 
+        else if (string_equals_cstring(&setting, "tab"))
         {
             if (first_tab) {
                 first_tab = false;
@@ -2857,7 +2909,7 @@ void syntax_editor_load_state(String file_path)
                 int_value_to_set = &editor.tabs[editor.open_tab_index].cam_start;
             }
         }
-        else if (string_equals_cstring(&setting, "fold")) 
+        else if (string_equals_cstring(&setting, "fold"))
         {
             auto parts = string_split(value, ';');
             SCOPE_EXIT(string_split_destroy(parts));
@@ -2883,7 +2935,7 @@ void syntax_editor_load_state(String file_path)
             }
 
             // Sanity check (File may have been changed since last session)
-            if (success) 
+            if (success)
             {
                 auto& tab = editor.tabs[editor.open_tab_index];
                 if (start < 0 || start >= tab.code->line_count) {
@@ -3447,8 +3499,13 @@ void code_completion_find_suggestions()
         if (partially_typed.size == 1 && !char_is_valid_identifier(partially_typed.characters[0])) {
             partially_typed = string_create_static("");
         }
-        is_member_access = test_char(line->text, word_start - 1, '.');
-        is_path_lookup = test_char(line->text, word_start - 1, '~');
+
+        if (test_char(line->text, word_start - 1, '.') || test_char(line->text, cursor.character - 1, '.')) {
+            is_member_access = true;
+        }
+        if (test_char(line->text, word_start - 1, '~') || test_char(line->text, cursor.character - 1, '~')) {
+            is_path_lookup = true;
+        }
     }
     fuzzy_search_start_search(partially_typed, 10);
 
@@ -4704,7 +4761,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         syntax_editor_close_tab(editor.open_tab_index);
         break;
     }
-    case Normal_Command_Type::GOTO_DEFINITION: 
+    case Normal_Command_Type::GOTO_DEFINITION:
     {
         syntax_editor_synchronize_code_information();
         Position_Info position_info = code_query_find_position_infos(cursor, nullptr);
@@ -5037,7 +5094,7 @@ void insert_command_execute(Insert_Command input)
         Text_Editing::delete_text_range(text_range_make(cursor, to), false, true);
         break;
     }
-    // Letters
+                                                  // Letters
     case Insert_Command_Type::DELIMITER_LETTER:
     {
         bool insert_double_after = false;

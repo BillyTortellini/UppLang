@@ -82,8 +82,8 @@ namespace AST
     {
         Node_Type type;
         Node* parent;
-        Text_Range range;
-        Text_Range bounding_range;
+        Token_Range range;
+        Token_Range bounding_range;
     };
 
     enum class Import_Type

@@ -82,7 +82,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     new_sym->definition_node = definition_node;
     if (definition_node != nullptr) {
         new_sym->definition_unit = compiler_find_ast_compilation_unit(new_sym->definition_node);
-        new_sym->definition_text_index = definition_node->range.start;
+        new_sym->definition_text_index = token_index_to_text_index(definition_node->range.start, new_sym->definition_unit->code, true);
     }
     else {
         new_sym->definition_unit = nullptr;

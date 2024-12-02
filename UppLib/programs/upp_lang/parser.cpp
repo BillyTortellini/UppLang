@@ -27,8 +27,8 @@ namespace Parser
 
     struct Parser
     {
-        Compilation_Unit* unit;
         Source_Code* code;
+        Compilation_Unit* unit;
         Parse_State state;
         // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
     };
@@ -61,7 +61,7 @@ namespace Parser
         Node* base = &result->base;
         base->parent = parent;
         base->type = type;
-        base->range.start = token_index_to_text_index(parser.state.pos, parser.code, true);
+        base->range.start = parser.state.pos;
         base->range.end = base->range.start;
 
         return result;
@@ -198,10 +198,10 @@ namespace Parser
         while (child != 0) 
         {
             auto child_range = child->bounding_range;
-            if (!text_index_in_order(bounding_range.start, child_range.start)) {
+            if (token_index_compare(bounding_range.start, child_range.start) < 0) {
                 bounding_range.start = child_range.start;
             }
-            if (!text_index_in_order(child_range.end, bounding_range.end)) {
+            if (token_index_compare(child_range.end, bounding_range.end) < 0) {
                 bounding_range.end = child_range.end;
             }
 
@@ -216,37 +216,26 @@ namespace Parser
         // Now it does 3 things: 
         //      * Sanity checks
         //      * Sets the end of the node
-        //      * Calculates bounding-ranges (for editor)
+        //      * Calcualtes bounding-ranges (for editor)
         auto code = parser.code;
 
         // Set end of node
         auto& range = node->range;
-        if (parser.state.pos.line >= code->line_count) {
-            range.end = text_index_make_line_end(code, code->line_count - 1);
+        range.end = parser.state.pos;
+        if (range.end.line > code->line_count) {
+            range.end = token_index_make_line_end(code, code->line_count - 1);
         }
-        else
-        {
-            auto line = parser.state.line;
-            range.end.line = parser.state.pos.line;
-            if (parser.state.pos.token >= line->tokens.size) {
-                range.end.character = line->text.size;
-            }
-            else {
-                range.end.character = line->tokens[parser.state.pos.token].end_index;
-            }
-
+        else if (range.start.line != range.end.line && range.end.token == 0 && range.end.line > 0) {
             // Here we have the difference between next line token zero or end of line last token
-            if (range.start.line != range.end.line && range.end.character == 0 && range.end.line > 0) {
-                range.end = text_index_make_line_end(code, range.end.line - 1);
-            }
+            range.end = token_index_make_line_end(code, range.end.line - 1);
         }
-
+        
         // Calculate bounding range
         node_calculate_bounding_range(node);
 
         // Sanity-Check that start/end is in order
-        bool in_order = text_index_in_order(range.start, range.end);
-        assert(in_order, "Ranges must be in order");
+        int order = token_index_compare(range.start, range.end);
+        assert(order != -1, "Ranges must be in order");
     }
 
 
@@ -489,7 +478,7 @@ namespace Parser
                         block_indent + 1, true
                     );
 
-                    Text_Range range = text_range_make(text_index_make(block_start_line, 0), text_index_make_line_end(code, parser.state.pos.line-1));
+                    Token_Range range = token_range_make(token_index_make(block_start_line, 0), token_index_make_line_end(code, parser.state.pos.line-1));
                     code_block->base.range = range;
                     code_block->base.bounding_range = range;
                     statement->base.range = range;
@@ -2371,8 +2360,9 @@ namespace Parser
                 expr = result;
 
                 auto& range = result->base.range;
-                range.start = token_index_to_text_index(link.token_index, parser.code, true); 
-                range.end = token_index_to_text_index(link.token_index, parser.code, false);
+                range.start = link.token_index; 
+                range.end = link.token_index;
+                range.end.token += 1;
                 node_calculate_bounding_range(AST::upcast(result->options.binop.left));
                 node_calculate_bounding_range(AST::upcast(result));
             }
@@ -2471,7 +2461,7 @@ namespace Parser
         parse_block_of_items(upcast(root), wrapper_parse_module_item, module_add_child, Operator::SEMI_COLON, 0, false);
 
         // Set range
-        Text_Range range = text_range_make(text_index_make(0, 0), text_index_make_line_end(code, code->line_count-1));
+        Token_Range range = token_range_make(token_index_make(0, 0), token_index_make_line_end(code, code->line_count-1));
         root->base.range = range;
         root->base.bounding_range = range;
     }
@@ -2487,7 +2477,6 @@ namespace Parser
 
         parser.code = unit->code;
         parser.unit = unit;
-        parser.unit->root = 0;
         parser.state.allocated_count = 0;
         parser.state.error_count = 0;
         parser.state.pos = token_index_make(0, 0);
@@ -2498,14 +2487,14 @@ namespace Parser
     // AST queries based on Token-Indices
     void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges)
     {
-        auto range = text_range_to_token_range(base->range, code);
+        auto range = base->range;
         switch (section)
         {
         case Section::NONE: break;
         case Section::WHOLE:
         {
             if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
-                dynamic_array_push_back(ranges, text_range_to_token_range(base->bounding_range, code));
+                dynamic_array_push_back(ranges, base->bounding_range);
                 break;
             }
             dynamic_array_push_back(ranges, range);
@@ -2521,7 +2510,7 @@ namespace Parser
             auto child = AST::base_get_child(base, index);
             while (child != 0)
             {
-                auto child_range = text_range_to_token_range(child->range, code);
+                auto child_range = child->range;
                 if (token_index_compare(sub_range.start, child_range.start) == 0) {
                     sub_range.end = child_range.start;
                     // Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
@@ -2561,7 +2550,6 @@ namespace Parser
             // Find next (), {} or [], and add the tokens to the ranges
             auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
             if (!result.available) {
-                dynamic_array_push_back(ranges, token_range_make(range.start, range.start));
                 break;
             }
             dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
@@ -2604,23 +2592,5 @@ namespace Parser
         }
         default: panic("");
         }
-    }
-
-    AST::Node* find_smallest_enclosing_node(AST::Node* base, Text_Index index)
-    {
-        int child_index = 0;
-        AST::Node* child = AST::base_get_child(base, child_index);
-        if (child == 0) {
-            return base;
-        }
-        while (child != 0) {
-            auto child_range = child->bounding_range;
-            if (text_range_contains(child_range, index)) {
-                return find_smallest_enclosing_node(child, index);
-            }
-            child_index += 1;
-            child = AST::base_get_child(base, child_index);
-        }
-        return base;
     }
 }

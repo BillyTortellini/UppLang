@@ -9,26 +9,33 @@
 #include "syntax_colors.hpp"
 #include "../../win32/timing.hpp"
 
-Text_Range text_range_last_token(Text_Range text_range, Source_Code* code) {
-    Token_Range token_range = text_range_to_token_range(text_range, code);
-    if (token_range.end.token == 0) {
-        return text_range_make(text_range.end, text_range.end);
-    }
-    return token_range_to_text_range(token_range_make(token_index_make(token_range.end.line, token_range.end.token-1), token_range.end), code);
-}
-
-Text_Range text_range_first_token(Text_Range text_range, Source_Code* code) {
-    auto line = source_code_get_line(code, text_range.start.line);
-    auto& tokens = line->tokens;
-    Token_Range token_range = text_range_to_token_range(text_range, code);
-    if (token_range.start.token + 1 > line->tokens.size) {
-        return text_range_make(text_range.start, text_range.start);
-    }
-    return token_range_to_text_range(token_range_make(token_range.start, token_index_make(token_range.start.line, token_range.start.token + 1)), code);
-}
-
-void add_code_analysis_item(Code_Analysis_Item_Type type, Code_Analysis_Item_Option option, Text_Range range, Source_Code* code, int tree_depth)
+Token_Range token_range_last_token(Token_Range range, Source_Code* code) 
 {
+    if (token_index_equal(range.start, range.end)) return range;
+    if (range.end.token > 0) {
+        range.start = range.end;
+        range.start.token -= 1;
+        return range;
+    }
+    return token_range_make(range.end, range.end);
+}
+
+Token_Range token_range_first_token(Token_Range range, Source_Code* code) 
+{
+    if (token_index_equal(range.start, range.end)) return range;
+    auto line = source_code_get_line(code, range.start.line);
+    if (range.start.token + 1 <= line->tokens.size) {
+        range.end = range.start;
+        range.end.token = range.start.token + 1;
+        return range;
+    }
+    return token_range_make(range.start, range.start);
+}
+
+void add_code_analysis_item(Code_Analysis_Item_Type type, Code_Analysis_Item_Option option, Token_Range token_range, Source_Code* code, int tree_depth)
+{
+    Text_Range range = token_range_to_text_range(token_range, code);
+
     for (int i = range.start.line; i <= range.end.line; i++)
     {
         auto line = source_code_get_line(code, i);
@@ -77,7 +84,7 @@ void find_editor_infos_recursive(
         auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(node), Info_Query::TRY_READ);
         if (info == 0) { break; }
         Symbol_Table_Range table_range;
-        table_range.range = node->bounding_range;
+        table_range.range = token_range_to_text_range(node->bounding_range, code);
         table_range.symbol_table = info->symbol_table;
         table_range.tree_depth = tree_depth;
         dynamic_array_push_back(&code->symbol_table_ranges, table_range);
@@ -88,7 +95,7 @@ void find_editor_infos_recursive(
         auto block_node = AST::downcast<AST::Code_Block>(node);
         if (block_node->block_id.available) {
             Block_ID_Range id_range;
-            id_range.range = node->bounding_range;
+            id_range.range = token_range_to_text_range(node->bounding_range, code);
             id_range.block_id = block_node->block_id.value;
             dynamic_array_push_back(&code->block_id_range, id_range);
         }
@@ -96,7 +103,7 @@ void find_editor_infos_recursive(
         auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ);
         if (block == 0) { break; }
         Symbol_Table_Range table_range;
-        table_range.range = node->bounding_range;
+        table_range.range = token_range_to_text_range(node->bounding_range, code);
         table_range.symbol_table = block->symbol_table;
         table_range.tree_depth = tree_depth;
         dynamic_array_push_back(&code->symbol_table_ranges, table_range);
@@ -111,7 +118,7 @@ void find_editor_infos_recursive(
             if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
                 Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
                 Symbol_Table_Range table_range;
-                table_range.range = node->bounding_range;
+                table_range.range = token_range_to_text_range(node->bounding_range, code);
                 table_range.symbol_table = table;
                 table_range.tree_depth = tree_depth;
                 dynamic_array_push_back(&code->symbol_table_ranges, table_range);
@@ -129,7 +136,7 @@ void find_editor_infos_recursive(
                     option.member_access.final_type = value_info->cast_info.result_type;
                     option.member_access.initial_type = value_info->cast_info.initial_type;
                     option.member_access.access_type = info->specifics.member_access.type;
-                    add_code_analysis_item(Code_Analysis_Item_Type::MEMBER_ACCESS, option, text_range_last_token(node->range, code), code, tree_depth);
+                    add_code_analysis_item(Code_Analysis_Item_Type::MEMBER_ACCESS, option, token_range_last_token(node->range, code), code, tree_depth);
                 }
             }
             else if (expr->type == AST::Expression_Type::AUTO_ENUM)
@@ -138,7 +145,7 @@ void find_editor_infos_recursive(
                 if (type->type == Datatype_Type::ENUM) {
                     Code_Analysis_Item_Option option;
                     option.auto_enum_type = downcast<Datatype_Enum>(type);
-                    add_code_analysis_item(Code_Analysis_Item_Type::AUTO_ENUM, option, text_range_last_token(node->range, code), code, tree_depth);
+                    add_code_analysis_item(Code_Analysis_Item_Type::AUTO_ENUM, option, token_range_last_token(node->range, code), code, tree_depth);
                 }
             }
 
@@ -156,13 +163,13 @@ void find_editor_infos_recursive(
         auto member = downcast<AST::Structure_Member_Node>(node);
         Code_Analysis_Item_Option option;
         option.markup_color = member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE;
-        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, text_range_first_token(node->range, code), code, tree_depth);
+        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
         break;
     }
     case AST::Node_Type::ENUM_MEMBER: {
         Code_Analysis_Item_Option option;
         option.markup_color = Syntax_Color::ENUM_MEMBER;
-        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, text_range_first_token(node->range, code), code, tree_depth);
+        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
         break;
     }
     case AST::Node_Type::ARGUMENT: {
@@ -197,7 +204,7 @@ void find_editor_infos_recursive(
     case AST::Node_Type::PARAMETER: 
     {
         bool is_definition = false;
-        Text_Range range = text_range_first_token(node->range, code);
+        Token_Range range = token_range_first_token(node->range, code);
         Symbol* symbol = nullptr;
         AST::Symbol_Lookup* lookup = nullptr;
         switch (node->type)
@@ -217,7 +224,7 @@ void find_editor_infos_recursive(
         case AST::Node_Type::PARAMETER: 
         {
             auto param = downcast<AST::Parameter>(node);
-            Token_Index start_token = text_range_to_token_range(node->range, code).start;
+            Token_Index start_token = node->range.start;
             if (param->is_comptime) {
                 start_token.token += 1;
             }
@@ -227,10 +234,8 @@ void find_editor_infos_recursive(
             auto& tokens = source_code_get_line(code, start_token.line)->tokens;
             range.start.line = start_token.line;
             range.end.line = start_token.line;
-            Token_Range token_range = token_range_make(token_index_make(start_token.line, 0), token_index_make(start_token.line, 0));
-            token_range.start.token = math_maximum(start_token.token, tokens.size);
-            token_range.end.token = math_maximum(start_token.token + 1, tokens.size);
-            range = token_range_to_text_range(token_range, code);
+            range.start.token = math_maximum(start_token.token, tokens.size);
+            range.end.token = math_maximum(start_token.token + 1, tokens.size);
             is_definition = true;
 
             auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ);
@@ -304,7 +309,7 @@ void compiler_analysis_update_source_code_information()
 
             Code_Analysis_Item_Option option;
             option.error_index = errors.size - 1;
-            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, range, unit->code, 0);
+            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, error.range, unit->code, 0);
         }
     }
 
@@ -332,7 +337,7 @@ void compiler_analysis_update_source_code_information()
         for (int j = 0; j < ranges.size; j++) {
             Code_Analysis_Item_Option option;
             option.error_index = errors.size - 1;
-            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, token_range_to_text_range(ranges[j], unit->code), unit->code, 0);
+            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, ranges[j], unit->code, 0);
         }
     }
 }

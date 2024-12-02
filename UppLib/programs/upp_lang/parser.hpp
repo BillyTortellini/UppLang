@@ -35,5 +35,4 @@ namespace Parser
     };
 
     void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
-    AST::Node* find_smallest_enclosing_node(AST::Node* base, Text_Index index);
 }
