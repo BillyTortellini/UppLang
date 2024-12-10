@@ -447,6 +447,15 @@ Optional<int> string_parse_int(String* string) {
     return optional_make_success(result);
 }
 
+Optional<i64> string_parse_i64(String* string) {
+    char* end_ptr;
+    i64 result = strtoll(string->characters, &end_ptr, 10);
+    if (string->characters + string->size != end_ptr) {
+        return optional_make_failure<i64>();
+    }
+    return optional_make_success(result);
+}
+
 bool string_contains_character(String string, char character) {
     for (int i = 0; i < string.size; i++) {
         if (string.characters[i] == character) {

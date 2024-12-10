@@ -59,5 +59,6 @@ Optional<int> string_find_character_index(String* string, char c, int start_posi
 Optional<int> string_find_character_index_reverse(String* string, char character, int startpos);
 Optional<float> string_parse_float(String* string);
 Optional<int> string_parse_int(String* string);
+Optional<i64> string_parse_i64(String* string);
 Array<String> string_split(String string, char c); 
 void string_split_destroy(Array<String> parts);

@@ -1,14 +1,83 @@
 
-Bug 1:
- * Text-Range must be in order
+
+What data do I need from PDBs:
+ - All PDBs:
+    * Function location, size and name
+    * Do I want to store block-information? (Variables with same names may be bad otherwize)
+ - My Code:
+    * Line number information
+    * Variables, Globals, Parameters, Constantz
+    * Type Info? (Maybe basic types?)
+
+What data do I need from PEs:
+ - Section Information (To translate PDB locations)
+ - I guess using export symbols to get public variables is fine
+ - Name of the file would also be nice
+ - Location of PDB file
+ - Frame-Pointer-Omission Data
+
+
+
+
+TODO next:
+ - Load all symbols from all dlls
+ - On break, show closest function start
+ - Show more frigg instructions
+ - Command to query symbol (location)
+
+ - Set breakpoint at main function
+ - Show disassembly of main function
+
+ - Generate compiler information when loading modules/dlls, (more infos for main-code)
+ - Do stack-walking with symbol information (Show current stack-trace in compiler on command)
+
+ - Refactor into new file
+ - IR-Code and Bytecode/C-Generator need to store translation names
+ - New UI-Mode for debugging (Show current instruction and things)
+
+DONE:
+ - Run process and store all necessary data from PE (Name, sections infos, pdb filename?)
+ - Query all necessary information from pdb into Custom-Format before running the process
+ - Line-Information from PDB
+ - Read Section infos from PE (portable executable) image
+
+
+Intermediate Goal:
+    Loading Information for _single_ object file:
+        - Function information (which functions are compiled in this module)
+        - Local variable symbols
+        - Line-Information for each function
+    On Startup:
+        - Translate RVAs of PDB to loaded code (How tho?)
+        - Set breakpoint at main function entry
+        - Show disassembly of whole main function
+        - Allow stepping over lines (Set breakpoint at next line, sl command)
+        - Show variable values 
+
+
+Open Questions:
+ * Where is Line-Information stored in PDB files (DIA SDK)
+ * Does stack-walking information include function start/end addresses?
+ * How to 'guess' in which dll/code we currently are (Based on section)
+ * How to translate virtual addresses (sector + offset) from PDB into live image (Sector table?)
+ * Optimized Symbol information (How to get to a symbols value in optimized code?)
+
+
+
+* PDB should provide 
+    - Line to Assembly info
+    - Function location info
+    - Variable/Parameter/Global location info
+* Find out where Symbol-Info is stored in PDB
+
+Debugger:
+ * Load module/source-code infos from EXE and PDB
+ * Figure out where we are in code...
 
 TODO:
- * Auto-format line does not update tokens?
- * Fix Bugs
  * Don't reparse if no changes...
  * Member-Access and Symbol-Lookup re-implementation in editor
 
-- Symbol_Lookup_Visited table --> Querying symbol table needs this, e.g. both editor-completions and compilord
 
 Next Tasks:
  * Synchronization
