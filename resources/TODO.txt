@@ -1,41 +1,24 @@
 
 
-What data do I need from PDBs:
- - All PDBs:
-    * Function location, size and name
-    * Do I want to store block-information? (Variables with same names may be bad otherwize)
- - My Code:
-    * Line number information
-    * Variables, Globals, Parameters, Constantz
-    * Type Info? (Maybe basic types?)
 
-What data do I need from PEs:
- - Section Information (To translate PDB locations)
- - I guess using export symbols to get public variables is fine
- - Name of the file would also be nice
- - Location of PDB file
- - Frame-Pointer-Omission Data
-
-
-
-
-TODO next:
- - Load all symbols from all dlls
- - On break, show closest function start
- - Show more frigg instructions
- - Command to query symbol (location)
-
- - Set breakpoint at main function
- - Show disassembly of main function
-
- - Generate compiler information when loading modules/dlls, (more infos for main-code)
+TODO:
  - Do stack-walking with symbol information (Show current stack-trace in compiler on command)
+ - Software breakpoints at some point?
 
  - Refactor into new file
  - IR-Code and Bytecode/C-Generator need to store translation names
  - New UI-Mode for debugging (Show current instruction and things)
 
 DONE:
+ - Setting breakpoints at symbols (main function)
+ - Show disassembly of main function
+ - Command to query symbol (location)
+ - Show all assembly instructions in current function
+ - All functions should have the same layout, with address, length and name + A reference to Source-Information if available.
+ - Generate compiler information when loading modules/dlls, (more infos for main-code)
+
+ - Load all symbols from all dlls
+ - On break, show closest function start
  - Run process and store all necessary data from PE (Name, sections infos, pdb filename?)
  - Query all necessary information from pdb into Custom-Format before running the process
  - Line-Information from PDB

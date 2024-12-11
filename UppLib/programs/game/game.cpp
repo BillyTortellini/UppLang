@@ -163,70 +163,67 @@ namespace PDB_Analysis
         int line_num; // Starts with 1!
     };
 
-    struct PDB_Function_Info
+    // Further information for functions where we have access to the source-code
+    struct PDB_Function_Source_Info
     {
-        String normal_name;
-        String mangled_name;
-
-        PDB_Location_Static location;
+        int function_index;
         Optional<PDB_Location_Static> debug_start_location;
         Optional<PDB_Location_Static> debug_end_location;
-        u64 length; // Size in bytes
 
         Dynamic_Array<int> child_block_indices;
         Dynamic_Array<PDB_Variable_Info> parameter_infos;
         Dynamic_Array<PDB_Line_Info> line_infos;
     };
 
-    struct PDB_Extern_Function
+    struct PDB_Function
     {
         String normal_name;
         String mangled_name;
         PDB_Location_Static location;
         u64 length; // Size in bytes
+        int source_info_index; // -1 if not available, which should be for most functions in imported libraries
     };
 
     struct PDB_Information
     {
-        Dynamic_Array<PDB_Function_Info> functions;
+        Dynamic_Array<PDB_Function_Source_Info> source_infos;
         Dynamic_Array<PDB_Code_Block_Info> block_infos;
         Dynamic_Array<PDB_Variable_Info> global_infos;
-        Dynamic_Array<PDB_Extern_Function> extern_functions;
+        Dynamic_Array<PDB_Function> functions;
         Hashtable<i32, String> source_file_paths;
     };
 
     PDB_Information pdb_information_create()
     {
         PDB_Information information;
-        information.functions         = dynamic_array_create<PDB_Function_Info>();
+        information.source_infos      = dynamic_array_create<PDB_Function_Source_Info>();
         information.block_infos       = dynamic_array_create<PDB_Code_Block_Info>();
         information.global_infos      = dynamic_array_create<PDB_Variable_Info>();
-        information.extern_functions  = dynamic_array_create<PDB_Extern_Function>();
+        information.functions         = dynamic_array_create<PDB_Function>();
         information.source_file_paths = hashtable_create_empty<i32, String>(3, hash_i32, equals_i32);
         return information;
     }
 
     void pdb_information_destroy(PDB_Information* information)
     {
-        for (int i = 0; i < information->functions.size; i++) {
-            auto& fn = information->functions[i];
+        for (int i = 0; i < information->source_infos.size; i++) {
+            auto& fn = information->source_infos[i];
             dynamic_array_destroy(&fn.line_infos);
+            dynamic_array_destroy(&fn.child_block_indices);
+
             for (int j = 0; j < fn.parameter_infos.size; j++) {
                 string_destroy(&fn.parameter_infos[j].name);
             }
             dynamic_array_destroy(&fn.parameter_infos);
-            dynamic_array_destroy(&fn.child_block_indices);
+        }
+        dynamic_array_destroy(&information->source_infos);
+
+        for (int i = 0; i < information->functions.size; i++) {
+            auto& fn = information->functions[i];
             string_destroy(&fn.mangled_name);
             string_destroy(&fn.normal_name);
         }
         dynamic_array_destroy(&information->functions);
-
-        for (int i = 0; i < information->extern_functions.size; i++) {
-            auto& fn = information->extern_functions[i];
-            string_destroy(&fn.mangled_name);
-            string_destroy(&fn.normal_name);
-        }
-        dynamic_array_destroy(&information->extern_functions);
 
         for (int i = 0; i < information->block_infos.size; i++) {
             auto& block = information->block_infos[i];
@@ -563,7 +560,7 @@ namespace PDB_Analysis
     }
 
     void pdb_symbol_analyse_recursive(
-        IDiaSymbol* symbol, PDB_Information* info, bool is_main_compiland, int function_index, int block_index, IDiaSession* session)
+        IDiaSymbol* symbol, PDB_Information* info, bool is_main_compiland, int source_info_index, int block_index, IDiaSession* session)
     {
         DWORD tag = 0;
         if (symbol->get_symTag(&tag) != S_OK) {
@@ -586,39 +583,39 @@ namespace PDB_Analysis
                 break;
             }
 
-            // Handle function as extern function
-            if (!is_main_compiland) 
+            // Add function info
+            int function_index = -1;
             {
-                PDB_Extern_Function fn;
+                PDB_Function fn;
                 fn.length = length;
                 fn.location = location.options.static_loc;
                 fn.normal_name = string_create();
                 fn.mangled_name = string_create();
+                fn.source_info_index = -1;
                 pdb_symbol_get_undecorated_name(symbol, &fn.normal_name);
                 pdb_symbol_get_name(symbol, &fn.mangled_name);
-                dynamic_array_push_back(&info->extern_functions, fn);
+                function_index = info->functions.size;
+                dynamic_array_push_back(&info->functions, fn);
+            }
+
+            if (!is_main_compiland) {
                 break;
             }
 
-            // Otherwise handle as normal function
-            PDB_Function_Info function_info;
-            function_info.line_infos = dynamic_array_create<PDB_Line_Info>();
-            function_info.parameter_infos = dynamic_array_create<PDB_Variable_Info>();
-            function_info.child_block_indices = dynamic_array_create<int>();
-            function_info.mangled_name = string_create();
-            function_info.normal_name = string_create();
-            function_info.length = length;
-            function_info.location = location.options.static_loc;
-            function_info.debug_start_location = optional_make_failure<PDB_Location_Static>();
-            function_info.debug_end_location = optional_make_failure<PDB_Location_Static>();
+            // Query source-infos
+            PDB_Function_Source_Info source_info;
+            source_info.line_infos = dynamic_array_create<PDB_Line_Info>();
+            source_info.parameter_infos = dynamic_array_create<PDB_Variable_Info>();
+            source_info.child_block_indices = dynamic_array_create<int>();
+            source_info.debug_start_location = optional_make_failure<PDB_Location_Static>();
+            source_info.debug_end_location = optional_make_failure<PDB_Location_Static>();
+            source_info.function_index = function_index;
 
-            pdb_symbol_get_name(symbol, &function_info.mangled_name);
-            pdb_symbol_get_undecorated_name(symbol, &function_info.normal_name);
-
-            int added_function_index = info->functions.size;
-            dynamic_array_push_back(&info->functions, function_info);
+            int added_source_info_index = info->source_infos.size;
+            dynamic_array_push_back(&info->source_infos, source_info);
 
             // Query line-infos
+            auto& function_info = info->functions[function_index];
             {
                 CComPtr<IDiaEnumLineNumbers> line_iterator;
                 bool worked = session->findLinesByAddr(
@@ -682,7 +679,7 @@ namespace PDB_Analysis
                         line_info.location.offset = offset;
                         line_info.source_file_id = src_id;
                         line_info.line_num = linenum;
-                        dynamic_array_push_back(&info->functions[added_function_index].line_infos, line_info);
+                        dynamic_array_push_back(&info->source_infos[added_source_info_index].line_infos, line_info);
 
                         line_number->Release();
                     }
@@ -696,7 +693,7 @@ namespace PDB_Analysis
                 IDiaSymbol* child = NULL;
                 ULONG celt = 0;
                 while (SUCCEEDED(child_iterator->Next(1, &child, &celt)) && (celt == 1)) {
-                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, added_function_index, -1, session);
+                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, added_source_info_index, -1, session);
                     child->Release();
                 }
                 child_iterator->Release();
@@ -707,7 +704,7 @@ namespace PDB_Analysis
         case SymTagBlock:
         {
             // If not inside a function, return (Not sure if this happens)
-            if (function_index == -1 || !is_main_compiland) {
+            if (source_info_index == -1 || !is_main_compiland) {
                 break;
             }
             PDB_Location location = pdb_symbol_get_location(symbol);
@@ -722,8 +719,8 @@ namespace PDB_Analysis
 
             PDB_Code_Block_Info block_info;
             block_info.variables = dynamic_array_create<PDB_Variable_Info>();
-            block_info.function_index = function_index;
-            block_info.length = function_index;
+            block_info.function_index = source_info_index;
+            block_info.length = source_info_index;
             block_info.location = location.options.static_loc;
 
             int added_block_index = info->block_infos.size;
@@ -736,7 +733,7 @@ namespace PDB_Analysis
                 IDiaSymbol* child = NULL;
                 ULONG celt = 0;
                 while (SUCCEEDED(child_iterator->Next(1, &child, &celt)) && (celt == 1)) {
-                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, function_index, added_block_index, session);
+                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, source_info_index, added_block_index, session);
                     child->Release();
                 }
                 child_iterator->Release();
@@ -766,14 +763,15 @@ namespace PDB_Analysis
                 dynamic_array_push_back(&block.variables, variable_info);
                 break;
             }
-            case DataIsParam: {
-                if (function_index == -1) {
+            case DataIsParam: 
+            {
+                if (source_info_index == -1) {
                     break;
                 }
                 variable_info.name = string_create();
                 pdb_symbol_get_name(symbol, &variable_info.name);
-                auto& function = info->functions[function_index];
-                dynamic_array_push_back(&function.parameter_infos, variable_info);
+                auto& source_info = info->source_infos[source_info_index];
+                dynamic_array_push_back(&source_info.parameter_infos, variable_info);
                 break;
             }
 
@@ -817,10 +815,10 @@ namespace PDB_Analysis
         // Function start and end addresses...
         case SymTagFuncDebugStart:
         {
-            if (function_index == -1) {
+            if (source_info_index == -1) {
                 break;
             }
-            auto& function = info->functions[function_index];
+            auto& function = info->source_infos[source_info_index];
             if (function.debug_start_location.available) {
                 break;
             }
@@ -833,10 +831,10 @@ namespace PDB_Analysis
         }
         case SymTagFuncDebugEnd:
         {
-            if (function_index == -1) {
+            if (source_info_index == -1) {
                 break;
             }
-            auto& function = info->functions[function_index];
+            auto& function = info->source_infos[source_info_index];
             if (function.debug_end_location.available) {
                 break;
             }
@@ -964,7 +962,7 @@ namespace PDB_Analysis
                 SysFreeString(wide_compiland_string);
 
                 string_replace_character(&string_buffer, '\\', '/');
-                printf("Compiland name: \"%s\"\n", string_buffer.characters);
+                //printf("Compiland name: \"%s\"\n", string_buffer.characters);
                 if (string_equals_cstring(&string_buffer, main_compiland_name)) {
                     is_main_compiland = true;
                 }
@@ -1496,17 +1494,40 @@ bool string_fill_from_line(String* to_fill)
     return false;
 }
 
+u64 find_address_of_symbol(String name, PDB_Analysis::PDB_Information pdb_info, PE_Analysis::PE_Info main_pe_info)
+{
+    // Search in pdb for function with this name...
+    for (int i = 0; i < pdb_info.functions.size; i++) {
+        auto& function = pdb_info.functions[i];
+        if (!string_equals(&name, &function.normal_name)) continue;
+
+        int section_index = function.location.section_index - 1;
+        u64 offset = function.location.offset;
+
+        auto& sections = main_pe_info.sections;
+        if (section_index >= 0 && section_index < sections.size) {
+            auto& section = sections[section_index];
+            return main_pe_info.base_address + section.rva + offset;
+        }
+    }
+    return 0;
+}
+
 String* find_closest_symbol_name(u64 address, Dynamic_Array<PE_Analysis::PE_Info> pe_infos, PDB_Analysis::PDB_Information pdb_info, u64* out_dist = nullptr)
 {
     String* closest_name = nullptr;
     u64 closest_distance = (u64)(i64)-1;
 
-    for (int i = 0; i < pe_infos.size; i++) 
+    if (pe_infos.size == 0) {
+        return nullptr;
+    }
+
+    for (int i = 0; i < pe_infos.size; i++)
     {
         auto& pe_info = pe_infos[i];
         for (int i = 0; i < pe_info.exported_symbols.size; i++) {
             auto& symbol = pe_info.exported_symbols[i];
-            if (symbol.forwarder_name.available || ! symbol.name.available) continue;
+            if (symbol.forwarder_name.available || !symbol.name.available) continue;
 
             u64 symbol_address = symbol.rva + pe_info.base_address;
             if (address < symbol_address) continue;
@@ -1519,61 +1540,31 @@ String* find_closest_symbol_name(u64 address, Dynamic_Array<PE_Analysis::PE_Info
         }
     }
 
-    if (pe_infos.size > 0)
+    auto& section_infos = pe_infos[0].sections;
+    for (int i = 0; i < pdb_info.functions.size; i++)
     {
-        auto& section_infos = pe_infos[0].sections;
+        auto& function = pdb_info.functions[i];
+        auto loc = function.location;
+        if (function.normal_name.size == 0 && function.mangled_name.size == 0) continue;
+        if (loc.section_index == 0) continue; // Section 0 should not be valid?
 
-        for (int i = 0; i < pdb_info.extern_functions.size; i++) 
+        int section_index = loc.section_index - 1; // Sections indices are 1 based...
+        if (section_index < 0 || section_index >= section_infos.size) continue;
+
+        auto& section = section_infos[section_index];
+
+        u64 fn_address = pe_infos[0].base_address + section.rva + loc.offset;
+
+        if (address >= fn_address && address < fn_address + function.length)
         {
-            auto& extern_fn = pdb_info.extern_functions[i];
-            auto loc = extern_fn.location;
-            if (extern_fn.normal_name.size == 0 && extern_fn.mangled_name.size == 0) continue;
-            if (loc.section_index == 0) continue; // Section 0 should not be valid?
-
-            int section_index = loc.section_index - 1; // I assume sections are index with this
-            if (section_index < 0 || section_index >= section_infos.size) continue;
-
-            auto& section = section_infos[section_index];
-            u64 fn_address = pe_infos[0].base_address + section.rva + loc.offset;
-
-            if (address >= fn_address && address < fn_address + extern_fn.length)
-            {
-                if (out_dist != nullptr) {
-                    *out_dist = address - fn_address;
-                }
-                if (extern_fn.normal_name.size > 0) {
-                    return &extern_fn.normal_name;
-                }
-                else {
-                    return &extern_fn.mangled_name;
-                }
+            if (out_dist != nullptr) {
+                *out_dist = address - fn_address;
             }
-        }
-
-        for (int i = 0; i < pdb_info.functions.size; i++)
-        {
-            auto& function = pdb_info.functions[i];
-            auto loc = function.location;
-            if (function.normal_name.size == 0 && function.mangled_name.size == 0) continue;
-            if (loc.section_index == 0) continue; // Section 0 should not be valid?
-
-            int section_index = loc.section_index - 1; // I assume sections are index with this
-            if (section_index < 0 || section_index >= section_infos.size) continue;
-
-            auto& section = section_infos[section_index];
-            u64 fn_address = pe_infos[0].base_address + section.rva + loc.offset;
-
-            if (address >= fn_address && address < fn_address + function.length)
-            {
-                if (out_dist != nullptr) {
-                    *out_dist = address - fn_address;
-                }
-                if (function.normal_name.size > 0) {
-                    return &function.normal_name;
-                }
-                else {
-                    return &function.mangled_name;
-                }
+            if (function.normal_name.size > 0) {
+                return &function.normal_name;
+            }
+            else {
+                return &function.mangled_name;
             }
         }
     }
@@ -1584,13 +1575,34 @@ String* find_closest_symbol_name(u64 address, Dynamic_Array<PE_Analysis::PE_Info
     return closest_name;
 }
 
+struct Breakpoint
+{
+    u64 address;
+    int id; // To remove the breakpoint
+};
+
+enum class Hardware_Breakpoint_Type
+{
+    BREAK_ON_EXECUTE,
+    BREAK_ON_READ,
+    BREAK_ON_READ_OR_WRITE,
+};
+
+struct Hardware_Breakpoint
+{
+    u64 address;
+    bool enabled;
+    int length_bits; // For data_breakpoints (read/write), 2 bits are used, and this indicated a length of 1, 2, 4, or 8 bytes
+    Hardware_Breakpoint_Type type;
+};
+
 void game_entry()
 {
     PDB_Analysis::PDB_Information pdb_info = PDB_Analysis::pdb_information_create();
     SCOPE_EXIT(PDB_Analysis::pdb_information_destroy(&pdb_info));
     bool success = PDB_Analysis::pdb_information_fill_from_file(
-        &pdb_info, 
-        "P:/Martin/Projects/UppLib/backend/test/main.pdb", 
+        &pdb_info,
+        "P:/Martin/Projects/UppLib/backend/test/main.pdb",
         "P:/Martin/Projects/UppLib/backend/test/main.obj"
     );
 
@@ -1600,12 +1612,16 @@ void game_entry()
         return;
     }
 
+    Dynamic_Array<Breakpoint> breakpoints = dynamic_array_create<Breakpoint>();
+    SCOPE_EXIT(dynamic_array_destroy(&breakpoints));
+    int next_breakpoint_id = 0;
+
     Dynamic_Array<PE_Analysis::PE_Info> pe_infos = dynamic_array_create<PE_Analysis::PE_Info>();
     SCOPE_EXIT(
         for (int i = 0; i < pe_infos.size; i++) {
             PE_Analysis::pe_info_destroy(&pe_infos[i]);
         }
-        dynamic_array_destroy(&pe_infos);
+    dynamic_array_destroy(&pe_infos);
     );
 
     debugger_initialize();
@@ -1624,7 +1640,7 @@ void game_entry()
     String input_line = string_create();
     SCOPE_EXIT(string_destroy(&input_line));
     bool loop_var = true;
-    bool expect_trap = false;
+    bool waiting_for_step_trap = false;
     while (loop_var)
     {
         DEBUG_EVENT debug_event;
@@ -1634,7 +1650,7 @@ void game_entry()
             helper_print_last_error();
             break;
         }
-        bool event_exception_was_handled = false;
+        DWORD continue_status = DBG_CONTINUE;
 
         // Ignore events from other processes
         if (debug_event.dwProcessId != debugger.process_id) {
@@ -1643,138 +1659,186 @@ void game_entry()
             continue;
         }
 
-        printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
-        switch (debug_event.dwDebugEventCode)
-        {
-        case CREATE_PROCESS_DEBUG_EVENT: 
-        {
-            auto& create_info = debug_event.u.CreateProcessInfo;
-            base_executable_image_va = (u64)create_info.lpBaseOfImage;
-            printf("Create_Process\n");
-
-            // Load portable-executable information
-            PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-            bool success = PE_Analysis::pe_info_fill_from_executable_image(
-                &pe_info, (u64)create_info.lpBaseOfImage, debugger.process_handle, create_info.lpImageName, create_info.fUnicode
-            );
-            if (success) {
-                dynamic_array_push_back(&pe_infos, pe_info);
-            }
-            else {
-                PE_Analysis::pe_info_destroy(&pe_info);
-            }
-
-            CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
-            break;
-        }
-        case LOAD_DLL_DEBUG_EVENT:
-        {
-            auto& dll_load = debug_event.u.LoadDll;
-            printf("Load DLL event\n");
-
-            // Load portable-executable information
-            PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-            bool success = PE_Analysis::pe_info_fill_from_executable_image(
-                &pe_info, (u64)dll_load.lpBaseOfDll, debugger.process_handle, dll_load.lpImageName, dll_load.fUnicode
-            );
-            if (success) {
-                dynamic_array_push_back(&pe_infos, pe_info);
-            }
-            else {
-                PE_Analysis::pe_info_destroy(&pe_info);
-            }
-
-            CloseHandle(debug_event.u.LoadDll.hFile);
-            break;
-        }
-        case EXCEPTION_DEBUG_EVENT: {
-            int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
-            if (code == EXCEPTION_SINGLE_STEP) {
-                if (expect_trap) {
-                    expect_trap = false;
-                    event_exception_was_handled = true;
-                }
-            }
-            const char* exception_name = "";
-            switch (code)
-            {
-            case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
-            case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
-            case EXCEPTION_BREAKPOINT: exception_name = "EXCEPTION_BREAKPOINT"; break;
-            case EXCEPTION_SINGLE_STEP: exception_name = "EXCEPTION_SINGLE_STEP"; break;
-            case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
-            case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
-            case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
-            case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
-            case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
-            case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
-            case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
-            case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
-            case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
-            case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
-            case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
-            case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
-            case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
-            case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
-            case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
-            case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
-            case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
-            case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
-            }
-            printf("Exception %s\n", exception_name);
-            break;
-        }
-        case OUTPUT_DEBUG_STRING_EVENT:
-        {
-            auto& debug_str = debug_event.u.DebugString;
-            auto& str = string_buffer;
-            string_reset(&str);
-            bool success = Process_Memory::read_string(
-                debugger.process_handle, (void*)(debug_str.lpDebugStringData), 
-                &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &byte_buffer
-            );
-            if (success) {
-                printf("Output_Debug_String: \"%s\"\n", str.characters);
-            }
-            else {
-                printf("Debug string could not be read\n");
-            }
-            break;
-        }
-        case UNLOAD_DLL_DEBUG_EVENT:     printf("Unload_Dll\n"); break;
-        case CREATE_THREAD_DEBUG_EVENT:  printf("Create_thread\n"); break;
-        case EXIT_THREAD_DEBUG_EVENT:    printf("Exit_Thread\n"); break;
-        case EXIT_PROCESS_DEBUG_EVENT:   printf("Exit_Process\n"); break;
-        case RIP_EVENT:                  printf("RIP event \n"); break;
-        default: loop_var = false; break;
+        if (debug_event.dwThreadId != debugger.main_thread_id) {
+            printf("Debug event from thread with id: %d\n", debug_event.dwThreadId);
+            ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_EXCEPTION_NOT_HANDLED);
+            continue;
         }
 
-        // Print state
+        // Get thread context
         CONTEXT thread_context;
-        {
-            thread_context.ContextFlags = CONTEXT_ALL;
-            if (!GetThreadContext(debugger.main_thread_handle, &thread_context)) {
-                helper_print_last_error();
-                panic("Should work!");
-            }
-            printf("rip=[0x%08llx] ", thread_context.Rip);
+        thread_context.ContextFlags = CONTEXT_ALL;
+        if (!GetThreadContext(debugger.main_thread_handle, &thread_context)) {
+            helper_print_last_error();
+            panic("Should work!");
+        }
 
-            u64 dist = 0;
-            String* closest_symbol = find_closest_symbol_name(thread_context.Rip, pe_infos, pdb_info, &dist);
-            if (closest_symbol != nullptr) {
-                printf(", %s + [%04llX]", closest_symbol->characters, dist);
+        // Handle step instruction
+        bool is_step_event = false;
+        if (waiting_for_step_trap && debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+            if (debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+                is_step_event = true;
+                waiting_for_step_trap = false;
+            }
+        }
+
+        // Handle events
+        if (!is_step_event)
+        {
+            printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
+            switch (debug_event.dwDebugEventCode)
+            {
+            case CREATE_PROCESS_DEBUG_EVENT:
+            {
+                auto& create_info = debug_event.u.CreateProcessInfo;
+                base_executable_image_va = (u64)create_info.lpBaseOfImage;
+                printf("Create_Process\n");
+
+                // Load portable-executable information
+                PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+                bool success = PE_Analysis::pe_info_fill_from_executable_image(
+                    &pe_info, (u64)create_info.lpBaseOfImage, debugger.process_handle, create_info.lpImageName, create_info.fUnicode
+                );
+                if (success) {
+                    dynamic_array_push_back(&pe_infos, pe_info);
+                }
+                else {
+                    PE_Analysis::pe_info_destroy(&pe_info);
+                }
+
+                CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
+                break;
+            }
+            case LOAD_DLL_DEBUG_EVENT:
+            {
+                auto& dll_load = debug_event.u.LoadDll;
+                printf("Load DLL event: ");
+
+                // Load portable-executable information
+                PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+                bool success = PE_Analysis::pe_info_fill_from_executable_image(
+                    &pe_info, (u64)dll_load.lpBaseOfDll, debugger.process_handle, dll_load.lpImageName, dll_load.fUnicode
+                );
+                if (success)
+                {
+                    if (pe_info.name.size > 0) {
+                        printf("\"%s\" \n", pe_info.name.characters);
+                    }
+                    else {
+                        printf("Analysis success, but name not retrievable \n");
+                    }
+                    dynamic_array_push_back(&pe_infos, pe_info);
+                }
+                else {
+                    printf("Analysis failed!\n");
+                    PE_Analysis::pe_info_destroy(&pe_info);
+                }
+
+                CloseHandle(debug_event.u.LoadDll.hFile);
+                break;
+            }
+            case EXCEPTION_DEBUG_EVENT: 
+            {
+                int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
+
+                // Check if any of our breakpoints were hit by breakpoint
+                if (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP)
+                {
+                    bool our_breakpoint = false;
+                    for (int i = 0; i < breakpoints.size; i++) {
+                        auto& bp = breakpoints[i];
+                        if (thread_context.Rip == bp.address) {
+                            our_breakpoint = true;
+                            break;
+                        }
+                    }
+
+                    if (our_breakpoint) {
+                        printf("Our Breakpoint was hit!\n");
+                        // Set resume flag, so that execution can continue (Do i need to clear this again?)
+                        continue_status = DBG_EXCEPTION_HANDLED;
+                        thread_context.EFlags = thread_context.EFlags | 0x10000;
+                        break;
+                    }
+                }
+
+                const char* exception_name = "";
+                continue_status = DBG_EXCEPTION_NOT_HANDLED;
+                switch (code)
+                {
+                case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
+                case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
+                case EXCEPTION_BREAKPOINT: exception_name = "EXCEPTION_BREAKPOINT"; break;
+                case EXCEPTION_SINGLE_STEP: exception_name = "EXCEPTION_SINGLE_STEP"; break;
+                case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
+                case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
+                case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
+                case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
+                case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
+                case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
+                case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
+                case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
+                case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
+                case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
+                case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
+                case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
+                case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
+                case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
+                case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
+                case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
+                case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
+                case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
+                }
+                printf("Exception %s\n", exception_name);
+                break;
+            }
+            case OUTPUT_DEBUG_STRING_EVENT:
+            {
+                auto& debug_str = debug_event.u.DebugString;
+                auto& str = string_buffer;
+                string_reset(&str);
+                bool success = Process_Memory::read_string(
+                    debugger.process_handle, (void*)(debug_str.lpDebugStringData),
+                    &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &byte_buffer
+                );
+                if (success) {
+                    printf("Output_Debug_String: \"%s\"\n", str.characters);
+                }
+                else {
+                    printf("Debug string could not be read\n");
+                }
+                break;
+            }
+            case UNLOAD_DLL_DEBUG_EVENT:     printf("Unload_Dll\n"); break;
+            case CREATE_THREAD_DEBUG_EVENT:  printf("Create_thread\n"); break;
+            case EXIT_THREAD_DEBUG_EVENT:    printf("Exit_Thread\n"); break;
+            case EXIT_PROCESS_DEBUG_EVENT:   printf("Exit_Process\n"); break;
+            case RIP_EVENT:                  printf("RIP event \n"); break;
+            default: loop_var = false; break;
             }
         }
 
         // Parse/execute commands
-        while (true)
+        while (true && !waiting_for_step_trap)
         {
-            printf("\n> ");
-            if (string_fill_from_line(&input_line)) {
-                loop_var = false;
-                break;
+            // Print current state
+            {
+                printf("rip=[0x%08llX] ", thread_context.Rip);
+
+                u64 dist = 0;
+                String* closest_symbol = find_closest_symbol_name(thread_context.Rip, pe_infos, pdb_info, &dist);
+                if (closest_symbol != nullptr) {
+                    printf(", %s + [%04llX]", closest_symbol->characters, dist);
+                }
+
+                printf("\n> ");
+                if (string_fill_from_line(&input_line)) {
+                    loop_var = false;
+                    break;
+                }
             }
 
+            // Handle commands
             Array<String> parts = string_split(input_line, ' ');
             SCOPE_EXIT(string_split_destroy(parts));
             if (parts.size == 0) continue;
@@ -1784,19 +1848,15 @@ void game_entry()
                 break;
             }
             else if (string_equals_cstring(&command, "s") || string_equals_cstring(&command, "step")) {
-                thread_context.EFlags = thread_context.EFlags | 0x100;
-                if (!SetThreadContext(debugger.main_thread_handle, &thread_context)) {
-                    helper_print_last_error();
-                    panic("Should work!");
-                }
-                expect_trap = true;
+                waiting_for_step_trap = true;
                 break;
             }
             else if (string_equals_cstring(&command, "q") || string_equals_cstring(&command, "quit") || string_equals_cstring(&command, "exit")) {
                 loop_var = false;
                 break;
             }
-            else if (string_equals_cstring(&command, "registers") || string_equals_cstring(&command, "r")) {
+            else if (string_equals_cstring(&command, "registers") || string_equals_cstring(&command, "r"))
+            {
                 auto& c = thread_context;
                 printf("    rax=0x%016llx rbx=0x%016llx rcx=0x%016llx\n", c.Rax, c.Rbx, c.Rcx);
                 printf("    rdx=0x%016llx rsi=0x%016llx rdi=0x%016llx\n", c.Rdx, c.Rsi, c.Rdi);
@@ -1804,41 +1864,255 @@ void game_entry()
                 printf("     r8=0x%016llx  r9=0x%016llx r10=0x%016llx\n", c.R8, c.R9, c.R10);
                 printf("    r11=0x%016llx r12=0x%016llx r13=0x%016llx\n", c.R11, c.R12, c.R13);
                 printf("    r14=0x%016llx r15=0x%016llx eflags=0x%08lx\n", c.R14, c.R15, c.EFlags);
-                break;
             }
             else if (string_equals_cstring(&command, "d") || string_equals_cstring(&command, "display"))
             {
                 auto& bytes = byte_buffer;
-                bool success = Process_Memory::read_as_much_as_possible(debugger.process_handle,(void*)thread_context.Rip, &bytes, 16);
-                if (success)
-                {
-                    for (int i = 0; i < bytes.size; i += 1) {
-                        printf("%02X ", bytes[i]);
-                    }
-                    printf("\n");
 
-                    // Print bytes as x64 assembly
-                    if (bytes.size > 0)
-                    {
-                        INSTRUX instruction;
-                        NDSTATUS status = NdDecodeEx(&instruction, bytes.data, bytes.size, ND_CODE_64, ND_DATA_64);
-                        if (ND_SUCCESS(status))
-                        {
-                            String str = string_create_empty(256);
-                            SCOPE_EXIT(string_destroy(&str));
-                            NdToText(&instruction, thread_context.Rip, str.capacity - 1, str.characters);
-                            str.size = (int)strlen(str.characters);
-                            printf("Decoded instruction: %s\n", str.characters);
+                void* virtual_address = (void*)thread_context.Rip;
+                u64 byte_length = 32;
+                if (parts.size == 2)
+                {
+                    String symbol_name = parts[1];
+
+                    // Search in pdb for function with this name...
+                    PDB_Analysis::PDB_Function* function = nullptr;
+                    for (int i = 0; i < pdb_info.functions.size; i++) {
+                        auto& fn = pdb_info.functions[i];
+                        if (string_equals(&symbol_name, &fn.normal_name)) {
+                            function = &fn;
+                            break;
                         }
                     }
-                }
-                continue;
-            }
 
-            printf("Invalid command: \"%s\"\nRetry: ", command.characters);
+                    if (function != nullptr)
+                    {
+                        printf(
+                            "Found function: %s, section: %d, offset: %lld\n",
+                            function->normal_name.characters, function->location.section_index, function->location.offset
+                        );
+                        int section_index = function->location.section_index - 1;
+                        u64 offset = function->location.offset;
+
+                        auto& sections = pe_infos[0].sections;
+                        if (section_index >= 0 && section_index < sections.size)
+                        {
+                            auto& section = sections[section_index];
+                            virtual_address = (void*)(base_executable_image_va + section.rva + offset);
+                            byte_length = function->length;
+                        }
+                    }
+                    else {
+                        printf("Could not find function, continuing with normal disassembly output\n");
+                    }
+                }
+
+                bool success = Process_Memory::read_as_much_as_possible(debugger.process_handle, virtual_address, &bytes, byte_length);
+                if (!success) {
+                    printf("Could not read memory at specified address...\n");
+                    continue;
+                }
+
+                // Print bytes as x64 assembly
+                int byte_index = 0;
+                while (byte_index < byte_length)
+                {
+                    INSTRUX instruction;
+                    NDSTATUS status = NdDecodeEx(&instruction, bytes.data + byte_index, bytes.size - byte_index, ND_CODE_64, ND_DATA_64);
+                    if (!ND_SUCCESS(status)) {
+                        break;
+                    }
+                    assert(instruction.Length > 0, "");
+
+                    // Print bytes of instruction
+                    printf("[0x%08llX] ", (u64)(virtual_address)+byte_index);
+                    for (int i = 0; i < 6; i++)
+                    {
+                        if (i < instruction.Length) {
+                            if (i == 5 && instruction.Length > 6) {
+                                printf(".. ");
+                            }
+                            else {
+                                printf("%02X ", bytes[byte_index + i]);
+                            }
+                        }
+                        else {
+                            printf("   ");
+                        }
+                    }
+
+                    // Print instruction
+                    String str = string_create_empty(256);
+                    SCOPE_EXIT(string_destroy(&str));
+                    NdToText(&instruction, thread_context.Rip, str.capacity - 1, str.characters);
+                    str.size = (int)strlen(str.characters);
+                    printf("%s\n", str.characters);
+
+                    byte_index += instruction.Length;
+                }
+            }
+            else if (string_equals_cstring(&command, "bp") || string_equals_cstring(&command, "ba"))  // Add breakpoint
+            {
+                if (parts.size != 2) {
+                    printf("Add breakpoint command requires an argument\n");
+                    continue;
+                }
+
+                u64 function_address = find_address_of_symbol(parts[1], pdb_info, pe_infos[0]);
+                if (function_address == 0) {
+                    printf("Add breakpoint failed, could not find address of symbol\n");
+                    continue;
+                }
+
+                bool other_exists = false;
+                for (int i = 0; i < breakpoints.size; i++) {
+                    auto& other = breakpoints[i];
+                    if (other.address == function_address) {
+                        other_exists = true;
+                        break;
+                    }
+                }
+                if (other_exists) {
+                    printf("Add breakpoint failed, breakpoint with this address already set\n");
+                    continue;
+                }
+                if (breakpoints.size > 3) {
+                    printf("Add breakpoint failed, reached maximum breakpoint count (4)\n");
+                    continue;
+                }
+
+                Breakpoint breakpoint;
+                breakpoint.address = function_address;
+                breakpoint.id = next_breakpoint_id;
+                next_breakpoint_id++;
+                dynamic_array_push_back(&breakpoints, breakpoint);
+                printf("Added new breakpoint %d at [0x%08llX]\n", breakpoint.id, breakpoint.address);
+            }
+            else if (string_equals_cstring(&command, "bd") || string_equals_cstring(&command, "bc"))  // Delete breakpoint
+            {
+                if (parts.size != 2) {
+                    printf("Delete breakpoint command requires an argument (id)\n");
+                    continue;
+                }
+
+                auto id_opt = string_parse_int(&parts[1]);
+                if (!id_opt.available) {
+                    printf("Delete breakpoint failed, could not parse argument\n");
+                    continue;
+                }
+                int id = id_opt.value;
+
+                int index = -1;
+                for (int i = 0; i < breakpoints.size; i++) {
+                    auto& other = breakpoints[i];
+                    if (other.id == id) {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index == -1) {
+                    printf("Delete breakpoint failed, breakpoint with given id does not exist");
+                    continue;
+                }
+
+                dynamic_array_swap_remove(&breakpoints, index);
+                printf("Removed breakpoint %d\n", id);
+            }
+            else if (string_equals_cstring(&command, "bl") || string_equals_cstring(&command, "breakpoint_list")) // List breakpoints
+            {
+                for (int i = 0; i < breakpoints.size; i++) {
+                    auto& bp = breakpoints[i];
+                    printf("    ID: %2d, Address: [0x%08llX]\n", bp.id, bp.address);
+                }
+            }
+            else {
+                printf("Invalid command: \"%s\"\nRetry: ", command.characters);
+            }
         }
 
-        ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, event_exception_was_handled ? DBG_EXCEPTION_HANDLED : DBG_EXCEPTION_NOT_HANDLED);
+        // Set hardware breakpoints
+        if (true)
+        {
+            // Initialize hardware breakpoints as not-set
+            Hardware_Breakpoint hw_points[4];
+            for (int i = 0; i < 4; i++) {
+                Hardware_Breakpoint& bp = hw_points[i];
+                bp.address = 0;
+                bp.enabled = false;
+                bp.length_bits = 0;
+                bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+            }
+
+            // Update hardware_breakpoints based on breakpoint list
+            for (int i = 0; i < breakpoints.size && i < 4; i++)
+            {
+                auto& breakpoint = breakpoints[i];
+                hw_points[i].enabled = true;
+                hw_points[i].address = breakpoint.address;
+                hw_points[i].length_bits = 0;
+                hw_points[i].type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+            }
+
+            auto set_u64_bits = [](u64 initial_value, int bit_index, int bit_length, u64 bits_to_set) -> u64 {
+                if (bit_length == 0) return initial_value;
+
+                u64 mask = (1 << bit_length) - 1; // Generate 1s
+                bits_to_set = bits_to_set & mask; // Truncate bits_to_set by size
+                mask = mask << bit_index;
+                bits_to_set = bits_to_set << bit_index;
+                return ((~mask) & initial_value) | (mask & bits_to_set);
+            };
+
+            // Transfer hardware-breakpoints into ThreadContext
+            for (int i = 0; i < 4; i++)
+            {
+                auto& bp = hw_points[i];
+                switch (i)
+                {
+                case 0: thread_context.Dr0 = bp.address; break;
+                case 1: thread_context.Dr1 = bp.address; break;
+                case 2: thread_context.Dr2 = bp.address; break;
+                case 3: thread_context.Dr3 = bp.address; break;
+                default: panic("");
+                }
+
+                int length_bits = bp.length_bits;
+                int read_write_value = 0;
+                switch (bp.type)
+                {
+                case Hardware_Breakpoint_Type::BREAK_ON_EXECUTE:       read_write_value = 0; length_bits = 0; break;
+                case Hardware_Breakpoint_Type::BREAK_ON_READ:          read_write_value = 1; break;
+                case Hardware_Breakpoint_Type::BREAK_ON_READ_OR_WRITE: read_write_value = 3; break;
+                default: panic("");
+                }
+
+
+                int local_enabled_bit_offset = i * 2;
+                int read_write_bits_offset   = 16 + i * 4;
+                int len_bit_offset           = 18 + i * 4;
+
+                u64 dr7 = thread_context.Dr7;
+                dr7 = set_u64_bits(dr7, local_enabled_bit_offset, 1, bp.enabled ? 1 : 0);
+                dr7 = set_u64_bits(dr7, read_write_bits_offset,   2, read_write_value);
+                dr7 = set_u64_bits(dr7, len_bit_offset,           2, length_bits);
+                thread_context.Dr7 = dr7;
+            }
+        }
+
+        // Set trap flag if we want to do a step
+        if (waiting_for_step_trap) {
+            thread_context.EFlags = thread_context.EFlags | 0x100;
+        }
+
+        // Update thread context
+        thread_context.ContextFlags = CONTEXT_ALL;
+        if (!SetThreadContext(debugger.main_thread_handle, &thread_context)) {
+            helper_print_last_error();
+            panic("Should work!");
+        }
+
+        // Continue until next event
+        ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, continue_status);
 
         if (debug_event.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT || debug_event.dwDebugEventCode == RIP_EVENT) {
             break;
