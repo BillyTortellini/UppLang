@@ -354,6 +354,9 @@
     <ClInclude Include="win32\thread.hpp">
       <Filter>Header Files\Win32</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\debugger.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -570,6 +573,9 @@
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="win32\thread.cpp">
+      <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\debugger.cpp">
       <Filter>Source Files\Win32</Filter>
     </ClCompile>
   </ItemGroup>

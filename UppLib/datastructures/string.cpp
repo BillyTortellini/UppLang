@@ -527,3 +527,24 @@ void string_split_destroy(Array<String> parts) {
     delete parts.data;
     parts.data = 0;
 }
+
+bool string_fill_from_line(String* to_fill)
+{
+    string_reset(to_fill);
+    while (true)
+    {
+        int c = getc(stdin);
+        if (c == 0 || c == EOF) {
+            return true;
+        }
+        if (c == '\n') {
+            break;
+        }
+        if (c == '\r' || c < ' ') {
+            continue;
+        }
+        string_append_character(to_fill, c);
+    }
+
+    return false;
+}

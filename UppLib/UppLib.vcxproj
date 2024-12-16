@@ -51,6 +51,7 @@
     <ClInclude Include="programs\upp_lang\compiler_misc.hpp" />
     <ClInclude Include="programs\upp_lang\constant_pool.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
+    <ClInclude Include="programs\upp_lang\debugger.hpp" />
     <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp" />
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
     <ClInclude Include="programs\upp_lang\lexer.hpp" />
@@ -127,6 +128,7 @@
     <ClCompile Include="programs\upp_lang\compiler_misc.cpp" />
     <ClCompile Include="programs\upp_lang\constant_pool.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
+    <ClCompile Include="programs\upp_lang\debugger.cpp" />
     <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp" />
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
     <ClCompile Include="programs\upp_lang\lexer.cpp" />

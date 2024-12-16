@@ -62,3 +62,4 @@ Optional<int> string_parse_int(String* string);
 Optional<i64> string_parse_i64(String* string);
 Array<String> string_split(String string, char c); 
 void string_split_destroy(Array<String> parts);
+bool string_fill_from_line(String* to_fill);

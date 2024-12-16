@@ -1,15 +1,32 @@
 
 
+Refactor into new file
+ - Debugger create
+ - Start_Process --> Could fail
+ - Enter text mode --> Textual commands and output?
+
+
+
+Debugger Improvements which could be done:
+ - Software breakpoints would be nice
+ - Stack walking Epilog check should check for jmp instructions with correct encoding...
+ - Load PDB's for DLLs when available
+ - Breakpoints need to be set after initial process_create event...
+
 
 TODO:
- - Do stack-walking with symbol information (Show current stack-trace in compiler on command)
- - Software breakpoints at some point?
-
- - Refactor into new file
  - IR-Code and Bytecode/C-Generator need to store translation names
- - New UI-Mode for debugging (Show current instruction and things)
+ - New UI-Mode for debugging (Setting breakpoints, maybe command parsing for other things?)
 
 DONE:
+ - Refactor into new file
+ - Handle Chained unwind infos
+ - Stack walking Epilog handling (Except for jmps instead of ret)
+ - Executing Op-Codes and doing stack-walk!
+ - Check if opcode-version 2 works
+ - Parsing mach_frame code now doesn't use error, also version 2 is ignored, some more bug fixes...
+ - Bug: Adder not shown in pdb --> undecorated names are actually not mangled names...
+
  - Setting breakpoints at symbols (main function)
  - Show disassembly of main function
  - Command to query symbol (location)
