@@ -100,6 +100,7 @@ Compilation_Unit* compiler_add_compilation_unit(String file_path, bool open_in_e
 
 void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type);
 Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node); // Returns 0 if file couldn't be read
+bool compiler_can_execute_c_compiled(Compiler_Analysis_Data* analysis_data);
 Exit_Code compiler_execute(Compiler_Analysis_Data* analysis_data);
 
 bool compiler_errors_occured(Compiler_Analysis_Data* analysis_data);

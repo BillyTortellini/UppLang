@@ -11,6 +11,7 @@
 #include "ir_code.hpp"
 #include "symbol_table.hpp"
 #include "editor_analysis_info.hpp"
+#include "constant_pool.hpp"
 
 // --------------
 // - C_COMPILER -
@@ -193,31 +194,6 @@ struct IR_Code_Block;
 struct Upp_Constant;
 struct ModTree_Function;
 
-enum class C_Translation_Type
-{
-    FUNCTION,
-    DATATYPE,
-    REGISTER,
-    CONSTANT
-};
-
-struct C_Translation
-{
-    C_Translation_Type type;
-    union {
-        int function_slot_index;
-        struct {
-            IR_Code_Block* code_block;
-            int index;
-        } register_translation;
-        Datatype* datatype;
-        struct {
-            int index; // Index in constant pool
-            bool requires_memory_address; 
-        } constant;
-    } options;
-};
-
 bool c_translation_is_equal(C_Translation* ap, C_Translation* bp) 
 {
     auto& a = *ap;
@@ -304,6 +280,14 @@ enum class Generator_Section
     MAX_ENUM_VALUE,
 };
 
+struct Translation_Char_Info
+{
+    IR_Code_Block* code_block;
+    int instruction_index;
+    int char_start;
+    int char_end;
+};
+
 struct C_Generator
 {
     String sections[(int)Generator_Section::MAX_ENUM_VALUE];
@@ -313,8 +297,8 @@ struct C_Generator
     Hashtable<Datatype*, C_Type_Dependency*> type_to_dependency_mapping;
     Dynamic_Array<C_Type_Dependency*> type_dependencies;
 
-    Hashtable<C_Translation, String> translations;
-    Upp_Constant global_type_informations;
+    Dynamic_Array<Translation_Char_Info> translation_characters;
+    C_Program_Translation program_translation;
 };
 
 static C_Generator c_generator;
@@ -326,9 +310,12 @@ C_Generator* c_generator_initialize()
     for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
         result.sections[i] = string_create_empty(256);
     }
-    result.translations = hashtable_create_empty<C_Translation, String>(64, c_translation_hash, c_translation_is_equal);
+    result.program_translation.line_infos = dynamic_array_create<C_Line_Info>(32);
+    result.program_translation.name_mapping = hashtable_create_empty<C_Translation, String>(64, c_translation_hash, c_translation_is_equal);
+    result.program_translation.source_code = string_create_empty(2048);
     result.type_dependencies = dynamic_array_create<C_Type_Dependency*>();
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Datatype*, C_Type_Dependency*>(32);
+    result.translation_characters = dynamic_array_create<Translation_Char_Info>(32);
     result.name_counter = 0;
     result.text = 0;
 
@@ -341,8 +328,14 @@ void c_generator_shutdown()
     for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
         string_destroy(&gen.sections[i]);
     }
-    hashtable_destroy(&gen.translations);
     hashtable_destroy(&gen.type_to_dependency_mapping);
+
+    string_destroy(&gen.program_translation.source_code);
+    hashtable_for_each_value(&gen.program_translation.name_mapping, string_destroy);
+    hashtable_destroy(&gen.program_translation.name_mapping);
+    dynamic_array_destroy(&gen.program_translation.line_infos);
+    dynamic_array_destroy(&gen.translation_characters);
+
     for (int i = 0; i < gen.type_dependencies.size; i++) {
         type_dependency_destroy(&gen.type_dependencies[i]);
     }
@@ -452,7 +445,7 @@ void c_generator_output_type_reference(Datatype* type)
     translation.type = C_Translation_Type::DATATYPE;
     translation.options.datatype = type;
     {
-        String* translated = hashtable_find_element(&gen.translations, translation);
+        String* translated = hashtable_find_element(&gen.program_translation.name_mapping, translation);
         if (translated != 0) {
             string_append(gen.text, translated->characters);
             return;
@@ -492,7 +485,7 @@ void c_generator_output_type_reference(Datatype* type)
             }
         }
 
-        hashtable_insert_element(&gen.translations, translation, access_name);
+        hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
         gen.text = backup_text;
         string_append(gen.text, access_name.characters);
         return;
@@ -673,7 +666,7 @@ void c_generator_output_type_reference(Datatype* type)
         gen.name_counter += 1;
 
         // Because structs can contain references to themselves, we need to register the access name before generating the members
-        hashtable_insert_element(&gen.translations, translation, access_name);
+        hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
         if (structure->struct_type == AST::Structure_Type::STRUCT) {
             string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
         }
@@ -720,7 +713,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
 
         // Similar to structs we insert the names early
-        hashtable_insert_element(&gen.translations, translation, access_name);
+        hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
         string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
 
         // Generate array definition
@@ -760,7 +753,7 @@ void c_generator_output_type_reference(Datatype* type)
     }
 
     // Insert translation into table and append access to text
-    hashtable_insert_element(&gen.translations, translation, access_name);
+    hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
     gen.text = backup_text;
     string_append(gen.text, access_name.characters);
 }
@@ -859,7 +852,12 @@ void c_generator_generate()
         for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
             string_reset(&gen.sections[i]);
         }
-        hashtable_reset(&gen.translations);
+
+        hashtable_for_each_value(&gen.program_translation.name_mapping, string_destroy);
+        hashtable_reset(&gen.program_translation.name_mapping);
+        dynamic_array_reset(&gen.translation_characters);
+        dynamic_array_reset(&gen.program_translation.line_infos);
+
         hashtable_reset(&gen.type_to_dependency_mapping);
         for (int i = 0; i < gen.type_dependencies.size; i++) {
             type_dependency_destroy(&gen.type_dependencies[i]);
@@ -877,7 +875,7 @@ void c_generator_generate()
             translation.type = C_Translation_Type::DATATYPE;
             translation.options.datatype = const_u8_slice;
             String name = string_create("Slice_U8_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.translations, translation, name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // String
         {
@@ -885,7 +883,7 @@ void c_generator_generate()
             translation.type = C_Translation_Type::DATATYPE;
             translation.options.datatype = types.c_string;
             String name = string_create("Upp_String_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.translations, translation, name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // Type_Handle
         {
@@ -893,7 +891,7 @@ void c_generator_generate()
             translation.type = C_Translation_Type::DATATYPE;
             translation.options.datatype = types.type_handle;
             String name = string_create("Type_Handle_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.translations, translation, name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // Byte_Pointer
         {
@@ -901,7 +899,7 @@ void c_generator_generate()
             translation.type = C_Translation_Type::DATATYPE;
             translation.options.datatype = types.byte_pointer;
             String name = string_create("byte_pointer_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.translations, translation, name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // Any
         {
@@ -909,7 +907,7 @@ void c_generator_generate()
             translation.type = C_Translation_Type::DATATYPE;
             translation.options.datatype = upcast(types.any_type);
             String name = string_create("Upp_Any_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.translations, translation, name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
     }
 
@@ -994,7 +992,7 @@ void c_generator_generate()
             C_Translation translation;
             translation.type = C_Translation_Type::FUNCTION;
             translation.options.function_slot_index = function->function_slot_index;
-            hashtable_insert_element(&gen.translations, translation, access_name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
 
             // Generate prototype
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
@@ -1014,7 +1012,7 @@ void c_generator_generate()
             C_Translation translation;
             translation.type = C_Translation_Type::FUNCTION;
             translation.options.function_slot_index = extern_function->function_slot_index;
-            hashtable_insert_element(&gen.translations, translation, access_name);
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, access_name);
         }
     }
 
@@ -1034,7 +1032,7 @@ void c_generator_generate()
                     C_Translation fn_translation;
                     fn_translation.type = C_Translation_Type::FUNCTION;
                     fn_translation.options.function_slot_index = function->function_slot_index;
-                    String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
+                    String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
                     assert(fn_name != 0, "");
 
                     append_function_signature(fn_name, function->function_type);
@@ -1052,7 +1050,7 @@ void c_generator_generate()
         }
     }
 
-    // Create type_info function
+    // Create type_info init function
     {
         // Create Holder struct
         gen.text = &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS];
@@ -1286,7 +1284,10 @@ void c_generator_generate()
         }
     }
 
-    // Finish (Add entry and combine + write all sections to file)
+    // Combine all sections + entry into one string 
+    auto& source_code = gen.program_translation.source_code;
+    string_reset(&source_code);
+    int function_implementation_char_index = -1;
     {
         string_append(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
@@ -1294,37 +1295,113 @@ void c_generator_generate()
         );
 
         // Combine sections into one program
-        String source_code = string_create_empty(4096);
-        SCOPE_EXIT(string_destroy(&source_code));
+        string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
+        string_append(&source_code, "#pragma once\n#include <cstdlib>\n#include \"../hardcoded/hardcoded_functions.h\"\n#include \"../hardcoded/datatypes.h\"\n\n");
+        // string_append_formated(&source_code, "/* EXTERN HEADERS\n----------------*/\n");
+        // string_append_string(&source_code, &section_extern_includes);
+        // string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
+        // string_append_string(&source_code, &generator->section_string_data);
+        string_append_formated(&source_code, "\n/* ENUMS\n----------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS]);
+        string_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES]);
+        string_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS]);
+        string_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS]);
+        string_append_formated(&source_code, "\n/* ARRAY_HOLDER_SECTION\n----------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS]);
+        string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n"); // Need to be declared before constants for function pointers constants to work
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES]);
+        string_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANTS]);
+        string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::GLOBALS]);
+        string_append_formated(&source_code, "\n/* FUNCTIONS\n------------------*/\n");
+        function_implementation_char_index = source_code.size;
+        string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]);
+    }
+
+    // Write to file
+    file_io_write_file("backend/src/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
+
+    // Calculate line-translations
+    {
+        // Count lines before function implementation starts
         {
-            string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
-            string_append(&source_code, "#pragma once\n#include <cstdlib>\n#include \"../hardcoded/hardcoded_functions.h\"\n#include \"../hardcoded/datatypes.h\"\n\n");
-            // string_append_formated(&source_code, "/* EXTERN HEADERS\n----------------*/\n");
-            // string_append_string(&source_code, &section_extern_includes);
-            // string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
-            // string_append_string(&source_code, &generator->section_string_data);
-            string_append_formated(&source_code, "\n/* ENUMS\n----------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::ENUM_DECLARATIONS]);
-            string_append_formated(&source_code, "\n/* STRUCT_PROTOTYPES\n----------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES]);
-            string_append_formated(&source_code, "\n/* TYPE_DECLARATIONS\n------------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::TYPE_DECLARATIONS]);
-            string_append_formated(&source_code, "\n/* STRUCT_IMPLEMENTATIONS\n----------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::STRUCT_AND_ARRAY_DECLARATIONS]);
-            string_append_formated(&source_code, "\n/* ARRAY_HOLDER_SECTION\n----------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANT_ARRAY_HOLDERS]);
-            string_append_formated(&source_code, "\n/* FUNCTION PROTOTYPES\n------------------*/\n"); // Need to be declared before constants for function pointers constants to work
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES]);
-            string_append_formated(&source_code, "\n/* CONSTANTS\n------------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::CONSTANTS]);
-            string_append_formated(&source_code, "\n/* GLOBALS\n------------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::GLOBALS]);
-            string_append_formated(&source_code, "\n/* FUNCTIONS\n------------------*/\n");
-            string_append_string(&source_code, &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]);
+            int line_offset = 0;
+            for (int i = 0; i < function_implementation_char_index; i++) {
+                auto c = source_code.characters[i];
+                if (c == '\n') {
+                    line_offset += 1;
+                }
+            }
+            gen.program_translation.line_offset = line_offset;
         }
 
-        file_io_write_file("backend/src/main.cpp", array_create_static((byte*)source_code.characters, source_code.size));
+        int last_line_start = function_implementation_char_index;
+        IR_Code_Block* current_block = nullptr;
+        int ir_instruction_index = -1;
+        int next_char_translation_index = 0;
+        for (int char_index = function_implementation_char_index; char_index < source_code.size; char_index++)
+        {
+            auto c = source_code[char_index];
+            if (c != '\n') {
+                continue;
+            }
+
+            // Find next translation which overlaps this line
+            while (next_char_translation_index < gen.translation_characters.size) 
+            {
+                auto& next_translation = gen.translation_characters[next_char_translation_index];
+
+                // Section-relative line starts/ends
+                int line_start = last_line_start - function_implementation_char_index;
+                int line_end = char_index - function_implementation_char_index;
+                // Check if line intersects translation
+                if (!(line_start >= next_translation.char_end && line_end <= next_translation.char_start)) {
+                    if (ir_instruction_index == -1) {
+                        current_block = next_translation.code_block;
+                        ir_instruction_index = next_translation.instruction_index;
+                    }
+                }
+
+                // Check if we left this translation
+                if (line_end >= next_translation.char_end) {
+                    current_block = nullptr;
+                    ir_instruction_index = -1;
+                    next_char_translation_index += 1;
+                }
+                else {
+                    break;
+                }
+            }
+
+            if (c == '\n') {
+                C_Line_Info line_info;
+                line_info.ir_block = current_block;
+                line_info.instruction_index = ir_instruction_index;
+                line_info.line_start_index = last_line_start;
+                line_info.line_end_index = char_index;
+                last_line_start = char_index + 1;
+                dynamic_array_push_back(&gen.program_translation.line_infos, line_info);
+            }
+        }
+
+        // Push back last line
+        if (last_line_start != source_code.size && current_block != nullptr) {
+            C_Line_Info line_info;
+            line_info.ir_block = current_block;
+            line_info.instruction_index = ir_instruction_index;
+            line_info.line_start_index = last_line_start;
+            line_info.line_end_index = source_code.size;
+            dynamic_array_push_back(&gen.program_translation.line_infos, line_info);
+        }
     }
+}
+
+C_Program_Translation* c_generator_get_translation() {
+    return &c_generator.program_translation;
 }
 
 // Outputs "{" + the struct content on indentation level + 1 and "}"
@@ -1388,7 +1465,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     constant_translation.options.constant.index = constant.constant_index;
     constant_translation.options.constant.requires_memory_address = requires_memory_address;
     {
-        String* access_name = hashtable_find_element(&gen.translations, constant_translation);
+        String* access_name = hashtable_find_element(&gen.program_translation.name_mapping, constant_translation);
         if (access_name != 0) {
             string_append(gen.text, access_name->characters);
             return;
@@ -1512,7 +1589,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 C_Translation function_translation;
                 function_translation.type = C_Translation_Type::FUNCTION;
                 function_translation.options.function_slot_index = function_index - 1;
-                String* fn_name = hashtable_find_element(&gen.translations, function_translation);
+                String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, function_translation);
                 assert(fn_name != 0, "");
                 string_append_formated(gen.text, "(&%s)", fn_name->characters);
             }
@@ -1621,7 +1698,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     }
 
     // Store translation
-    hashtable_insert_element(&gen.translations, constant_translation, access_name);
+    hashtable_insert_element(&gen.program_translation.name_mapping, constant_translation, access_name);
 
     // Append constant access
     gen.text = backup_text;
@@ -1649,7 +1726,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         translation.options.register_translation.code_block = access->option.register_access.definition_block;
         translation.options.register_translation.index = access->option.register_access.index;
         {
-            String* name = hashtable_find_element(&gen.translations, translation);
+            String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
             if (name != 0) {
                 string_append(gen.text, name->characters);
                 break;
@@ -1667,7 +1744,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         string_append_formated(&new_name, "%_%d", gen.name_counter);
         gen.name_counter++;
 
-        hashtable_insert_element(&gen.translations, translation, new_name);
+        hashtable_insert_element(&gen.program_translation.name_mapping, translation, new_name);
         string_append(gen.text, new_name.characters);
         break;
     }
@@ -1859,6 +1936,20 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
     for (int i = 0; i < code_block->instructions.size; i++)
     {
         IR_Instruction* instr = &code_block->instructions[i];
+
+        bool add_char_info = gen.text == &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
+        Translation_Char_Info char_info;
+        char_info.code_block = code_block;
+        char_info.instruction_index = i;
+        char_info.char_start = gen.text->size;
+        char_info.char_end = char_info.char_start;
+        SCOPE_EXIT(
+            if (add_char_info && gen.text == &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]) {
+                char_info.char_end = gen.text->size;
+                dynamic_array_push_back(&gen.translation_characters, char_info);
+            }
+        );
+
         if (instr->type != IR_Instruction_Type::BLOCK) {
             string_add_indentation(gen.text, indentation_level + 1);
         }
@@ -1893,7 +1984,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 C_Translation fn_translation;
                 fn_translation.type = C_Translation_Type::FUNCTION;
                 fn_translation.options.function_slot_index = call->options.function->function_slot_index;
-                String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
+                String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
                 assert(fn_name != 0, "Hey");
                 string_append_formated(gen.text, fn_name->characters);
                 break;
@@ -2109,7 +2200,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             C_Translation fn_translation;
             fn_translation.type = C_Translation_Type::FUNCTION;
             fn_translation.options.function_slot_index = addr_of->function_slot_index;
-            String* fn_name = hashtable_find_element(&gen.translations, fn_translation);
+            String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
             assert(fn_name != 0, "HEY");
             string_append_formated(gen.text, "&%s;\n", fn_name->characters);
             break;

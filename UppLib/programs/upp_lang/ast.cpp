@@ -1249,4 +1249,21 @@ namespace AST
         }
     }
 
+    Node* find_smallest_enclosing_node(Node* start_node, Token_Index index)
+    {
+        if (!token_range_contains(start_node->bounding_range, index)) {
+            return nullptr;
+        }
+
+        int child_index = 0;
+        Node* child_node = base_get_child(start_node, child_index);
+        while (child_node != 0) {
+            if (token_range_contains(child_node->bounding_range, index)) {
+                return find_smallest_enclosing_node(child_node, index);
+            }
+            child_index += 1;
+            child_node = base_get_child(start_node, child_index);
+        }
+        return start_node;
+    }
 }

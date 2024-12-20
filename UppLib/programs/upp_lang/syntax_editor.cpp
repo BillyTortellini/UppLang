@@ -24,6 +24,9 @@
 #include "source_code.hpp"
 #include "code_history.hpp"
 #include "editor_analysis_info.hpp"
+#include "debugger.hpp"
+
+#include "ir_code.hpp"
 
 #include "../../utility/rich_text.hpp"
 #include "../../utility/line_edit.hpp"
@@ -185,6 +188,7 @@ enum class Normal_Command_Type
     GOTO_NEXT_JUMP, // Ctrl-I
     ADD_INDENTATION, // >
     REMOVE_INDENTATION, // >
+    SET_REMOVE_BREAKPOINT, // gp
 
     MAX_ENUM_VALUE
 };
@@ -217,6 +221,12 @@ struct Code_Fold
     int indentation;
 };
 
+struct Line_Breakpoint
+{
+    int line_number;
+    bool is_valid_bp;
+};
+
 struct Editor_Tab
 {
     Source_Code* code; // Note: This is different than the code in the compilation unit
@@ -229,6 +239,7 @@ struct Editor_Tab
     bool requires_recompile; // E.g. when loaded from a file, or otherwise modified
 
     Dynamic_Array<Code_Fold> folds;
+    Dynamic_Array<Line_Breakpoint> breakpoints;
 
     // Cursor and camera
     Text_Index cursor;
@@ -364,6 +375,9 @@ struct Syntax_Editor
 
     bool compiler_build_code;
     Compilation_Unit* compiler_main_unit;
+
+    // Debugger
+    Source_Debugger* debugger;
 };
 
 // Globals
@@ -1223,6 +1237,7 @@ namespace Parsing
                 case 'b': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_CURRENT_BLOCK, repeat_count));
                 case 'f': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK, repeat_count));
                 case 'F': return parse_result_success(normal_mode_command_make(Normal_Command_Type::UNFOLD_IN_BLOCK, repeat_count));
+                case 'p': return parse_result_success(normal_mode_command_make(Normal_Command_Type::SET_REMOVE_BREAKPOINT, 1));
                 }
             }
         }
@@ -2009,6 +2024,7 @@ int syntax_editor_add_tab(String file_path)
     tab.last_line_x_pos = 0;
     tab.cam_start = 0;
     tab.cam_end = 0;
+    tab.breakpoints = dynamic_array_create<Line_Breakpoint>();
     tab.last_jump_index = -1;
     tab.jump_list = dynamic_array_create<Text_Index>();
     dynamic_array_push_back(&syntax_editor.tabs, tab);
@@ -2027,6 +2043,7 @@ void editor_tab_destroy(Editor_Tab* tab) {
     code_history_destroy(&tab->history);
     dynamic_array_destroy(&tab->folds);
     dynamic_array_destroy(&tab->jump_list);
+    dynamic_array_destroy(&tab->breakpoints);
     if (tab->compilation_unit != nullptr) {
         tab->compilation_unit->open_in_editor = false;
     }
@@ -2188,6 +2205,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     memory_zero(&syntax_editor);
     gui_initialize(text_renderer, window);
 
+    syntax_editor.debugger = source_debugger_create();
     syntax_editor.last_code_completion_tab = -1;
     syntax_editor.compile_count = 0;
     syntax_editor.symbol_table_already_visited = hashset_create_pointer_empty<Symbol_Table*>(4);
@@ -2256,6 +2274,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
+    source_debugger_destroy(editor.debugger);
     hashset_destroy(&editor.symbol_table_already_visited);
     directory_crawler_destroy(editor.directory_crawler);
     dynamic_array_destroy(&editor.particles);
@@ -2493,7 +2512,7 @@ void code_diff_update_folds_and_jumps(Code_Diff code_diff, int tab_index)
     // Remove-folds where changes happened
     for (int i = 0; i < code_diff.line_diffs.size; i++)
     {
-        auto line = code_diff.line_diffs[i];
+        const auto& line = code_diff.line_diffs[i];
         if (line.items.size == 0 && !line.indent_changed) continue;
 
         int line_index = line.new_line_index;
@@ -2555,7 +2574,7 @@ void code_diff_update_tokenization(Code_Diff code_diff, Source_Code* code)
 {
     for (int i = 0; i < code_diff.line_diffs.size; i++)
     {
-        auto line = code_diff.line_diffs[i];
+        const auto& line = code_diff.line_diffs[i];
         if (line.items.size == 0) continue;
         source_code_tokenize_line(source_code_get_line(code, line.new_line_index));
     }
@@ -4521,6 +4540,47 @@ void normal_command_execute(Normal_Mode_Command& command)
 
     auto line = source_code_get_line(code, cursor.line);
 
+    // Filter commands during debug mode
+    auto debugger_state = source_debugger_get_state(editor.debugger);
+    if (debugger_state->process_running) 
+    {
+        bool command_ok = false;
+        switch (command.type)
+        {
+        case Normal_Command_Type::MOVEMENT:
+        case Normal_Command_Type::YANK_MOTION:
+        case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
+        case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE:
+        case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP:
+        case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER:
+        case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM:
+        case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_TOP:
+        case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER:
+        case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM:
+        case Normal_Command_Type::GOTO_NEXT_TAB:
+        case Normal_Command_Type::GOTO_PREV_TAB:
+        case Normal_Command_Type::GOTO_DEFINITION:
+        case Normal_Command_Type::CLOSE_TAB:
+        case Normal_Command_Type::FOLD_CURRENT_BLOCK:
+        case Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK:
+        case Normal_Command_Type::UNFOLD_IN_BLOCK:
+        case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE:
+        case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION:
+        case Normal_Command_Type::ENTER_SHOW_ERROR_MODE:
+        case Normal_Command_Type::ENTER_TEXT_SEARCH:
+        case Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE:
+        case Normal_Command_Type::SEARCH_IDENTIFER_UNDER_CURSOR:
+        case Normal_Command_Type::VISUALIZE_MOTION:
+        case Normal_Command_Type::GOTO_LAST_JUMP:
+        case Normal_Command_Type::GOTO_NEXT_JUMP:
+        case Normal_Command_Type::SET_REMOVE_BREAKPOINT:
+            command_ok = true;
+        }
+        if (!command_ok) {
+            return;
+        }
+    }
+
     // Save cursor pos
     history_set_cursor_pos(history, cursor);
 
@@ -4978,6 +5038,24 @@ void normal_command_execute(Normal_Mode_Command& command)
         }
 
         Text_Editing::particles_add_in_range(range, vec3(1.0f));
+        break;
+    }
+    case Normal_Command_Type::SET_REMOVE_BREAKPOINT: {
+        auto& breakpoints = tab.breakpoints;
+        int index = -1;
+        for (int i = 0; i < breakpoints.size; i++) {
+            if (breakpoints[i].line_number == cursor.line) {
+                index = i;
+                break;
+            }
+        }
+        if (index != -1) {
+            dynamic_array_swap_remove(&breakpoints, index);
+            break;
+        }
+        Line_Breakpoint bp;
+        bp.line_number = cursor.line;
+        dynamic_array_push_back(&breakpoints, bp);
         break;
     }
     default: panic("");
@@ -5645,6 +5723,62 @@ void syntax_editor_process_key_message(Key_Message& msg)
     }
 }
 
+int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block* block, AST::Statement* statement, IR_Code_Block** out_code_block)
+{
+    for (int i = 0; i < block->instructions.size; i++)
+    {
+        auto& instr = block->instructions[i];
+
+        if (instr.associated_statement == statement) {
+            *out_code_block = block;
+            return i;
+        }
+
+        int result_index = -1;
+        switch (instr.type)
+        {
+        case IR_Instruction_Type::BLOCK: {
+            result_index = ir_block_find_first_instruction_hitting_statement_rec(instr.options.block, statement, out_code_block);
+            break;
+        }
+        case IR_Instruction_Type::WHILE: {
+            result_index = ir_block_find_first_instruction_hitting_statement_rec(instr.options.while_instr.code, statement, out_code_block);
+            break;
+        }
+        case IR_Instruction_Type::IF: {
+            result_index = ir_block_find_first_instruction_hitting_statement_rec(instr.options.if_instr.true_branch, statement, out_code_block);
+            if (result_index != -1) break;
+            result_index = ir_block_find_first_instruction_hitting_statement_rec(instr.options.if_instr.false_branch, statement, out_code_block);
+            break;
+        }
+        }
+
+        if (result_index != -1) {
+            return result_index;
+        }
+    }
+
+    return -1;
+}
+
+void source_debugger_add_breakpoints()
+{
+    auto& editor = syntax_editor;
+    auto debugger = editor.debugger;
+    auto& tab = editor.tabs[editor.open_tab_index];
+
+    auto debugger_state = source_debugger_get_state(debugger);
+    if (!debugger_state->process_running) {
+        return;
+    }
+
+    auto& line_breakpoints = tab.breakpoints;
+    for (int i = 0; i < line_breakpoints.size; i++) {
+        auto& line_bp = line_breakpoints[i];
+        line_bp.is_valid_bp = source_debugger_add_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit) != nullptr;
+    }
+}
+
 void syntax_editor_update(bool& animations_running)
 {
     auto& editor = syntax_editor;
@@ -5719,6 +5853,8 @@ void syntax_editor_update(bool& animations_running)
     syntax_editor_synchronize_with_compiler(false);
 
     // Generate GUI (Tabs)
+    auto debugger_state = source_debugger_get_state(editor.debugger);
+    bool debugger_running = debugger_state->process_running;
     {
         // Draw Tabs
         auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
@@ -5792,6 +5928,16 @@ void syntax_editor_update(bool& animations_running)
                 }
             }
         }
+        if (debugger_running) 
+        {
+            auto center_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.4f, 0.1f, 0.7f, 1.0f)));
+            gui_node_set_layout(center_container, GUI_Stack_Direction::TOP_TO_BOTTOM, GUI_Alignment::CENTER);
+            auto debug_container = gui_add_node(center_container, gui_size_make_fit(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.3f)));
+            gui_node_set_padding(debug_container, 3, 3);
+            gui_node_set_layout(debug_container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MIN);
+
+            gui_push_text(debug_container, string_create_static("Debugger running!"), vec4(1.0f));
+        }
         auto code_node = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
         if (code_node.first_time_created) {
             auto& info = rendering_core.render_information;
@@ -5814,15 +5960,41 @@ void syntax_editor_update(bool& animations_running)
         animations_running = true;
     }
 
+    // Handle debugger
+    if (debugger_running) 
+    {
+        if (build_and_run) {
+            source_debugger_continue(editor.debugger);
+        }
+        return;
+    }
+
     // For now always wait for newest compiler information
     if (build_and_run || synch_with_compiler) {
         syntax_editor_wait_for_newest_compiler_info(build_and_run);
     }
 
-    if (!build_and_run) {
+    if (!build_and_run || editor.analysis_data == nullptr) {
         return;
     }
-    if (editor.analysis_data == nullptr) return;
+
+    // Start debugger if we are in C-Compilation mode
+    if (compiler_can_execute_c_compiled(editor.analysis_data)) 
+    {
+        editor_leave_insert_mode();
+        editor.mode = Editor_Mode::NORMAL;
+        bool started = source_debugger_start_process(
+            editor.debugger,
+            "P:/Martin/Projects/UppLib/backend/build/main.exe",
+            "P:/Martin/Projects/UppLib/backend/build/main.pdb",
+            "P:/Martin/Projects/UppLib/backend/build/main.obj",
+            editor.analysis_data
+        );
+
+        // Now we should be able to set our breakpoints
+        source_debugger_add_breakpoints();
+        return;
+    }
 
     auto& errors = editor.analysis_data->compiler_errors;
     // Display error messages or run the program
@@ -5957,6 +6129,7 @@ void syntax_editor_render()
     auto& tab = editor.tabs[editor.open_tab_index];
     auto code = tab.code;
     auto& cursor = tab.cursor;
+    auto debugger_state = source_debugger_get_state(editor.debugger);
 
     // Calculate camera line range + on_screen_indices for lines
     auto& cam_start = tab.cam_start;
@@ -6004,7 +6177,7 @@ void syntax_editor_render()
         }
     }
 
-    // Render line numbers
+    // Render line numbers (And breakpoints)
     int cam_start_visible = source_code_get_line(code, cam_start)->visible_index;
     {
         auto get_digits = [](int number) -> int {
@@ -6020,14 +6193,26 @@ void syntax_editor_render()
         int line_num_digits = math_maximum(get_digits(tab.code->line_count), 4) + 1;
 
         // Move code-box to the right
-        code_box.min.x += char_size.x * (line_num_digits + 1);
+        code_box.min.x += char_size.x * (line_num_digits + 1 + 1);
 
         int cursor_visible_index = source_code_get_line(code, cursor.line)->visible_index;
+
+        int current_execution_line_index = -1;
+        if (debugger_state->process_running && debugger_state->stack_frames.size > 0)
+        {
+            auto& frame = debugger_state->stack_frames[0];
+            if (frame.is_upp_function) {
+                if (tab.compilation_unit == frame.options.upp_function.unit) {
+                    current_execution_line_index = frame.options.upp_function.line_index;
+                }
+            }
+        }
 
         // Draw line numbers
         String text = string_create();
         SCOPE_EXIT(string_destroy(&text));
         int last_visible_index = -1;
+
         for (int i = cam_start; i <= cam_end; i++)
         {
             auto line = source_code_get_line(code, i);
@@ -6036,6 +6221,31 @@ void syntax_editor_render()
                 continue;
             }
             last_visible_index = visible_index;
+
+            int height = code_box.max.y;
+            float y_pos = height - (visible_index - cam_start_visible) * char_size.y;
+
+            bool has_bp = false;
+            bool is_current_execution = i == current_execution_line_index;
+            for (int j = 0; j < tab.breakpoints.size; j++) {
+                if (tab.breakpoints[j].line_number == i) {
+                    has_bp = true;
+                    break;
+                }
+            }
+            if (is_current_execution) {
+                text_renderer_add_text(
+                    editor.text_renderer, string_create_static(">"), vec2(line_num_digits* char_size.x, y_pos), Anchor::TOP_LEFT,
+                    char_size, vec3(1.0f, 1.0f, 0.0f)
+                );
+            }
+            else if (has_bp) {
+                text_renderer_add_text(
+                    editor.text_renderer, string_create_static("o"), vec2(line_num_digits* char_size.x, y_pos), Anchor::TOP_LEFT,
+                    char_size, vec3(1.0f, 0.0f, 0.0f)
+                );
+            }
+
 
             int number = math_absolute(cursor_visible_index - visible_index);
             float x_pos = (line_num_digits - get_digits(number)) * char_size.x;;
@@ -6046,11 +6256,10 @@ void syntax_editor_render()
                 x_pos = 0;
             }
 
-            int height = code_box.max.y;
             string_reset(&text);
             string_append_formated(&text, "%d", number);
             text_renderer_add_text(
-                editor.text_renderer, text, vec2(x_pos, height - (visible_index - cam_start_visible) * char_size.y), Anchor::TOP_LEFT, char_size, color
+                editor.text_renderer, text, vec2(x_pos, y_pos), Anchor::TOP_LEFT, char_size, color
             );
         }
     }
@@ -6104,6 +6313,9 @@ void syntax_editor_render()
                     Rich_Text::set_bg(text, vec3(0.4f));
                 }
                 Rich_Text::append(text, "|...|");
+                if (Line_Movement::move_visible_lines_up_or_down(line_index, 1) >= cam_end) {
+                    break;
+                }
                 continue;
             }
 
@@ -6214,8 +6426,10 @@ void syntax_editor_render()
             while (true)
             {
                 auto line = source_code_get_line(code, line_index);
+                SCOPE_EXIT(line_index = Line_Movement::move_visible_lines_up_or_down(line_index, 1));
                 if (line->is_folded) {
-                    return;
+                    if (line_index == cam_end) break;
+                    continue;
                 }
 
                 auto& infos = line->item_infos;
@@ -6262,7 +6476,6 @@ void syntax_editor_render()
                 }
 
                 if (line_index == cam_end) break;
-                line_index = Line_Movement::move_visible_lines_up_or_down(line_index, 1);
             }
         }
     }

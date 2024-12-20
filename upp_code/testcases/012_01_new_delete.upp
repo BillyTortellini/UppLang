@@ -1,3 +1,4 @@
+
 main :: ()
 	x :=* new int
 	x = 15
@@ -11,7 +12,7 @@ main :: ()
 		delete data
 		i = i + 1
 	
-	// new cann also allocate slices with (size)
+	// new can also allocate slices with (size)
 	for i := 0; i < 10; i += 1
 		values := new(20) int
 		values[10] = 5

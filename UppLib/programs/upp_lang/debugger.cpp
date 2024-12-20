@@ -9,9 +9,22 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include <bddisasm.h>
+#include "compiler.hpp"
+#include "c_backend.hpp"
+#include "editor_analysis_info.hpp"
+#include "ir_code.hpp"
 
 #include <dia2.h>
 #include <atlbase.h>
+
+struct Breakpoint
+{
+    u64 address;
+};
+
+u64 debugger_find_address_of_function(Debugger* debugger, String name);
+void debugger_detach_from_process(Debugger* debugger);
+void source_debugger_update_state(Source_Debugger* debugger);
 
 void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string)
 {
@@ -1841,11 +1854,6 @@ namespace PE_Analysis
 
 
 // Debugger
-struct Breakpoint
-{
-    u64 address;
-};
-
 enum class Hardware_Breakpoint_Type
 {
     BREAK_ON_EXECUTE,
@@ -1865,6 +1873,14 @@ struct Thread_Info
 {
     HANDLE handle;
     DWORD id;
+
+    bool executing_single_step; // If trap flag should be set
+    bool executing_step_over_breakpoint; // If contine flag should be set
+};
+
+struct Stack_Frame_Info
+{
+    CONTEXT context_in_frame;
 };
 
 struct Debugger
@@ -1874,20 +1890,24 @@ struct Debugger
     // Handles
     HANDLE process_handle;
     DWORD process_id;
-    Thread_Info main_thread_info;
-
-    Dynamic_Array<Breakpoint> breakpoints;
     Dynamic_Array<Thread_Info> threads;
+    int main_thread_info_index;
+
+    // Debugger Data
+    Dynamic_Array<Breakpoint> breakpoints;
+    Dynamic_Array<Stack_Frame_Info> stack_frames;
     int exe_pe_info_index; // PE-Info for executable
     Dynamic_Array<PE_Analysis::PE_Info> pe_infos;
     PDB_Analysis::PDB_Information* pdb_info;
 
+    // Helpers
     String string_buffer;
     Dynamic_Array<u8> byte_buffer;
-    bool executing_single_step;
-    bool executing_step_over_breakpoint;
     bool last_event_hit_breakpoint;
     bool last_event_hit_step;
+
+    // Event handling
+    bool last_debug_event_requires_handling;
     DEBUG_EVENT last_debug_event;
     DWORD continue_status;
 };
@@ -1898,8 +1918,9 @@ Debugger* debugger_create()
     result->process_running = false;
     result->process_handle = nullptr;
     result->process_id = 0;
-    result->main_thread_info.handle = nullptr;
-    result->main_thread_info.id = 0;
+    result->main_thread_info_index = -1;
+    result->last_debug_event_requires_handling = false;
+    result->stack_frames = dynamic_array_create<Stack_Frame_Info>();
 
     result->breakpoints = dynamic_array_create<Breakpoint>();
     result->threads = dynamic_array_create<Thread_Info>();
@@ -1909,8 +1930,6 @@ Debugger* debugger_create()
     result->string_buffer = string_create(512);
     result->byte_buffer = dynamic_array_create<u8>(512);
     result->last_event_hit_breakpoint = false;
-    result->executing_single_step = false;
-    result->executing_step_over_breakpoint = false;
 
     return result;
 }
@@ -1930,8 +1949,6 @@ void debugger_destroy(Debugger* debugger)
             CloseHandle(debugger->process_handle);
             debugger->process_handle = nullptr;
         }
-        debugger->main_thread_info.handle = nullptr;
-        debugger->main_thread_info.id = 0;
     }
 
     for (int i = 0; i < debugger->pe_infos.size; i++) {
@@ -1947,20 +1964,56 @@ void debugger_destroy(Debugger* debugger)
     dynamic_array_destroy(&debugger->breakpoints);
     dynamic_array_destroy(&debugger->threads);
     dynamic_array_destroy(&debugger->byte_buffer);
+    dynamic_array_destroy(&debugger->stack_frames);
     string_destroy(&debugger->string_buffer);
 }
 
-bool debugger_start_process(Debugger* debugger, const char* exe_filepath, const char* pdb_filepath)
+void debugger_reset(Debugger* debugger)
+{
+    if (debugger->process_running)
+    {
+        for (int i = 0; i < debugger->threads.size; i++) {
+            auto& info = debugger->threads[i];
+            if (info.handle != nullptr) {
+                CloseHandle(info.handle);
+            }
+            info.handle = nullptr;
+        }
+        if (debugger->process_handle != nullptr) {
+            CloseHandle(debugger->process_handle);
+            debugger->process_handle = nullptr;
+        }
+    }
+
+    for (int i = 0; i < debugger->pe_infos.size; i++) {
+        PE_Analysis::pe_info_destroy(&debugger->pe_infos[i]);
+    }
+    dynamic_array_destroy(&debugger->pe_infos);
+
+    if (debugger->pdb_info != nullptr) {
+        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
+        debugger->pdb_info = nullptr;
+    }
+
+    debugger->last_debug_event_requires_handling = false;
+    dynamic_array_reset(&debugger->breakpoints);
+    dynamic_array_reset(&debugger->threads);
+    dynamic_array_reset(&debugger->byte_buffer);
+    string_reset(&debugger->string_buffer);
+}
+
+bool debugger_start_process(Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath)
 {
     if (debugger->process_running) {
         printf("debugger already has process running");
         return false;
     }
+    debugger_reset(debugger);
 
     if (pdb_filepath != nullptr) 
     {
         debugger->pdb_info = PDB_Analysis::pdb_information_create();
-        if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, exe_filepath)) {
+        if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, main_obj_filepath)) {
             PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
             debugger->pdb_info = nullptr;
             printf("Couldn't parse pdb file!\n");
@@ -1992,17 +2045,64 @@ bool debugger_start_process(Debugger* debugger, const char* exe_filepath, const 
     }
 
     debugger->last_event_hit_breakpoint = false;
-    debugger->executing_single_step = false;
     debugger->process_handle = process_info.hProcess;
     debugger->process_id = process_info.dwProcessId;
-    debugger->main_thread_info.handle = process_info.hThread;
-    debugger->main_thread_info.id = process_info.dwThreadId;
-    dynamic_array_push_back(&debugger->threads, debugger->main_thread_info);
+
+    Thread_Info main_thread_info;
+    main_thread_info.handle = process_info.hThread;
+    main_thread_info.id = process_info.dwThreadId;
+    main_thread_info.executing_single_step = false;
+    main_thread_info.executing_step_over_breakpoint = false;
+    debugger->main_thread_info_index = debugger->threads.size;
+    dynamic_array_push_back(&debugger->threads, main_thread_info);
 
     ResumeThread(process_info.hThread);
     debugger->process_running = true;
 
+    // Execute until we hit the main function
+    {
+        // Wait for process create event
+        while (true)
+        {
+            debugger_wait_and_handle_next_event(debugger);
+            if (!debugger->process_running) return false;
+            auto& event = debugger->last_debug_event;
+            if (event.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+                break;
+            }
+        }
+
+        // Add breakpoint for main-function
+        Breakpoint bp;
+        bp.address = debugger_find_address_of_function(debugger, string_create_static("main"));
+        if (bp.address == 0) {
+            printf("No main function found!\n");
+            debugger_detach_from_process(debugger);
+            return false;
+        }
+        dynamic_array_push_back(&debugger->breakpoints, bp);
+
+        // Wait until we hit the main function 
+        while (true) {
+            debugger_wait_and_handle_next_event(debugger);
+            if (debugger->last_event_hit_breakpoint) {
+                break;
+            }
+        }
+        for (int i = 0; i < debugger->threads.size; i++) {
+            if (debugger->threads[i].id == debugger->last_debug_event.dwThreadId) {
+                debugger->main_thread_info_index = i;
+                break;
+            }
+        }
+        dynamic_array_reset(&debugger->breakpoints);
+    }
+
     return true;
+}
+
+bool debugger_process_running(Debugger* debugger) {
+    return debugger->process_running;
 }
 
 void debugger_detach_from_process(Debugger* debugger)
@@ -2017,11 +2117,119 @@ bool debugger_last_event_was_breakpoint_or_step(Debugger* debugger)
     return debugger->last_event_hit_breakpoint || debugger->last_event_hit_step;
 }
 
-void debugger_wait_next_event(Debugger* debugger) // Returns true if process has closed
+bool debugger_wait_and_handle_next_event(Debugger* debugger)
 {
-    debugger->last_event_hit_breakpoint = false;
-    debugger->last_event_hit_step = false;
-    if (!debugger->process_running) return;
+    // Continue from last event
+    {
+        if (!debugger->process_running) return false;
+
+        if (debugger->last_debug_event_requires_handling)
+        {
+            // Set registers for all threads?
+            for (int i = 0; i < debugger->threads.size; i++)
+            {
+                auto& thread_info = debugger->threads[i];
+
+                CONTEXT thread_context;
+                thread_context.ContextFlags = CONTEXT_ALL;
+                if (!GetThreadContext(thread_info.handle, &thread_context)) {
+                    debugger_detach_from_process(debugger);
+                    printf("GetThreadContext did not work!\n");
+                    helper_print_last_error();
+                    return true;
+                }
+
+                // Initialize hardware breakpoints as not-set
+                Hardware_Breakpoint hw_points[4];
+                for (int i = 0; i < 4; i++) {
+                    Hardware_Breakpoint& bp = hw_points[i];
+                    bp.address = 0;
+                    bp.enabled = false;
+                    bp.length_bits = 0;
+                    bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+                }
+
+                // Update hardware_breakpoints based on breakpoint list
+                for (int i = 0; i < debugger->breakpoints.size && i < 4; i++)
+                {
+                    auto& breakpoint = debugger->breakpoints[i];
+                    hw_points[i].enabled = true;
+                    hw_points[i].address = breakpoint.address;
+                    hw_points[i].length_bits = 0;
+                    hw_points[i].type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+                }
+
+                auto set_u64_bits = [](u64 initial_value, int bit_index, int bit_length, u64 bits_to_set) -> u64 {
+                    if (bit_length == 0) return initial_value;
+
+                    u64 mask = (1 << bit_length) - 1; // Generate 1s
+                    bits_to_set = bits_to_set & mask; // Truncate bits_to_set by size
+                    mask = mask << bit_index;
+                    bits_to_set = bits_to_set << bit_index;
+                    return ((~mask) & initial_value) | (mask & bits_to_set);
+                };
+
+                // Transfer hardware-breakpoints into ThreadContext
+                for (int i = 0; i < 4; i++)
+                {
+                    auto& bp = hw_points[i];
+                    switch (i)
+                    {
+                    case 0: thread_context.Dr0 = bp.address; break;
+                    case 1: thread_context.Dr1 = bp.address; break;
+                    case 2: thread_context.Dr2 = bp.address; break;
+                    case 3: thread_context.Dr3 = bp.address; break;
+                    default: panic("");
+                    }
+
+                    int length_bits = bp.length_bits;
+                    int read_write_value = 0;
+                    switch (bp.type)
+                    {
+                    case Hardware_Breakpoint_Type::BREAK_ON_EXECUTE:       read_write_value = 0; length_bits = 0; break;
+                    case Hardware_Breakpoint_Type::BREAK_ON_READ:          read_write_value = 1; break;
+                    case Hardware_Breakpoint_Type::BREAK_ON_READ_OR_WRITE: read_write_value = 3; break;
+                    default: panic("");
+                    }
+
+                    int local_enabled_bit_offset = i * 2;
+                    int read_write_bits_offset = 16 + i * 4;
+                    int len_bit_offset = 18 + i * 4;
+
+                    u64 dr7 = thread_context.Dr7;
+                    dr7 = set_u64_bits(dr7, local_enabled_bit_offset, 1, bp.enabled ? 1 : 0);
+                    dr7 = set_u64_bits(dr7, read_write_bits_offset, 2, read_write_value);
+                    dr7 = set_u64_bits(dr7, len_bit_offset, 2, length_bits);
+                    thread_context.Dr7 = dr7;
+                }
+
+                // Set trap flag if we want to do a step
+                if (thread_info.executing_single_step) {
+                    thread_context.EFlags = thread_context.EFlags | 0x100; // Trap flag
+                }
+                if (thread_info.executing_step_over_breakpoint) {
+                    thread_context.EFlags = thread_context.EFlags | 0x10000; // Resume flag
+                    thread_info.executing_step_over_breakpoint = false;
+                }
+
+                // Update thread context
+                thread_context.ContextFlags = CONTEXT_ALL;
+                if (!SetThreadContext(thread_info.handle, &thread_context)) {
+                    helper_print_last_error();
+                    panic("Should work!");
+                }
+            }
+
+            auto& debug_event = debugger->last_debug_event;
+            // FlushInstructionCache(debugger->process_handle, 0, 0);
+            ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, debugger->continue_status);
+            debugger->last_debug_event_requires_handling = false;
+        }
+
+        debugger->last_event_hit_breakpoint = false;
+        debugger->last_event_hit_step = false;
+        if (!debugger->process_running) return false;
+    }
 
     // Wait for next debug event
     auto& debug_event = debugger->last_debug_event;
@@ -2030,329 +2238,250 @@ void debugger_wait_next_event(Debugger* debugger) // Returns true if process has
     if (!success) {
         helper_print_last_error();
         debugger_detach_from_process(debugger);
-        return;
+        return true;
     }
+    debugger->last_debug_event_requires_handling = true;
     debugger->continue_status = DBG_CONTINUE;
 
-    // Check if event is from main-thread
-    bool event_is_from_main_thread = true;
-    if (debug_event.dwProcessId != debugger->process_id) {
-        printf("Debug event from other process with id: %d\n", debug_event.dwProcessId);
-        event_is_from_main_thread = false;
-    }
-    else if (debug_event.dwThreadId != debugger->main_thread_info.id) {
-        printf("Debug event from thread with id: %d\n", debug_event.dwThreadId);
-        event_is_from_main_thread = false;
-    }
+    // Handle thread creation
+    int thread_info_index = -1;
+    {
+        if (debug_event.dwProcessId != debugger->process_id) {
+            printf("Debug event from other process with id: %d\n", debug_event.dwProcessId);
+        }
 
-    // Handle step instruction
-    bool event_was_handled = false;
-    if (debugger->executing_single_step && debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT && event_is_from_main_thread) {
-        if (debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_SINGLE_STEP) {
-            event_was_handled = true;
-            debugger->executing_single_step = false;
-            debugger->last_event_hit_step = true;
+        if (debug_event.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT) {
+            Thread_Info info;
+            info.handle = debug_event.u.CreateThread.hThread;
+            info.id = debug_event.dwThreadId;
+            info.executing_single_step = false;
+            info.executing_step_over_breakpoint = false;
+            dynamic_array_push_back(&debugger->threads, info);
+        }
+
+        // Find thread_info
+        bool event_was_handled = false;
+        for (int i = 0; i < debugger->threads.size; i++) {
+            if (debugger->threads[i].id == debug_event.dwThreadId) {
+                thread_info_index = i;
+                break;
+            }
+        }
+        if (thread_info_index == -1) {
+            printf("Debug event from un-registered thread! encountered\n");
+            debugger_detach_from_process(debugger);
+            return true;
         }
     }
 
     // Handle events
-    if (!event_was_handled)
+    printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
+    switch (debug_event.dwDebugEventCode)
     {
-        printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
-        switch (debug_event.dwDebugEventCode)
-        {
-        case CREATE_PROCESS_DEBUG_EVENT:
-        {
-            auto& create_info = debug_event.u.CreateProcessInfo;
-            printf("Create_Process\n");
+    case CREATE_PROCESS_DEBUG_EVENT:
+    {
+        auto& create_info = debug_event.u.CreateProcessInfo;
+        printf("Create_Process\n");
 
-            // Load portable-executable information
-            PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-            bool success = PE_Analysis::pe_info_fill_from_executable_image(
-                &pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode
-            );
-            if (success) {
-                debugger->exe_pe_info_index = debugger->pe_infos.size;
-                dynamic_array_push_back(&debugger->pe_infos, pe_info);
+        // Load portable-executable information
+        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+        bool success = PE_Analysis::pe_info_fill_from_executable_image(
+            &pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode
+        );
+        if (success) {
+            debugger->exe_pe_info_index = debugger->pe_infos.size;
+            dynamic_array_push_back(&debugger->pe_infos, pe_info);
+        }
+        else {
+            printf("Could not parse main executable pe info!\n");
+            debugger_detach_from_process(debugger);
+            PE_Analysis::pe_info_destroy(&pe_info);
+        }
+        CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
+        break;
+    }
+    case LOAD_DLL_DEBUG_EVENT:
+    {
+        auto& dll_load = debug_event.u.LoadDll;
+
+        // Load portable-executable information
+        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+        bool success = PE_Analysis::pe_info_fill_from_executable_image(
+            &pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode
+        );
+        printf("Load DLL event: ");
+        if (success)
+        {
+            if (pe_info.name.size > 0) {
+                printf("\"%s\" ", pe_info.name.characters);
             }
             else {
-                printf("Could not parse main executable pe info!\n");
-                debugger_detach_from_process(debugger);
-                PE_Analysis::pe_info_destroy(&pe_info);
+                printf("Analysis success, but name not retrievable ");
             }
-            CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
-            break;
-        }
-        case LOAD_DLL_DEBUG_EVENT:
-        {
-            auto& dll_load = debug_event.u.LoadDll;
-
-            // Load portable-executable information
-            PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-            bool success = PE_Analysis::pe_info_fill_from_executable_image(
-                &pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode
-            );
-            printf("Load DLL event: ");
-            if (success)
-            {
-                if (pe_info.name.size > 0) {
-                    printf("\"%s\" ", pe_info.name.characters);
-                }
-                else {
-                    printf("Analysis success, but name not retrievable ");
-                }
-                if (pe_info.pdb_name.size > 0) {
-                    printf("pdb: \"%s\" ", pe_info.pdb_name.characters);
-                }
-                printf("\n");
-                dynamic_array_push_back(&debugger->pe_infos, pe_info);
-            }
-            else {
-                printf("Analysis failed!\n");
-                PE_Analysis::pe_info_destroy(&pe_info);
-            }
-
-            CloseHandle(debug_event.u.LoadDll.hFile);
-            break;
-        }
-        case EXCEPTION_DEBUG_EVENT:
-        {
-            int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
-
-            // Check if any of our breakpoints were hit by breakpoint
-            if (event_is_from_main_thread && (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP))
-            {
-                debugger->last_event_hit_breakpoint = true;
-
-                // Get thread context
-                CONTEXT thread_context;
-                thread_context.ContextFlags = CONTEXT_ALL;
-                if (!GetThreadContext(debugger->main_thread_info.handle, &thread_context)) {
-                    debugger_detach_from_process(debugger);
-                    printf("GetThreadContext did not work!\n");
-                    helper_print_last_error();
-                }
-
-                auto& breakpoints = debugger->breakpoints;
-                bool our_breakpoint = false;
-                for (int i = 0; i < breakpoints.size; i++) {
-                    auto& bp = breakpoints[i];
-                    if (thread_context.Rip == bp.address) {
-                        our_breakpoint = true;
-                        break;
-                    }
-                }
-
-                if (our_breakpoint) {
-                    printf("Our Breakpoint was hit!\n");
-                    // Set resume flag, so that execution can continue (Do i need to clear this again?)
-                    debugger->executing_step_over_breakpoint = true;
-                    debugger->continue_status = DBG_EXCEPTION_HANDLED;
-                    break;
-                }
-            }
-
-            const char* exception_name = "";
-            debugger->continue_status = DBG_EXCEPTION_NOT_HANDLED;
-            switch (code)
-            {
-            case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
-            case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
-            case EXCEPTION_BREAKPOINT: exception_name = "EXCEPTION_BREAKPOINT"; break;
-            case EXCEPTION_SINGLE_STEP: exception_name = "EXCEPTION_SINGLE_STEP"; break;
-            case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
-            case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
-            case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
-            case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
-            case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
-            case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
-            case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
-            case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
-            case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
-            case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
-            case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
-            case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
-            case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
-            case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
-            case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
-            case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
-            case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
-            case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
-            }
-            printf("Exception %s\n", exception_name);
-            break;
-        }
-        case OUTPUT_DEBUG_STRING_EVENT:
-        {
-            auto& debug_str = debug_event.u.DebugString;
-            auto& str = debugger->string_buffer;
-            string_reset(&str);
-            bool success = Process_Memory::read_string(
-                debugger->process_handle, (void*)(debug_str.lpDebugStringData),
-                &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
-            );
-            if (success) {
-                printf("Output_Debug_String: \"%s\"\n", str.characters);
-            }
-            else {
-                printf("Debug string could not be read\n");
-            }
-            break;
-        }
-        case UNLOAD_DLL_DEBUG_EVENT:
-        {
-            printf("Unload_Dll: ");
-            u64 dll_base = (u64)debug_event.u.UnloadDll.lpBaseOfDll;
-            for (int i = 0; i < debugger->pe_infos.size; i++) {
-                auto& pe_info = debugger->pe_infos[i];
-                if (pe_info.base_address == dll_base && i != debugger->exe_pe_info_index) {
-                    printf(pe_info.name.characters);
-                    PE_Analysis::pe_info_destroy(&pe_info);
-                    dynamic_array_swap_remove(&debugger->pe_infos, i);
-                    break;
-                }
+            if (pe_info.pdb_name.size > 0) {
+                printf("pdb: \"%s\" ", pe_info.pdb_name.characters);
             }
             printf("\n");
-            break;
+            dynamic_array_push_back(&debugger->pe_infos, pe_info);
         }
-        case CREATE_THREAD_DEBUG_EVENT: {
-            Thread_Info info;
-            info.handle = debug_event.u.CreateThread.hThread;
-            info.id = debug_event.dwThreadId;
-            dynamic_array_push_back(&debugger->threads, info);
-            printf("Create_thread\n");
-            break;
+        else {
+            printf("Analysis failed!\n");
+            PE_Analysis::pe_info_destroy(&pe_info);
         }
-        case EXIT_THREAD_DEBUG_EVENT: {
-            for (int i = 0; i < debugger->threads.size; i++) {
-                auto& thread = debugger->threads[i];
-                if (thread.id == debug_event.dwThreadId) {
-                    dynamic_array_swap_remove(&debugger->threads, i);
+
+        CloseHandle(debug_event.u.LoadDll.hFile);
+        break;
+    }
+    case EXCEPTION_DEBUG_EVENT:
+    {
+        int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
+
+        // Get thread context
+        CONTEXT thread_context;
+        thread_context.ContextFlags = CONTEXT_ALL;
+        auto& thread_info = debugger->threads[thread_info_index];
+        if (!GetThreadContext(thread_info.handle, &thread_context)) {
+            debugger_detach_from_process(debugger);
+            printf("GetThreadContext did not work!\n");
+            helper_print_last_error();
+            return true;
+        }
+        bool bp_hit = (thread_context.Dr6 & 0b1111) != 0;
+
+        // Handle step instruction
+        if (thread_info.executing_single_step && code == EXCEPTION_SINGLE_STEP && !bp_hit) {
+            thread_info.executing_single_step = false;
+            debugger->last_event_hit_step = true;
+            return false;
+        }
+
+        // Reset step flag if we hit an exception
+        for (int i = 0; i < debugger->threads.size; i++) {
+            debugger->threads[i].executing_single_step = false;
+        }
+
+        // Check if any of our breakpoints were hit by breakpoint
+        if (bp_hit && (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP))
+        {
+            debugger->last_event_hit_breakpoint = true;
+
+            auto& breakpoints = debugger->breakpoints;
+            bool our_breakpoint = false;
+            for (int i = 0; i < breakpoints.size; i++) {
+                auto& bp = breakpoints[i];
+                if (thread_context.Rip == bp.address) {
+                    our_breakpoint = true;
                     break;
                 }
             }
-            printf("Exit_Thread\n");
-            break;
-        }
-        case EXIT_PROCESS_DEBUG_EVENT: {
-            debugger_detach_from_process(debugger);
-            printf("Exit_Process\n");
-            break;
-        }
-        case RIP_EVENT: {
-            debugger_detach_from_process(debugger);
-            printf("RIP event \n");
-            break;
-        }
-        default: {
-            printf("Debugger received unknown debug event code: #%d\n", debug_event.dwDebugEventCode);
-            debugger_detach_from_process(debugger);
-            break;
-        }
-        }
-    }
-}
 
-bool debugger_continue_from_last_event(Debugger* debugger)
-{
-    CONTEXT thread_context;
-    thread_context.ContextFlags = CONTEXT_ALL;
-    if (!GetThreadContext(debugger->main_thread_info.handle, &thread_context)) {
-        debugger_detach_from_process(debugger);
-        printf("GetThreadContext did not work!\n");
-        helper_print_last_error();
-        return true;
-    }
+            if (our_breakpoint) {
+                printf("Our Breakpoint was hit!\n");
+                // Set resume flag, so that execution can continue (Do i need to clear this again?)
+                thread_info.executing_step_over_breakpoint = true;
+                thread_info.executing_single_step = false;
+                debugger->continue_status = DBG_EXCEPTION_HANDLED;
+                break;
+            }
+        }
 
-    // Set hardware breakpoints
+        const char* exception_name = "";
+        debugger->continue_status = DBG_EXCEPTION_NOT_HANDLED;
+        switch (code)
+        {
+        case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
+        case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
+        case EXCEPTION_BREAKPOINT: exception_name = "EXCEPTION_BREAKPOINT"; break;
+        case EXCEPTION_SINGLE_STEP: exception_name = "EXCEPTION_SINGLE_STEP"; break;
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
+        case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
+        case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
+        case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
+        case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
+        case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
+        case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
+        case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
+        case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
+        case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
+        case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
+        case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
+        case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
+        case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
+        case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
+        case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
+        case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
+        }
+        printf("Exception %s\n", exception_name);
+        break;
+    }
+    case OUTPUT_DEBUG_STRING_EVENT:
     {
-        // Initialize hardware breakpoints as not-set
-        Hardware_Breakpoint hw_points[4];
-        for (int i = 0; i < 4; i++) {
-            Hardware_Breakpoint& bp = hw_points[i];
-            bp.address = 0;
-            bp.enabled = false;
-            bp.length_bits = 0;
-            bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+        auto& debug_str = debug_event.u.DebugString;
+        auto& str = debugger->string_buffer;
+        string_reset(&str);
+        bool success = Process_Memory::read_string(
+            debugger->process_handle, (void*)(debug_str.lpDebugStringData),
+            &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
+        );
+        if (success) {
+            printf("Output_Debug_String: \"%s\"\n", str.characters);
         }
-
-        // Update hardware_breakpoints based on breakpoint list
-        for (int i = 0; i < debugger->breakpoints.size && i < 4; i++)
-        {
-            auto& breakpoint = debugger->breakpoints[i];
-            hw_points[i].enabled = true;
-            hw_points[i].address = breakpoint.address;
-            hw_points[i].length_bits = 0;
-            hw_points[i].type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+        else {
+            printf("Debug string could not be read\n");
         }
-
-        auto set_u64_bits = [](u64 initial_value, int bit_index, int bit_length, u64 bits_to_set) -> u64 {
-            if (bit_length == 0) return initial_value;
-
-            u64 mask = (1 << bit_length) - 1; // Generate 1s
-            bits_to_set = bits_to_set & mask; // Truncate bits_to_set by size
-            mask = mask << bit_index;
-            bits_to_set = bits_to_set << bit_index;
-            return ((~mask) & initial_value) | (mask & bits_to_set);
-        };
-
-        // Transfer hardware-breakpoints into ThreadContext
-        for (int i = 0; i < 4; i++)
-        {
-            auto& bp = hw_points[i];
-            switch (i)
-            {
-            case 0: thread_context.Dr0 = bp.address; break;
-            case 1: thread_context.Dr1 = bp.address; break;
-            case 2: thread_context.Dr2 = bp.address; break;
-            case 3: thread_context.Dr3 = bp.address; break;
-            default: panic("");
+        break;
+    }
+    case UNLOAD_DLL_DEBUG_EVENT:
+    {
+        printf("Unload_Dll: ");
+        u64 dll_base = (u64)debug_event.u.UnloadDll.lpBaseOfDll;
+        for (int i = 0; i < debugger->pe_infos.size; i++) {
+            auto& pe_info = debugger->pe_infos[i];
+            if (pe_info.base_address == dll_base && i != debugger->exe_pe_info_index) {
+                printf(pe_info.name.characters);
+                PE_Analysis::pe_info_destroy(&pe_info);
+                dynamic_array_swap_remove(&debugger->pe_infos, i);
+                break;
             }
-
-            int length_bits = bp.length_bits;
-            int read_write_value = 0;
-            switch (bp.type)
-            {
-            case Hardware_Breakpoint_Type::BREAK_ON_EXECUTE:       read_write_value = 0; length_bits = 0; break;
-            case Hardware_Breakpoint_Type::BREAK_ON_READ:          read_write_value = 1; break;
-            case Hardware_Breakpoint_Type::BREAK_ON_READ_OR_WRITE: read_write_value = 3; break;
-            default: panic("");
-            }
-
-
-            int local_enabled_bit_offset = i * 2;
-            int read_write_bits_offset = 16 + i * 4;
-            int len_bit_offset = 18 + i * 4;
-
-            u64 dr7 = thread_context.Dr7;
-            dr7 = set_u64_bits(dr7, local_enabled_bit_offset, 1, bp.enabled ? 1 : 0);
-            dr7 = set_u64_bits(dr7, read_write_bits_offset, 2, read_write_value);
-            dr7 = set_u64_bits(dr7, len_bit_offset, 2, length_bits);
-            thread_context.Dr7 = dr7;
         }
+        printf("\n");
+        break;
+    }
+    case CREATE_THREAD_DEBUG_EVENT: {
+        printf("Create_thread\n");
+        break;
+    }
+    case EXIT_THREAD_DEBUG_EVENT: {
+        for (int i = 0; i < debugger->threads.size; i++) {
+            auto& thread = debugger->threads[i];
+            if (thread.id == debug_event.dwThreadId) {
+                dynamic_array_swap_remove(&debugger->threads, i);
+                break;
+            }
+        }
+        printf("Exit_Thread\n");
+        break;
+    }
+    case EXIT_PROCESS_DEBUG_EVENT: {
+        debugger_detach_from_process(debugger);
+        printf("Exit_Process\n");
+        break;
+    }
+    case RIP_EVENT: {
+        debugger_detach_from_process(debugger);
+        printf("RIP event \n");
+        break;
+    }
+    default: {
+        printf("Debugger received unknown debug event code: #%d\n", debug_event.dwDebugEventCode);
+        debugger_detach_from_process(debugger);
+        break;
+    }
     }
 
-    // Set trap flag if we want to do a step
-    if (debugger->executing_single_step) {
-        thread_context.EFlags = thread_context.EFlags | 0x100;
-    }
-    if (debugger->executing_step_over_breakpoint) {
-        thread_context.EFlags = thread_context.EFlags | 0x10000;
-        debugger->executing_step_over_breakpoint = false;
-    }
-
-    // Update thread context
-    thread_context.ContextFlags = CONTEXT_ALL;
-    if (!SetThreadContext(debugger->main_thread_info.handle, &thread_context)) {
-        helper_print_last_error();
-        panic("Should work!");
-    }
-    auto& debug_event = debugger->last_debug_event;
-    ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, debugger->continue_status);
     return !debugger->process_running;
 }
-
-
 
 
 
@@ -2400,7 +2529,7 @@ u64 debugger_find_address_of_function(Debugger* debugger, String name)
     return 0;
 }
 
-String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* out_dist = nullptr)
+String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* out_dist = nullptr, String* out_dll_name = nullptr)
 {
     if (debugger->pe_infos.size == 0) return nullptr;
 
@@ -2450,6 +2579,9 @@ String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* 
             if (distance < closest_distance) {
                 closest_name = &symbol.name.value;
                 closest_distance = distance;
+                if (out_dll_name != nullptr) {
+                    *out_dll_name = pe_info.name;
+                }
             }
         }
     }
@@ -2528,11 +2660,13 @@ bool disassemble_bytes_from_process(
 
 void do_stack_walk(Debugger* debugger)
 {
+    dynamic_array_reset(&debugger->stack_frames);
     if (!debugger->process_running) return;
 
     CONTEXT context;
     context.ContextFlags = CONTEXT_ALL;
-    if (!GetThreadContext(debugger->main_thread_info.handle, &context)) {
+    auto& main_thread_info = debugger->threads[debugger->main_thread_info_index];
+    if (!GetThreadContext(main_thread_info.handle, &context)) {
         helper_print_last_error();
         return;
     }
@@ -2593,6 +2727,10 @@ void do_stack_walk(Debugger* debugger)
 
         // Print frame info
         {
+            Stack_Frame_Info frame_info;
+            frame_info.context_in_frame = context;
+            dynamic_array_push_back(&debugger->stack_frames, frame_info);
+
             printf("Stack-Frame #%d: [0x%08llX]", frame_depth, context.Rip);
             frame_depth += 1;
             u64 offset = 0;
@@ -2778,6 +2916,17 @@ void do_stack_walk(Debugger* debugger)
     }
 }
 
+u64 static_location_to_virtual_address(Debugger* debugger, PDB_Analysis::PDB_Location_Static location)
+{
+    if (!debugger->process_running) return 0;
+    if (debugger->exe_pe_info_index == -1) return 0;
+
+    auto& pe_info = debugger->pe_infos[debugger->exe_pe_info_index];
+    int section_index = location.section_index - 1;
+    if (section_index < 0 || section_index >= pe_info.sections.size) return 0;
+    return pe_info.base_address + pe_info.sections[section_index].rva + location.offset;
+}
+
 void debugger_wait_for_console_command(Debugger* debugger)
 {
     bool wait_for_next_command = true;
@@ -2786,7 +2935,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
         if (!debugger->process_running) return;
         CONTEXT thread_context;
         thread_context.ContextFlags = CONTEXT_ALL;
-        if (!GetThreadContext(debugger->main_thread_info.handle, &thread_context)) {
+        auto& main_thread_info = debugger->threads[debugger->main_thread_info_index];
+        if (!GetThreadContext(main_thread_info.handle, &thread_context)) {
             printf("GetThreadContext failed!\n");
             return;
         }
@@ -2815,11 +2965,24 @@ void debugger_wait_for_console_command(Debugger* debugger)
         if (parts.size == 0) continue;
         String command = parts[0];
 
-        if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
+        if (string_equals_cstring(&command, "?")) {
+            printf("Commands:\n");
+            printf("    c  - continue until next debug-event\n");
+            printf("    s  - single step\n");
+            printf("    q  - quit\n");
+            printf("    r  - show registers\n");
+            printf("    d  - display disassembly at current instrution/at specified symbol\n");
+            printf("    bp - add breakpoint at symbol\n");
+            printf("    bl - list active breakpoints\n");
+            printf("    bd - delete breakpoint\n");
+            printf("    k  - show stack/do stack-walk\n");
+            printf("    i  - show PDB-Infos (All functions in src)\n");
+        }
+        else if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
             return;
         }
         else if (string_equals_cstring(&command, "s") || string_equals_cstring(&command, "step")) {
-            debugger->executing_single_step = true;
+            main_thread_info.executing_single_step = true;
             break;
         }
         else if (string_equals_cstring(&command, "q") || string_equals_cstring(&command, "quit") || string_equals_cstring(&command, "exit")) {
@@ -2867,15 +3030,9 @@ void debugger_wait_for_console_command(Debugger* debugger)
                         "Found function: %s, section: %d, offset: %lld\n",
                         function->name.characters, function->location.section_index, function->location.offset
                     );
-                    int section_index = function->location.section_index - 1;
-                    u64 offset = function->location.offset;
-
-                    auto& main_pe = debugger->pe_infos[debugger->exe_pe_info_index];
-                    auto& sections = main_pe.sections;
-                    if (section_index >= 0 && section_index < sections.size)
-                    {
-                        auto& section = sections[section_index];
-                        virtual_address = (void*)(main_pe.base_address + section.rva + offset);
+                    u64 fn_address = static_location_to_virtual_address(debugger, function->location);
+                    if (fn_address != 0) {
+                        virtual_address = (void*)fn_address;
                         byte_length = function->length;
                     }
                 }
@@ -2895,7 +3052,25 @@ void debugger_wait_for_console_command(Debugger* debugger)
                 continue;
             }
 
-            u64 function_address = debugger_find_address_of_function(debugger, parts[1]);
+            auto param = parts[1];
+            bool is_address = false;
+            u64 function_address = 0;
+            if (param.size > 2 && (string_starts_with(param, "0x") || string_starts_with(param, "0X"))) {
+                Optional<i64> value = string_parse_i64_hex(string_create_substring_static(&param, 2, param.size));
+                if (!value.available) {
+                    printf("Add breakpoint failed, couldn't parse hexadecimal value\n");
+                    continue;
+                }
+                if (value.value == 0) {
+                    printf("Add breakpoint failed, value is not a valid address\n");
+                    continue;
+                }
+                function_address = (u64)value.value;
+            }
+            else {
+                function_address = debugger_find_address_of_function(debugger, parts[1]);
+            }
+
             if (function_address == 0) {
                 printf("Add breakpoint failed, could not find address of symbol\n");
                 continue;
@@ -2955,6 +3130,19 @@ void debugger_wait_for_console_command(Debugger* debugger)
                 printf("    #%2d, Address: [0x%08llX]\n", i, bp.address);
             }
         }
+        else if (string_equals_cstring(&command, "i"))
+        {
+            for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
+                auto& src_info = debugger->pdb_info->source_infos[i];
+                auto& fn_info = debugger->pdb_info->functions[src_info.function_index];
+                printf(
+                    "  %s, address: 0x%08llX, length: %lld\n",
+                    fn_info.name.characters,
+                    static_location_to_virtual_address(debugger, fn_info.location),
+                    fn_info.length
+                );
+            }
+        }
         else if (string_equals_cstring(&command, "k") || string_equals_cstring(&command, "stack")) {
             do_stack_walk(debugger);
         }
@@ -2962,5 +3150,636 @@ void debugger_wait_for_console_command(Debugger* debugger)
             printf("Invalid command: \"%s\"\nRetry: ", command.characters);
         }
     }
+}
+
+u64 debugger_find_address_of_line(Debugger* debugger, int line_index)
+{
+    if (!debugger->process_running) return 0;
+
+    for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
+        auto& fn_info = debugger->pdb_info->source_infos[i];
+        for (int j = 0; j < fn_info.line_infos.size; j++) {
+            auto& line_info = fn_info.line_infos[j];
+            if (line_info.line_num == line_index + 1) {
+                u64 address = static_location_to_virtual_address(debugger, line_info.location);
+                if (address != 0) return address;
+            }
+        }
+    }
+
+    return 0;
+}
+
+Dynamic_Array<Breakpoint>* debugger_get_breakpoints(Debugger* debugger)
+{
+    return &debugger->breakpoints;
+}
+
+
+
+
+
+// SOURCE-DEBUGGER
+struct Machine_Code_Range
+{
+    u64 start_virtual_address;
+    u64 end_virtual_address;
+};
+
+struct Statement_Mapping;
+struct IR_Instruction_Mapping;
+struct Upp_Line_Mapping;
+
+struct C_Line_Mapping
+{
+    int c_line_index; // Global line-index
+    Machine_Code_Range range;
+    IR_Instruction_Mapping* instruction_mapping;
+};
+
+struct IR_Instruction_Mapping
+{
+    Statement_Mapping* statement;
+    IR_Code_Block* code_block;
+    int instruction_index;
+    Dynamic_Array<C_Line_Mapping*> c_lines;
+};
+
+struct Statement_Mapping
+{
+    AST::Statement* statement;
+    Upp_Line_Mapping* line_mapping;
+    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
+};
+
+struct Upp_Line_Mapping
+{
+    int compilation_unit_mapping_index;
+    int line_number;
+    Dynamic_Array<Statement_Mapping*> statements;
+};
+
+struct Compilation_Unit_Mapping
+{
+    Compilation_Unit* compilation_unit;
+    Dynamic_Array<Upp_Line_Mapping> lines;
+};
+
+struct Function_Slot_Mapping
+{
+    Dynamic_Array<C_Line_Mapping*> c_lines;
+    u64 virtual_address_start;
+    u64 virtual_address_end;
+    String name;
+};
+
+struct Source_Debugger
+{
+    Debugger* debugger;
+
+    Source_Debugger_State state;
+
+    Dynamic_Array<Compilation_Unit_Mapping> compilation_unit_mapping;
+    Dynamic_Array<Statement_Mapping> statement_mapping;
+    Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
+    Dynamic_Array<C_Line_Mapping> c_line_mapping;
+    Dynamic_Array<Function_Slot_Mapping> function_slot_mapping;
+
+    Dynamic_Array<Source_Breakpoint*> breakpoints;
+};
+
+Source_Debugger* source_debugger_create()
+{
+    Source_Debugger* result = new Source_Debugger;
+    result->debugger = debugger_create();
+    result->breakpoints = dynamic_array_create<Source_Breakpoint*>();
+    result->state.hit_breakpoint = false;
+    result->state.process_running = false;
+    result->state.stack_frames = dynamic_array_create<Source_Stack_Frame>();
+
+    result->compilation_unit_mapping = dynamic_array_create<Compilation_Unit_Mapping>();
+    result->statement_mapping = dynamic_array_create<Statement_Mapping>();
+    result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
+    result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
+    result->function_slot_mapping = dynamic_array_create<Function_Slot_Mapping>();
+
+    return result;
+}
+
+void source_debugger_reset(Source_Debugger* debugger) 
+{
+    auto& state = debugger->state;
+    dynamic_array_reset(&state.stack_frames);
+
+    for (int i = 0; i < debugger->breakpoints.size; i++) {
+        auto bp = debugger->breakpoints[i];
+        dynamic_array_destroy(&bp->addresses);
+        delete bp;
+    }
+    dynamic_array_reset(&debugger->breakpoints);
+
+    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)  {
+        auto unit = debugger->compilation_unit_mapping[i];
+        for (int k = 0; k < unit.lines.size; k++) {
+            auto line_mapping = unit.lines[k];
+            dynamic_array_destroy(&line_mapping.statements);
+        }
+        dynamic_array_destroy(&unit.lines);
+    }
+    dynamic_array_reset(&debugger->compilation_unit_mapping);
+
+    for (int i = 0; i < debugger->statement_mapping.size; i++)  {
+        dynamic_array_destroy(&debugger->statement_mapping[i].ir_instructions);
+    }
+    dynamic_array_reset(&debugger->statement_mapping);
+
+    for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)  {
+        dynamic_array_destroy(&debugger->ir_instruction_mapping[i].c_lines);
+    }
+    dynamic_array_reset(&debugger->ir_instruction_mapping);
+
+    for (int i = 0; i < debugger->function_slot_mapping.size; i++)  {
+        dynamic_array_destroy(&debugger->function_slot_mapping[i].c_lines);
+    }
+    dynamic_array_reset(&debugger->function_slot_mapping);
+
+    dynamic_array_reset(&debugger->c_line_mapping);
+
+    dynamic_array_reset(&debugger->breakpoints);
+    debugger_reset(debugger->debugger);
+}
+
+void source_debugger_destroy(Source_Debugger* debugger) 
+{
+    auto& state = debugger->state;
+    source_debugger_reset(debugger);
+
+    dynamic_array_destroy(&state.stack_frames);
+    dynamic_array_destroy(&debugger->breakpoints);
+    dynamic_array_destroy(&debugger->compilation_unit_mapping);
+    dynamic_array_destroy(&debugger->statement_mapping);
+    dynamic_array_destroy(&debugger->ir_instruction_mapping);
+    dynamic_array_destroy(&debugger->function_slot_mapping);
+    dynamic_array_destroy(&debugger->c_line_mapping);
+    dynamic_array_destroy(&debugger->breakpoints);
+    debugger_destroy(debugger->debugger);
+}
+
+
+// Note: This only adds the statement mappings, but not line-to statement mapping (Must be done in seperate case for pointers to work)
+void source_debugger_add_statements_from_unit_recursive(
+    AST::Node* node, Source_Debugger* debugger, Hashtable<AST::Statement*, int>* statement_to_mapping_table, Compilation_Unit_Mapping* unit_mapping)
+{
+    if (node->type == AST::Node_Type::STATEMENT) {
+        AST::Statement* statement = downcast<AST::Statement>(node);
+        if (!hashtable_insert_element(statement_to_mapping_table, statement, debugger->statement_mapping.size)) {
+            return;
+        }
+        Statement_Mapping stat_mapping;
+        stat_mapping.ir_instructions = dynamic_array_create<IR_Instruction_Mapping*>();
+        stat_mapping.statement = statement;
+        stat_mapping.line_mapping = &unit_mapping->lines[node->bounding_range.start.line];
+        dynamic_array_push_back(&debugger->statement_mapping, stat_mapping);
+    }
+
+    int child_index = 0;
+    AST::Node* child = AST::base_get_child(node, child_index);
+    while (child != nullptr)
+    {
+        source_debugger_add_statements_from_unit_recursive(child, debugger, statement_to_mapping_table, unit_mapping);
+        child_index += 1;
+        child = AST::base_get_child(node, child_index);
+    }
+}
+
+void source_debugger_add_ir_code_block_instruction_mapping_recursive(
+    IR_Code_Block* block, Source_Debugger* debugger, Hashtable<IR_Code_Block*, int>* code_block_start_offsets)
+{
+    int offset_start = debugger->ir_instruction_mapping.size;
+    if (!hashtable_insert_element(code_block_start_offsets, block, offset_start)) {
+        return;
+    }
+
+    // Push dummy mappings for now
+    dynamic_array_reserve(&debugger->ir_instruction_mapping, debugger->ir_instruction_mapping.size + block->instructions.size);
+    for (int i = 0; i < block->instructions.size; i++)
+    {
+        IR_Instruction_Mapping instr_mapping;
+        instr_mapping.code_block = block;
+        instr_mapping.instruction_index = i;
+        instr_mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
+        instr_mapping.statement = nullptr;
+        dynamic_array_push_back(&debugger->ir_instruction_mapping, instr_mapping);
+    }
+
+    // Afterwards recurse to lower blocks
+    for (int i = 0; i < block->instructions.size; i++)
+    {
+        IR_Instruction& instr = block->instructions[i];
+        switch (instr.type)
+        {
+        case IR_Instruction_Type::IF: {
+            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.if_instr.true_branch, debugger, code_block_start_offsets);
+            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.if_instr.false_branch, debugger, code_block_start_offsets);
+            break;
+        }
+        case IR_Instruction_Type::WHILE: {
+            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.while_instr.code, debugger, code_block_start_offsets);
+            break;
+        }
+        case IR_Instruction_Type::BLOCK: {
+            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.block, debugger, code_block_start_offsets);
+            break;
+        }
+        }
+    }
+}
+
+Source_Debugger_State* source_debugger_get_state(Source_Debugger* debugger) {
+    return &debugger->state;
+}
+
+bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data)
+{
+    if (!debugger_start_process(debugger->debugger, exe_filepath, pdb_filepath, main_obj_filepath)) {
+        return false;
+    }
+    if (debugger->debugger->pdb_info == nullptr) {
+        debugger_detach_from_process(debugger->debugger);
+        return false;
+    }
+
+    auto pdb_info = debugger->debugger->pdb_info;
+    C_Program_Translation* c_translation = c_generator_get_translation();
+
+    // Generate all mappings
+    {
+        Hashtable<AST::Statement*, int> statement_to_mapping_table = hashtable_create_pointer_empty<AST::Statement*, int>(1024);
+        SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
+
+        // Compilation unit mappings (Unit <-> Upp_Line <-> Statements)
+        for (int i = 0; i < compiler.compilation_units.size; i++)
+        {
+            auto& unit = compiler.compilation_units[i];
+
+            if (!unit->used_in_last_compile) continue;
+
+            Compilation_Unit_Mapping unit_mapping;
+            unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);
+            unit_mapping.compilation_unit = unit;
+
+            for (int i = 0; i < unit->code->line_count; i++) {
+                Upp_Line_Mapping line_mapping;
+                line_mapping.compilation_unit_mapping_index = debugger->compilation_unit_mapping.size;
+                line_mapping.line_number = i;
+                line_mapping.statements = dynamic_array_create<Statement_Mapping*>();
+                dynamic_array_push_back(&unit_mapping.lines, line_mapping);
+            }
+            dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
+
+            source_debugger_add_statements_from_unit_recursive(
+                upcast(unit->root), debugger, &statement_to_mapping_table, &debugger->compilation_unit_mapping[debugger->compilation_unit_mapping.size-1]
+            );
+        }
+
+        // Add connections from Upp_Line to Statements
+        for (int i = 0; i < debugger->statement_mapping.size; i++) {
+            auto& stat_mapping = debugger->statement_mapping[i];
+            dynamic_array_push_back(&stat_mapping.line_mapping->statements, &stat_mapping);
+        }
+
+        // Statement <-> IR_Instruction 
+        Hashtable<IR_Code_Block*, int> ir_block_mapping_offset = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
+        SCOPE_EXIT(hashtable_destroy(&ir_block_mapping_offset));
+        for (int i = 0; i < compiler.ir_generator->program->functions.size; i++) {
+            auto ir_fn = compiler.ir_generator->program->functions[i];
+            source_debugger_add_ir_code_block_instruction_mapping_recursive(ir_fn->code, debugger, &ir_block_mapping_offset);
+        }
+        // Add connections Statement -> IR_Instruction
+        for (int i = 0; i < debugger->ir_instruction_mapping.size; i++) 
+        {
+            auto& ir_mapping = debugger->ir_instruction_mapping[i];
+            auto& ir_instr = ir_mapping.code_block->instructions[ir_mapping.instruction_index];
+            if (ir_instr.associated_statement != 0) {
+                int* map_index = hashtable_find_element(&statement_to_mapping_table, ir_instr.associated_statement);
+                if (map_index != 0) {
+                    ir_mapping.statement = &debugger->statement_mapping[*map_index];
+                }
+            }
+
+            if (ir_mapping.statement != 0) {
+                dynamic_array_push_back(&ir_mapping.statement->ir_instructions, &ir_mapping);
+            }
+        }
+
+        // IR_Instruction <-> C-Line
+        dynamic_array_reset(&debugger->c_line_mapping);
+        dynamic_array_reserve(&debugger->c_line_mapping, c_translation->line_infos.size);
+        for (int i = 0; i < c_translation->line_infos.size; i++) 
+        {
+            auto line_info = c_translation->line_infos[i];
+
+            C_Line_Mapping line_map;
+            line_map.c_line_index = i + c_translation->line_offset;
+            line_map.range.start_virtual_address = 0;
+            line_map.range.end_virtual_address = 0;
+            line_map.instruction_mapping = nullptr;
+
+            int* block_start_offset = hashtable_find_element(&ir_block_mapping_offset, line_info.ir_block);
+            if (block_start_offset != 0) {
+                line_map.instruction_mapping = &debugger->ir_instruction_mapping[*block_start_offset + line_info.instruction_index];
+            }
+
+            dynamic_array_push_back(&debugger->c_line_mapping, line_map);
+        }
+        // Connection IR_Instruction -> C-Line
+        for (int i = 0; i < debugger->c_line_mapping.size; i++)
+        {
+            auto& line_mapping = debugger->c_line_mapping[i];
+            if (line_mapping.instruction_mapping != 0) {
+                dynamic_array_push_back(&line_mapping.instruction_mapping->c_lines, &line_mapping);
+            }
+        }
+
+        // C-Line/Function-Slot <-> Machine-Code Range
+        dynamic_array_reset(&debugger->function_slot_mapping);
+        dynamic_array_reserve(&debugger->function_slot_mapping, analysis_data->function_slots.size);
+        for (int i = 0; i < analysis_data->function_slots.size; i++) {
+            Function_Slot_Mapping slot_mapping;
+            slot_mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
+            slot_mapping.name = string_create_static("");
+            slot_mapping.virtual_address_start = 0;
+            slot_mapping.virtual_address_end = 0;
+            dynamic_array_push_back(&debugger->function_slot_mapping, slot_mapping);
+        }
+        Hashtable<String, int> c_function_name_to_function_slot_map = hashtable_create_empty<String, int>(64, hash_string, string_equals);
+        SCOPE_EXIT(hashtable_destroy(&c_function_name_to_function_slot_map));
+        for (auto iter = hashtable_iterator_create(&c_translation->name_mapping); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
+        {
+            String name = *iter.value;
+            C_Translation& translation = *iter.key;
+            if (translation.type == C_Translation_Type::FUNCTION) {
+                hashtable_insert_element(&c_function_name_to_function_slot_map, name, translation.options.function_slot_index);
+            }
+        }
+        for (int i = 0; i < pdb_info->source_infos.size; i++)
+        {
+            auto& src_info = pdb_info->source_infos[i];
+            auto& fn_info = pdb_info->functions[src_info.function_index];
+
+            int* function_slot_index = hashtable_find_element(&c_function_name_to_function_slot_map, fn_info.name);
+            if (function_slot_index == nullptr) continue;
+            auto& slot_mapping = debugger->function_slot_mapping[*function_slot_index];
+            slot_mapping.name = fn_info.name;
+            slot_mapping.virtual_address_start = static_location_to_virtual_address(debugger->debugger, fn_info.location);
+            slot_mapping.virtual_address_end = slot_mapping.virtual_address_start + fn_info.length;
+
+            for (int j = 0; j < src_info.line_infos.size; j++)
+            {
+                auto& pdb_line_info = src_info.line_infos[j];
+                int line_map_index = pdb_line_info.line_num - 1 - c_translation->line_offset;
+                assert(line_map_index >= 0, "");
+
+                auto& c_line_mapping = debugger->c_line_mapping[line_map_index];
+                c_line_mapping.range.start_virtual_address = static_location_to_virtual_address(debugger->debugger, pdb_line_info.location);
+                c_line_mapping.range.end_virtual_address = c_line_mapping.range.start_virtual_address + pdb_line_info.length;
+
+                dynamic_array_push_back(&slot_mapping.c_lines, &c_line_mapping);
+            }
+        }
+    }
+
+    source_debugger_update_state(debugger);
+    return true;
+}
+
+struct Machine_Code_Segment
+{
+    u64 virtual_address_start;
+    u64 virtual_address_end;
+    int function_slot_index;
+    int c_line_index_with_offset;
+};
+
+struct Segment_Comparator 
+{
+    bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b) 
+    {
+        if (a.function_slot_index != b.function_slot_index) {
+            return a.function_slot_index < b.function_slot_index;
+        }
+        return a.virtual_address_start < b.virtual_address_start;
+    }
+};
+
+void source_debugger_upp_line_to_machine_code_segments(
+    Source_Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Dynamic_Array<Machine_Code_Segment>* machine_code_segments)
+{
+    dynamic_array_reset(machine_code_segments);
+    Compilation_Unit_Mapping* unit_map = nullptr;
+    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
+        auto& unit = debugger->compilation_unit_mapping[i];
+        if (unit.compilation_unit == compilation_unit) {
+            unit_map = &unit;
+            break;
+        }
+    }
+    if (unit_map == nullptr) return;
+    if (line_index < 0 || line_index >= unit_map->lines.size)  return;
+
+    auto& line_map = unit_map->lines[line_index];
+    for (int i = 0; i < line_map.statements.size; i++)
+    {
+        auto stat_map = line_map.statements[i];
+        for (int j = 0; j < stat_map->ir_instructions.size; j++) {
+            auto ir_instr_map = stat_map->ir_instructions[j];
+            for (int k = 0; k < ir_instr_map->c_lines.size; k++) {
+                Machine_Code_Segment segment;
+                segment.function_slot_index = ir_instr_map->code_block->function->function_slot_index;
+                segment.virtual_address_start = ir_instr_map->c_lines[k]->range.start_virtual_address;
+                segment.virtual_address_end = ir_instr_map->c_lines[k]->range.end_virtual_address;
+                segment.c_line_index_with_offset = ir_instr_map->c_lines[k]->c_line_index;
+                if (segment.virtual_address_start == 0 || segment.virtual_address_end == 0) continue;
+                dynamic_array_push_back(machine_code_segments, segment);
+            }
+        }
+    }
+
+    // Sort segments and fuse together...
+    Segment_Comparator comp;
+    dynamic_array_sort(machine_code_segments, comp);
+    for (int i = 0; i < machine_code_segments->size - 1; i++)
+    {
+        auto& current = machine_code_segments->data[i];
+        auto& next = machine_code_segments->data[i + 1];
+
+        if (current.function_slot_index != next.function_slot_index) continue;
+        if (current.virtual_address_end == next.virtual_address_start) {
+            current.virtual_address_end = next.virtual_address_end;
+            dynamic_array_remove_ordered(machine_code_segments, i + 1);
+            i = i - 1;
+        }
+    }
+}
+
+struct Machine_Code_Address_To_Line_Result
+{
+    Compilation_Unit* unit;
+    int line_index;
+    int function_slot;
+    AST::Statement* statement;
+};
+
+Machine_Code_Address_To_Line_Result source_debugger_machine_instruction_address_to_upp_line(Source_Debugger* debugger, u64 virtual_address)
+{
+    Machine_Code_Address_To_Line_Result result;
+    result.unit = nullptr;
+    result.line_index = -1;
+    result.function_slot = -1;
+    result.statement = nullptr;
+
+    int slot_index = -1;
+    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
+        auto& slot = debugger->function_slot_mapping[i];
+        if (virtual_address >= slot.virtual_address_start && virtual_address < slot.virtual_address_end) {
+            slot_index = i;
+            break;
+        }
+    }
+    if (slot_index == -1) return result;
+
+    result.function_slot = slot_index;
+    auto& slot_mapping = debugger->function_slot_mapping[slot_index];
+    int segment_index = -1;
+
+    for (int i = 0; i < slot_mapping.c_lines.size; i++) 
+    {
+        auto& c_line = slot_mapping.c_lines[i];
+        if (virtual_address >= c_line->range.start_virtual_address && virtual_address < c_line->range.end_virtual_address) 
+        {
+            auto& upp_line = c_line->instruction_mapping->statement->line_mapping;
+            result.statement = c_line->instruction_mapping->statement->statement;
+            result.line_index = upp_line->line_number;
+            result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
+            return result;
+        }
+    }
+
+    return result;
+}
+
+void source_debugger_update_state(Source_Debugger* debugger)
+{
+    auto& state = debugger->state;
+    state.process_running = debugger->debugger->process_running;
+    dynamic_array_reset(&state.stack_frames);
+    if (!state.process_running) {
+        state.process_running = false;
+        state.hit_breakpoint = false;
+        return;
+    }
+
+    do_stack_walk(debugger->debugger);
+    auto& stack_frames = debugger->debugger->stack_frames;
+    dynamic_array_reserve(&state.stack_frames, stack_frames.size);
+    for (int i = 0; i < stack_frames.size; i++) 
+    {
+        Source_Stack_Frame source_frame;
+        CONTEXT& context = stack_frames[i].context_in_frame;
+
+        Machine_Code_Address_To_Line_Result line_result = source_debugger_machine_instruction_address_to_upp_line(debugger, context.Rip);
+        if (line_result.unit == nullptr || line_result.line_index == -1 || line_result.function_slot == -1 || line_result.statement == nullptr) 
+        {
+            u64 out_distance = 0;
+            String out_dll_name = string_create_static("");
+            String* symbol_name = debugger_find_closest_symbol_name(debugger->debugger, context.Rip, &out_distance, &out_dll_name);
+            source_frame.is_upp_function = false;
+            if (symbol_name == nullptr) {
+                source_frame.options.other.symbol_name = string_create_static("");
+            }
+            source_frame.options.other.dll_name = out_dll_name;
+            source_frame.options.other.offset_from_symbol_start = out_distance;
+        }
+        else
+        {
+            source_frame.is_upp_function = true;
+            source_frame.options.upp_function.line_index = line_result.line_index;
+            source_frame.options.upp_function.unit = line_result.unit;
+            source_frame.options.upp_function.slot = line_result.function_slot;
+        }
+        dynamic_array_push_back(&state.stack_frames, source_frame);
+    }
+}
+
+Source_Debugger_State* source_debugger_continue(Source_Debugger* debugger) 
+{
+    debugger->state.process_running = debugger->debugger->process_running;
+    if (!debugger->state.process_running) return &debugger->state;
+
+    // Set all source-breakpoints...
+    dynamic_array_reset(&debugger->debugger->breakpoints);
+    for (int i = 0; i < debugger->breakpoints.size; i++) {
+        auto bp = debugger->breakpoints[i];
+        for (int j = 0; j < bp->addresses.size; j++) {
+            Breakpoint real_bp;
+            real_bp.address = bp->addresses[j];
+            dynamic_array_push_back(&debugger->debugger->breakpoints, real_bp);
+        }
+    }
+
+    // Keep running until breakpoint, exception or program exit
+    dynamic_array_reset(&debugger->state.stack_frames);
+    while (true)
+    {
+        if (debugger_wait_and_handle_next_event(debugger->debugger)) {
+            debugger->state.process_running = false;
+            return &debugger->state;
+        }
+
+        debugger->state.hit_breakpoint = debugger->debugger->last_event_hit_breakpoint;
+        if (debugger->state.hit_breakpoint) {
+            break;
+        }
+        else if ( debugger->debugger->last_debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
+            // TODO: Maybe we want to show the exception info or something
+            break;
+        }
+    }
+    source_debugger_update_state(debugger);
+
+    return &debugger->state;
+}
+
+void source_debugger_detach_process(Source_Debugger* debugger) {
+    debugger_detach_from_process(debugger->debugger);
+    debugger->state.process_running = false;
+}
+
+Source_Breakpoint* source_debugger_add_breakpoint(Source_Debugger* debugger, int line_index, Compilation_Unit* unit)
+{
+    for (int i = 0; i < debugger->breakpoints.size; i++) {
+        auto& bp = debugger->breakpoints[i];
+        if (bp->compilation_unit == unit && bp->line_index == line_index) {
+            return nullptr;
+        }
+    }
+
+    Dynamic_Array<Machine_Code_Segment> segments = dynamic_array_create<Machine_Code_Segment>();
+    SCOPE_EXIT(dynamic_array_destroy(&segments));
+    source_debugger_upp_line_to_machine_code_segments(debugger, unit, line_index, &segments);
+    if (segments.size == 0) return nullptr;
+
+    Source_Breakpoint* breakpoint = new Source_Breakpoint;
+    breakpoint->addresses = dynamic_array_create<u64>();
+    breakpoint->compilation_unit = unit;
+    breakpoint->line_index = line_index;
+
+    for (int i = 0; i < segments.size; i++) {
+        auto& segment = segments[i];
+        dynamic_array_push_back(&breakpoint->addresses, segment.virtual_address_start);
+    }
+
+    dynamic_array_push_back(&debugger->breakpoints, breakpoint);
+    return breakpoint;
 }
 

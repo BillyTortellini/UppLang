@@ -266,6 +266,11 @@ struct IR_Instruction
         IR_Code_Block* block;
         int label_index;
     } options;
+
+    // Mapping from AST to ir-code
+    AST::Statement* associated_statement;
+    AST::Expression* associated_expr;
+    Analysis_Pass* associated_pass;
 };
 
 struct IR_Program;
@@ -361,6 +366,9 @@ struct IR_Generator
 
     int next_label_index;
     Analysis_Pass* current_pass;
+    AST::Expression* current_expr;
+    AST::Statement* current_statement;
+    IR_Code_Block* current_block;
 };
 
 extern IR_Generator ir_generator;

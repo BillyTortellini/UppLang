@@ -515,5 +515,7 @@ namespace AST
     AST::Node* upcast(T* node) {
         return &node->base;
     }
+
+    Node* find_smallest_enclosing_node(Node* start_node, Token_Index index);
 }
 

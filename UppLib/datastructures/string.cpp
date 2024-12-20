@@ -242,6 +242,12 @@ Optional<int> string_find_character_index_reverse(String* string, char character
     return result;
 }
 
+bool string_starts_with(String str, const char* start) {
+    int start_length = (int) strlen(start);
+    if (start_length > str.size) return false;
+    return strncmp(str.characters, start, start_length) == 0;
+}
+
 bool string_ends_with(const char* string, const char* ending) {
     int ending_length = (int) strlen(ending);
     int string_length = (int) strlen(string);
@@ -451,6 +457,15 @@ Optional<i64> string_parse_i64(String* string) {
     char* end_ptr;
     i64 result = strtoll(string->characters, &end_ptr, 10);
     if (string->characters + string->size != end_ptr) {
+        return optional_make_failure<i64>();
+    }
+    return optional_make_success(result);
+}
+
+Optional<i64> string_parse_i64_hex(String string) {
+    char* end_ptr;
+    i64 result = strtoll(string.characters, &end_ptr, 16);
+    if (string.characters + string.size != end_ptr) {
         return optional_make_failure<i64>();
     }
     return optional_make_success(result);

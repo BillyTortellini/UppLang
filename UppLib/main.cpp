@@ -12,8 +12,8 @@ int main(int argc, char** argv)
     //render_rework();
     //bachelor_thesis();
     // return run_import_gui();
-    // upp_lang_main();
-    game_entry();
+    upp_lang_main();
+    //game_entry();
     //proc_city_main();
     return 0;
 }

@@ -222,7 +222,7 @@ namespace Parser
         // Set end of node
         auto& range = node->range;
         range.end = parser.state.pos;
-        if (range.end.line > code->line_count) {
+        if (range.end.line >= code->line_count) {
             range.end = token_index_make_line_end(code, code->line_count - 1);
         }
         else if (range.start.line != range.end.line && range.end.token == 0 && range.end.line > 0) {

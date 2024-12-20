@@ -1,24 +1,80 @@
 
 
-Refactor into new file
- - Debugger create
- - Start_Process --> Could fail
- - Enter text mode --> Textual commands and output?
+Source-Code Translation to 
+ * Source-Line to zero, one or multiple addresses (Usually one, if not polymorphic)
+    - Breakpoint should be set on each instance? (Maybe if, while and for need special treatment)
+ * Virtual-Address (compiled instruction) --> Source-Line + Analysis-Pass (Polymorphic info)
+    1. Find source-function (section search)
+    2. Line-Infos per source-function (Ranges), binary search maybe
+ * Step into, step out of, step over...
+    - into: Step until ast::statement changes?
+    - over: breakpoint on next statement (Watch out for for loops and things)
+    - out-of: Breakpoint on return-address
+ * Translating functions to modtree-functions...
+
+TODO:
+ - Implement software breakpoints
+ 
+
+Notes:
+ - Adding breakpoints seems to be unreliable before some loading?
+ - Or we start using software breakpoints, as this is easier...
+ - Maybe start writing source-code debugger...
+    * Start process
+    * Set source-breakpoints
+    * Wait for next breakpoint hit
+ - Solution:
+    * After Process_Create event, set breakpoint on main
+    * When main is hit, set all other breakpoints we have
+    * Continue normally
+
+TODO:
+ - Fix breakpoints in console debugger!
 
 
+What do I want from my debugger:
+ * Setting breakpoints, stopping at breakpoints (Software breakpoints)
+ * Stops when debug_break is hit, or on other program violations (Should probably be implemented at some point)
+ * Step over (statement, BP at end of instruction/start of next instruction), step into (function-call, step until statement-index has changed?), step-out of (BP at return-address + stack needs to be smaller)
+ * Variable watch window (type variable name and value is shown)
+ * Stack-Frames (Call-Hierarchy), which also affects variable-name resolution in watch-window
 
-Debugger Improvements which could be done:
- - Software breakpoints would be nice
- - Stack walking Epilog check should check for jmp instructions with correct encoding...
- - Load PDB's for DLLs when available
- - Breakpoints need to be set after initial process_create event...
+First running version:
+ - Start debugger, which should set a breakpoint at main?
+
+TODO: C-Generator translation
+ --> IR-Instruction to Line-Number / backwards
+ --> Name 'mangling' for function, variable and global names
+    Do we need to know which block is which block? --> Check pdb-info again...
+        I guess not, as we can use identifier to go from variable-name to something something...
+
+So we actually already store thingz
+
+
+Upp-Code --> C-Source Line mapping:
+    Upp-Code --> Tokens --> AST::Node and Token-Ranges --> IR-Instruction AST::Expr/Statement --> C IR-Instruction line-range
 
 
 TODO:
  - IR-Code and Bytecode/C-Generator need to store translation names
  - New UI-Mode for debugging (Setting breakpoints, maybe command parsing for other things?)
 
+ISSUE-TRACKER:
+    Bugs with Editor-Synchronization:
+     - I managed to have history/tokens desynched with undo
+    
+    Debugger Improvements which could be done:
+     - Software breakpoints would be nice
+     - Stack walking Epilog check should check for jmp instructions with correct encoding...
+     - Load PDB's for DLLs when available
+     - Breakpoints need to be set after initial process_create event...
+
 DONE:
+ - Fixed loops after IR-Code Mapping update
+ - Fixed end of file bug (AST-Range)
+ - IR-Code to AST mapping
+ - Refactored Debugger (New file)
+
  - Refactor into new file
  - Handle Chained unwind infos
  - Stack walking Epilog handling (Except for jmps instead of ret)

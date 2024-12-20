@@ -48,6 +48,7 @@ void string_append_character(String* string, char c);
 void string_append_character_array(String* string, Array<char> appendix); // Difference to append c_string is that appendix does not need to be 0 terminated
 void string_truncate(String* string, int vector_length);
 void string_replace_character(String* string, char to_replace, char replace_with);
+bool string_starts_with(String str, const char* start);
 bool string_ends_with(const char* string, const char* ending);
 void string_remove_character(String* string, int index);
 void string_insert_character_before(String* string, byte character, int index);
@@ -60,6 +61,7 @@ Optional<int> string_find_character_index_reverse(String* string, char character
 Optional<float> string_parse_float(String* string);
 Optional<int> string_parse_int(String* string);
 Optional<i64> string_parse_i64(String* string);
+Optional<i64> string_parse_i64_hex(String string);
 Array<String> string_split(String string, char c); 
 void string_split_destroy(Array<String> parts);
 bool string_fill_from_line(String* to_fill);
