@@ -346,7 +346,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
                     logg("\n--------IR_PROGRAM---------\n");
                     String tmp = string_create_empty(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    ir_program_append_to_string(compiler.ir_generator->program, &tmp, false);
+                    ir_program_append_to_string(compiler.ir_generator->program, &tmp, false, compiler.analysis_data);
                     logg("%s", tmp.characters);
                 }
 

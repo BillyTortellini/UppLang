@@ -1,5 +1,40 @@
 
 
+TODO:
+ - Implement software breakpoints
+ - Implement step into
+    Implementations:
+        - Check next ir-instruction address, and set breakpoint on this address
+        - Single stepping until current statement changes
+ - Step over and step out of
+ - Some Editor mode while debugger is running for stepping
+ - Watch window to query variables...
+
+
+DONE:
+ - Merge source-debugger and debugger
+
+ - Fix tokenization with muli-line undo
+ - Fix IR-Instruction to C-Line translation on first line in function
+
+ - IDE should focus Window when breakpoint is hit
+ - Show translations in debugger (F4 while debugger is running)
+
+
+Things to think about:
+ - For which use cases do I need the translation in both directions (Assembly <---> Upp),
+    and depending on that we need to define what is stored for e.g. IR-Instructions (Start-end characters)
+ - Nested IR-Instructions exist:
+    * For/While/If/Block
+    * Also labels and gotos
+
+Debugger next Features:
+ * Setting breakpoints, continue
+ * Show currently executing line
+ * Step over (step until instruction index changes?), step out of, step into
+
+
+
 Source-Code Translation to 
  * Source-Line to zero, one or multiple addresses (Usually one, if not polymorphic)
     - Breakpoint should be set on each instance? (Maybe if, while and for need special treatment)
@@ -12,24 +47,8 @@ Source-Code Translation to
     - out-of: Breakpoint on return-address
  * Translating functions to modtree-functions...
 
-TODO:
- - Implement software breakpoints
+
  
-
-Notes:
- - Adding breakpoints seems to be unreliable before some loading?
- - Or we start using software breakpoints, as this is easier...
- - Maybe start writing source-code debugger...
-    * Start process
-    * Set source-breakpoints
-    * Wait for next breakpoint hit
- - Solution:
-    * After Process_Create event, set breakpoint on main
-    * When main is hit, set all other breakpoints we have
-    * Continue normally
-
-TODO:
- - Fix breakpoints in console debugger!
 
 
 What do I want from my debugger:

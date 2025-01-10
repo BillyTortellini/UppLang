@@ -16,21 +16,18 @@ void game_entry()
         debugger,
         "P:/Martin/Projects/UppLib/backend/test/main.exe",
         "P:/Martin/Projects/UppLib/backend/test/main.pdb",
-        "P:/Martin/Projects/UppLib/backend/test/main.obj"
+        "P:/Martin/Projects/UppLib/backend/test/main.obj",
+        nullptr
     );
     if (!started) {
         printf("Couldn't start debugger\n");
         return;
     }
 
-    debugger_wait_for_console_command(debugger);
-    while (debugger_process_running(debugger)) {
-        if (debugger_wait_and_handle_next_event(debugger)) {
-            break;
-        }
-        if (debugger_last_event_was_breakpoint_or_step(debugger)) {
-            debugger_wait_for_console_command(debugger);
-        }
+    Debugger_State state = debugger_get_state(debugger);
+    while (state != Debugger_State::NO_ACTIVE_PROCESS) {
+        debugger_wait_for_console_command(debugger);
+        state = debugger_continue_until_next_breakpoint_or_exit(debugger);
     }
 
     printf("\n-----------\nProcess finished\n");

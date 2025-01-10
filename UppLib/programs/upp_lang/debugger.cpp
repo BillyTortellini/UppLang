@@ -17,14 +17,14 @@
 #include <dia2.h>
 #include <atlbase.h>
 
-struct Breakpoint
-{
-    u64 address;
-};
+const bool DEBUG_OUTPUT_ENABLED = true;
 
+
+// Prototypes
 u64 debugger_find_address_of_function(Debugger* debugger, String name);
-void debugger_detach_from_process(Debugger* debugger);
-void source_debugger_update_state(Source_Debugger* debugger);
+Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address);
+
+
 
 void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string)
 {
@@ -62,6 +62,32 @@ void wide_string_to_utf8(const wchar_t* wide_string, String* string)
     string->size = (int)strlen(string->characters);
 }
 
+const char* x64_integer_register_to_name(X64_Integer_Register reg)
+{
+    switch (reg)
+    {
+    case X64_Integer_Register::RAX: return "RAX";
+    case X64_Integer_Register::RCX: return "RCX";
+    case X64_Integer_Register::RDX: return "RDX";
+    case X64_Integer_Register::RBX: return "RBX";
+    case X64_Integer_Register::RSP: return "RSP";
+    case X64_Integer_Register::RBP: return "RBP";
+    case X64_Integer_Register::RSI: return "RSI";
+    case X64_Integer_Register::RDI: return "RDI";
+    case X64_Integer_Register::R8:  return "R8";
+    case X64_Integer_Register::R9:  return "R9";
+    case X64_Integer_Register::R10: return "R10";
+    case X64_Integer_Register::R11: return "R11";
+    case X64_Integer_Register::R12: return "R12";
+    case X64_Integer_Register::R13: return "R13";
+    case X64_Integer_Register::R14: return "R14";
+    case X64_Integer_Register::R15: return "R15";
+    }
+    return "Unknown";
+}
+
+
+
 namespace PDB_Analysis
 {
     enum class PDB_Constant_Type
@@ -92,41 +118,6 @@ namespace PDB_Analysis
         u32 section_index; // Should not be null I guess
     };
 
-    enum class Register_x64
-    {
-        RAX,
-        RBX,
-        RCX,
-        RDX,
-        RSI,
-        RDI,
-        RIP,
-        RSP,
-        RBP,
-
-        R8,
-        R9,
-        R10,
-        R11,
-        R12,
-        R13,
-        R14,
-        R15,
-
-        MM_N,  // Floating point register (0-7)
-        XMM_N, // 128-Bit Media registers (0-15)
-
-        OTHER, // Other register on x64 which I'll ignore for now
-    };
-
-    struct PDB_Location_Register
-    {
-        Register_x64 reg;
-        u8 size; // Byte-count, either 1, 2, 4, 8, 16...
-        u8 offset; // e.g. 0 for first 
-        int numbered_register_index; // For xmm and mmx registers
-    };
-
     enum class PDB_Location_Type
     {
         STATIC,
@@ -145,9 +136,9 @@ namespace PDB_Analysis
         {
             PDB_Location_Static static_loc;
             PDB_Location_Static thread_local_storage;
-            PDB_Location_Register register_loc;
+            X64_Register_Value_Location register_loc;
             struct {
-                PDB_Location_Register reg;
+                X64_Register_Value_Location reg;
                 i64 offset;
             } register_relative;
             PDB_Constant_Value constant_value;
@@ -208,10 +199,10 @@ namespace PDB_Analysis
     PDB_Information* pdb_information_create()
     {
         PDB_Information* information = new PDB_Information;
-        information->source_infos      = dynamic_array_create<PDB_Function_Source_Info>();
-        information->block_infos       = dynamic_array_create<PDB_Code_Block_Info>();
-        information->global_infos      = dynamic_array_create<PDB_Variable_Info>();
-        information->functions         = dynamic_array_create<PDB_Function>();
+        information->source_infos = dynamic_array_create<PDB_Function_Source_Info>();
+        information->block_infos = dynamic_array_create<PDB_Code_Block_Info>();
+        information->global_infos = dynamic_array_create<PDB_Variable_Info>();
+        information->functions = dynamic_array_create<PDB_Function>();
         information->source_file_paths = hashtable_create_empty<i32, String>(3, hash_i32, equals_i32);
         return information;
     }
@@ -264,7 +255,7 @@ namespace PDB_Analysis
         value.type = PDB_Constant_Type::OTHER;
         value.size = 0;
 
-        switch (variant.vt) 
+        switch (variant.vt)
         {
         case VT_I1:  value.type = PDB_Constant_Type::SIGNED_INT; value.size = 1; value.options.int_value = (i8)variant.bVal; break;
         case VT_I2:  value.type = PDB_Constant_Type::SIGNED_INT; value.size = 2; value.options.int_value = (i16)variant.iVal; break;
@@ -286,165 +277,156 @@ namespace PDB_Analysis
         return value;
     }
 
-    PDB_Location_Register register_id_to_location(u32 reg_id)
+    X64_Register_Value_Location register_id_to_location(u32 reg_id)
     {
-        PDB_Location_Register loc;
-        loc.reg = Register_x64::OTHER;
-        loc.numbered_register_index = 0;
+        X64_Register_Value_Location loc;
+        loc.type = X64_Register_Type::OTHER;
+        loc.register_index = 0;
         loc.size = 8;
         loc.offset = 0;
         switch (reg_id)
         {
         case CV_REG_NONE: break;
 
-        case CV_AMD64_AL: loc.reg = Register_x64::RAX; loc.size = 1; break;
-        case CV_AMD64_CL: loc.reg = Register_x64::RCX; loc.size = 1; break;
-        case CV_AMD64_DL: loc.reg = Register_x64::RDX; loc.size = 1; break;
-        case CV_AMD64_BL: loc.reg = Register_x64::RBX; loc.size = 1; break;
+        case CV_AMD64_AL:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RAX; loc.size = 1; break;
+        case CV_AMD64_CL:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RCX; loc.size = 1; break;
+        case CV_AMD64_DL:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDX; loc.size = 1; break;
+        case CV_AMD64_BL:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBX; loc.size = 1; break;
 
-        case CV_AMD64_AH: loc.reg = Register_x64::RAX; loc.size = 1; loc.offset = 1; break;
-        case CV_AMD64_CH: loc.reg = Register_x64::RCX; loc.size = 1; loc.offset = 1; break;
-        case CV_AMD64_DH: loc.reg = Register_x64::RDX; loc.size = 1; loc.offset = 1; break;
-        case CV_AMD64_BH: loc.reg = Register_x64::RBX; loc.size = 1; loc.offset = 1; break;
+        case CV_AMD64_AH:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RAX; loc.size = 1; loc.offset = 1; break;
+        case CV_AMD64_CH:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RCX; loc.size = 1; loc.offset = 1; break;
+        case CV_AMD64_DH:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDX; loc.size = 1; loc.offset = 1; break;
+        case CV_AMD64_BH:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBX; loc.size = 1; loc.offset = 1; break;
 
-        case CV_AMD64_SIL: loc.reg = Register_x64::RSI; loc.size = 1; break;
-        case CV_AMD64_DIL: loc.reg = Register_x64::RDI; loc.size = 1; break;
-        case CV_AMD64_BPL: loc.reg = Register_x64::RBP; loc.size = 1; break;
-        case CV_AMD64_SPL: loc.reg = Register_x64::RSP; loc.size = 1; break;
+        case CV_AMD64_SIL: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSI; loc.size = 1; break;
+        case CV_AMD64_DIL: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDI; loc.size = 1; break;
+        case CV_AMD64_BPL: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBP; loc.size = 1; break;
+        case CV_AMD64_SPL: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSP; loc.size = 1; break;
 
-        case CV_AMD64_AX: loc.reg = Register_x64::RAX; loc.size = 2; break;
-        case CV_AMD64_CX: loc.reg = Register_x64::RCX; loc.size = 2; break;
-        case CV_AMD64_DX: loc.reg = Register_x64::RDX; loc.size = 2; break;
-        case CV_AMD64_BX: loc.reg = Register_x64::RBX; loc.size = 2; break;
-        case CV_AMD64_SP: loc.reg = Register_x64::RSP; loc.size = 2; break;
-        case CV_AMD64_BP: loc.reg = Register_x64::RBP; loc.size = 2; break;
-        case CV_AMD64_SI: loc.reg = Register_x64::RSI; loc.size = 2; break;
-        case CV_AMD64_DI: loc.reg = Register_x64::RDI; loc.size = 2; break;
+        case CV_AMD64_AX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RAX; loc.size = 2; break;
+        case CV_AMD64_CX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RCX; loc.size = 2; break;
+        case CV_AMD64_DX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDX; loc.size = 2; break;
+        case CV_AMD64_BX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBX; loc.size = 2; break;
+        case CV_AMD64_SP:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSP; loc.size = 2; break;
+        case CV_AMD64_BP:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBP; loc.size = 2; break;
+        case CV_AMD64_SI:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSI; loc.size = 2; break;
+        case CV_AMD64_DI:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDI; loc.size = 2; break;
 
-        case CV_AMD64_EAX: loc.reg = Register_x64::RAX; loc.size = 4; break;
-        case CV_AMD64_ECX: loc.reg = Register_x64::RCX; loc.size = 4; break;
-        case CV_AMD64_EDX: loc.reg = Register_x64::RDX; loc.size = 4; break;
-        case CV_AMD64_EBX: loc.reg = Register_x64::RBX; loc.size = 4; break;
-        case CV_AMD64_ESP: loc.reg = Register_x64::RSP; loc.size = 4; break;
-        case CV_AMD64_EBP: loc.reg = Register_x64::RBP; loc.size = 4; break;
-        case CV_AMD64_ESI: loc.reg = Register_x64::RSI; loc.size = 4; break;
-        case CV_AMD64_EDI: loc.reg = Register_x64::RDI; loc.size = 4; break;
+        case CV_AMD64_EAX: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RAX; loc.size = 4; break;
+        case CV_AMD64_ECX: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RCX; loc.size = 4; break;
+        case CV_AMD64_EDX: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDX; loc.size = 4; break;
+        case CV_AMD64_EBX: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBX; loc.size = 4; break;
+        case CV_AMD64_ESP: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSP; loc.size = 4; break;
+        case CV_AMD64_EBP: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBP; loc.size = 4; break;
+        case CV_AMD64_ESI: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSI; loc.size = 4; break;
+        case CV_AMD64_EDI: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDI; loc.size = 4; break;
 
-        case CV_AMD64_RIP:    loc.reg = Register_x64::RIP; loc.size = 8; break;
+        case CV_AMD64_RIP: loc.type = X64_Register_Type::RIP; loc.size = 8; break;
 
-        case CV_AMD64_RAX: loc.reg = Register_x64::RAX; loc.size = 8; break;
-        case CV_AMD64_RBX: loc.reg = Register_x64::RBX; loc.size = 8; break;
-        case CV_AMD64_RCX: loc.reg = Register_x64::RCX; loc.size = 8; break;
-        case CV_AMD64_RDX: loc.reg = Register_x64::RDX; loc.size = 8; break;
-        case CV_AMD64_RSI: loc.reg = Register_x64::RSI; loc.size = 8; break;
-        case CV_AMD64_RDI: loc.reg = Register_x64::RDI; loc.size = 8; break;
-        case CV_AMD64_RBP: loc.reg = Register_x64::RBP; loc.size = 8; break;
-        case CV_AMD64_RSP: loc.reg = Register_x64::RSP; loc.size = 8; break;
+        case CV_AMD64_RAX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RAX; loc.size = 8; break;
+        case CV_AMD64_RBX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBX; loc.size = 8; break;
+        case CV_AMD64_RCX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RCX; loc.size = 8; break;
+        case CV_AMD64_RDX:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDX; loc.size = 8; break;
+        case CV_AMD64_RSI:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSI; loc.size = 8; break;
+        case CV_AMD64_RDI:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RDI; loc.size = 8; break;
+        case CV_AMD64_RBP:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RBP; loc.size = 8; break;
+        case CV_AMD64_RSP:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::RSP; loc.size = 8; break;
 
-        case CV_AMD64_R8:  loc.reg = Register_x64::R8;  loc.size = 8; break;
-        case CV_AMD64_R9:  loc.reg = Register_x64::R9;  loc.size = 8; break;
-        case CV_AMD64_R10: loc.reg = Register_x64::R10; loc.size = 8; break;
-        case CV_AMD64_R11: loc.reg = Register_x64::R11; loc.size = 8; break;
-        case CV_AMD64_R12: loc.reg = Register_x64::R12; loc.size = 8; break;
-        case CV_AMD64_R13: loc.reg = Register_x64::R13; loc.size = 8; break;
-        case CV_AMD64_R14: loc.reg = Register_x64::R14; loc.size = 8; break;
-        case CV_AMD64_R15: loc.reg = Register_x64::R15; loc.size = 8; break;
+        case CV_AMD64_R8:   loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R8;  loc.size = 8; break;
+        case CV_AMD64_R9:   loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R9;  loc.size = 8; break;
+        case CV_AMD64_R10:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R10; loc.size = 8; break;
+        case CV_AMD64_R11:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R11; loc.size = 8; break;
+        case CV_AMD64_R12:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R12; loc.size = 8; break;
+        case CV_AMD64_R13:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R13; loc.size = 8; break;
+        case CV_AMD64_R14:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R14; loc.size = 8; break;
+        case CV_AMD64_R15:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R15; loc.size = 8; break;
 
-        case CV_AMD64_R8B:  loc.reg = Register_x64::R8;  loc.size = 1; break;
-        case CV_AMD64_R9B:  loc.reg = Register_x64::R9;  loc.size = 1; break;
-        case CV_AMD64_R10B: loc.reg = Register_x64::R10; loc.size = 1; break;
-        case CV_AMD64_R11B: loc.reg = Register_x64::R11; loc.size = 1; break;
-        case CV_AMD64_R12B: loc.reg = Register_x64::R12; loc.size = 1; break;
-        case CV_AMD64_R13B: loc.reg = Register_x64::R13; loc.size = 1; break;
-        case CV_AMD64_R14B: loc.reg = Register_x64::R14; loc.size = 1; break;
-        case CV_AMD64_R15B: loc.reg = Register_x64::R15; loc.size = 1; break;
+        case CV_AMD64_R8B:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R8;  loc.size = 1; break;
+        case CV_AMD64_R9B:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R9;  loc.size = 1; break;
+        case CV_AMD64_R10B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R10; loc.size = 1; break;
+        case CV_AMD64_R11B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R11; loc.size = 1; break;
+        case CV_AMD64_R12B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R12; loc.size = 1; break;
+        case CV_AMD64_R13B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R13; loc.size = 1; break;
+        case CV_AMD64_R14B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R14; loc.size = 1; break;
+        case CV_AMD64_R15B: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R15; loc.size = 1; break;
 
-        case CV_AMD64_R8W:  loc.reg = Register_x64::R8;  loc.size = 2; break;
-        case CV_AMD64_R9W:  loc.reg = Register_x64::R9;  loc.size = 2; break;
-        case CV_AMD64_R10W: loc.reg = Register_x64::R10; loc.size = 2; break;
-        case CV_AMD64_R11W: loc.reg = Register_x64::R11; loc.size = 2; break;
-        case CV_AMD64_R12W: loc.reg = Register_x64::R12; loc.size = 2; break;
-        case CV_AMD64_R13W: loc.reg = Register_x64::R13; loc.size = 2; break;
-        case CV_AMD64_R14W: loc.reg = Register_x64::R14; loc.size = 2; break;
-        case CV_AMD64_R15W: loc.reg = Register_x64::R15; loc.size = 2; break;
+        case CV_AMD64_R8W:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R8;  loc.size = 2; break;
+        case CV_AMD64_R9W:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R9;  loc.size = 2; break;
+        case CV_AMD64_R10W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R10; loc.size = 2; break;
+        case CV_AMD64_R11W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R11; loc.size = 2; break;
+        case CV_AMD64_R12W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R12; loc.size = 2; break;
+        case CV_AMD64_R13W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R13; loc.size = 2; break;
+        case CV_AMD64_R14W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R14; loc.size = 2; break;
+        case CV_AMD64_R15W: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R15; loc.size = 2; break;
 
-        case CV_AMD64_R8D:  loc.reg = Register_x64::R8;  loc.size = 4; break;
-        case CV_AMD64_R9D:  loc.reg = Register_x64::R9;  loc.size = 4; break;
-        case CV_AMD64_R10D: loc.reg = Register_x64::R10; loc.size = 4; break;
-        case CV_AMD64_R11D: loc.reg = Register_x64::R11; loc.size = 4; break;
-        case CV_AMD64_R12D: loc.reg = Register_x64::R12; loc.size = 4; break;
-        case CV_AMD64_R13D: loc.reg = Register_x64::R13; loc.size = 4; break;
-        case CV_AMD64_R14D: loc.reg = Register_x64::R14; loc.size = 4; break;
-        case CV_AMD64_R15D: loc.reg = Register_x64::R15; loc.size = 4; break;
-
-        case CV_AMD64_MM0: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 0; loc.size = 8; break;
-        case CV_AMD64_MM1: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 1; loc.size = 8; break;
-        case CV_AMD64_MM2: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 2; loc.size = 8; break;
-        case CV_AMD64_MM3: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 3; loc.size = 8; break;
-        case CV_AMD64_MM4: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 4; loc.size = 8; break;
-        case CV_AMD64_MM5: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 5; loc.size = 8; break;
-        case CV_AMD64_MM6: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 6; loc.size = 8; break;
-        case CV_AMD64_MM7: loc.reg = Register_x64::MM_N; loc.numbered_register_index = 7; loc.size = 8; break;
+        case CV_AMD64_R8D:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R8;  loc.size = 4; break;
+        case CV_AMD64_R9D:  loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R9;  loc.size = 4; break;
+        case CV_AMD64_R10D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R10; loc.size = 4; break;
+        case CV_AMD64_R11D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R11; loc.size = 4; break;
+        case CV_AMD64_R12D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R12; loc.size = 4; break;
+        case CV_AMD64_R13D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R13; loc.size = 4; break;
+        case CV_AMD64_R14D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R14; loc.size = 4; break;
+        case CV_AMD64_R15D: loc.type = X64_Register_Type::INTEGER; loc.register_index = (int)X64_Integer_Register::R15; loc.size = 4; break;
 
         // Handle ranges seperately
-        default: 
+        default:
         {
             // MM Registers (Float registers, actually 80 bit large)
             if (reg_id >= CV_AMD64_MM0 && reg_id <= CV_AMD64_MM7) {
-                loc.reg = Register_x64::MM_N;
+                loc.type = X64_Register_Type::MMX;
+                loc.register_index = reg_id - CV_AMD64_MM0;
                 loc.size = 8;
-                loc.numbered_register_index = reg_id - CV_AMD64_MM0;
                 loc.offset = 0;
             }
             // MM Register sub-range
             else if (reg_id >= CV_AMD64_MM00 && reg_id <= CV_AMD64_MM71) {
-                loc.reg = Register_x64::MM_N;
+                loc.type = X64_Register_Type::MMX;
                 loc.size = 4;
-                loc.numbered_register_index = (reg_id - CV_AMD64_MM00) / 2;
+                loc.register_index = (reg_id - CV_AMD64_MM00) / 2;
                 loc.offset = (reg_id - CV_AMD64_MM00) % 2 == 0 ? 0 : 4;
             }
             // Full XMM Registers
             else if (reg_id >= CV_AMD64_XMM0 && reg_id <= CV_AMD64_XMM15) {
-                loc.reg = Register_x64::XMM_N;
-                loc.numbered_register_index = reg_id - CV_AMD64_XMM0;
+                loc.type = X64_Register_Type::XMM;
+                loc.register_index = reg_id - CV_AMD64_XMM0;
                 loc.size = 16;
             }
             // XMM float sub-ranges
             else if (reg_id >= CV_AMD64_XMM0_0 && reg_id <= CV_AMD64_XMM7_3) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 4;
-                loc.numbered_register_index = (reg_id - CV_AMD64_XMM0) / 4;
+                loc.register_index = (reg_id - CV_AMD64_XMM0) / 4;
                 loc.offset = ((reg_id - CV_AMD64_XMM0) % 4) * 4;
             }
             else if (reg_id >= CV_AMD64_XMM8_0 && reg_id <= CV_AMD64_XMM15_3) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 4;
-                loc.numbered_register_index = 7 + (reg_id - CV_AMD64_XMM7) / 4;
+                loc.register_index = 7 + (reg_id - CV_AMD64_XMM7) / 4;
                 loc.offset = ((reg_id - CV_AMD64_XMM7) % 4) * 4;
             }
             // XMM double sub-range
             else if (reg_id >= CV_AMD64_XMM0L && reg_id <= CV_AMD64_XMM7L) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 8;
-                loc.numbered_register_index = reg_id - CV_AMD64_XMM0L;
+                loc.register_index = reg_id - CV_AMD64_XMM0L;
                 loc.offset = 0;
             }
             else if (reg_id >= CV_AMD64_XMM0H && reg_id <= CV_AMD64_XMM7H) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 8;
-                loc.numbered_register_index = reg_id - CV_AMD64_XMM0H;
+                loc.register_index = reg_id - CV_AMD64_XMM0H;
                 loc.offset = 8;
             }
             else if (reg_id >= CV_AMD64_XMM8L && reg_id <= CV_AMD64_XMM15L) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 8;
-                loc.numbered_register_index = reg_id - CV_AMD64_XMM8L;
+                loc.register_index = reg_id - CV_AMD64_XMM8L;
                 loc.offset = 0;
             }
             else if (reg_id >= CV_AMD64_XMM8H && reg_id <= CV_AMD64_XMM15H) {
-                loc.reg = Register_x64::XMM_N;
+                loc.type = X64_Register_Type::XMM;
                 loc.size = 8;
-                loc.numbered_register_index = reg_id - CV_AMD64_XMM8H;
+                loc.register_index = reg_id - CV_AMD64_XMM8H;
                 loc.offset = 8;
             }
             break;
@@ -495,8 +477,8 @@ namespace PDB_Analysis
         case LocIsEnregistered:
         {
             location.type = PDB_Location_Type::INSIDE_REGISTER;
-            location.options.register_loc.reg = Register_x64::OTHER;
-            location.options.register_loc.numbered_register_index = 0;
+            location.options.register_loc.type = X64_Register_Type::OTHER;
+            location.options.register_loc.register_index = 0;
             location.options.register_loc.offset = 0;
             location.options.register_loc.size = 0;
 
@@ -509,8 +491,8 @@ namespace PDB_Analysis
         case LocIsRegRel:
         {
             location.type = PDB_Location_Type::REGISTER_RELATIVE;
-            location.options.register_relative.reg.reg = Register_x64::OTHER;
-            location.options.register_relative.reg.numbered_register_index = 0;
+            location.options.register_relative.reg.type = X64_Register_Type::OTHER;
+            location.options.register_relative.reg.register_index = 0;
             location.options.register_relative.reg.offset = 0;
             location.options.register_relative.reg.size = 0;
             location.options.register_relative.offset = 0;
@@ -518,7 +500,7 @@ namespace PDB_Analysis
             DWORD register_id = 0;
             LONG offset = 0;
             if ((symbol->get_registerId(&register_id) == S_OK) &&
-                (symbol->get_offset(&offset) == S_OK)) 
+                (symbol->get_offset(&offset) == S_OK))
             {
                 location.options.register_relative.reg = register_id_to_location(register_id);
                 location.options.register_relative.offset = offset;
@@ -530,7 +512,7 @@ namespace PDB_Analysis
             location.type = PDB_Location_Type::IS_CONSTANT;
             location.options.constant_value.type = PDB_Constant_Type::OTHER;
             location.options.constant_value.size = 0;
-            
+
             VARIANT variant;
             VariantInit(&variant);
             if (symbol->get_value(&variant) == S_OK) {
@@ -541,9 +523,9 @@ namespace PDB_Analysis
         }
         // Handle these as other for now
         case LocInMetaData:
-        case LocIsIlRel: 
+        case LocIsIlRel:
         case LocIsThisRel:
-        case LocIsBitField: 
+        case LocIsBitField:
         case LocIsSlot:
         case LocIsNull:
         default: break;
@@ -561,7 +543,7 @@ namespace PDB_Analysis
             SysFreeString(name);
         }
     }
-    
+
     void pdb_symbol_get_undecorated_name(IDiaSymbol* symbol, String* append_to)
     {
         string_reset(append_to);
@@ -630,9 +612,9 @@ namespace PDB_Analysis
             {
                 CComPtr<IDiaEnumLineNumbers> line_iterator;
                 bool worked = session->findLinesByAddr(
-                    function_info.location.section_index, 
-                    function_info.location.offset, 
-                    function_info.length, 
+                    function_info.location.section_index,
+                    function_info.location.offset,
+                    function_info.length,
                     &line_iterator
                 ) == S_OK;
 
@@ -668,7 +650,7 @@ namespace PDB_Analysis
                         {
                             int int_id = src_id;
                             String* str = hashtable_find_element(&info->source_file_paths, int_id);
-                            if (str == 0) 
+                            if (str == 0)
                             {
                                 CComPtr<IDiaSourceFile> source_file;
                                 if (line_number->get_sourceFile(&source_file) == S_OK) {
@@ -774,7 +756,7 @@ namespace PDB_Analysis
                 dynamic_array_push_back(&block.variables, variable_info);
                 break;
             }
-            case DataIsParam: 
+            case DataIsParam:
             {
                 if (source_info_index == -1) {
                     break;
@@ -786,7 +768,7 @@ namespace PDB_Analysis
                 break;
             }
 
-            case DataIsStaticLocal: 
+            case DataIsStaticLocal:
             case DataIsFileStatic: // File scoped global
             case DataIsGlobal: {
                 variable_info.name = string_create();
@@ -1026,45 +1008,46 @@ namespace Process_Memory
         return false;
     }
 
-    bool read_as_much_as_possible(HANDLE process_handle, void* virtual_address, Dynamic_Array<u8>* out_bytes, u64 read_size)
+    void read_as_much_as_possible(HANDLE process_handle, void* virtual_address, Dynamic_Array<u8>* out_bytes, u64 read_size)
     {
         dynamic_array_reset(out_bytes);
         dynamic_array_reserve(out_bytes, read_size);
 
         if (virtual_address == nullptr || read_size == 0 || process_handle == nullptr) {
-            return false;
+            return;
         }
 
+        // Check if reading whole read_size succeeds
         size_t bytes_written = 0;
         if (ReadProcessMemory(process_handle, virtual_address, out_bytes->data, read_size, &bytes_written) != 0) {
             out_bytes->size = read_size;
-            return true;
+            return;
         }
 
-        // Check largest possible read size
+        // Otherwise find largest read size with VirtualQueryEx
         {
             MEMORY_BASIC_INFORMATION memory_info;
             int written_bytes = VirtualQueryEx(process_handle, virtual_address, &memory_info, sizeof(memory_info));
-            if (written_bytes == 0) {
-                return false;
+            if (written_bytes == 0) { // Virtual query failed
+                return;
             }
 
             if (memory_info.State != MEM_COMMIT) {
-                return false;
+                return;
             }
 
             i64 max_read_length = (i64)memory_info.RegionSize - ((i64)virtual_address - (i64)memory_info.BaseAddress);
-            if (max_read_length < 0) {
-                return false;
+            if (max_read_length <= 0) {
+                return;
             }
             read_size = math_minimum((u64)max_read_length, read_size);
         }
 
+        // Try reading size again
         if (ReadProcessMemory(process_handle, virtual_address, out_bytes->data, read_size, &bytes_written) != 0) {
-            return false;
+            return;
         }
-        out_bytes->size = (int)read_size;
-        return true;
+        out_bytes->size = (int)bytes_written;
     }
 
     bool read_string(HANDLE process_handle, void* virtual_address, String* out_string, u64 max_size, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
@@ -1077,13 +1060,12 @@ namespace Process_Memory
             max_size = 2 * max_size + 1;
         }
 
-        dynamic_array_reset(byte_buffer);
-        dynamic_array_reserve(byte_buffer, max_size + 2);
-        if (!read_as_much_as_possible(process_handle, virtual_address, byte_buffer, max_size)) {
+        read_as_much_as_possible(process_handle, virtual_address, byte_buffer, max_size);
+        if (byte_buffer->size == 0) {
             return false;
         }
 
-        if (is_wide_char) 
+        if (is_wide_char)
         {
             const wchar_t* char_ptr = (wchar_t*)byte_buffer->data;
             int max_length = max_size / 2;
@@ -1136,27 +1118,6 @@ namespace PE_Analysis
         bool flag_execute;
     };
 
-    // Unwind Infos
-    enum class Unwind_Register
-    {
-        RAX,
-        RCX,
-        RDX,
-        RBX,
-        RSP,
-        RBP,
-        RSI,
-        RDI,
-        R8,
-        R9,
-        R10,
-        R11,
-        R12,
-        R13,
-        R14,
-        R15
-    };
-
     enum class Unwind_Code_Type
     {
         PUSH_REG,                   // Pushes register onto stack (e.g decreases RSP by 8)
@@ -1171,13 +1132,13 @@ namespace PE_Analysis
         Unwind_Code_Type type;
         u8 instruction_offset; // Instruction offset from function start
         union {
-            Unwind_Register push_reg;
+            X64_Integer_Register push_reg;
             struct {
-                Unwind_Register reg;
+                X64_Integer_Register reg;
                 u32 offset_from_rsp;
             } save_reg;
             struct {
-                Unwind_Register fp_reg;
+                X64_Integer_Register fp_reg; // Usually rbp, but could also be other...
                 u32 offset_from_rsp;
             } set_frame_pointer;
             struct {
@@ -1266,7 +1227,7 @@ namespace PE_Analysis
 
     const int MAX_STRING_LENGTH = 260;
 
-    struct UNWIND_INFO 
+    struct UNWIND_INFO
     {
         u8 Version : 3;
         u8 Flags : 5;
@@ -1297,30 +1258,6 @@ namespace PE_Analysis
         UWOP_PUSH_MACHFRAME   /* info == 0: no error-code, 1: error-code */
     };
 
-    const char* unwind_register_to_str(Unwind_Register reg)
-    {
-        switch (reg) 
-        {
-        case Unwind_Register::RAX: return "RAX";
-        case Unwind_Register::RCX: return "RCX";
-        case Unwind_Register::RDX: return "RDX";
-        case Unwind_Register::RBX: return "RBX";
-        case Unwind_Register::RSP: return "RSP";
-        case Unwind_Register::RBP: return "RBP";
-        case Unwind_Register::RSI: return "RSI";
-        case Unwind_Register::RDI: return "RDI";
-        case Unwind_Register::R8:  return "R8";
-        case Unwind_Register::R9:  return "R9";
-        case Unwind_Register::R10: return "R10";
-        case Unwind_Register::R11: return "R11";
-        case Unwind_Register::R12: return "R12";
-        case Unwind_Register::R13: return "R13";
-        case Unwind_Register::R14: return "R14";
-        case Unwind_Register::R15: return "R15";
-        }
-        return "Unknown";
-    }
-
     u64 hash_function_unwind_info(Function_Unwind_Info* fn_info) {
         u64 hash = hash_u64(&fn_info->start_rva);
         hash = hash_combine(hash, hash_u64(&fn_info->end_rva));
@@ -1344,7 +1281,7 @@ namespace PE_Analysis
 
     int add_unwind_block(
         PE_Info* pe_info, HANDLE process_handle, u64 unwind_data_rva, u64 base_virtual_address,
-        Hashtable<u64, int>* already_generated_blocks, Hashset<Function_Unwind_Info>* already_generated_fn_infos, 
+        Hashtable<u64, int>* already_generated_blocks, Hashset<Function_Unwind_Info>* already_generated_fn_infos,
         Dynamic_Array<Unwind_Code_Slot>& code_slot_buffer)
     {
         // Check if we have already generated this unwind_info
@@ -1421,13 +1358,13 @@ namespace PE_Analysis
                 return value;
             };
 
-            auto to_register_id = [&](u32 value) -> Unwind_Register {
-                if (value > (u32)Unwind_Register::R15) {
+            auto to_register_id = [&](u32 value) -> X64_Integer_Register {
+                if (value >= (u32)X64_Integer_Register::MAX_VALUE) {
                     printf("Found invalid register_id in unwind code: %d\n", value);
                     success = false;
-                    return Unwind_Register::RAX;
+                    return X64_Integer_Register::RAX;
                 }
-                return (Unwind_Register)value;
+                return (X64_Integer_Register)value;
             };
 
             switch ((UNWIND_OP_CODES)slot.UnwindOp)
@@ -1520,7 +1457,7 @@ namespace PE_Analysis
                 &chain_info
             );
 
-            if (success) 
+            if (success)
             {
                 int chain_block_index = add_unwind_block(
                     pe_info, process_handle, chain_info.UnwindData,
@@ -1540,7 +1477,7 @@ namespace PE_Analysis
         return unwind_block_index;
     }
 
-    bool pe_info_fill_from_executable_image(PE_Info * pe_info, u64 base_virtual_address, HANDLE process_handle, void* image_name_addr_opt, bool name_is_unicode)
+    bool pe_info_fill_from_executable_image(PE_Info* pe_info, u64 base_virtual_address, HANDLE process_handle, void* image_name_addr_opt, bool name_is_unicode)
     {
         if (base_virtual_address == 0 || process_handle == nullptr) return false;
         pe_info->base_address = base_virtual_address;
@@ -1808,7 +1745,7 @@ namespace PE_Analysis
                 fn_unwind_info.start_rva = runtime_function.BeginAddress;
                 fn_unwind_info.end_rva = runtime_function.EndAddress;
                 fn_unwind_info.unwind_block_index = add_unwind_block(
-                    pe_info, process_handle, runtime_function.UnwindData, base_virtual_address, 
+                    pe_info, process_handle, runtime_function.UnwindData, base_virtual_address,
                     &already_analysed_unwind_blocks, &already_analysed_function_infos, code_slot_buffer
                 );
 
@@ -1828,12 +1765,12 @@ namespace PE_Analysis
             printf("ALLOC: %d\n", code.options.alloc_size);
             break;
         case Unwind_Code_Type::PUSH_REG:
-            printf("PUSH_REG: %s\n", unwind_register_to_str(code.options.push_reg));
+            printf("PUSH_REG: %s\n", x64_integer_register_to_name(code.options.push_reg));
             break;
         case Unwind_Code_Type::SAVE_REG:
             printf(
                 "SAVE_REG: %s, offset: %d\n",
-                unwind_register_to_str((Unwind_Register)code.options.save_reg.reg),
+                x64_integer_register_to_name(code.options.save_reg.reg),
                 code.options.save_reg.offset_from_rsp
             );
             break;
@@ -1843,7 +1780,7 @@ namespace PE_Analysis
         case Unwind_Code_Type::SET_FRAME_POINTER_REGISTER:
             printf(
                 "SET_FRAME_POINTER_REGISTER: %s, offset: %d\n",
-                unwind_register_to_str(code.options.set_frame_pointer.fp_reg),
+                x64_integer_register_to_name(code.options.set_frame_pointer.fp_reg),
                 code.options.set_frame_pointer.offset_from_rsp
             );
             break;
@@ -1853,7 +1790,77 @@ namespace PE_Analysis
 
 
 
+
 // Debugger
+struct Statement_Mapping;
+struct IR_Instruction_Mapping;
+struct Upp_Line_Mapping;
+
+// Source Mapping Info
+struct Machine_Code_Range
+{
+    u64 start_virtual_address;
+    u64 end_virtual_address;
+};
+
+struct C_Line_Mapping
+{
+    int c_line_index; // Global line-index
+    Machine_Code_Range range;
+    IR_Instruction_Mapping* instruction_mapping;
+};
+
+struct IR_Instruction_Mapping
+{
+    Statement_Mapping* statement;
+    IR_Code_Block* code_block;
+    int instruction_index;
+    Dynamic_Array<C_Line_Mapping*> c_lines;
+};
+
+struct Statement_Mapping
+{
+    AST::Statement* statement;
+    Upp_Line_Mapping* line_mapping;
+    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
+};
+
+struct Upp_Line_Mapping
+{
+    int compilation_unit_mapping_index;
+    int line_number;
+    Dynamic_Array<Statement_Mapping*> statements;
+};
+
+struct Compilation_Unit_Mapping
+{
+    Compilation_Unit* compilation_unit;
+    Dynamic_Array<Upp_Line_Mapping> lines;
+};
+
+struct Function_Slot_Mapping
+{
+    Dynamic_Array<C_Line_Mapping*> c_lines;
+    u64 virtual_address_start;
+    u64 virtual_address_end;
+    String name;
+};
+
+struct Machine_Code_Segment
+{
+    u64 virtual_address_start;
+    u64 virtual_address_end;
+    int function_slot_index;
+    int c_line_index_with_offset;
+};
+
+struct Address_Breakpoint
+{
+    u64 address;
+    u8 original_byte;
+    bool is_software_breakpoint;
+};
+
 enum class Hardware_Breakpoint_Type
 {
     BREAK_ON_EXECUTE,
@@ -1878,612 +1885,230 @@ struct Thread_Info
     bool executing_step_over_breakpoint; // If contine flag should be set
 };
 
-struct Stack_Frame_Info
-{
-    CONTEXT context_in_frame;
-};
-
 struct Debugger
 {
-    bool process_running;
-
-    // Handles
+    // Process Infos
     HANDLE process_handle;
     DWORD process_id;
     Dynamic_Array<Thread_Info> threads;
-    int main_thread_info_index;
-
-    // Debugger Data
-    Dynamic_Array<Breakpoint> breakpoints;
-    Dynamic_Array<Stack_Frame_Info> stack_frames;
-    int exe_pe_info_index; // PE-Info for executable
     Dynamic_Array<PE_Analysis::PE_Info> pe_infos;
     PDB_Analysis::PDB_Information* pdb_info;
+    int main_thread_info_index; // The main thread is determined by the thread that starts executing main
+    int exe_pe_info_index; // PE-Info for executable (Determined by first Create_Process debug event)
+
+    // Debugger Data
+    Debugger_State state;
+    Dynamic_Array<Stack_Frame> stack_frames;
+    Dynamic_Array<Address_Breakpoint> address_breakpoints;
+    Dynamic_Array<Source_Breakpoint*> source_breakpoints;
+
+    // Source to assembly mapping
+    Dynamic_Array<Compilation_Unit_Mapping> compilation_unit_mapping;
+    Dynamic_Array<Statement_Mapping> statement_mapping;
+    Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
+    Dynamic_Array<C_Line_Mapping> c_line_mapping;
+    Dynamic_Array<Function_Slot_Mapping> function_slot_mapping;
 
     // Helpers
     String string_buffer;
     Dynamic_Array<u8> byte_buffer;
-    bool last_event_hit_breakpoint;
-    bool last_event_hit_step;
+    Dynamic_Array<INSTRUX> disassembly_buffer;
 
     // Event handling
+    bool last_event_hit_breakpoint;
+    bool last_event_hit_step;
     bool last_debug_event_requires_handling;
     DEBUG_EVENT last_debug_event;
     DWORD continue_status;
+    int event_count;
+    int last_stack_walk_event_count;
 };
 
 Debugger* debugger_create()
 {
     Debugger* result = new Debugger;
-    result->process_running = false;
     result->process_handle = nullptr;
-    result->process_id = 0;
-    result->main_thread_info_index = -1;
-    result->last_debug_event_requires_handling = false;
-    result->stack_frames = dynamic_array_create<Stack_Frame_Info>();
-
-    result->breakpoints = dynamic_array_create<Breakpoint>();
+    result->process_id = -1;
     result->threads = dynamic_array_create<Thread_Info>();
-    result->pdb_info = nullptr;
-    result->exe_pe_info_index = -1;
+    result->main_thread_info_index = -1;
     result->pe_infos = dynamic_array_create<PE_Analysis::PE_Info>();
-    result->string_buffer = string_create(512);
-    result->byte_buffer = dynamic_array_create<u8>(512);
+    result->exe_pe_info_index = -1;
+    result->pdb_info = nullptr;
+
+    result->state = Debugger_State::NO_ACTIVE_PROCESS;
+    result->stack_frames = dynamic_array_create<Stack_Frame>();
+    result->address_breakpoints = dynamic_array_create<Address_Breakpoint>();
+    result->source_breakpoints = dynamic_array_create<Source_Breakpoint*>();
+
+    result->compilation_unit_mapping = dynamic_array_create<Compilation_Unit_Mapping>();
+    result->statement_mapping = dynamic_array_create<Statement_Mapping>();
+    result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
+    result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
+    result->function_slot_mapping = dynamic_array_create<Function_Slot_Mapping>();
+
+    result->string_buffer = string_create();
+    result->byte_buffer = dynamic_array_create<u8>();
+    result->disassembly_buffer = dynamic_array_create<INSTRUX>();
+
+    result->last_debug_event_requires_handling = false;
     result->last_event_hit_breakpoint = false;
+    result->last_debug_event_requires_handling = false;
+
+    debugger_reset(result);
 
     return result;
 }
 
+// If not terminate if running, the debugger detaches from the process
+void debugger_reset(Debugger* debugger, Debugger_Reset_Type reset_type)
+{
+    // Terminate running process if any
+    if (debugger->state != Debugger_State::NO_ACTIVE_PROCESS)
+    {
+        bool close_all_handles = false;
+        switch (reset_type)
+        {
+        case Debugger_Reset_Type::DETACH_FROM_PROCESS: {
+            DebugActiveProcessStop(debugger->process_id);
+            close_all_handles = true;
+            break;
+        }
+        case Debugger_Reset_Type::TERMINATE_PROCESS: {
+            DebugActiveProcessStop(debugger->process_id);
+            TerminateProcess(debugger->process_handle, 69);
+            close_all_handles = true;
+            break;
+        }
+        case Debugger_Reset_Type::PROCESS_EXIT_RECEIVED: {
+            break;
+        }
+        default: panic("");
+         }
+
+        if (close_all_handles) {
+            // Close all open handles
+            for (int i = 0; i < debugger->threads.size; i++) {
+                auto& info = debugger->threads[i];
+                if (info.handle != nullptr) {
+                    CloseHandle(info.handle);
+                }
+                info.handle = nullptr;
+            }
+            if (debugger->process_handle != nullptr) {
+                CloseHandle(debugger->process_handle);
+            }
+            debugger->process_handle = nullptr;
+        }
+
+        debugger->state = Debugger_State::NO_ACTIVE_PROCESS;
+    }
+
+    debugger->process_handle = nullptr;
+    debugger->process_id = -1;
+    debugger->exe_pe_info_index = -1;
+    debugger->main_thread_info_index = -1;
+    debugger->last_debug_event_requires_handling = false;
+    debugger->last_event_hit_breakpoint = false;
+    debugger->last_event_hit_step = false;
+    debugger->event_count = 0;
+    debugger->last_stack_walk_event_count = -1;
+
+    for (int i = 0; i < debugger->pe_infos.size; i++) {
+        PE_Analysis::pe_info_destroy(&debugger->pe_infos[i]);
+    }
+    dynamic_array_reset(&debugger->pe_infos);
+
+    if (debugger->pdb_info != nullptr) {
+        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
+        debugger->pdb_info = nullptr;
+    }
+
+    dynamic_array_reset(&debugger->threads);
+    dynamic_array_reset(&debugger->stack_frames);
+    dynamic_array_reset(&debugger->address_breakpoints);
+    dynamic_array_reset(&debugger->byte_buffer);
+    dynamic_array_reset(&debugger->disassembly_buffer);
+    string_reset(&debugger->string_buffer);
+
+    for (int i = 0; i < debugger->source_breakpoints.size; i++) {
+        Source_Breakpoint* bp = debugger->source_breakpoints[i];
+        dynamic_array_destroy(&bp->addresses);
+        delete bp;
+    }
+    dynamic_array_reset(&debugger->source_breakpoints);
+
+    // Reset mappings
+    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
+        auto unit = debugger->compilation_unit_mapping[i];
+        for (int k = 0; k < unit.lines.size; k++) {
+            auto line_mapping = unit.lines[k];
+            dynamic_array_destroy(&line_mapping.statements);
+        }
+        dynamic_array_destroy(&unit.lines);
+    }
+    dynamic_array_reset(&debugger->compilation_unit_mapping);
+
+    for (int i = 0; i < debugger->statement_mapping.size; i++) {
+        dynamic_array_destroy(&debugger->statement_mapping[i].ir_instructions);
+    }
+    dynamic_array_reset(&debugger->statement_mapping);
+
+    for (int i = 0; i < debugger->ir_instruction_mapping.size; i++) {
+        dynamic_array_destroy(&debugger->ir_instruction_mapping[i].c_lines);
+    }
+    dynamic_array_reset(&debugger->ir_instruction_mapping);
+
+    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
+        dynamic_array_destroy(&debugger->function_slot_mapping[i].c_lines);
+    }
+    dynamic_array_reset(&debugger->function_slot_mapping);
+    dynamic_array_reset(&debugger->c_line_mapping);
+}
+
 void debugger_destroy(Debugger* debugger)
 {
-    if (debugger->process_running)
-    {
-        for (int i = 0; i < debugger->threads.size; i++) {
-            auto& info = debugger->threads[i];
-            if (info.handle != nullptr) {
-                CloseHandle(info.handle);
-            }
-            info.handle = nullptr;
-        }
-        if (debugger->process_handle != nullptr) {
-            CloseHandle(debugger->process_handle);
-            debugger->process_handle = nullptr;
-        }
-    }
-
-    for (int i = 0; i < debugger->pe_infos.size; i++) {
-        PE_Analysis::pe_info_destroy(&debugger->pe_infos[i]);
-    }
-    dynamic_array_destroy(&debugger->pe_infos);
-
-    if (debugger->pdb_info != nullptr) {
-        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
-        debugger->pdb_info = nullptr;
-    }
-
-    dynamic_array_destroy(&debugger->breakpoints);
-    dynamic_array_destroy(&debugger->threads);
-    dynamic_array_destroy(&debugger->byte_buffer);
-    dynamic_array_destroy(&debugger->stack_frames);
-    string_destroy(&debugger->string_buffer);
-}
-
-void debugger_reset(Debugger* debugger)
-{
-    if (debugger->process_running)
-    {
-        for (int i = 0; i < debugger->threads.size; i++) {
-            auto& info = debugger->threads[i];
-            if (info.handle != nullptr) {
-                CloseHandle(info.handle);
-            }
-            info.handle = nullptr;
-        }
-        if (debugger->process_handle != nullptr) {
-            CloseHandle(debugger->process_handle);
-            debugger->process_handle = nullptr;
-        }
-    }
-
-    for (int i = 0; i < debugger->pe_infos.size; i++) {
-        PE_Analysis::pe_info_destroy(&debugger->pe_infos[i]);
-    }
-    dynamic_array_destroy(&debugger->pe_infos);
-
-    if (debugger->pdb_info != nullptr) {
-        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
-        debugger->pdb_info = nullptr;
-    }
-
-    debugger->last_debug_event_requires_handling = false;
-    dynamic_array_reset(&debugger->breakpoints);
-    dynamic_array_reset(&debugger->threads);
-    dynamic_array_reset(&debugger->byte_buffer);
-    string_reset(&debugger->string_buffer);
-}
-
-bool debugger_start_process(Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath)
-{
-    if (debugger->process_running) {
-        printf("debugger already has process running");
-        return false;
-    }
     debugger_reset(debugger);
 
-    if (pdb_filepath != nullptr) 
-    {
-        debugger->pdb_info = PDB_Analysis::pdb_information_create();
-        if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, main_obj_filepath)) {
-            PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
-            debugger->pdb_info = nullptr;
-            printf("Couldn't parse pdb file!\n");
-            return false;
-        }
-    }
-
-    STARTUPINFO startup_info;
-    ZeroMemory(&startup_info, sizeof(startup_info));
-    startup_info.cb = sizeof(startup_info);
-    PROCESS_INFORMATION process_info;
-    bool success = CreateProcessA(
-        exe_filepath, // application path
-        nullptr, // Command line args
-        nullptr, // Security-Attributes (if child processes can access this handle)
-        nullptr, // Security-attributes for thread
-        false, // Inherit handles
-        CREATE_DEFAULT_ERROR_MODE | CREATE_NEW_CONSOLE | CREATE_SUSPENDED | DEBUG_ONLY_THIS_PROCESS,
-        nullptr, // Environment
-        nullptr, // Current directory
-        &startup_info,
-        &process_info
-    );
-
-    if (!success) {
-        logg("CreateProcessA failed\n");
-        helper_print_last_error();
-        return false;
-    }
-
+    debugger->process_handle = nullptr;
+    debugger->process_id = -1;
+    debugger->exe_pe_info_index = -1;
+    debugger->main_thread_info_index = -1;
+    debugger->last_debug_event_requires_handling = false;
     debugger->last_event_hit_breakpoint = false;
-    debugger->process_handle = process_info.hProcess;
-    debugger->process_id = process_info.dwProcessId;
+    debugger->last_event_hit_step = false;
 
-    Thread_Info main_thread_info;
-    main_thread_info.handle = process_info.hThread;
-    main_thread_info.id = process_info.dwThreadId;
-    main_thread_info.executing_single_step = false;
-    main_thread_info.executing_step_over_breakpoint = false;
-    debugger->main_thread_info_index = debugger->threads.size;
-    dynamic_array_push_back(&debugger->threads, main_thread_info);
+    dynamic_array_destroy(&debugger->pe_infos);
+    dynamic_array_destroy(&debugger->threads);
+    dynamic_array_destroy(&debugger->stack_frames);
+    dynamic_array_destroy(&debugger->address_breakpoints);
+    dynamic_array_destroy(&debugger->byte_buffer);
+    dynamic_array_destroy(&debugger->disassembly_buffer);
+    string_destroy(&debugger->string_buffer);
 
-    ResumeThread(process_info.hThread);
-    debugger->process_running = true;
+    dynamic_array_destroy(&debugger->source_breakpoints);
 
-    // Execute until we hit the main function
-    {
-        // Wait for process create event
-        while (true)
-        {
-            debugger_wait_and_handle_next_event(debugger);
-            if (!debugger->process_running) return false;
-            auto& event = debugger->last_debug_event;
-            if (event.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
-                break;
-            }
-        }
+    dynamic_array_destroy(&debugger->compilation_unit_mapping);
+    dynamic_array_destroy(&debugger->statement_mapping);
+    dynamic_array_destroy(&debugger->ir_instruction_mapping);
+    dynamic_array_destroy(&debugger->function_slot_mapping);
+    dynamic_array_destroy(&debugger->c_line_mapping);
 
-        // Add breakpoint for main-function
-        Breakpoint bp;
-        bp.address = debugger_find_address_of_function(debugger, string_create_static("main"));
-        if (bp.address == 0) {
-            printf("No main function found!\n");
-            debugger_detach_from_process(debugger);
-            return false;
-        }
-        dynamic_array_push_back(&debugger->breakpoints, bp);
-
-        // Wait until we hit the main function 
-        while (true) {
-            debugger_wait_and_handle_next_event(debugger);
-            if (debugger->last_event_hit_breakpoint) {
-                break;
-            }
-        }
-        for (int i = 0; i < debugger->threads.size; i++) {
-            if (debugger->threads[i].id == debugger->last_debug_event.dwThreadId) {
-                debugger->main_thread_info_index = i;
-                break;
-            }
-        }
-        dynamic_array_reset(&debugger->breakpoints);
-    }
-
-    return true;
+    delete debugger;
 }
 
-bool debugger_process_running(Debugger* debugger) {
-    return debugger->process_running;
-}
 
-void debugger_detach_from_process(Debugger* debugger)
+
+// DEBUGGER ADDRESS TRANSLATIONS
+u64 static_location_to_virtual_address(Debugger* debugger, PDB_Analysis::PDB_Location_Static location)
 {
-    if (!debugger->process_running) return;
-    DebugActiveProcessStop(debugger->process_id);
-    debugger->process_running = false;
+    if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS) return 0;
+    if (debugger->exe_pe_info_index == -1) return 0;
+
+    auto& pe_info = debugger->pe_infos[debugger->exe_pe_info_index];
+    int section_index = location.section_index - 1;
+    if (section_index < 0 || section_index >= pe_info.sections.size) return 0;
+    return pe_info.base_address + pe_info.sections[section_index].rva + location.offset;
 }
-
-bool debugger_last_event_was_breakpoint_or_step(Debugger* debugger)
-{
-    return debugger->last_event_hit_breakpoint || debugger->last_event_hit_step;
-}
-
-bool debugger_wait_and_handle_next_event(Debugger* debugger)
-{
-    // Continue from last event
-    {
-        if (!debugger->process_running) return false;
-
-        if (debugger->last_debug_event_requires_handling)
-        {
-            // Set registers for all threads?
-            for (int i = 0; i < debugger->threads.size; i++)
-            {
-                auto& thread_info = debugger->threads[i];
-
-                CONTEXT thread_context;
-                thread_context.ContextFlags = CONTEXT_ALL;
-                if (!GetThreadContext(thread_info.handle, &thread_context)) {
-                    debugger_detach_from_process(debugger);
-                    printf("GetThreadContext did not work!\n");
-                    helper_print_last_error();
-                    return true;
-                }
-
-                // Initialize hardware breakpoints as not-set
-                Hardware_Breakpoint hw_points[4];
-                for (int i = 0; i < 4; i++) {
-                    Hardware_Breakpoint& bp = hw_points[i];
-                    bp.address = 0;
-                    bp.enabled = false;
-                    bp.length_bits = 0;
-                    bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
-                }
-
-                // Update hardware_breakpoints based on breakpoint list
-                for (int i = 0; i < debugger->breakpoints.size && i < 4; i++)
-                {
-                    auto& breakpoint = debugger->breakpoints[i];
-                    hw_points[i].enabled = true;
-                    hw_points[i].address = breakpoint.address;
-                    hw_points[i].length_bits = 0;
-                    hw_points[i].type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
-                }
-
-                auto set_u64_bits = [](u64 initial_value, int bit_index, int bit_length, u64 bits_to_set) -> u64 {
-                    if (bit_length == 0) return initial_value;
-
-                    u64 mask = (1 << bit_length) - 1; // Generate 1s
-                    bits_to_set = bits_to_set & mask; // Truncate bits_to_set by size
-                    mask = mask << bit_index;
-                    bits_to_set = bits_to_set << bit_index;
-                    return ((~mask) & initial_value) | (mask & bits_to_set);
-                };
-
-                // Transfer hardware-breakpoints into ThreadContext
-                for (int i = 0; i < 4; i++)
-                {
-                    auto& bp = hw_points[i];
-                    switch (i)
-                    {
-                    case 0: thread_context.Dr0 = bp.address; break;
-                    case 1: thread_context.Dr1 = bp.address; break;
-                    case 2: thread_context.Dr2 = bp.address; break;
-                    case 3: thread_context.Dr3 = bp.address; break;
-                    default: panic("");
-                    }
-
-                    int length_bits = bp.length_bits;
-                    int read_write_value = 0;
-                    switch (bp.type)
-                    {
-                    case Hardware_Breakpoint_Type::BREAK_ON_EXECUTE:       read_write_value = 0; length_bits = 0; break;
-                    case Hardware_Breakpoint_Type::BREAK_ON_READ:          read_write_value = 1; break;
-                    case Hardware_Breakpoint_Type::BREAK_ON_READ_OR_WRITE: read_write_value = 3; break;
-                    default: panic("");
-                    }
-
-                    int local_enabled_bit_offset = i * 2;
-                    int read_write_bits_offset = 16 + i * 4;
-                    int len_bit_offset = 18 + i * 4;
-
-                    u64 dr7 = thread_context.Dr7;
-                    dr7 = set_u64_bits(dr7, local_enabled_bit_offset, 1, bp.enabled ? 1 : 0);
-                    dr7 = set_u64_bits(dr7, read_write_bits_offset, 2, read_write_value);
-                    dr7 = set_u64_bits(dr7, len_bit_offset, 2, length_bits);
-                    thread_context.Dr7 = dr7;
-                }
-
-                // Set trap flag if we want to do a step
-                if (thread_info.executing_single_step) {
-                    thread_context.EFlags = thread_context.EFlags | 0x100; // Trap flag
-                }
-                if (thread_info.executing_step_over_breakpoint) {
-                    thread_context.EFlags = thread_context.EFlags | 0x10000; // Resume flag
-                    thread_info.executing_step_over_breakpoint = false;
-                }
-
-                // Update thread context
-                thread_context.ContextFlags = CONTEXT_ALL;
-                if (!SetThreadContext(thread_info.handle, &thread_context)) {
-                    helper_print_last_error();
-                    panic("Should work!");
-                }
-            }
-
-            auto& debug_event = debugger->last_debug_event;
-            // FlushInstructionCache(debugger->process_handle, 0, 0);
-            ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, debugger->continue_status);
-            debugger->last_debug_event_requires_handling = false;
-        }
-
-        debugger->last_event_hit_breakpoint = false;
-        debugger->last_event_hit_step = false;
-        if (!debugger->process_running) return false;
-    }
-
-    // Wait for next debug event
-    auto& debug_event = debugger->last_debug_event;
-    ZeroMemory(&debug_event, sizeof(debug_event));
-    bool success = WaitForDebugEventEx(&debug_event, INFINITE);
-    if (!success) {
-        helper_print_last_error();
-        debugger_detach_from_process(debugger);
-        return true;
-    }
-    debugger->last_debug_event_requires_handling = true;
-    debugger->continue_status = DBG_CONTINUE;
-
-    // Handle thread creation
-    int thread_info_index = -1;
-    {
-        if (debug_event.dwProcessId != debugger->process_id) {
-            printf("Debug event from other process with id: %d\n", debug_event.dwProcessId);
-        }
-
-        if (debug_event.dwDebugEventCode == CREATE_THREAD_DEBUG_EVENT) {
-            Thread_Info info;
-            info.handle = debug_event.u.CreateThread.hThread;
-            info.id = debug_event.dwThreadId;
-            info.executing_single_step = false;
-            info.executing_step_over_breakpoint = false;
-            dynamic_array_push_back(&debugger->threads, info);
-        }
-
-        // Find thread_info
-        bool event_was_handled = false;
-        for (int i = 0; i < debugger->threads.size; i++) {
-            if (debugger->threads[i].id == debug_event.dwThreadId) {
-                thread_info_index = i;
-                break;
-            }
-        }
-        if (thread_info_index == -1) {
-            printf("Debug event from un-registered thread! encountered\n");
-            debugger_detach_from_process(debugger);
-            return true;
-        }
-    }
-
-    // Handle events
-    printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
-    switch (debug_event.dwDebugEventCode)
-    {
-    case CREATE_PROCESS_DEBUG_EVENT:
-    {
-        auto& create_info = debug_event.u.CreateProcessInfo;
-        printf("Create_Process\n");
-
-        // Load portable-executable information
-        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-        bool success = PE_Analysis::pe_info_fill_from_executable_image(
-            &pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode
-        );
-        if (success) {
-            debugger->exe_pe_info_index = debugger->pe_infos.size;
-            dynamic_array_push_back(&debugger->pe_infos, pe_info);
-        }
-        else {
-            printf("Could not parse main executable pe info!\n");
-            debugger_detach_from_process(debugger);
-            PE_Analysis::pe_info_destroy(&pe_info);
-        }
-        CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
-        break;
-    }
-    case LOAD_DLL_DEBUG_EVENT:
-    {
-        auto& dll_load = debug_event.u.LoadDll;
-
-        // Load portable-executable information
-        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
-        bool success = PE_Analysis::pe_info_fill_from_executable_image(
-            &pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode
-        );
-        printf("Load DLL event: ");
-        if (success)
-        {
-            if (pe_info.name.size > 0) {
-                printf("\"%s\" ", pe_info.name.characters);
-            }
-            else {
-                printf("Analysis success, but name not retrievable ");
-            }
-            if (pe_info.pdb_name.size > 0) {
-                printf("pdb: \"%s\" ", pe_info.pdb_name.characters);
-            }
-            printf("\n");
-            dynamic_array_push_back(&debugger->pe_infos, pe_info);
-        }
-        else {
-            printf("Analysis failed!\n");
-            PE_Analysis::pe_info_destroy(&pe_info);
-        }
-
-        CloseHandle(debug_event.u.LoadDll.hFile);
-        break;
-    }
-    case EXCEPTION_DEBUG_EVENT:
-    {
-        int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
-
-        // Get thread context
-        CONTEXT thread_context;
-        thread_context.ContextFlags = CONTEXT_ALL;
-        auto& thread_info = debugger->threads[thread_info_index];
-        if (!GetThreadContext(thread_info.handle, &thread_context)) {
-            debugger_detach_from_process(debugger);
-            printf("GetThreadContext did not work!\n");
-            helper_print_last_error();
-            return true;
-        }
-        bool bp_hit = (thread_context.Dr6 & 0b1111) != 0;
-
-        // Handle step instruction
-        if (thread_info.executing_single_step && code == EXCEPTION_SINGLE_STEP && !bp_hit) {
-            thread_info.executing_single_step = false;
-            debugger->last_event_hit_step = true;
-            return false;
-        }
-
-        // Reset step flag if we hit an exception
-        for (int i = 0; i < debugger->threads.size; i++) {
-            debugger->threads[i].executing_single_step = false;
-        }
-
-        // Check if any of our breakpoints were hit by breakpoint
-        if (bp_hit && (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP))
-        {
-            debugger->last_event_hit_breakpoint = true;
-
-            auto& breakpoints = debugger->breakpoints;
-            bool our_breakpoint = false;
-            for (int i = 0; i < breakpoints.size; i++) {
-                auto& bp = breakpoints[i];
-                if (thread_context.Rip == bp.address) {
-                    our_breakpoint = true;
-                    break;
-                }
-            }
-
-            if (our_breakpoint) {
-                printf("Our Breakpoint was hit!\n");
-                // Set resume flag, so that execution can continue (Do i need to clear this again?)
-                thread_info.executing_step_over_breakpoint = true;
-                thread_info.executing_single_step = false;
-                debugger->continue_status = DBG_EXCEPTION_HANDLED;
-                break;
-            }
-        }
-
-        const char* exception_name = "";
-        debugger->continue_status = DBG_EXCEPTION_NOT_HANDLED;
-        switch (code)
-        {
-        case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
-        case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
-        case EXCEPTION_BREAKPOINT: exception_name = "EXCEPTION_BREAKPOINT"; break;
-        case EXCEPTION_SINGLE_STEP: exception_name = "EXCEPTION_SINGLE_STEP"; break;
-        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
-        case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
-        case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
-        case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
-        case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
-        case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
-        case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
-        case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
-        case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
-        case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
-        case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
-        case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
-        case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
-        case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
-        case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
-        case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
-        case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
-        case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
-        }
-        printf("Exception %s\n", exception_name);
-        break;
-    }
-    case OUTPUT_DEBUG_STRING_EVENT:
-    {
-        auto& debug_str = debug_event.u.DebugString;
-        auto& str = debugger->string_buffer;
-        string_reset(&str);
-        bool success = Process_Memory::read_string(
-            debugger->process_handle, (void*)(debug_str.lpDebugStringData),
-            &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
-        );
-        if (success) {
-            printf("Output_Debug_String: \"%s\"\n", str.characters);
-        }
-        else {
-            printf("Debug string could not be read\n");
-        }
-        break;
-    }
-    case UNLOAD_DLL_DEBUG_EVENT:
-    {
-        printf("Unload_Dll: ");
-        u64 dll_base = (u64)debug_event.u.UnloadDll.lpBaseOfDll;
-        for (int i = 0; i < debugger->pe_infos.size; i++) {
-            auto& pe_info = debugger->pe_infos[i];
-            if (pe_info.base_address == dll_base && i != debugger->exe_pe_info_index) {
-                printf(pe_info.name.characters);
-                PE_Analysis::pe_info_destroy(&pe_info);
-                dynamic_array_swap_remove(&debugger->pe_infos, i);
-                break;
-            }
-        }
-        printf("\n");
-        break;
-    }
-    case CREATE_THREAD_DEBUG_EVENT: {
-        printf("Create_thread\n");
-        break;
-    }
-    case EXIT_THREAD_DEBUG_EVENT: {
-        for (int i = 0; i < debugger->threads.size; i++) {
-            auto& thread = debugger->threads[i];
-            if (thread.id == debug_event.dwThreadId) {
-                dynamic_array_swap_remove(&debugger->threads, i);
-                break;
-            }
-        }
-        printf("Exit_Thread\n");
-        break;
-    }
-    case EXIT_PROCESS_DEBUG_EVENT: {
-        debugger_detach_from_process(debugger);
-        printf("Exit_Process\n");
-        break;
-    }
-    case RIP_EVENT: {
-        debugger_detach_from_process(debugger);
-        printf("RIP event \n");
-        break;
-    }
-    default: {
-        printf("Debugger received unknown debug event code: #%d\n", debug_event.dwDebugEventCode);
-        debugger_detach_from_process(debugger);
-        break;
-    }
-    }
-
-    return !debugger->process_running;
-}
-
-
 
 PE_Analysis::PE_Info* debugger_find_module_of_address(Debugger* debugger, u64 address, bool must_be_executable_section)
 {
@@ -2494,7 +2119,7 @@ PE_Analysis::PE_Info* debugger_find_module_of_address(Debugger* debugger, u64 ad
         for (int j = 0; j < sections.size; j++)
         {
             auto& section = sections[j];
-            if (!section.flag_execute) continue;
+            if (!section.flag_execute && must_be_executable_section) continue;
 
             u64 section_start_addr = info.base_address + section.rva;
             if (address >= section_start_addr && address < section_start_addr + section.size) {
@@ -2593,80 +2218,113 @@ String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* 
     return closest_name;
 }
 
-// Returns true if the whole read_size was disassembled. If only partial read was successfull, false is returned, but out_instructions is filled
-bool disassemble_bytes_from_process(
-    HANDLE process_handle, u64 address, u32 read_size, Dynamic_Array<byte>* byte_buffer, Dynamic_Array<INSTRUX>* out_instructions, bool print_result)
+u64 debugger_find_address_of_c_line_from_pdb_info(Debugger* debugger, int line_index)
 {
-    dynamic_array_reset(out_instructions);
+    if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS || debugger->pdb_info == nullptr) return 0;
 
-    auto& bytes = *byte_buffer;
-    bool success = Process_Memory::read_as_much_as_possible(process_handle, (void*)address, byte_buffer, read_size);
-    if (!success) {
-        return false;
+    for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
+        auto& fn_info = debugger->pdb_info->source_infos[i];
+        for (int j = 0; j < fn_info.line_infos.size; j++) {
+            auto& line_info = fn_info.line_infos[j];
+            if (line_info.line_num == line_index + 1) {
+                u64 address = static_location_to_virtual_address(debugger, line_info.location);
+                if (address != 0) return address;
+            }
+        }
     }
 
-    // Print bytes as x64 assembly
-    int byte_index = 0;
-    dynamic_array_reserve(out_instructions, byte_buffer->size / 4); // Reserve buffer size assuming a normal instruction stakes ~4 bytes
-    while (byte_index < byte_buffer->size)
+    return 0;
+}
+
+// Returns true if the whole read_size was disassembled. If only partial read was successfull, false is returned, but out_instructions is filled
+bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 read_size)
+{
+    auto& instructions = debugger->disassembly_buffer;
+    auto& byte_buffer = debugger->byte_buffer;
+    dynamic_array_reset(&instructions);
+
+    // Read bytes
+    Process_Memory::read_as_much_as_possible(debugger->process_handle, (void*)virtual_address, &byte_buffer, read_size);
+
+    // Disassemble bytes
+    u32 byte_index = 0;
+    dynamic_array_reserve(&instructions, byte_buffer.size / 4); // Reserve buffer size assuming a normal instruction stakes ~4 bytes
+    while (byte_index < (u32) byte_buffer.size)
     {
         INSTRUX instruction;
-        NDSTATUS status = NdDecodeEx(&instruction, bytes.data + byte_index, bytes.size - byte_index, ND_CODE_64, ND_DATA_64);
+        NDSTATUS status = NdDecodeEx(&instruction, byte_buffer.data + byte_index, byte_buffer.size - byte_index, ND_CODE_64, ND_DATA_64);
         if (!ND_SUCCESS(status)) {
             break;
         }
         assert(instruction.Length > 0, "");
-        dynamic_array_push_back(out_instructions, instruction);
+        dynamic_array_push_back(&instructions, instruction);
         byte_index += instruction.Length;
     }
 
-    if (print_result)
+    return byte_index >= read_size;
+}
+
+void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indentation_spaces, bool print_addresses = true, bool print_raw_bytes = true)
+{
+    String str = string_create_empty(256);
+    SCOPE_EXIT(string_destroy(&str));
+
+    auto& instructions = debugger->disassembly_buffer;
+    auto& byte_buffer = debugger->byte_buffer;
+
+    u32 byte_index = 0;
+    for (int i = 0; i < instructions.size; i++)
     {
-        String str = string_create_empty(256);
-        SCOPE_EXIT(string_destroy(&str));
+        INSTRUX instr = instructions.data[i];
 
-        u32 byte_index = 0;
-        for (int i = 0; i < out_instructions->size; i++)
-        {
-            INSTRUX instr = out_instructions->data[i];
-
-            // Print bytes of instruction
+        for (int i = 0; i < indentation_spaces; i++) {
+            printf(" ");
+        }
+        // Print bytes of instruction
+        if (print_addresses) {
             printf("[0x%08llX] ", address + byte_index);
+        }
+        if (print_raw_bytes)
+        {
             for (int i = 0; i < 6; i++)
             {
                 if (i < instr.Length) {
                     if (i == 5 && instr.Length > 6) {
-                        printf(".. ");
+                        //printf(".. ");
                     }
                     else {
-                        printf("%02X ", bytes[byte_index + i]);
+                        printf("%02X ", (i32)(byte_buffer.data[byte_index + i]));
                     }
                 }
                 else {
                     printf("   ");
                 }
             }
-
-            // Print instruction
-            NdToText(&instr, address + byte_index, str.capacity - 1, str.characters);
-            str.size = (int)strlen(str.characters);
-            printf("%s\n", str.characters);
-            byte_index += instr.Length;
         }
-    }
 
-    return out_instructions->size > 0;
+        // Print instruction
+        NdToText(&instr, address + byte_index, str.capacity - 1, str.characters);
+        str.size = (int)strlen(str.characters);
+        printf("%s\n", str.characters);
+        byte_index += instr.Length;
+    }
 }
 
 void do_stack_walk(Debugger* debugger)
 {
+    if (debugger->last_stack_walk_event_count == debugger->event_count) {
+        return;
+    }
+
     dynamic_array_reset(&debugger->stack_frames);
-    if (!debugger->process_running) return;
+    if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS || debugger->state == Debugger_State::RUNNING) return;
+    debugger->last_stack_walk_event_count = debugger->event_count;
 
     CONTEXT context;
     context.ContextFlags = CONTEXT_ALL;
     auto& main_thread_info = debugger->threads[debugger->main_thread_info_index];
     if (!GetThreadContext(main_thread_info.handle, &context)) {
+        printf("Couldn't retrieve thread context!");
         helper_print_last_error();
         return;
     }
@@ -2689,12 +2347,9 @@ void do_stack_walk(Debugger* debugger)
         assert(stack_min_address <= stack_max_address, "");
     }
 
-    Dynamic_Array<byte> byte_buffer = dynamic_array_create<byte>(128);
-    SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
-    Dynamic_Array<INSTRUX> instruction_buffer = dynamic_array_create<INSTRUX>(16);
-    SCOPE_EXIT(dynamic_array_destroy(&instruction_buffer));
+    auto& disassembly_buffer = debugger->disassembly_buffer;
 
-    int max_depth = 8;
+    const int max_depth = 8;
     int frame_depth = 0;
     while (true)
     {
@@ -2718,19 +2373,43 @@ void do_stack_walk(Debugger* debugger)
             }
         }
 
-        // Find module of current address
+        // Find module of current Rip
         PE_Analysis::PE_Info* found_module = debugger_find_module_of_address(debugger, context.Rip, true);
         if (found_module == nullptr) {
             printf("Module for Rip address: %p not found\n", (void*)context.Rip);
             return;
         }
 
-        // Print frame info
+        // Store frame info
         {
-            Stack_Frame_Info frame_info;
-            frame_info.context_in_frame = context;
-            dynamic_array_push_back(&debugger->stack_frames, frame_info);
+            Stack_Frame frame_info;
+            frame_info.instruction_pointer = context.Rip;
 
+            Machine_Code_Address_To_Line_Result line_result = source_mapping_machine_instruction_address_to_upp_line(debugger, context.Rip);
+            if (line_result.unit == nullptr || line_result.line_index == -1 || line_result.function_slot == -1 || line_result.statement == nullptr)
+            {
+                frame_info.inside_upp_function = false;
+                u64 out_distance = 0;
+                String out_dll_name = string_create_static("");
+                String* symbol_name = debugger_find_closest_symbol_name(debugger, context.Rip, &out_distance, &out_dll_name);
+                if (symbol_name == nullptr) {
+                    frame_info.options.other.symbol_name = string_create_static("");
+                }
+                frame_info.options.other.dll_name = out_dll_name;
+                frame_info.options.other.offset_from_symbol_start = out_distance;
+            }
+            else
+            {
+                frame_info.inside_upp_function = true;
+                frame_info.options.upp_function.line_index = line_result.line_index;
+                frame_info.options.upp_function.unit = line_result.unit;
+                frame_info.options.upp_function.slot = line_result.function_slot;
+            }
+            dynamic_array_push_back(&debugger->stack_frames, frame_info);
+        }
+
+        // Print stack frame Info
+        {
             printf("Stack-Frame #%d: [0x%08llX]", frame_depth, context.Rip);
             frame_depth += 1;
             u64 offset = 0;
@@ -2765,7 +2444,7 @@ void do_stack_walk(Debugger* debugger)
             }
 
             // Helper functions
-            auto get_reg_ptr = [](PE_Analysis::Unwind_Register reg, CONTEXT* context) -> u64* {
+            auto get_reg_ptr = [](X64_Integer_Register reg, CONTEXT* context) -> u64* {
                 // Registers are stored in context the same as Unwind-Register order...
                 return (&context->Rax) + (int)reg;
             };
@@ -2782,14 +2461,14 @@ void do_stack_walk(Debugger* debugger)
             {
                 u32 remaining_bytes = (unwind_info.end_rva + found_module->base_address) - context.Rip;
                 remaining_bytes = math_minimum(remaining_bytes, (u32)(16 * 32)); // Limit count of instructions read to max 32 instructions with 16 bytes each
-                disassemble_bytes_from_process(debugger->process_handle, context.Rip, remaining_bytes, &byte_buffer, &instruction_buffer, false);
+                debugger_disassemble_bytes(debugger, context.Rip, remaining_bytes);
 
                 // Analyse instructions to check if we are in epilog
                 // Epilog must only consist of 8byte register pops and a return or a non-relative jmp
                 // We ignore the non-relative jump now, because I can't figure out the encoding for this (ModRM bits need to be checked...)
-                for (int i = 0; i < instruction_buffer.size; i++)
+                for (int i = 0; i < disassembly_buffer.size; i++)
                 {
-                    auto& instr = instruction_buffer[i];
+                    auto& instr = disassembly_buffer[i];
                     if (instr.Category == ND_CAT_POP && instr.OpMode == ND_ADDR_64 && instr.OperandsCount == 1)
                     {
                         auto& operand = instr.Operands[0];
@@ -2820,12 +2499,12 @@ void do_stack_walk(Debugger* debugger)
                 // Execute epilog if we are inside, to get the previous context back
                 if (inside_epilog)
                 {
-                    for (int i = 0; i < instruction_buffer.size && success; i++)
+                    for (int i = 0; i < disassembly_buffer.size && success; i++)
                     {
-                        auto& instr = instruction_buffer[i];
+                        auto& instr = disassembly_buffer[i];
                         if (instr.Category == ND_CAT_POP && instr.OpMode == ND_ADDR_64 && instr.OperandsCount == 1) {
                             auto& operand = instr.Operands[0];
-                            PE_Analysis::Unwind_Register reg_id = (PE_Analysis::Unwind_Register) operand.Info.Register.Reg;
+                            X64_Integer_Register reg_id = (X64_Integer_Register)operand.Info.Register.Reg;
                             u64* reg = get_reg_ptr(reg_id, &context);
                             success = Process_Memory::read_single_value(debugger->process_handle, (void*)context.Rsp, reg);
                         }
@@ -2851,7 +2530,6 @@ void do_stack_walk(Debugger* debugger)
                 for (int i = 0; i < unwind_block.unwind_codes.size && success; i++)
                 {
                     using PE_Analysis::Unwind_Code_Type;
-                    using PE_Analysis::Unwind_Register;
 
                     auto& code = unwind_block.unwind_codes[i];
 
@@ -2878,7 +2556,8 @@ void do_stack_walk(Debugger* debugger)
                     }
                     case Unwind_Code_Type::SAVE_XMM_128: {
                         M128A* xmm_reg = get_xmm_ptr(code.options.save_xmm_128.xmm_number, &context);
-                        success = Process_Memory::read_single_value(debugger->process_handle, (void*)(context.Rsp + code.options.save_xmm_128.offset_from_rsp), xmm_reg);
+                        success = Process_Memory::read_single_value(
+                            debugger->process_handle, (void*)(context.Rsp + code.options.save_xmm_128.offset_from_rsp), xmm_reg);
                         break;
                     }
                     case Unwind_Code_Type::SET_FRAME_POINTER_REGISTER: {
@@ -2916,419 +2595,13 @@ void do_stack_walk(Debugger* debugger)
     }
 }
 
-u64 static_location_to_virtual_address(Debugger* debugger, PDB_Analysis::PDB_Location_Static location)
-{
-    if (!debugger->process_running) return 0;
-    if (debugger->exe_pe_info_index == -1) return 0;
-
-    auto& pe_info = debugger->pe_infos[debugger->exe_pe_info_index];
-    int section_index = location.section_index - 1;
-    if (section_index < 0 || section_index >= pe_info.sections.size) return 0;
-    return pe_info.base_address + pe_info.sections[section_index].rva + location.offset;
-}
-
-void debugger_wait_for_console_command(Debugger* debugger)
-{
-    bool wait_for_next_command = true;
-    while (wait_for_next_command)
-    {
-        if (!debugger->process_running) return;
-        CONTEXT thread_context;
-        thread_context.ContextFlags = CONTEXT_ALL;
-        auto& main_thread_info = debugger->threads[debugger->main_thread_info_index];
-        if (!GetThreadContext(main_thread_info.handle, &thread_context)) {
-            printf("GetThreadContext failed!\n");
-            return;
-        }
-
-        // Print current state
-        String input_line = string_create();
-        SCOPE_EXIT(string_destroy(&input_line));
-        {
-            printf("rip=[0x%08llX] ", thread_context.Rip);
-
-            u64 dist = 0;
-            String* closest_symbol = debugger_find_closest_symbol_name(debugger, thread_context.Rip, &dist);
-            if (closest_symbol != nullptr) {
-                printf(", %s + [%04llX]", closest_symbol->characters, dist);
-            }
-
-            printf("\n> ");
-            if (string_fill_from_line(&input_line)) {
-                return;
-            }
-        }
-
-        // Handle commands
-        Array<String> parts = string_split(input_line, ' ');
-        SCOPE_EXIT(string_split_destroy(parts));
-        if (parts.size == 0) continue;
-        String command = parts[0];
-
-        if (string_equals_cstring(&command, "?")) {
-            printf("Commands:\n");
-            printf("    c  - continue until next debug-event\n");
-            printf("    s  - single step\n");
-            printf("    q  - quit\n");
-            printf("    r  - show registers\n");
-            printf("    d  - display disassembly at current instrution/at specified symbol\n");
-            printf("    bp - add breakpoint at symbol\n");
-            printf("    bl - list active breakpoints\n");
-            printf("    bd - delete breakpoint\n");
-            printf("    k  - show stack/do stack-walk\n");
-            printf("    i  - show PDB-Infos (All functions in src)\n");
-        }
-        else if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
-            return;
-        }
-        else if (string_equals_cstring(&command, "s") || string_equals_cstring(&command, "step")) {
-            main_thread_info.executing_single_step = true;
-            break;
-        }
-        else if (string_equals_cstring(&command, "q") || string_equals_cstring(&command, "quit") || string_equals_cstring(&command, "exit")) {
-            debugger_detach_from_process(debugger);
-            return;
-        }
-        else if (string_equals_cstring(&command, "registers") || string_equals_cstring(&command, "r"))
-        {
-            auto& c = thread_context;
-            auto flag = [&](int bit_index)->int { return (thread_context.EFlags & (1 << bit_index)) == 0 ? 0 : 1; };
-            printf("    rax=0x%016llx rbx=0x%016llx rcx=0x%016llx\n", c.Rax, c.Rbx, c.Rcx);
-            printf("    rdx=0x%016llx rsi=0x%016llx rdi=0x%016llx\n", c.Rdx, c.Rsi, c.Rdi);
-            printf("    rip=0x%016llx rsp=0x%016llx rbp=0x%016llx\n", c.Rip, c.Rsp, c.Rbp);
-            printf("     r8=0x%016llx  r9=0x%016llx r10=0x%016llx\n", c.R8, c.R9, c.R10);
-            printf("    r11=0x%016llx r12=0x%016llx r13=0x%016llx\n", c.R11, c.R12, c.R13);
-            printf("    r14=0x%016llx r15=0x%016llx eflags=0x%08lx\n", c.R14, c.R15, c.EFlags);
-            printf("    CF: %d, PF: %d, AF: %d, ZF: %d, SF: %d\n", flag(0), flag(2), flag(4), flag(6), flag(7));
-            printf("    TF: %d, IF: %d, DF: %d, OF: %d, RF: %d\n", flag(8), flag(9), flag(10), flag(11), flag(16));
-            printf("    Carry, Parity, Auxillary-Carry, Zero, Sign, Trap, Interrupt-enabled, Direction, Overflow, Resume\n");
-        }
-        else if (string_equals_cstring(&command, "d") || string_equals_cstring(&command, "display"))
-        {
-            auto& bytes = debugger->byte_buffer;
-
-            void* virtual_address = (void*)thread_context.Rip;
-            u64 byte_length = 32;
-            if (parts.size == 2 && debugger->pdb_info != nullptr)
-            {
-                String symbol_name = parts[1];
-                auto pdb_info = debugger->pdb_info;
-
-                // Search in pdb for function with this name...
-                PDB_Analysis::PDB_Function* function = nullptr;
-                for (int i = 0; i < pdb_info->functions.size; i++) {
-                    auto& fn = pdb_info->functions[i];
-                    if (string_equals(&symbol_name, &fn.name)) {
-                        function = &fn;
-                        break;
-                    }
-                }
-
-                if (function != nullptr)
-                {
-                    printf(
-                        "Found function: %s, section: %d, offset: %lld\n",
-                        function->name.characters, function->location.section_index, function->location.offset
-                    );
-                    u64 fn_address = static_location_to_virtual_address(debugger, function->location);
-                    if (fn_address != 0) {
-                        virtual_address = (void*)fn_address;
-                        byte_length = function->length;
-                    }
-                }
-                else {
-                    printf("Could not find function, continuing with normal disassembly output\n");
-                }
-            }
-
-            Dynamic_Array<INSTRUX> instr_buffer = dynamic_array_create<INSTRUX>(128);
-            SCOPE_EXIT(dynamic_array_destroy(&instr_buffer));
-            disassemble_bytes_from_process(debugger->process_handle, (u64)virtual_address, (u32)byte_length, &debugger->byte_buffer, &instr_buffer, true);
-        }
-        else if (string_equals_cstring(&command, "bp") || string_equals_cstring(&command, "ba"))  // Add breakpoint
-        {
-            if (parts.size != 2) {
-                printf("Add breakpoint command requires an argument\n");
-                continue;
-            }
-
-            auto param = parts[1];
-            bool is_address = false;
-            u64 function_address = 0;
-            if (param.size > 2 && (string_starts_with(param, "0x") || string_starts_with(param, "0X"))) {
-                Optional<i64> value = string_parse_i64_hex(string_create_substring_static(&param, 2, param.size));
-                if (!value.available) {
-                    printf("Add breakpoint failed, couldn't parse hexadecimal value\n");
-                    continue;
-                }
-                if (value.value == 0) {
-                    printf("Add breakpoint failed, value is not a valid address\n");
-                    continue;
-                }
-                function_address = (u64)value.value;
-            }
-            else {
-                function_address = debugger_find_address_of_function(debugger, parts[1]);
-            }
-
-            if (function_address == 0) {
-                printf("Add breakpoint failed, could not find address of symbol\n");
-                continue;
-            }
-
-            bool other_exists = false;
-            auto& breakpoints = debugger->breakpoints;
-            for (int i = 0; i < breakpoints.size; i++) {
-                auto& other = breakpoints[i];
-                if (other.address == function_address) {
-                    other_exists = true;
-                    break;
-                }
-            }
-            if (other_exists) {
-                printf("Add breakpoint failed, breakpoint with this address already set\n");
-                continue;
-            }
-            if (breakpoints.size > 3) {
-                printf("Add breakpoint failed, reached maximum breakpoint count (4)\n");
-                continue;
-            }
-
-            Breakpoint breakpoint;
-            breakpoint.address = function_address;
-            dynamic_array_push_back(&breakpoints, breakpoint);
-            printf("Added new breakpoint at [0x%08llX]\n", breakpoint.address);
-        }
-        else if (string_equals_cstring(&command, "bd") || string_equals_cstring(&command, "bc"))  // Delete breakpoint
-        {
-            if (parts.size != 2) {
-                printf("Delete breakpoint command requires an argument (id)\n");
-                continue;
-            }
-
-            auto id_opt = string_parse_int(&parts[1]);
-            if (!id_opt.available) {
-                printf("Delete breakpoint failed, could not parse argument\n");
-                continue;
-            }
-            int index = id_opt.value;
-
-            auto& breakpoints = debugger->breakpoints;
-            if (index < 0 || index >= breakpoints.size) {
-                printf("Delete breakpoint failed, breakpoint with given id does not exist");
-                continue;
-            }
-
-            dynamic_array_remove_ordered(&breakpoints, index);
-            printf("Removed breakpoint %d\n", index);
-        }
-        else if (string_equals_cstring(&command, "bl") || string_equals_cstring(&command, "breakpoint_list")) // List breakpoints
-        {
-            auto& breakpoints = debugger->breakpoints;
-            for (int i = 0; i < breakpoints.size; i++) {
-                auto& bp = breakpoints[i];
-                printf("    #%2d, Address: [0x%08llX]\n", i, bp.address);
-            }
-        }
-        else if (string_equals_cstring(&command, "i"))
-        {
-            for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
-                auto& src_info = debugger->pdb_info->source_infos[i];
-                auto& fn_info = debugger->pdb_info->functions[src_info.function_index];
-                printf(
-                    "  %s, address: 0x%08llX, length: %lld\n",
-                    fn_info.name.characters,
-                    static_location_to_virtual_address(debugger, fn_info.location),
-                    fn_info.length
-                );
-            }
-        }
-        else if (string_equals_cstring(&command, "k") || string_equals_cstring(&command, "stack")) {
-            do_stack_walk(debugger);
-        }
-        else {
-            printf("Invalid command: \"%s\"\nRetry: ", command.characters);
-        }
-    }
-}
-
-u64 debugger_find_address_of_line(Debugger* debugger, int line_index)
-{
-    if (!debugger->process_running) return 0;
-
-    for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
-        auto& fn_info = debugger->pdb_info->source_infos[i];
-        for (int j = 0; j < fn_info.line_infos.size; j++) {
-            auto& line_info = fn_info.line_infos[j];
-            if (line_info.line_num == line_index + 1) {
-                u64 address = static_location_to_virtual_address(debugger, line_info.location);
-                if (address != 0) return address;
-            }
-        }
-    }
-
-    return 0;
-}
-
-Dynamic_Array<Breakpoint>* debugger_get_breakpoints(Debugger* debugger)
-{
-    return &debugger->breakpoints;
-}
 
 
 
-
-
-// SOURCE-DEBUGGER
-struct Machine_Code_Range
-{
-    u64 start_virtual_address;
-    u64 end_virtual_address;
-};
-
-struct Statement_Mapping;
-struct IR_Instruction_Mapping;
-struct Upp_Line_Mapping;
-
-struct C_Line_Mapping
-{
-    int c_line_index; // Global line-index
-    Machine_Code_Range range;
-    IR_Instruction_Mapping* instruction_mapping;
-};
-
-struct IR_Instruction_Mapping
-{
-    Statement_Mapping* statement;
-    IR_Code_Block* code_block;
-    int instruction_index;
-    Dynamic_Array<C_Line_Mapping*> c_lines;
-};
-
-struct Statement_Mapping
-{
-    AST::Statement* statement;
-    Upp_Line_Mapping* line_mapping;
-    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
-};
-
-struct Upp_Line_Mapping
-{
-    int compilation_unit_mapping_index;
-    int line_number;
-    Dynamic_Array<Statement_Mapping*> statements;
-};
-
-struct Compilation_Unit_Mapping
-{
-    Compilation_Unit* compilation_unit;
-    Dynamic_Array<Upp_Line_Mapping> lines;
-};
-
-struct Function_Slot_Mapping
-{
-    Dynamic_Array<C_Line_Mapping*> c_lines;
-    u64 virtual_address_start;
-    u64 virtual_address_end;
-    String name;
-};
-
-struct Source_Debugger
-{
-    Debugger* debugger;
-
-    Source_Debugger_State state;
-
-    Dynamic_Array<Compilation_Unit_Mapping> compilation_unit_mapping;
-    Dynamic_Array<Statement_Mapping> statement_mapping;
-    Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
-    Dynamic_Array<C_Line_Mapping> c_line_mapping;
-    Dynamic_Array<Function_Slot_Mapping> function_slot_mapping;
-
-    Dynamic_Array<Source_Breakpoint*> breakpoints;
-};
-
-Source_Debugger* source_debugger_create()
-{
-    Source_Debugger* result = new Source_Debugger;
-    result->debugger = debugger_create();
-    result->breakpoints = dynamic_array_create<Source_Breakpoint*>();
-    result->state.hit_breakpoint = false;
-    result->state.process_running = false;
-    result->state.stack_frames = dynamic_array_create<Source_Stack_Frame>();
-
-    result->compilation_unit_mapping = dynamic_array_create<Compilation_Unit_Mapping>();
-    result->statement_mapping = dynamic_array_create<Statement_Mapping>();
-    result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
-    result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
-    result->function_slot_mapping = dynamic_array_create<Function_Slot_Mapping>();
-
-    return result;
-}
-
-void source_debugger_reset(Source_Debugger* debugger) 
-{
-    auto& state = debugger->state;
-    dynamic_array_reset(&state.stack_frames);
-
-    for (int i = 0; i < debugger->breakpoints.size; i++) {
-        auto bp = debugger->breakpoints[i];
-        dynamic_array_destroy(&bp->addresses);
-        delete bp;
-    }
-    dynamic_array_reset(&debugger->breakpoints);
-
-    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)  {
-        auto unit = debugger->compilation_unit_mapping[i];
-        for (int k = 0; k < unit.lines.size; k++) {
-            auto line_mapping = unit.lines[k];
-            dynamic_array_destroy(&line_mapping.statements);
-        }
-        dynamic_array_destroy(&unit.lines);
-    }
-    dynamic_array_reset(&debugger->compilation_unit_mapping);
-
-    for (int i = 0; i < debugger->statement_mapping.size; i++)  {
-        dynamic_array_destroy(&debugger->statement_mapping[i].ir_instructions);
-    }
-    dynamic_array_reset(&debugger->statement_mapping);
-
-    for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)  {
-        dynamic_array_destroy(&debugger->ir_instruction_mapping[i].c_lines);
-    }
-    dynamic_array_reset(&debugger->ir_instruction_mapping);
-
-    for (int i = 0; i < debugger->function_slot_mapping.size; i++)  {
-        dynamic_array_destroy(&debugger->function_slot_mapping[i].c_lines);
-    }
-    dynamic_array_reset(&debugger->function_slot_mapping);
-
-    dynamic_array_reset(&debugger->c_line_mapping);
-
-    dynamic_array_reset(&debugger->breakpoints);
-    debugger_reset(debugger->debugger);
-}
-
-void source_debugger_destroy(Source_Debugger* debugger) 
-{
-    auto& state = debugger->state;
-    source_debugger_reset(debugger);
-
-    dynamic_array_destroy(&state.stack_frames);
-    dynamic_array_destroy(&debugger->breakpoints);
-    dynamic_array_destroy(&debugger->compilation_unit_mapping);
-    dynamic_array_destroy(&debugger->statement_mapping);
-    dynamic_array_destroy(&debugger->ir_instruction_mapping);
-    dynamic_array_destroy(&debugger->function_slot_mapping);
-    dynamic_array_destroy(&debugger->c_line_mapping);
-    dynamic_array_destroy(&debugger->breakpoints);
-    debugger_destroy(debugger->debugger);
-}
-
-
+// SOURCE_MAPPING
 // Note: This only adds the statement mappings, but not line-to statement mapping (Must be done in seperate case for pointers to work)
-void source_debugger_add_statements_from_unit_recursive(
-    AST::Node* node, Source_Debugger* debugger, Hashtable<AST::Statement*, int>* statement_to_mapping_table, Compilation_Unit_Mapping* unit_mapping)
+void source_mapping_generate_statement_to_line_mapping_recursive(
+    AST::Node* node, Debugger* debugger, Hashtable<AST::Statement*, int>* statement_to_mapping_table, Compilation_Unit_Mapping* unit_mapping)
 {
     if (node->type == AST::Node_Type::STATEMENT) {
         AST::Statement* statement = downcast<AST::Statement>(node);
@@ -3346,14 +2619,14 @@ void source_debugger_add_statements_from_unit_recursive(
     AST::Node* child = AST::base_get_child(node, child_index);
     while (child != nullptr)
     {
-        source_debugger_add_statements_from_unit_recursive(child, debugger, statement_to_mapping_table, unit_mapping);
+        source_mapping_generate_statement_to_line_mapping_recursive(child, debugger, statement_to_mapping_table, unit_mapping);
         child_index += 1;
         child = AST::base_get_child(node, child_index);
     }
 }
 
-void source_debugger_add_ir_code_block_instruction_mapping_recursive(
-    IR_Code_Block* block, Source_Debugger* debugger, Hashtable<IR_Code_Block*, int>* code_block_start_offsets)
+void source_mapping_generate_ir_instruction_mapping_recursive(
+    IR_Code_Block* block, Debugger* debugger, Hashtable<IR_Code_Block*, int>* code_block_start_offsets)
 {
     int offset_start = debugger->ir_instruction_mapping.size;
     if (!hashtable_insert_element(code_block_start_offsets, block, offset_start)) {
@@ -3379,41 +2652,227 @@ void source_debugger_add_ir_code_block_instruction_mapping_recursive(
         switch (instr.type)
         {
         case IR_Instruction_Type::IF: {
-            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.if_instr.true_branch, debugger, code_block_start_offsets);
-            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.if_instr.false_branch, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.true_branch, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.false_branch, debugger, code_block_start_offsets);
             break;
         }
         case IR_Instruction_Type::WHILE: {
-            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.while_instr.code, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.while_instr.code, debugger, code_block_start_offsets);
             break;
         }
         case IR_Instruction_Type::BLOCK: {
-            source_debugger_add_ir_code_block_instruction_mapping_recursive(instr.options.block, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.block, debugger, code_block_start_offsets);
             break;
         }
         }
     }
 }
 
-Source_Debugger_State* source_debugger_get_state(Source_Debugger* debugger) {
-    return &debugger->state;
+struct Segment_Comparator
+{
+    bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b)
+    {
+        if (a.function_slot_index != b.function_slot_index) {
+            return a.function_slot_index < b.function_slot_index;
+        }
+        return a.virtual_address_start < b.virtual_address_start;
+    }
+};
+
+void source_mapping_upp_line_to_machine_code_segments(
+    Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Dynamic_Array<Machine_Code_Segment>* out_machine_code_segments)
+{
+    dynamic_array_reset(out_machine_code_segments);
+    Compilation_Unit_Mapping* unit_map = nullptr;
+    for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
+        auto& unit = debugger->compilation_unit_mapping[i];
+        if (unit.compilation_unit == compilation_unit) {
+            unit_map = &unit;
+            break;
+        }
+    }
+    if (unit_map == nullptr) return;
+    if (line_index < 0 || line_index >= unit_map->lines.size)  return;
+
+    auto& line_map = unit_map->lines[line_index];
+    for (int i = 0; i < line_map.statements.size; i++)
+    {
+        auto stat_map = line_map.statements[i];
+        for (int j = 0; j < stat_map->ir_instructions.size; j++)
+        {
+            auto ir_instr_map = stat_map->ir_instructions[j];
+            for (int k = 0; k < ir_instr_map->c_lines.size; k++)
+            {
+                auto c_line_info = ir_instr_map->c_lines[k];
+                Machine_Code_Segment segment;
+                segment.function_slot_index = ir_instr_map->code_block->function->function_slot_index;
+                segment.virtual_address_start = c_line_info->range.start_virtual_address;
+                segment.virtual_address_end = c_line_info->range.end_virtual_address;
+                segment.c_line_index_with_offset = c_line_info->c_line_index;
+                if (segment.virtual_address_start == 0 || segment.virtual_address_end == 0) continue;
+                dynamic_array_push_back(out_machine_code_segments, segment);
+            }
+        }
+    }
+
+    // Sort segments and fuse together...
+    Segment_Comparator comp;
+    dynamic_array_sort(out_machine_code_segments, comp);
+    for (int i = 0; i < out_machine_code_segments->size - 1; i++)
+    {
+        auto& current = out_machine_code_segments->data[i];
+        auto& next = out_machine_code_segments->data[i + 1];
+
+        if (current.function_slot_index != next.function_slot_index) continue;
+        if (current.virtual_address_end == next.virtual_address_start) {
+            current.virtual_address_end = next.virtual_address_end;
+            dynamic_array_remove_ordered(out_machine_code_segments, i + 1);
+            i = i - 1;
+        }
+    }
 }
 
-bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data)
+Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address)
 {
-    if (!debugger_start_process(debugger->debugger, exe_filepath, pdb_filepath, main_obj_filepath)) {
-        return false;
-    }
-    if (debugger->debugger->pdb_info == nullptr) {
-        debugger_detach_from_process(debugger->debugger);
-        return false;
-    }
+    Machine_Code_Address_To_Line_Result result;
+    result.unit = nullptr;
+    result.line_index = -1;
+    result.function_slot = -1;
+    result.statement = nullptr;
 
-    auto pdb_info = debugger->debugger->pdb_info;
-    C_Program_Translation* c_translation = c_generator_get_translation();
+    int slot_index = -1;
+    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
+        auto& slot = debugger->function_slot_mapping[i];
+        if (virtual_address >= slot.virtual_address_start && virtual_address < slot.virtual_address_end) {
+            slot_index = i;
+            break;
+        }
+    }
+    if (slot_index == -1) return result;
 
-    // Generate all mappings
+    result.function_slot = slot_index;
+    auto& slot_mapping = debugger->function_slot_mapping[slot_index];
+    int segment_index = -1;
+
+    for (int i = 0; i < slot_mapping.c_lines.size; i++)
     {
+        auto& c_line = slot_mapping.c_lines[i];
+        if (virtual_address >= c_line->range.start_virtual_address && virtual_address < c_line->range.end_virtual_address)
+        {
+            auto& upp_line = c_line->instruction_mapping->statement->line_mapping;
+            result.statement = c_line->instruction_mapping->statement->statement;
+            result.line_index = upp_line->line_number;
+            result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
+            return result;
+        }
+    }
+
+    return result;
+}
+
+
+
+// DEBUGGER CONTROLS
+bool debugger_start_process(
+    Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data)
+{
+    debugger_reset(debugger);
+
+    // Load pdb file
+    debugger->pdb_info = PDB_Analysis::pdb_information_create();
+    if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, main_obj_filepath)) {
+        PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
+        debugger->pdb_info = nullptr;
+        printf("Couldn't parse pdb file!\n");
+        return false;
+    }
+
+    // Create process
+    {
+        STARTUPINFO startup_info;
+        ZeroMemory(&startup_info, sizeof(startup_info));
+        startup_info.cb = sizeof(startup_info);
+        PROCESS_INFORMATION process_info;
+        bool success = CreateProcessA(
+            exe_filepath, // application path
+            nullptr, // Command line args
+            nullptr, // Security-Attributes (if child processes can access this handle)
+            nullptr, // Security-attributes for thread
+            false, // Inherit handles
+            CREATE_DEFAULT_ERROR_MODE | CREATE_NEW_CONSOLE | CREATE_SUSPENDED | DEBUG_ONLY_THIS_PROCESS,
+            nullptr, // Environment
+            nullptr, // Current directory
+            &startup_info,
+            &process_info
+        );
+
+        if (!success) {
+            logg("CreateProcessA failed\n");
+            helper_print_last_error();
+            return false;
+        }
+        debugger->process_handle = process_info.hProcess;
+        debugger->process_id = process_info.dwProcessId;
+
+        Thread_Info main_thread_info;
+        main_thread_info.handle = process_info.hThread;
+        main_thread_info.id = process_info.dwThreadId;
+        main_thread_info.executing_single_step = false;
+        main_thread_info.executing_step_over_breakpoint = false;
+        debugger->main_thread_info_index = debugger->threads.size;
+        dynamic_array_push_back(&debugger->threads, main_thread_info);
+
+        debugger->state = Debugger_State::RUNNING;
+        ResumeThread(process_info.hThread);
+    }
+
+    // Execute until we hit the main function
+    {
+        // Wait for process create event
+        while (true)
+        {
+            debugger_continue_until_next_event(debugger);
+            if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS) return false;
+            auto& event = debugger->last_debug_event;
+            if (event.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+                break;
+            }
+        }
+
+        // Add breakpoint for main-function
+        Address_Breakpoint bp;
+        bp.address = debugger_find_address_of_function(debugger, string_create_static("main"));
+        bp.is_software_breakpoint = false;
+        bp.original_byte = 0;
+        if (bp.address == 0) {
+            printf("No main function found!\n");
+            debugger_reset(debugger);
+            return false;
+        }
+        dynamic_array_push_back(&debugger->address_breakpoints, bp);
+
+        // Wait until we hit the main function 
+        while (debugger->state != Debugger_State::NO_ACTIVE_PROCESS) {
+            debugger_continue_until_next_event(debugger);
+            if (debugger->last_event_hit_breakpoint) {
+                break;
+            }
+        }
+        for (int i = 0; i < debugger->threads.size; i++) {
+            if (debugger->threads[i].id == debugger->last_debug_event.dwThreadId) {
+                debugger->main_thread_info_index = i;
+                break;
+            }
+        }
+        dynamic_array_reset(&debugger->address_breakpoints);
+    }
+
+    // Generate all mappings (Upp-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
+    if (analysis_data != nullptr)
+    {
+        auto pdb_info = debugger->pdb_info;
+        C_Program_Translation* c_translation = c_generator_get_translation();
+
         Hashtable<AST::Statement*, int> statement_to_mapping_table = hashtable_create_pointer_empty<AST::Statement*, int>(1024);
         SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
 
@@ -3437,8 +2896,8 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
             }
             dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
 
-            source_debugger_add_statements_from_unit_recursive(
-                upcast(unit->root), debugger, &statement_to_mapping_table, &debugger->compilation_unit_mapping[debugger->compilation_unit_mapping.size-1]
+            source_mapping_generate_statement_to_line_mapping_recursive(
+                upcast(unit->root), debugger, &statement_to_mapping_table, &debugger->compilation_unit_mapping[debugger->compilation_unit_mapping.size - 1]
             );
         }
 
@@ -3453,10 +2912,10 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
         SCOPE_EXIT(hashtable_destroy(&ir_block_mapping_offset));
         for (int i = 0; i < compiler.ir_generator->program->functions.size; i++) {
             auto ir_fn = compiler.ir_generator->program->functions[i];
-            source_debugger_add_ir_code_block_instruction_mapping_recursive(ir_fn->code, debugger, &ir_block_mapping_offset);
+            source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger, &ir_block_mapping_offset);
         }
         // Add connections Statement -> IR_Instruction
-        for (int i = 0; i < debugger->ir_instruction_mapping.size; i++) 
+        for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)
         {
             auto& ir_mapping = debugger->ir_instruction_mapping[i];
             auto& ir_instr = ir_mapping.code_block->instructions[ir_mapping.instruction_index];
@@ -3475,7 +2934,7 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
         // IR_Instruction <-> C-Line
         dynamic_array_reset(&debugger->c_line_mapping);
         dynamic_array_reserve(&debugger->c_line_mapping, c_translation->line_infos.size);
-        for (int i = 0; i < c_translation->line_infos.size; i++) 
+        for (int i = 0; i < c_translation->line_infos.size; i++)
         {
             auto line_info = c_translation->line_infos[i];
 
@@ -3531,7 +2990,7 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
             if (function_slot_index == nullptr) continue;
             auto& slot_mapping = debugger->function_slot_mapping[*function_slot_index];
             slot_mapping.name = fn_info.name;
-            slot_mapping.virtual_address_start = static_location_to_virtual_address(debugger->debugger, fn_info.location);
+            slot_mapping.virtual_address_start = static_location_to_virtual_address(debugger, fn_info.location);
             slot_mapping.virtual_address_end = slot_mapping.virtual_address_start + fn_info.length;
 
             for (int j = 0; j < src_info.line_infos.size; j++)
@@ -3541,7 +3000,7 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
                 assert(line_map_index >= 0, "");
 
                 auto& c_line_mapping = debugger->c_line_mapping[line_map_index];
-                c_line_mapping.range.start_virtual_address = static_location_to_virtual_address(debugger->debugger, pdb_line_info.location);
+                c_line_mapping.range.start_virtual_address = static_location_to_virtual_address(debugger, pdb_line_info.location);
                 c_line_mapping.range.end_virtual_address = c_line_mapping.range.start_virtual_address + pdb_line_info.length;
 
                 dynamic_array_push_back(&slot_mapping.c_lines, &c_line_mapping);
@@ -3549,33 +3008,735 @@ bool source_debugger_start_process(Source_Debugger* debugger, const char* exe_fi
         }
     }
 
-    source_debugger_update_state(debugger);
-    return true;
+    return debugger->state != Debugger_State::NO_ACTIVE_PROCESS;
 }
 
-struct Machine_Code_Segment
-{
-    u64 virtual_address_start;
-    u64 virtual_address_end;
-    int function_slot_index;
-    int c_line_index_with_offset;
-};
+Debugger_State debugger_get_state(Debugger* debugger) {
+    return debugger->state; 
+}
 
-struct Segment_Comparator 
+bool debugger_address_is_breakpoint(Debugger* debugger, u64 address)
 {
-    bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b) 
-    {
-        if (a.function_slot_index != b.function_slot_index) {
-            return a.function_slot_index < b.function_slot_index;
+    for (int i = 0; i < debugger->address_breakpoints.size; i++) {
+        if (debugger->address_breakpoints[i].address == address) {
+            return true;
         }
-        return a.virtual_address_start < b.virtual_address_start;
     }
-};
+    for (int i = 0; i < debugger->source_breakpoints.size; i++) {
+        auto& breakpoint = debugger->source_breakpoints[i];
+        if (breakpoint->active_reference_count <= 0) continue;
+        for (int j = 0; j < breakpoint->addresses.size; j++) {
+            if (address == breakpoint->addresses[j]) {
+                return true;
+            }
+        }
+    }
 
-void source_debugger_upp_line_to_machine_code_segments(
-    Source_Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Dynamic_Array<Machine_Code_Segment>* machine_code_segments)
+    return false;
+}
+
+Debugger_State debugger_continue_until_next_event(Debugger * debugger)
 {
-    dynamic_array_reset(machine_code_segments);
+    // Continue from last event
+    if (debugger->last_debug_event_requires_handling)
+    {
+        // Initialize hardware breakpoints
+        Hardware_Breakpoint hw_points[4];
+        for (int i = 0; i < 4; i++) {
+            Hardware_Breakpoint& bp = hw_points[i];
+            bp.address = 0;
+            bp.enabled = false;
+            bp.length_bits = 0;
+            bp.type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+        }
+        int hw_breakpoint_count = 0;
+        auto set_hw_breakpoint = [&](u64 address) -> bool {
+            if (hw_breakpoint_count >= 4) return false;
+            int hw_bp_index = hw_breakpoint_count;
+            hw_breakpoint_count += 1;
+            hw_points[hw_bp_index].enabled = true;
+            hw_points[hw_bp_index].address = address;
+            hw_points[hw_bp_index].length_bits = 0;
+            hw_points[hw_bp_index].type = Hardware_Breakpoint_Type::BREAK_ON_EXECUTE;
+            return true;
+        };
+
+        for (int i = 0; i < debugger->address_breakpoints.size; i++) {
+            auto& breakpoint = debugger->address_breakpoints[i];
+            set_hw_breakpoint(breakpoint.address);
+        }
+        for (int i = 0; i < debugger->source_breakpoints.size; i++) {
+            auto& breakpoint = debugger->source_breakpoints[i];
+            if (breakpoint->active_reference_count <= 0) continue;
+            for (int j = 0; j < breakpoint->addresses.size; j++) {
+                set_hw_breakpoint(breakpoint->addresses[j]);
+            }
+        }
+
+        // Set registers for all threads?
+        bool success = true;
+        for (int i = 0; i < debugger->threads.size; i++)
+        {
+            auto& thread_info = debugger->threads[i];
+
+            CONTEXT thread_context;
+            thread_context.ContextFlags = CONTEXT_ALL;
+            if (!GetThreadContext(thread_info.handle, &thread_context)) {
+                printf("GetThreadContext did not work!\n");
+                helper_print_last_error();
+                success = false;
+                continue;
+            }
+
+            auto set_u64_bits = [](u64 initial_value, int bit_index, int bit_length, u64 bits_to_set) -> u64 {
+                if (bit_length == 0) return initial_value;
+
+                u64 mask = (1 << bit_length) - 1; // Generate 1s
+                bits_to_set = bits_to_set & mask; // Truncate bits_to_set by size
+                mask = mask << bit_index;
+                bits_to_set = bits_to_set << bit_index;
+                return ((~mask) & initial_value) | (mask & bits_to_set);
+            };
+
+            // Transfer hardware-breakpoints into ThreadContext
+            for (int i = 0; i < 4; i++)
+            {
+                auto& bp = hw_points[i];
+                switch (i)
+                {
+                case 0: thread_context.Dr0 = bp.address; break;
+                case 1: thread_context.Dr1 = bp.address; break;
+                case 2: thread_context.Dr2 = bp.address; break;
+                case 3: thread_context.Dr3 = bp.address; break;
+                default: panic("");
+                }
+
+                int length_bits = bp.length_bits;
+                int read_write_value = 0;
+                switch (bp.type)
+                {
+                case Hardware_Breakpoint_Type::BREAK_ON_EXECUTE:       read_write_value = 0; length_bits = 0; break;
+                case Hardware_Breakpoint_Type::BREAK_ON_READ:          read_write_value = 1; break;
+                case Hardware_Breakpoint_Type::BREAK_ON_READ_OR_WRITE: read_write_value = 3; break;
+                default: panic("");
+                }
+
+                int local_enabled_bit_offset = i * 2;
+                int read_write_bits_offset = 16 + i * 4;
+                int len_bit_offset = 18 + i * 4;
+
+                u64 dr7 = thread_context.Dr7;
+                dr7 = set_u64_bits(dr7, local_enabled_bit_offset, 1, bp.enabled ? 1 : 0);
+                dr7 = set_u64_bits(dr7, read_write_bits_offset, 2, read_write_value);
+                dr7 = set_u64_bits(dr7, len_bit_offset, 2, length_bits);
+                thread_context.Dr7 = dr7;
+            }
+
+            // Set trap flag if we want to do a step
+            if (thread_info.executing_single_step) {
+                thread_context.EFlags = thread_context.EFlags | 0x100; // Trap flag
+            }
+            // Set Resume Flag if we are on breakpoint
+            bool on_breakpoint = false;
+            for (int i = 0; i < debugger->address_breakpoints.size; i++) {
+                if (debugger->address_breakpoints[i].address == thread_context.Rip) {
+                    on_breakpoint = true;
+                    break;
+                }
+            }
+            for (int i = 0; i < debugger->source_breakpoints.size && !on_breakpoint; i++) {
+                auto& breakpoint = debugger->source_breakpoints[i];
+                if (breakpoint->active_reference_count <= 0) continue;
+                for (int j = 0; j < breakpoint->addresses.size; j++) {
+                    if (thread_context.Rip == breakpoint->addresses[j]) {
+                        on_breakpoint = true;
+                        break;
+                    }
+                }
+            }
+            if (on_breakpoint && thread_info.executing_step_over_breakpoint) {
+                thread_context.EFlags = thread_context.EFlags | 0x10000; // Resume flag
+            }
+            if (!on_breakpoint) {
+                thread_info.executing_step_over_breakpoint = false;
+            }
+
+            // Update thread context
+            thread_context.ContextFlags = CONTEXT_ALL;
+            if (!SetThreadContext(thread_info.handle, &thread_context)) {
+                printf("GetThreadContext did not work!\n");
+                helper_print_last_error();
+                success = false;
+            }
+        }
+
+        auto& debug_event = debugger->last_debug_event;
+        // FlushInstructionCache(debugger->process_handle, 0, 0);
+        BOOL continue_success = ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, debugger->continue_status);
+        if (!continue_success) {
+            printf("ContinueDebugEvent failed!\n");
+            helper_print_last_error();
+            success = false;
+        }
+
+        if (!success) {
+            debugger_reset(debugger);
+            return debugger->state;
+        }
+        debugger->state = Debugger_State::RUNNING;
+    }
+
+    // Wait for next debug event
+    auto& debug_event = debugger->last_debug_event;
+    {
+        ZeroMemory(&debug_event, sizeof(debug_event));
+        bool success = WaitForDebugEventEx(&debug_event, INFINITE);
+        if (!success) {
+            helper_print_last_error();
+            debugger_reset(debugger);
+            return debugger->state;
+        }
+        debugger->state = Debugger_State::BREAKPOINT_HIT_OR_HALTED;
+        debugger->continue_status = DBG_CONTINUE;
+        debugger->last_debug_event_requires_handling = true;
+        debugger->last_event_hit_breakpoint = false;
+        debugger->last_event_hit_step = false;
+        debugger->event_count += 1;
+    }
+
+    if (debug_event.dwProcessId != debugger->process_id) {
+        printf("Debug event from other process with id: %d\n", debug_event.dwProcessId);
+    }
+    if (DEBUG_OUTPUT_ENABLED) {
+        printf("Process ID: %5d, thread_id: %5d, Event: ", debug_event.dwProcessId, debug_event.dwThreadId);
+    }
+
+    // Handle events
+    switch (debug_event.dwDebugEventCode)
+    {
+    case CREATE_PROCESS_DEBUG_EVENT:
+    {
+        auto& create_info = debug_event.u.CreateProcessInfo;
+        if (DEBUG_OUTPUT_ENABLED) { printf("Create_Process\n"); }
+
+        // Load portable-executable information
+        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+        bool success = PE_Analysis::pe_info_fill_from_executable_image(
+            &pe_info, (u64)create_info.lpBaseOfImage, debugger->process_handle, create_info.lpImageName, create_info.fUnicode
+        );
+        if (success) {
+            debugger->exe_pe_info_index = debugger->pe_infos.size;
+            dynamic_array_push_back(&debugger->pe_infos, pe_info);
+        }
+        else {
+            printf("Could not parse main executable pe info!\n");
+            debugger_reset(debugger);
+            PE_Analysis::pe_info_destroy(&pe_info);
+        }
+        CloseHandle(debug_event.u.CreateProcessInfo.hFile); // Close handle to image file, as win32 doc describes
+        break;
+    }
+    case LOAD_DLL_DEBUG_EVENT:
+    {
+        auto& dll_load = debug_event.u.LoadDll;
+
+        // Load portable-executable information
+        PE_Analysis::PE_Info pe_info = PE_Analysis::pe_info_create();
+        bool success = PE_Analysis::pe_info_fill_from_executable_image(
+            &pe_info, (u64)dll_load.lpBaseOfDll, debugger->process_handle, dll_load.lpImageName, dll_load.fUnicode
+        );
+        if (DEBUG_OUTPUT_ENABLED) { printf("Load DLL event: "); }
+        if (success)
+        {
+            dynamic_array_push_back(&debugger->pe_infos, pe_info);
+
+            if (DEBUG_OUTPUT_ENABLED)
+            {
+                if (pe_info.name.size > 0) {
+                    printf("\"%s\" ", pe_info.name.characters);
+                }
+                else {
+                    printf("Analysis success, but name not retrievable ");
+                }
+                if (pe_info.pdb_name.size > 0) {
+                    printf("pdb: \"%s\" ", pe_info.pdb_name.characters);
+                }
+                printf("\n");
+            }
+        }
+        else {
+            PE_Analysis::pe_info_destroy(&pe_info);
+            if (DEBUG_OUTPUT_ENABLED) { printf("Analysis failed!\n"); }
+        }
+
+        CloseHandle(debug_event.u.LoadDll.hFile);
+        break;
+    }
+    case EXCEPTION_DEBUG_EVENT:
+    {
+        // Find thread-info
+        int thread_info_index = -1;
+        for (int i = 0; i < debugger->threads.size; i++) {
+            if (debugger->threads[i].id == debug_event.dwThreadId) {
+                thread_info_index = i;
+                break;
+            }
+        }
+        if (thread_info_index == -1) {
+            printf("Debug event from un-registered thread! encountered\n");
+            debugger_reset(debugger);
+            return debugger->state;
+        }
+        auto& thread_info = debugger->threads[thread_info_index];
+
+        // Get thread context
+        CONTEXT thread_context;
+        thread_context.ContextFlags = CONTEXT_ALL;
+        if (!GetThreadContext(thread_info.handle, &thread_context)) {
+            printf("GetThreadContext did not work!\n");
+            helper_print_last_error();
+            debugger_reset(debugger);
+            return debugger->state;
+        }
+        bool bp_hit = (thread_context.Dr6 & 0b1111) != 0;
+
+        // Handle step instruction
+        int code = debug_event.u.Exception.ExceptionRecord.ExceptionCode;
+        if (thread_info.executing_single_step && code == EXCEPTION_SINGLE_STEP && !bp_hit) {
+            thread_info.executing_single_step = false;
+            debugger->last_event_hit_step = true;
+            break;
+        }
+
+        // Reset step flag if we hit breakpoint or exception
+        for (int i = 0; i < debugger->threads.size; i++) {
+            debugger->threads[i].executing_single_step = false;
+        }
+
+        // Check if any of our breakpoints were hit
+        if (bp_hit && (code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP))
+        {
+            debugger->last_event_hit_breakpoint = true;
+
+            auto& breakpoints = debugger->address_breakpoints;
+
+            if (debugger_address_is_breakpoint(debugger, thread_context.Rip)) {
+                if (DEBUG_OUTPUT_ENABLED) { printf("Our Breakpoint was hit!\n"); }
+                // Set resume flag, so that execution can continue (Do i need to clear this again?)
+                thread_info.executing_step_over_breakpoint = true;
+                thread_info.executing_single_step = false;
+                debugger->continue_status = DBG_EXCEPTION_HANDLED;
+                break;
+            }
+        }
+
+        const char* exception_name = "";
+        debugger->continue_status = DBG_EXCEPTION_NOT_HANDLED;
+        bool can_continue_exception = false;
+        switch (code)
+        {
+        case EXCEPTION_BREAKPOINT: can_continue_exception = true; exception_name = "EXCEPTION_BREAKPOINT"; break;
+        case EXCEPTION_SINGLE_STEP: can_continue_exception = true; exception_name = "EXCEPTION_SINGLE_STEP"; break;
+        case EXCEPTION_ACCESS_VIOLATION: exception_name = "EXCEPTION_ACCESS_VIOLATION"; break;
+        case EXCEPTION_DATATYPE_MISALIGNMENT: exception_name = "EXCEPTION_DATATYPE_MISALIGNMENT"; break;
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: exception_name = "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"; break;
+        case EXCEPTION_FLT_DENORMAL_OPERAND: exception_name = "EXCEPTION_FLT_DENORMAL_OPERAND"; break;
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_FLT_DIVIDE_BY_ZERO"; break;
+        case EXCEPTION_FLT_INEXACT_RESULT: exception_name = "EXCEPTION_FLT_INEXACT_RESULT"; break;
+        case EXCEPTION_FLT_INVALID_OPERATION: exception_name = "EXCEPTION_FLT_INVALID_OPERATION"; break;
+        case EXCEPTION_FLT_OVERFLOW: exception_name = "EXCEPTION_FLT_OVERFLOW"; break;
+        case EXCEPTION_FLT_STACK_CHECK: exception_name = "EXCEPTION_FLT_STACK_CHECK"; break;
+        case EXCEPTION_FLT_UNDERFLOW: exception_name = "EXCEPTION_FLT_UNDERFLOW"; break;
+        case EXCEPTION_INT_DIVIDE_BY_ZERO: exception_name = "EXCEPTION_INT_DIVIDE_BY_ZERO"; break;
+        case EXCEPTION_INT_OVERFLOW: exception_name = "EXCEPTION_INT_OVERFLOW"; break;
+        case EXCEPTION_PRIV_INSTRUCTION: exception_name = "EXCEPTION_PRIV_INSTRUCTION"; break;
+        case EXCEPTION_IN_PAGE_ERROR: exception_name = "EXCEPTION_IN_PAGE_ERROR"; break;
+        case EXCEPTION_ILLEGAL_INSTRUCTION: exception_name = "EXCEPTION_ILLEGAL_INSTRUCTION"; break;
+        case EXCEPTION_NONCONTINUABLE_EXCEPTION: exception_name = "EXCEPTION_NONCONTINUABLE_EXCEPTION"; break;
+        case EXCEPTION_STACK_OVERFLOW: exception_name = "EXCEPTION_STACK_OVERFLOW"; break;
+        case EXCEPTION_INVALID_DISPOSITION: exception_name = "EXCEPTION_INVALID_DISPOSITION"; break;
+        case EXCEPTION_GUARD_PAGE: exception_name = "EXCEPTION_GUARD_PAGE"; break;
+        case EXCEPTION_INVALID_HANDLE: exception_name = "EXCEPTION_INVALID_HANDLE"; break;
+        }
+        if (DEBUG_OUTPUT_ENABLED) { printf("Exception %s\n", exception_name); }
+        if (!can_continue_exception) {
+            debugger->state = Debugger_State::EXCEPTION_OCCURED;
+        }
+        break;
+    }
+    case OUTPUT_DEBUG_STRING_EVENT:
+    {
+        auto& debug_str = debug_event.u.DebugString;
+        auto& str = debugger->string_buffer;
+        string_reset(&str);
+        bool success = Process_Memory::read_string(
+            debugger->process_handle, (void*)(debug_str.lpDebugStringData),
+            &str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
+        );
+        if (success) {
+            printf("Output_Debug_String: \"%s\"\n", str.characters);
+        }
+        else {
+            printf("Debug string could not be read\n");
+        }
+        break;
+    }
+    case UNLOAD_DLL_DEBUG_EVENT:
+    {
+        if (DEBUG_OUTPUT_ENABLED) { printf("Unload_Dll: "); }
+        u64 dll_base = (u64)debug_event.u.UnloadDll.lpBaseOfDll;
+        for (int i = 0; i < debugger->pe_infos.size; i++) {
+            auto& pe_info = debugger->pe_infos[i];
+            if (pe_info.base_address == dll_base && i != debugger->exe_pe_info_index) {
+                printf(pe_info.name.characters);
+                PE_Analysis::pe_info_destroy(&pe_info);
+                dynamic_array_swap_remove(&debugger->pe_infos, i);
+                break;
+            }
+        }
+        if (DEBUG_OUTPUT_ENABLED) { printf("\n"); }
+        break;
+    }
+    case CREATE_THREAD_DEBUG_EVENT:
+    {
+        Thread_Info info;
+        info.handle = debug_event.u.CreateThread.hThread;
+        info.id = debug_event.dwThreadId;
+        info.executing_single_step = false;
+        info.executing_step_over_breakpoint = false;
+        dynamic_array_push_back(&debugger->threads, info);
+
+        if (DEBUG_OUTPUT_ENABLED) { printf("Create_thread\n"); }
+        break;
+    }
+    case EXIT_THREAD_DEBUG_EVENT: {
+        for (int i = 0; i < debugger->threads.size; i++) {
+            auto& thread = debugger->threads[i];
+            if (thread.id == debug_event.dwThreadId) {
+                if (i == debugger->main_thread_info_index) {
+                    debugger->main_thread_info_index = -1;
+                }
+                dynamic_array_swap_remove(&debugger->threads, i);
+                break;
+            }
+        }
+        if (DEBUG_OUTPUT_ENABLED) { printf("Exit_Thread\n"); }
+        break;
+    }
+    case EXIT_PROCESS_DEBUG_EVENT: {
+        ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE);
+        debugger->last_debug_event_requires_handling = false;
+        debugger_reset(debugger, Debugger_Reset_Type::PROCESS_EXIT_RECEIVED);
+        if (DEBUG_OUTPUT_ENABLED) { printf("Exit_Process\n"); }
+        break;
+    }
+    case RIP_EVENT: {
+        debugger_reset(debugger);
+        if (DEBUG_OUTPUT_ENABLED) { printf("RIP event \n"); }
+        break;
+    }
+    default: {
+        if (DEBUG_OUTPUT_ENABLED) { printf("Debugger received unknown debug event code: #%d\n", debug_event.dwDebugEventCode); }
+        debugger_reset(debugger);
+        break;
+    }
+    }
+
+    return debugger->state;
+}
+
+Debugger_State debugger_continue_until_next_breakpoint_or_exit(Debugger * debugger)
+{
+    if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS) return debugger->state;
+
+    dynamic_array_reset(&debugger->stack_frames);
+    while (true) {
+        debugger_continue_until_next_event(debugger);
+        if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS || debugger->last_event_hit_breakpoint) {
+            break;
+        }
+    }
+    return debugger->state;
+}
+
+void debugger_wait_for_console_command(Debugger * debugger)
+{
+    bool wait_for_next_command = true;
+    while (wait_for_next_command)
+    {
+        if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS) break;
+        CONTEXT thread_context;
+        thread_context.ContextFlags = CONTEXT_ALL;
+        auto& main_thread_info = debugger->threads[debugger->main_thread_info_index];
+        if (!GetThreadContext(main_thread_info.handle, &thread_context)) {
+            printf("GetThreadContext failed!\n");
+            return;
+        }
+
+        // Print current state
+        String input_line = string_create();
+        SCOPE_EXIT(string_destroy(&input_line));
+        {
+            printf("rip=[0x%08llX] ", thread_context.Rip);
+
+            u64 dist = 0;
+            String* closest_symbol = debugger_find_closest_symbol_name(debugger, thread_context.Rip, &dist);
+            if (closest_symbol != nullptr) {
+                printf(", %s + [%04llX]", closest_symbol->characters, dist);
+            }
+
+            printf("\n> ");
+            if (string_fill_from_line(&input_line)) {
+                return;
+            }
+        }
+
+        // Handle commands
+        Array<String> parts = string_split(input_line, ' ');
+        SCOPE_EXIT(string_split_destroy(parts));
+        if (parts.size == 0) continue;
+        String command = parts[0];
+
+        if (string_equals_cstring(&command, "?")) {
+            printf("Commands:\n");
+            printf("    c  - continue until next debug-event\n");
+            printf("    s  - single step\n");
+            printf("    q  - quit\n");
+            printf("    r  - show registers\n");
+            printf("    d  - display disassembly at current instrution/at specified symbol\n");
+            printf("    bp - add breakpoint at symbol\n");
+            printf("    bl - list active breakpoints\n");
+            printf("    bd - delete breakpoint\n");
+            printf("    k  - show stack/do stack-walk\n");
+            printf("    i  - show PDB-Infos (All functions in src)\n");
+        }
+        else if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
+            return;
+        }
+        else if (string_equals_cstring(&command, "s") || string_equals_cstring(&command, "step")) {
+            main_thread_info.executing_single_step = true;
+            break;
+        }
+        else if (string_equals_cstring(&command, "q") || string_equals_cstring(&command, "quit") || string_equals_cstring(&command, "exit")) {
+            debugger_reset(debugger);
+            return;
+        }
+        else if (string_equals_cstring(&command, "registers") || string_equals_cstring(&command, "r"))
+        {
+            auto& c = thread_context;
+            auto flag = [&](int bit_index)->int { return (thread_context.EFlags & (1 << bit_index)) == 0 ? 0 : 1; };
+            printf("    rax=0x%016llx rbx=0x%016llx rcx=0x%016llx\n", c.Rax, c.Rbx, c.Rcx);
+            printf("    rdx=0x%016llx rsi=0x%016llx rdi=0x%016llx\n", c.Rdx, c.Rsi, c.Rdi);
+            printf("    rip=0x%016llx rsp=0x%016llx rbp=0x%016llx\n", c.Rip, c.Rsp, c.Rbp);
+            printf("     r8=0x%016llx  r9=0x%016llx r10=0x%016llx\n", c.R8, c.R9, c.R10);
+            printf("    r11=0x%016llx r12=0x%016llx r13=0x%016llx\n", c.R11, c.R12, c.R13);
+            printf("    r14=0x%016llx r15=0x%016llx eflags=0x%08lx\n", c.R14, c.R15, c.EFlags);
+            printf("    CF: %d, PF: %d, AF: %d, ZF: %d, SF: %d\n", flag(0), flag(2), flag(4), flag(6), flag(7));
+            printf("    TF: %d, IF: %d, DF: %d, OF: %d, RF: %d\n", flag(8), flag(9), flag(10), flag(11), flag(16));
+            printf("    Carry, Parity, Auxillary-Carry, Zero, Sign, Trap, Interrupt-enabled, Direction, Overflow, Resume\n");
+        }
+        else if (string_equals_cstring(&command, "d") || string_equals_cstring(&command, "display"))
+        {
+            auto& bytes = debugger->byte_buffer;
+
+            void* virtual_address = (void*)thread_context.Rip;
+            u64 byte_length = 32;
+            if (parts.size == 2 && debugger->pdb_info != nullptr)
+            {
+                String symbol_name = parts[1];
+                auto pdb_info = debugger->pdb_info;
+
+                // Search in pdb for function with this name...
+                PDB_Analysis::PDB_Function* function = nullptr;
+                for (int i = 0; i < pdb_info->functions.size; i++) {
+                    auto& fn = pdb_info->functions[i];
+                    if (string_equals(&symbol_name, &fn.name)) {
+                        function = &fn;
+                        break;
+                    }
+                }
+
+                if (function != nullptr)
+                {
+                    printf(
+                        "Found function: %s, section: %d, offset: %lld\n",
+                        function->name.characters, function->location.section_index, function->location.offset
+                    );
+                    u64 fn_address = static_location_to_virtual_address(debugger, function->location);
+                    if (fn_address != 0) {
+                        virtual_address = (void*)fn_address;
+                        byte_length = function->length;
+                    }
+                }
+                else {
+                    printf("Could not find function, continuing with normal disassembly output\n");
+                }
+            }
+
+            debugger_disassemble_bytes(debugger, (u64)virtual_address, (u32)byte_length);
+            debugger_print_last_disassembly(debugger, (u64)virtual_address, 2);
+        }
+        else if (string_equals_cstring(&command, "bp") || string_equals_cstring(&command, "ba"))  // Add breakpoint
+        {
+            if (parts.size != 2) {
+                printf("Add breakpoint command requires an argument\n");
+                continue;
+            }
+
+            auto param = parts[1];
+            bool is_address = false;
+            u64 function_address = 0;
+            if (param.size > 2 && (string_starts_with(param, "0x") || string_starts_with(param, "0X"))) {
+                Optional<i64> value = string_parse_i64_hex(string_create_substring_static(&param, 2, param.size));
+                if (!value.available) {
+                    printf("Add breakpoint failed, couldn't parse hexadecimal value\n");
+                    continue;
+                }
+                if (value.value == 0) {
+                    printf("Add breakpoint failed, value is not a valid address\n");
+                    continue;
+                }
+                function_address = (u64)value.value;
+            }
+            else {
+                function_address = debugger_find_address_of_function(debugger, parts[1]);
+            }
+
+            if (function_address == 0) {
+                printf("Add breakpoint failed, could not find address of symbol\n");
+                continue;
+            }
+
+            bool other_exists = false;
+            auto& breakpoints = debugger->address_breakpoints;
+            for (int i = 0; i < breakpoints.size; i++) {
+                auto& other = breakpoints[i];
+                if (other.address == function_address) {
+                    other_exists = true;
+                    break;
+                }
+            }
+            if (other_exists) {
+                printf("Add breakpoint failed, breakpoint with this address already set\n");
+                continue;
+            }
+            if (breakpoints.size > 3) {
+                printf("Add breakpoint failed, reached maximum breakpoint count (4)\n");
+                continue;
+            }
+
+            Address_Breakpoint breakpoint;
+            breakpoint.address = function_address;
+            breakpoint.is_software_breakpoint = false;
+            breakpoint.original_byte = 0;
+            dynamic_array_push_back(&breakpoints, breakpoint);
+            printf("Added new breakpoint at [0x%08llX]\n", breakpoint.address);
+        }
+        else if (string_equals_cstring(&command, "bd") || string_equals_cstring(&command, "bc"))  // Delete breakpoint
+        {
+            if (parts.size != 2) {
+                printf("Delete breakpoint command requires an argument (id)\n");
+                continue;
+            }
+
+            auto id_opt = string_parse_int(&parts[1]);
+            if (!id_opt.available) {
+                printf("Delete breakpoint failed, could not parse argument\n");
+                continue;
+            }
+            int index = id_opt.value;
+
+            auto& breakpoints = debugger->address_breakpoints;
+            if (index < 0 || index >= breakpoints.size) {
+                printf("Delete breakpoint failed, breakpoint with given id does not exist");
+                continue;
+            }
+
+            dynamic_array_remove_ordered(&breakpoints, index);
+            printf("Removed breakpoint %d\n", index);
+        }
+        else if (string_equals_cstring(&command, "bl") || string_equals_cstring(&command, "breakpoint_list")) // List breakpoints
+        {
+            auto& breakpoints = debugger->address_breakpoints;
+            for (int i = 0; i < breakpoints.size; i++) {
+                auto& bp = breakpoints[i];
+                printf("    #%2d, Address: [0x%08llX]\n", i, bp.address);
+            }
+        }
+        else if (string_equals_cstring(&command, "i"))
+        {
+            for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
+                auto& src_info = debugger->pdb_info->source_infos[i];
+                auto& fn_info = debugger->pdb_info->functions[src_info.function_index];
+                printf(
+                    "  %s, address: 0x%08llX, length: %lld\n",
+                    fn_info.name.characters,
+                    static_location_to_virtual_address(debugger, fn_info.location),
+                    fn_info.length
+                );
+            }
+        }
+        else if (string_equals_cstring(&command, "k") || string_equals_cstring(&command, "stack")) {
+            do_stack_walk(debugger);
+        }
+        else {
+            printf("Invalid command: \"%s\"\nRetry: ", command.characters);
+        }
+    }
+}
+
+Source_Breakpoint* debugger_add_source_breakpoint(Debugger * debugger, int line_index, Compilation_Unit * unit)
+{
+    for (int i = 0; i < debugger->source_breakpoints.size; i++) {
+        auto& bp = debugger->source_breakpoints[i];
+        if (bp->compilation_unit == unit && bp->line_index == line_index) {
+            bp->active_reference_count += 1;
+            return bp;
+        }
+    }
+
+    Dynamic_Array<Machine_Code_Segment> segments = dynamic_array_create<Machine_Code_Segment>();
+    SCOPE_EXIT(dynamic_array_destroy(&segments));
+    source_mapping_upp_line_to_machine_code_segments(debugger, unit, line_index, &segments);
+
+    Source_Breakpoint* breakpoint = new Source_Breakpoint;
+    breakpoint->addresses = dynamic_array_create<u64>();
+    breakpoint->compilation_unit = unit;
+    breakpoint->line_index = line_index;
+    breakpoint->active_reference_count = 1;
+
+    for (int i = 0; i < segments.size; i++) {
+        auto& segment = segments[i];
+        dynamic_array_push_back(&breakpoint->addresses, segment.virtual_address_start);
+    }
+
+    dynamic_array_push_back(&debugger->source_breakpoints, breakpoint);
+    return breakpoint;
+}
+
+void debugger_remove_source_breakpoint(Debugger * debugger, Source_Breakpoint * breakpoint)
+{
+    if (breakpoint == nullptr) return;
+    breakpoint->active_reference_count = math_maximum(0, breakpoint->active_reference_count - 1);
+}
+
+Array<Stack_Frame> debugger_get_stack_frames(Debugger * debugger)
+{
+    if (debugger->state == Debugger_State::NO_ACTIVE_PROCESS) {
+        Array<Stack_Frame> empty;
+        empty.data = 0;
+        empty.size = 0;
+        return empty;
+    }
+
+    do_stack_walk(debugger);
+    return dynamic_array_as_array(&debugger->stack_frames);
+}
+
+void debugger_print_line_translation(Debugger * debugger, Compilation_Unit * compilation_unit, int line_index, Compiler_Analysis_Data * analysis_data)
+{
+    printf("Mapping info for line #%d of %s\n", line_index, compilation_unit->filepath.characters);
+
     Compilation_Unit_Mapping* unit_map = nullptr;
     for (int i = 0; i < debugger->compilation_unit_mapping.size; i++) {
         auto& unit = debugger->compilation_unit_mapping[i];
@@ -3587,199 +3748,54 @@ void source_debugger_upp_line_to_machine_code_segments(
     if (unit_map == nullptr) return;
     if (line_index < 0 || line_index >= unit_map->lines.size)  return;
 
+    // Prepare temporary values
+    auto c_source = c_generator_get_translation()->source_code;
+    auto c_line_array = string_split(c_source, '\n');
+    SCOPE_EXIT(string_split_destroy(c_line_array));
+
+    String tmp = string_create(128);
+    SCOPE_EXIT(string_destroy(&tmp));
+
+    Dynamic_Array<byte> byte_buffer = dynamic_array_create<byte>(256);
+    Dynamic_Array<INSTRUX> disassembly = dynamic_array_create<INSTRUX>(16);
+    SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
+    SCOPE_EXIT(dynamic_array_destroy(&disassembly));
+
     auto& line_map = unit_map->lines[line_index];
     for (int i = 0; i < line_map.statements.size; i++)
     {
         auto stat_map = line_map.statements[i];
-        for (int j = 0; j < stat_map->ir_instructions.size; j++) {
+        AST::base_append_to_string(upcast(stat_map->statement), &tmp);
+        printf("Statement #%d: %s\n", i, tmp.characters);
+        string_reset(&tmp);
+
+        for (int j = 0; j < stat_map->ir_instructions.size; j++)
+        {
             auto ir_instr_map = stat_map->ir_instructions[j];
-            for (int k = 0; k < ir_instr_map->c_lines.size; k++) {
-                Machine_Code_Segment segment;
-                segment.function_slot_index = ir_instr_map->code_block->function->function_slot_index;
-                segment.virtual_address_start = ir_instr_map->c_lines[k]->range.start_virtual_address;
-                segment.virtual_address_end = ir_instr_map->c_lines[k]->range.end_virtual_address;
-                segment.c_line_index_with_offset = ir_instr_map->c_lines[k]->c_line_index;
-                if (segment.virtual_address_start == 0 || segment.virtual_address_end == 0) continue;
-                dynamic_array_push_back(machine_code_segments, segment);
+            ir_instruction_append_to_string(
+                &ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, analysis_data);
+            printf("  IR-Instr: #%d: %s\n", j, tmp.characters);
+            string_reset(&tmp);
+
+            for (int k = 0; k < ir_instr_map->c_lines.size; k++)
+            {
+                auto c_line = ir_instr_map->c_lines[k];
+                int c_index = c_line->c_line_index;
+                if (c_index < 0 || c_index >= c_line_array.size) {
+                    printf("    INVALID line index: %d\n", c_index);
+                    continue;
+                }
+                string_append_string(&tmp, &c_line_array[c_index]);
+                printf("    C-Line: #%d: %s\n", c_index, tmp.characters);
+                string_reset(&tmp);
+
+                // Print disassembly
+                if (c_line->range.start_virtual_address != 0 && c_line->range.start_virtual_address < c_line->range.end_virtual_address) {
+                    u64 size = c_line->range.end_virtual_address - c_line->range.start_virtual_address;
+                    debugger_disassemble_bytes(debugger, c_line->range.start_virtual_address, size);
+                    debugger_print_last_disassembly(debugger, c_line->range.start_virtual_address, 6);
+                }
             }
         }
     }
-
-    // Sort segments and fuse together...
-    Segment_Comparator comp;
-    dynamic_array_sort(machine_code_segments, comp);
-    for (int i = 0; i < machine_code_segments->size - 1; i++)
-    {
-        auto& current = machine_code_segments->data[i];
-        auto& next = machine_code_segments->data[i + 1];
-
-        if (current.function_slot_index != next.function_slot_index) continue;
-        if (current.virtual_address_end == next.virtual_address_start) {
-            current.virtual_address_end = next.virtual_address_end;
-            dynamic_array_remove_ordered(machine_code_segments, i + 1);
-            i = i - 1;
-        }
-    }
 }
-
-struct Machine_Code_Address_To_Line_Result
-{
-    Compilation_Unit* unit;
-    int line_index;
-    int function_slot;
-    AST::Statement* statement;
-};
-
-Machine_Code_Address_To_Line_Result source_debugger_machine_instruction_address_to_upp_line(Source_Debugger* debugger, u64 virtual_address)
-{
-    Machine_Code_Address_To_Line_Result result;
-    result.unit = nullptr;
-    result.line_index = -1;
-    result.function_slot = -1;
-    result.statement = nullptr;
-
-    int slot_index = -1;
-    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
-        auto& slot = debugger->function_slot_mapping[i];
-        if (virtual_address >= slot.virtual_address_start && virtual_address < slot.virtual_address_end) {
-            slot_index = i;
-            break;
-        }
-    }
-    if (slot_index == -1) return result;
-
-    result.function_slot = slot_index;
-    auto& slot_mapping = debugger->function_slot_mapping[slot_index];
-    int segment_index = -1;
-
-    for (int i = 0; i < slot_mapping.c_lines.size; i++) 
-    {
-        auto& c_line = slot_mapping.c_lines[i];
-        if (virtual_address >= c_line->range.start_virtual_address && virtual_address < c_line->range.end_virtual_address) 
-        {
-            auto& upp_line = c_line->instruction_mapping->statement->line_mapping;
-            result.statement = c_line->instruction_mapping->statement->statement;
-            result.line_index = upp_line->line_number;
-            result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
-            return result;
-        }
-    }
-
-    return result;
-}
-
-void source_debugger_update_state(Source_Debugger* debugger)
-{
-    auto& state = debugger->state;
-    state.process_running = debugger->debugger->process_running;
-    dynamic_array_reset(&state.stack_frames);
-    if (!state.process_running) {
-        state.process_running = false;
-        state.hit_breakpoint = false;
-        return;
-    }
-
-    do_stack_walk(debugger->debugger);
-    auto& stack_frames = debugger->debugger->stack_frames;
-    dynamic_array_reserve(&state.stack_frames, stack_frames.size);
-    for (int i = 0; i < stack_frames.size; i++) 
-    {
-        Source_Stack_Frame source_frame;
-        CONTEXT& context = stack_frames[i].context_in_frame;
-
-        Machine_Code_Address_To_Line_Result line_result = source_debugger_machine_instruction_address_to_upp_line(debugger, context.Rip);
-        if (line_result.unit == nullptr || line_result.line_index == -1 || line_result.function_slot == -1 || line_result.statement == nullptr) 
-        {
-            u64 out_distance = 0;
-            String out_dll_name = string_create_static("");
-            String* symbol_name = debugger_find_closest_symbol_name(debugger->debugger, context.Rip, &out_distance, &out_dll_name);
-            source_frame.is_upp_function = false;
-            if (symbol_name == nullptr) {
-                source_frame.options.other.symbol_name = string_create_static("");
-            }
-            source_frame.options.other.dll_name = out_dll_name;
-            source_frame.options.other.offset_from_symbol_start = out_distance;
-        }
-        else
-        {
-            source_frame.is_upp_function = true;
-            source_frame.options.upp_function.line_index = line_result.line_index;
-            source_frame.options.upp_function.unit = line_result.unit;
-            source_frame.options.upp_function.slot = line_result.function_slot;
-        }
-        dynamic_array_push_back(&state.stack_frames, source_frame);
-    }
-}
-
-Source_Debugger_State* source_debugger_continue(Source_Debugger* debugger) 
-{
-    debugger->state.process_running = debugger->debugger->process_running;
-    if (!debugger->state.process_running) return &debugger->state;
-
-    // Set all source-breakpoints...
-    dynamic_array_reset(&debugger->debugger->breakpoints);
-    for (int i = 0; i < debugger->breakpoints.size; i++) {
-        auto bp = debugger->breakpoints[i];
-        for (int j = 0; j < bp->addresses.size; j++) {
-            Breakpoint real_bp;
-            real_bp.address = bp->addresses[j];
-            dynamic_array_push_back(&debugger->debugger->breakpoints, real_bp);
-        }
-    }
-
-    // Keep running until breakpoint, exception or program exit
-    dynamic_array_reset(&debugger->state.stack_frames);
-    while (true)
-    {
-        if (debugger_wait_and_handle_next_event(debugger->debugger)) {
-            debugger->state.process_running = false;
-            return &debugger->state;
-        }
-
-        debugger->state.hit_breakpoint = debugger->debugger->last_event_hit_breakpoint;
-        if (debugger->state.hit_breakpoint) {
-            break;
-        }
-        else if ( debugger->debugger->last_debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT) {
-            // TODO: Maybe we want to show the exception info or something
-            break;
-        }
-    }
-    source_debugger_update_state(debugger);
-
-    return &debugger->state;
-}
-
-void source_debugger_detach_process(Source_Debugger* debugger) {
-    debugger_detach_from_process(debugger->debugger);
-    debugger->state.process_running = false;
-}
-
-Source_Breakpoint* source_debugger_add_breakpoint(Source_Debugger* debugger, int line_index, Compilation_Unit* unit)
-{
-    for (int i = 0; i < debugger->breakpoints.size; i++) {
-        auto& bp = debugger->breakpoints[i];
-        if (bp->compilation_unit == unit && bp->line_index == line_index) {
-            return nullptr;
-        }
-    }
-
-    Dynamic_Array<Machine_Code_Segment> segments = dynamic_array_create<Machine_Code_Segment>();
-    SCOPE_EXIT(dynamic_array_destroy(&segments));
-    source_debugger_upp_line_to_machine_code_segments(debugger, unit, line_index, &segments);
-    if (segments.size == 0) return nullptr;
-
-    Source_Breakpoint* breakpoint = new Source_Breakpoint;
-    breakpoint->addresses = dynamic_array_create<u64>();
-    breakpoint->compilation_unit = unit;
-    breakpoint->line_index = line_index;
-
-    for (int i = 0; i < segments.size; i++) {
-        auto& segment = segments[i];
-        dynamic_array_push_back(&breakpoint->addresses, segment.virtual_address_start);
-    }
-
-    dynamic_array_push_back(&debugger->breakpoints, breakpoint);
-    return breakpoint;
-}
-

@@ -13,6 +13,7 @@
 #include "../../utility/directory_crawler.hpp"
 #include "../../win32/thread.hpp"
 #include "../../win32/process.hpp"
+#include "../../win32/window.hpp"
 
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
@@ -188,7 +189,7 @@ enum class Normal_Command_Type
     GOTO_NEXT_JUMP, // Ctrl-I
     ADD_INDENTATION, // >
     REMOVE_INDENTATION, // >
-    SET_REMOVE_BREAKPOINT, // gp
+    TOGGLE_LINE_BREAKPOINT, // gp
 
     MAX_ENUM_VALUE
 };
@@ -224,7 +225,7 @@ struct Code_Fold
 struct Line_Breakpoint
 {
     int line_number;
-    bool is_valid_bp;
+    Source_Breakpoint* src_breakpoint; 
 };
 
 struct Editor_Tab
@@ -297,6 +298,7 @@ struct Particle
 struct Syntax_Editor
 {
     // Editing
+    Window* window;
     Editor_Mode mode;
     Dynamic_Array<Editor_Tab> tabs;
     int open_tab_index;
@@ -377,7 +379,7 @@ struct Syntax_Editor
     Compilation_Unit* compiler_main_unit;
 
     // Debugger
-    Source_Debugger* debugger;
+    Debugger* debugger;
 };
 
 // Globals
@@ -1237,7 +1239,7 @@ namespace Parsing
                 case 'b': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_CURRENT_BLOCK, repeat_count));
                 case 'f': return parse_result_success(normal_mode_command_make(Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK, repeat_count));
                 case 'F': return parse_result_success(normal_mode_command_make(Normal_Command_Type::UNFOLD_IN_BLOCK, repeat_count));
-                case 'p': return parse_result_success(normal_mode_command_make(Normal_Command_Type::SET_REMOVE_BREAKPOINT, 1));
+                case 'p': return parse_result_success(normal_mode_command_make(Normal_Command_Type::TOGGLE_LINE_BREAKPOINT, 1));
                 }
             }
         }
@@ -2203,9 +2205,10 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer)
 {
     memory_zero(&syntax_editor);
+    syntax_editor.window = window;
     gui_initialize(text_renderer, window);
 
-    syntax_editor.debugger = source_debugger_create();
+    syntax_editor.debugger = debugger_create();
     syntax_editor.last_code_completion_tab = -1;
     syntax_editor.compile_count = 0;
     syntax_editor.symbol_table_already_visited = hashset_create_pointer_empty<Symbol_Table*>(4);
@@ -2274,7 +2277,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 void syntax_editor_destroy()
 {
     auto& editor = syntax_editor;
-    source_debugger_destroy(editor.debugger);
+    debugger_destroy(editor.debugger);
     hashset_destroy(&editor.symbol_table_already_visited);
     directory_crawler_destroy(editor.directory_crawler);
     dynamic_array_destroy(&editor.particles);
@@ -2391,7 +2394,7 @@ Code_Diff code_diff_create_from_changes(Dynamic_Array<Code_Change> changes)
             {
                 auto& diff = result.line_diffs[j];
                 if (change.apply_forwards) {
-                    if (line_index < diff.new_line_index) {
+                    if (line_index <= diff.new_line_index) {
                         diff.new_line_index += 1;
                     }
                 }
@@ -2706,6 +2709,7 @@ unsigned long compiler_thread_entry_fn(void* userdata)
     return 0;
 }
 
+// Checks if there are any new compilation infos, and starts a new compilation cycle if code has changed
 void syntax_editor_synchronize_with_compiler(bool generate_code)
 {
     syntax_editor_synchronize_code_information();
@@ -2731,7 +2735,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         }
     }
 
-    // Get latest compiler work
+    // Get latest compiler work (Check semaphore if compilation was finished)
     bool got_compiler_update = editor.compiler_work_started;
     if (editor.compiler_work_started)
     {
@@ -4541,8 +4545,8 @@ void normal_command_execute(Normal_Mode_Command& command)
     auto line = source_code_get_line(code, cursor.line);
 
     // Filter commands during debug mode
-    auto debugger_state = source_debugger_get_state(editor.debugger);
-    if (debugger_state->process_running) 
+    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
+    if (debugger_running) 
     {
         bool command_ok = false;
         switch (command.type)
@@ -4573,7 +4577,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         case Normal_Command_Type::VISUALIZE_MOTION:
         case Normal_Command_Type::GOTO_LAST_JUMP:
         case Normal_Command_Type::GOTO_NEXT_JUMP:
-        case Normal_Command_Type::SET_REMOVE_BREAKPOINT:
+        case Normal_Command_Type::TOGGLE_LINE_BREAKPOINT:
             command_ok = true;
         }
         if (!command_ok) {
@@ -5040,7 +5044,8 @@ void normal_command_execute(Normal_Mode_Command& command)
         Text_Editing::particles_add_in_range(range, vec3(1.0f));
         break;
     }
-    case Normal_Command_Type::SET_REMOVE_BREAKPOINT: {
+    case Normal_Command_Type::TOGGLE_LINE_BREAKPOINT: 
+    {
         auto& breakpoints = tab.breakpoints;
         int index = -1;
         for (int i = 0; i < breakpoints.size; i++) {
@@ -5049,12 +5054,23 @@ void normal_command_execute(Normal_Mode_Command& command)
                 break;
             }
         }
+
+        // Remove breakpoint if already exists
         if (index != -1) {
+            auto& bp = breakpoints[index];
+            if (bp.src_breakpoint != nullptr && debugger_running) {
+                debugger_remove_source_breakpoint(editor.debugger, bp.src_breakpoint);
+            }
             dynamic_array_swap_remove(&breakpoints, index);
             break;
         }
+
         Line_Breakpoint bp;
         bp.line_number = cursor.line;
+        bp.src_breakpoint = nullptr;
+        if (debugger_running) {
+            bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, bp.line_number, tab.compilation_unit);
+        }
         dynamic_array_push_back(&breakpoints, bp);
         break;
     }
@@ -5761,24 +5777,6 @@ int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block* block, 
     return -1;
 }
 
-void source_debugger_add_breakpoints()
-{
-    auto& editor = syntax_editor;
-    auto debugger = editor.debugger;
-    auto& tab = editor.tabs[editor.open_tab_index];
-
-    auto debugger_state = source_debugger_get_state(debugger);
-    if (!debugger_state->process_running) {
-        return;
-    }
-
-    auto& line_breakpoints = tab.breakpoints;
-    for (int i = 0; i < line_breakpoints.size; i++) {
-        auto& line_bp = line_breakpoints[i];
-        line_bp.is_valid_bp = source_debugger_add_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit) != nullptr;
-    }
-}
-
 void syntax_editor_update(bool& animations_running)
 {
     auto& editor = syntax_editor;
@@ -5853,8 +5851,7 @@ void syntax_editor_update(bool& animations_running)
     syntax_editor_synchronize_with_compiler(false);
 
     // Generate GUI (Tabs)
-    auto debugger_state = source_debugger_get_state(editor.debugger);
-    bool debugger_running = debugger_state->process_running;
+    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
     {
         // Draw Tabs
         auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
@@ -5964,7 +5961,14 @@ void syntax_editor_update(bool& animations_running)
     if (debugger_running) 
     {
         if (build_and_run) {
-            source_debugger_continue(editor.debugger);
+            debugger_continue_until_next_breakpoint_or_exit(editor.debugger);
+            window_set_focus(editor.window);
+        }
+
+        // Print mapping infos if this is se case
+        if (syntax_editor.input->key_pressed[(int)Key_Code::F4]) {
+            auto& tab = editor.tabs[editor.open_tab_index];
+            debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.analysis_data);
         }
         return;
     }
@@ -5983,7 +5987,7 @@ void syntax_editor_update(bool& animations_running)
     {
         editor_leave_insert_mode();
         editor.mode = Editor_Mode::NORMAL;
-        bool started = source_debugger_start_process(
+        bool started = debugger_start_process(
             editor.debugger,
             "P:/Martin/Projects/UppLib/backend/build/main.exe",
             "P:/Martin/Projects/UppLib/backend/build/main.pdb",
@@ -5991,8 +5995,20 @@ void syntax_editor_update(bool& animations_running)
             editor.analysis_data
         );
 
-        // Now we should be able to set our breakpoints
-        source_debugger_add_breakpoints();
+        // Add breakpoints
+        {
+            auto& editor = syntax_editor;
+            auto debugger = editor.debugger;
+            auto& tab = editor.tabs[editor.open_tab_index];
+
+            auto& line_breakpoints = tab.breakpoints;
+            for (int i = 0; i < line_breakpoints.size; i++) {
+                auto& line_bp = line_breakpoints[i];
+                line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit);
+            }
+        }
+
+        window_set_focus(editor.window);
         return;
     }
 
@@ -6129,7 +6145,7 @@ void syntax_editor_render()
     auto& tab = editor.tabs[editor.open_tab_index];
     auto code = tab.code;
     auto& cursor = tab.cursor;
-    auto debugger_state = source_debugger_get_state(editor.debugger);
+    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
 
     // Calculate camera line range + on_screen_indices for lines
     auto& cam_start = tab.cam_start;
@@ -6198,10 +6214,11 @@ void syntax_editor_render()
         int cursor_visible_index = source_code_get_line(code, cursor.line)->visible_index;
 
         int current_execution_line_index = -1;
-        if (debugger_state->process_running && debugger_state->stack_frames.size > 0)
+        Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
+        if (stack_frames.size > 0)
         {
-            auto& frame = debugger_state->stack_frames[0];
-            if (frame.is_upp_function) {
+            auto& frame = stack_frames[0];
+            if (frame.inside_upp_function) {
                 if (tab.compilation_unit == frame.options.upp_function.unit) {
                     current_execution_line_index = frame.options.upp_function.line_index;
                 }

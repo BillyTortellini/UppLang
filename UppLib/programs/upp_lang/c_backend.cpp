@@ -1359,7 +1359,7 @@ void c_generator_generate()
                 int line_start = last_line_start - function_implementation_char_index;
                 int line_end = char_index - function_implementation_char_index;
                 // Check if line intersects translation
-                if (!(line_start >= next_translation.char_end && line_end <= next_translation.char_start)) {
+                if (!(line_start >= next_translation.char_end || line_end <= next_translation.char_start)) {
                     if (ir_instruction_index == -1) {
                         current_block = next_translation.code_block;
                         ir_instruction_index = next_translation.instruction_index;
@@ -1892,14 +1892,14 @@ void c_generator_output_cast_if_necessary(IR_Data_Access* write_to_access, Datat
     string_append_formated(gen.text, ") ");
 }
 
-// registers_in_same_scope is used for e.g. the while loop condition-block, as this may contain registers
-void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_level, bool registers_in_same_scope)
+// define_registers_in_outer_scope is used for e.g. the while loop condition-block
+void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_level, bool define_registers_in_outer_scope)
 {
     auto& gen = c_generator;
 
     // Create Register variables
     {
-        if (!registers_in_same_scope)
+        if (!define_registers_in_outer_scope)
         {
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "{\n");
@@ -1909,7 +1909,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             auto& reg = code_block->registers[i];
             if (reg.has_definition_instruction) continue;
 
-            if (registers_in_same_scope) {
+            if (define_registers_in_outer_scope) {
                 string_add_indentation(gen.text, indentation_level);
             }
             else {
@@ -1926,7 +1926,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             c_generator_output_data_access(&access);
             string_append_formated(gen.text, ";\n");
         }
-        if (registers_in_same_scope) {
+        if (define_registers_in_outer_scope) {
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "{\n");
         }
@@ -1937,19 +1937,24 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
     {
         IR_Instruction* instr = &code_block->instructions[i];
 
+        // Add instruction to char mapping
         bool add_char_info = gen.text == &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
         Translation_Char_Info char_info;
         char_info.code_block = code_block;
         char_info.instruction_index = i;
         char_info.char_start = gen.text->size;
         char_info.char_end = char_info.char_start;
+        int char_info_index = gen.translation_characters.size;
+        if (add_char_info) {
+            dynamic_array_push_back(&gen.translation_characters, char_info);
+        }
         SCOPE_EXIT(
             if (add_char_info && gen.text == &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION]) {
-                char_info.char_end = gen.text->size;
-                dynamic_array_push_back(&gen.translation_characters, char_info);
+                gen.translation_characters[char_info_index].char_end = gen.text->size;
             }
         );
 
+        // Generate instruction
         if (instr->type != IR_Instruction_Type::BLOCK) {
             string_add_indentation(gen.text, indentation_level + 1);
         }

@@ -1012,6 +1012,14 @@ void window_set_vsync(Window* window, bool vsync) {
     }
 }
 
+void window_set_focus(Window* window) {
+    if (window->state.minimized) return;
+    BOOL success = SetForegroundWindow(window->hwnd);
+    if (success == 0) {
+        printf("Set foreground window failed!\n");
+    }
+}
+
 void window_set_minimized(Window* window, bool minimized) {
     if (window->state.minimized != minimized)
     {
