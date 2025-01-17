@@ -122,12 +122,27 @@ struct Stack_Frame
     } options;
 };
 
-enum class Debugger_State
+enum class Halt_Type
+{
+    DEBUG_EVENT_RECEIVED,     // Thread create/destroy, process create/destroy, others
+    STEPPING,                 // Step instruction hit
+    BREAKPOINT_HIT,           // One of our own breakpoints was hit
+    DEBUG_BREAK_HIT,          // Breakpoint was hit that wasn't our own (e.g. debug_break)
+    EXCEPTION_OCCURED,        // Exception occurred, which leads to program termination
+};
+
+enum class Debug_Process_State
 {
     RUNNING,
-    BREAKPOINT_HIT_OR_HALTED, // Caused by breakpoints, stepping, __debugbreak
-    EXCEPTION_OCCURED, // Hit an exception which wasn't caused by debugger (e.g. access violation)
+    HALTED,
     NO_ACTIVE_PROCESS
+};
+
+struct Debugger_State
+{
+    Debug_Process_State process_state;
+    Halt_Type halt_type; // Following are only valid in halted state
+    const char* exception_name; // Only valid when exception occured
 };
 
 struct Source_Breakpoint
@@ -147,8 +162,7 @@ bool debugger_start_process(
 );
 
 Debugger_State debugger_get_state(Debugger* debugger);
-Debugger_State debugger_continue_until_next_event(Debugger* debugger); // Returns true if process has closed
-Debugger_State debugger_continue_until_next_breakpoint_or_exit(Debugger* debugger);
+void debugger_resume_until_next_halt_or_exit(Debugger* debugger);
 void debugger_wait_for_console_command(Debugger* debugger);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);

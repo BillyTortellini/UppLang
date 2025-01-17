@@ -4545,7 +4545,7 @@ void normal_command_execute(Normal_Mode_Command& command)
     auto line = source_code_get_line(code, cursor.line);
 
     // Filter commands during debug mode
-    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
+    bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
     if (debugger_running) 
     {
         bool command_ok = false;
@@ -5851,7 +5851,7 @@ void syntax_editor_update(bool& animations_running)
     syntax_editor_synchronize_with_compiler(false);
 
     // Generate GUI (Tabs)
-    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
+    bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
     {
         // Draw Tabs
         auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
@@ -5961,7 +5961,7 @@ void syntax_editor_update(bool& animations_running)
     if (debugger_running) 
     {
         if (build_and_run) {
-            debugger_continue_until_next_breakpoint_or_exit(editor.debugger);
+            debugger_resume_until_next_halt_or_exit(editor.debugger);
             window_set_focus(editor.window);
         }
 
@@ -6145,7 +6145,7 @@ void syntax_editor_render()
     auto& tab = editor.tabs[editor.open_tab_index];
     auto code = tab.code;
     auto& cursor = tab.cursor;
-    bool debugger_running = debugger_get_state(editor.debugger) != Debugger_State::NO_ACTIVE_PROCESS;
+    bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 
     // Calculate camera line range + on_screen_indices for lines
     auto& cam_start = tab.cam_start;

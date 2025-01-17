@@ -24,10 +24,11 @@ void game_entry()
         return;
     }
 
-    Debugger_State state = debugger_get_state(debugger);
-    while (state != Debugger_State::NO_ACTIVE_PROCESS) {
+    Debug_Process_State state = debugger_get_state(debugger).process_state;
+    while (state != Debug_Process_State::NO_ACTIVE_PROCESS) {
         debugger_wait_for_console_command(debugger);
-        state = debugger_continue_until_next_breakpoint_or_exit(debugger);
+        debugger_resume_until_next_halt_or_exit(debugger);
+        state = debugger_get_state(debugger).process_state;
     }
 
     printf("\n-----------\nProcess finished\n");
