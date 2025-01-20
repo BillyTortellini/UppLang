@@ -7,6 +7,7 @@
 struct Debugger;
 struct Compilation_Unit;
 struct Compiler_Analysis_Data;
+struct IR_Code_Block;
 namespace AST {
     struct Statement;
 }
@@ -91,10 +92,13 @@ enum class X64_Flags
 
 struct Machine_Code_Address_To_Line_Result
 {
-    Compilation_Unit* unit;
-    int line_index;
     int function_slot;
+    int c_line_index;
+    IR_Code_Block* ir_block;
+    int ir_instruction_index;
     AST::Statement* statement;
+    Compilation_Unit* unit;
+    int upp_line_index;
 };
 
 struct Stack_Frame
@@ -156,6 +160,7 @@ bool debugger_start_process(
 
 Debugger_State debugger_get_state(Debugger* debugger);
 void debugger_resume_until_next_halt_or_exit(Debugger* debugger);
+void debugger_continue_with_step_over_until_next_event(Debugger* debugger);
 void debugger_wait_for_console_command(Debugger* debugger);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);

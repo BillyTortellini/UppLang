@@ -5960,7 +5960,7 @@ void syntax_editor_update(bool& animations_running)
     // Handle debugger
     if (debugger_running) 
     {
-        if (build_and_run) {
+        if (build_and_run) { // F5
             debugger_resume_until_next_halt_or_exit(editor.debugger);
             window_set_focus(editor.window);
         }
@@ -5970,8 +5970,12 @@ void syntax_editor_update(bool& animations_running)
             auto& tab = editor.tabs[editor.open_tab_index];
             debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.analysis_data);
         }
-        else if (syntax_editor.input->key_pressed[(int)Key_Code::F6]) {
+        else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
             debugger_reset(editor.debugger);
+        }
+        else if (syntax_editor.input->key_pressed[(int)Key_Code::F6]) {
+            debugger_continue_with_step_over_until_next_event(editor.debugger);
+            window_set_focus(editor.window);
         }
         return;
     }

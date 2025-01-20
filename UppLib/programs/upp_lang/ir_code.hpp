@@ -200,6 +200,8 @@ struct IR_Register
 struct IR_Code_Block
 {
     IR_Function* function;
+    IR_Code_Block* parent_block; // May be null if function
+    int parent_instruction_index;
     Dynamic_Array<IR_Register> registers;
     Dynamic_Array<IR_Instruction> instructions;
 };
@@ -339,6 +341,12 @@ struct Defer_Item
     } options;
 };
 
+struct IR_Instruction_Reference
+{
+    IR_Code_Block* block;
+    int index;
+};
+
 struct IR_Generator
 {
     IR_Program* program;
@@ -359,12 +367,12 @@ struct IR_Generator
     Dynamic_Array<Defer_Item> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;
     Dynamic_Array<Unresolved_Goto> fill_out_breaks;
+    Dynamic_Array<IR_Instruction_Reference> label_positions;
 
     Hashtable<AST::Code_Block*, int> labels_break;
     Hashtable<AST::Code_Block*, int> labels_continue;
     Hashtable<AST::Code_Block*, int> block_defer_depths;
 
-    int next_label_index;
     Analysis_Pass* current_pass;
     AST::Expression* current_expr;
     AST::Statement* current_statement;

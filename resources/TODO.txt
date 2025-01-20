@@ -1,22 +1,15 @@
 
 TODO:
-TODO:
-  * Step into, step over and step out of...
-  Generally speaking, some ideas:
-  - Based on IR-Instructions I should know the code paths that can be taken, e.g. next IR-Instruction
-    Then I can set breakpoints on those instructions, and just continue until we hit the next breakpoint
-    Based on the stepping type, I can also figure out if I want to do jumps or not...
+ - Add reference counting to address-breakpoints, as step-over may add/remove addresses
+ - Fix bugs with step-over
+ - Add some code to make step-into work (e.g. for function calls add something)
+    --> Ignore function pointer calls for now
+ - Add step out of (Simple)
 
- - Implement step into
-    Implementations:
-        - Check next ir-instruction address, and set breakpoint on this address
-        - Single stepping until current statement changes
- - Step over and step out of
- - Some Editor mode while debugger is running for stepping
- - Watch window to query variables...
 
 
 DONE:
+ - Added first implementation of step-over
  - Cleaned up Debugger: Correct shutdown with handles, clean stepping, clean breakpoints, correct startup-sequence handling
  - Correct shutdown for debugger
  - Implement software breakpoints

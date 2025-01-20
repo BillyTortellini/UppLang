@@ -22,7 +22,7 @@ const bool DEBUG_OUTPUT_ENABLED = true;
 
 // Prototypes
 u64 debugger_find_address_of_function(Debugger* debugger, String name);
-Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address);
+bool source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address, Machine_Code_Address_To_Line_Result& out_result);
 
 
 
@@ -1925,12 +1925,14 @@ struct Debugger
     Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
     Dynamic_Array<C_Line_Mapping> c_line_mapping;
     Dynamic_Array<Function_Slot_Mapping> function_slot_mapping;
+    Hashtable<IR_Code_Block*, int> ir_block_mapping_offset;
 
     // Helpers
     String string_buffer;
     Dynamic_Array<u8> byte_buffer;
     Dynamic_Array<INSTRUX> disassembly_buffer;
     Hardware_Breakpoint hardware_breakpoints[HARDWARE_BREAKPOINT_COUNT];
+    Compiler_Analysis_Data* analysis_data;
 
     // Event handling
     DEBUG_EVENT last_debug_event;
@@ -1963,6 +1965,7 @@ Debugger* debugger_create()
     result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
     result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
     result->function_slot_mapping = dynamic_array_create<Function_Slot_Mapping>();
+    result->ir_block_mapping_offset = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
 
     result->string_buffer = string_create();
     result->byte_buffer = dynamic_array_create<u8>();
@@ -2005,6 +2008,7 @@ void debugger_reset(Debugger* debugger)
     debugger->main_thread_id = -1;
 
     debugger->exe_pe_info_index = -1;
+    debugger->analysis_data = nullptr;
     debugger->main_thread_info_index = -1;
     debugger->last_debug_event_requires_handling = false;
     debugger->event_count = 0;
@@ -2034,6 +2038,7 @@ void debugger_reset(Debugger* debugger)
     dynamic_array_reset(&debugger->byte_buffer);
     dynamic_array_reset(&debugger->disassembly_buffer);
     string_reset(&debugger->string_buffer);
+    hashtable_reset(&debugger->ir_block_mapping_offset);
 
     for (int i = 0; i < debugger->source_breakpoints.size; i++) {
         Source_Breakpoint* bp = debugger->source_breakpoints[i];
@@ -2087,6 +2092,7 @@ void debugger_destroy(Debugger* debugger)
     dynamic_array_destroy(&debugger->byte_buffer);
     dynamic_array_destroy(&debugger->disassembly_buffer);
     string_destroy(&debugger->string_buffer);
+    hashtable_destroy(&debugger->ir_block_mapping_offset);
 
     dynamic_array_destroy(&debugger->source_breakpoints);
 
@@ -2398,8 +2404,16 @@ void do_stack_walk(Debugger* debugger)
             Stack_Frame frame_info;
             frame_info.instruction_pointer = context.Rip;
 
-            Machine_Code_Address_To_Line_Result line_result = source_mapping_machine_instruction_address_to_upp_line(debugger, context.Rip);
-            if (line_result.unit == nullptr || line_result.line_index == -1 || line_result.function_slot == -1 || line_result.statement == nullptr)
+            Machine_Code_Address_To_Line_Result line_result;
+            bool success = source_mapping_machine_instruction_address_to_upp_line(debugger, context.Rip, line_result);
+            if (success)
+            {
+                frame_info.inside_upp_function = true;
+                frame_info.options.upp_function.line_index = line_result.upp_line_index;
+                frame_info.options.upp_function.unit = line_result.unit;
+                frame_info.options.upp_function.slot = line_result.function_slot;
+            }
+            else
             {
                 frame_info.inside_upp_function = false;
                 u64 out_distance = 0;
@@ -2410,13 +2424,6 @@ void do_stack_walk(Debugger* debugger)
                 }
                 frame_info.options.other.dll_name = out_dll_name;
                 frame_info.options.other.offset_from_symbol_start = out_distance;
-            }
-            else
-            {
-                frame_info.inside_upp_function = true;
-                frame_info.options.upp_function.line_index = line_result.line_index;
-                frame_info.options.upp_function.unit = line_result.unit;
-                frame_info.options.upp_function.slot = line_result.function_slot;
             }
             dynamic_array_push_back(&debugger->stack_frames, frame_info);
         }
@@ -2638,9 +2645,9 @@ void source_mapping_generate_statement_to_line_mapping_recursive(
     }
 }
 
-void source_mapping_generate_ir_instruction_mapping_recursive(
-    IR_Code_Block* block, Debugger* debugger, Hashtable<IR_Code_Block*, int>* code_block_start_offsets)
+void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* block, Debugger* debugger)
 {
+    auto code_block_start_offsets = &debugger->ir_block_mapping_offset;
     int offset_start = debugger->ir_instruction_mapping.size;
     if (!hashtable_insert_element(code_block_start_offsets, block, offset_start)) {
         return;
@@ -2665,16 +2672,23 @@ void source_mapping_generate_ir_instruction_mapping_recursive(
         switch (instr.type)
         {
         case IR_Instruction_Type::IF: {
-            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.true_branch, debugger, code_block_start_offsets);
-            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.false_branch, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.true_branch, debugger);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.if_instr.false_branch, debugger);
             break;
         }
         case IR_Instruction_Type::WHILE: {
-            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.while_instr.code, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.while_instr.code, debugger);
             break;
         }
         case IR_Instruction_Type::BLOCK: {
-            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.block, debugger, code_block_start_offsets);
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.block, debugger);
+            break;
+        }
+        case IR_Instruction_Type::SWITCH: {
+            for (int j = 0; j < instr.options.switch_instr.cases.size; j++) {
+                source_mapping_generate_ir_instruction_mapping_recursive(instr.options.switch_instr.cases[j].block, debugger);
+            }
+            source_mapping_generate_ir_instruction_mapping_recursive(instr.options.switch_instr.default_block, debugger);
             break;
         }
         }
@@ -2745,13 +2759,15 @@ void source_mapping_upp_line_to_machine_code_segments(
     }
 }
 
-Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address)
+bool source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address, Machine_Code_Address_To_Line_Result& out_result)
 {
-    Machine_Code_Address_To_Line_Result result;
-    result.unit = nullptr;
-    result.line_index = -1;
-    result.function_slot = -1;
-    result.statement = nullptr;
+    out_result.unit = nullptr;
+    out_result.c_line_index = -1;
+    out_result.ir_block = nullptr;
+    out_result.ir_instruction_index = -1;
+    out_result.upp_line_index = -1;
+    out_result.function_slot = -1;
+    out_result.statement = nullptr;
 
     int slot_index = -1;
     for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
@@ -2761,9 +2777,9 @@ Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_t
             break;
         }
     }
-    if (slot_index == -1) return result;
+    if (slot_index == -1) return false;
 
-    result.function_slot = slot_index;
+    out_result.function_slot = slot_index;
     auto& slot_mapping = debugger->function_slot_mapping[slot_index];
     int segment_index = -1;
 
@@ -2773,14 +2789,17 @@ Machine_Code_Address_To_Line_Result source_mapping_machine_instruction_address_t
         if (virtual_address >= c_line->range.start_virtual_address && virtual_address < c_line->range.end_virtual_address)
         {
             auto& upp_line = c_line->instruction_mapping->statement->line_mapping;
-            result.statement = c_line->instruction_mapping->statement->statement;
-            result.line_index = upp_line->line_number;
-            result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
-            return result;
+            out_result.c_line_index = c_line->c_line_index;
+            out_result.ir_block = c_line->instruction_mapping->code_block;
+            out_result.ir_instruction_index = c_line->instruction_mapping->instruction_index;
+            out_result.statement = c_line->instruction_mapping->statement->statement;
+            out_result.upp_line_index = upp_line->line_number;
+            out_result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
+            return true;
         }
     }
 
-    return result;
+    return false;
 }
 
 
@@ -3408,6 +3427,7 @@ bool debugger_start_process(
     Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data)
 {
     debugger_reset(debugger);
+    debugger->analysis_data = analysis_data;
 
     // Load pdb file
     debugger->pdb_info = PDB_Analysis::pdb_information_create();
@@ -3568,11 +3588,9 @@ bool debugger_start_process(
         }
 
         // Statement <-> IR_Instruction 
-        Hashtable<IR_Code_Block*, int> ir_block_mapping_offset = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-        SCOPE_EXIT(hashtable_destroy(&ir_block_mapping_offset));
         for (int i = 0; i < compiler.ir_generator->program->functions.size; i++) {
             auto ir_fn = compiler.ir_generator->program->functions[i];
-            source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger, &ir_block_mapping_offset);
+            source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger);
         }
         // Add connections Statement -> IR_Instruction
         for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)
@@ -3604,7 +3622,7 @@ bool debugger_start_process(
             line_map.range.end_virtual_address = 0;
             line_map.instruction_mapping = nullptr;
 
-            int* block_start_offset = hashtable_find_element(&ir_block_mapping_offset, line_info.ir_block);
+            int* block_start_offset = hashtable_find_element(&debugger->ir_block_mapping_offset, line_info.ir_block);
             if (block_start_offset != 0) {
                 line_map.instruction_mapping = &debugger->ir_instruction_mapping[*block_start_offset + line_info.instruction_index];
             }
@@ -3676,6 +3694,245 @@ Debugger_State debugger_get_state(Debugger* debugger) {
 }
 
 
+
+// Source debugger features
+u64 ir_instruction_reference_hash(IR_Instruction_Reference* ref) {
+    u64 hash = hash_pointer(ref->block);
+    return hash_combine(hash, hash_i32(&ref->index));
+}
+
+bool ir_instruction_reference_equals(IR_Instruction_Reference* a, IR_Instruction_Reference* b) {
+    return a->index == b->index && a->block == b->block;
+}
+
+// Returns true if this code path always 'terminates' with another ir-instruction
+bool debugger_find_next_ir_instruction_with_different_statement(
+    Debugger* debugger, 
+    IR_Code_Block* block, 
+    int instruction_index,
+    Dynamic_Array<u64>* next_statement_addresses,
+    Statement_Mapping* initial_statement,
+    Hashset<IR_Instruction_Reference>* already_visited)
+{
+    if (block->instructions.size == 0) return false;
+
+    // Loop over blocks
+    while (true)
+    {
+        int* block_start_offset = hashtable_find_element(&debugger->ir_block_mapping_offset, block);
+        if (block_start_offset == 0) {
+            return false;
+        }
+
+        bool found_goto = false;
+        // Handle all instructions in scope
+        for (; instruction_index < block->instructions.size; instruction_index += 1)
+        {
+            // Check if already visited
+            {
+                IR_Instruction_Reference ref;
+                ref.block = block;
+                ref.index = instruction_index;
+                bool insert_successfull = hashset_insert_element(already_visited, ref);
+                if (!insert_successfull) return false;
+            }
+
+            // Check if instruction has different statement and assembly mapping exists (E.g. is a valid breakpoint for step over)
+            {
+                auto& ir_mapping = debugger->ir_instruction_mapping[*block_start_offset + instruction_index];
+                Statement_Mapping* statement_mapping = ir_mapping.statement;
+                if (statement_mapping != 0) 
+                {
+                    if (statement_mapping != initial_statement) 
+                    {
+                        bool assembly_mapping_exists = false;
+                        for (int i = 0; i < ir_mapping.c_lines.size; i++) {
+                            auto range = ir_mapping.c_lines[i]->range;
+                            if (range.start_virtual_address != 0 && range.end_virtual_address != 0 && range.start_virtual_address != range.end_virtual_address) {
+                                dynamic_array_push_back(next_statement_addresses, range.start_virtual_address);
+                                assembly_mapping_exists = true;
+                                break;
+                            }
+                        }
+                        if (assembly_mapping_exists) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Handle instructions which branch into other instructions
+            auto& instruction = block->instructions[instruction_index];
+            switch (instruction.type)
+            {
+            case IR_Instruction_Type::BLOCK: 
+            {
+                bool terminates = debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.block, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                if (terminates) {
+                    return true;
+                }
+                break;
+            }
+            case IR_Instruction_Type::FUNCTION_CALL: {
+                // Nothing for now...
+                break;
+            }
+            case IR_Instruction_Type::GOTO: {
+                found_goto = true;
+                IR_Instruction_Reference goto_ref = ir_generator.label_positions[instruction.options.label_index];
+                block = goto_ref.block;
+                instruction_index = goto_ref.index;
+                break;
+            }
+            case IR_Instruction_Type::IF: 
+            {
+                bool true_path_terminates = debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.if_instr.true_branch, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                bool false_path_terminates = debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.if_instr.false_branch, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                if (true_path_terminates && false_path_terminates) {
+                    return true;
+                }
+                break;
+            }
+            case IR_Instruction_Type::WHILE:
+            {
+                bool terminates = debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.while_instr.condition_code, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                if (terminates) {
+                    return true;
+                }
+                debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.while_instr.code, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                break;
+            }
+            case IR_Instruction_Type::RETURN: {
+                return true;
+            }
+            case IR_Instruction_Type::SWITCH:
+            {
+                bool all_paths_terminate = true;
+                for (int i = 0; i < instruction.options.switch_instr.cases.size; i++) 
+                {
+                    auto& switch_case = instruction.options.switch_instr.cases[i];
+                    bool path_terminates = debugger_find_next_ir_instruction_with_different_statement(
+                        debugger, switch_case.block, 0, next_statement_addresses, initial_statement, already_visited
+                    );
+                    if (!path_terminates) {
+                        all_paths_terminate = false;
+                    }
+                }
+                bool default_terminates = debugger_find_next_ir_instruction_with_different_statement(
+                    debugger, instruction.options.switch_instr.default_block, 0, next_statement_addresses, initial_statement, already_visited
+                );
+                if (!default_terminates) {
+                    all_paths_terminate = false;
+                }
+
+                if (all_paths_terminate) {
+                    return true;
+                }
+                break;
+            }
+            default: break;
+            }
+
+            if (found_goto) {
+                break;
+            }
+        }
+
+        // On goto continue from goto
+        if (found_goto) {
+            continue;
+        }
+
+        // Move up one scope, and try to find termination there
+        if (block->parent_block == 0) {
+            return true; // Implicit return at end of function
+        }
+        instruction_index = block->parent_instruction_index;
+        block = block->parent_block;
+        auto& instr = block->instructions[instruction_index];
+        if (instr.type != IR_Instruction_Type::WHILE) {
+            instruction_index += 1; // Only when existing a while block do we want to not skip the instruction
+        }
+    }
+}
+
+void debugger_find_next_ir_instructions(
+    Debugger* debugger, IR_Code_Block* ir_block, int instruction_index, Dynamic_Array<u64>* next_statement_addresses)
+{
+    Hashset<IR_Instruction_Reference> visited = hashset_create_empty<IR_Instruction_Reference>(
+        16, ir_instruction_reference_hash, ir_instruction_reference_equals
+    );
+    SCOPE_EXIT(hashset_destroy(&visited));
+
+    // Check if instruction has statement_mapping
+    int* block_offset_opt = hashtable_find_element(&debugger->ir_block_mapping_offset, ir_block);
+    if (block_offset_opt == nullptr) {
+        return;
+    }
+    Statement_Mapping* statement_mapping = debugger->ir_instruction_mapping[*block_offset_opt + instruction_index].statement;
+    if (statement_mapping == nullptr) {
+        return;
+    }
+
+    debugger_find_next_ir_instruction_with_different_statement(debugger, ir_block, instruction_index, next_statement_addresses, statement_mapping, &visited);
+    return;
+}
+
+void debugger_continue_with_step_over_until_next_event(Debugger* debugger)
+{
+    if (debugger->state.process_state != Debug_Process_State::HALTED) return;
+
+    Array<Stack_Frame> stack_frames = debugger_get_stack_frames(debugger);
+    if (stack_frames.size == 0) {
+        debugger_resume_until_next_halt_or_exit(debugger);
+        return;
+    }
+    u64 current_rip = stack_frames[0].instruction_pointer;
+
+    Machine_Code_Address_To_Line_Result line_result;
+    bool success = source_mapping_machine_instruction_address_to_upp_line(debugger, current_rip, line_result);
+    if (!success) {
+        debugger_resume_until_next_halt_or_exit(debugger);
+        return;
+    }
+
+    Dynamic_Array<u64> next_statement_addresses = dynamic_array_create<u64>();
+    SCOPE_EXIT(dynamic_array_destroy(&next_statement_addresses));
+    debugger_find_next_ir_instructions(debugger, line_result.ir_block, line_result.ir_instruction_index, &next_statement_addresses);
+
+    // Set breakpoints on next instruction and return address
+    u64 return_address = 0;
+    if (stack_frames.size > 1) {
+        return_address = stack_frames[1].instruction_pointer;
+        dynamic_array_push_back(&next_statement_addresses, return_address);
+    }
+
+    for (int i = 0; i < next_statement_addresses.size; i++) {
+        u64 address = next_statement_addresses[i];
+        debugger_add_address_breakpoint(debugger, address);
+    }
+
+    // Continue after breakpoints are set
+    debugger_resume_until_next_halt_or_exit(debugger);
+
+    if (debugger->state.process_state == Debug_Process_State::HALTED) {
+        // Remove all breakpoints again
+        for (int i = 0; i < next_statement_addresses.size; i++) {
+            u64 address = next_statement_addresses[i];
+            debugger_remove_address_breakpoint(debugger, address);
+        }
+    }
+}
 
 void debugger_wait_for_console_command(Debugger* debugger)
 {
