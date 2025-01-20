@@ -1903,8 +1903,6 @@ struct Debugger
     // Process Infos
     HANDLE process_handle; // From CreateProcessA
     HANDLE main_thread_handle; // From CreateProcessA
-    HANDLE start_event_process_handle; // From Create_Process_Debug_Event
-    HANDLE start_event_thread_handle; // From Create_Process_Debug_Event (This is also included in thread_info)
 
     DWORD  main_thread_id; // From CreateProcessA
     DWORD  process_id; // From CreateProcessA
@@ -1952,6 +1950,8 @@ Debugger* debugger_create()
     result->pe_infos = dynamic_array_create<PE_Analysis::PE_Info>();
     result->exe_pe_info_index = -1;
     result->pdb_info = nullptr;
+    result->main_thread_handle = nullptr;
+    result->process_handle = nullptr;
 
     result->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
     result->stack_frames = dynamic_array_create<Stack_Frame>();
@@ -1973,7 +1973,7 @@ Debugger* debugger_create()
     return result;
 }
 
-void debugger_reset(Debugger* debugger, Debugger_Reset_Type reset_type)
+void debugger_reset(Debugger* debugger)
 {
     // Terminate running process if any
     if (debugger->state.process_state != Debug_Process_State::NO_ACTIVE_PROCESS)
@@ -1983,54 +1983,23 @@ void debugger_reset(Debugger* debugger, Debugger_Reset_Type reset_type)
             debugger->state.process_state = Debug_Process_State::RUNNING;
         }
 
-        // Close all open handles
-        for (int i = 0; i < debugger->threads.size; i++) {
-            auto& info = debugger->threads[i];
-            if (info.handle != nullptr) {
-                CloseHandle(info.handle);
-            }
-            info.handle = nullptr;
-        }
-        if (debugger->start_event_process_handle != nullptr) {
-            CloseHandle(debugger->start_event_process_handle);
-            debugger->start_event_process_handle = nullptr;
-        }
-
-        switch (reset_type)
-        {
-        case Debugger_Reset_Type::DETACH_FROM_PROCESS: {
-            DebugActiveProcessStop(debugger->process_id);
-            break;
-        }
-        case Debugger_Reset_Type::TERMINATE_PROCESS: {
-            TerminateProcess(debugger->process_handle, 69);
-            DebugActiveProcessStop(debugger->process_id);
-            break;
-        }
-        case Debugger_Reset_Type::PROCESS_EXIT_RECEIVED: {
-            DebugActiveProcessStop(debugger->process_id);
-            break;
-        }
-        default: panic("");
-        }
-
-        // Close process handle
-        if (debugger->main_thread_handle != nullptr) {
-            CloseHandle(debugger->main_thread_handle);
-            debugger->main_thread_handle = nullptr;
-        }
-        if (debugger->process_handle != nullptr) {
-            CloseHandle(debugger->process_handle);
-            debugger->process_handle = nullptr;
-        }
+        // Note: From testing we know that DebugActiveProcessStop closes all handles which were sent through Debug-Messages
+        TerminateProcess(debugger->process_handle, 69);
+        DebugActiveProcessStop(debugger->process_id);
 
         debugger->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
     }
 
-    debugger->process_handle = nullptr;
-    debugger->main_thread_handle = nullptr;
-    debugger->start_event_process_handle = nullptr;
-    debugger->start_event_thread_handle = nullptr;
+    // Close remaining open handles
+    // Note: These are handles from CreateProcessA, so we still need to manually close these
+    if (debugger->main_thread_handle != nullptr) {
+        CloseHandle(debugger->main_thread_handle);
+        debugger->main_thread_handle = nullptr;
+    }
+    if (debugger->process_handle != nullptr) {
+        CloseHandle(debugger->process_handle);
+        debugger->process_handle = nullptr;
+    }
 
     debugger->process_id = -1;
     debugger->main_thread_id = -1;
@@ -2936,9 +2905,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
         CloseHandle(create_info.hFile); // Close handle to image file, as win32 doc describes, and we don't need the file info
         if (DEBUG_OUTPUT_ENABLED) { printf("Create_Process\n"); }
 
-        // Store handles
-        debugger->start_event_process_handle = create_info.hProcess;
-        debugger->start_event_thread_handle = create_info.hThread;
+        // Note: Since we use CreateProcessA, we don't need to store the handles hProcess and hThread from this event
         if (debug_event.dwProcessId != debugger->process_id) {
             printf("WARNING: Create_Process_Debug_Event process id does not match CreateProcessA process id\n");
         }
@@ -2976,19 +2943,10 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 
         // Note: ContinueDebugEvent closes the process handle and the thread handle received through the create_process_debug_event
         ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE);
-        debugger->state.process_state = Debug_Process_State::RUNNING;
+        debugger->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
         debugger->last_debug_event_requires_handling = false;
 
-        for (int i = 0; i < debugger->threads.size; i++) {
-            if (debugger->threads[i].handle == debugger->start_event_thread_handle) {
-                dynamic_array_swap_remove(&debugger->threads, i);
-                break;
-            }
-        }
-        debugger->start_event_process_handle = nullptr;
-        debugger->start_event_thread_handle = nullptr;
-
-        debugger_reset(debugger, Debugger_Reset_Type::PROCESS_EXIT_RECEIVED);
+        debugger_reset(debugger);
         if (DEBUG_OUTPUT_ENABLED) { printf("Exit_Process\n"); }
         break;
     }
@@ -3086,11 +3044,13 @@ void debugger_handle_last_debug_event(Debugger* debugger)
         case EXCEPTION_BREAKPOINT:  
         case EXCEPTION_SINGLE_STEP: 
         {
+            // Note: Hardware-breakpoints trigger the Single_Step Exception, while 'software' breakpoints cause the Breakpoint exception
             exception_name = code == EXCEPTION_SINGLE_STEP ? "SINGLE_STEP" : "BREAKPOINT";
             debugger->continue_status = DBG_EXCEPTION_HANDLED; // Always treat breakpoints and steps as handled exceptions
 
             // Get Thread-Context
             u64 instruction_pointer = 0;
+            bool hardware_breakpoint_hit = false;
             for (int i = 0; i < debugger->threads.size; i++) {
                 auto& thread_info = debugger->threads[i];
                 if (thread_info.id == debug_event.dwThreadId) {
@@ -3098,9 +3058,13 @@ void debugger_handle_last_debug_event(Debugger* debugger)
                     thread_context.ContextFlags = CONTEXT_ALL;
                     if (GetThreadContext(thread_info.handle, &thread_context)) {
                         instruction_pointer = thread_context.Rip;
+                        hardware_breakpoint_hit = (thread_context.Dr6 & 0b1111) != 0;
                     }
                     break;
                 }
+            }
+            if (hardware_breakpoint_hit) {
+                exception_name = "HARDWARE_BREAKPOINT";
             }
 
             // Check if we hit any of our breakpoints, otherwise it's a debug_break
@@ -3109,7 +3073,6 @@ void debugger_handle_last_debug_event(Debugger* debugger)
                 auto& bp = debugger->address_breakpoints[i];
                 if (instruction_pointer == bp.address) {
                     debugger->state.halt_type = Halt_Type::BREAKPOINT_HIT;
-                    // bool hardware_breakpoint_flag_set = (thread_context.Dr6 & 0b1111) != 0;
                     break;
                 }
             }
@@ -3275,7 +3238,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
         if (debugger->state.process_state != Debug_Process_State::HALTED) return;
     }
 
-    // Remove all software breakpoints to remove
+    // Remove all software breakpoints which are queued to be removed
     for (int i = 0; i < debugger->address_breakpoints.size; i++)
     {
         auto& bp = debugger->address_breakpoints[i];
@@ -3291,7 +3254,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
         i = i - 1;
     }
 
-    // Single-Step all threads which are currently on breakpoints
+    // Single-Step all threads which are currently on software breakpoints
     for (int i = 0; i < debugger->threads.size; i++)
     {
         auto& thread_info = debugger->threads[i];
@@ -3306,8 +3269,9 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
         bool on_breakpoint = false;
         for (int i = 0; i < debugger->address_breakpoints.size; i++) {
             auto& bp = debugger->address_breakpoints[i];
+            if (!bp.is_software_breakpoint) continue;
             if (bp.address == thread_context.Rip) {
-                // Note: In theory this the single step could create/delete new threads, which would throw off the current loop
+                // Note: In theory the single step could create/delete new threads, which would throw off the current loop
                 debugger_single_step_thread(debugger, thread_info.handle);
                 if (debugger->state.process_state != Debug_Process_State::HALTED) return;
                 break;
@@ -3327,6 +3291,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
     }
 
     // Set hardware breakpoints for all threads (Set debug registers in thread-context)
+    // Also set resume flag if thread is on hardware breakpoint
     for (int i = 0; i < debugger->threads.size; i++)
     {
         auto& thread_info = debugger->threads[i];
@@ -3349,6 +3314,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
         };
 
         // Transfer hardware-breakpoints into ThreadContext
+        bool set_resume_flag = false;
         for (int i = 0; i < HARDWARE_BREAKPOINT_COUNT; i++)
         {
             auto& bp = debugger->hardware_breakpoints[i];
@@ -3359,6 +3325,10 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
             case 2: thread_context.Dr2 = bp.address; break;
             case 3: thread_context.Dr3 = bp.address; break;
             default: panic("");
+            }
+
+            if (bp.enabled && thread_context.Rip == bp.address) {
+                set_resume_flag = true;
             }
 
             int length_bits = bp.length_bits;
@@ -3384,7 +3354,13 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
 
         // Update thread context
         thread_context.ContextFlags = CONTEXT_ALL;
-        // thread_context.EFlags = thread_context.EFlags & (~(u32)X64_Flags::RESUME);
+        if (set_resume_flag) {
+            thread_context.EFlags = thread_context.EFlags | (u32)X64_Flags::RESUME;
+        }
+        else {
+            thread_context.EFlags = thread_context.EFlags & (~(u32)X64_Flags::RESUME);
+        }
+
         if (!SetThreadContext(thread_info.handle, &thread_context)) {
             // Maybe some error logging at some point?
             printf("Set thread context failed?\n");

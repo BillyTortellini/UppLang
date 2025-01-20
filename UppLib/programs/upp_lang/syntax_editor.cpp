@@ -5970,6 +5970,9 @@ void syntax_editor_update(bool& animations_running)
             auto& tab = editor.tabs[editor.open_tab_index];
             debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.analysis_data);
         }
+        else if (syntax_editor.input->key_pressed[(int)Key_Code::F6]) {
+            debugger_reset(editor.debugger);
+        }
         return;
     }
 

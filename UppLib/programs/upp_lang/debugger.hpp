@@ -97,13 +97,6 @@ struct Machine_Code_Address_To_Line_Result
     AST::Statement* statement;
 };
 
-enum class Debugger_Reset_Type
-{
-    TERMINATE_PROCESS,
-    DETACH_FROM_PROCESS,
-    PROCESS_EXIT_RECEIVED
-};
-
 struct Stack_Frame
 {
     u64 instruction_pointer;
@@ -155,7 +148,7 @@ struct Source_Breakpoint
 
 Debugger* debugger_create();
 void debugger_destroy(Debugger* debugger);
-void debugger_reset(Debugger* debugger, Debugger_Reset_Type reset_type = Debugger_Reset_Type::TERMINATE_PROCESS);
+void debugger_reset(Debugger* debugger);
 
 bool debugger_start_process(
     Debugger* debugger, const char* exe_filename, const char* pdb_filename, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data

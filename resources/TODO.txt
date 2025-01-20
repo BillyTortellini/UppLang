@@ -1,20 +1,5 @@
 
 TODO:
- * Some problem with software breakpoints
- * I guess hardware breakpoints cause a STEP EXCEPTION, so maybe handle/print this correctly
-
-Try to do correct shutdown...
-    Or maybe just don't care too much about handles, and just fugg it...
-
-Things in Debugger I want to fix:
- * Clean stepping
- * Clean breakpoint handling (On continue, step over all breakpoints, then continue normally)
- * Correct handling of Handles (Threads, Process), and correct shutdown
- * Correct Debugger start sequence (Receive and handling of first 'prolog' debug messages in order)
-
-Implementation Plan:
- * Rework stepping in current debugger (e.g. Suspend all threads, and do the correct thing...)
-
 TODO:
   * Step into, step over and step out of...
   Generally speaking, some ideas:
@@ -32,6 +17,8 @@ TODO:
 
 
 DONE:
+ - Cleaned up Debugger: Correct shutdown with handles, clean stepping, clean breakpoints, correct startup-sequence handling
+ - Correct shutdown for debugger
  - Implement software breakpoints
  - Merge source-debugger and debugger
 
