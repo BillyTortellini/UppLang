@@ -65,3 +65,4 @@ Optional<i64> string_parse_i64_hex(String string);
 Array<String> string_split(String string, char c); 
 void string_split_destroy(Array<String> parts);
 bool string_fill_from_line(String* to_fill);
+String string_create_filename_from_path_static(String* filepath);

@@ -22,7 +22,6 @@ const bool DEBUG_OUTPUT_ENABLED = true;
 
 // Prototypes
 u64 debugger_find_address_of_function(Debugger* debugger, String name);
-bool source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address, Machine_Code_Address_To_Line_Result& out_result);
 
 
 
@@ -156,7 +155,7 @@ namespace PDB_Analysis
         PDB_Location_Static location;
         u64 length; // Size in bytes
         Dynamic_Array<PDB_Variable_Info> variables;
-        int function_index;
+        int source_info_index;
     };
 
     struct PDB_Line_Info
@@ -436,6 +435,49 @@ namespace PDB_Analysis
         return loc;
     }
 
+    bool x64_register_value_location_get_value_from_context(X64_Register_Value_Location location, CONTEXT context, void* write_to, int read_size)
+    {
+        if (location.size < read_size) return false;
+        void* read_from = nullptr;
+        int register_size = 8;
+        switch (location.type)
+        {
+        case X64_Register_Type::RIP: {
+            read_from = &context.Rip;
+            break;
+        }
+        case X64_Register_Type::INTEGER: {
+            assert(location.register_index >= 0 && location.register_index < 16, "");
+            read_from = &((u64*)&context.Rax)[location.register_index];
+            break;
+        }
+        case X64_Register_Type::XMM: {
+            assert(location.register_index >= 0 && location.register_index < 16, "");
+            read_from = &((M128A*)&context.Xmm0)[location.register_index];
+            register_size = 16;
+            break;
+        }
+        case X64_Register_Type::DEBUG_REG: {
+            assert(location.register_index >= 0 && location.register_index < 6, "");
+            read_from = &((u64*)&context.Dr0)[location.register_index];
+            break;
+        }
+        case X64_Register_Type::FLAGS: {
+            read_from = &context.EFlags;
+            register_size = 4;
+            break;
+        }
+        case X64_Register_Type::MMX: 
+        case X64_Register_Type::OTHER: return false;
+        default: panic(""); return false;
+        }
+
+        // Note: this depens on little vs Big-endianness, and I just assume little endian for now, as the debugger is only for x64 windows
+        u8* read_start = &((u8*)read_from)[location.offset];
+        memory_copy(write_to, read_start, read_size);
+        return true;
+    }
+
     PDB_Location pdb_symbol_get_location(IDiaSymbol* symbol)
     {
         PDB_Location location;
@@ -555,7 +597,7 @@ namespace PDB_Analysis
     }
 
     void pdb_symbol_analyse_recursive(
-        IDiaSymbol* symbol, PDB_Information* info, bool is_main_compiland, int source_info_index, int block_index, IDiaSession* session)
+        IDiaSymbol* symbol, PDB_Information* info, bool inside_main_compiland, int source_info_index, int block_index, IDiaSession* session, const char* main_compiland_name)
     {
         DWORD tag = 0;
         if (symbol->get_symTag(&tag) != S_OK) {
@@ -564,7 +606,85 @@ namespace PDB_Analysis
 
         switch (tag)
         {
-            // Interesting Symbols:
+        // Interesting Symbols:
+        case SymTagExe: 
+        {
+            // Loop over all compilands
+            {
+                IDiaEnumSymbols* compiland_iter = NULL;
+                if (FAILED(symbol->findChildren(SymTagCompiland, NULL, nsNone, &compiland_iter))) {
+                    printf("Enumerating compilands failed!\n");
+                    return;
+                }
+                SCOPE_EXIT(if (compiland_iter != NULL) { compiland_iter->Release(); compiland_iter = NULL; });
+
+                ULONG celt = 0;
+                IDiaSymbol* compiland = NULL;
+                while (compiland_iter->Next(1, &compiland, &celt) == S_OK && celt == 1)
+                {
+                    pdb_symbol_analyse_recursive(compiland, info, false, -1, -1, session, main_compiland_name);
+                    compiland->Release();
+                }
+            }
+
+            // Loop over all data (Because Globals are stored per EXE, not per compiland)
+            {
+                IDiaEnumSymbols* data_iter = NULL;
+                if (FAILED(symbol->findChildren(SymTagData, NULL, nsNone, &data_iter))) {
+                    printf("Enumerating data failed!\n");
+                    return;
+                }
+                SCOPE_EXIT(if (data_iter != NULL) { data_iter->Release(); data_iter = NULL; });
+
+                ULONG celt = 0;
+                IDiaSymbol* data_symbol = NULL;
+                while (data_iter->Next(1, &data_symbol, &celt) == S_OK && celt == 1)
+                {
+                    pdb_symbol_analyse_recursive(data_symbol, info, false, -1, -1, session, main_compiland_name);
+                    data_symbol->Release();
+                }
+            }
+
+            // Note: We ignore other members of the exe for now...
+
+            break;
+        }
+        case SymTagCompiland:
+        {
+            bool is_main_compiland = false;
+            BSTR wide_compiland_string;
+            if (symbol->get_name(&wide_compiland_string) == S_OK)
+            {
+                String tmp = string_create();
+                SCOPE_EXIT(string_destroy(&tmp));
+                wide_string_to_utf8(wide_compiland_string, &tmp);
+                SysFreeString(wide_compiland_string);
+
+                string_replace_character(&tmp, '\\', '/');
+                //printf("Compiland name: \"%s\"\n", string_buffer.characters);
+                if (string_equals_cstring(&tmp, main_compiland_name)) {
+                    is_main_compiland = true;
+                }
+            }
+
+
+            // Recursively call all child items
+            IDiaEnumSymbols* child_iter = NULL;
+            if (FAILED(symbol->findChildren(SymTagNull, NULL, nsNone, &child_iter))) {
+                printf("Enumerating children of compiland failed!\n");
+                return;
+            }
+            SCOPE_EXIT(if (child_iter != NULL) { child_iter->Release(); child_iter = NULL; });
+
+            ULONG celt = 0;
+            IDiaSymbol* child_symbol = NULL;
+            while (child_iter->Next(1, &child_symbol, &celt) == S_OK && celt == 1)
+            {
+                pdb_symbol_analyse_recursive(child_symbol, info, is_main_compiland, -1, -1, session, main_compiland_name);
+                child_symbol->Release();
+            }
+            break;
+        }
         case SymTagFunction:
         {
             PDB_Location location = pdb_symbol_get_location(symbol);
@@ -585,13 +705,13 @@ namespace PDB_Analysis
                 fn.length = length;
                 fn.location = location.options.static_loc;
                 fn.name = string_create();
-                fn.source_info_index = -1;
+                fn.source_info_index = inside_main_compiland ? info->source_infos.size : -1;
                 pdb_symbol_get_name(symbol, &fn.name);
                 function_index = info->functions.size;
                 dynamic_array_push_back(&info->functions, fn);
             }
 
-            if (!is_main_compiland) {
+            if (!inside_main_compiland) {
                 break;
             }
 
@@ -606,6 +726,17 @@ namespace PDB_Analysis
 
             int added_source_info_index = info->source_infos.size;
             dynamic_array_push_back(&info->source_infos, source_info);
+
+            // Add default block for function (Note: The Dia-Interface does not report the normal function-scope as a block)
+            PDB_Code_Block_Info block_info;
+            block_info.variables = dynamic_array_create<PDB_Variable_Info>();
+            block_info.source_info_index = added_source_info_index;
+            block_info.length = info->functions[function_index].length;
+            block_info.location = info->functions[function_index].location;
+
+            int added_block_index = info->block_infos.size;
+            dynamic_array_push_back(&info->block_infos, block_info);
+            dynamic_array_push_back(&info->source_infos[added_source_info_index].child_block_indices, added_block_index);
 
             // Query line-infos
             auto& function_info = info->functions[function_index];
@@ -686,7 +817,7 @@ namespace PDB_Analysis
                 IDiaSymbol* child = NULL;
                 ULONG celt = 0;
                 while (SUCCEEDED(child_iterator->Next(1, &child, &celt)) && (celt == 1)) {
-                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, added_source_info_index, -1, session);
+                    pdb_symbol_analyse_recursive(child, info, inside_main_compiland, added_source_info_index, added_block_index, session, main_compiland_name);
                     child->Release();
                 }
                 child_iterator->Release();
@@ -697,7 +828,7 @@ namespace PDB_Analysis
         case SymTagBlock:
         {
             // If not inside a function, return (Not sure if this happens)
-            if (source_info_index == -1 || !is_main_compiland) {
+            if (source_info_index == -1 || !inside_main_compiland) {
                 break;
             }
             PDB_Location location = pdb_symbol_get_location(symbol);
@@ -712,12 +843,13 @@ namespace PDB_Analysis
 
             PDB_Code_Block_Info block_info;
             block_info.variables = dynamic_array_create<PDB_Variable_Info>();
-            block_info.function_index = source_info_index;
-            block_info.length = source_info_index;
+            block_info.source_info_index = source_info_index;
+            block_info.length = length;
             block_info.location = location.options.static_loc;
 
             int added_block_index = info->block_infos.size;
             dynamic_array_push_back(&info->block_infos, block_info);
+            dynamic_array_push_back(&info->source_infos[source_info_index].child_block_indices, added_block_index);
 
             // Recursively call all child items
             IDiaEnumSymbols* child_iterator = NULL;
@@ -726,7 +858,7 @@ namespace PDB_Analysis
                 IDiaSymbol* child = NULL;
                 ULONG celt = 0;
                 while (SUCCEEDED(child_iterator->Next(1, &child, &celt)) && (celt == 1)) {
-                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, source_info_index, added_block_index, session);
+                    pdb_symbol_analyse_recursive(child, info, inside_main_compiland, source_info_index, added_block_index, session, main_compiland_name);
                     child->Release();
                 }
                 child_iterator->Release();
@@ -734,10 +866,7 @@ namespace PDB_Analysis
         }
         case SymTagData: // Variables, parameters, globals
         {
-            if (!is_main_compiland) { // Question if globals are stored per compiland or per exe...
-                break;
-            }
-
+            // Note: Globals are stored per EXE, so we cannot use main-compiland information
             DWORD data_kind;
             if (symbol->get_dataKind(&data_kind) != S_OK) {
                 break;
@@ -747,7 +876,7 @@ namespace PDB_Analysis
             switch (data_kind)
             {
             case DataIsLocal: {
-                if (block_index == -1) {
+                if (block_index == -1 || !inside_main_compiland) {
                     break;
                 }
                 variable_info.name = string_create();
@@ -758,7 +887,7 @@ namespace PDB_Analysis
             }
             case DataIsParam:
             {
-                if (source_info_index == -1) {
+                if (source_info_index == -1 || !inside_main_compiland) {
                     break;
                 }
                 variable_info.name = string_create();
@@ -768,39 +897,22 @@ namespace PDB_Analysis
                 break;
             }
 
-            case DataIsStaticLocal:
+            case DataIsConstant: // Global constants should also be considered
             case DataIsFileStatic: // File scoped global
-            case DataIsGlobal: {
+            case DataIsGlobal: 
+            {
                 variable_info.name = string_create();
                 pdb_symbol_get_name(symbol, &variable_info.name);
                 dynamic_array_push_back(&info->global_infos, variable_info);
                 break;
             }
 
-            case DataIsConstant:
+            case DataIsStaticLocal:
             case DataIsUnknown:
             case DataIsObjectPtr: // this pointer
             case DataIsMember:
             case DataIsStaticMember:
             default: break;
-            }
-            break;
-        }
-
-        // Maybe compilands (obj files) can be hierarchical
-        case SymTagCompiland:
-        {
-            // Recursively call all child items
-            IDiaEnumSymbols* child_iterator = NULL;
-            if (SUCCEEDED(symbol->findChildren(SymTagNull, NULL, nsNone, &child_iterator)))
-            {
-                IDiaSymbol* child = NULL;
-                ULONG celt = 0;
-                while (SUCCEEDED(child_iterator->Next(1, &child, &celt)) && (celt == 1)) {
-                    pdb_symbol_analyse_recursive(child, info, is_main_compiland, -1, -1, session);
-                    child->Release();
-                }
-                child_iterator->Release();
             }
             break;
         }
@@ -839,8 +951,8 @@ namespace PDB_Analysis
             break;
         }
 
+        case SymTagPublicSymbol: break;
         case SymTagLabel: break;
-        case SymTagExe: break;
         case SymTagCompilandDetails: break;
         case SymTagCompilandEnv: break;
 
@@ -863,7 +975,6 @@ namespace PDB_Analysis
         case SymTagMatrixType: break;
 
             // Maybe interesting
-        case SymTagPublicSymbol: break;
         case SymTagNull: break;
         case SymTagCallSite: break;
         case SymTagInlineSite: break;
@@ -884,7 +995,140 @@ namespace PDB_Analysis
         case SymTagHeapAllocationSite: break;
         case SymTagCoffGroup: break;
         case SymTagInlinee: break;
+        default: {
+            printf("Found invalid symtag of child symbol\n");
+            break;
+        }
+        }
+    }
+
+    void symbol_tree_append_to_string_recursive(String* string, IDiaSymbol* symbol, int indentation, IDiaSession* session, Hashset<u64>* already_visited)
+    {
+        for (int i = 0; i < indentation; i++) {
+            string_append_formated(string, "    ");
+        }
+
+        DWORD tag = 0;
+        if (symbol->get_symTag(&tag) != S_OK) {
+            string_append_formated(string, "GetSymTag failed!\n");
+            return;
+        }
+
+        bool append_name = false;
+        switch (tag)
+        {
+        case SymTagFunction: string_append_formated(string, "Function"); append_name = true; break;
+        case SymTagBlock: string_append_formated(string, "Block"); break;
+        case SymTagData: // Variables, parameters, globals
+        {
+            string_append_formated(string, "SymTagData ");
+            DWORD data_kind;
+            if (symbol->get_dataKind(&data_kind) != S_OK) {
+                string_append_formated(string, "Error with retrieving datakind");
+                break;
+            }
+
+            switch (data_kind)
+            {
+            case DataIsLocal:        string_append_formated(string, "Local-Variable"); append_name = true; break;
+            case DataIsParam:        string_append_formated(string, "Parameter"); append_name = true; break;
+            case DataIsStaticLocal:  string_append_formated(string, "Static_Local"); append_name = true; break;
+            case DataIsFileStatic:   string_append_formated(string, "File_Static"); append_name = true; break;
+            case DataIsGlobal:       string_append_formated(string, "Global"); append_name = true; break;
+            case DataIsConstant:     string_append_formated(string, "Constant"); append_name = true; break;
+            case DataIsMember:       string_append_formated(string, "Member"); append_name = true; break;
+            case DataIsStaticMember: string_append_formated(string, "StaticMember"); append_name = true; break;
+            case DataIsUnknown:      string_append_formated(string, "Unknown"); break;
+            case DataIsObjectPtr:    string_append_formated(string, "ObjectPtr(this)"); break;
+            default: break;
+            }
+            break;
+        }
+
+        // Maybe compilands (obj files) can be hierarchical
+        case SymTagCompiland:      string_append_formated(string, "Compiland"); append_name = true; break;
+        case SymTagPublicSymbol: string_append_formated(string, "SymTagPublicSymbol"); append_name = true; break;
+        case SymTagLabel: string_append_formated(string, "SymTagLabel"); append_name = true; break;
+        case SymTagExe: string_append_formated(string, "SymTagExe"); append_name = true; break;
+        case SymTagFuncDebugStart: string_append_formated(string, "FunctionDebugStart"); break;
+        case SymTagFuncDebugEnd: string_append_formated(string, "SymTagFuncDebugEnd"); break;
+        case SymTagCompilandDetails: string_append_formated(string, "SymTagCompilandDetails"); break;
+        case SymTagCompilandEnv: string_append_formated(string, "SymTagCompilandEnv"); break;
+        case SymTagUDT: string_append_formated(string, "UDT"); append_name = true; break;
+        case SymTagEnum: string_append_formated(string, "SymTagEnum"); append_name = true; break;
+        case SymTagTypedef: string_append_formated(string, "SymTagTypedef"); break;
+        case SymTagBaseClass: string_append_formated(string, "SymTagBaseClass"); break;
+        case SymTagFunctionArgType: string_append_formated(string, "SymTagFunctionArgType"); break;
+        case SymTagFunctionType: string_append_formated(string, "SymTagFunctionType"); break;
+        case SymTagPointerType: string_append_formated(string, "SymTagPointerType"); break;
+        case SymTagArrayType: string_append_formated(string, "SymTagArrayType"); break;
+        case SymTagBaseType: string_append_formated(string, "SymTagBaseType"); break;
+        case SymTagFriend: string_append_formated(string, "SymTagFriend"); break;
+        case SymTagCustomType: string_append_formated(string, "SymTagCustomType"); break;
+        case SymTagManagedType: string_append_formated(string, "SymTagManagedType"); break;
+        case SymTagVectorType: string_append_formated(string, "SymTagVectorType"); break;
+        case SymTagMatrixType: string_append_formated(string, "SymTagMatrixType"); break;
+        case SymTagNull: string_append_formated(string, "SymTagNull"); break;
+        case SymTagCallSite: string_append_formated(string, "SymTagCallSite"); break;
+        case SymTagInlineSite: string_append_formated(string, "SymTagInlineSite"); break;
+        case SymTagAnnotation: string_append_formated(string, "SymTagAnnotation"); append_name = true; break;
+        case SymTagUsingNamespace: string_append_formated(string, "SymTagUsingNamespace"); break;
+        case SymTagVTableShape: string_append_formated(string, "SymTagVTableShape"); break;
+        case SymTagVTable: string_append_formated(string, "SymTagVTable"); break;
+        case SymTagCustom: string_append_formated(string, "SymTagCustom"); break;
+        case SymTagThunk: string_append_formated(string, "SymTagThunk"); break;
+        case SymTagDimension: string_append_formated(string, "SymTagDimension"); break;
+        case SymTagBaseInterface: string_append_formated(string, "SymTagBaseInterface"); break;
+        case SymTagHLSLType: string_append_formated(string, "SymTagHLSLType"); break;
+        case SymTagCaller: string_append_formated(string, "SymTagCaller"); break;
+        case SymTagCallee: string_append_formated(string, "SymTagCallee"); break;
+        case SymTagExport: string_append_formated(string, "SymTagExport"); break;
+        case SymTagHeapAllocationSite: string_append_formated(string, "SymTagHeapAllocationSite"); break;
+        case SymTagCoffGroup: string_append_formated(string, "SymTagCoffGroup"); break;
+        case SymTagInlinee: string_append_formated(string, "SymTagInlinee"); break;
         default: break;
+        }
+
+        if (append_name)
+        {
+            String tmp = string_create();
+            SCOPE_EXIT(string_destroy(&tmp));
+            pdb_symbol_get_name(symbol, &tmp);
+            string_append_formated(string, " \"%s\"", tmp.characters);
+        }
+
+        // Check if already visited
+        DWORD indexID = 0;
+        if (symbol->get_symIndexId(&indexID) != S_OK) {
+            string_append_formated(string, "GetSymIndexID failed\n");
+            return;
+        }
+        else
+        {
+            u64 id = (u64)indexID;
+            if (!hashset_insert_element(already_visited, id)) {
+                string_append_formated(string, " [Visited]\n");
+                return;
+            }
+        }
+        string_append_formated(string, "\n");
+
+        // Loop over all compilands
+        IDiaEnumSymbols* child_iter = NULL;
+        if (FAILED(session->findChildren(symbol, SymTagNull, NULL, nsNone, &child_iter))) {
+            return;
+        }
+        if (child_iter == NULL) {
+            return;
+        }
+        SCOPE_EXIT(if (child_iter != NULL) { child_iter->Release(); child_iter = NULL; });
+
+        ULONG celt = 0;
+        IDiaSymbol* child_symbol = NULL;
+        while (child_iter->Next(1, &child_symbol, &celt) == S_OK && celt == 1)
+        {
+            symbol_tree_append_to_string_recursive(string, child_symbol, indentation + 1, session, already_visited);
+            child_symbol->Release();
         }
     }
 
@@ -935,6 +1179,16 @@ namespace PDB_Analysis
         }
         SCOPE_EXIT(if (global_scope != NULL) { global_scope->Release(); global_scope = NULL; });
 
+        // Write Symbol-Tree as info file (Debug purposes)
+        {
+            Hashset<u64> visited = hashset_create_empty<u64>(512, hash_u64, equals_u64);
+            SCOPE_EXIT(hashset_destroy(&visited));
+            String tmp = string_create_empty(2048);
+            SCOPE_EXIT(string_destroy(&tmp));
+            symbol_tree_append_to_string_recursive(&tmp, global_scope, 0, session, &visited);
+            file_io_write_file("backend/build/pdb_info_tree.txt", array_create_static<byte>((byte*)tmp.characters, tmp.size));
+        }
+
         DWORD machine_type;
         if (global_scope->get_machineType(&machine_type) != S_OK) {
             printf("get_machine_type failed!\n");
@@ -945,36 +1199,7 @@ namespace PDB_Analysis
             return false;
         }
 
-        // Loop over all compilands
-        IDiaEnumSymbols* compiland_iter = NULL;
-        if (FAILED(global_scope->findChildren(SymTagCompiland, NULL, nsNone, &compiland_iter))) {
-            printf("Enumerating compilands failed!\n");
-            return false;
-        }
-        SCOPE_EXIT(if (compiland_iter != NULL) { compiland_iter->Release(); compiland_iter = NULL; });
-
-        ULONG celt = 0;
-        IDiaSymbol* compiland = NULL;
-        while (compiland_iter->Next(1, &compiland, &celt) == S_OK && celt == 1)
-        {
-            bool is_main_compiland = false;
-            BSTR wide_compiland_string;
-            if (compiland->get_name(&wide_compiland_string) == S_OK)
-            {
-                wide_string_to_utf8(wide_compiland_string, &string_buffer);
-                SysFreeString(wide_compiland_string);
-
-                string_replace_character(&string_buffer, '\\', '/');
-                //printf("Compiland name: \"%s\"\n", string_buffer.characters);
-                if (string_equals_cstring(&string_buffer, main_compiland_name)) {
-                    is_main_compiland = true;
-                }
-            }
-
-            pdb_symbol_analyse_recursive(compiland, information, is_main_compiland, -1, -1, session);
-            compiland->Release();
-        }
-
+        pdb_symbol_analyse_recursive(global_scope, information, false, -1, -1, session, main_compiland_name);
         return true;
     }
 }
@@ -989,6 +1214,15 @@ namespace Process_Memory
             return false;
         }
         return bytes_written == sizeof(T);
+    }
+
+    bool read_bytes(HANDLE process_handle, void* virtual_address, void* out_data, int size) {
+        if (virtual_address == nullptr || process_handle == nullptr || size <= 0) return false;
+        u64 bytes_written = 0;
+        if (!ReadProcessMemory(process_handle, virtual_address, out_data, size, &bytes_written)) {
+            return false;
+        }
+        return bytes_written == size;
     }
 
     bool write_byte(HANDLE process_handle, void* virtual_address, u8 value) {
@@ -1110,6 +1344,7 @@ namespace PE_Analysis
         u32 rva; // Relative Virtual Address...
         Optional<String> name; // Symbols may not have a name if they are referenced by ordinal
         Optional<String> forwarder_name; // If the symbol is a forward to another dll
+        int associated_unwind_info_index; // Index of unwind-info with the same address (same rva), otherwise -1 
     };
 
     // Section Infos
@@ -1169,6 +1404,7 @@ namespace PE_Analysis
         u64 start_rva;
         u64 end_rva;
         int unwind_block_index;
+        int export_symbol_info_index; // -1 if not available
     };
 
     struct PE_Info
@@ -1601,6 +1837,7 @@ namespace PE_Analysis
                     symbol_info.rva = rva;
                     symbol_info.name = optional_make_failure<String>();
                     symbol_info.forwarder_name = optional_make_failure<String>();
+                    symbol_info.associated_unwind_info_index = -1;
 
                     bool is_forwarder =
                         rva >= location_export_table.VirtualAddress &&
@@ -1678,7 +1915,7 @@ namespace PE_Analysis
             }
         }
 
-        // Read infos from debug table
+        // Read infos from debug table (Mainly pdb file name)
         if (true)
         {
             int debug_info_count = location_debug_table.Size / sizeof(IMAGE_DEBUG_DIRECTORY);
@@ -1751,12 +1988,38 @@ namespace PE_Analysis
                 Function_Unwind_Info fn_unwind_info;
                 fn_unwind_info.start_rva = runtime_function.BeginAddress;
                 fn_unwind_info.end_rva = runtime_function.EndAddress;
+                fn_unwind_info.export_symbol_info_index = -1;
                 fn_unwind_info.unwind_block_index = add_unwind_block(
                     pe_info, process_handle, runtime_function.UnwindData, base_virtual_address,
                     &already_analysed_unwind_blocks, &already_analysed_function_infos, code_slot_buffer
                 );
 
                 add_function_unwind_info(pe_info, fn_unwind_info, &already_analysed_function_infos);
+            }
+        }
+
+        // Match Export-Symbols and Exception Data
+        {
+            Hashtable<u64, int> address_to_unwind_index = hashtable_create_empty<u64, int>(pe_info->function_unwind_infos.size, hash_u64, equals_u64);
+            SCOPE_EXIT(hashtable_destroy(&address_to_unwind_index));
+
+            for (int i = 0; i < pe_info->function_unwind_infos.size; i++) {
+                auto& unwind_info = pe_info->function_unwind_infos[i];
+                unwind_info.export_symbol_info_index = -1;
+                hashtable_insert_element(&address_to_unwind_index, unwind_info.start_rva, i);
+            }
+            for (int i = 0; i < pe_info->exported_symbols.size; i++) {
+                auto& export_symbol = pe_info->exported_symbols[i];
+                export_symbol.associated_unwind_info_index = -1;
+                if (export_symbol.forwarder_name.available) continue;
+                int* unwind_index = hashtable_find_element(&address_to_unwind_index, (u64)export_symbol.rva);
+                if (unwind_index != 0) {
+                    export_symbol.associated_unwind_info_index = *unwind_index;
+                    pe_info->function_unwind_infos[*unwind_index].export_symbol_info_index = i;
+                }
+                else {
+                    export_symbol.associated_unwind_info_index = -1;
+                }
             }
         }
 
@@ -1802,75 +2065,72 @@ namespace PE_Analysis
 struct Statement_Mapping;
 struct IR_Instruction_Mapping;
 struct Upp_Line_Mapping;
+struct C_Line_Mapping;
 
-// Source Mapping Info
 struct Machine_Code_Range
 {
     u64 start_virtual_address;
     u64 end_virtual_address;
 };
 
-struct C_Line_Mapping
+struct Compilation_Unit_Mapping
 {
-    int c_line_index; // Global line-index
-    Machine_Code_Range range;
-    IR_Instruction_Mapping* instruction_mapping;
-};
-
-struct IR_Instruction_Mapping
-{
-    Statement_Mapping* statement;
-    IR_Code_Block* code_block;
-    int instruction_index;
-    Dynamic_Array<C_Line_Mapping*> c_lines;
-};
-
-struct Statement_Mapping
-{
-    AST::Statement* statement;
-    Upp_Line_Mapping* line_mapping;
-    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
+    Dynamic_Array<Upp_Line_Mapping> lines;
+    Compilation_Unit* compilation_unit;
 };
 
 struct Upp_Line_Mapping
 {
-    int compilation_unit_mapping_index;
-    int line_number;
+    Compilation_Unit_Mapping* parent_unit;
     Dynamic_Array<Statement_Mapping*> statements;
+    int line_number;
 };
 
-struct Compilation_Unit_Mapping
+struct Statement_Mapping
 {
-    Compilation_Unit* compilation_unit;
-    Dynamic_Array<Upp_Line_Mapping> lines;
+    Upp_Line_Mapping* parent_line;
+    Dynamic_Array<IR_Instruction_Mapping*> ir_instructions;
+    AST::Statement* statement;
 };
 
-struct Function_Slot_Mapping
+struct IR_Instruction_Mapping
 {
+    Statement_Mapping* parent_statement; // Note: Not every IR-Instruction has a parent statement!
     Dynamic_Array<C_Line_Mapping*> c_lines;
+    IR_Code_Block* code_block;
+    int instruction_index;
+};
+
+struct C_Line_Mapping
+{
+    IR_Instruction_Mapping* parent_instruction;
+    Machine_Code_Range range; // Note: May be 0 if no machine code was generated for this line
+    int c_line_index; // Global line-index
+};
+
+struct IR_Function_Mapping
+{
+    IR_Function* ir_function;
+    Dynamic_Array<C_Line_Mapping*> c_lines; // All C-Lines for which machine instructions exist?
     u64 virtual_address_start;
     u64 virtual_address_end;
     String name;
 };
 
-struct Machine_Code_Segment
-{
-    u64 virtual_address_start;
-    u64 virtual_address_end;
-    int function_slot_index;
-    int c_line_index_with_offset;
-};
+
+
+
 
 struct Address_Breakpoint
 {
     u64 address;
     bool is_software_breakpoint;
+    int reference_count;
     union {
         int hardware_breakpoint_index;
         struct {
             u8 original_byte;
             bool is_installed; // Address breakpoints get installed (e.g. 0xCC is inserted) on demand, when we continue from a thread
-            bool remove_after_next_event; // Software breakpoints cannot de deleted
         } software_bp;
     } options;
 };
@@ -1924,8 +2184,10 @@ struct Debugger
     Dynamic_Array<Statement_Mapping> statement_mapping;
     Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
     Dynamic_Array<C_Line_Mapping> c_line_mapping;
-    Dynamic_Array<Function_Slot_Mapping> function_slot_mapping;
-    Hashtable<IR_Code_Block*, int> ir_block_mapping_offset;
+    Dynamic_Array<IR_Function_Mapping> ir_function_mapping;
+
+    Hashtable<IR_Code_Block*, int> ir_block_to_ir_instruction_mapping_start_index;
+    Hashtable<String, PDB_Analysis::PDB_Location> c_name_to_location_map; // Stores local-variables, parameters and globals
 
     // Helpers
     String string_buffer;
@@ -1964,8 +2226,10 @@ Debugger* debugger_create()
     result->statement_mapping = dynamic_array_create<Statement_Mapping>();
     result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
     result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
-    result->function_slot_mapping = dynamic_array_create<Function_Slot_Mapping>();
-    result->ir_block_mapping_offset = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
+    result->ir_function_mapping = dynamic_array_create<IR_Function_Mapping>();
+    result->ir_block_to_ir_instruction_mapping_start_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
+    result->c_name_to_location_map = hashtable_create_empty<String, PDB_Analysis::PDB_Location>(64, hash_string, string_equals);
+    hashtable_reset(&result->c_name_to_location_map);
 
     result->string_buffer = string_create();
     result->byte_buffer = dynamic_array_create<u8>();
@@ -2038,7 +2302,8 @@ void debugger_reset(Debugger* debugger)
     dynamic_array_reset(&debugger->byte_buffer);
     dynamic_array_reset(&debugger->disassembly_buffer);
     string_reset(&debugger->string_buffer);
-    hashtable_reset(&debugger->ir_block_mapping_offset);
+    hashtable_reset(&debugger->ir_block_to_ir_instruction_mapping_start_index);
+    hashtable_reset(&debugger->c_name_to_location_map);
 
     for (int i = 0; i < debugger->source_breakpoints.size; i++) {
         Source_Breakpoint* bp = debugger->source_breakpoints[i];
@@ -2068,10 +2333,10 @@ void debugger_reset(Debugger* debugger)
     }
     dynamic_array_reset(&debugger->ir_instruction_mapping);
 
-    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
-        dynamic_array_destroy(&debugger->function_slot_mapping[i].c_lines);
+    for (int i = 0; i < debugger->ir_function_mapping.size; i++) {
+        dynamic_array_destroy(&debugger->ir_function_mapping[i].c_lines);
     }
-    dynamic_array_reset(&debugger->function_slot_mapping);
+    dynamic_array_reset(&debugger->ir_function_mapping);
     dynamic_array_reset(&debugger->c_line_mapping);
 }
 
@@ -2092,14 +2357,15 @@ void debugger_destroy(Debugger* debugger)
     dynamic_array_destroy(&debugger->byte_buffer);
     dynamic_array_destroy(&debugger->disassembly_buffer);
     string_destroy(&debugger->string_buffer);
-    hashtable_destroy(&debugger->ir_block_mapping_offset);
+    hashtable_destroy(&debugger->ir_block_to_ir_instruction_mapping_start_index);
+    hashtable_destroy(&debugger->c_name_to_location_map);
 
     dynamic_array_destroy(&debugger->source_breakpoints);
 
     dynamic_array_destroy(&debugger->compilation_unit_mapping);
     dynamic_array_destroy(&debugger->statement_mapping);
     dynamic_array_destroy(&debugger->ir_instruction_mapping);
-    dynamic_array_destroy(&debugger->function_slot_mapping);
+    dynamic_array_destroy(&debugger->ir_function_mapping);
     dynamic_array_destroy(&debugger->c_line_mapping);
 
     delete debugger;
@@ -2163,12 +2429,53 @@ u64 debugger_find_address_of_function(Debugger* debugger, String name)
     return 0;
 }
 
-String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* out_dist = nullptr, String* out_dll_name = nullptr)
+struct Closest_Symbol_Info
 {
-    if (debugger->pe_infos.size == 0) return nullptr;
+    int pe_index;
+    int section_index;
+    String section_name;
+    String pe_name;
 
-    // Check if address is inside function found in pdb
-    if (debugger->pdb_info != nullptr)
+    int exception_handling_index; // -1 if not found
+    bool found_symbol;
+    u64 distance;
+    String symbol_name; // Name from pdb or PE export table
+};
+
+Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 address)
+{
+    Closest_Symbol_Info info;
+    info.distance = (u64)-1;
+    info.pe_index = -1;
+    info.section_index = -1;
+    info.found_symbol = false;
+    info.exception_handling_index = -1;
+    info.symbol_name = string_create_static("");
+    info.section_name = string_create_static("");
+    info.pe_name = string_create_static("");
+    if (debugger->pe_infos.size == 0) return info;
+
+    // Find PE (Dll or exe) and section of address
+    for (int i = 0; i < debugger->pe_infos.size && info.pe_index == -1; i++) {
+        auto& pe_info = debugger->pe_infos[i];
+        for (int j = 0; j < pe_info.sections.size; j++) {
+            auto& section = pe_info.sections[j];
+            if (address >= section.rva + pe_info.base_address && address < section.rva + section.size + pe_info.base_address) {
+                info.pe_index = i;
+                info.section_index = j;
+                info.pe_name = string_create_filename_from_path_static(&pe_info.name);
+                info.section_name = section.name;
+                break;
+            }
+        }
+    }
+
+    if (info.pe_index == -1) {
+        return info;
+    }
+
+    // Check if we can find function in PDB-Information (Only possible for main exe currently)
+    if (info.pe_index == debugger->exe_pe_info_index && debugger->pdb_info != nullptr)
     {
         auto& main_pe = debugger->pe_infos[debugger->exe_pe_info_index];
         auto& section_infos = main_pe.sections;
@@ -2178,30 +2485,53 @@ String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* 
             auto loc = function.location;
             if (loc.section_index == 0) continue; // Section 0 should not be valid?
 
-            int section_index = loc.section_index - 1; // Sections indices are 1 based...
+            // Note: Here we use the section-info inside the pdb again to calculate the address from RVA
+            //       Maybe cross-checking with previously found section should be done
+            int section_index = loc.section_index - 1; // Sections indices of PDB are 1 based...
             if (section_index < 0 || section_index >= section_infos.size) continue;
 
             auto& section = section_infos[section_index];
             u64 fn_address = main_pe.base_address + section.rva + loc.offset;
 
-            if (address >= fn_address && address < fn_address + function.length)
-            {
-                if (out_dist != nullptr) {
-                    *out_dist = address - fn_address;
-                }
-                return &function.name;
+            if (address >= fn_address && address < fn_address + function.length) {
+                info.distance = address - fn_address;
+                info.symbol_name = function.name;
+                info.found_symbol = true;
+                return info;
             }
         }
     }
 
+    // Check if we can find an exception handler for the current function
+    auto& pe_info = debugger->pe_infos[info.pe_index];
+    for (int i = 0; i < pe_info.function_unwind_infos.size; i++)
+    {
+        auto& unwind_info = pe_info.function_unwind_infos[i];
+        u64 start_address = unwind_info.start_rva + pe_info.base_address;
+        u64 end_address = unwind_info.end_rva + pe_info.base_address;
+        if (address >= start_address && address < end_address) {
+            info.exception_handling_index = i;
+            info.found_symbol = false;
+            info.distance = address - start_address;
+            if (unwind_info.export_symbol_info_index != -1) {
+                auto& export_symbol = pe_info.exported_symbols[unwind_info.export_symbol_info_index];
+                if (export_symbol.name.available) {
+                    info.found_symbol = true;
+                    info.symbol_name = export_symbol.name.value;
+                }
+            }
+            return info;
+        }
+    }
+
     // Otherwise find closest address from export-table of loaded Dll/PEs
-    String* closest_name = nullptr;
+    String closest_name = string_create_static("");
     u64 closest_distance = (u64)(i64)-1;
 
+    // Find symbol that is closest to address
     auto& pe_infos = debugger->pe_infos;
-    for (int i = 0; i < pe_infos.size; i++)
     {
-        auto& pe_info = pe_infos[i];
+        auto& pe_info = pe_infos[info.pe_index];
         for (int i = 0; i < pe_info.exported_symbols.size; i++) {
             auto& symbol = pe_info.exported_symbols[i];
             if (symbol.forwarder_name.available || !symbol.name.available) continue;
@@ -2211,20 +2541,58 @@ String* debugger_find_closest_symbol_name(Debugger* debugger, u64 address, u64* 
 
             u64 distance = address - symbol_address;
             if (distance < closest_distance) {
-                closest_name = &symbol.name.value;
+                closest_name = symbol.name.value;
                 closest_distance = distance;
-                if (out_dll_name != nullptr) {
-                    *out_dll_name = pe_info.name;
-                }
             }
         }
     }
 
-
-    if (closest_name != nullptr && out_dist != nullptr) {
-        *out_dist = closest_distance;
+    if (closest_distance != (u64)(i64)-1) {
+        info.found_symbol = true;
+        info.distance = closest_distance;
+        info.symbol_name = closest_name;
     }
-    return closest_name;
+    return info;
+}
+
+void print_closest_symbol_name(Debugger* debugger, Closest_Symbol_Info symbol_info)
+{
+    if (symbol_info.pe_index == -1) {
+        printf("ADDRESS_OUTSIDE_LOADED_SECTIONS");
+        return;
+    }
+
+    if (symbol_info.found_symbol) {
+        printf("%s ", symbol_info.symbol_name.characters);
+    }
+    else {
+        if (symbol_info.exception_handling_index != -1) {
+            printf("Private Function ");
+        }
+        else {
+            printf("Unknown/Leaf-Function ");
+        }
+    }
+
+    if (symbol_info.pe_index == debugger->exe_pe_info_index) {
+        printf("[main.exe ");
+    }
+    else {
+        if (symbol_info.pe_name.size == 0) {
+            printf("[?(PE #%d) ", symbol_info.pe_index);
+        }
+        else {
+            printf("[%s ", symbol_info.pe_name.characters);
+        }
+    }
+    if (symbol_info.section_name.size == 0) {
+        printf("?(Section #%d) ", symbol_info.section_index);
+    }
+    else {
+        printf("%s ", symbol_info.section_name.characters);
+    }
+
+    printf("+0x%04llX]\n", symbol_info.distance);
 }
 
 u64 debugger_find_address_of_c_line_from_pdb_info(Debugger* debugger, int line_index)
@@ -2268,7 +2636,7 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
     // Disassemble bytes
     u32 byte_index = 0;
     dynamic_array_reserve(&instructions, byte_buffer.size / 4); // Reserve buffer size assuming a normal instruction stakes ~4 bytes
-    while (byte_index < (u32) byte_buffer.size)
+    while (byte_index < (u32)byte_buffer.size)
     {
         INSTRUX instruction;
         NDSTATUS status = NdDecodeEx(&instruction, byte_buffer.data + byte_index, byte_buffer.size - byte_index, ND_CODE_64, ND_DATA_64);
@@ -2375,19 +2743,19 @@ void do_stack_walk(Debugger* debugger)
         // Check for exit criteria (Left stack-region or return address invalid)
         {
             if (context.Rsp > stack_max_address) {
-                printf("Rsp went out of stack-space (Above stack end)\n");
+                // printf("Rsp went out of stack-space (Above stack end)\n");
                 return;
             }
             else if (context.Rsp < stack_min_address) {
-                printf("Rsp went out of stack-space (Below stack-start)\n");
+                // printf("Rsp went out of stack-space (Below stack-start)\n");
                 return;
             }
             else if (context.Rip == 0) {
-                printf("Rip is null (Return address on stack was null...)\n");
+                // printf("Rip is null (Return address on stack was null...)\n");
                 return;
             }
             else if (frame_depth >= max_depth) {
-                printf("Reached max frame_depth\n");
+                // printf("Reached max frame_depth\n");
                 return;
             }
         }
@@ -2400,47 +2768,11 @@ void do_stack_walk(Debugger* debugger)
         }
 
         // Store frame info
-        {
-            Stack_Frame frame_info;
-            frame_info.instruction_pointer = context.Rip;
-
-            Machine_Code_Address_To_Line_Result line_result;
-            bool success = source_mapping_machine_instruction_address_to_upp_line(debugger, context.Rip, line_result);
-            if (success)
-            {
-                frame_info.inside_upp_function = true;
-                frame_info.options.upp_function.line_index = line_result.upp_line_index;
-                frame_info.options.upp_function.unit = line_result.unit;
-                frame_info.options.upp_function.slot = line_result.function_slot;
-            }
-            else
-            {
-                frame_info.inside_upp_function = false;
-                u64 out_distance = 0;
-                String out_dll_name = string_create_static("");
-                String* symbol_name = debugger_find_closest_symbol_name(debugger, context.Rip, &out_distance, &out_dll_name);
-                if (symbol_name == nullptr) {
-                    frame_info.options.other.symbol_name = string_create_static("");
-                }
-                frame_info.options.other.dll_name = out_dll_name;
-                frame_info.options.other.offset_from_symbol_start = out_distance;
-            }
-            dynamic_array_push_back(&debugger->stack_frames, frame_info);
-        }
-
-        // Print stack frame Info
-        {
-            printf("Stack-Frame #%d: [0x%08llX]", frame_depth, context.Rip);
-            frame_depth += 1;
-            u64 offset = 0;
-            String* name = debugger_find_closest_symbol_name(debugger, context.Rip, &offset);
-            if (name != nullptr) {
-                printf(" [+0x%04llX] %s \n", offset, name->characters);
-            }
-            else {
-                printf(" could not find closest symbol...\n");
-            }
-        }
+        Stack_Frame frame_info;
+        frame_info.instruction_pointer = context.Rip;
+        frame_info.stack_frame_start_address = 0;
+        dynamic_array_push_back(&debugger->stack_frames, frame_info);
+        frame_depth += 1;
 
         // Find unwind infos
         int found_index = -1;
@@ -2600,8 +2932,12 @@ void do_stack_walk(Debugger* debugger)
             }
         }
 
-        // Undo Call instruction (Pop return address from stack)
+        // Undo Call instruction (Load return address from stack)
         {
+            // Save stack-frame start address
+            debugger->stack_frames[debugger->stack_frames.size - 1].stack_frame_start_address = context.Rsp;
+
+            // Load return address
             u64 return_addr = 0;
             bool success = Process_Memory::read_single_value(debugger->process_handle, (void*)context.Rsp, &return_addr);
             if (!success) {
@@ -2609,9 +2945,28 @@ void do_stack_walk(Debugger* debugger)
                 return;
             }
 
+            // Simulate Pop-instruction
             context.Rsp += 8;
             context.Rip = return_addr;
         }
+    }
+}
+
+void debugger_print_stack_frames(Debugger* debugger)
+{
+    do_stack_walk(debugger);
+    auto& stack_frames = debugger->stack_frames;
+
+    // Print in reverse order...
+    for (int i = stack_frames.size - 1; i >= 0; i--)
+    {
+        auto& frame = stack_frames[i];
+
+        // Print stack frame Info
+        printf("Frame #%d: [0x%08llX] ", i, frame.stack_frame_start_address);
+
+        Closest_Symbol_Info symbol_info = debugger_find_closest_symbol_name(debugger, frame.instruction_pointer);
+        print_closest_symbol_name(debugger, symbol_info);
     }
 }
 
@@ -2628,10 +2983,11 @@ void source_mapping_generate_statement_to_line_mapping_recursive(
         if (!hashtable_insert_element(statement_to_mapping_table, statement, debugger->statement_mapping.size)) {
             return;
         }
+
         Statement_Mapping stat_mapping;
         stat_mapping.ir_instructions = dynamic_array_create<IR_Instruction_Mapping*>();
         stat_mapping.statement = statement;
-        stat_mapping.line_mapping = &unit_mapping->lines[node->bounding_range.start.line];
+        stat_mapping.parent_line = &unit_mapping->lines[node->bounding_range.start.line];
         dynamic_array_push_back(&debugger->statement_mapping, stat_mapping);
     }
 
@@ -2647,7 +3003,7 @@ void source_mapping_generate_statement_to_line_mapping_recursive(
 
 void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* block, Debugger* debugger)
 {
-    auto code_block_start_offsets = &debugger->ir_block_mapping_offset;
+    auto code_block_start_offsets = &debugger->ir_block_to_ir_instruction_mapping_start_index;
     int offset_start = debugger->ir_instruction_mapping.size;
     if (!hashtable_insert_element(code_block_start_offsets, block, offset_start)) {
         return;
@@ -2658,10 +3014,10 @@ void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* blo
     for (int i = 0; i < block->instructions.size; i++)
     {
         IR_Instruction_Mapping instr_mapping;
+        instr_mapping.parent_statement = nullptr;
         instr_mapping.code_block = block;
         instr_mapping.instruction_index = i;
         instr_mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
-        instr_mapping.statement = nullptr;
         dynamic_array_push_back(&debugger->ir_instruction_mapping, instr_mapping);
     }
 
@@ -2694,6 +3050,14 @@ void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* blo
         }
     }
 }
+
+struct Machine_Code_Segment
+{
+    u64 virtual_address_start;
+    u64 virtual_address_end;
+    int function_slot_index;
+    int c_line_index_with_offset;
+};
 
 struct Segment_Comparator
 {
@@ -2759,47 +3123,58 @@ void source_mapping_upp_line_to_machine_code_segments(
     }
 }
 
-bool source_mapping_machine_instruction_address_to_upp_line(Debugger* debugger, u64 virtual_address, Machine_Code_Address_To_Line_Result& out_result)
+Assembly_Source_Information debugger_get_assembly_source_information(Debugger* debugger, u64 virtual_address)
 {
-    out_result.unit = nullptr;
-    out_result.c_line_index = -1;
-    out_result.ir_block = nullptr;
-    out_result.ir_instruction_index = -1;
-    out_result.upp_line_index = -1;
-    out_result.function_slot = -1;
-    out_result.statement = nullptr;
+    Assembly_Source_Information result;
+    result.ir_function = 0;
+    result.function_start_address = 0;
+    result.function_end_address = 0;
+    result.c_line_index = -1;
+    result.ir_block = nullptr;
+    result.ir_instruction_index = -1;
+    result.statement = nullptr;
+    result.unit = nullptr;
+    result.upp_line_index = -1;
 
-    int slot_index = -1;
-    for (int i = 0; i < debugger->function_slot_mapping.size; i++) {
-        auto& slot = debugger->function_slot_mapping[i];
-        if (virtual_address >= slot.virtual_address_start && virtual_address < slot.virtual_address_end) {
-            slot_index = i;
+    IR_Function_Mapping* function_mapping = nullptr;
+    for (int i = 0; i < debugger->ir_function_mapping.size; i++) {
+        auto& function = debugger->ir_function_mapping[i];
+        if (virtual_address >= function.virtual_address_start && virtual_address < function.virtual_address_end) {
+            function_mapping = &function;
+            result.ir_function = function.ir_function;
             break;
         }
     }
-    if (slot_index == -1) return false;
+    if (function_mapping == nullptr) return result;
 
-    out_result.function_slot = slot_index;
-    auto& slot_mapping = debugger->function_slot_mapping[slot_index];
-    int segment_index = -1;
+    result.function_start_address = function_mapping->virtual_address_start;
+    result.function_end_address = function_mapping->virtual_address_end;
 
-    for (int i = 0; i < slot_mapping.c_lines.size; i++)
+    // Find C-Line that contains this address (TODO: Check if PDB line information contains ranges for ifs or other such constructs)
+    //  Maybe there are multiple lines containing this address?
+    for (int i = 0; i < function_mapping->c_lines.size; i++)
     {
-        auto& c_line = slot_mapping.c_lines[i];
+        auto& c_line = function_mapping->c_lines[i];
         if (virtual_address >= c_line->range.start_virtual_address && virtual_address < c_line->range.end_virtual_address)
         {
-            auto& upp_line = c_line->instruction_mapping->statement->line_mapping;
-            out_result.c_line_index = c_line->c_line_index;
-            out_result.ir_block = c_line->instruction_mapping->code_block;
-            out_result.ir_instruction_index = c_line->instruction_mapping->instruction_index;
-            out_result.statement = c_line->instruction_mapping->statement->statement;
-            out_result.upp_line_index = upp_line->line_number;
-            out_result.unit = debugger->compilation_unit_mapping[upp_line->compilation_unit_mapping_index].compilation_unit;
-            return true;
+            result.c_line_index = c_line->c_line_index;
+            if (c_line->parent_instruction != 0) {
+                result.ir_block = c_line->parent_instruction->code_block;
+                result.ir_instruction_index = c_line->parent_instruction->instruction_index;
+                if (c_line->parent_instruction->parent_statement != 0) {
+                    result.statement = c_line->parent_instruction->parent_statement->statement;
+                    auto line_mapping = c_line->parent_instruction->parent_statement->parent_line;
+                    if (line_mapping != 0) {
+                        result.upp_line_index = line_mapping->line_number;
+                        result.unit = line_mapping->parent_unit->compilation_unit;
+                    }
+                }
+            }
+            return result;
         }
     }
 
-    return false;
+    return result;
 }
 
 
@@ -2810,10 +3185,8 @@ bool debugger_add_address_breakpoint(Debugger* debugger, u64 address)
     // Check if breakpoint at this address already exists
     for (int i = 0; i < debugger->address_breakpoints.size; i++) {
         auto& bp = debugger->address_breakpoints[i];
-        if (bp.address == address ) {
-            if (bp.is_software_breakpoint) {
-                bp.options.software_bp.remove_after_next_event = false;
-            }
+        if (bp.address == address) {
+            bp.reference_count += 1;
             return true;
         }
     }
@@ -2821,6 +3194,7 @@ bool debugger_add_address_breakpoint(Debugger* debugger, u64 address)
     Address_Breakpoint breakpoint;
     breakpoint.address = address;
     breakpoint.is_software_breakpoint = true;
+    breakpoint.reference_count = 1;
 
     // Check if hardware breakpoints are available
     for (int i = 0; i < HARDWARE_BREAKPOINT_COUNT; i++) {
@@ -2839,7 +3213,6 @@ bool debugger_add_address_breakpoint(Debugger* debugger, u64 address)
     if (breakpoint.is_software_breakpoint)
     {
         breakpoint.options.software_bp.is_installed = false;
-        breakpoint.options.software_bp.remove_after_next_event = false;
         bool success = Process_Memory::read_single_value<byte>(debugger->process_handle, (void*)address, &breakpoint.options.software_bp.original_byte);
         if (!success) {
             return false;
@@ -2865,13 +3238,14 @@ bool debugger_remove_address_breakpoint(Debugger* debugger, u64 address)
 
     // Different handling based on software/hardware breakpoint
     auto& bp = debugger->address_breakpoints[index];
-    if (bp.is_software_breakpoint) {
-        bp.options.software_bp.remove_after_next_event = true;
-        return true;
+    bp.reference_count = math_maximum(0, bp.reference_count - 1);
+
+    if (bp.reference_count == 0 && !bp.is_software_breakpoint) {
+        debugger->hardware_breakpoints[bp.options.hardware_breakpoint_index].enabled = false;
+        debugger->hardware_breakpoints[bp.options.hardware_breakpoint_index].address = 0;
+        dynamic_array_swap_remove(&debugger->address_breakpoints, index);
     }
 
-    debugger->hardware_breakpoints[bp.options.hardware_breakpoint_index].enabled = false;
-    dynamic_array_swap_remove(&debugger->address_breakpoints, index);
     return true;
 }
 
@@ -2954,7 +3328,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
         break;
     }
     case RIP_EVENT: // Note: As I understood it, RIP events only happen when system debuggers fail?
-    case EXIT_PROCESS_DEBUG_EVENT: 
+    case EXIT_PROCESS_DEBUG_EVENT:
     {
         if (debug_event.dwDebugEventCode == RIP_EVENT) {
             panic("RIP event occured!\n");
@@ -3031,7 +3405,7 @@ void debugger_handle_last_debug_event(Debugger* debugger)
         if (DEBUG_OUTPUT_ENABLED) { printf("Create_thread\n"); }
         break;
     }
-    case EXIT_THREAD_DEBUG_EVENT: 
+    case EXIT_THREAD_DEBUG_EVENT:
     {
         // Remove thread from thread list
         for (int i = 0; i < debugger->threads.size; i++) {
@@ -3060,8 +3434,8 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 
         switch (code)
         {
-        case EXCEPTION_BREAKPOINT:  
-        case EXCEPTION_SINGLE_STEP: 
+        case EXCEPTION_BREAKPOINT:
+        case EXCEPTION_SINGLE_STEP:
         {
             // Note: Hardware-breakpoints trigger the Single_Step Exception, while 'software' breakpoints cause the Breakpoint exception
             exception_name = code == EXCEPTION_SINGLE_STEP ? "SINGLE_STEP" : "BREAKPOINT";
@@ -3164,21 +3538,26 @@ void debugger_single_step_thread(Debugger* debugger, HANDLE thread_handle)
     for (int i = 0; i < debugger->threads.size; i++) {
         if (debugger->threads[i].handle == thread_handle) {
             found = true;
-            thread_id =debugger->threads[i].id;
+            thread_id = debugger->threads[i].id;
             break;
         }
     }
     if (!found) return;
-    
+
     CONTEXT thread_context;
     thread_context.ContextFlags = CONTEXT_ALL;
     if (!GetThreadContext(thread_handle, &thread_context)) {
         return;
     }
     thread_context.EFlags = thread_context.EFlags | (u32)X64_Flags::TRAP;
+    thread_context.Dr7 = 0;
+    thread_context.Dr0 = 0;
+    thread_context.Dr1 = 0;
+    thread_context.Dr2 = 0;
+    thread_context.Dr3 = 0;
 
     // Handle software/hardware breakpoints
-    for (int i = 0; i < debugger->address_breakpoints.size; i++) 
+    for (int i = 0; i < debugger->address_breakpoints.size; i++)
     {
         auto& bp = debugger->address_breakpoints[i];
         if (bp.address != thread_context.Rip) continue;
@@ -3261,14 +3640,16 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
     for (int i = 0; i < debugger->address_breakpoints.size; i++)
     {
         auto& bp = debugger->address_breakpoints[i];
-        if (!bp.is_software_breakpoint) continue;
-        if (!bp.options.software_bp.remove_after_next_event) continue;
+        if (bp.reference_count > 0) continue;
 
-        if (bp.options.software_bp.is_installed) {
-            bool success = Process_Memory::write_byte(debugger->process_handle, (void*)bp.address, bp.options.software_bp.original_byte);
-            FlushInstructionCache(debugger->process_handle, (void*)bp.address, 1);
-            bp.options.software_bp.is_installed = false;
+        if (bp.is_software_breakpoint) {
+            if (bp.options.software_bp.is_installed) {
+                bool success = Process_Memory::write_byte(debugger->process_handle, (void*)bp.address, bp.options.software_bp.original_byte);
+                FlushInstructionCache(debugger->process_handle, (void*)bp.address, 1);
+                bp.options.software_bp.is_installed = false;
+            }
         }
+
         dynamic_array_swap_remove(&debugger->address_breakpoints, i);
         i = i - 1;
     }
@@ -3415,8 +3796,8 @@ void debugger_resume_until_next_halt_or_exit(Debugger* debugger)
         debugger_receive_next_debug_event(debugger, true);
         debugger_handle_last_debug_event(debugger);
         if (debugger->state.process_state == Debug_Process_State::NO_ACTIVE_PROCESS) return;
-        if (debugger->state.process_state == Debug_Process_State::HALTED && 
-            (debugger->state.halt_type == Halt_Type::BREAKPOINT_HIT || 
+        if (debugger->state.process_state == Debug_Process_State::HALTED &&
+            (debugger->state.halt_type == Halt_Type::BREAKPOINT_HIT ||
                 debugger->state.halt_type == Halt_Type::DEBUG_BREAK_HIT ||
                 debugger->state.halt_type == Halt_Type::EXCEPTION_OCCURED)) return;
         debugger_continue_from_last_debug_event(debugger);
@@ -3505,7 +3886,7 @@ bool debugger_start_process(
         }
 
         if (debugger->last_debug_event.dwDebugEventCode == EXCEPTION_DEBUG_EVENT &&
-            debugger->last_debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT) 
+            debugger->last_debug_event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
         {
             break;
         }
@@ -3548,51 +3929,58 @@ bool debugger_start_process(
     }
 
     // Generate all mappings (Upp-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
+    C_Program_Translation* c_translation = c_generator_get_translation();
     if (analysis_data != nullptr)
     {
         auto pdb_info = debugger->pdb_info;
-        C_Program_Translation* c_translation = c_generator_get_translation();
 
         Hashtable<AST::Statement*, int> statement_to_mapping_table = hashtable_create_pointer_empty<AST::Statement*, int>(1024);
         SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
 
-        // Compilation unit mappings (Unit <-> Upp_Line <-> Statements)
+        // Create Compilation-Unit <-> Upp_Line mapping
         for (int i = 0; i < compiler.compilation_units.size; i++)
         {
-            auto& unit = compiler.compilation_units[i];
-
+            auto unit = compiler.compilation_units[i];
             if (!unit->used_in_last_compile) continue;
 
             Compilation_Unit_Mapping unit_mapping;
             unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);
             unit_mapping.compilation_unit = unit;
-
-            for (int i = 0; i < unit->code->line_count; i++) {
+            dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
+        }
+        for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)
+        {
+            Compilation_Unit_Mapping* unit_mapping = &debugger->compilation_unit_mapping[i];
+            for (int i = 0; i < unit_mapping->compilation_unit->code->line_count; i++) {
                 Upp_Line_Mapping line_mapping;
-                line_mapping.compilation_unit_mapping_index = debugger->compilation_unit_mapping.size;
+                line_mapping.parent_unit = unit_mapping;
                 line_mapping.line_number = i;
                 line_mapping.statements = dynamic_array_create<Statement_Mapping*>();
-                dynamic_array_push_back(&unit_mapping.lines, line_mapping);
+                dynamic_array_push_back(&unit_mapping->lines, line_mapping);
             }
-            dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
+        }
 
+        // Add Statement to Upp_Line mapping
+        for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)
+        {
+            Compilation_Unit_Mapping* unit_mapping = &debugger->compilation_unit_mapping[i];
             source_mapping_generate_statement_to_line_mapping_recursive(
-                upcast(unit->root), debugger, &statement_to_mapping_table, &debugger->compilation_unit_mapping[debugger->compilation_unit_mapping.size - 1]
+                upcast(unit_mapping->compilation_unit->root),
+                debugger,
+                &statement_to_mapping_table,
+                unit_mapping
             );
         }
-
-        // Add connections from Upp_Line to Statements
-        for (int i = 0; i < debugger->statement_mapping.size; i++) {
+        for (int i = 0; i < debugger->statement_mapping.size; i++) { // Add connection from upp-line to statements
             auto& stat_mapping = debugger->statement_mapping[i];
-            dynamic_array_push_back(&stat_mapping.line_mapping->statements, &stat_mapping);
+            dynamic_array_push_back(&stat_mapping.parent_line->statements, &stat_mapping);
         }
 
-        // Statement <-> IR_Instruction 
+        // Add IR-Instruction to Statement mapping
         for (int i = 0; i < compiler.ir_generator->program->functions.size; i++) {
             auto ir_fn = compiler.ir_generator->program->functions[i];
-            source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger);
+            source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger); // Note: This only enumerates/finds all IR-Instructions
         }
-        // Add connections Statement -> IR_Instruction
         for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)
         {
             auto& ir_mapping = debugger->ir_instruction_mapping[i];
@@ -3600,16 +3988,16 @@ bool debugger_start_process(
             if (ir_instr.associated_statement != 0) {
                 int* map_index = hashtable_find_element(&statement_to_mapping_table, ir_instr.associated_statement);
                 if (map_index != 0) {
-                    ir_mapping.statement = &debugger->statement_mapping[*map_index];
+                    ir_mapping.parent_statement = &debugger->statement_mapping[*map_index];
                 }
             }
 
-            if (ir_mapping.statement != 0) {
-                dynamic_array_push_back(&ir_mapping.statement->ir_instructions, &ir_mapping);
+            if (ir_mapping.parent_statement != 0) {
+                dynamic_array_push_back(&ir_mapping.parent_statement->ir_instructions, &ir_mapping);
             }
         }
 
-        // IR_Instruction <-> C-Line
+        // Add C-Line to IR_Instruction mapping
         dynamic_array_reset(&debugger->c_line_mapping);
         dynamic_array_reserve(&debugger->c_line_mapping, c_translation->line_infos.size);
         for (int i = 0; i < c_translation->line_infos.size; i++)
@@ -3620,56 +4008,64 @@ bool debugger_start_process(
             line_map.c_line_index = i + c_translation->line_offset;
             line_map.range.start_virtual_address = 0;
             line_map.range.end_virtual_address = 0;
-            line_map.instruction_mapping = nullptr;
+            line_map.parent_instruction = nullptr;
 
-            int* block_start_offset = hashtable_find_element(&debugger->ir_block_mapping_offset, line_info.ir_block);
+            int* block_start_offset = hashtable_find_element(&debugger->ir_block_to_ir_instruction_mapping_start_index, line_info.ir_block);
             if (block_start_offset != 0) {
-                line_map.instruction_mapping = &debugger->ir_instruction_mapping[*block_start_offset + line_info.instruction_index];
+                line_map.parent_instruction = &debugger->ir_instruction_mapping[*block_start_offset + line_info.instruction_index];
             }
 
             dynamic_array_push_back(&debugger->c_line_mapping, line_map);
         }
-        // Connection IR_Instruction -> C-Line
         for (int i = 0; i < debugger->c_line_mapping.size; i++)
         {
             auto& line_mapping = debugger->c_line_mapping[i];
-            if (line_mapping.instruction_mapping != 0) {
-                dynamic_array_push_back(&line_mapping.instruction_mapping->c_lines, &line_mapping);
+            if (line_mapping.parent_instruction != 0) {
+                dynamic_array_push_back(&line_mapping.parent_instruction->c_lines, &line_mapping);
             }
         }
 
-        // C-Line/Function-Slot <-> Machine-Code Range
-        dynamic_array_reset(&debugger->function_slot_mapping);
-        dynamic_array_reserve(&debugger->function_slot_mapping, analysis_data->function_slots.size);
-        for (int i = 0; i < analysis_data->function_slots.size; i++) {
-            Function_Slot_Mapping slot_mapping;
-            slot_mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
-            slot_mapping.name = string_create_static("");
-            slot_mapping.virtual_address_start = 0;
-            slot_mapping.virtual_address_end = 0;
-            dynamic_array_push_back(&debugger->function_slot_mapping, slot_mapping);
+        // Add IR_Function-Mapping
+        dynamic_array_reset(&debugger->ir_function_mapping);
+        dynamic_array_reserve(&debugger->ir_function_mapping, ir_generator.program->functions.size);
+        for (int i = 0; i < ir_generator.program->functions.size; i++) {
+            IR_Function* ir_function = ir_generator.program->functions[i];
+            IR_Function_Mapping mapping;
+            mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
+            mapping.name = string_create_static("");
+            mapping.virtual_address_start = 0;
+            mapping.virtual_address_end = 0;
+            mapping.ir_function = ir_function;
+            dynamic_array_push_back(&debugger->ir_function_mapping, mapping);
         }
-        Hashtable<String, int> c_function_name_to_function_slot_map = hashtable_create_empty<String, int>(64, hash_string, string_equals);
-        SCOPE_EXIT(hashtable_destroy(&c_function_name_to_function_slot_map));
-        for (auto iter = hashtable_iterator_create(&c_translation->name_mapping); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
+        Hashtable<String, IR_Function_Mapping*> c_function_name_to_ir_function_map =
+            hashtable_create_empty<String, IR_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
+        SCOPE_EXIT(hashtable_destroy(&c_function_name_to_ir_function_map));
+        for (int i = 0; i < debugger->ir_function_mapping.size; i++)
         {
-            String name = *iter.value;
-            C_Translation& translation = *iter.key;
-            if (translation.type == C_Translation_Type::FUNCTION) {
-                hashtable_insert_element(&c_function_name_to_function_slot_map, name, translation.options.function_slot_index);
+            IR_Function_Mapping* function = &debugger->ir_function_mapping[i];;
+            C_Translation translation;
+            translation.type = C_Translation_Type::FUNCTION;
+            translation.options.function_slot_index = function->ir_function->function_slot_index;
+            String* c_function_name_opt = hashtable_find_element(&c_translation->name_mapping, translation);
+            if (c_function_name_opt != nullptr) {
+                bool success = hashtable_insert_element(&c_function_name_to_ir_function_map, *c_function_name_opt, function);
+                assert(success, "Functions names should be guaranteed to be unique");
             }
         }
+
+        // Store Assembly_Ranges for C-Lines and IR_Function_Mapping
         for (int i = 0; i < pdb_info->source_infos.size; i++)
         {
             auto& src_info = pdb_info->source_infos[i];
             auto& fn_info = pdb_info->functions[src_info.function_index];
 
-            int* function_slot_index = hashtable_find_element(&c_function_name_to_function_slot_map, fn_info.name);
-            if (function_slot_index == nullptr) continue;
-            auto& slot_mapping = debugger->function_slot_mapping[*function_slot_index];
-            slot_mapping.name = fn_info.name;
-            slot_mapping.virtual_address_start = static_location_to_virtual_address(debugger, fn_info.location);
-            slot_mapping.virtual_address_end = slot_mapping.virtual_address_start + fn_info.length;
+            IR_Function_Mapping** function_mapping_opt = hashtable_find_element(&c_function_name_to_ir_function_map, fn_info.name);
+            if (function_mapping_opt == nullptr) continue;
+            IR_Function_Mapping* function_mapping = *function_mapping_opt;
+            function_mapping->name = fn_info.name;
+            function_mapping->virtual_address_start = static_location_to_virtual_address(debugger, fn_info.location);
+            function_mapping->virtual_address_end = function_mapping->virtual_address_start + fn_info.length;
 
             for (int j = 0; j < src_info.line_infos.size; j++)
             {
@@ -3681,7 +4077,34 @@ bool debugger_start_process(
                 c_line_mapping.range.start_virtual_address = static_location_to_virtual_address(debugger, pdb_line_info.location);
                 c_line_mapping.range.end_virtual_address = c_line_mapping.range.start_virtual_address + pdb_line_info.length;
 
-                dynamic_array_push_back(&slot_mapping.c_lines, &c_line_mapping);
+                dynamic_array_push_back(&function_mapping->c_lines, &c_line_mapping);
+            }
+        }
+
+        // Generate C-Name to Location mapping
+        {
+            // Generate Variable-Mapping
+            using PDB_Analysis::PDB_Location;
+            auto c_name_to_pdb_location_map = &debugger->c_name_to_location_map;
+            for (int i = 0; i < debugger->pdb_info->block_infos.size; i++) {
+                PDB_Analysis::PDB_Code_Block_Info& block_info = debugger->pdb_info->block_infos[i];
+                for (int j = 0; j < block_info.variables.size; j++) {
+                    const auto& variable_info = block_info.variables[j];
+                    hashtable_insert_element(c_name_to_pdb_location_map, variable_info.name, variable_info.location);
+                }
+            }
+            // Add function parameters
+            for (int i = 0; i < debugger->pdb_info->source_infos.size; i++) {
+                auto function_source_info = &debugger->pdb_info->source_infos[i];
+                for (int j = 0; j < function_source_info->parameter_infos.size; j++) {
+                    const auto& param_info = function_source_info->parameter_infos[j];
+                    hashtable_insert_element(c_name_to_pdb_location_map, param_info.name, param_info.location);
+                }
+            }
+            // Add globals 
+            for (int i = 0; i < debugger->pdb_info->global_infos.size; i++) {
+                auto global_info = &debugger->pdb_info->global_infos[i];
+                hashtable_insert_element(c_name_to_pdb_location_map, global_info->name, global_info->location);
             }
         }
     }
@@ -3705,190 +4128,26 @@ bool ir_instruction_reference_equals(IR_Instruction_Reference* a, IR_Instruction
     return a->index == b->index && a->block == b->block;
 }
 
-// Returns true if this code path always 'terminates' with another ir-instruction
-bool debugger_find_next_ir_instruction_with_different_statement(
-    Debugger* debugger, 
-    IR_Code_Block* block, 
-    int instruction_index,
-    Dynamic_Array<u64>* next_statement_addresses,
-    Statement_Mapping* initial_statement,
-    Hashset<IR_Instruction_Reference>* already_visited)
+
+
+void debugger_step_out(Debugger* debugger)
 {
-    if (block->instructions.size == 0) return false;
+    if (debugger->state.process_state != Debug_Process_State::HALTED) return;
 
-    // Loop over blocks
-    while (true)
-    {
-        int* block_start_offset = hashtable_find_element(&debugger->ir_block_mapping_offset, block);
-        if (block_start_offset == 0) {
-            return false;
-        }
-
-        bool found_goto = false;
-        // Handle all instructions in scope
-        for (; instruction_index < block->instructions.size; instruction_index += 1)
-        {
-            // Check if already visited
-            {
-                IR_Instruction_Reference ref;
-                ref.block = block;
-                ref.index = instruction_index;
-                bool insert_successfull = hashset_insert_element(already_visited, ref);
-                if (!insert_successfull) return false;
-            }
-
-            // Check if instruction has different statement and assembly mapping exists (E.g. is a valid breakpoint for step over)
-            {
-                auto& ir_mapping = debugger->ir_instruction_mapping[*block_start_offset + instruction_index];
-                Statement_Mapping* statement_mapping = ir_mapping.statement;
-                if (statement_mapping != 0) 
-                {
-                    if (statement_mapping != initial_statement) 
-                    {
-                        bool assembly_mapping_exists = false;
-                        for (int i = 0; i < ir_mapping.c_lines.size; i++) {
-                            auto range = ir_mapping.c_lines[i]->range;
-                            if (range.start_virtual_address != 0 && range.end_virtual_address != 0 && range.start_virtual_address != range.end_virtual_address) {
-                                dynamic_array_push_back(next_statement_addresses, range.start_virtual_address);
-                                assembly_mapping_exists = true;
-                                break;
-                            }
-                        }
-                        if (assembly_mapping_exists) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Handle instructions which branch into other instructions
-            auto& instruction = block->instructions[instruction_index];
-            switch (instruction.type)
-            {
-            case IR_Instruction_Type::BLOCK: 
-            {
-                bool terminates = debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.block, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                if (terminates) {
-                    return true;
-                }
-                break;
-            }
-            case IR_Instruction_Type::FUNCTION_CALL: {
-                // Nothing for now...
-                break;
-            }
-            case IR_Instruction_Type::GOTO: {
-                found_goto = true;
-                IR_Instruction_Reference goto_ref = ir_generator.label_positions[instruction.options.label_index];
-                block = goto_ref.block;
-                instruction_index = goto_ref.index;
-                break;
-            }
-            case IR_Instruction_Type::IF: 
-            {
-                bool true_path_terminates = debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.if_instr.true_branch, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                bool false_path_terminates = debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.if_instr.false_branch, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                if (true_path_terminates && false_path_terminates) {
-                    return true;
-                }
-                break;
-            }
-            case IR_Instruction_Type::WHILE:
-            {
-                bool terminates = debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.while_instr.condition_code, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                if (terminates) {
-                    return true;
-                }
-                debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.while_instr.code, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                break;
-            }
-            case IR_Instruction_Type::RETURN: {
-                return true;
-            }
-            case IR_Instruction_Type::SWITCH:
-            {
-                bool all_paths_terminate = true;
-                for (int i = 0; i < instruction.options.switch_instr.cases.size; i++) 
-                {
-                    auto& switch_case = instruction.options.switch_instr.cases[i];
-                    bool path_terminates = debugger_find_next_ir_instruction_with_different_statement(
-                        debugger, switch_case.block, 0, next_statement_addresses, initial_statement, already_visited
-                    );
-                    if (!path_terminates) {
-                        all_paths_terminate = false;
-                    }
-                }
-                bool default_terminates = debugger_find_next_ir_instruction_with_different_statement(
-                    debugger, instruction.options.switch_instr.default_block, 0, next_statement_addresses, initial_statement, already_visited
-                );
-                if (!default_terminates) {
-                    all_paths_terminate = false;
-                }
-
-                if (all_paths_terminate) {
-                    return true;
-                }
-                break;
-            }
-            default: break;
-            }
-
-            if (found_goto) {
-                break;
-            }
-        }
-
-        // On goto continue from goto
-        if (found_goto) {
-            continue;
-        }
-
-        // Move up one scope, and try to find termination there
-        if (block->parent_block == 0) {
-            return true; // Implicit return at end of function
-        }
-        instruction_index = block->parent_instruction_index;
-        block = block->parent_block;
-        auto& instr = block->instructions[instruction_index];
-        if (instr.type != IR_Instruction_Type::WHILE) {
-            instruction_index += 1; // Only when existing a while block do we want to not skip the instruction
-        }
-    }
-}
-
-void debugger_find_next_ir_instructions(
-    Debugger* debugger, IR_Code_Block* ir_block, int instruction_index, Dynamic_Array<u64>* next_statement_addresses)
-{
-    Hashset<IR_Instruction_Reference> visited = hashset_create_empty<IR_Instruction_Reference>(
-        16, ir_instruction_reference_hash, ir_instruction_reference_equals
-    );
-    SCOPE_EXIT(hashset_destroy(&visited));
-
-    // Check if instruction has statement_mapping
-    int* block_offset_opt = hashtable_find_element(&debugger->ir_block_mapping_offset, ir_block);
-    if (block_offset_opt == nullptr) {
-        return;
-    }
-    Statement_Mapping* statement_mapping = debugger->ir_instruction_mapping[*block_offset_opt + instruction_index].statement;
-    if (statement_mapping == nullptr) {
+    Array<Stack_Frame> stack_frames = debugger_get_stack_frames(debugger);
+    if (stack_frames.size <= 1) {
+        debugger_resume_until_next_halt_or_exit(debugger);
         return;
     }
 
-    debugger_find_next_ir_instruction_with_different_statement(debugger, ir_block, instruction_index, next_statement_addresses, statement_mapping, &visited);
+    u64 return_address = stack_frames[1].instruction_pointer;
+    debugger_add_address_breakpoint(debugger, return_address);
+    debugger_resume_until_next_halt_or_exit(debugger);
+    debugger_remove_address_breakpoint(debugger, return_address);
     return;
 }
 
-void debugger_continue_with_step_over_until_next_event(Debugger* debugger)
+void debugger_step_over_statement(Debugger* debugger, bool step_into)
 {
     if (debugger->state.process_state != Debug_Process_State::HALTED) return;
 
@@ -3898,40 +4157,174 @@ void debugger_continue_with_step_over_until_next_event(Debugger* debugger)
         return;
     }
     u64 current_rip = stack_frames[0].instruction_pointer;
+    // Notes: Return address is always pushed, I would rather like to store the current stack-frame start address, 
+    //        and if this one changes we know if we went inside another function (stack grows down) or if we went up a function (returned)
 
-    Machine_Code_Address_To_Line_Result line_result;
-    bool success = source_mapping_machine_instruction_address_to_upp_line(debugger, current_rip, line_result);
-    if (!success) {
-        debugger_resume_until_next_halt_or_exit(debugger);
+    Assembly_Source_Information assembly_info = debugger_get_assembly_source_information(debugger, current_rip);
+    if (assembly_info.ir_function == nullptr) { // E.g. currently not inside upp-function
+        debugger_step_out(debugger);
         return;
     }
+    AST::Statement* initial_statement = assembly_info.statement; // Note: May be null, if we are on some code without upp-lines
+    u64 initial_stack_frame = stack_frames[0].stack_frame_start_address;
 
-    Dynamic_Array<u64> next_statement_addresses = dynamic_array_create<u64>();
-    SCOPE_EXIT(dynamic_array_destroy(&next_statement_addresses));
-    debugger_find_next_ir_instructions(debugger, line_result.ir_block, line_result.ir_instruction_index, &next_statement_addresses);
+    // Step until current_instruction changes
+    const int maximum_step_number = 100;
+    const int max_steps_in_unknown_function = 10;
+    int step_count = 0;
+    int steps_in_unknown_function_count = 0;
+    bool just_stepped_out = false;
+    while (debugger->main_thread_info_index != -1 && debugger->state.process_state == Debug_Process_State::HALTED && step_count < maximum_step_number)
+    {
+        if (!just_stepped_out) {
+            debugger_single_step_thread(debugger, debugger->threads[debugger->main_thread_info_index].handle);
+            step_count += 1;
+        }
+        just_stepped_out = false;
 
-    // Set breakpoints on next instruction and return address
-    u64 return_address = 0;
-    if (stack_frames.size > 1) {
-        return_address = stack_frames[1].instruction_pointer;
-        dynamic_array_push_back(&next_statement_addresses, return_address);
-    }
+        // Check if we are still in same function/stack thread
+        stack_frames = debugger_get_stack_frames(debugger);
+        if (stack_frames.size == 0) {
+            return;
+        }
 
-    for (int i = 0; i < next_statement_addresses.size; i++) {
-        u64 address = next_statement_addresses[i];
-        debugger_add_address_breakpoint(debugger, address);
-    }
+        u64 current_stack_frame_address = stack_frames[0].stack_frame_start_address;
+        Assembly_Source_Information source_info = debugger_get_assembly_source_information(debugger, stack_frames[0].instruction_pointer);
+        ModTree_Function* current_function = nullptr;
+        if (source_info.ir_function == nullptr) {
+            current_function = debugger->analysis_data->function_slots[source_info.ir_function->function_slot_index].modtree_function;
+            if (current_function == nullptr) {
+                steps_in_unknown_function_count += 1;
+            }
+            else {
+                steps_in_unknown_function_count = 0;
+            }
+        }
 
-    // Continue after breakpoints are set
-    debugger_resume_until_next_halt_or_exit(debugger);
+        if (current_stack_frame_address < initial_stack_frame) {
+            // Another function was called
+            if (step_into)
+            {
+                if (current_function != nullptr) {
+                    return;
+                }
+                // Otherwise we stepped into an unknown function
+                if (steps_in_unknown_function_count >= max_steps_in_unknown_function) {
+                    debugger_step_out(debugger);
+                    just_stepped_out = true;
+                }
+                continue;
+            }
 
-    if (debugger->state.process_state == Debug_Process_State::HALTED) {
-        // Remove all breakpoints again
-        for (int i = 0; i < next_statement_addresses.size; i++) {
-            u64 address = next_statement_addresses[i];
-            debugger_remove_address_breakpoint(debugger, address);
+            debugger_step_out(debugger);
+            just_stepped_out = true;
+            continue;
+        }
+        else if (current_stack_frame_address > initial_stack_frame)
+        {
+            // We stepped out of the starting function
+            return;
+        }
+
+        // Check if statement has changed
+        if (source_info.statement != nullptr && (initial_statement == nullptr || initial_statement != source_info.statement)) {
+            return;
         }
     }
+
+    printf("Stepping finished\n");
+}
+
+// Queries Local-Variables, Parameters or Globals by name
+Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
+    Debugger* debugger, Assembly_Source_Information source_info, u64 instruction_pointer, String variable_name, Datatype** out_datatype)
+{
+    C_Translation translation;
+    translation.type = (C_Translation_Type)-1;
+    *out_datatype = nullptr;
+
+    // Try to find local Variable (Register in IR-Block)
+    if (source_info.ir_function != nullptr)
+    {
+        // Find IR_Block and register_index
+        int register_index = -1;
+        IR_Code_Block* block = source_info.ir_block;
+
+        // Use Function-Body as backup-block if no ir_block was found at address
+        if (block == nullptr && source_info.ir_function != nullptr) {
+            block = source_info.ir_function->code;
+        }
+
+        // Find register by going up blocks
+        while (block != nullptr)
+        {
+            for (int i = 0; i < block->registers.size; i++) {
+                auto& reg = block->registers[i];
+                if (!reg.name.available) continue;
+                if (string_equals(reg.name.value, &variable_name)) {
+                    register_index = i;
+                    break;
+                }
+            }
+            if (register_index != -1) break;
+            block = block->parent_block;
+        }
+
+        if (register_index != -1)
+        {
+            translation.type = C_Translation_Type::REGISTER;
+            translation.options.register_translation.code_block = block;
+            translation.options.register_translation.index = register_index;
+            *out_datatype = block->registers[register_index].type;
+        }
+    }
+
+    // If not found try to find parameter with same name 
+    if ((int)translation.type == -1 && source_info.ir_function != nullptr)
+    {
+        auto& params = source_info.ir_function->function_type->parameters;
+        for (int i = 0; i < params.size; i++)
+        {
+            auto& param = params[i];
+            if (string_equals(param.name, &variable_name)) {
+                translation.type = C_Translation_Type::PARAMETER;
+                translation.options.parameter.function = source_info.ir_function;
+                translation.options.parameter.index = i;
+                *out_datatype = param.type;
+                break;
+            }
+        }
+    }
+
+    // If not found try to find global with same name
+    if ((int)translation.type == -1)
+    {
+        for (int i = 0; i < debugger->analysis_data->program->globals.size; i++)
+        {
+            auto& global = debugger->analysis_data->program->globals[i];
+            if (global->symbol == 0) continue;
+            if (string_equals(global->symbol->id, &variable_name)) {
+                translation.type = C_Translation_Type::GLOBAL;
+                translation.options.global_index = i;
+                *out_datatype = global->type;
+                break;
+            }
+        }
+    }
+
+    if ((int)translation.type == -1) {
+        return optional_make_failure<PDB_Analysis::PDB_Location>();
+    }
+
+    String* c_name_opt = hashtable_find_element(&c_generator_get_translation()->name_mapping, translation);
+    if (c_name_opt == nullptr) {
+        return optional_make_failure<PDB_Analysis::PDB_Location>();
+    }
+    PDB_Analysis::PDB_Location* location_opt = hashtable_find_element(&debugger->c_name_to_location_map, *c_name_opt);
+    if (location_opt == nullptr) {
+        return optional_make_failure<PDB_Analysis::PDB_Location>();
+    }
+    return optional_make_success(*location_opt);
 }
 
 void debugger_wait_for_console_command(Debugger* debugger)
@@ -3954,11 +4347,8 @@ void debugger_wait_for_console_command(Debugger* debugger)
         {
             printf("rip=[0x%08llX] ", thread_context.Rip);
 
-            u64 dist = 0;
-            String* closest_symbol = debugger_find_closest_symbol_name(debugger, thread_context.Rip, &dist);
-            if (closest_symbol != nullptr) {
-                printf(", %s + [%04llX]", closest_symbol->characters, dist);
-            }
+            Closest_Symbol_Info symbol_info = debugger_find_closest_symbol_name(debugger, thread_context.Rip);
+            print_closest_symbol_name(debugger, symbol_info);
 
             printf("\n> ");
             if (string_fill_from_line(&input_line)) {
@@ -3984,6 +4374,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
             printf("    bd - delete breakpoint\n");
             printf("    k  - show stack/do stack-walk\n");
             printf("    i  - show PDB-Infos (All functions in src)\n");
+            printf("    v  - Print variable information\n");
         }
         else if (string_equals_cstring(&command, "c") || string_equals_cstring(&command, "continue")) {
             return;
@@ -4152,8 +4543,107 @@ void debugger_wait_for_console_command(Debugger* debugger)
                 );
             }
         }
+        else if (string_equals_cstring(&command, "v"))
+        {
+            if (parts.size != 2) {
+                printf("Variable command requires an argument");
+                continue;
+            }
+
+            auto variable_name = parts[1];
+            Array<Stack_Frame> stack_frames = debugger_get_stack_frames(debugger);
+            if (stack_frames.size == 0) {
+                printf("Could not retrieve current stack");
+                continue;
+            }
+            u64 instruction_pointer = stack_frames[0].instruction_pointer;
+            Assembly_Source_Information source_info = debugger_get_assembly_source_information(debugger, instruction_pointer);
+            Datatype* value_type = nullptr;
+            Optional<PDB_Analysis::PDB_Location> value_query = debugger_query_named_upp_value(debugger, source_info, instruction_pointer, variable_name, &value_type);
+            if (!value_query.available) {
+                printf("Could not find value with this name!\n");
+                continue;
+            }
+
+            Array<u8> var_buffer = array_create<u8>(value_type->memory_info.value.size);
+            SCOPE_EXIT(array_destroy(&var_buffer));
+            CONTEXT thread_context;
+            thread_context.ContextFlags = CONTEXT_ALL;
+            BOOL success = GetThreadContext(debugger->threads[debugger->main_thread_info_index].handle, &thread_context);
+            if (!success) {
+                printf("Couldn't access thread context?!\n");
+                continue;
+            }
+
+            bool read_success = true;
+            PDB_Analysis::PDB_Location& pdb_location = value_query.value;
+            switch (pdb_location.type)
+            {
+            case PDB_Analysis::PDB_Location_Type::INSIDE_REGISTER: {
+                read_success = PDB_Analysis::x64_register_value_location_get_value_from_context(
+                    pdb_location.options.register_loc, thread_context, var_buffer.data, var_buffer.size
+                );
+                break;
+            }
+            case PDB_Analysis::PDB_Location_Type::REGISTER_RELATIVE: {
+                u64 address = 0;
+                read_success = PDB_Analysis::x64_register_value_location_get_value_from_context(
+                    pdb_location.options.register_relative.reg, thread_context, &address, 8
+                );
+                if (read_success) {
+                    read_success = Process_Memory::read_bytes(
+                        debugger->process_handle,
+                        (void*)(address + pdb_location.options.register_relative.offset),
+                        var_buffer.data,
+                        var_buffer.size
+                    );
+                }
+                break;
+            }
+            case PDB_Analysis::PDB_Location_Type::IS_CONSTANT: {
+                int constant_size = pdb_location.options.constant_value.size;
+                if (constant_size == var_buffer.size) {
+                    memory_copy(var_buffer.data, &pdb_location.options.constant_value.options.int_value, var_buffer.size);
+                }
+                else {
+                    read_success = false;
+                }
+                break;
+            }
+            case PDB_Analysis::PDB_Location_Type::STATIC: {
+                u64 address = static_location_to_virtual_address(debugger, pdb_location.options.static_loc);
+                if (address != 0) {
+                    read_success = Process_Memory::read_bytes(debugger->process_handle, (void*)address, var_buffer.data, var_buffer.size);
+                }
+                else {
+                    read_success = false;
+                }
+                break;
+            }
+            case PDB_Analysis::PDB_Location_Type::THREAD_LOCAL_STORAGE: {
+                read_success = false;
+                printf("Variable in thread-local storage!\n");
+                break;
+            }
+            case PDB_Analysis::PDB_Location_Type::UNKNOWN: {
+                read_success = false;
+                printf("Variable in unknown location\n");
+                break;
+            }
+            default: panic(""); ; break;
+            }
+
+            if (read_success) {
+                String str = string_create();
+                SCOPE_EXIT(string_destroy(&str));
+                // TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
+                datatype_append_value_to_string(value_type, &debugger->analysis_data->type_system, var_buffer.data, &str);
+                printf("Variable-value: \"%s\"\n", str.characters);
+            }
+        }
+
         else if (string_equals_cstring(&command, "k") || string_equals_cstring(&command, "stack")) {
-            do_stack_walk(debugger);
+            debugger_print_stack_frames(debugger);
         }
         else {
             printf("Invalid command: \"%s\"\nRetry: ", command.characters);
@@ -4288,3 +4778,4 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
         }
     }
 }
+

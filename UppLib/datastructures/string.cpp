@@ -563,3 +563,15 @@ bool string_fill_from_line(String* to_fill)
 
     return false;
 }
+
+String string_create_filename_from_path_static(String* filepath)
+{
+    if (filepath->size == 0) return string_create_static("");
+    Optional<int> backslash_pos_opt = string_find_character_index_reverse(filepath, '\\', filepath->size - 1);
+    Optional<int> slash_pos_opt = string_find_character_index_reverse(filepath, '/', filepath->size - 1);
+
+    int backslash_pos = backslash_pos_opt.available ? backslash_pos_opt.value : 0;
+    int slash_pos = slash_pos_opt.available ? slash_pos_opt.value : 0;
+    int last_seperator = math_maximum(backslash_pos, slash_pos);
+    return string_create_substring_static(filepath, last_seperator + 1, filepath->size);
+}

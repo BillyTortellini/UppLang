@@ -48,6 +48,7 @@ void window_set_cursor_constrain(Window* window, bool constrain);
 void window_set_cursor_reset_into_center(Window* window, bool reset);
 void window_set_cursor_icon(Window* window, Cursor_Icon_Type cursor);
 void window_set_vsync(Window* window, bool vsync);
+void window_set_focus_on_console();
 void window_set_focus(Window* window);
 void window_set_minimized(Window* window, bool minimized);
 void window_set_position(Window* window, int x, int y);

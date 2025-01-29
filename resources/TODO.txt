@@ -1,14 +1,73 @@
 
+
+TODO
+ * Create Watch window
+    --> UI where we can enter names and we display strings...
+
+DONE:
+ * Fixed Global-Variable Information in PDB (Changed traversal inside Symbols with SymTagExe)
+ * Looked at PDB-Tree-Hierarchy Traversal for better understanding 
+ * Cleaned-Up C compiler switches (wrong build.pdb being generated)
+ * Parameter access now working
+ * Fix Breakpoints (Fixed C-Translation for parameters and function names)
+
+
+
+Debugger TODO:
+ * Pre-Calculate variable/parameter matching after debugger starts
+ * Parameter access and Globals should also be accessible
+ * Global access after variable/parameter lookup failed
+
+ * Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
+ * Fix Step-Over (Should respect breakpoints, use step-out of correctly)
+ * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
+
+ * Debugger breakpoints should be stored in session + update with line edits
+    --> Breakpoints should show when there is no valid instruction there
+ * Better breakpoint/current location rendering (Images instead of >, colors, step out/step in information)
+
+ * GUI-Watch window for variables
+ * Search depth for variables (Search some frames up the stack)
+ * GUI Stack-Window (Show stack, select stack-frame (moves cursor))
+ 
+
+ * Printing variables needs more options (Show pointer values, use memory reads on other processes, options for arrays and struct-members)
+ 
+ * Simple Expression Evaluation should also be possible (Pointer stuff &/*, Array-access [], member-access with .x, maybe use ast-parsing for this?)
+ * Maybe more output/info for pointers (e.g. section + function info, or data, or stack, or on heap...)
+
+ - Test step over code:
+    * If else
+    * Switch
+    * Loops
+    * Defer
+    * Stepping out of function?
+    * Gotos (Break/continue with labels)
+
+
+
+Notes: Programming Language Idea:
+ - We know when functions are called, and in what order.
+ - If we had some sort of Programming state (Knowing when functions are called/in what state of objects),
+    we could have different access patterns for things. E.g. Optionals/Nullpointer could be some values,
+    things may not be initialized or others...
+
+
+
+
+
 TODO:
- - Add reference counting to address-breakpoints, as step-over may add/remove addresses
- - Fix bugs with step-over
- - Add some code to make step-into work (e.g. for function calls add something)
-    --> Ignore function pointer calls for now
- - Add step out of (Simple)
+
 
 
 
 DONE:
+ - Added bandaid-solution for step-into with weird functions inbetween
+ - Added some better output for stack-frames
+
+ - Fixed C-Translation bug (If-Else and statements which include other statements...)
+ - Add reference counting to address-breakpoints, as step-over may add/remove addresses
+
  - Added first implementation of step-over
  - Cleaned up Debugger: Correct shutdown with handles, clean stepping, clean breakpoints, correct startup-sequence handling
  - Correct shutdown for debugger

@@ -11,6 +11,7 @@ struct C_Compiler;
 struct IR_Code_Block;
 struct Datatype;
 struct String;
+struct IR_Function;
 
 
 // C_COMPILER
@@ -27,6 +28,8 @@ enum class C_Translation_Type
     FUNCTION,
     DATATYPE,
     REGISTER,
+    PARAMETER,
+    GLOBAL,
     CONSTANT
 };
 
@@ -35,6 +38,11 @@ struct C_Translation
     C_Translation_Type type;
     union {
         int function_slot_index;
+        int global_index;
+        struct {
+            IR_Function* function;
+            int index;
+        } parameter;
         struct {
             IR_Code_Block* code_block;
             int index;

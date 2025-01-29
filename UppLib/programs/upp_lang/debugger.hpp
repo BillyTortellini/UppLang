@@ -8,6 +8,7 @@ struct Debugger;
 struct Compilation_Unit;
 struct Compiler_Analysis_Data;
 struct IR_Code_Block;
+struct IR_Function;
 namespace AST {
     struct Statement;
 }
@@ -53,7 +54,7 @@ enum class X64_Register_Type
     INTEGER, // 64 bit integer registers
     MMX, // 64 bit float registers (not in use)
     XMM, // 128 bit media registers
-    DEBUG,
+    DEBUG_REG, // Debug registers (6)
     FLAGS,
     RIP,
     OTHER, // Something we currently don't keep track of (e.g. segment registers)
@@ -63,8 +64,8 @@ struct X64_Register_Value_Location
 {
     X64_Register_Type type;
     int register_index; // Depending on type, the index of the register (e.g. 16 integer + 16 xmm registers)
-    int size; // Access size, may be 0-128
-    int offset; // Offset in register, for e.g. al and ah (high and low bits)
+    int offset;  // Offset from bottom of register, used for ah and al, and also some xmm high/low bytes
+    int size;    // Access size, between 1-16 bytes
 };
 
 enum class X64_Flags
@@ -90,12 +91,17 @@ enum class X64_Flags
 //     u64 flags;
 // };
 
-struct Machine_Code_Address_To_Line_Result
+struct Assembly_Source_Information
 {
-    int function_slot;
+    IR_Function* ir_function; // From which upp-function this assembly comes from
+    u64 function_start_address;
+    u64 function_end_address;
+
     int c_line_index;
+
     IR_Code_Block* ir_block;
     int ir_instruction_index;
+
     AST::Statement* statement;
     Compilation_Unit* unit;
     int upp_line_index;
@@ -104,19 +110,7 @@ struct Machine_Code_Address_To_Line_Result
 struct Stack_Frame
 {
     u64 instruction_pointer;
-    bool inside_upp_function;
-    union {
-        struct {
-            int slot;
-            Compilation_Unit* unit;
-            int line_index;
-        } upp_function;
-        struct {
-            String symbol_name; // may be empty
-            String dll_name; // may also be empty
-            u64 offset_from_symbol_start;
-        } other;
-    } options;
+    u64 stack_frame_start_address; // Address of return instruction
 };
 
 enum class Halt_Type
@@ -158,9 +152,12 @@ bool debugger_start_process(
     Debugger* debugger, const char* exe_filename, const char* pdb_filename, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data
 );
 
-Debugger_State debugger_get_state(Debugger* debugger);
 void debugger_resume_until_next_halt_or_exit(Debugger* debugger);
-void debugger_continue_with_step_over_until_next_event(Debugger* debugger);
+void debugger_step_over_statement(Debugger* debugger, bool step_into);
+void debugger_step_out(Debugger* debugger);
+
+Debugger_State debugger_get_state(Debugger* debugger);
+Assembly_Source_Information debugger_get_assembly_source_information(Debugger* debugger, u64 virtual_address);
 void debugger_wait_for_console_command(Debugger* debugger);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);

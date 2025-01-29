@@ -17,6 +17,9 @@
 // - C_COMPILER -
 // --------------
 
+void c_generator_output_global_access(int global_index);
+void c_generator_output_parameter_access(IR_Function* function, int parameter_index);
+
 struct C_Compiler
 {
     bool initialized;
@@ -100,10 +103,18 @@ void c_compiler_compile()
     String command = string_create_empty(128);
     SCOPE_EXIT(string_destroy(&command));
     {
+        /*
+        Used Compiler Switches:
+            MDd     --> Multithreaded debug version of runtime library
+            EHsc    --> Exception handling thing
+            Zi      --> Generate PDB file (ZI would be with Edit-And-Continue Features)
+            std:    --> C++ Standard to use, c++latest is used for designated struct inititalizers
+            Fd      --> Debug-Filename output path (PDB filename)
+            Fo      --> Object-File output directory
+        */
         // Note: MDd should be replaced between debug and optimized build
-        const char* compiler_options = "/MDd /EHsc /Zi /Fdbackend/build /Fobackend/build/ /std:c++latest"; // /std:c++latest is used for designated struct inititalizers
-        const char* linker_options = "/OUT:backend/build/main.exe /PDB:backend/build/main.pdb";
-        string_append_formated(&command, "\"cl\" ");
+        const char* compiler_options = "/MDd /EHsc /Zi /std:c++latest /Fobackend/build/ /Fdbackend/build/main.pdb /Febackend/build/main.exe";
+        string_append_formated(&command, "\"cl\" "); // Not sure why we need those Quotations, maybe for CreateProcess?
         string_append_formated(&command, compiler_options);
 
         auto& extern_sources = compiler.analysis_data->extern_sources;
@@ -133,7 +144,7 @@ void c_compiler_compile()
         }
 
         // LINKER
-        string_append_formated(&command, " /link %s", linker_options);
+        string_append_formated(&command, " /link");
 
         // Library directories
         auto lib_dirs = extern_sources.compiler_settings[(int)Extern_Compiler_Setting::LIBRARY_DIRECTORY];
@@ -146,7 +157,6 @@ void c_compiler_compile()
         for (int i = 0; i < lib_files.size; i++) {
             string_append_formated(&command, " \"%s\"", lib_files[i]->characters);
         }
-
     }
 
     logg("Compile command:\n%s\n", command.characters);
@@ -159,6 +169,11 @@ void c_compiler_compile()
     else {
         comp.last_compile_successfull = false;
     }
+
+    if (!comp.last_compile_successfull) {
+        logg("\n!!! ERROR, C-COMPILE NOT SUCCESSFULL !!!\n\n");
+    }
+
     return;
 }
 
@@ -178,7 +193,7 @@ Exit_Code c_compiler_execute()
         return exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Exit code value from program execution was invalid");
     }
 
-    return exit_code_make((Exit_Code_Type) exit_code_value);
+    return exit_code_make((Exit_Code_Type)exit_code_value);
 }
 
 
@@ -194,23 +209,28 @@ struct IR_Code_Block;
 struct Upp_Constant;
 struct ModTree_Function;
 
-bool c_translation_is_equal(C_Translation* ap, C_Translation* bp) 
+bool c_translation_is_equal(C_Translation* ap, C_Translation* bp)
 {
     auto& a = *ap;
     auto& b = *bp;
     if (a.type != b.type) return false;
     switch (a.type)
     {
-    case C_Translation_Type::REGISTER: 
+    case C_Translation_Type::REGISTER:
         return a.options.register_translation.code_block == b.options.register_translation.code_block &&
             a.options.register_translation.index == b.options.register_translation.index;
     case C_Translation_Type::DATATYPE:
         return types_are_equal(a.options.datatype, b.options.datatype);
     case C_Translation_Type::FUNCTION:
         return a.options.function_slot_index == b.options.function_slot_index;
+    case C_Translation_Type::GLOBAL:
+        return a.options.global_index == b.options.global_index;
     case C_Translation_Type::CONSTANT:
-        return a.options.constant.index == b.options.constant.index && 
+        return a.options.constant.index == b.options.constant.index &&
             a.options.constant.requires_memory_address == b.options.constant.requires_memory_address;
+    case C_Translation_Type::PARAMETER:
+        return a.options.parameter.index == b.options.parameter.index &&
+            a.options.parameter.function == b.options.parameter.function;
     default: panic("");
     }
     return false;
@@ -224,12 +244,15 @@ u64 c_translation_hash(C_Translation* tp)
     u64 hash = hash_i32(&type_value);
     switch (t.type)
     {
-    case C_Translation_Type::REGISTER: 
+    case C_Translation_Type::REGISTER:
         hash = hash_combine(hash, hash_pointer(t.options.register_translation.code_block));
         hash = hash_combine(hash, hash_i32(&t.options.register_translation.index));
         break;
     case C_Translation_Type::DATATYPE:
         hash = hash_combine(hash, hash_pointer(t.options.datatype));
+        break;
+    case C_Translation_Type::GLOBAL:
+        hash = hash_combine(hash, hash_i32(&t.options.global_index));
         break;
     case C_Translation_Type::FUNCTION:
         hash = hash_combine(hash, hash_i32(&t.options.function_slot_index));
@@ -237,6 +260,10 @@ u64 c_translation_hash(C_Translation* tp)
     case C_Translation_Type::CONSTANT:
         hash = hash_combine(hash, hash_i32(&t.options.constant.index));
         hash = hash_bool(hash, t.options.constant.requires_memory_address);
+        break;
+    case C_Translation_Type::PARAMETER:
+        hash = hash_combine(hash, hash_pointer(t.options.parameter.function));
+        hash = hash_combine(hash, hash_i32(&t.options.parameter.index));
         break;
     default: panic("");
     }
@@ -368,17 +395,17 @@ void c_generator_generate_struct_content(Struct_Content* content, C_Type_Depende
     gen.text = &type_dependency->type_definition;
 
     // Generate members + add potential dependencies
-    for (int i = 0; i < content->members.size; i++) 
+    for (int i = 0; i < content->members.size; i++)
     {
         auto& member = content->members[i];
-        
+
         string_add_indentation(gen.text, indentation_level);
         c_generator_output_type_reference(member.type);
         string_append_formated(gen.text, " %s;\n", member.id->characters);
 
         // Add dependencies if necessary
         auto member_type = datatype_get_non_const_type(member.type);
-        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE) 
+        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE)
         {
             member_type = member_type->base_type;
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
@@ -389,11 +416,11 @@ void c_generator_generate_struct_content(Struct_Content* content, C_Type_Depende
     }
 
     // Generate subtypes + tag if existing
-    if (content->subtypes.size > 0) 
+    if (content->subtypes.size > 0)
     {
         string_add_indentation(gen.text, indentation_level);
         string_append(gen.text, "union {\n");
-        for (int i = 0; i < content->subtypes.size; i++) 
+        for (int i = 0; i < content->subtypes.size; i++)
         {
             Struct_Content* child_content = content->subtypes[i];
             string_add_indentation(gen.text, indentation_level + 1);
@@ -541,7 +568,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
         break;
     }
-    case Datatype_Type::ENUM: 
+    case Datatype_Type::ENUM:
     {
         auto enum_type = downcast<Datatype_Enum>(type);
         auto& members = enum_type->members;
@@ -561,7 +588,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(&access_name, "byte_pointer_"); // Defined in hardcoded_functions.h as void*
         break;
     }
-    case Datatype_Type::SLICE: 
+    case Datatype_Type::SLICE:
     {
         auto slice_type = downcast<Datatype_Slice>(type);
         string_append_formated(&access_name, "Slice_%d", gen.name_counter);
@@ -586,7 +613,7 @@ void c_generator_output_type_reference(Datatype* type)
 
         break;
     }
-    case Datatype_Type::FUNCTION: 
+    case Datatype_Type::FUNCTION:
     {
         auto function = downcast<Datatype_Function>(type);
         auto& parameters = function->parameters;
@@ -635,7 +662,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append(gen.text, " value;\n    bool is_available;\n};\n");
 
         auto member_type = datatype_get_non_const_type(opt->child_type);
-        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE) 
+        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE)
         {
             member_type = member_type->base_type;
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
@@ -682,7 +709,7 @@ void c_generator_output_type_reference(Datatype* type)
         // Handle extern structs (No members, but size and alignment can be different
         if (structure->content.members.size == 0 && structure->content.subtypes.size == 0) {
             string_append_formated(
-                gen.text, "alignas(%d) %s {\n    u8 values[%d];\n};\n", 
+                gen.text, "alignas(%d) %s {\n    u8 values[%d];\n};\n",
                 structure->base.memory_info.value.alignment, access_name.characters, structure->base.memory_info.value.size
             );
         }
@@ -705,7 +732,7 @@ void c_generator_output_type_reference(Datatype* type)
         c_generator_output_type_reference(downcast<Datatype_Subtype>(type)->base_type);
         break;
     }
-    case Datatype_Type::ARRAY: 
+    case Datatype_Type::ARRAY:
     {
         auto array_type = downcast<Datatype_Array>(type);
         string_append_formated(&access_name, "Array_%d", gen.name_counter);
@@ -730,7 +757,7 @@ void c_generator_output_type_reference(Datatype* type)
 
         // Add dependency if necessary
         auto member_type = datatype_get_non_const_type(array_type->element_type);
-        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY) 
+        if (member_type->type == Datatype_Type::SUBTYPE || member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY)
         {
             member_type = member_type->base_type;
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
@@ -789,7 +816,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
     // Generate members
     string_add_indentation(gen.text, indentation_level);
     string_append_formated(gen.text, "content->members.size = %d;\n", content->members.size);
-    if (content->members.size != 0) 
+    if (content->members.size != 0)
     {
         string_add_indentation(gen.text, indentation_level);
         string_append(gen.text, "content->members.data = new ");
@@ -915,7 +942,7 @@ void c_generator_generate()
     {
         gen.text = &gen.sections[(int)Generator_Section::GLOBALS];
         auto& globals = compiler.analysis_data->program->globals;
-        for (int i = 0; i < globals.size; i++) 
+        for (int i = 0; i < globals.size; i++)
         {
             auto global = globals[i];
             auto type = global->type;
@@ -927,16 +954,14 @@ void c_generator_generate()
 
             c_generator_output_type_reference(type);
             string_append(gen.text, " ");
-            IR_Data_Access access;
-            access.type = IR_Data_Access_Type::GLOBAL_DATA;
-            access.option.global_index = i;
-            c_generator_output_data_access(&access);
+            c_generator_output_global_access(i);
             string_append(gen.text, ";\n");
         }
     }
 
-    auto append_function_signature = [&](String* function_access_name, Datatype_Function* signature)
+    auto append_function_signature = [&](String* function_access_name, IR_Function* function)
     {
+        Datatype_Function* signature = function->function_type;
         if (signature->return_type.available) {
             c_generator_output_type_reference(signature->return_type.value);
         }
@@ -954,7 +979,7 @@ void c_generator_generate()
             string_append(gen.text, " ");
 
             // Note: This has to be the same name as in output_data_access for parameter access
-            string_append_formated(gen.text, "%s_p%d", param.name->characters, j);
+            c_generator_output_parameter_access(function, j);
 
             if (j != parameters.size - 1) {
                 string_append(gen.text, ", ");
@@ -996,12 +1021,12 @@ void c_generator_generate()
 
             // Generate prototype
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_PROTOTYPES];
-            append_function_signature(&access_name, function->function_type);
+            append_function_signature(&access_name, function);
             string_append(gen.text, ";\n");
         }
 
         // Generate extern function translations (Aren't included in ir functions)
-        for (int i = 0; i < compiler.analysis_data->extern_sources.extern_functions.size; i++) 
+        for (int i = 0; i < compiler.analysis_data->extern_sources.extern_functions.size; i++)
         {
             auto extern_function = compiler.analysis_data->extern_sources.extern_functions[i];
             assert(extern_function->function_type == ModTree_Function_Type::EXTERN, "Should be extern");
@@ -1027,7 +1052,7 @@ void c_generator_generate()
             // Generate function signature into tmp c_string
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
             {
-                if (function != program->entry_function) 
+                if (function != program->entry_function)
                 {
                     C_Translation fn_translation;
                     fn_translation.type = C_Translation_Type::FUNCTION;
@@ -1035,11 +1060,11 @@ void c_generator_generate()
                     String* fn_name = hashtable_find_element(&gen.program_translation.name_mapping, fn_translation);
                     assert(fn_name != 0, "");
 
-                    append_function_signature(fn_name, function->function_type);
+                    append_function_signature(fn_name, function);
                 }
                 else {
                     String name = string_create_static("upp_entry_");
-                    append_function_signature(&name, function->function_type);
+                    append_function_signature(&name, function);
                 }
             }
 
@@ -1076,7 +1101,7 @@ void c_generator_generate()
 
 
         auto& type_system = compiler.analysis_data->type_system;
-        for (int i = 0; i < type_system.types.size; i++) 
+        for (int i = 0; i < type_system.types.size; i++)
         {
             auto type = type_system.types[i];
             assert(type->memory_info.available, "Should be the case at this point");
@@ -1092,7 +1117,7 @@ void c_generator_generate()
             string_add_indentation(gen.text, 1);
             string_append_formated(gen.text, "info->alignment = %d;\n", memory.alignment);
             string_add_indentation(gen.text, 1);
-            string_append(gen.text,          "info->tag_      = ");
+            string_append(gen.text, "info->tag_      = ");
             output_memory_as_new_constant((byte*)&type_system.internal_type_infos[i]->tag, types.type_information_type->content.tag_member.type, false, 1);
             string_append(gen.text, ";\n");
 
@@ -1156,7 +1181,7 @@ void c_generator_generate()
                 string_append_formated(gen.text, "info->subtypes_.Slice.element_type = %d;\n", slice->element_type->type_handle.index);
                 break;
             }
-            case Datatype_Type::ENUM: 
+            case Datatype_Type::ENUM:
             {
                 auto enumeration = downcast<Datatype_Enum>(type);
                 Struct_Content* enum_subtype = types.type_information_type->content.subtypes[(int)Datatype_Type::ENUM - 1];
@@ -1189,7 +1214,7 @@ void c_generator_generate()
                 }
                 break;
             }
-            case Datatype_Type::FUNCTION: 
+            case Datatype_Type::FUNCTION:
             {
                 auto function = downcast<Datatype_Function>(type);
 
@@ -1214,7 +1239,7 @@ void c_generator_generate()
                 }
                 break;
             }
-            case Datatype_Type::STRUCT: 
+            case Datatype_Type::STRUCT:
             {
                 auto structure = downcast<Datatype_Struct>(type);
                 string_append_formated(gen.text, "info->subtypes_.Struct.is_union = %s;\n", structure->struct_type == AST::Structure_Type::UNION ? "true" : "false");
@@ -1340,36 +1365,32 @@ void c_generator_generate()
         }
 
         int last_line_start = function_implementation_char_index;
-        IR_Code_Block* current_block = nullptr;
-        int ir_instruction_index = -1;
         int next_char_translation_index = 0;
-        for (int char_index = function_implementation_char_index; char_index < source_code.size; char_index++)
+        Dynamic_Array<int> active_translations_indices = dynamic_array_create<int>(4);
+        SCOPE_EXIT(dynamic_array_destroy(&active_translations_indices));
+        for (int char_index = function_implementation_char_index; char_index < source_code.size + 1; char_index++)
         {
-            auto c = source_code[char_index];
+            char c;
+            if (char_index != source_code.size) {
+                c = source_code[char_index];
+            }
+            else {
+                c = '\n';
+            }
             if (c != '\n') {
                 continue;
             }
 
-            // Find next translation which overlaps this line
-            while (next_char_translation_index < gen.translation_characters.size) 
+            int line_start = last_line_start;
+            int line_end = char_index;
+            last_line_start = char_index + 1;
+
+            // Activate all translations which we moved over
+            while (next_char_translation_index < gen.translation_characters.size)
             {
-                auto& next_translation = gen.translation_characters[next_char_translation_index];
-
-                // Section-relative line starts/ends
-                int line_start = last_line_start - function_implementation_char_index;
-                int line_end = char_index - function_implementation_char_index;
-                // Check if line intersects translation
-                if (!(line_start >= next_translation.char_end || line_end <= next_translation.char_start)) {
-                    if (ir_instruction_index == -1) {
-                        current_block = next_translation.code_block;
-                        ir_instruction_index = next_translation.instruction_index;
-                    }
-                }
-
-                // Check if we left this translation
-                if (line_end >= next_translation.char_end) {
-                    current_block = nullptr;
-                    ir_instruction_index = -1;
+                auto& translation = gen.translation_characters[next_char_translation_index];
+                if (translation.char_start <= line_end - function_implementation_char_index) {
+                    dynamic_array_push_back(&active_translations_indices, next_char_translation_index);
                     next_char_translation_index += 1;
                 }
                 else {
@@ -1377,24 +1398,41 @@ void c_generator_generate()
                 }
             }
 
-            if (c == '\n') {
-                C_Line_Info line_info;
-                line_info.ir_block = current_block;
-                line_info.instruction_index = ir_instruction_index;
-                line_info.line_start_index = last_line_start;
-                line_info.line_end_index = char_index;
-                last_line_start = char_index + 1;
-                dynamic_array_push_back(&gen.program_translation.line_infos, line_info);
+            // Remove all non-active translations
+            for (int i = 0; i < active_translations_indices.size; i++) {
+                int translation_index = active_translations_indices[i];
+                auto& translation = gen.translation_characters[translation_index];
+                // Check if translation was already passed by
+                if (translation.char_end <= line_start - function_implementation_char_index) {
+                    dynamic_array_swap_remove(&active_translations_indices, i);
+                    i -= 1;
+                }
             }
-        }
 
-        // Push back last line
-        if (last_line_start != source_code.size && current_block != nullptr) {
             C_Line_Info line_info;
-            line_info.ir_block = current_block;
-            line_info.instruction_index = ir_instruction_index;
-            line_info.line_start_index = last_line_start;
-            line_info.line_end_index = source_code.size;
+            line_info.ir_block = nullptr;
+            line_info.instruction_index = -1;
+            line_info.line_start_index = line_start;
+            line_info.line_end_index = line_end;
+
+            // Find smallest active translation
+            int smallest_index = -1;
+            int smallest_char_length = 100000000;
+            for (int i = 0; i < active_translations_indices.size; i++) {
+                auto& translation = gen.translation_characters[active_translations_indices[i]];
+                int length = translation.char_end - translation.char_start;
+                if (length < smallest_char_length) {
+                    smallest_index = i;
+                    smallest_char_length = length;
+                }
+            }
+
+            if (smallest_index != -1) {
+                auto& translation = gen.translation_characters[active_translations_indices[smallest_index]];
+                line_info.ir_block = translation.code_block;
+                line_info.instruction_index = translation.instruction_index;
+            }
+
             dynamic_array_push_back(&gen.program_translation.line_infos, line_info);
         }
     }
@@ -1503,7 +1541,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
         int type_size = type->memory_info.value.size;
         switch (type->type)
         {
-        // Simple cases first
+            // Simple cases first
         case Datatype_Type::PRIMITIVE:
         {
             auto primitive = downcast<Datatype_Primitive>(type);
@@ -1651,7 +1689,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 String escaped = string_create_empty(16);
                 SCOPE_EXIT(string_destroy(&escaped));
                 for (int i = 0; i < string.bytes.size; i++) {
-                    char c = (char) string.bytes.data[i];
+                    char c = (char)string.bytes.data[i];
                     switch (c)
                     {
                     case '\n': string_append(&escaped, "\\n"); break;
@@ -1712,6 +1750,67 @@ void output_memory_as_new_constant(byte* base_memory, Datatype* base_type, bool 
     c_generator_output_constant_access(result.options.constant, requires_memory_address, current_indentation_level);
 }
 
+void c_generator_output_parameter_access(IR_Function* function, int parameter_index)
+{
+    auto& gen = c_generator;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
+
+    C_Translation translation;
+    translation.type = C_Translation_Type::PARAMETER;
+    translation.options.parameter.function = function;
+    translation.options.parameter.index = parameter_index;
+    {
+        String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+        if (name != 0) {
+            string_append(gen.text, name->characters);
+            return;
+        }
+    }
+
+    String new_name = string_create_empty(16);
+    auto& param = function->function_type->parameters[parameter_index];
+    string_append_formated(&new_name, "%s_%d", param.name->characters, gen.name_counter);
+    gen.name_counter++;
+
+    hashtable_insert_element(&gen.program_translation.name_mapping, translation, new_name);
+    string_append(gen.text, new_name.characters);
+}
+
+void c_generator_output_global_access(int global_index)
+{
+    auto& gen = c_generator;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
+    auto& global = compiler.analysis_data->program->globals[global_index];
+
+    C_Translation translation;
+    translation.type = C_Translation_Type::GLOBAL;
+    translation.options.global_index = global_index;
+    {
+        String* name = hashtable_find_element(&gen.program_translation.name_mapping, translation);
+        if (name != 0) {
+            string_append(gen.text, name->characters);
+            return;
+        }
+    }
+
+    String new_name = string_create_empty(16);
+    if (global->is_extern) {
+        string_append(&new_name, global->symbol->id->characters);
+    }
+    else {
+        if (global->symbol != 0) {
+            string_append_formated(&new_name, "%s_g%d", global->symbol->id->characters, gen.name_counter);
+        }
+        else {
+            string_append_formated(&new_name, "global_%d", gen.name_counter);
+        }
+    }
+    gen.name_counter++;
+
+    hashtable_insert_element(&gen.program_translation.name_mapping, translation, new_name);
+    string_append(gen.text, new_name.characters);
+}
+
 void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis_on_pointer_ops)
 {
     auto& gen = c_generator;
@@ -1750,26 +1849,12 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
     }
     case IR_Data_Access_Type::PARAMETER:
     {
-        auto& param_access = access->option.parameter;
-        auto& param = param_access.function->function_type->parameters[param_access.index];
-        string_append_formated(gen.text, "%s_p%d", param.name->characters, param_access.index);
+        c_generator_output_parameter_access(access->option.parameter.function, access->option.parameter.index);
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA:
     {
-        auto global = compiler.analysis_data->program->globals[access->option.global_index];
-
-        if (global->is_extern) {
-            string_append(gen.text, global->symbol->id->characters);
-        }
-        else {
-            if (global->symbol != 0) {
-                string_append_formated(gen.text, "%s_g%d", global->symbol->id->characters, access->option.global_index);
-            }
-            else {
-                string_append_formated(gen.text, "global_%d", access->option.global_index);
-            }
-        }
+        c_generator_output_global_access(access->option.global_index);
         break;
     }
     case IR_Data_Access_Type::CONSTANT:

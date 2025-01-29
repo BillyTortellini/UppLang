@@ -1012,6 +1012,16 @@ void window_set_vsync(Window* window, bool vsync) {
     }
 }
 
+void window_set_focus_on_console() {
+    HWND console_window = GetConsoleWindow();
+    if (console_window == NULL) return;
+
+    BOOL success = SetForegroundWindow(console_window);
+    if (success == 0) {
+        printf("Set foreground window failed!\n");
+    }
+}
+
 void window_set_focus(Window* window) {
     if (window->state.minimized) return;
     BOOL success = SetForegroundWindow(window->hwnd);

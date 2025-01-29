@@ -5827,7 +5827,9 @@ void syntax_editor_update(bool& animations_running)
     }
 
     // Check shortcuts pressed
-    if (syntax_editor.input->key_pressed[(int)Key_Code::O] && syntax_editor.input->key_down[(int)Key_Code::CTRL] && syntax_editor.input->key_down[(int)Key_Code::SHIFT]) {
+    if (syntax_editor.input->key_pressed[(int)Key_Code::O] && 
+        syntax_editor.input->key_down[(int)Key_Code::CTRL] && 
+        syntax_editor.input->key_down[(int)Key_Code::SHIFT]) {
         String filename = string_create();
         SCOPE_EXIT(string_destroy(&filename));
         bool worked = file_io_open_file_selection_dialog(&filename);
@@ -5853,7 +5855,6 @@ void syntax_editor_update(bool& animations_running)
     // Generate GUI (Tabs)
     bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
     {
-        // Draw Tabs
         auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
         auto tabs_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.1f, 0.1f, 0.7f, 1.0f)));
         if (editor.tabs.size > 1)
@@ -5974,7 +5975,16 @@ void syntax_editor_update(bool& animations_running)
             debugger_reset(editor.debugger);
         }
         else if (syntax_editor.input->key_pressed[(int)Key_Code::F6]) {
-            debugger_continue_with_step_over_until_next_event(editor.debugger);
+            debugger_step_over_statement(editor.debugger, false);
+            window_set_focus(editor.window);
+        }
+        else if (syntax_editor.input->key_pressed[(int)Key_Code::F7]) {
+            debugger_step_over_statement(editor.debugger, true);
+            window_set_focus(editor.window);
+        }
+        else if (syntax_editor.input->key_pressed[(int)Key_Code::F9]) {
+            window_set_focus_on_console();
+            debugger_wait_for_console_command(editor.debugger);
             window_set_focus(editor.window);
         }
         return;
@@ -6014,6 +6024,7 @@ void syntax_editor_update(bool& animations_running)
                 line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit);
             }
         }
+        //debugger_resume_until_next_halt_or_exit(editor.debugger);
 
         window_set_focus(editor.window);
         return;
@@ -6221,14 +6232,62 @@ void syntax_editor_render()
         int cursor_visible_index = source_code_get_line(code, cursor.line)->visible_index;
 
         int current_execution_line_index = -1;
+        const char* current_line_symbol = ">";
         Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
         if (stack_frames.size > 0)
         {
             auto& frame = stack_frames[0];
-            if (frame.inside_upp_function) {
-                if (tab.compilation_unit == frame.options.upp_function.unit) {
-                    current_execution_line_index = frame.options.upp_function.line_index;
+            Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
+
+            // Find unit and upp_line_index of currently executing instruction
+            int upp_line_index = -1;
+            Compilation_Unit* unit = nullptr;
+            if (info.unit != nullptr) {
+                upp_line_index = info.upp_line_index;
+                unit = info.unit;
+            }
+            else if (info.ir_function != nullptr) 
+            {
+                // Here we don't know the exact line, but we know the function
+                int distance_to_start = math_absolute((i64)frame.instruction_pointer - (i64)info.function_start_address);
+                int distance_to_end = math_absolute((i64)frame.instruction_pointer - (i64)info.function_end_address);
+                if (distance_to_end < distance_to_start && distance_to_end < 8) { // Just some things to figure out if we are in prolog
+                    current_line_symbol = "<"; // To indicate we are currently leaving the function
                 }
+
+                auto modtree_fn = editor.analysis_data->function_slots[info.ir_function->function_slot_index].modtree_function;
+                AST::Node* function_origin_node = nullptr;
+                if (modtree_fn != nullptr) 
+                {
+                    switch (modtree_fn->function_type)
+                    {
+                    case ModTree_Function_Type::BAKE: {
+                        function_origin_node = upcast(modtree_fn->options.bake->analysis_workload->bake_node);
+                        break;
+                    }
+                    case ModTree_Function_Type::EXTERN: {
+                        auto symbol = modtree_fn->options.extern_definition->symbol;
+                        if (symbol != 0) {
+                            function_origin_node = symbol->definition_node;
+                        }
+                        break;
+                    }
+                    case ModTree_Function_Type::NORMAL: {
+                        function_origin_node = upcast(modtree_fn->options.normal.progress->body_workload->body_node);
+                        break;
+                    }
+                    default: panic("");
+                    }
+                }
+
+                if (function_origin_node != nullptr) {
+                    unit = compiler_find_ast_compilation_unit(function_origin_node);
+                    upp_line_index = function_origin_node->range.start.line;
+                }
+            }
+
+            if (upp_line_index != -1 && editor.tabs[editor.open_tab_index].compilation_unit == unit) {
+                current_execution_line_index = upp_line_index;
             }
         }
 
@@ -6259,7 +6318,7 @@ void syntax_editor_render()
             }
             if (is_current_execution) {
                 text_renderer_add_text(
-                    editor.text_renderer, string_create_static(">"), vec2(line_num_digits* char_size.x, y_pos), Anchor::TOP_LEFT,
+                    editor.text_renderer, string_create_static(current_line_symbol), vec2(line_num_digits* char_size.x, y_pos), Anchor::TOP_LEFT,
                     char_size, vec3(1.0f, 1.0f, 0.0f)
                 );
             }
