@@ -54,10 +54,9 @@ Compiler compiler;
 
 
 // COMPILER
-Compiler* compiler_initialize(Timer* timer)
+Compiler* compiler_initialize()
 {
     compiler.add_compilation_unit_semaphore = semaphore_create(1, 1);
-    compiler.timer = timer;
     compiler.identifier_pool = identifier_pool_create();
     compiler.analysis_data = nullptr;
     compiler.fiber_pool = fiber_pool_create();
@@ -212,7 +211,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
         if (do_output) {
             // logg("\n\n\n   COMPILING\n---------------\n");
         }
-        compiler.time_compile_start = timer_current_time_in_seconds(compiler.timer);
+        compiler.time_compile_start = timer_current_time_in_seconds();
         compiler.generate_code = generate_code;
         {
             compiler.time_analysing = 0;
@@ -236,7 +235,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
         if (compiler.analysis_data != nullptr) {
             compiler_analysis_data_destroy(compiler.analysis_data);
         }
-        compiler.analysis_data = compiler_analysis_data_create(compiler.timer);
+        compiler.analysis_data = compiler_analysis_data_create();
         type_system_add_predefined_types(&compiler.analysis_data->type_system);
 
         // Remove/Delete sources that aren't used anymore
@@ -365,7 +364,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
         compiler_switch_timing_task(Timing_Task::FINISH);
         if (do_output && output_timing && generate_code)
         {
-            double sum = timer_current_time_in_seconds(compiler.timer) - compiler.time_compile_start;
+            double sum = timer_current_time_in_seconds() - compiler.time_compile_start;
             logg("\n-------- TIMINGS ---------\n");
             logg("reset       ... %3.2fms\n", (float)(compiler.time_reset) * 1000);
             if (enable_lexing) {
@@ -493,7 +492,7 @@ void compiler_switch_timing_task(Timing_Task task)
     }
     default: panic("");
     }
-    double now = timer_current_time_in_seconds(compiler.timer);
+    double now = timer_current_time_in_seconds();
     double time_spent = now - compiler.task_last_start_time;
     *add_to = *add_to + time_spent;
     //logg("Spent %3.2fms on: %s\n", time_spent, timing_task_to_string(compiler.task_current));
@@ -544,7 +543,7 @@ Test_Case test_case_make(const char* name, bool should_success)
     return result;
 }
 
-void compiler_run_testcases(Timer* timer, bool force_run)
+void compiler_run_testcases(bool force_run)
 {
     if (!enable_testcases && !force_run) return;
     bool i_enable_lexing = enable_lexing;
@@ -691,7 +690,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         return;
     }
 
-    double time_stress_start = timer_current_time_in_seconds(timer);
+    double time_stress_start = timer_current_time_in_seconds();
 
     String code = text.value;
     for (int i = 0; i < code.size; i++)
@@ -762,7 +761,7 @@ void compiler_run_testcases(Timer* timer, bool force_run)
         }
     }
 
-    double time_stress_end = timer_current_time_in_seconds(timer);
+    double time_stress_end = timer_current_time_in_seconds();
     float ms_time = (time_stress_end - time_stress_start) * 1000.0f;
     logg("Stress test time: %3.2fms (%3.2fms per parse/analyse)\n", ms_time, ms_time / code.size / 2.0f);
 }

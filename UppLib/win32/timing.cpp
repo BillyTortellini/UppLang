@@ -6,33 +6,35 @@
 #include "../utility/utils.hpp"
 #include "windows_helper_functions.hpp"
 
-i64 timing_current_cpu_tick() {
+// Counts per second
+i64 performance_frequency = 1;
+i64 application_start_time = 0;
+
+void timer_initialize() {
+    bool res = QueryPerformanceFrequency((LARGE_INTEGER*) &performance_frequency);    
+    if (!res) {
+        helper_print_last_error();
+        panic("From MSDN: This has to be supported for Windows XP or later, so we don't expect this to fail");
+    }
+    // Again, we expect this call to succeed
+    QueryPerformanceCounter((LARGE_INTEGER*)&application_start_time);
+}
+
+i64 timer_current_cpu_tick() {
     return __rdtsc();
 }
 
-Timer timer_make()
-{
-    Timer result;
-    bool res = QueryPerformanceFrequency((LARGE_INTEGER*) &result.timing_performance_frequency);    
-    if (!res) {
-        helper_print_last_error();
-        panic("Could not initialize timing");
-    };
-    QueryPerformanceCounter((LARGE_INTEGER*) &result.timing_start_time);
-    return result;
-}
-
-double timer_current_time_in_seconds(Timer* timer)
+double timer_current_time_in_seconds()
 {
     i64 now;
     QueryPerformanceCounter((LARGE_INTEGER*)&now);
-    now = now - timer->timing_start_time;
-    return (double)now/timer->timing_performance_frequency;
+    now = now - application_start_time;
+    return (double)now/performance_frequency;
 }
 
-void timer_sleep_until(Timer* timer, double until_in_seconds)
+void timer_sleep_until(double until_in_seconds)
 {
-    double now_in_seconds = timer_current_time_in_seconds(timer);
+    double now_in_seconds = timer_current_time_in_seconds();
     double diff = until_in_seconds - now_in_seconds;
     if (diff <= 0.0) return;
 
@@ -41,18 +43,18 @@ void timer_sleep_until(Timer* timer, double until_in_seconds)
     // we sleep one ms less and do busy waiting for the last ms
     ms -= 1;
     if (ms > 0) {
-        timeBeginPeriod(1); // Sets schedular to be at most 1 ms behind after sleep
+        timeBeginPeriod(1); 
         Sleep(ms);
         timeEndPeriod(1);
     }
 
     // Busy wait until time actually passes
     int sleep_cycles = 0;
-    do { sleep_cycles++; } while (timer_current_time_in_seconds(timer) < until_in_seconds);
+    do { sleep_cycles++; } while (timer_current_time_in_seconds() < until_in_seconds);
 }
 
-void timer_sleep_for(Timer* timer, double seconds) {
-    double start = timer_current_time_in_seconds(timer);
-    timer_sleep_until(timer, start + seconds);
+void timer_sleep_for(double seconds) {
+    double start = timer_current_time_in_seconds();
+    timer_sleep_until(start + seconds);
 }
 

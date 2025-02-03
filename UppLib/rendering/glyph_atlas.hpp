@@ -21,7 +21,7 @@ struct Glyph_Information
     float atlas_fragcoords_right;
 };
 
-struct Glyph_Atlas
+struct Font_Information
 {
     // Atlas Data
     Texture_Bitmap atlas_bitmap;
@@ -35,7 +35,7 @@ struct Glyph_Atlas
     Array<int> character_to_glyph_map;
 };
 
-Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
+Optional<Font_Information> glyph_atlas_create_from_font_file(
     const char* font_filepath,
     int max_character_pixel_size,
     int atlas_size,
@@ -43,9 +43,9 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     int character_margin,
     bool render_antialiased
 );
-Optional<Glyph_Atlas> glyph_atlas_create_from_atlas_file(const char* altas_filepath);
+Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* altas_filepath);
 
-void glyph_atlas_save_as_file(Glyph_Atlas* altas, const char* filepath);
-void glyph_atlas_print_glyph_information(Glyph_Atlas* atlas);
-void glyph_atlas_destroy(Glyph_Atlas* atlas);
+void glyph_atlas_save_as_file(Font_Information* altas, const char* filepath);
+void glyph_atlas_print_glyph_information(Font_Information* atlas);
+void glyph_atlas_destroy(Font_Information* atlas);
 

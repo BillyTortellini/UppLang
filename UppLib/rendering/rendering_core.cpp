@@ -1229,7 +1229,7 @@ Framebuffer* rendering_core_query_framebuffer_fullscreen(const char* name, Textu
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.framebuffers, string_create_static(name));
     if (found != 0) {
-        // Note: if a framebuffer is queried with different attributes (E.g. texture type or sampling mode)
+        // Note: if a framebuffer is queried with different attributes (E.g. bitmap type or sampling mode)
         auto framebuffer = *found;
         assert(framebuffer->resize_with_window, "Cannot set width of framebuffer for fullscreen!");
         return *found;
@@ -1247,7 +1247,7 @@ Framebuffer* rendering_core_query_framebuffer(const char* name, Texture_Type typ
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.framebuffers, string_create_static(name));
     if (found != 0) {
-        // Note: if a framebuffer is queried with different attributes (E.g. texture type or sampling mode)
+        // Note: if a framebuffer is queried with different attributes (E.g. bitmap type or sampling mode)
         auto framebuffer = *found;
         if (framebuffer->width != width || framebuffer->height != height) {
             assert(framebuffer->resize_with_window, "Cannot create framebuffer as fullscreen and then resize!");

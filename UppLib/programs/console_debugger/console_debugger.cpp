@@ -1,4 +1,4 @@
-#include "game.hpp"
+#include "console_debugger.hpp"
 
 #include "../../utility/datatypes.hpp"  
 #include "../../utility/utils.hpp"    
@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <iostream>
 
-void game_entry()
+void console_debugger_entry()
 {
     Debugger* debugger = debugger_create();
     SCOPE_EXIT(debugger_destroy(debugger));

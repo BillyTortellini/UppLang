@@ -1,8 +1,83 @@
 
+Implementation Plan:
+ * Make Renderer that displays a fixed size mono-colored texture
+ * Create font atlas with library?
 
-TODO
- * Create Watch window
-    --> UI where we can enter names and we display strings...
+Current Plan:
+ * Refactor Text-Renderer to better support fixed Pixel-Size and also Pixel-Alignment
+    Also use Integer Coordinates, everything else doesn't make sense for fonts (Except for rotated fonts and 3D things, but we don't need that now)
+    --> E.g. Text-Renderer supporting SDF-Fonts or Fixed-Size Fonts
+ * Maybe some Mesh for batched-rendering?
+ * Make Renderer for pre-defined, fixed resolution SDF-Symbols (Basic Texture Rendering, but create Texture on CPU from SDF functions)
+ * Write new IMGUI, but making it more like DearImGui
+    - Single Window system at the top
+    - Set of Seperated-Widgets (Inputs, Sections, Labels, Text...)
+ * Use ImGui for Debugger-Menu
+    - Stack-Frames
+    - Execution Control
+    - Breakpoints
+    - Watch-Window
+ * Fix Debugger Stepping
+
+What do I need from Renderer:
+ * Vertex-Colored Rectangles with Borders (Also rectangles) (On integer Sizes)
+ * Mono-Textured (With alpha) Rectangle Rendering (Fonts and Symbols)
+
+So we want:
+ * Lot's of Sheet
+
+
+
+
+Watch-Window Design:
+ * Probably open with keyboard-shortcut
+ * List of watch-
+
+Debugger Features:
+ * Stack-Frames 
+    - Stack-Search-Depth for variables
+    - Preview size (1 or multiple stack-frames)
+    - Thread-Selection and Information (Future)
+    - Goto current instruction
+ * Execution Controls
+    - Current Instruction Rendering (Selected Stack-Frame + Instruction Pointer + Per-Thread?)
+    - Step Into/Over/Out-Of
+    - Continue/Halt
+    - Per-Thread Control
+    - Run until cursor hit (If cursor is on executable line)
+ * Breakpoint-Window
+    - Enable/Disable/Goto breakpoints on the fly (Preview breakpoint line)
+    - Breakpoint-Groups
+    - Conditional Breakpoints (Future)
+        + Data-Condition 
+        + Hit-Chains (Other breakpoints need to be hit first)
+        + Stack-Frame Conditions (Called-from, others)
+        + Setting Breakpoint-Variable values
+ * Watch-Window
+    - Show table of Watch-Values
+    - Adding/Removing/Editing/Navigating Watch_Values
+    - Value-Display values during debugging (Single line preview by default)
+        + Show if value has changed since last step/breakpoint
+        + Code-Completion if debugger is halted
+    - Formating and options for Datatypes (Probably another line in a table)
+        + Integers, Floats, bools (Precision, signed/unsigned, Hexadecimal, Decimal, Binary)
+        + Pointers (Check address info, invalid, null, show value-preview if valid)
+        + Structs/Unions/Tagged-Structs
+        + Strings/Any
+        + Optionals
+        + Others (Array/Slice/Enum)
+    - Expandables Views for complex types (Structs/Arrays/Pointers)
+        + Either show members with folding, or have some hierarchical Window-Structure...
+    - Custom View System for Datatypes
+        + E.g. Dynamic_Array, Hashtable, Lists, Allocators
+        + Either enabled by default or accessible in value-display
+    - Expression-Evaluation in Watch-Window
+        + Member-Access, Array/Slice-Access, Referencing and Dereferencing, Binary-Ops 
+    - Debug variables
+        + Storing values in variables at user-requested time or at breakpoint/address hit
+        + Using these values in breakpoint conditions or Expression-Evaluation
+
+
 
 DONE:
  * Fixed Global-Variable Information in PDB (Changed traversal inside Symbols with SymTagExe)
@@ -14,10 +89,6 @@ DONE:
 
 
 Debugger TODO:
- * Pre-Calculate variable/parameter matching after debugger starts
- * Parameter access and Globals should also be accessible
- * Global access after variable/parameter lookup failed
-
  * Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
  * Fix Step-Over (Should respect breakpoints, use step-out of correctly)
  * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)

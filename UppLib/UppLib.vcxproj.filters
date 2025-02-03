@@ -40,9 +40,6 @@
     <Filter Include="Source Files\Programs\Upp_Lang">
       <UniqueIdentifier>{1cc28854-1fd3-409c-814e-5d969df59547}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\Programs\Proc_City">
-      <UniqueIdentifier>{4030bf76-83f8-4e45-a4c2-8e7235771218}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\Win32">
       <UniqueIdentifier>{491472cc-8b12-4eba-8610-1ec3e05d50ac}</UniqueIdentifier>
     </Filter>
@@ -76,26 +73,8 @@
     <Filter Include="Resource Files\Shaders\Upp_Lang">
       <UniqueIdentifier>{b72a4446-85ee-44c4-88a4-1705e56cf350}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\Text_Editor">
-      <UniqueIdentifier>{a494c709-1bc0-4520-b22d-b9b52e0f4e14}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Programs\Text_Editor">
-      <UniqueIdentifier>{bcfac7d7-fac4-4aca-a9f1-d43ca9f108e1}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\Programs\C_Importer">
       <UniqueIdentifier>{97e19768-b984-4e20-a66d-1d4c80794ef3}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Programs\Render_Rework">
-      <UniqueIdentifier>{7e9c0c19-b669-4876-9637-3c16c81490bd}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Programs\Render_Rework">
-      <UniqueIdentifier>{f14dca25-db34-4144-8c59-2147dd97c431}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Header Files\Programs\Bachelor_Thesis">
-      <UniqueIdentifier>{44811558-22ed-4351-8df9-9cb0ecd662a2}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="Source Files\Programs\Bachelor_Thesis">
-      <UniqueIdentifier>{045d66cc-4411-4663-b45a-44fc6a765cab}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\Rendering">
       <UniqueIdentifier>{5cba0240-f303-4cef-974e-d82f904c5b72}</UniqueIdentifier>
@@ -112,14 +91,17 @@
     <Filter Include="Header Files\Programs\C_Importer">
       <UniqueIdentifier>{47028984-d817-4d39-8ee3-bbc51605c838}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\Proc_City">
-      <UniqueIdentifier>{b438c3f2-8a56-409a-8b47-f0fc5e099085}</UniqueIdentifier>
+    <Filter Include="Header Files\Programs\Console_Debugger">
+      <UniqueIdentifier>{298f683b-80da-446e-b340-da7749acaf10}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\Programs\Game">
-      <UniqueIdentifier>{1494a384-8ad0-43c0-b0e3-0081a51de021}</UniqueIdentifier>
+    <Filter Include="Source Files\Programs\Console_Debugger">
+      <UniqueIdentifier>{fa63063e-87b9-479e-b0e0-2d74faf486fe}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\Programs\Game">
-      <UniqueIdentifier>{64cb08b6-117d-4706-99c8-11ed25762b00}</UniqueIdentifier>
+    <Filter Include="Header Files\Programs\Imgui_Test">
+      <UniqueIdentifier>{c0023961-4c77-42b5-9925-973755bd477f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Imgui_Test">
+      <UniqueIdentifier>{41595b8d-31e9-4144-aad9-62bd3c180cf8}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -185,9 +167,6 @@
     </ClInclude>
     <ClInclude Include="upplib.hpp">
       <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\proc_city\proc_city.hpp">
-      <Filter>Header Files\Programs\Proc_City</Filter>
     </ClInclude>
     <ClInclude Include="datastructures\string_pool.hpp">
       <Filter>Header Files\Datastructures</Filter>
@@ -288,9 +267,6 @@
     <ClInclude Include="programs\upp_lang\type_system.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\text_editor\text_editor.hpp">
-      <Filter>Header Files\Programs\Text_Editor</Filter>
-    </ClInclude>
     <ClInclude Include="programs\c_importer\c_importer.hpp">
       <Filter>Header Files\Programs\C_Importer</Filter>
     </ClInclude>
@@ -315,20 +291,11 @@
     <ClInclude Include="programs\upp_lang\constant_pool.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\bachelor_thesis\bachelor.hpp">
-      <Filter>Header Files\Programs\Bachelor_Thesis</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\text_editor\text.hpp">
-      <Filter>Header Files\Programs\Text_Editor</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
     <ClInclude Include="programs\upp_lang\ast.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
-    <ClInclude Include="programs\render_rework\render_rework.hpp">
-      <Filter>Header Files\Programs\Render_Rework</Filter>
     </ClInclude>
     <ClInclude Include="programs\c_importer\c_lexer.hpp">
       <Filter>Header Files\Programs\C_Importer</Filter>
@@ -345,9 +312,6 @@
     <ClInclude Include="utility\line_edit.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\game\game.hpp">
-      <Filter>Header Files\Programs\Game</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -356,6 +320,12 @@
     </ClInclude>
     <ClInclude Include="programs\upp_lang\debugger.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\console_debugger\console_debugger.hpp">
+      <Filter>Header Files\Programs\Console_Debugger</Filter>
+    </ClInclude>
+    <ClInclude Include="programs\imgui_test\imgui_test.hpp">
+      <Filter>Header Files\Programs\Imgui_Test</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -412,9 +382,6 @@
     </ClCompile>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\proc_city\proc_city.cpp">
-      <Filter>Source Files\Programs\Proc_City</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\string_pool.cpp">
       <Filter>Source Files\Datastructures</Filter>
@@ -515,14 +482,8 @@
     <ClCompile Include="programs\upp_lang\compiler_misc.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\text_editor\text_editor.cpp">
-      <Filter>Source Files\Programs\Text_Editor</Filter>
-    </ClCompile>
     <ClCompile Include="programs\c_importer\c_importer.cpp">
       <Filter>Source Files\Programs\C_Importer</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\text_editor\text.cpp">
-      <Filter>Source Files\Programs\Text_Editor</Filter>
     </ClCompile>
     <ClCompile Include="programs\c_importer\c_lexer.cpp">
       <Filter>Source Files\Programs\C_Importer</Filter>
@@ -536,9 +497,6 @@
     <ClCompile Include="programs\upp_lang\symbol_table.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
-    <ClCompile Include="programs\render_rework\render_rework.cpp">
-      <Filter>Source Files\Programs\Render_Rework</Filter>
-    </ClCompile>
     <ClCompile Include="rendering\texture.cpp">
       <Filter>Source Files\Rendering\Core</Filter>
     </ClCompile>
@@ -550,9 +508,6 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\constant_pool.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\bachelor_thesis\bachelor.cpp">
-      <Filter>Source Files\Programs\Bachelor_Thesis</Filter>
     </ClCompile>
     <ClCompile Include="programs\c_importer\import_gui.cpp">
       <Filter>Source Files\Programs\C_Importer</Filter>
@@ -566,9 +521,6 @@
     <ClCompile Include="utility\line_edit.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
-    <ClCompile Include="programs\game\game.cpp">
-      <Filter>Source Files\Programs\Game</Filter>
-    </ClCompile>
     <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
@@ -577,6 +529,12 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\debugger.cpp">
       <Filter>Source Files\Win32</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\console_debugger\console_debugger.cpp">
+      <Filter>Source Files\Programs\Console_Debugger</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\imgui_test\imgui_test.cpp">
+      <Filter>Source Files\Programs\Imgui_Test</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -625,6 +583,9 @@
       <Filter>Resource Files\Shaders</Filter>
     </None>
     <None Include="..\resources\shaders\particle.glsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\mono_texture.glsl">
       <Filter>Resource Files\Shaders</Filter>
     </None>
   </ItemGroup>

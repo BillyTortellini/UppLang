@@ -9,7 +9,7 @@
 
 struct Text_Renderer
 {
-    Glyph_Atlas glyph_atlas;
+    Font_Information glyph_atlas;
     Texture* atlas_bitmap_texture;
     Texture* atlas_sdf_texture;
     Vertex_Attribute<float>* attrib_pixel_size;

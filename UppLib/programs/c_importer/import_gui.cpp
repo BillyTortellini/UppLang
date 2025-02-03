@@ -381,13 +381,13 @@ void output_import_interface(String* output_filename)
 int run_import_gui()
 {
     // Window/Rendering Stuff
+    timer_initialize();
     Window* window = window_create("C-Import GUI", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
     rendering_core_initialize(window_state->width, window_state->height, window_state->dpi);
     SCOPE_EXIT(rendering_core_destroy());
 
-    Timer timer = timer_make();
     importer_initialize();
 
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file("resources/fonts/glyph_atlas.atlas");
@@ -429,11 +429,11 @@ int run_import_gui()
     vec2 default_char_size = text_renderer_get_aligned_char_size(text_renderer, 0.4f);
 
     // Window Loop
-    double time_last_update_start = timer_current_time_in_seconds(&timer);
+    double time_last_update_start = timer_current_time_in_seconds();
     float angle = 0.0f;
     while (true)
     {
-        double time_frame_start = timer_current_time_in_seconds(&timer);
+        double time_frame_start = timer_current_time_in_seconds();
         float time_since_last_update = (float)(time_frame_start - time_last_update_start);
         time_last_update_start = time_frame_start;
 
@@ -691,7 +691,7 @@ int run_import_gui()
 
         // Rendering
         {
-            rendering_core_prepare_frame(timer_current_time_in_seconds(&timer), window_state->width, window_state->height);
+            rendering_core_prepare_frame(timer_current_time_in_seconds(), window_state->width, window_state->height);
             gui_update_and_render(gui_pass);
 
             text_renderer_reset(text_renderer);
@@ -704,7 +704,7 @@ int run_import_gui()
         {
             const int TARGET_FPS = 60;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
-            timer_sleep_until(&timer, time_frame_start + SECONDS_PER_FRAME);
+            timer_sleep_until(time_frame_start + SECONDS_PER_FRAME);
         }
     }
 

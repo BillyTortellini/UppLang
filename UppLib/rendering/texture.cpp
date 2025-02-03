@@ -80,7 +80,7 @@ void texture_update_texture_data(Texture* texture, Array<byte> data, bool create
         panic("Unsupported types for data upload, is definitly possible, but I have to look into that\n");
     }
     if (data.size != texture_type_pixel_byte_size(texture->type) * texture->width * texture->height) {
-        panic("Data size doesn't match texture!");
+        panic("Data size doesn't match bitmap!");
     }
 
 
@@ -167,7 +167,7 @@ GLint texture_bind_to_next_free_unit(Texture* texture, Sampling_Mode sample_mode
         panic("Cannot bind a renderbuffer, since they are write_only");
     }
     if (!texture->has_mipmap && sample_mode.minification == Texture_Minification_Mode::TRILINEAR_INTERPOLATION) {
-        panic("Tried to set to trilinear, but texture has no mipmap!\n");
+        panic("Tried to set to trilinear, but bitmap has no mipmap!\n");
     }
     return opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type::TEXTURE_2D, texture->texture_id, sample_mode);
 }

@@ -364,7 +364,6 @@ struct Syntax_Editor
     Input* input;
     Rendering_Core* rendering_core;
     Renderer_2D* renderer_2D;
-    Timer* timer;
     Text_Renderer* text_renderer;
     int frame_index;
 
@@ -2202,7 +2201,7 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 
 
 
-void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input, Timer* timer)
+void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input)
 {
     memory_zero(&syntax_editor);
     syntax_editor.window = window;
@@ -2215,8 +2214,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.auto_format_identifier_pool = identifier_pool_create();
     syntax_editor.last_insert_was_shift_enter = false;
     syntax_editor.random = random_make_time_initalized();
-    syntax_editor.last_update_time = timer_current_time_in_seconds(timer);
-    syntax_editor.timer = timer;
+    syntax_editor.last_update_time = timer_current_time_in_seconds();
     syntax_editor.particles = dynamic_array_create<Particle>();
     syntax_editor.directory_crawler = directory_crawler_create();
     syntax_editor.frame_index = 1;
@@ -2256,7 +2254,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.last_search_was_forward = false;
     syntax_editor.last_search_was_to = false;
 
-    compiler_initialize(timer);
+    compiler_initialize();
 
     String default_filename = string_create_static("upp_code/editor_text.upp");
     int tab_index = syntax_editor_add_tab(default_filename);
@@ -2696,7 +2694,7 @@ unsigned long compiler_thread_entry_fn(void* userdata)
         compiler_analysis_update_source_code_information();
 
         // Artificial sleep, to see how 'sluggish' editor becomes...
-        //timer_sleep_for(compiler.timer, 1.0);
+        //timer_sleep_for(1.0);
 
         semaphore_increment(editor.compilation_finish_semaphore, 1);
         //logg("Compiler thread waiting now\n");
@@ -5792,7 +5790,7 @@ void syntax_editor_update(bool& animations_running)
 
     // Update particles
     {
-        auto time = timer_current_time_in_seconds(editor.timer);
+        auto time = timer_current_time_in_seconds();
         float delta = time - editor.last_update_time;
         editor.last_update_time = time;
 
@@ -5843,7 +5841,7 @@ void syntax_editor_update(bool& animations_running)
     }
     else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
         syntax_editor_wait_for_newest_compiler_info(false);
-        compiler_run_testcases(compiler.timer, true);
+        compiler_run_testcases(true);
     }
 
     // Handle Editor inputs

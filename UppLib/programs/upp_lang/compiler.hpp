@@ -75,7 +75,6 @@ struct Compiler
     Semaphore add_compilation_unit_semaphore;
 
     // Timing stuff
-    Timer* timer;
     Timing_Task task_current;
     double task_last_start_time;
     double time_compile_start;
@@ -90,7 +89,7 @@ struct Compiler
 
 extern Compiler compiler;
 
-Compiler* compiler_initialize(Timer* timer);
+Compiler* compiler_initialize();
 void compiler_destroy();
 
 // Expects file_path to be a full path (For deduplication)
@@ -106,4 +105,4 @@ Exit_Code compiler_execute(Compiler_Analysis_Data* analysis_data);
 bool compiler_errors_occured(Compiler_Analysis_Data* analysis_data);
 Compilation_Unit* compiler_find_ast_compilation_unit(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
-void compiler_run_testcases(Timer* timer, bool force_run);
+void compiler_run_testcases(bool force_run);

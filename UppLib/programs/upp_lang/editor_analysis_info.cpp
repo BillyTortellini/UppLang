@@ -350,13 +350,13 @@ bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
     return a->base == b->base && a->pass == b->pass;
 }
 
-Compiler_Analysis_Data* compiler_analysis_data_create(Timer* timer)
+Compiler_Analysis_Data* compiler_analysis_data_create()
 {
     Compiler_Analysis_Data* result = new Compiler_Analysis_Data;
 
     result->compiler_errors = dynamic_array_create<Compiler_Error_Info>(); // List of parser and semantic errors
     result->constant_pool = constant_pool_create();
-    result->type_system = type_system_create(timer);
+    result->type_system = type_system_create();
     result->extern_sources = extern_sources_create();
 
     // Semantic analyser

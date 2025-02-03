@@ -764,14 +764,13 @@ Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* nam
     return subtype_index_make(new_indices);
 }
 
-Type_System type_system_create(Timer* timer)
+Type_System type_system_create()
 {
     Type_System result;
     result.deduplication_table = hashtable_create_empty<Type_Deduplication, Datatype*>(32, type_deduplication_hash, type_deduplication_is_equal);
     result.types = dynamic_array_create<Datatype*>(256);
     result.internal_type_infos = dynamic_array_create<Internal_Type_Information*>(256);
     result.subtype_index_deduplication = hashset_create_empty<Subtype_Index*>(1, subtype_index_hash, subtype_index_equals);
-    result.timer = timer;
     result.register_time = 0;
     result.subtype_base_index.indices = dynamic_array_create<Named_Index>();
     return result;

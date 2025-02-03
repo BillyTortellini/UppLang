@@ -2465,12 +2465,12 @@ void workload_executer_resolve()
                 else illegal_code_path
     */
 
-    double start_time = timer_current_time_in_seconds(compiler.timer);
+    double start_time = timer_current_time_in_seconds();
     double time_in_executer = 0;
     double time_in_loop_resolve = 0;
     double time_per_workload_type[100];
     memory_set_bytes(&time_per_workload_type[0], sizeof(double) * 100, 0);
-    double last_timestamp = timer_current_time_in_seconds(compiler.timer);
+    double last_timestamp = timer_current_time_in_seconds();
 
     auto& executer = workload_executer;
     auto& all_workloads = compiler.analysis_data->all_workloads;
@@ -2573,14 +2573,14 @@ void workload_executer_resolve()
             }
 
             // TIMING
-            double now = timer_current_time_in_seconds(compiler.timer);
+            double now = timer_current_time_in_seconds();
             time_in_executer += now - last_timestamp;
             last_timestamp = now;
 
             bool finished = workload_executer_switch_to_workload(workload);
 
             // TIMING
-            now = timer_current_time_in_seconds(compiler.timer);
+            now = timer_current_time_in_seconds();
             time_per_workload_type[(int)workload->type] += now - last_timestamp;
             last_timestamp = now;
 
@@ -2631,7 +2631,7 @@ void workload_executer_resolve()
              3. Resolve the loop (Log Error, set some of the dependencies to error)
         */
         // TIMING
-        double now = timer_current_time_in_seconds(compiler.timer);
+        double now = timer_current_time_in_seconds();
         time_in_executer += now - last_timestamp;
         last_timestamp = now;
 
@@ -2787,7 +2787,7 @@ void workload_executer_resolve()
             }
 
             // TIMING
-            double now = timer_current_time_in_seconds(compiler.timer);
+            double now = timer_current_time_in_seconds();
             time_in_loop_resolve += now - last_timestamp;
             last_timestamp = now;
 
@@ -2800,7 +2800,7 @@ void workload_executer_resolve()
 
     if (PRINT_TIMING)
     {
-        double end_time = timer_current_time_in_seconds(compiler.timer);
+        double end_time = timer_current_time_in_seconds();
         //logg("Time in Bake Analysis    %3.4f")
         logg("Time in executer         %3.4fms\n", time_in_executer * 1000);
         logg("Time in loop-resolve     %3.4fms\n", time_in_loop_resolve * 1000);
@@ -10212,6 +10212,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
         auto& param_function = matching_info->matched_parameters[0];
 
         Custom_Operator op;
+        memory_zero(&op);
         Custom_Operator_Key key;
         key.type = AST::Context_Change_Type::ARRAY_ACCESS;
 

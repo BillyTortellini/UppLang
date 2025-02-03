@@ -38,7 +38,7 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Operator_Context*> allocated_operator_contexts;
 };
 
-Compiler_Analysis_Data* compiler_analysis_data_create(Timer* timer);
+Compiler_Analysis_Data* compiler_analysis_data_create();
 void compiler_analysis_data_destroy(Compiler_Analysis_Data* data);
 
 

@@ -3,6 +3,22 @@
 #include "../../utility/hash_functions.hpp"
 #include "../upp_lang/compiler_misc.hpp"
 
+Text_Position text_position_make(int line_index, int character)
+{
+    Text_Position pos;
+    pos.line_index = line_index;
+    pos.character = character;
+    return pos;
+}
+
+Text_Slice text_slice_make(Text_Position start, Text_Position end)
+{
+    Text_Slice slice;
+    slice.start = start;
+    slice.end = end;
+    return slice;
+}
+
 bool token_type_is_keyword(C_Token_Type type)
 {
     switch (type)

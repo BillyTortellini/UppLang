@@ -3,7 +3,6 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
-#include "../text_editor/text.hpp"
 
 enum class C_Token_Type
 {
@@ -83,6 +82,18 @@ enum class C_Token_Type
     NEW_LINE, // \n
     // Controll Tokens 
     ERROR_TOKEN // <- This is usefull because now errors propagate to syntax analysis
+};
+
+struct Text_Position
+{
+    int line_index;
+    int character;
+};
+
+struct Text_Slice
+{
+    Text_Position start;
+    Text_Position end;
 };
 
 union Token_Attribute

@@ -222,6 +222,7 @@ void upp_lang_main()
     //test_things();
     //return;
 
+    timer_initialize();
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);
@@ -232,15 +233,13 @@ void upp_lang_main()
     glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
     logg("Maximum attribs: %d\n", maxAttribs);
 
-    Timer timer = timer_make();
-
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file("resources/fonts/glyph_atlas.atlas");
     SCOPE_EXIT(text_renderer_destroy(text_renderer));
 
     Renderer_2D* renderer_2D = renderer_2D_create(text_renderer);
     SCOPE_EXIT(renderer_2D_destroy(renderer_2D));
 
-    syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window), &timer);
+    syntax_editor_initialize(text_renderer, renderer_2D, window, window_get_input(window));
     SCOPE_EXIT(syntax_editor_destroy());
     syntax_editor_load_state(string_create_static("upp_code/session.ses"));
 
@@ -274,11 +273,11 @@ void upp_lang_main()
     // Window Loop
     int last_animation_required_frame = -100;
     int frame = 0;
-    double time_last_update_start = timer_current_time_in_seconds(&timer);
+    double time_last_update_start = timer_current_time_in_seconds();
     float angle = 0.0f;
     while (true)
     {
-        double time_frame_start = timer_current_time_in_seconds(&timer);
+        double time_frame_start = timer_current_time_in_seconds();
         float time_since_last_update = (float)(time_frame_start - time_last_update_start);
         time_last_update_start = time_frame_start;
 
@@ -321,11 +320,11 @@ void upp_lang_main()
             //code_editor_update(&code_editor, input, timer_current_time_in_seconds(&timer));
         }
 
-        double time_input_end = timer_current_time_in_seconds(&timer);
+        double time_input_end = timer_current_time_in_seconds();
 
         // Rendering
         {
-            rendering_core_prepare_frame(timer_current_time_in_seconds(&timer), window_state->width, window_state->height);
+            rendering_core_prepare_frame(timer_current_time_in_seconds(), window_state->width, window_state->height);
             SCOPE_EXIT(
                 text_renderer_reset(text_renderer);
             renderer_2D_reset(renderer_2D);
@@ -419,11 +418,11 @@ void upp_lang_main()
         }
 
         input_reset(input); // Clear input for next frame
-        double time_render_end = timer_current_time_in_seconds(&timer);
+        double time_render_end = timer_current_time_in_seconds();
 
         // Sleep
         {
-            double time_calculations = timer_current_time_in_seconds(&timer) - time_frame_start;
+            double time_calculations = timer_current_time_in_seconds() - time_frame_start;
             /*
             logg("FRAME_TIMING:\n---------------\n");
             logg("input        ... %3.2fms\n", 1000.0f * (float)(time_input_end - time_frame_start));
@@ -434,7 +433,7 @@ void upp_lang_main()
             // Sleep
             const int TARGET_FPS = 30;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
-            timer_sleep_until(&timer, time_frame_start + SECONDS_PER_FRAME);
+            timer_sleep_until(time_frame_start + SECONDS_PER_FRAME);
         }
     }
 }

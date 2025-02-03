@@ -8,7 +8,6 @@
 #include "../../utility/rich_text.hpp"
 
 struct Symbol;
-struct Timer;
 struct Datatype;
 struct Datatype_Struct;
 struct Datatype_Subtype;
@@ -535,7 +534,6 @@ struct Predefined_Types
 // TYPE SYSTEM
 struct Type_System
 {
-    Timer* timer;
     double register_time;
     Predefined_Types predefined_types;
 
@@ -547,7 +545,7 @@ struct Type_System
     Subtype_Index subtype_base_index;
 };
 
-Type_System type_system_create(Timer* timer);
+Type_System type_system_create();
 void type_system_destroy(Type_System* system);
 void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);

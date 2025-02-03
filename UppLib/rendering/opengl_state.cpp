@@ -154,7 +154,7 @@ OpenGL_State opengl_state_create()
     result.active_framebuffer = 0;
     result.texture2D_binding = 0;
 
-    // Initialize texture unit tracking
+    // Initialize bitmap unit tracking
     int texture_unit_count;
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &texture_unit_count);
     texture_unit_count = math_minimum(2048, texture_unit_count);
@@ -234,7 +234,7 @@ GLint opengl_state_bind_texture_to_next_free_unit(Texture_Binding_Type binding_t
     new_binding.bound_texture_id = texture_id;
     new_binding.sampling_mode = sampling_mode;
 
-    // Check if texture is already bound to a texture_unit
+    // Check if bitmap is already bound to a texture_unit
     {
         auto compare_binding = [](Texture_Unit_Binding& a, Texture_Unit_Binding& b) -> bool {
             return

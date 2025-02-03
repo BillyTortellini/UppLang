@@ -76,7 +76,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         return;
     }
 
-    Glyph_Atlas* atlas = &renderer->glyph_atlas;
+    Font_Information* atlas = &renderer->glyph_atlas;
     float text_height = char_size.x / text_renderer_get_char_width_to_height_ratio(renderer);
     const vec2 char_size_normalized = convertSizeFromTo(char_size, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     vec2 offset = anchor_switch(
@@ -315,7 +315,7 @@ void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass)
 
     Interesting stuff to implement:
         - Distance field form raster image
-        - Rectangle packing in texture atlas
+        - Rectangle packing in bitmap atlas
         - Font rasterization (When loading fonts myself) from bezier curves
         - Kerning and text placement with other metrics
 */

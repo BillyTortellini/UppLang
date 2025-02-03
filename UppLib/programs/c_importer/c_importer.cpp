@@ -1739,15 +1739,14 @@ Optional<C_Import_Package> c_importer_parse_header(
         string_append_formated(&output_program, "#include <cstdio>\n#include <%s>\n#define myoffsetof(s,m) ((size_t)&(((s*)0)->m))\n\nint main(int argc, char** argv) {\n", file_name);
         auto iter = hashtable_iterator_create(&package.symbol_table.symbols);
         int count = 0;
-        Timer timer = timer_make();
-        double last_time = timer_current_time_in_seconds(&timer);
+        double last_time = timer_current_time_in_seconds();
         Dynamic_Array<Print_Destination> destinations = dynamic_array_create<Print_Destination>(256);
         SCOPE_EXIT(dynamic_array_destroy(&destinations));
         while (hashtable_iterator_has_next(&iter))
         {
             count++;
             if (count % 2000 == 0) {
-                double now = timer_current_time_in_seconds(&timer);
+                double now = timer_current_time_in_seconds();
                 logg("%d/%d %3.2fs\n", count, package.symbol_table.symbols.element_count, (float)(now - last_time));
                 last_time = now;
             }

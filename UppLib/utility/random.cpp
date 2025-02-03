@@ -17,7 +17,7 @@ Random random_make_time_initalized()
 {
     uint32 a = 0;
     while (a == 0) {
-        a = (uint32)timing_current_cpu_tick();
+        a = (uint32)timer_current_cpu_tick();
     }
     return random_make(a, 5000);
 }

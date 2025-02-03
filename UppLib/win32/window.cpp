@@ -793,15 +793,9 @@ void window_change_fullscreen_mode(Window* window, bool fullscreen);
     So what i want to do:
     If I get KEY_DOWN/UP in message_handler, I tell WM_CHAR that it should put itself into the current message
 */
-bool time_init = false;
-Timer timer;
 bool window_handle_messages(Window* window, bool block_until_next_message, int* message_count)
 {
-    if (!time_init) {
-        timer = timer_make();
-        time_init = true;
-    }
-    double before_all = timer_current_time_in_seconds(&timer);
+    double before_all = timer_current_time_in_seconds();
 
     // Handle fullscreen requests
     if (window->fullscreen_state_request_was_made) {
@@ -827,7 +821,7 @@ bool window_handle_messages(Window* window, bool block_until_next_message, int* 
         window_set_cursor_into_center_of_screen(window);
     }
 
-    double start = timer_current_time_in_seconds(&timer);
+    double start = timer_current_time_in_seconds();
     MSG msg = {};
     int msg_count = 0;
     if (block_until_next_message)
@@ -868,7 +862,7 @@ bool window_handle_messages(Window* window, bool block_until_next_message, int* 
         *message_count = msg_count;
     }
 
-    double end = timer_current_time_in_seconds(&timer);
+    double end = timer_current_time_in_seconds();
     if (end - start > 0.003 && !block_until_next_message) {
         logg("Took longer than a ms %3.2fms\n", (end-start) * 1000.0f);
         // logg("Time for first: %3.2fms\n", (end - start) * 1000.0f);
@@ -1226,13 +1220,13 @@ void window_wait_vsynch()
     g_output->WaitForVBlank();
 }
 
-void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs, Timer& timer)
+void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsynchs)
 {
     window_initialize_dxgi_output();
-    double reference = timer_current_time_in_seconds(&timer);
+    double reference = timer_current_time_in_seconds();
     bool first = true;
     g_output->WaitForVBlank();
-    vsync_start = timer_current_time_in_seconds(&timer);
+    vsync_start = timer_current_time_in_seconds();
     time_between_vsynchs = 1 / 60.0;
 
     /// while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {

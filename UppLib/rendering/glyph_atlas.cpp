@@ -45,7 +45,7 @@ Glyph_Information glyph_information_binary_parser_read(BinaryParser* parser)
     return information;
 }
 
-Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
+Optional<Font_Information> glyph_atlas_create_from_font_file(
     const char* font_filepath,
     int max_character_pixel_size,
     int atlas_size,
@@ -53,7 +53,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     int character_margin,
     bool render_antialiased)
 {
-    Glyph_Atlas result;
+    Font_Information result;
     result.character_to_glyph_map = array_create<int>(256);
     result.cursor_advance = 0;
     result.glyph_informations = dynamic_array_create<Glyph_Information>(128);
@@ -63,7 +63,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     u32 ft_error = FT_Init_FreeType(&library);
     if (ft_error != 0) {
         logg("Could not initialize freetype, error: %s\n", FT_Error_String(ft_error));
-        return optional_make_failure<Glyph_Atlas>();
+        return optional_make_failure<Font_Information>();
     }
     SCOPE_EXIT(FT_Done_FreeType(library));
 
@@ -71,7 +71,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     ft_error = FT_New_Face(library, font_filepath, 0, &face);
     if (ft_error != 0) {
         logg("Could not create face for \"%font_filepath\", error: %s\n", font_filepath, FT_Error_String(ft_error));
-        return optional_make_failure<Glyph_Atlas>();
+        return optional_make_failure<Font_Information>();
     }
     SCOPE_EXIT(FT_Done_Face(face));
 
@@ -79,7 +79,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
     ft_error = FT_Set_Pixel_Sizes(face, 0, max_character_pixel_size);
     if (ft_error != 0) {
         logg("FT_Set_Pixel_Size failed, error: %s\n", FT_Error_String(ft_error));
-        return optional_make_failure<Glyph_Atlas>();
+        return optional_make_failure<Font_Information>();
     }
     result.ascender = face->size->metrics.ascender;
     result.descender = face->size->metrics.descender;
@@ -164,7 +164,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
         }
         if (atlas_cursor_y + glyph_bitmap.height + padding > atlas_bitmap.height) {
             logg("Texture atlas is too small", font_filepath, FT_Error_String(ft_error));
-            return optional_make_failure<Glyph_Atlas>();
+            return optional_make_failure<Font_Information>();
         }
         information.atlas_fragcoords_left = (atlas_cursor_x - character_margin) / (float)atlas_bitmap.width;
         information.atlas_fragcoords_right = (atlas_cursor_x + glyph_bitmap.width + character_margin) / (float)atlas_bitmap.width;
@@ -188,14 +188,14 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_font_file(
         result.character_to_glyph_map[current_character] = result.glyph_informations.size-1;
     }
 
-    // Create character atlas texture
+    // Create character atlas bitmap
     result.atlas_distance_field = texture_bitmap_create_distance_field(&atlas_bitmap);
     result.atlas_bitmap = atlas_bitmap;
 
     return optional_make_success(result);
 }
 
-void glyph_atlas_save_as_file(Glyph_Atlas* atlas, const char* filepath)
+void glyph_atlas_save_as_file(Font_Information* atlas, const char* filepath)
 {
     BinaryParser parser = binary_parser_create_empty(1024 * 1024 * 4);
     SCOPE_EXIT(binary_parser_destroy(&parser));
@@ -216,16 +216,16 @@ void glyph_atlas_save_as_file(Glyph_Atlas* atlas, const char* filepath)
     binary_parser_write_to_file(&parser, filepath);
 }
 
-Optional<Glyph_Atlas> glyph_atlas_create_from_atlas_file(const char* atlas_filepath)
+Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* atlas_filepath)
 {
     Optional<BinaryParser> optional_parser = binary_parser_create_from_file(atlas_filepath);
     if (!optional_parser.available) {
-        return optional_make_failure<Glyph_Atlas>();
+        return optional_make_failure<Font_Information>();
     }
     BinaryParser* parser = &optional_parser.value;
     SCOPE_EXIT(binary_parser_destroy(parser));
 
-    Glyph_Atlas result;
+    Font_Information result;
     int width = binary_parser_read_int(parser);
     int height = binary_parser_read_int(parser);
     result.ascender = binary_parser_read_int(parser);
@@ -247,7 +247,7 @@ Optional<Glyph_Atlas> glyph_atlas_create_from_atlas_file(const char* atlas_filep
     return optional_make_success(result);
 }
 
-void glyph_atlas_print_glyph_information(Glyph_Atlas* atlas)
+void glyph_atlas_print_glyph_information(Font_Information* atlas)
 {
     String message = string_create_empty(4096);
     SCOPE_EXIT(string_destroy(&message));
@@ -262,7 +262,7 @@ void glyph_atlas_print_glyph_information(Glyph_Atlas* atlas)
     logg("\n%s\n", message.characters);
 }
 
-void glyph_atlas_destroy(Glyph_Atlas* atlas)
+void glyph_atlas_destroy(Font_Information* atlas)
 {
     dynamic_array_destroy(&atlas->glyph_informations);
     array_destroy(&atlas->character_to_glyph_map);
