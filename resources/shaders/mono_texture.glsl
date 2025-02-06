@@ -31,7 +31,7 @@ void main()
 {
     float texture_value = texture(u_sampler, f_uvs).x;
     o_color.xyz = f_color.xyz;
-    o_color.w = pow(f_color.w * texture_value, 1/2.2);
+    o_color.w = f_color.w * pow(texture_value, 1/2.2);
 }
 
 #endif

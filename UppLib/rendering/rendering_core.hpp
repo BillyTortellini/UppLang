@@ -92,11 +92,15 @@ Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attri
 
 
 // MESH
+struct Mesh;
+
 struct Attribute_Buffer
 {
     Dynamic_Array<byte> attribute_data;
     GPU_Buffer gpu_buffer;
-    int element_count; // Size in elements, not bytes!
+    int element_byte_size;
+    Mesh* mesh;
+    bool is_index_buffer;
 };
 
 struct Mesh
@@ -115,79 +119,45 @@ struct Mesh
     int index_count;
 };
 
+// Crashes if attribute is not in mesh
 template<typename T>
-Array<T> mesh_get_attribute_data(Mesh* mesh, Vertex_Attribute<T>* attribute) 
+Attribute_Buffer* mesh_get_raw_attribute_buffer(Mesh* mesh, Vertex_Attribute<T>* attribute) 
 {
-    int index = -1;
     for (int i = 0; i < mesh->description->attributes.size; i++) {
         if (mesh->description->attributes[i] == static_cast<Vertex_Attribute_Base*>(attribute)) {
-            index = i;
-            break;
+            return &mesh->buffers[i];
         }
     }
-    if (index == -1) {
-        panic("Mesh did not contain attribute : %s\n", attribute->name.characters);
-    }
-    return dynamic_array_as_array(&mesh->buffers[index].attribute_data);
+    panic("Currently this function crashes here");
+    return 0;
+}
+
+// This updates vertex-count and index-count of mesh
+void attribute_buffer_report_change_to_mesh(Attribute_Buffer* buffer); 
+void attribute_buffer_push_raw_data(Attribute_Buffer* buffer, void* data, int size); // Note: Also reports size-change to mesh and sets is_dirty
+
+template<typename T>
+void attribute_buffer_push_value(Attribute_Buffer* buffer, T value) {
+    attribute_buffer_push_raw_data(buffer, &value, sizeof(T));
 }
 
 template<typename T>
-Array<T> mesh_get_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int start_index, int size) 
-{
-    int index = -1;
-    for (int i = 0; i < mesh->description->attributes.size; i++) {
-        if (mesh->description->attributes[i] == static_cast<Vertex_Attribute_Base*>(attribute)) {
-            index = i;
-            break;
-        }
-    }
-    if (index == -1) {
-        panic("Mesh did not contain attribute : %s\n", attribute->name.characters);
-    }
-    
-    mesh->dirty = true;
-    auto& buffer = mesh->buffers[index];
+Array<T> attribute_buffer_allocate_slice(Attribute_Buffer* buffer, int element_count) {
+    assert(sizeof(T) == buffer->element_byte_size, "Otherwise we push invalid datatype!");
+    dynamic_array_reserve(&buffer->attribute_data, buffer->attribute_data.size + element_count * sizeof(T));
 
     Array<T> result;
-    result.size = size;
-    result.data = (T*) &buffer.attribute_data.data[start_index * sizeof(T)];
+    result.data = (T*) &buffer->attribute_data.data[buffer->attribute_data.size];
+    result.size = element_count;
+    buffer->attribute_data.size += sizeof(T) * element_count;
+    attribute_buffer_report_change_to_mesh(buffer);
     return result;
 }
 
-
 template<typename T>
-Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) 
-{
-    int index = -1;
-    for (int i = 0; i < mesh->description->attributes.size; i++) {
-        if (mesh->description->attributes[i] == static_cast<Vertex_Attribute_Base*>(attribute)) {
-            index = i;
-            break;
-        }
-    }
-    if (index == -1) {
-        panic("Mesh did not contain attribute : %s\n", attribute->name.characters);
-    }
-
-    mesh->dirty = true;
-
-    auto& buffer = mesh->buffers[index];
-    buffer.element_count += size;
-    if (mesh->description->attributes[index] == rendering_core.predefined.index) {
-        mesh->index_count = buffer.element_count;
-    }
-    else {
-        mesh->vertex_count = math_maximum(mesh->vertex_count, buffer.element_count);
-    }
-
-    int before_size = buffer.attribute_data.size;
-    dynamic_array_reserve(&buffer.attribute_data, buffer.attribute_data.size + size * sizeof(T));
-    buffer.attribute_data.size = buffer.attribute_data.size + size * sizeof(T);
-
-    Array<T> result;
-    result.size = size;
-    result.data = (T*) &buffer.attribute_data.data[before_size];
-    return result;
+Array<T> mesh_push_attribute_slice(Mesh* mesh, Vertex_Attribute<T>* attribute, int size) {
+    Attribute_Buffer* buffer = mesh_get_raw_attribute_buffer(mesh, attribute);
+    return attribute_buffer_allocate_slice<T>(buffer, size);
 }
 
 template<typename T>

@@ -1,7 +1,39 @@
 
-Implementation Plan:
- * Make Renderer that displays a fixed size mono-colored texture
- * Create font atlas with library?
+TODO in UI:
+ * Add scroll-bar on y-overflow (Scroll-Offset stored per window, also last y-size for things)
+    - Currently off by one, maybe fix at some point
+    - Input is missing...
+ * Widget-Functionality
+    - Button
+    - Text_Input
+ * Add horizontal separator and non-mergin items (labels + sepeartor) 
+ * Label and button groups (To have similarly sized labels/buttons)
+
+ * More Widgets
+    - Check_Box,
+    - Number_Input
+    - Sub_Header
+
+ * Implement Batching (I assume drawing can then be done with a single draw call with correct triangle order!)
+    - Using an index-buffer we can Generate the index-Buffer afterwards
+    
+Done:
+ * Better growing on widgets
+ * Add Hitboxes to things
+ * Merge Widget-Lines if enough space
+ * Collaps Widget if not enough space
+
+ * Text-Clipping 
+ * Added better way to add Vertices to Mesh (Direct Access to Mesh-Attribute_Buffer)
+ * Refactored Bitmap and Glyph-Atlas (Removed Sub-Image)
+ * Refactored Box-Vertex creation
+ * Rectangle-Clipping inside Window
+ * Render first few widgets
+
+ * Check which padding for text is reasonable (Different for bottom/Top of text I guess in single line buttons?)
+ * Create box-renderer with border colors
+ * Box-Rendering around character, check fit 
+    
 
 Current Plan:
  * Refactor Text-Renderer to better support fixed Pixel-Size and also Pixel-Alignment

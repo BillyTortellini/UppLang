@@ -339,7 +339,6 @@ void rendering_core_prepare_frame(float current_time, int backbuffer_width, int 
                 mesh->index_count = 0;
                 for (int i = 0; i < mesh->buffers.size; i++) {
                     auto& buffer = mesh->buffers[i];
-                    buffer.element_count = 0;
                     dynamic_array_reset(&buffer.attribute_data);
                 }
             }
@@ -382,7 +381,9 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
                 auto& buffer = mesh->buffers[i];
                 auto attribute = mesh->description->attributes[i];
                 if (attribute != rendering_core.predefined.index) {
-                    assert(buffer.element_count == mesh->vertex_count, "Mesh contains attributes with different sizes!\n");
+                    int vertex_count_in_buffer = buffer.attribute_data.size / buffer.element_byte_size;
+                    int buffer_alignment       = buffer.attribute_data.size % buffer.element_byte_size;
+                    assert(vertex_count_in_buffer == mesh->vertex_count && buffer_alignment == 0, "Mesh contains attributes with different sizes!\n");
                 }
                 gpu_buffer_update(&buffer.gpu_buffer, dynamic_array_as_bytes(&buffer.attribute_data));
             }
@@ -609,7 +610,7 @@ Vertex_Description* vertex_description_create(std::initializer_list<Vertex_Attri
     return description;
 }
 
-Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * description, bool reset_every_frame)
+Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* description, bool reset_every_frame)
 {
     auto& core = rendering_core;
     auto found = hashtable_find_element(&core.meshes, string_create_static(name));
@@ -641,18 +642,21 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description * descripti
     {
         auto& buffer = mesh->buffers[i];
         auto attribute = description->attributes[i];
-        bool is_index = attribute == core.predefined.index;
 
+        bool is_index = attribute == core.predefined.index;
         if (is_index) {
             mesh->has_index_buffer = true;
         }
-        buffer.element_count = 0;
+
+        buffer.element_byte_size = shader_datatype_get_info(attribute->type).byte_size;
+        buffer.mesh = mesh;
+        buffer.is_index_buffer = is_index;
+        buffer.attribute_data = dynamic_array_create<byte>();
         buffer.gpu_buffer = gpu_buffer_create_empty(
             1,
             is_index ? GPU_Buffer_Type::INDEX_BUFFER : GPU_Buffer_Type::VERTEX_BUFFER,
             mesh->reset_every_frame ? GPU_Buffer_Usage::DYNAMIC : GPU_Buffer_Usage::STATIC
         );
-        buffer.attribute_data = dynamic_array_create<byte>(1);
     }
     hashtable_insert_element(&core.meshes, string_create_static(name), mesh);
 
@@ -699,6 +703,27 @@ void mesh_push_indices(Mesh* mesh, std::initializer_list<uint32> indices, bool a
     }
 }
 
+void attribute_buffer_report_change_to_mesh(Attribute_Buffer* buffer)
+{
+    assert(buffer->attribute_data.size % buffer->element_byte_size == 0, "");
+    Mesh* mesh = buffer->mesh;
+    if (buffer->is_index_buffer) {
+        mesh->index_count = buffer->attribute_data.size / sizeof(u32); // Indices are always u32 currently
+    }
+    else {
+        mesh->vertex_count = math_maximum(mesh->vertex_count, buffer->attribute_data.size / buffer->element_byte_size);
+    }
+}
+
+void attribute_buffer_push_raw_data(Attribute_Buffer* buffer, void* data, int size)
+{
+    assert(size % buffer->element_byte_size == 0, "Otherwise we push invalid datatype!");
+    dynamic_array_reserve(&buffer->attribute_data, buffer->attribute_data.size + size);
+    memory_copy(&buffer->attribute_data.data[buffer->attribute_data.size], data, size);
+    buffer->attribute_data.size += size;
+    attribute_buffer_report_change_to_mesh(buffer);
+    buffer->mesh->dirty = true;
+}
 
 
 // SHADERS
