@@ -1,8 +1,22 @@
 
+
+Working on:
+ * List-Container (Y-Size distribution)
+    - Draw rectangle with border
+    - Just make it that it takes at least 3 y lines, but y can grow
+ * Sub-Headers
+    - Sub-Containers?
+    
+
+UI-Ideas:
+ * Use Grid when merging lines, so adjacent lines are still somewhat aligned
+ * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
+ * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
+ * Containers may want to fill in y-size, or grow to a specific maximum (Lists or Multi-Line Texts?)
+    They should also provided minimum y-size
+    
+
 TODO in UI:
- * Add scroll-bar on y-overflow (Scroll-Offset stored per window, also last y-size for things)
-    - Currently off by one, maybe fix at some point
-    - Input is missing...
  * Widget-Functionality
     - Button
     - Text_Input
@@ -14,10 +28,14 @@ TODO in UI:
     - Number_Input
     - Sub_Header
 
+ * Transform into Immediate_Mode UI
+
  * Implement Batching (I assume drawing can then be done with a single draw call with correct triangle order!)
     - Using an index-buffer we can Generate the index-Buffer afterwards
     
 Done:
+ * Scroll-Bar implemented
+
  * Better growing on widgets
  * Add Hitboxes to things
  * Merge Widget-Lines if enough space
@@ -34,6 +52,23 @@ Done:
  * Create box-renderer with border colors
  * Box-Rendering around character, check fit 
     
+Scroll-Bar Input:
+ - Arguably Question if UI-Input should be hiearchical (Scroll-Bar, Window-Resize, Other)
+ - Some things to consider: 
+    * Input delay: Do we want to have a 1 frame input delay for things
+    * Multiple layout calculations should also be avoided (probably)
+What about the following scheme:
+ - We know window positions from last frame/from setting fixed positions in code,
+    so we can Analyse Drag-And-Drop for window positions first.
+ - Then we can do our normal layout, which needs to be done before input anyway
+ - If we have a scroll-bar, we can test it for scrolling
+ - Then we can do the window layout (- Scroll bar width), and proceed with other input
+
+What if an input changes the layout of things? (E.g. We clicked on a sub-header)?
+ - This action has to be delayed to next frame, I don't think re-calculating the layout is really helpfull in this case
+
+
+
 
 Current Plan:
  * Refactor Text-Renderer to better support fixed Pixel-Size and also Pixel-Alignment

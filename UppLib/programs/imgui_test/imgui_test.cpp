@@ -685,45 +685,56 @@ vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b) {
     return vec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 }
 
-const vec4 COLOR_WINDOW_BG = vec4_color_from_rgb(0x16, 0x85, 0x5B);
+const vec4 COLOR_WINDOW_BG        = vec4_color_from_rgb(0x16, 0x85, 0x5B);
 const vec4 COLOR_WINDOW_BG_HEADER = vec4_color_from_rgb(0x62, 0xA1, 0x99);
-const vec4 COLOR_BUTTON_BORDER = vec4_color_from_rgb(0x19, 0x75, 0xD0);
-const vec4 COLOR_BUTTON_BG = vec4_color_from_rgb(0x0F, 0x47, 0x7E);
-const vec4 COLOR_BUTTON_BG_HOVER = vec4_color_from_rgb(0x71, 0xA9, 0xE2);
-const vec4 COLOR_INPUT_BG = vec4_color_from_rgb(0x9C, 0xA3, 0xAC);
-const vec4 COLOR_INPUT_BORDER = vec4_color_from_rgb(0x70, 0x73, 0x76);
+const vec4 COLOR_SCROLL_BG        = vec4_color_from_rgb(0xCE, 0xCE, 0xCE);
+const vec4 COLOR_SCROLL_BAR       = vec4_color_from_rgb(0x9D, 0x9D, 0x9D);
+const vec4 COLOR_BUTTON_BORDER    = vec4_color_from_rgb(0x19, 0x75, 0xD0);
+const vec4 COLOR_BUTTON_BG        = vec4_color_from_rgb(0x0F, 0x47, 0x7E);
+const vec4 COLOR_BUTTON_BG_HOVER  = vec4_color_from_rgb(0x71, 0xA9, 0xE2);
+const vec4 COLOR_INPUT_BG         = vec4_color_from_rgb(0x9C, 0xA3, 0xAC);
+const vec4 COLOR_INPUT_BORDER     = vec4_color_from_rgb(0x70, 0x73, 0x76);
+const vec4 COLOR_LIST_LINE_EVEN   = vec4_color_from_rgb(0xFE, 0xCB, 0xA3);
+const vec4 COLOR_LIST_LINE_ODD    = vec4_color_from_rgb(0xB6, 0xB1, 0xAC);
 
 
-struct UI_Hitbox
-{
-    BBox box;
-    bool mouse_hover;
-    bool input_enabled;
-};
 
 enum class Widget_Type
 {
     LABEL,
     TEXT_INPUT,
     BUTTON,
+    LIST_CONTAINER
 };
 
 struct Widget
 {
     // Widget Data
     Widget_Type type;
-    String label_text; // Every widget has a label for now
-    int label_hitbox;
-    String input_text; // Only for text-input
-    int input_hitbox;
+    union {
+        String label; 
+        String button_text;
+        struct {
+            String text;
+            String label; 
+        } input;
+        bool list_container_can_grow;
+    } options;
 
     // Layout information (Needs to be reported by widget)
-    int min_size_collapsed;
-    int min_size_single_line;
-    int max_size_single_line;
+    bool can_combine_in_lines;
+    int min_width_collapsed; 
+    int min_width_without_collapse;
+    int min_width_for_line_merge;
 
+    // Given the available width, widgets can calculate their min, and max height
+    int min_height;
+    int max_height;
+    bool height_can_grow; // For widgets that want to grow in y (Lists or others)
+
+    // Calculated by container
+    BBox widget_box;
     int line_index;
-    int available_size;
 };
 
 struct UI_Window
@@ -732,183 +743,404 @@ struct UI_Window
     ivec2 position;
     ivec2 size;
     Dynamic_Array<Widget> widgets;
-    Dynamic_Array<UI_Hitbox> hitboxes;
 };
+
+const int LABEL_CHAR_COUNT_SIZE = 12;
+const int TEXT_INPUT_MIN_CHAR_COUNT = 10;
+const int TEXT_INPUT_MAX_CHAR_COUNT = 20;
+const int BUTTON_MIN_CHAR_COUNT = 6;
+const int BUTTON_WANTED_CHAR_COUNT = 10;
+const int LIST_CONTAINER_MIN_CHAR_COUNT = 16;
 
 // Returns y-size
 int ui_layout_widgets_in_area(UI_Window* window, BBox client_area, ivec2 char_size)
 {
-    const int LABEL_CHAR_COUNT_SIZE = 12;
-    const int BUTTON_MIN_CHAR_COUNT = 6;
-    const int BUTTON_WANTED_CHAR_COUNT = 10;
-    const int TEXT_INPUT_MIN_CHAR_COUNT = 10;
-    const int TEXT_INPUT_MAX_CHAR_COUNT = 20;
-    const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int LINE_ITEM_HEIGHT  = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
 
-    int text_border_space = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
-
-    // Figure out lines and calculate size-options (Single-Line, Collapsed, Max) for widgets 
-    int available_width = client_area.max.x - client_area.min.x;
-    int remaining_width = available_width;
-    int line_count = 0;
+    // Find widget widths
+    int min_child_min_width_collapsed        = 1000000;
+    int min_child_min_width_without_collapse = 1000000;
+    int min_child_min_width_for_line_merge   = 1000000;
+    int max_child_min_width_collapsed = 0;
+    int max_child_min_width_without_collapse = 0;
+    int max_child_min_width_for_line_merge = 0;
     for (int i = 0; i < window->widgets.size; i++)
     {
         auto& widget = window->widgets[i];
         switch (widget.type)
         {
         case Widget_Type::LABEL: {
-            widget.min_size_collapsed   = widget.label_text.size * char_size.x;
-            widget.min_size_single_line = widget.min_size_collapsed; 
-            widget.max_size_single_line = widget.min_size_collapsed; 
+            widget.min_width_collapsed        = widget.options.label.size * char_size.x;
+            widget.min_width_without_collapse = widget.min_width_collapsed; 
+            widget.min_width_for_line_merge   = widget.min_width_collapsed; 
             break;
         }
         case Widget_Type::BUTTON: {
-            widget.min_size_collapsed   = BUTTON_MIN_CHAR_COUNT * char_size.x + text_border_space;
-            widget.min_size_single_line = widget.min_size_collapsed; 
-            widget.max_size_single_line = BUTTON_WANTED_CHAR_COUNT * char_size.x + text_border_space; 
+            widget.min_width_collapsed        = BUTTON_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            widget.min_width_without_collapse = widget.min_width_collapsed; 
+            widget.min_width_for_line_merge   = BUTTON_WANTED_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE; 
             break;
         }
         case Widget_Type::TEXT_INPUT: {
-            int label_size = LABEL_CHAR_COUNT_SIZE * char_size.x;
-            int text_input_min_size = TEXT_INPUT_MIN_CHAR_COUNT * char_size.x + text_border_space;
-            int text_input_max_size = TEXT_INPUT_MAX_CHAR_COUNT * char_size.x + text_border_space;
-            widget.min_size_collapsed   = math_minimum(label_size, PAD_ADJACENT_LABLE_LINE_SPLIT + text_input_min_size);
-            widget.min_size_single_line = label_size + PAD_LABEL_BOX + text_input_min_size; 
-            widget.max_size_single_line = label_size + PAD_LABEL_BOX + text_input_max_size; 
+            int label_size          = LABEL_CHAR_COUNT_SIZE * char_size.x;
+            int text_input_min_size = TEXT_INPUT_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            int text_input_max_size = TEXT_INPUT_MAX_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+
+            widget.min_width_collapsed        = math_minimum(label_size, PAD_ADJACENT_LABLE_LINE_SPLIT + text_input_min_size);
+            widget.min_width_without_collapse = label_size + PAD_LABEL_BOX + text_input_min_size; 
+            widget.min_width_for_line_merge   = label_size + PAD_LABEL_BOX + text_input_max_size; 
+            break;
+        }
+        case Widget_Type::LIST_CONTAINER: {
+            widget.min_width_collapsed        = 4 * char_size.x;
+            widget.min_width_without_collapse = LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x; 
+            widget.min_width_for_line_merge   = LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x; 
             break;
         }
         default: panic("");
         }
-        
-        if (remaining_width >= widget.max_size_single_line) {
-            remaining_width -= widget.max_size_single_line + PAD_WIDGETS_ON_LINE;
-        }
-        else {
-            if (i != 0) {
-                line_count += 1;
-            }
-            remaining_width = available_width - (widget.max_size_single_line + PAD_WIDGETS_ON_LINE);
-        }
-        widget.line_index = line_count;
+
+        widget.line_index = i;
+        widget.widget_box.min.x = client_area.min.x;
+        widget.widget_box.max.x = client_area.max.x;
+
+        max_child_min_width_collapsed        = math_maximum(max_child_min_width_collapsed, widget.min_width_collapsed);
+        max_child_min_width_without_collapse = math_maximum(max_child_min_width_without_collapse, widget.min_width_without_collapse);
+        max_child_min_width_for_line_merge   = math_maximum(max_child_min_width_for_line_merge, widget.min_width_for_line_merge);
+        min_child_min_width_collapsed        = math_minimum(min_child_min_width_collapsed, widget.min_width_collapsed);
+        min_child_min_width_without_collapse = math_minimum(min_child_min_width_without_collapse, widget.min_width_without_collapse);
+        min_child_min_width_for_line_merge   = math_minimum(min_child_min_width_for_line_merge, widget.min_width_for_line_merge);
     }
 
-    // Distribute available-size to widgets
-    int line_start_index = 0;
-    while (line_start_index < window->widgets.size)
+    // Combine lines if enough space is available
+    int available_width = client_area.max.x - client_area.min.x;
+    bool lines_were_combined = false;
+    int line_count = window->widgets.size;
+    if (available_width >= min_child_min_width_for_line_merge * 2)
     {
-        int start_widget_line = window->widgets[line_start_index].line_index;
-        int line_end_index = line_start_index;
-        int fixed_allocated_size = 0;
-        while (line_end_index < window->widgets.size) {
-            auto& widget = window->widgets[line_end_index];
-            if (widget.line_index != start_widget_line) {
-                break;
-            }
-            fixed_allocated_size += widget.max_size_single_line;
-            line_end_index += 1;
-        }
-
-        int count = line_end_index - line_start_index;
-        if (count == 1) {
-            auto& widget = window->widgets[line_start_index];
-            widget.available_size = available_width;
-            line_start_index = line_end_index;
-            continue;
-        }
-
-        int padding_space = (count - 1) * PAD_WIDGETS_ON_LINE;
-        int overflow_budget = available_width - padding_space - fixed_allocated_size;
-        int extra_per_widget = overflow_budget / count;
-
-        for (int i = line_start_index; i < line_end_index; i++) {
+        // Distribute widgets to lines
+        int remaining_width = available_width;
+        int max_widgets_per_line = 0;
+        int line_widget_count = 0;
+        line_count = 0;
+        bool last_can_combine = true;
+        for (int i = 0; i < window->widgets.size; i++)
+        {
             auto& widget = window->widgets[i];
-            widget.available_size = widget.max_size_single_line + extra_per_widget;
+            if (remaining_width >= widget.min_width_for_line_merge && widget.can_combine_in_lines && last_can_combine) {
+                remaining_width -= widget.min_width_for_line_merge + PAD_WIDGETS_ON_LINE;
+                line_widget_count += 1;
+            }
+            else 
+            {
+                // Not enough space in line for widget
+                if (i != 0) {
+                    line_count += 1;
+                    max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
+                    line_widget_count = 1;
+                }
+                else {
+                    max_widgets_per_line = math_maximum(max_widgets_per_line, 1);
+                }
+                remaining_width = available_width - (widget.min_width_for_line_merge + PAD_WIDGETS_ON_LINE);
+            }
+            widget.line_index = line_count;
+            last_can_combine = widget.can_combine_in_lines;
         }
-        int remaining_pixels = overflow_budget % count;
-        window->widgets[line_start_index].available_size += remaining_pixels;
+        max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
+        line_count += 1;
 
-        line_start_index = line_end_index;
+        // Distribute Width to widgets (based on lines)
+        lines_were_combined = max_widgets_per_line > 1;
+        if (lines_were_combined)
+        {
+            int line_start_index = 0;
+            while (line_start_index < window->widgets.size)
+            {
+                // Find end on line
+                int start_widget_line = window->widgets[line_start_index].line_index;
+                int line_end_index = line_start_index;
+                int fixed_allocated_size = 0;
+                while (line_end_index < window->widgets.size) {
+                    auto& widget = window->widgets[line_end_index];
+                    if (widget.line_index != start_widget_line) {
+                        break;
+                    }
+                    fixed_allocated_size += widget.min_width_for_line_merge;
+                    line_end_index += 1;
+                }
+
+                // Early exit if only single widget on line
+                int count = line_end_index - line_start_index;
+                if (count == 1) {
+                    auto& widget = window->widgets[line_start_index];
+                    line_start_index = line_end_index;
+                    continue;
+                }
+
+                // Distribute space to all widgets on line
+                int padding_space = (count - 1) * PAD_WIDGETS_ON_LINE;
+                int overflow_budget = available_width - padding_space - fixed_allocated_size;
+                int extra_per_widget = overflow_budget / count;
+                int remaining_pixels = overflow_budget % count;
+                int x_pos = client_area.min.x;
+
+                for (int i = line_start_index; i < line_end_index; i++)
+                {
+                    auto& widget = window->widgets[i];
+                    int width = widget.min_width_for_line_merge + extra_per_widget;
+                    if (i == 0) { width += remaining_pixels; }
+
+                    widget.widget_box.min.x = x_pos;
+                    widget.widget_box.max.x = x_pos + width;
+                    x_pos += width + PAD_WIDGETS_ON_LINE;
+                }
+
+                line_start_index = line_end_index;
+            }
+        }
     }
 
-    // Layout widgets
-    auto cursor_add_label_box = [&](ivec2 cursor, int label_char_count) -> BBox {
-        return BBox(cursor - ivec2(0, LINE_ITEM_HEIGHT), cursor + ivec2(label_char_count * char_size.x + 2 * (BORDER_SPACE + PAD_LEFT_RIGHT), 0));
-    };
-    auto cursor_add_box = [&](ivec2 cursor, int width) -> BBox {
-        return BBox(cursor - ivec2(0, LINE_ITEM_HEIGHT), cursor + ivec2(width, 0));
-    };
-
-    ivec2 cursor = ivec2(client_area.min.x, client_area.max.y);
-    int last_line_index = 0;
-    int max_height_in_line = 0;
+    // Calculate Widget Heights (Depends on available width for widget)
+    int sum_widget_min_heights = 0;
+    int sum_widget_max_heights = 0;
+    int growable_widget_count = 0;
     for (int i = 0; i < window->widgets.size; i++)
     {
         auto& widget = window->widgets[i];
-        if (last_line_index != widget.line_index) {
-            cursor.x = client_area.min.x;
-            cursor.y = cursor.y - (max_height_in_line + PAD_WIDGETS_BETWEEN_LINES);
-            max_height_in_line = 0;
-            last_line_index = widget.line_index;
-        }
-
-        int widget_height = 0;
         switch (widget.type)
         {
-        case Widget_Type::LABEL: {
-            UI_Hitbox& hitbox = window->hitboxes[widget.label_hitbox];
-            hitbox.input_enabled = false;
-            hitbox.box = cursor_add_label_box(cursor, widget.label_text.size);
-            widget_height = LINE_ITEM_HEIGHT;
-            break;
-        }
-        case Widget_Type::BUTTON: {
-            UI_Hitbox& hitbox = window->hitboxes[widget.label_hitbox];
-            hitbox.input_enabled = true;
-            hitbox.box = cursor_add_box(cursor, widget.available_size);
-            widget_height = LINE_ITEM_HEIGHT;
-            break;
-        }
-        case Widget_Type::TEXT_INPUT:
+        case Widget_Type::LABEL:
+        case Widget_Type::BUTTON:
         {
-            UI_Hitbox& label_hitbox = window->hitboxes[widget.label_hitbox];
-            label_hitbox.input_enabled = false;
-            UI_Hitbox& text_hitbox = window->hitboxes[widget.input_hitbox];
-            text_hitbox.input_enabled = true;
-
-            if (widget.available_size >= widget.min_size_single_line) { // Text on same line
-                label_hitbox.box = cursor_add_label_box(cursor, LABEL_CHAR_COUNT_SIZE);
-                int remaining_width = widget.available_size - (label_hitbox.box.max.x - label_hitbox.box.min.x) - 1;
-                text_hitbox.box = cursor_add_box(ivec2(label_hitbox.box.max.x + 1, cursor.y), remaining_width);
-                widget_height = LINE_ITEM_HEIGHT;
+            widget.min_height = LINE_ITEM_HEIGHT;
+            widget.max_height = LINE_ITEM_HEIGHT;
+            widget.height_can_grow = false;
+            break;
+        }
+        case Widget_Type::TEXT_INPUT: {
+            int height = LINE_ITEM_HEIGHT;
+            if (widget.widget_box.max.x - widget.widget_box.min.x < widget.min_width_without_collapse) {
+                // TODO: Recheck Drawing code, maybe i'm removing the border of the widget to make them look more connected
+                height = 2 * LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
             }
-            else { // Collapsed
-                label_hitbox.box = cursor_add_label_box(cursor, widget.label_text.size);
-                ivec2 next_line_cursor = cursor + ivec2(PAD_ADJACENT_LABLE_LINE_SPLIT, -LINE_ITEM_HEIGHT + BORDER_SPACE);
-                text_hitbox.box = cursor_add_box(next_line_cursor, widget.available_size - PAD_ADJACENT_LABLE_LINE_SPLIT);
-                widget_height = 2 * LINE_ITEM_HEIGHT - BORDER_SPACE;
-            }
+            widget.min_height = height;
+            widget.max_height = height;
+            widget.height_can_grow = false;
+            break;
+        }
+        case Widget_Type::LIST_CONTAINER: {
+            widget.min_height = LINE_ITEM_HEIGHT * 2;
+            widget.max_height = LINE_ITEM_HEIGHT * 5;
+            widget.height_can_grow = widget.options.list_container_can_grow;
             break;
         }
         default: panic("");
         }
 
-        max_height_in_line = math_maximum(max_height_in_line, widget_height);
-        cursor.x += widget.available_size + PAD_WIDGETS_ON_LINE;
+        sum_widget_min_heights += widget.min_height;
+        sum_widget_max_heights += widget.max_height;
+        growable_widget_count += widget.height_can_grow ? 1 : 0;
     }
 
-    int lowest_y = cursor.y - (max_height_in_line + PAD_WIDGETS_BETWEEN_LINES);
-    return client_area.max.y - lowest_y;
+    // Calculate Height per line
+    int sum_line_min_heights = 0;
+    int sum_line_max_heights = 0;
+    int growable_line_count = 0;
+    if (lines_were_combined)
+    {
+        int max_last_line_min_height = 0;
+        int max_last_line_max_height = 0;
+        bool last_line_can_grow = false;
+        int last_line_index = 0;
+        for (int i = 0; i < window->widgets.size; i++)
+        {
+            auto& widget = window->widgets[i];
+            if (widget.line_index != last_line_index) 
+            {
+                sum_line_min_heights += max_last_line_min_height;
+                sum_line_max_heights += max_last_line_max_height;
+                growable_line_count += last_line_can_grow ? 1 : 0;
+
+                last_line_index = widget.line_index;
+                max_last_line_min_height = 0;
+                max_last_line_max_height = 0;
+                last_line_can_grow = false;
+            }
+
+            max_last_line_min_height = math_maximum(max_last_line_min_height, widget.min_height);
+            max_last_line_max_height = math_maximum(max_last_line_max_height, widget.max_height);
+            last_line_can_grow = last_line_can_grow | widget.height_can_grow;
+        }
+        sum_line_min_heights += max_last_line_min_height;
+        sum_line_max_heights += max_last_line_max_height;
+        growable_line_count += last_line_can_grow ? 1 : 0;
+    }
+    else 
+    {
+        sum_line_min_heights = sum_widget_min_heights;
+        sum_line_max_heights = sum_widget_max_heights;
+        growable_line_count  = growable_widget_count;
+    }
+
+    // TODO: Now we could decide if we have a scroll-bar or not, and re-calculate the layout stuff
+
+    // Distribute heights to widgets
+    int available_height = client_area.max.y - client_area.min.y - PAD_WIDGETS_BETWEEN_LINES * (line_count - 1);
+    int y_pos = client_area.max.y;
+    int last_line_index = 0;
+    int last_line_height = 0;
+    int height_buffer = available_height - sum_line_min_heights;
+    int max_subtracted_from_height_buffer_in_line = 0;
+    int first_growing_line_index = -1;
+    for (int i = 0; i < window->widgets.size; i++)
+    {
+        auto& widget = window->widgets[i];
+
+        // Check if we moved to new line
+        if (widget.line_index != last_line_index) 
+        {
+            y_pos -= last_line_height + PAD_WIDGETS_BETWEEN_LINES;
+            height_buffer = math_maximum(0, height_buffer - max_subtracted_from_height_buffer_in_line);
+            max_subtracted_from_height_buffer_in_line = 0;
+            last_line_index = widget.line_index;
+            last_line_height = 0;
+        }
+
+        // Figure out widget height
+        int widget_height = 0;
+        bool line_grows = false;
+        if (available_height <= sum_line_min_heights) 
+        {
+            widget_height = widget.min_height;
+        }
+        else if (available_height <= sum_line_max_heights) 
+        {
+            widget_height = widget.min_height;
+            int remaining_to_max = widget.max_height - widget.min_height;
+            int subtract_count = math_minimum(height_buffer, remaining_to_max);
+            widget_height += subtract_count;
+            max_subtracted_from_height_buffer_in_line = math_maximum(max_subtracted_from_height_buffer_in_line, subtract_count);
+        }
+        else 
+        {
+            widget_height = widget.max_height;
+            if (widget.height_can_grow) 
+            {
+                int extra_height    = (available_height - sum_line_max_heights) / growable_line_count;
+                int pixel_remainder = (available_height - sum_line_max_heights) % growable_line_count; 
+                widget_height += extra_height;
+                if (first_growing_line_index == widget.line_index || first_growing_line_index == -1) {
+                    first_growing_line_index = widget.line_index;
+                    // widget_height += pixel_remainder;
+                }
+            }
+        }
+
+        // Set widget position
+        last_line_height = math_maximum(last_line_height, widget_height);
+        widget.widget_box.max.y = y_pos;
+        widget.widget_box.min.y = y_pos - widget_height;
+    }
+    y_pos -= last_line_height;
+
+    return client_area.max.y - y_pos;
 }
 
-void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, Glyph_Atlas_* glyph_atlas)
+void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, Glyph_Atlas_* glyph_atlas, Input* input)
 {
+    if (bbox_is_empty(client_area)) return;
+
     ivec2 char_size = glyph_atlas->char_box_size;
     int max_height = client_area.max.y - client_area.min.y;
     int used_height = ui_layout_widgets_in_area(window, client_area, char_size);
-    if (used_height > max_height) {
-        // Here we add scroll-bar
-        client_area.max.x -= 10;
-        int used_height = ui_layout_widgets_in_area(window, client_area, char_size);
+
+    // Check if we need scroll-bar
+    if (used_height > max_height)
+    {
+        const int SCROLL_BAR_WIDTH = 10;
+        const int MIN_SCROLL_BAR_HEIGHT = 10;
+        const int SCROLL_BAR_PADDING = 1; // Top/Bot/Left/Right padding
+        const int MOUSE_WHEEL_SENSITIVITY = 15;
+
+        // Re-calculate widget layout, leaving space for scroll-bar
+        BBox original_client_area = client_area;
+        client_area.max.x -= SCROLL_BAR_WIDTH + 2;
+        used_height = ui_layout_widgets_in_area(window, client_area, char_size);
+
+        // Draw scroll-background box
+        BBox scroll_box = BBox(ivec2(client_area.max.x + 2, client_area.min.y), ivec2(client_area.max.x + SCROLL_BAR_WIDTH + 2, client_area.max.y));
+        mesh_push_box(mesh, scroll_box, COLOR_SCROLL_BG);
+
+        // Figure out bar-height
+        int available_bar_space = scroll_box.max.y - scroll_box.min.y - 2 * SCROLL_BAR_PADDING;
+        int bar_height = math_maximum(MIN_SCROLL_BAR_HEIGHT, available_bar_space * max_height / math_maximum(1, used_height));
+
+        // Figure out bar-positioning 
+        static int pixel_scroll_offset = 0;
+        const int max_bar_offset = available_bar_space - bar_height;
+        const int max_pixel_scroll_offset = used_height - max_height;
+
+        // Handle Input
+        {
+            ivec2 window_size = ivec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
+            ivec2 mouse = ivec2(input->mouse_x, window_size.y - input->mouse_y);
+
+            // Handle mouse-wheel
+            if (bbox_contains_point(original_client_area, mouse)) {
+                pixel_scroll_offset -= input->mouse_wheel_delta * MOUSE_WHEEL_SENSITIVITY;
+            }
+
+            // Calculate current bar position
+            int bar_offset = max_bar_offset * pixel_scroll_offset / math_maximum(max_pixel_scroll_offset, 1);
+            BBox bar_box = BBox(
+                ivec2(scroll_box.min.x + SCROLL_BAR_PADDING, scroll_box.max.y - SCROLL_BAR_PADDING - bar_height - bar_offset),
+                ivec2(scroll_box.max.x - SCROLL_BAR_PADDING, scroll_box.max.y - SCROLL_BAR_PADDING - bar_offset)
+            );
+
+            // Drag-and-Drop logic
+            static bool drag_start = false;
+            static ivec2 drag_start_mouse = ivec2(0);
+            static int drag_start_bar_offset = 0;
+
+            if (drag_start)
+            {
+                if (input->mouse_down[(int)Mouse_Key_Code::LEFT]) {
+                    bar_offset = drag_start_bar_offset - (mouse.y - drag_start_mouse.y); // Minus because bar-offset is given in negative y
+                    // Set pixel-scroll offset
+                    pixel_scroll_offset = bar_offset * max_pixel_scroll_offset / math_maximum(max_bar_offset, 1);
+                }
+                else {
+                    drag_start = false;
+                }
+            }
+            else
+            {
+                if (bbox_contains_point(bar_box, mouse) && input->mouse_down[(int)Mouse_Key_Code::LEFT]) {
+                    drag_start = true;
+                    drag_start_mouse = mouse;
+                    drag_start_bar_offset = bar_offset;
+                }
+            }
+
+        }
+
+        // Draw scroll-bar
+        pixel_scroll_offset = math_clamp(pixel_scroll_offset, 0, max_pixel_scroll_offset);
+        int bar_offset = max_bar_offset * pixel_scroll_offset / math_maximum(max_pixel_scroll_offset, 1);
+        BBox bar_box = BBox(
+            ivec2(scroll_box.min.x + SCROLL_BAR_PADDING, scroll_box.max.y - SCROLL_BAR_PADDING - bar_height - bar_offset),
+            ivec2(scroll_box.max.x - SCROLL_BAR_PADDING, scroll_box.max.y - SCROLL_BAR_PADDING - bar_offset)
+        );
+        mesh_push_box(mesh, bar_box, COLOR_SCROLL_BAR);
+
+        // Apply offset to all widgets
+        for (int i = 0; i < window->widgets.size; i++) {
+            auto& widget = window->widgets[i];
+            widget.widget_box.min.y += pixel_scroll_offset;
+            widget.widget_box.max.y += pixel_scroll_offset;
+        }
     }
 
     // Draw widgets
@@ -935,23 +1167,56 @@ void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, G
         mesh_push_text_clipped(mesh, glyph_atlas, text, text_pos + ivec2(text_offset, 0), text_clip_area);
     };
 
+    const int LINE_ITEM_HEIGHT  = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
     for (int i = 0; i < window->widgets.size; i++)
     {
         auto& widget = window->widgets[i];
         switch (widget.type)
         {
         case Widget_Type::LABEL: {
-            box_draw_label(window->hitboxes[widget.label_hitbox].box, widget.label_text, client_area);
+            box_draw_label(widget.widget_box, widget.options.label, client_area);
             break;
         }
         case Widget_Type::BUTTON: {
-            box_draw_text_in_box(window->hitboxes[widget.label_hitbox].box, widget.label_text, true, client_area, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
+            box_draw_text_in_box(widget.widget_box, widget.options.button_text, true, client_area, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
+            break;
+        }
+        case Widget_Type::LIST_CONTAINER: 
+        {
+            int line_count = (widget.widget_box.max.y - widget.widget_box.min.y) / LINE_ITEM_HEIGHT + 1;
+            BBox clipping_box = bbox_intersection(client_area, widget.widget_box);
+            for (int i = 0; i < line_count; i++)
+            {
+                BBox line_box = widget.widget_box;
+                line_box.max.y = widget.widget_box.max.y - i * LINE_ITEM_HEIGHT;
+                line_box.min.y = widget.widget_box.max.y - (i + 1) * LINE_ITEM_HEIGHT;
+                mesh_push_box_clipped(mesh, line_box, clipping_box, i % 2 == 0 ? COLOR_LIST_LINE_EVEN : COLOR_LIST_LINE_ODD);
+            }
             break;
         }
         case Widget_Type::TEXT_INPUT:
         {
-            box_draw_label(window->hitboxes[widget.label_hitbox].box, widget.label_text, client_area);
-            box_draw_text_in_box(window->hitboxes[widget.input_hitbox].box, widget.input_text, false, client_area, COLOR_INPUT_BG, COLOR_INPUT_BORDER);
+            BBox label_box = BBox(
+                ivec2(widget.widget_box.min.x, widget.widget_box.max.y - LINE_ITEM_HEIGHT),
+                ivec2(widget.widget_box.min.x + char_size.x * LABEL_CHAR_COUNT_SIZE, widget.widget_box.max.y)
+            );
+            BBox text_box = BBox(ivec2(0), ivec2(0));
+            if (widget.widget_box.max.x - widget.widget_box.min.x < widget.min_width_without_collapse) {
+                text_box = BBox(
+                    widget.widget_box.min + ivec2(PAD_ADJACENT_LABLE_LINE_SPLIT, 0),
+                    ivec2(widget.widget_box.max.x, widget.widget_box.min.y + LINE_ITEM_HEIGHT)
+                );
+            }
+            else {
+                text_box = BBox(
+                    ivec2(label_box.max.x + PAD_LABEL_BOX, label_box.min.y),
+                    widget.widget_box.max
+                );
+            }
+
+            box_draw_label(label_box, widget.options.input.label, client_area);
+            box_draw_text_in_box(text_box, widget.options.input.text, false, client_area, COLOR_INPUT_BG, COLOR_INPUT_BORDER);
             break;
         }
         default: panic("");
@@ -1038,70 +1303,46 @@ void imgui_test_entry()
     ui_window.title = string_create_static("Test-Window!");
     ui_window.widgets = dynamic_array_create<Widget>();
     SCOPE_EXIT(dynamic_array_destroy(&ui_window.widgets));
-    ui_window.hitboxes = dynamic_array_create<UI_Hitbox>();
-    SCOPE_EXIT(dynamic_array_destroy(&ui_window.hitboxes));
 
-    UI_Hitbox dummy;
-    dummy.box = BBox(ivec2(0), ivec2(0));
-    dummy.input_enabled = false;
-    dummy.mouse_hover = false;
-
-    // Widget label;
-    // label.type = Widget_Type::LABEL;
-    // label.label_text = string_create_static("Test label YaY");
-    // label.label_hitbox = ui_window.hitboxes.size;
-    // dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    // label.input_text = string_create_static("");
-    // dynamic_array_push_back(&ui_window.widgets, label);
+    Widget label;
+    label.type = Widget_Type::LABEL;
+    label.options.label = string_create_static("Test label YaY");
+    label.can_combine_in_lines = false;
+    dynamic_array_push_back(&ui_window.widgets, label);
 
     Widget text_input;
     text_input.type = Widget_Type::TEXT_INPUT;
-
-    text_input.label_text = string_create_static("Name:");
-    text_input.input_text = string_create_static("Some text yay nay jay in the ocean?");
-    text_input.label_hitbox = ui_window.hitboxes.size;
-    dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    text_input.input_hitbox = ui_window.hitboxes.size;
-    dynamic_array_push_back(&ui_window.hitboxes, dummy);
+    text_input.options.input.label = string_create_static("Name:");
+    text_input.options.input.text = string_create_static("Some text yay nay jay in the ocean?");
+    text_input.can_combine_in_lines = true;
     dynamic_array_push_back(&ui_window.widgets, text_input);
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 4; i++)
     {
         const char* names[3] = { "Test 1", "What", "Other" };
         const char* texts[3] = { "Well this is somethign", "Lorem ipsum ", "What did you just say you little..." };
-        text_input.label_text = string_create_static(names[i % 3]);
-        text_input.input_text = string_create_static(texts[i % 3]);
-        text_input.label_hitbox = ui_window.hitboxes.size;
-        dynamic_array_push_back(&ui_window.hitboxes, dummy);
-        text_input.input_hitbox = ui_window.hitboxes.size;
-        dynamic_array_push_back(&ui_window.hitboxes, dummy);
-        dynamic_array_push_back(&ui_window.widgets, text_input);
 
+        text_input.options.input.label = string_create_static(names[i % 3]);
+        text_input.options.input.text  = string_create_static(texts[i % 3]);
+        dynamic_array_push_back(&ui_window.widgets, text_input);
     }
 
-    //text_input.label_text = string_create_static("City_Code");
-    //text_input.input_text = string_create_static("8142");
-    //text_input.label_hitbox = ui_window.hitboxes.size;
-    //dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    //text_input.input_hitbox = ui_window.hitboxes.size;
-    //dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    //dynamic_array_push_back(&ui_window.widgets, text_input);
-
-    //text_input.label_text = string_create_static("Address");
-    //text_input.input_text = string_create_static("Here and there");
-    //text_input.label_hitbox = ui_window.hitboxes.size;
-    //dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    //text_input.input_hitbox = ui_window.hitboxes.size;
-    //dynamic_array_push_back(&ui_window.hitboxes, dummy);
-    //dynamic_array_push_back(&ui_window.widgets, text_input);
+    Widget list;
+    list.type = Widget_Type::LIST_CONTAINER;
+    list.options.list_container_can_grow = false;
+    list.can_combine_in_lines = false;
+    dynamic_array_push_back(&ui_window.widgets, list);
 
     Widget button;
     button.type = Widget_Type::BUTTON;
-    button.label_text = string_create_static("Click Me!");
-    button.input_text = string_create_static("");
-    button.label_hitbox = ui_window.hitboxes.size;
-    dynamic_array_push_back(&ui_window.hitboxes, dummy);
+    button.options.button_text = string_create_static("Click Me!");
+    button.can_combine_in_lines = true;
     dynamic_array_push_back(&ui_window.widgets, button);
+
+    list.type = Widget_Type::LIST_CONTAINER;
+    list.options.list_container_can_grow = true;
+    list.can_combine_in_lines = false;
+    dynamic_array_push_back(&ui_window.widgets, list);
 
 
     bool drag_active = false;
@@ -1207,51 +1448,7 @@ void imgui_test_entry()
         BBox widget_box = client_box;
         widget_box.min = widget_box.min + ivec2(2);
         widget_box.max = widget_box.max - ivec2(2);
-        ui_window_render_widgets(&ui_window, widget_box, mesh, &glyph_atlas);
-        // const int WIDGET_PADDING_X = 2;
-        // const int WIDGET_PADDING_Y = 1; // Padding between two UI-Widgets
-        // ivec2 next_widget_pos = ivec2(client_box.min.x + WIDGET_PADDING_X, client_box.max.y - LINE_ITEM_SIZE - WIDGET_PADDING_Y);
-        // for (int i = 0; i < ui_window.container.widgets.size; i++)
-        // {
-        //     auto& widget = ui_window.container.widgets[i];
-        //     switch (widget.type)
-        //     {
-        //     case Widget_Type::LABEL: {
-        //         ivec2 text_pos = next_widget_pos + ivec2(0, PAD_BOT + BORDER_SPACE);
-        //         mesh_push_text_clipped(mesh, &glyph_atlas, widget.text, text_pos, client_box);
-        //         break;
-        //     }
-        //     case Widget_Type::BUTTON:
-        //     {
-        //         ivec2 widget_size =
-        //             glyph_atlas.char_box_size * ivec2(widget.text.size, 1) +  // Text-Size
-        //             ivec2(PAD_LEFT_RIGHT * 2, PAD_BOT + PAD_TOP) +            // Text Padding
-        //             BORDER_SPACE * 2;                                         // Border
-        //         BBox widget_box = BBox(next_widget_pos, next_widget_pos + widget_size);
-        //         ivec2 text_pos = widget_box.min + ivec2(BORDER_SPACE + PAD_LEFT_RIGHT, PAD_BOT) + BORDER_SPACE;
-
-        //         mesh_push_box_with_border_clipped(mesh, widget_box, client_box, COLOR_BUTTON_BG, 1, COLOR_BUTTON_BORDER);
-        //         mesh_push_text_clipped(mesh, &glyph_atlas, widget.text, text_pos, client_box);
-        //         break;
-        //     }
-        //     case Widget_Type::TEXT_INPUT: {
-        //         ivec2 widget_size =
-        //             glyph_atlas.char_box_size * ivec2(widget.text.size, 1) +  // Text-Size
-        //             ivec2(PAD_LEFT_RIGHT * 2, PAD_BOT + PAD_TOP) +            // Text Padding
-        //             BORDER_SPACE * 2;                                         // Border
-        //         BBox widget_box = BBox(next_widget_pos, next_widget_pos + widget_size);
-        //         ivec2 text_pos = widget_box.min + ivec2(BORDER_SPACE + PAD_LEFT_RIGHT, PAD_BOT) + BORDER_SPACE;
-
-        //         mesh_push_box_with_border_clipped(mesh, widget_box, client_box, COLOR_INPUT_BG, 1, COLOR_INPUT_BORDER);
-        //         mesh_push_text_clipped(mesh, &glyph_atlas, widget.text, text_pos, client_box);
-        //         break;
-        //     }
-        //     default: panic("");
-        //     }
-
-        //     next_widget_pos.y -= LINE_ITEM_SIZE + WIDGET_PADDING_Y;
-        // }
-
+        ui_window_render_widgets(&ui_window, widget_box, mesh, &glyph_atlas, input);
 
         // Tests for Text-Rendering
         if (false)
