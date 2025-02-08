@@ -699,28 +699,47 @@ const vec4 COLOR_LIST_LINE_ODD    = vec4_color_from_rgb(0xB6, 0xB1, 0xAC);
 
 
 
-enum class Widget_Type
+enum class Layout_Type
 {
-    LABEL,
-    TEXT_INPUT,
-    BUTTON,
-    LIST_CONTAINER
+    NORMAL, // Stack-Horizontal with option to combine lines
+    STACK_HORIZONTAL, // All widgets are added in a single line
+    LABELED_ITEMS // Collapsable label items
 };
 
-struct Widget
+struct Widget;
+struct Widget_Container
 {
-    // Widget Data
-    Widget_Type type;
+    Layout_Type layout;
     union {
-        String label; 
-        String button_text;
-        struct {
-            String text;
-            String label; 
-        } input;
-        bool list_container_can_grow;
+        struct 
+        {
+            bool allow_line_combination;
+            bool scroll_bar_enabled;
+            int min_line_count; // 0 for normal behavior
+            int max_line_count; // 0 or -1 to disable
+        } normal;
+        String label_text;
     } options;
+    Dynamic_Array<Widget> widgets;
 
+    // Intermediate layout data
+    int max_child_min_width_collapsed;
+    int max_child_min_width_without_collapse;
+    int max_child_min_width_for_line_merge;
+    int min_child_size_for_line_merge;
+    int sum_child_min_width_collapsed;
+    int sum_child_min_width_without_collapse;
+    int sum_child_min_width_for_line_merge;
+
+    int line_count;
+    int sum_line_min_heights;
+    int sum_line_max_heights;
+    int growable_line_count;
+    bool scroll_bar_was_added;
+};
+
+struct Layout_Info
+{
     // Layout information (Needs to be reported by widget)
     bool can_combine_in_lines;
     int min_width_collapsed; 
@@ -733,8 +752,30 @@ struct Widget
     bool height_can_grow; // For widgets that want to grow in y (Lists or others)
 
     // Calculated by container
-    BBox widget_box;
+    BBox box;
     int line_index;
+};
+
+enum class Widget_Type
+{
+    LABEL,
+    TEXT_INPUT,
+    BUTTON,
+    CONTAINER
+};
+
+struct Widget
+{
+    // Widget Data
+    Widget_Type type;
+    union {
+        String label; 
+        String button_text;
+        String input_text;
+        Widget_Container container;
+    } options;
+
+    Layout_Info layout_info;
 };
 
 struct UI_Window
@@ -742,7 +783,7 @@ struct UI_Window
     String title;
     ivec2 position;
     ivec2 size;
-    Dynamic_Array<Widget> widgets;
+    Widget_Container container;
 };
 
 const int LABEL_CHAR_COUNT_SIZE = 12;
@@ -752,129 +793,195 @@ const int BUTTON_MIN_CHAR_COUNT = 6;
 const int BUTTON_WANTED_CHAR_COUNT = 10;
 const int LIST_CONTAINER_MIN_CHAR_COUNT = 16;
 
-// Returns y-size
-int ui_layout_widgets_in_area(UI_Window* window, BBox client_area, ivec2 char_size)
-{
-    const int LINE_ITEM_HEIGHT  = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
-    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
+const int SCROLL_BAR_WIDTH = 10;
+const int MIN_SCROLL_BAR_HEIGHT = 10;
+const int SCROLL_BAR_PADDING = 1; // Top/Bot/Left/Right padding
+const int MOUSE_WHEEL_SENSITIVITY = 15;
 
-    // Find widget widths
-    int min_child_min_width_collapsed        = 1000000;
-    int min_child_min_width_without_collapse = 1000000;
-    int min_child_min_width_for_line_merge   = 1000000;
-    int max_child_min_width_collapsed = 0;
-    int max_child_min_width_without_collapse = 0;
-    int max_child_min_width_for_line_merge = 0;
-    for (int i = 0; i < window->widgets.size; i++)
+void widget_container_gather_width_information_recursive(Widget_Container* container, Layout_Info* out_layout_info, ivec2 char_size)
+{
+    const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
+    auto& widgets = container->widgets;
+
+    // Calculate child width infos
+    Widget_Container* c = container;
+    c->max_child_min_width_collapsed = 0;
+    c->max_child_min_width_without_collapse = 0;
+    c->max_child_min_width_for_line_merge = 0;
+    c->sum_child_min_width_collapsed = 0;
+    c->sum_child_min_width_without_collapse = 0;
+    c->sum_child_min_width_for_line_merge = 0;
+    c->min_child_size_for_line_merge = widgets.size == 0 ? 0 : 1000000;
+    c->scroll_bar_was_added = false;
+    bool child_height_can_grow = false;
+    bool has_child_that_cannot_combine_in_line = false;
+    for (int i = 0; i < widgets.size; i++)
     {
-        auto& widget = window->widgets[i];
+        auto& widget = widgets[i];
+        auto& layout = widget.layout_info;
         switch (widget.type)
         {
         case Widget_Type::LABEL: {
-            widget.min_width_collapsed        = widget.options.label.size * char_size.x;
-            widget.min_width_without_collapse = widget.min_width_collapsed; 
-            widget.min_width_for_line_merge   = widget.min_width_collapsed; 
+            layout.min_width_collapsed = widget.options.label.size * char_size.x;
+            layout.min_width_without_collapse = layout.min_width_collapsed;
+            layout.min_width_for_line_merge = layout.min_width_collapsed;
+            layout.height_can_grow = false;
+            layout.can_combine_in_lines = false;
             break;
         }
         case Widget_Type::BUTTON: {
-            widget.min_width_collapsed        = BUTTON_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
-            widget.min_width_without_collapse = widget.min_width_collapsed; 
-            widget.min_width_for_line_merge   = BUTTON_WANTED_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE; 
+            layout.min_width_collapsed = BUTTON_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_without_collapse = layout.min_width_collapsed;
+            layout.min_width_for_line_merge = BUTTON_WANTED_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            layout.height_can_grow = false;
+            layout.can_combine_in_lines = true;
             break;
         }
         case Widget_Type::TEXT_INPUT: {
-            int label_size          = LABEL_CHAR_COUNT_SIZE * char_size.x;
-            int text_input_min_size = TEXT_INPUT_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
-            int text_input_max_size = TEXT_INPUT_MAX_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
-
-            widget.min_width_collapsed        = math_minimum(label_size, PAD_ADJACENT_LABLE_LINE_SPLIT + text_input_min_size);
-            widget.min_width_without_collapse = label_size + PAD_LABEL_BOX + text_input_min_size; 
-            widget.min_width_for_line_merge   = label_size + PAD_LABEL_BOX + text_input_max_size; 
+            layout.min_width_collapsed = TEXT_INPUT_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_without_collapse = TEXT_INPUT_MIN_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_for_line_merge = TEXT_INPUT_MAX_CHAR_COUNT * char_size.x + TEXT_BORDER_SPACE;;
+            layout.height_can_grow = false;
+            layout.can_combine_in_lines = true;
             break;
         }
-        case Widget_Type::LIST_CONTAINER: {
-            widget.min_width_collapsed        = 4 * char_size.x;
-            widget.min_width_without_collapse = LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x; 
-            widget.min_width_for_line_merge   = LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x; 
+        case Widget_Type::CONTAINER: {
+            widget_container_gather_width_information_recursive(&widget.options.container, &layout, char_size);
+            layout.min_width_collapsed = math_maximum(layout.min_width_collapsed, 4 * char_size.x);
+            layout.min_width_without_collapse = math_maximum(layout.min_width_without_collapse, LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x);
+            layout.min_width_for_line_merge = math_maximum(layout.min_width_for_line_merge, LIST_CONTAINER_MIN_CHAR_COUNT * char_size.x);
             break;
         }
         default: panic("");
         }
 
-        widget.line_index = i;
-        widget.widget_box.min.x = client_area.min.x;
-        widget.widget_box.max.x = client_area.max.x;
-
-        max_child_min_width_collapsed        = math_maximum(max_child_min_width_collapsed, widget.min_width_collapsed);
-        max_child_min_width_without_collapse = math_maximum(max_child_min_width_without_collapse, widget.min_width_without_collapse);
-        max_child_min_width_for_line_merge   = math_maximum(max_child_min_width_for_line_merge, widget.min_width_for_line_merge);
-        min_child_min_width_collapsed        = math_minimum(min_child_min_width_collapsed, widget.min_width_collapsed);
-        min_child_min_width_without_collapse = math_minimum(min_child_min_width_without_collapse, widget.min_width_without_collapse);
-        min_child_min_width_for_line_merge   = math_minimum(min_child_min_width_for_line_merge, widget.min_width_for_line_merge);
+        layout.line_index = i;
+        c->max_child_min_width_collapsed = math_maximum(c->max_child_min_width_collapsed, layout.min_width_collapsed);
+        c->max_child_min_width_without_collapse = math_maximum(c->max_child_min_width_without_collapse, layout.min_width_without_collapse);
+        c->max_child_min_width_for_line_merge = math_maximum(c->max_child_min_width_for_line_merge, layout.min_width_for_line_merge);
+        c->sum_child_min_width_collapsed += layout.min_width_collapsed;
+        c->sum_child_min_width_without_collapse += layout.min_width_without_collapse;
+        c->sum_child_min_width_for_line_merge += layout.min_width_for_line_merge;
+        c->min_child_size_for_line_merge = math_minimum(c->min_child_size_for_line_merge, layout.min_width_for_line_merge);
+        child_height_can_grow = child_height_can_grow | layout.height_can_grow;
+        has_child_that_cannot_combine_in_line = has_child_that_cannot_combine_in_line | !layout.can_combine_in_lines;
     }
 
-    // Combine lines if enough space is available
-    int available_width = client_area.max.x - client_area.min.x;
-    bool lines_were_combined = false;
-    int line_count = window->widgets.size;
-    if (available_width >= min_child_min_width_for_line_merge * 2)
+    // Calculate container-layout from child sizes
+    out_layout_info->height_can_grow = child_height_can_grow;
+    switch (container->layout)
     {
-        // Distribute widgets to lines
-        int remaining_width = available_width;
-        int max_widgets_per_line = 0;
-        int line_widget_count = 0;
-        line_count = 0;
-        bool last_can_combine = true;
-        for (int i = 0; i < window->widgets.size; i++)
+    case Layout_Type::NORMAL:
+    {
+        out_layout_info->min_width_collapsed = c->max_child_min_width_collapsed;
+        out_layout_info->min_width_without_collapse = c->max_child_min_width_without_collapse;
+        out_layout_info->min_width_for_line_merge = c->sum_child_min_width_for_line_merge + (widgets.size - 1) * PAD_WIDGETS_ON_LINE;
+        out_layout_info->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+        break;
+    }
+    case Layout_Type::LABELED_ITEMS:
+    {
+        int label_length = LABEL_CHAR_COUNT_SIZE * char_size.x;
+        out_layout_info->min_width_collapsed = math_maximum(label_length, PAD_ADJACENT_LABLE_LINE_SPLIT + c->max_child_min_width_collapsed);
+        // Note: There are multiple different behaviors we could implement here...
+        out_layout_info->min_width_without_collapse = label_length + PAD_LABEL_BOX + c->sum_child_min_width_without_collapse + (widgets.size - 1) * PAD_LABEL_BOX;
+        out_layout_info->min_width_for_line_merge = label_length + c->sum_child_min_width_for_line_merge + (widgets.size - 1) * PAD_LABEL_BOX;
+        out_layout_info->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+        break;
+    }
+    case Layout_Type::STACK_HORIZONTAL:
+    {
+        out_layout_info->min_width_collapsed = c->sum_child_min_width_without_collapse;
+        out_layout_info->min_width_without_collapse = c->sum_child_min_width_without_collapse;
+        out_layout_info->min_width_for_line_merge = c->sum_child_min_width_for_line_merge + (widgets.size - 1) * PAD_LABEL_BOX;
+        out_layout_info->can_combine_in_lines = false;
+        out_layout_info->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+        break;
+    }
+    default: panic("");
+    }
+}
+
+void widget_container_calculate_x_bounds_and_height(Widget_Container* container, Layout_Info* out_layout_info, int x_pos, int available_width, ivec2 char_size)
+{
+    const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
+
+    // Calculate x-bounds for each widget
+    auto& widgets = container->widgets;
+    container->line_count = 0;
+    switch (container->layout)
+    {
+    case Layout_Type::NORMAL:
+    {
+        // Combine lines if enough space is available
+        bool lines_were_combined = false;
+        if (available_width >= container->min_child_size_for_line_merge * 2 && container->options.normal.allow_line_combination)
         {
-            auto& widget = window->widgets[i];
-            if (remaining_width >= widget.min_width_for_line_merge && widget.can_combine_in_lines && last_can_combine) {
-                remaining_width -= widget.min_width_for_line_merge + PAD_WIDGETS_ON_LINE;
-                line_widget_count += 1;
-            }
-            else 
+            // Combine multiple widgets into lines
+            int remaining_width = available_width;
+            int max_widgets_per_line = 0;
+            int line_widget_count = 0;
+            bool last_can_combine = true;
+            for (int i = 0; i < widgets.size; i++)
             {
-                // Not enough space in line for widget
-                if (i != 0) {
-                    line_count += 1;
-                    max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
-                    line_widget_count = 1;
+                auto& widget_layout = widgets[i].layout_info;
+                if (remaining_width >= widget_layout.min_width_for_line_merge && widget_layout.can_combine_in_lines && last_can_combine) {
+                    remaining_width -= widget_layout.min_width_for_line_merge + PAD_WIDGETS_ON_LINE;
+                    line_widget_count += 1;
                 }
-                else {
-                    max_widgets_per_line = math_maximum(max_widgets_per_line, 1);
+                else
+                {
+                    // Not enough space in line for widget
+                    if (i != 0) {
+                        container->line_count += 1;
+                        max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
+                        line_widget_count = 1;
+                    }
+                    else {
+                        max_widgets_per_line = math_maximum(max_widgets_per_line, 1);
+                    }
+                    remaining_width = available_width - (widget_layout.min_width_for_line_merge + PAD_WIDGETS_ON_LINE);
                 }
-                remaining_width = available_width - (widget.min_width_for_line_merge + PAD_WIDGETS_ON_LINE);
+                widget_layout.line_index = container->line_count;
+                last_can_combine = widget_layout.can_combine_in_lines;
             }
-            widget.line_index = line_count;
-            last_can_combine = widget.can_combine_in_lines;
+            max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
+            container->line_count += 1;
+
+            lines_were_combined = max_widgets_per_line > 1;
         }
-        max_widgets_per_line = math_maximum(max_widgets_per_line, line_widget_count);
-        line_count += 1;
+        else {
+            container->line_count = widgets.size;
+            lines_were_combined = false;
+        }
 
         // Distribute Width to widgets (based on lines)
-        lines_were_combined = max_widgets_per_line > 1;
         if (lines_were_combined)
         {
             int line_start_index = 0;
-            while (line_start_index < window->widgets.size)
+            while (line_start_index < widgets.size)
             {
                 // Find end on line
-                int start_widget_line = window->widgets[line_start_index].line_index;
+                int start_widget_line = widgets[line_start_index].layout_info.line_index;
                 int line_end_index = line_start_index;
                 int fixed_allocated_size = 0;
-                while (line_end_index < window->widgets.size) {
-                    auto& widget = window->widgets[line_end_index];
-                    if (widget.line_index != start_widget_line) {
+                while (line_end_index < widgets.size) {
+                    auto& widget_layout = widgets[line_end_index].layout_info;
+                    if (widget_layout.line_index != start_widget_line) {
                         break;
                     }
-                    fixed_allocated_size += widget.min_width_for_line_merge;
+                    fixed_allocated_size += widget_layout.min_width_for_line_merge;
                     line_end_index += 1;
                 }
 
                 // Early exit if only single widget on line
                 int count = line_end_index - line_start_index;
                 if (count == 1) {
-                    auto& widget = window->widgets[line_start_index];
+                    auto& widget_layout = widgets[line_start_index];
+                    widget_layout.layout_info.box.min.x = x_pos;
+                    widget_layout.layout_info.box.max.x = x_pos + available_width;
                     line_start_index = line_end_index;
                     continue;
                 }
@@ -884,186 +991,383 @@ int ui_layout_widgets_in_area(UI_Window* window, BBox client_area, ivec2 char_si
                 int overflow_budget = available_width - padding_space - fixed_allocated_size;
                 int extra_per_widget = overflow_budget / count;
                 int remaining_pixels = overflow_budget % count;
-                int x_pos = client_area.min.x;
 
+                int cursor_x = x_pos;
                 for (int i = line_start_index; i < line_end_index; i++)
                 {
-                    auto& widget = window->widgets[i];
-                    int width = widget.min_width_for_line_merge + extra_per_widget;
+                    auto& widget = widgets[i];
+                    int width = widget.layout_info.min_width_for_line_merge + extra_per_widget;
                     if (i == 0) { width += remaining_pixels; }
 
-                    widget.widget_box.min.x = x_pos;
-                    widget.widget_box.max.x = x_pos + width;
-                    x_pos += width + PAD_WIDGETS_ON_LINE;
+                    widget.layout_info.box.min.x = cursor_x;
+                    widget.layout_info.box.max.x = cursor_x + width;
+                    cursor_x += width + PAD_WIDGETS_ON_LINE;
                 }
 
                 line_start_index = line_end_index;
             }
         }
-    }
+        else
+        {
+            // Otherwise it's a simple horizontal stack for each widget
+            for (int i = 0; i < widgets.size; i++) {
+                auto& widget = widgets[i];
+                widget.layout_info.box.min.x = x_pos;
+                widget.layout_info.box.max.x = x_pos + available_width;
+                widget.layout_info.line_index = i;
+            }
+        }
 
-    // Calculate Widget Heights (Depends on available width for widget)
-    int sum_widget_min_heights = 0;
-    int sum_widget_max_heights = 0;
-    int growable_widget_count = 0;
-    for (int i = 0; i < window->widgets.size; i++)
+        break;
+    }
+    case Layout_Type::LABELED_ITEMS:
     {
-        auto& widget = window->widgets[i];
+        if (available_width < out_layout_info->min_width_without_collapse)
+        {
+            for (int i = 0; i < widgets.size; i++) {
+                auto& widget = widgets[i];
+                widget.layout_info.box.min.x = x_pos + PAD_ADJACENT_LABLE_LINE_SPLIT;
+                widget.layout_info.box.max.x = x_pos + available_width;
+                widget.layout_info.line_index = i; // Note: Not i + 1, because this is used later for calculating height (Grouping lines)
+            }
+        }
+        else
+        {
+            // Distribute space to all widgets on line
+            int padding_space = widgets.size * PAD_LABEL_BOX; // Note: Not minus one because we have a label
+            int overflow_budget = available_width - LABEL_CHAR_COUNT_SIZE * char_size.x - padding_space - container->sum_child_min_width_without_collapse;
+            int extra_per_widget = overflow_budget / widgets.size;
+            int remaining_pixels = overflow_budget % widgets.size;
+
+            int cursor_x = x_pos;
+            cursor_x += LABEL_CHAR_COUNT_SIZE * char_size.x + PAD_LABEL_BOX;
+            for (int i = 0; i < widgets.size; i++)
+            {
+                auto& widget = widgets[i];
+                int width = widget.layout_info.min_width_without_collapse + extra_per_widget;
+                if (i == 0) { width += remaining_pixels; }
+
+                widget.layout_info.box.min.x = cursor_x;
+                widget.layout_info.box.max.x = cursor_x + width;
+                widget.layout_info.line_index = 0;
+                cursor_x += width + PAD_LABEL_BOX;
+            }
+        }
+        break;
+    }
+    case Layout_Type::STACK_HORIZONTAL:
+    {
+        // Distribute space to all widgets on line
+        int padding_space = (widgets.size - 1) * PAD_LABEL_BOX;
+        int overflow_budget = available_width - padding_space - container->sum_child_min_width_without_collapse;
+        int extra_per_widget = overflow_budget / widgets.size;
+        int remaining_pixels = overflow_budget % widgets.size;
+
+        int cursor_x = x_pos;
+        for (int i = 0; i < widgets.size; i++)
+        {
+            auto& widget = widgets[i];
+            int width = widget.layout_info.min_width_without_collapse + extra_per_widget;
+            if (i == 0) { width += remaining_pixels; }
+
+            widget.layout_info.box.min.x = cursor_x;
+            widget.layout_info.box.max.x = cursor_x + width;
+            widget.layout_info.line_index = 0;
+            cursor_x += width + PAD_LABEL_BOX;
+        }
+
+        break;
+    }
+    default: panic("");
+    }
+    container->line_count = math_maximum(container->line_count, 1);
+
+    // Calculate Height per line
+    container->sum_line_min_heights = 0;
+    container->sum_line_max_heights = 0;
+    container->growable_line_count = 0;
+
+    int max_last_line_min_height = 0;
+    int max_last_line_max_height = 0;
+    bool last_line_can_grow = false;
+    int last_line_index = 0;
+    for (int i = 0; i < widgets.size; i++)
+    {
+        auto& widget = widgets[i];
         switch (widget.type)
         {
         case Widget_Type::LABEL:
         case Widget_Type::BUTTON:
+        case Widget_Type::TEXT_INPUT:
         {
-            widget.min_height = LINE_ITEM_HEIGHT;
-            widget.max_height = LINE_ITEM_HEIGHT;
-            widget.height_can_grow = false;
+            widget.layout_info.min_height = LINE_ITEM_HEIGHT;
+            widget.layout_info.max_height = LINE_ITEM_HEIGHT;
+            widget.layout_info.height_can_grow = false;
             break;
         }
-        case Widget_Type::TEXT_INPUT: {
-            int height = LINE_ITEM_HEIGHT;
-            if (widget.widget_box.max.x - widget.widget_box.min.x < widget.min_width_without_collapse) {
-                // TODO: Recheck Drawing code, maybe i'm removing the border of the widget to make them look more connected
-                height = 2 * LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
-            }
-            widget.min_height = height;
-            widget.max_height = height;
-            widget.height_can_grow = false;
-            break;
-        }
-        case Widget_Type::LIST_CONTAINER: {
-            widget.min_height = LINE_ITEM_HEIGHT * 2;
-            widget.max_height = LINE_ITEM_HEIGHT * 5;
-            widget.height_can_grow = widget.options.list_container_can_grow;
+        case Widget_Type::CONTAINER: 
+        {
+            auto& box = widget.layout_info.box;
+            widget_container_calculate_x_bounds_and_height(&widget.options.container, &widget.layout_info, box.min.x, box.max.x - box.min.x, char_size);
             break;
         }
         default: panic("");
         }
 
-        sum_widget_min_heights += widget.min_height;
-        sum_widget_max_heights += widget.max_height;
-        growable_widget_count += widget.height_can_grow ? 1 : 0;
-    }
-
-    // Calculate Height per line
-    int sum_line_min_heights = 0;
-    int sum_line_max_heights = 0;
-    int growable_line_count = 0;
-    if (lines_were_combined)
-    {
-        int max_last_line_min_height = 0;
-        int max_last_line_max_height = 0;
-        bool last_line_can_grow = false;
-        int last_line_index = 0;
-        for (int i = 0; i < window->widgets.size; i++)
+        if (widget.layout_info.line_index != last_line_index)
         {
-            auto& widget = window->widgets[i];
-            if (widget.line_index != last_line_index) 
-            {
-                sum_line_min_heights += max_last_line_min_height;
-                sum_line_max_heights += max_last_line_max_height;
-                growable_line_count += last_line_can_grow ? 1 : 0;
+            container->sum_line_min_heights += max_last_line_min_height;
+            container->sum_line_max_heights += max_last_line_max_height;
+            container->growable_line_count += last_line_can_grow ? 1 : 0;
 
-                last_line_index = widget.line_index;
-                max_last_line_min_height = 0;
-                max_last_line_max_height = 0;
-                last_line_can_grow = false;
-            }
-
-            max_last_line_min_height = math_maximum(max_last_line_min_height, widget.min_height);
-            max_last_line_max_height = math_maximum(max_last_line_max_height, widget.max_height);
-            last_line_can_grow = last_line_can_grow | widget.height_can_grow;
+            last_line_index = widget.layout_info.line_index;
+            max_last_line_min_height = 0;
+            max_last_line_max_height = 0;
+            last_line_can_grow = false;
         }
-        sum_line_min_heights += max_last_line_min_height;
-        sum_line_max_heights += max_last_line_max_height;
-        growable_line_count += last_line_can_grow ? 1 : 0;
+
+        max_last_line_min_height = math_maximum(max_last_line_min_height, widget.layout_info.min_height);
+        max_last_line_max_height = math_maximum(max_last_line_max_height, widget.layout_info.max_height);
+        last_line_can_grow = last_line_can_grow | widget.layout_info.height_can_grow;
     }
-    else 
+    container->sum_line_min_heights += max_last_line_min_height;
+    container->sum_line_max_heights += max_last_line_max_height;
+    container->growable_line_count += last_line_can_grow ? 1 : 0;
+
+    // Set Container height infos
+    out_layout_info->min_height = container->sum_line_min_heights + (container->line_count - 1) * PAD_WIDGETS_BETWEEN_LINES;
+    out_layout_info->max_height = container->sum_line_max_heights + (container->line_count - 1) * PAD_WIDGETS_BETWEEN_LINES;
+    out_layout_info->height_can_grow = container->growable_line_count > 0;
+    switch (container->layout)
     {
-        sum_line_min_heights = sum_widget_min_heights;
-        sum_line_max_heights = sum_widget_max_heights;
-        growable_line_count  = growable_widget_count;
+    case Layout_Type::NORMAL: 
+    {
+        int min_line_count = container->options.normal.min_line_count;
+        int max_line_count = container->options.normal.max_line_count;
+
+        int min_height = min_line_count * LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES * math_maximum(0, (min_line_count - 1));
+        out_layout_info->min_height = math_maximum(out_layout_info->min_height, min_height);
+
+        int max_height = max_line_count * LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES * math_maximum(0, (max_line_count - 1));
+        if (max_line_count > 0) {
+            out_layout_info->max_height = math_minimum(out_layout_info->max_height, max_height);
+            out_layout_info->height_can_grow = false;
+        }
+        break;
+    }
+    case Layout_Type::STACK_HORIZONTAL:
+        break;
+    case Layout_Type::LABELED_ITEMS: {
+        if (available_width < out_layout_info->min_width_without_collapse) {
+            out_layout_info->min_height += LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
+            out_layout_info->max_height += LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
+        }
+        break;
+    }
+    default: panic("");
+    }
+}
+
+void widget_container_calculate_y_bounds(Widget_Container* container, Layout_Info* out_layout_info, int y_pos, int available_height, ivec2 char_size)
+{
+    auto& widgets = container->widgets;
+    const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
+
+    // Check if we want to add scroll-bar
+    bool overflow_detected = available_height < out_layout_info->min_height;
+    int available_width = out_layout_info->box.max.x - out_layout_info->box.min.x;
+    if (overflow_detected && container->layout == Layout_Type::NORMAL && container->options.normal.scroll_bar_enabled)
+    {
+        auto& box = out_layout_info->box;
+        available_width -= SCROLL_BAR_WIDTH;
+        // Re-Calculate Child layout
+        widget_container_calculate_x_bounds_and_height(container, out_layout_info, out_layout_info->box.min.x, available_width, char_size);
+        container->scroll_bar_was_added = true;
     }
 
-    // TODO: Now we could decide if we have a scroll-bar or not, and re-calculate the layout stuff
+    // Offset y_pos if we are collapsed
+    if (container->layout == Layout_Type::LABELED_ITEMS && available_width < out_layout_info->min_width_without_collapse) {
+        y_pos -= LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
+    }
 
-    // Distribute heights to widgets
-    int available_height = client_area.max.y - client_area.min.y - PAD_WIDGETS_BETWEEN_LINES * (line_count - 1);
-    int y_pos = client_area.max.y;
+    if (available_width < out_layout_info->min_width_for_line_merge) {
+        out_layout_info->min_height += LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
+        out_layout_info->max_height += LINE_ITEM_HEIGHT + PAD_WIDGETS_BETWEEN_LINES;
+    }
+
+    // Do Y-Layout (Basically all layout do the same thing, using line-index to calculate height)
+    available_height = available_height - PAD_WIDGETS_BETWEEN_LINES * (container->line_count - 1);
     int last_line_index = 0;
     int last_line_height = 0;
-    int height_buffer = available_height - sum_line_min_heights;
+    int height_buffer = available_height - container->sum_line_min_heights;
     int max_subtracted_from_height_buffer_in_line = 0;
     int first_growing_line_index = -1;
-    for (int i = 0; i < window->widgets.size; i++)
+    for (int i = 0; i < widgets.size; i++)
     {
-        auto& widget = window->widgets[i];
+        auto& widget = widgets[i];
+        auto& layout = widget.layout_info;
 
         // Check if we moved to new line
-        if (widget.line_index != last_line_index) 
+        if (layout.line_index != last_line_index)
         {
             y_pos -= last_line_height + PAD_WIDGETS_BETWEEN_LINES;
             height_buffer = math_maximum(0, height_buffer - max_subtracted_from_height_buffer_in_line);
             max_subtracted_from_height_buffer_in_line = 0;
-            last_line_index = widget.line_index;
+            last_line_index = layout.line_index;
             last_line_height = 0;
         }
 
         // Figure out widget height
         int widget_height = 0;
         bool line_grows = false;
-        if (available_height <= sum_line_min_heights) 
+        if (available_height <= container->sum_line_min_heights)
         {
-            widget_height = widget.min_height;
+            widget_height = layout.min_height;
         }
-        else if (available_height <= sum_line_max_heights) 
+        else if (available_height <= container->sum_line_max_heights)
         {
-            widget_height = widget.min_height;
-            int remaining_to_max = widget.max_height - widget.min_height;
+            widget_height = layout.min_height;
+            int remaining_to_max = layout.max_height - layout.min_height;
             int subtract_count = math_minimum(height_buffer, remaining_to_max);
             widget_height += subtract_count;
             max_subtracted_from_height_buffer_in_line = math_maximum(max_subtracted_from_height_buffer_in_line, subtract_count);
         }
-        else 
+        else
         {
-            widget_height = widget.max_height;
-            if (widget.height_can_grow) 
+            widget_height = layout.max_height;
+            if (layout.height_can_grow)
             {
-                int extra_height    = (available_height - sum_line_max_heights) / growable_line_count;
-                int pixel_remainder = (available_height - sum_line_max_heights) % growable_line_count; 
+                int extra_height = (available_height - container->sum_line_max_heights) / container->growable_line_count;
+                int pixel_remainder = (available_height - container->sum_line_max_heights) % container->growable_line_count;
                 widget_height += extra_height;
-                if (first_growing_line_index == widget.line_index || first_growing_line_index == -1) {
-                    first_growing_line_index = widget.line_index;
-                    // widget_height += pixel_remainder;
+                if (first_growing_line_index == layout.line_index || first_growing_line_index == -1) {
+                    first_growing_line_index = layout.line_index;
+                    widget_height += pixel_remainder;
                 }
             }
         }
 
         // Set widget position
         last_line_height = math_maximum(last_line_height, widget_height);
-        widget.widget_box.max.y = y_pos;
-        widget.widget_box.min.y = y_pos - widget_height;
+        layout.box.max.y = y_pos;
+        layout.box.min.y = y_pos - widget_height;
+
+        // Recurse to children
+        if (widget.type == Widget_Type::CONTAINER) {
+            auto& box = widget.layout_info.box;
+            widget_container_calculate_y_bounds(&widget.options.container, &widget.layout_info, box.max.y, box.max.y - box.min.y, char_size);
+        }
     }
     y_pos -= last_line_height;
-
-    return client_area.max.y - y_pos;
 }
 
-void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, Glyph_Atlas_* glyph_atlas, Input* input)
+void widget_container_render_widgets_recursive(
+    Widget_Container* container, const Layout_Info* container_layout, BBox clipping_box, Mesh* mesh, Glyph_Atlas_* glyph_atlas
+)
 {
-    if (bbox_is_empty(client_area)) return;
-
     ivec2 char_size = glyph_atlas->char_box_size;
-    int max_height = client_area.max.y - client_area.min.y;
-    int used_height = ui_layout_widgets_in_area(window, client_area, char_size);
+    const int LINE_ITEM_HEIGHT = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
+    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
 
-    // Check if we need scroll-bar
-    if (used_height > max_height)
+    // Draw scroll bar
+    if (container->scroll_bar_was_added)
     {
-        const int SCROLL_BAR_WIDTH = 10;
-        const int MIN_SCROLL_BAR_HEIGHT = 10;
-        const int SCROLL_BAR_PADDING = 1; // Top/Bot/Left/Right padding
-        const int MOUSE_WHEEL_SENSITIVITY = 15;
+        // Draw scroll area
+        BBox scroll_area = container_layout->box;
+        scroll_area.min.x = scroll_area.max.x - SCROLL_BAR_WIDTH;
+        mesh_push_box_clipped(mesh, scroll_area, clipping_box, COLOR_SCROLL_BG);
 
+        // Draw bar (Currently on top of everything, because it's easier)
+        BBox bar_box = scroll_area;
+        bar_box.min.y = bar_box.max.y - MIN_SCROLL_BAR_HEIGHT;
+        bar_box.max = bar_box.max - ivec2(SCROLL_BAR_PADDING);
+        bar_box.min = bar_box.min + ivec2(SCROLL_BAR_PADDING);
+        mesh_push_box_clipped(mesh, bar_box, clipping_box, COLOR_SCROLL_BAR);
+    }
+
+    auto box_draw_label = [&](BBox box, String text, BBox clipping_box) {
+        mesh_push_text_clipped(mesh, glyph_atlas, text, box.min + ivec2(0, BORDER_SPACE + PAD_BOT), bbox_intersection(box, clipping_box));
+    };
+    auto box_draw_text_in_box = [&](BBox box, String text, bool center_text, BBox clipping_area, vec4 BG_COLOR, vec4 BORDER_COLOR)
+    {
+        mesh_push_box_with_border_clipped(mesh, box, clipping_area, BG_COLOR, BORDER_SPACE, BORDER_COLOR);
+
+        BBox text_clip_area = box;
+        text_clip_area.min = text_clip_area.min + ivec2(PAD_LEFT_RIGHT + BORDER_SPACE, BORDER_SPACE + PAD_BOT);
+        text_clip_area.max = text_clip_area.max - ivec2(PAD_LEFT_RIGHT + BORDER_SPACE, BORDER_SPACE + PAD_TOP);
+        ivec2 text_pos = text_clip_area.min;
+        int available_text_space = text_clip_area.max.x - text_clip_area.min.x;
+        text_clip_area = bbox_intersection(text_clip_area, clipping_area);
+
+        // Center button text if enough space is available
+        int required_text_space = char_size.x * text.size;
+        int text_offset = 0;
+        if (available_text_space > required_text_space && center_text) {
+            text_offset = (available_text_space - required_text_space) / 2; // Without division this would be right-align
+        }
+        mesh_push_text_clipped(mesh, glyph_atlas, text, text_pos + ivec2(text_offset, 0), text_clip_area);
+    };
+
+    // Render widgets
+    auto& widgets = container->widgets;
+    for (int i = 0; i < widgets.size; i++)
+    {
+        auto& widget = widgets[i];
+        auto& box = widget.layout_info.box;
+        switch (widget.type)
+        {
+        case Widget_Type::LABEL: {
+            box_draw_label(box, widget.options.label, clipping_box);
+            break;
+        }
+        case Widget_Type::BUTTON: {
+            box_draw_text_in_box(box, widget.options.button_text, true, clipping_box, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
+            break;
+        }
+        case Widget_Type::TEXT_INPUT: {
+            box_draw_text_in_box(box, widget.options.input_text, false, clipping_box, COLOR_INPUT_BG, COLOR_INPUT_BORDER);
+            break;
+        }
+        case Widget_Type::CONTAINER:
+        {
+            auto& list_container = widget.options.container;
+            if (list_container.layout == Layout_Type::LABELED_ITEMS) {
+                BBox label_box = box;
+                label_box.min.y = label_box.max.y - LINE_ITEM_HEIGHT;
+                label_box.max.x = label_box.min.x + LABEL_CHAR_COUNT_SIZE * char_size.x;
+                box_draw_label(label_box, widget.options.container.options.label_text, clipping_box);
+            }
+            widget_container_render_widgets_recursive(&list_container, &widget.layout_info, bbox_intersection(box, clipping_box), mesh, glyph_atlas);
+            break;
+        }
+        default: panic("");
+        }
+    }
+}
+
+void ui_window_new_rendering(UI_Window* window, BBox client_area, Mesh* mesh, Glyph_Atlas_* glyph_atlas)
+{
+    Layout_Info container_layout_info;
+    ivec2 char_size = glyph_atlas->char_box_size;
+
+    // Note: Here we could apply window width to e.g. fit exactly one line
+    widget_container_gather_width_information_recursive(&window->container, &container_layout_info, char_size);
+    container_layout_info.box.min.x = client_area.min.x;
+    container_layout_info.box.max.x = client_area.max.x;
+
+    // Note: Here we could apply window height to e.g. fit the required height perfectly, or add some more space for lists if growable
+    widget_container_calculate_x_bounds_and_height(
+        &window->container, &container_layout_info, client_area.min.x, client_area.max.x - client_area.min.x, char_size
+    );
+    container_layout_info.box.min.y = client_area.min.y;
+    container_layout_info.box.max.y = client_area.max.y;
+
+    widget_container_calculate_y_bounds(&window->container, &container_layout_info, client_area.max.y, client_area.max.y - client_area.min.y, char_size);
+
+    // Handle inputs after layout calculations (Note: Scroll-Bar input was not calculated yet!)
+    // Old scroll bar code
+    /*{
         // Re-calculate widget layout, leaving space for scroll-bar
         BBox original_client_area = client_area;
         client_area.max.x -= SCROLL_BAR_WIDTH + 2;
@@ -1077,7 +1381,7 @@ void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, G
         int available_bar_space = scroll_box.max.y - scroll_box.min.y - 2 * SCROLL_BAR_PADDING;
         int bar_height = math_maximum(MIN_SCROLL_BAR_HEIGHT, available_bar_space * max_height / math_maximum(1, used_height));
 
-        // Figure out bar-positioning 
+        // Figure out bar-positioning
         static int pixel_scroll_offset = 0;
         const int max_bar_offset = available_bar_space - bar_height;
         const int max_pixel_scroll_offset = used_height - max_height;
@@ -1141,87 +1445,11 @@ void ui_window_render_widgets(UI_Window* window, BBox client_area, Mesh* mesh, G
             widget.widget_box.min.y += pixel_scroll_offset;
             widget.widget_box.max.y += pixel_scroll_offset;
         }
-    }
 
-    // Draw widgets
-    auto box_draw_label = [&](BBox box, String text, BBox clipping_box) {
-        mesh_push_text_clipped(mesh, glyph_atlas, text, box.min + ivec2(BORDER_SPACE + PAD_LEFT_RIGHT, BORDER_SPACE + PAD_BOT), bbox_intersection(box, clipping_box));
-    };
-    auto box_draw_text_in_box = [&](BBox box, String text, bool center_text, BBox clipping_area, vec4 BG_COLOR, vec4 BORDER_COLOR)
-    {
-        mesh_push_box_with_border_clipped(mesh, box, clipping_area, BG_COLOR, BORDER_SPACE, BORDER_COLOR);
+    }*/
 
-        BBox text_clip_area = box;
-        text_clip_area.min = text_clip_area.min + ivec2(PAD_LEFT_RIGHT + BORDER_SPACE, BORDER_SPACE + PAD_BOT);
-        text_clip_area.max = text_clip_area.max - ivec2(PAD_LEFT_RIGHT + BORDER_SPACE, BORDER_SPACE + PAD_TOP);
-        ivec2 text_pos = text_clip_area.min;
-        int available_text_space = text_clip_area.max.x - text_clip_area.min.x;
-        text_clip_area = bbox_intersection(text_clip_area, clipping_area);
-
-        // Center button text if enough space is available
-        int required_text_space = char_size.x * text.size;
-        int text_offset = 0;
-        if (available_text_space > required_text_space && center_text) {
-            text_offset = (available_text_space - required_text_space) / 2; // Without division this would be right-align
-        }
-        mesh_push_text_clipped(mesh, glyph_atlas, text, text_pos + ivec2(text_offset, 0), text_clip_area);
-    };
-
-    const int LINE_ITEM_HEIGHT  = PAD_TOP + PAD_BOT + BORDER_SPACE + char_size.y;
-    const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
-    for (int i = 0; i < window->widgets.size; i++)
-    {
-        auto& widget = window->widgets[i];
-        switch (widget.type)
-        {
-        case Widget_Type::LABEL: {
-            box_draw_label(widget.widget_box, widget.options.label, client_area);
-            break;
-        }
-        case Widget_Type::BUTTON: {
-            box_draw_text_in_box(widget.widget_box, widget.options.button_text, true, client_area, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
-            break;
-        }
-        case Widget_Type::LIST_CONTAINER: 
-        {
-            int line_count = (widget.widget_box.max.y - widget.widget_box.min.y) / LINE_ITEM_HEIGHT + 1;
-            BBox clipping_box = bbox_intersection(client_area, widget.widget_box);
-            for (int i = 0; i < line_count; i++)
-            {
-                BBox line_box = widget.widget_box;
-                line_box.max.y = widget.widget_box.max.y - i * LINE_ITEM_HEIGHT;
-                line_box.min.y = widget.widget_box.max.y - (i + 1) * LINE_ITEM_HEIGHT;
-                mesh_push_box_clipped(mesh, line_box, clipping_box, i % 2 == 0 ? COLOR_LIST_LINE_EVEN : COLOR_LIST_LINE_ODD);
-            }
-            break;
-        }
-        case Widget_Type::TEXT_INPUT:
-        {
-            BBox label_box = BBox(
-                ivec2(widget.widget_box.min.x, widget.widget_box.max.y - LINE_ITEM_HEIGHT),
-                ivec2(widget.widget_box.min.x + char_size.x * LABEL_CHAR_COUNT_SIZE, widget.widget_box.max.y)
-            );
-            BBox text_box = BBox(ivec2(0), ivec2(0));
-            if (widget.widget_box.max.x - widget.widget_box.min.x < widget.min_width_without_collapse) {
-                text_box = BBox(
-                    widget.widget_box.min + ivec2(PAD_ADJACENT_LABLE_LINE_SPLIT, 0),
-                    ivec2(widget.widget_box.max.x, widget.widget_box.min.y + LINE_ITEM_HEIGHT)
-                );
-            }
-            else {
-                text_box = BBox(
-                    ivec2(label_box.max.x + PAD_LABEL_BOX, label_box.min.y),
-                    widget.widget_box.max
-                );
-            }
-
-            box_draw_label(label_box, widget.options.input.label, client_area);
-            box_draw_text_in_box(text_box, widget.options.input.text, false, client_area, COLOR_INPUT_BG, COLOR_INPUT_BORDER);
-            break;
-        }
-        default: panic("");
-        }
-    }
+    // Now we can render widgets
+    widget_container_render_widgets_recursive(&window->container, &container_layout_info, client_area, mesh, glyph_atlas);
 }
 
 
@@ -1301,50 +1529,60 @@ void imgui_test_entry()
     ui_window.size = ivec2(400, 300);
     ui_window.position = screen_size / 2 - ui_window.size / 2 - BORDER_SPACE;
     ui_window.title = string_create_static("Test-Window!");
-    ui_window.widgets = dynamic_array_create<Widget>();
-    SCOPE_EXIT(dynamic_array_destroy(&ui_window.widgets));
+    ui_window.container.layout = Layout_Type::NORMAL;
+    ui_window.container.options.normal.allow_line_combination = true;
+    ui_window.container.options.normal.scroll_bar_enabled = true;
+    ui_window.container.options.normal.min_line_count = 0;
+    ui_window.container.options.normal.max_line_count = 0;
+    ui_window.container.widgets = dynamic_array_create<Widget>();
+    SCOPE_EXIT(dynamic_array_destroy(&ui_window.container.widgets));
 
+    auto& widgets = ui_window.container.widgets;
     Widget label;
     label.type = Widget_Type::LABEL;
     label.options.label = string_create_static("Test label YaY");
-    label.can_combine_in_lines = false;
-    dynamic_array_push_back(&ui_window.widgets, label);
+    dynamic_array_push_back(&widgets, label);
 
     Widget text_input;
     text_input.type = Widget_Type::TEXT_INPUT;
-    text_input.options.input.label = string_create_static("Name:");
-    text_input.options.input.text = string_create_static("Some text yay nay jay in the ocean?");
-    text_input.can_combine_in_lines = true;
-    dynamic_array_push_back(&ui_window.widgets, text_input);
+    text_input.options.input_text = string_create_static("Some text yay nay jay in the ocean?");
+
+    Widget labeled_container;
+    labeled_container.type = Widget_Type::CONTAINER;
+    labeled_container.options.container.widgets = dynamic_array_create<Widget>();
+    labeled_container.options.container.layout = Layout_Type::LABELED_ITEMS;
+    labeled_container.options.container.options.label_text = string_create_static("Input:");
+    SCOPE_EXIT(dynamic_array_destroy(&labeled_container.options.container.widgets));
+
+    dynamic_array_push_back(&labeled_container.options.container.widgets, text_input);
+    dynamic_array_push_back(&widgets, labeled_container);
 
     for (int i = 0; i < 4; i++)
     {
         const char* names[3] = { "Test 1", "What", "Other" };
         const char* texts[3] = { "Well this is somethign", "Lorem ipsum ", "What did you just say you little..." };
 
-        text_input.options.input.label = string_create_static(names[i % 3]);
-        text_input.options.input.text  = string_create_static(texts[i % 3]);
-        dynamic_array_push_back(&ui_window.widgets, text_input);
+        labeled_container.type = Widget_Type::CONTAINER;
+        labeled_container.options.container.widgets = dynamic_array_create<Widget>();
+        labeled_container.options.container.options.label_text = string_create_static(names[i % 3]);
+
+        text_input.options.input_text = string_create_static(texts[i % 3]);
+        dynamic_array_push_back(&labeled_container.options.container.widgets, text_input);
+        dynamic_array_push_back(&widgets, labeled_container);
     }
 
-    Widget list;
-    list.type = Widget_Type::LIST_CONTAINER;
-    list.options.list_container_can_grow = false;
-    list.can_combine_in_lines = false;
-    dynamic_array_push_back(&ui_window.widgets, list);
+    // Widget list;
+    // list.type = Widget_Type::CONTAINER;
+    // list.options.list_container_can_grow = false;
+    // list.can_combine_in_lines = false;
+    // dynamic_array_push_back(&widgets, list);
 
     Widget button;
     button.type = Widget_Type::BUTTON;
     button.options.button_text = string_create_static("Click Me!");
-    button.can_combine_in_lines = true;
-    dynamic_array_push_back(&ui_window.widgets, button);
+    dynamic_array_push_back(&widgets, button);
 
-    list.type = Widget_Type::LIST_CONTAINER;
-    list.options.list_container_can_grow = true;
-    list.can_combine_in_lines = false;
-    dynamic_array_push_back(&ui_window.widgets, list);
-
-
+    // Window resize drag and drop
     bool drag_active = false;
     bool resize_active = false;
     ivec2 drag_start_mouse_pos(0);
@@ -1448,7 +1686,7 @@ void imgui_test_entry()
         BBox widget_box = client_box;
         widget_box.min = widget_box.min + ivec2(2);
         widget_box.max = widget_box.max - ivec2(2);
-        ui_window_render_widgets(&ui_window, widget_box, mesh, &glyph_atlas, input);
+        ui_window_new_rendering(&ui_window, widget_box, mesh, &glyph_atlas);
 
         // Tests for Text-Rendering
         if (false)

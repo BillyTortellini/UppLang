@@ -1,19 +1,13 @@
 
-
-Working on:
- * List-Container (Y-Size distribution)
-    - Draw rectangle with border
-    - Just make it that it takes at least 3 y lines, but y can grow
- * Sub-Headers
-    - Sub-Containers?
-    
+ - Input for Scroll-Bar
+ - Test Vertical layout, maybe implement disable collapse
+ - Make a list container by alternating background colors (Test stacked scroll-bars)
+ - A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
 
 UI-Ideas:
  * Use Grid when merging lines, so adjacent lines are still somewhat aligned
  * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
- * Containers may want to fill in y-size, or grow to a specific maximum (Lists or Multi-Line Texts?)
-    They should also provided minimum y-size
     
 
 TODO in UI:
@@ -34,6 +28,7 @@ TODO in UI:
     - Using an index-buffer we can Generate the index-Buffer afterwards
     
 Done:
+ * Added Height Distribution to UI
  * Scroll-Bar implemented
 
  * Better growing on widgets
