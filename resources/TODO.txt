@@ -1,10 +1,20 @@
 
- - Input for Scroll-Bar
- - Test Vertical layout, maybe implement disable collapse
- - Make a list container by alternating background colors (Test stacked scroll-bars)
- - A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
+Next Stuff:
+    Immediate-Mode --> seems to work...
+
+    Button-Input
+    Text-Input
+
+    Collapsable Items
+    Lists
+        
+
 
 UI-Ideas:
+ * Label and Button-Groups, so labels can have the same width in same group
+ * Vertical layout could use disable collapse on child-widgets
+ * Normal Layout (Lines) should allow alternate background colors for even/odd lines, and also border/padding for children
+ * A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
  * Use Grid when merging lines, so adjacent lines are still somewhat aligned
  * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
@@ -14,8 +24,7 @@ TODO in UI:
  * Widget-Functionality
     - Button
     - Text_Input
- * Add horizontal separator and non-mergin items (labels + sepeartor) 
- * Label and button groups (To have similarly sized labels/buttons)
+ * Add horizontal separator and non-mergin items (labels + seperator) 
 
  * More Widgets
     - Check_Box,
@@ -28,6 +37,10 @@ TODO in UI:
     - Using an index-buffer we can Generate the index-Buffer afterwards
     
 Done:
+ * Immediate mode rework
+ * Scroll-Bar input working again
+ * Width distribution Rework
+
  * Added Height Distribution to UI
  * Scroll-Bar implemented
 
