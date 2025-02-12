@@ -1,42 +1,55 @@
 
-Next Stuff:
-    Immediate-Mode --> seems to work...
 
-    Button-Input
-    Text-Input
+Working on: Text-Input
+----------------------
 
-    Collapsable Items
-    Lists
+
+
+
+
+TODO in UI:
+-----------
+ * More Widgets
+    - Check_Box,
+    - Number_Input
+    - Collapsable Sub_Header
+    - Horizontal Seperator
+ * Lists (Max-Size/Can grow)
+ * Drop-Down menu for Enums
+ * Multiple UI-Windows with z-order/other options
         
 
 
 UI-Ideas:
+---------
+ * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
  * Label and Button-Groups, so labels can have the same width in same group
  * Vertical layout could use disable collapse on child-widgets
- * Normal Layout (Lines) should allow alternate background colors for even/odd lines, and also border/padding for children
+ * Normal Layout (Lines) should allow a list-style odd-even background color swap
  * A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
- * Use Grid when merging lines, so adjacent lines are still somewhat aligned
  * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
     
-
-TODO in UI:
- * Widget-Functionality
-    - Button
-    - Text_Input
- * Add horizontal separator and non-mergin items (labels + seperator) 
-
- * More Widgets
-    - Check_Box,
-    - Number_Input
-    - Sub_Header
-
- * Transform into Immediate_Mode UI
-
- * Implement Batching (I assume drawing can then be done with a single draw call with correct triangle order!)
-    - Using an index-buffer we can Generate the index-Buffer afterwards
     
+
 Done:
+-----
+ * Added sdf representation of check_mark
+ * Text_Input done for now
+ * Cut (Keyboard shortcut CTRL-X)
+ * Copy Paste (Line_Edit)
+ * Text-Scrolling if cursor is out of frame...
+ * Fix bug with collapsed input + y-offset (Double y-offset add)
+ * Text input sending update to immediate mode user
+ * Text input with single line edit
+ * Added widget focus, added focus border for input
+ * Moved global data from window to ui_system (Dragging)
+ * Button-Input working
+ * Improved Block line-merging (Now continuous)
+ * Fixed Bug where hover-index at start and end frame was not correct (Rendering changed bounding box with y-offset)
+ * Bug-Fixes with Mouse-Hover scroll offset and scroll offset not resetting when resizing window
+
+ * Line-Mergin in Blocks
  * Immediate mode rework
  * Scroll-Bar input working again
  * Width distribution Rework

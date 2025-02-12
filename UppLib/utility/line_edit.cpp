@@ -1,6 +1,8 @@
 #include "line_edit.hpp"
 #include "character_info.hpp"
 
+#include "system_clipboard.hpp"
+
 Line_Editor line_editor_make()
 {
     Line_Editor editor;
@@ -93,7 +95,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
             select_start = 0;
             return true;
         }
-        case Key_Code::BACKSPACE: 
+        case Key_Code::BACKSPACE:
         case Key_Code::W:
         {
             int i = move_next_word(text, pos, false);
@@ -110,6 +112,54 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
             pos = text->size;
             return false;
         }
+        case Key_Code::C: 
+        {
+            int start = math_minimum(pos, select_start);
+            int end = math_maximum(pos, select_start);
+            if (start == end) return false;
+
+            String substring = string_create_substring_static(text, start, end);
+            clipboard_store_text(substring);
+            return false;
+        }
+        case Key_Code::X:
+        {
+            if (select_start == pos) return false;
+
+            int start = math_minimum(pos, select_start);
+            int end = math_maximum(pos, select_start);
+            String substring = string_create_substring_static(text, start, end);
+            clipboard_store_text(substring);
+            string_remove_substring(text, start, end);
+            pos = start;
+            select_start = start;
+
+            return true;
+        }
+        case Key_Code::V:
+        {
+            // Delete existing selection
+            bool changed = false;
+            if (select_start != pos) {
+                int start = math_minimum(pos, select_start);
+                int end = math_maximum(pos, select_start);
+                string_remove_substring(text, start, end);
+                pos = start;
+                select_start = start;
+                changed = true;
+            }
+            String clipboard = string_create();
+            SCOPE_EXIT(string_destroy(&clipboard));
+
+            bool success = clipboard_load_text(&clipboard);
+            if (success && clipboard.size != 0) {
+                string_insert_string(text, &clipboard, editor.pos);
+                editor.pos += clipboard.size;
+                editor.select_start = editor.pos;
+                changed = true;
+            }
+            return changed;
+        }
         }
     }
 
@@ -117,7 +167,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
     switch (msg.key_code)
     {
     case Key_Code::ARROW_RIGHT:
-    case Key_Code::ARROW_LEFT: 
+    case Key_Code::ARROW_LEFT:
     {
         int new_pos = pos;
         if (msg.ctrl_down) {
@@ -131,7 +181,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         if (msg.shift_down) {
             pos = new_pos;
         }
-        else 
+        else
         {
             // If we have a selection goto end of selection
             if (pos != select_start) {
@@ -150,7 +200,7 @@ bool line_editor_feed_key_message(Line_Editor& editor, String* text, Key_Message
         }
         return false;
     }
-    case Key_Code::BACKSPACE: 
+    case Key_Code::BACKSPACE:
     {
         if (text->size == 0) return false;
 

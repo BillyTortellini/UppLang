@@ -7,8 +7,7 @@
 /*
 Improvements:
  * History with Ctrl-Z + Shift-Ctrl-Z
- * Copy-Paste with Ctrl-C + Ctrl-V
- * Multiple line editing
+ * Multiple line editing ?
 */
 
 struct Line_Editor

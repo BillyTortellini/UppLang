@@ -327,6 +327,9 @@
     <ClInclude Include="programs\imgui_test\imgui_test.hpp">
       <Filter>Header Files\Programs\Imgui_Test</Filter>
     </ClInclude>
+    <ClInclude Include="utility\system_clipboard.hpp">
+      <Filter>Header Files\Utility</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -535,6 +538,9 @@
     </ClCompile>
     <ClCompile Include="programs\imgui_test\imgui_test.cpp">
       <Filter>Source Files\Programs\Imgui_Test</Filter>
+    </ClCompile>
+    <ClCompile Include="utility\system_clipboard.cpp">
+      <Filter>Source Files\Utility</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

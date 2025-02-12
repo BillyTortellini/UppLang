@@ -1,6 +1,7 @@
 #include "imgui_test.hpp"
 
 #include <iostream>
+#include "../../utility/line_edit.hpp"
 
 #include "../../win32/timing.hpp"
 
@@ -104,6 +105,15 @@ float bbox_sdf_to_point(BBox box, ivec2 point_int)
     return vector_length(offset);
 }
 
+float distance_point_to_line_segment(vec2 p, vec2 a, vec2 b)
+{
+    vec2 a_to_b = b - a;
+    float t = vector_dot(p - a, a_to_b) / vector_dot(a_to_b, a_to_b);
+    t = math_clamp(t, 0.0f, 1.0f);
+    vec2 closest = a + t * a_to_b;
+    return vector_length(p - closest);
+}
+
 BBox bbox_intersection(BBox a, BBox b)
 {
     BBox result;
@@ -201,22 +211,22 @@ Bitmap_Atlas_Writer bitmap_atlas_writer_make(Bitmap* bitmap)
     return result;
 }
 
-BBox bitmap_atlas_add_sub_image(Bitmap_Atlas_Writer* atlas, Bitmap bitmap, bool mirror_y = false)
+BBox bitmap_atlas_make_space_for_sub_image(Bitmap_Atlas_Writer* atlas, ivec2 size)
 {
     auto& write_pos = atlas->write_pos;
     auto& atlas_size = atlas->bitmap->size;
 
     // Check if atlas-bitmap is large enough for given bitmap and position
-    if (bitmap.size.x >= atlas_size.x || bitmap.size.y >= atlas_size.y) {
+    if (size.x >= atlas_size.x || size.y >= atlas_size.y) {
         return BBox(ivec2(0));
     }
 
     // Jump to next line in atlas if current line is full
-    if (write_pos.x + bitmap.size.x >= atlas_size.x) 
+    if (write_pos.x + size.x >= atlas_size.x)
     {
         // Check if atlas is exhausted (No more free space)
         int next_write_y = write_pos.y + atlas->max_subimage_height_in_current_line;
-        if (next_write_y + bitmap.size.y >= atlas_size.y) {
+        if (next_write_y + size.y >= atlas_size.y) {
             return BBox(ivec2(0));
         }
 
@@ -226,12 +236,19 @@ BBox bitmap_atlas_add_sub_image(Bitmap_Atlas_Writer* atlas, Bitmap bitmap, bool 
     }
 
     // Store information
-    BBox result_box = BBox(write_pos, write_pos + bitmap.size);
-    write_pos.x += bitmap.size.x;
-    bitmap_block_transfer_(*atlas->bitmap, bitmap, result_box.min, mirror_y);
-    atlas->max_subimage_height_in_current_line = math_maximum(atlas->max_subimage_height_in_current_line, bitmap.size.y);
+    BBox result_box = BBox(write_pos, write_pos + size);
+    write_pos.x += size.x;
+    atlas->max_subimage_height_in_current_line = math_maximum(atlas->max_subimage_height_in_current_line, size.y);
 
     return result_box;
+}
+
+BBox bitmap_atlas_add_sub_image(Bitmap_Atlas_Writer* atlas, Bitmap bitmap, bool mirror_y = false)
+{
+    BBox result = bitmap_atlas_make_space_for_sub_image(atlas, bitmap.size);
+    if (result.min.x == result.max.x) return result;
+    bitmap_block_transfer_(*atlas->bitmap, bitmap, result.min, mirror_y);
+    return result;
 }
 
 
@@ -341,7 +358,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
         // Write glyph bitmap into atlas-bitmap
         BBox atlas_position = empty_pixel_box;
         ivec2 pixel_size = ivec2(face->glyph->bitmap.width, face->glyph->bitmap.rows);
-        if (pixel_size.x != 0 && pixel_size.y != 0) 
+        if (pixel_size.x != 0 && pixel_size.y != 0)
         {
             // Special handling for Space ' ', or other characters without any pixels (Which use the empty pixel box)
             Bitmap glyph_bitmap = bitmap_create_static(pixel_size, face->glyph->bitmap.buffer, face->glyph->bitmap.pitch);
@@ -360,7 +377,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
         assert(face->glyph->metrics.height / 64 == pixel_size.y, "");
 
         // Store size metrics
-        max_advance = math_maximum(max_advance, (int) face->glyph->metrics.horiAdvance / 64);
+        max_advance = math_maximum(max_advance, (int)face->glyph->metrics.horiAdvance / 64);
         min_y = math_minimum(min_y, (int)face->glyph->metrics.horiBearingY / 64 - pixel_size.y);
         if (max_y < (int)face->glyph->metrics.horiBearingY / 64) {
             max_y = (int)face->glyph->metrics.horiBearingY / 64;
@@ -377,7 +394,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
 
         // Add glyph information into information array
         dynamic_array_push_back(&glyph_atlas->glyph_informations, information);
-        glyph_atlas->character_to_glyph_map[current_character] = glyph_atlas->glyph_informations.size-1;
+        glyph_atlas->character_to_glyph_map[current_character] = glyph_atlas->glyph_informations.size - 1;
     }
 
     printf("Max-Y character: '%c' (#%d)\n", max_y_index, max_y_index);
@@ -400,10 +417,10 @@ void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position
 
     u32 start_vertex_count = mesh->vertex_count;
     auto& predef = rendering_core.predefined;
-    Array<vec2> pos_data =   mesh_push_attribute_slice(mesh, predef.position2D,          4 * text.size);
-    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4,              4 * text.size);
-    Array<vec2> uv_data =    mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4 * text.size);
-    Array<u32> indices =     mesh_push_attribute_slice(mesh, predef.index,               6 * text.size);
+    Array<vec2> pos_data = mesh_push_attribute_slice(mesh, predef.position2D, 4 * text.size);
+    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4, 4 * text.size);
+    Array<vec2> uv_data = mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4 * text.size);
+    Array<u32> indices = mesh_push_attribute_slice(mesh, predef.index, 6 * text.size);
 
     for (int i = 0; i < text.size; i++)
     {
@@ -411,7 +428,7 @@ void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position
         Glyph_Information_& glyph = atlas->glyph_informations[atlas->character_to_glyph_map[(int)c]];
 
         ivec2 screen_pos = ivec2(
-            position.x + atlas->char_box_size.x * i + glyph.placement_offset.x, 
+            position.x + atlas->char_box_size.x * i + glyph.placement_offset.x,
             position.y + glyph.placement_offset.y
         );
         ivec2& glyph_size = glyph.atlas_box.max - glyph.atlas_box.min;
@@ -432,7 +449,7 @@ void mesh_push_text(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 position
 
         vec2 uv_min = vec2(glyph.atlas_box.min.x, glyph.atlas_box.min.y) / bitmap_size;
         vec2 uv_max = vec2(glyph.atlas_box.max.x, glyph.atlas_box.max.y) / bitmap_size;
-        uv_data[i * 4 + 0] = uv_min; 
+        uv_data[i * 4 + 0] = uv_min;
         uv_data[i * 4 + 1] = vec2(uv_max.x, uv_min.y);
         uv_data[i * 4 + 2] = uv_max;
         uv_data[i * 4 + 3] = vec2(uv_min.x, uv_max.y);
@@ -474,20 +491,20 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
     int char_count = char_end_index - char_start_index;
 
     auto& predef = rendering_core.predefined;
-    Attribute_Buffer* pos_buffer   = mesh_get_raw_attribute_buffer(mesh, predef.position2D);
+    Attribute_Buffer* pos_buffer = mesh_get_raw_attribute_buffer(mesh, predef.position2D);
     Attribute_Buffer* color_buffer = mesh_get_raw_attribute_buffer(mesh, predef.color4);
-    Attribute_Buffer* uv_buffer    = mesh_get_raw_attribute_buffer(mesh, predef.texture_coordinates);
+    Attribute_Buffer* uv_buffer = mesh_get_raw_attribute_buffer(mesh, predef.texture_coordinates);
     Attribute_Buffer* index_buffer = mesh_get_raw_attribute_buffer(mesh, predef.index);
 
     for (int i = char_start_index; i < char_end_index; i++)
     {
-        char c = text.characters[i];
+        unsigned char c = text.characters[i];
         if (c == ' ') continue;
-        Glyph_Information_& glyph = atlas->glyph_informations[atlas->character_to_glyph_map[(int)c]];
+        Glyph_Information_& glyph = atlas->glyph_informations[atlas->character_to_glyph_map[c]];
 
         // Calculate and Clip Glyph-BBox
         ivec2 screen_pos = ivec2(
-            position.x + atlas->char_box_size.x * i + glyph.placement_offset.x, 
+            position.x + atlas->char_box_size.x * i + glyph.placement_offset.x,
             position.y + glyph.placement_offset.y
         );
         BBox glyph_box = BBox(screen_pos, screen_pos + glyph.atlas_box.max - glyph.atlas_box.min);
@@ -496,10 +513,10 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
 
         // Generate Vertex-Data
         u32 start_vertex_count = mesh->vertex_count;
-        Array<vec2> pos_data   = attribute_buffer_allocate_slice<vec2>(pos_buffer, 4);
+        Array<vec2> pos_data = attribute_buffer_allocate_slice<vec2>(pos_buffer, 4);
         Array<vec4> color_data = attribute_buffer_allocate_slice<vec4>(color_buffer, 4);
-        Array<vec2> uv_data    = attribute_buffer_allocate_slice<vec2>(uv_buffer, 4);
-        Array<u32>  indices    = attribute_buffer_allocate_slice<u32> (index_buffer, 6);
+        Array<vec2> uv_data = attribute_buffer_allocate_slice<vec2>(uv_buffer, 4);
+        Array<u32>  indices = attribute_buffer_allocate_slice<u32>(index_buffer, 6);
 
         ivec2& pixel_size = clip_box.max - clip_box.min;
         vec2 min_pos = 2.0f * vec2(clip_box.min.x, clip_box.min.y) / screen_size - 1.0f;
@@ -514,7 +531,7 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
         uv_box.max = glyph.atlas_box.max + clip_box.max - glyph_box.max;
         vec2 uv_min = vec2(uv_box.min.x, uv_box.min.y) / bitmap_size;
         vec2 uv_max = vec2(uv_box.max.x, uv_box.max.y) / bitmap_size;
-        uv_data[0] = uv_min; 
+        uv_data[0] = uv_min;
         uv_data[1] = vec2(uv_max.x, uv_min.y);
         uv_data[2] = uv_max;
         uv_data[3] = vec2(uv_min.x, uv_max.y);
@@ -541,10 +558,10 @@ void mesh_push_subimage(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_b
 
     u32 start_vertex_count = mesh->vertex_count;
     auto& predef = rendering_core.predefined;
-    Array<vec2> pos_data =   mesh_push_attribute_slice(mesh, predef.position2D,          4);
-    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4,              4);
-    Array<vec2> uv_data =    mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4);
-    Array<u32> indices =     mesh_push_attribute_slice(mesh, predef.index,               6);
+    Array<vec2> pos_data = mesh_push_attribute_slice(mesh, predef.position2D, 4);
+    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4, 4);
+    Array<vec2> uv_data = mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4);
+    Array<u32> indices = mesh_push_attribute_slice(mesh, predef.index, 6);
 
     {
         ivec2& glyph_size = subimage.max - subimage.min;
@@ -565,7 +582,7 @@ void mesh_push_subimage(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_b
 
         vec2 uv_min = vec2(subimage.min.x, subimage.min.y) / bitmap_size;
         vec2 uv_max = vec2(subimage.max.x, subimage.max.y) / bitmap_size;
-        uv_data[0] = uv_min; 
+        uv_data[0] = uv_min;
         uv_data[1] = vec2(uv_max.x, uv_min.y);
         uv_data[2] = uv_max;
         uv_data[3] = vec2(uv_min.x, uv_max.y);
@@ -585,10 +602,10 @@ void mesh_push_box(Mesh* mesh, BBox box, vec4 color)
 
     u32 start_vertex_count = mesh->vertex_count;
     auto& predef = rendering_core.predefined;
-    Array<vec2> pos_data   = mesh_push_attribute_slice(mesh, predef.position2D,          4);
-    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4,              4);
-    Array<vec2> uv_data    = mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4);
-    Array<u32>  indices    = mesh_push_attribute_slice(mesh, predef.index,               6);
+    Array<vec2> pos_data = mesh_push_attribute_slice(mesh, predef.position2D, 4);
+    Array<vec4> color_data = mesh_push_attribute_slice(mesh, predef.color4, 4);
+    Array<vec2> uv_data = mesh_push_attribute_slice(mesh, predef.texture_coordinates, 4);
+    Array<u32>  indices = mesh_push_attribute_slice(mesh, predef.index, 6);
 
     {
         vec2 min = vec2(box.min.x, box.min.y);
@@ -599,7 +616,7 @@ void mesh_push_box(Mesh* mesh, BBox box, vec4 color)
         min = 2 * min / screen_size - 1.0f;
         max = 2 * max / screen_size - 1.0f;
 
-        pos_data[0] = min; 
+        pos_data[0] = min;
         pos_data[1] = vec2(max.x, min.y);
         pos_data[2] = max;
         pos_data[3] = vec2(min.x, max.y);
@@ -685,17 +702,46 @@ vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b) {
     return vec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 }
 
-const vec4 COLOR_WINDOW_BG        = vec4_color_from_rgb(0x16, 0x85, 0x5B);
+vec4 vec4_color_from_code(const char* c_str)
+{
+    String str = string_create_static(c_str);
+    auto get_hex_digit_value = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+        if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+        return -1;
+    };
+
+    // Check that hex-code format is correct
+    vec4 error = vec4(0, 0, 0, 1);
+    if (str.size != 7) return error;
+    if (str[0] != '#') return error;
+    for (int i = 1; i < str.size; i++) {
+        if (get_hex_digit_value(str[i]) == -1) return error;
+    }
+
+    u8 r = get_hex_digit_value(str[1]) * 16 + get_hex_digit_value(str[2]);
+    u8 g = get_hex_digit_value(str[3]) * 16 + get_hex_digit_value(str[4]);
+    u8 b = get_hex_digit_value(str[5]) * 16 + get_hex_digit_value(str[6]);
+
+    return vec4_color_from_rgb(r, g, b);
+}
+
+const vec4 COLOR_WINDOW_BG = vec4_color_from_rgb(0x16, 0x85, 0x5B);
 const vec4 COLOR_WINDOW_BG_HEADER = vec4_color_from_rgb(0x62, 0xA1, 0x99);
-const vec4 COLOR_SCROLL_BG        = vec4_color_from_rgb(0xCE, 0xCE, 0xCE);
-const vec4 COLOR_SCROLL_BAR       = vec4_color_from_rgb(0x9D, 0x9D, 0x9D);
-const vec4 COLOR_BUTTON_BORDER    = vec4_color_from_rgb(0x19, 0x75, 0xD0);
-const vec4 COLOR_BUTTON_BG        = vec4_color_from_rgb(0x0F, 0x47, 0x7E);
-const vec4 COLOR_BUTTON_BG_HOVER  = vec4_color_from_rgb(0x71, 0xA9, 0xE2);
-const vec4 COLOR_INPUT_BG         = vec4_color_from_rgb(0x9C, 0xA3, 0xAC);
-const vec4 COLOR_INPUT_BORDER     = vec4_color_from_rgb(0x70, 0x73, 0x76);
-const vec4 COLOR_LIST_LINE_EVEN   = vec4_color_from_rgb(0xFE, 0xCB, 0xA3);
-const vec4 COLOR_LIST_LINE_ODD    = vec4_color_from_rgb(0xB6, 0xB1, 0xAC);
+const vec4 COLOR_SCROLL_BG = vec4_color_from_rgb(0xCE, 0xCE, 0xCE);
+const vec4 COLOR_SCROLL_BAR = vec4_color_from_rgb(0x9D, 0x9D, 0x9D);
+const vec4 COLOR_BUTTON_BORDER = vec4_color_from_rgb(0x19, 0x75, 0xD0);
+const vec4 COLOR_BUTTON_BG = vec4_color_from_rgb(0x0F, 0x47, 0x7E);
+const vec4 COLOR_BUTTON_BG_HOVER = vec4_color_from_rgb(0x71, 0xA9, 0xE2);
+
+const vec4 COLOR_INPUT_BG = vec4_color_from_code("#A7A7A7");
+const vec4 COLOR_INPUT_BG_HOVER = vec4_color_from_code("#699EB6");
+const vec4 COLOR_INPUT_BORDER = vec4_color_from_code("#696969");
+const vec4 COLOR_INPUT_BORDER_FOCUSED = vec4_color_from_code("#FF8F00");
+
+const vec4 COLOR_LIST_LINE_EVEN = vec4_color_from_rgb(0xFE, 0xCB, 0xA3);
+const vec4 COLOR_LIST_LINE_ODD = vec4_color_from_rgb(0xB6, 0xB1, 0xAC);
 
 
 
@@ -729,7 +775,7 @@ struct Widget_Container
 {
     Layout_Type layout;
     union {
-        struct 
+        struct
         {
             bool allow_line_combination;
             bool scroll_bar_enabled;
@@ -768,7 +814,7 @@ struct Layout_Info
 {
     // Layout information (Needs to be reported by widget)
     bool can_combine_in_lines;
-    int min_width_collapsed; 
+    int min_width_collapsed;
     int min_width_without_collapse;
     int min_width_for_line_merge;
 
@@ -795,9 +841,15 @@ struct Widget
     // Widget Data
     Widget_Type type;
     union {
-        UI_String label_text; 
-        UI_String button_text;
-        UI_String input_text;
+        UI_String label_text;
+        struct {
+            UI_String text;
+            bool was_clicked;
+        } button;
+        struct {
+            UI_String text;
+            bool text_was_changed; // After pressing enter
+        } text_input;
         Container_Handle container;
     } options;
 
@@ -816,13 +868,6 @@ struct UI_Window
     Container_Handle container;
     Layout_Info container_layout_info;
 
-    // General drag-and-drops for all widgets
-    bool drag_active;
-    ivec2 drag_start_mouse_pos;
-    bool last_cursor_was_drag;
-    int mouse_hover_widget_index; // -1 if no hover...
-    bool mouse_hovers_over_clickable;
-
     // Window drag and drops
     bool window_drag_active;
     ivec2 window_pos_at_drag_start;
@@ -832,13 +877,28 @@ struct UI_Window
 
 struct UI_System
 {
+    // Data-Structures
     UI_Window window;
     Dynamic_Array<Widget> widgets;
     Dynamic_Array<Widget_Container> containers;
     String string_buffer;
 
+    // Layout info
     int line_item_height;
     ivec2 char_size;
+
+    // Input Data
+    bool drag_active;
+    ivec2 drag_start_mouse_pos;
+    bool last_cursor_was_drag;
+
+    int focused_widget_index; // -1 if not available
+    int mouse_hover_widget_index; // -1 if not available
+    bool mouse_hovers_over_clickable;
+
+    Line_Editor line_editor;
+    String input_string;
+    int input_x_offset;
 };
 
 UI_System ui_system;
@@ -852,9 +912,18 @@ void ui_system_initialize(Glyph_Atlas_* glyph_atlas)
     ui_system.char_size = glyph_atlas->char_box_size;
     ui_system.line_item_height = PAD_TOP + PAD_BOT + BORDER_SPACE + ui_system.char_size.y;
 
+    // Input 
+    ui_system.drag_active = false;
+    ui_system.mouse_hovers_over_clickable = false;
+    ui_system.mouse_hover_widget_index = -1;
+    ui_system.focused_widget_index = -1;
+    ui_system.last_cursor_was_drag = false;
+
+    ui_system.line_editor = line_editor_make();
+    ui_system.input_string = string_create();
+
     // Initialize window
     ui_system.window.container.container_index = 0;
-    ui_system.window.drag_active = false;
     ui_system.window.title = string_create_static("Main window");
     ui_system.window.size = ivec2(400, 300);
     ui_system.window.position = ivec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height) / 2;
@@ -878,6 +947,7 @@ void ui_system_shutdown()
     dynamic_array_destroy(&ui_system.containers);
     dynamic_array_destroy(&ui_system.widgets);
     string_destroy(&ui_system.string_buffer);
+    string_destroy(&ui_system.input_string);
 }
 
 UI_String ui_system_add_string(String string)
@@ -889,12 +959,20 @@ UI_String ui_system_add_string(String string)
     return result;
 }
 
+String ui_string_to_string(UI_String string) {
+    String result;
+    result.capacity = 0;
+    result.characters = &ui_system.string_buffer[string.start_index];
+    result.size = string.length;
+    return result;
+};
+
 Widget_Handle ui_system_push_widget(Container_Handle container_handle, Widget_Type widget_type)
 {
     Widget_Container& container = ui_system.containers[container_handle.container_index];
 
     // Check if we can match widget to previous frame
-    if (!container.matching_failed_this_frame && container.next_matching_index < container.widget_indices.size) 
+    if (!container.matching_failed_this_frame && container.next_matching_index < container.widget_indices.size)
     {
         int widget_index = container.widget_indices[container.next_matching_index];
         Widget& prev_widget = ui_system.widgets[widget_index];
@@ -931,7 +1009,7 @@ Container_Handle ui_system_push_container_widget(Container_Handle parent, Layout
     Widget_Handle widget_handle = ui_system_push_widget(parent, Widget_Type::CONTAINER);
     Widget& widget = ui_system.widgets[widget_handle.widget_index];
 
-    if (widget_handle.created_this_frame) 
+    if (widget_handle.created_this_frame)
     {
         Widget_Container container;
         container.widget_indices = dynamic_array_create<int>();
@@ -949,12 +1027,15 @@ Container_Handle ui_system_push_container_widget(Container_Handle parent, Layout
     return widget.options.container;
 }
 
-bool ui_system_push_button(Container_Handle container, const char* label_text) 
+bool ui_system_push_button(Container_Handle container, const char* label_text)
 {
     Widget_Handle handle = ui_system_push_widget(container, Widget_Type::BUTTON);
     Widget& widget = ui_system.widgets[handle.widget_index];
-    widget.options.button_text = ui_system_add_string(string_create_static(label_text));
-    return false;
+    widget.options.button.text = ui_system_add_string(string_create_static(label_text));
+    if (widget.created_this_frame) {
+        widget.options.button.was_clicked = false;
+    }
+    return widget.options.button.was_clicked;
 }
 
 void ui_system_push_label(Container_Handle container, const char* text)
@@ -964,14 +1045,31 @@ void ui_system_push_label(Container_Handle container, const char* text)
     widget.options.label_text = ui_system_add_string(string_create_static(text));
 }
 
-void ui_system_push_text_input(Container_Handle container, const char* label_text, String text)
+struct Text_Input_State {
+    bool text_was_changed;
+    String new_text;
+};
+
+Text_Input_State ui_system_push_text_input(Container_Handle container, const char* label_text, String text)
 {
     Container_Handle label_container = ui_system_push_container_widget(container, Layout_Type::LABELED_ITEMS);
     ui_system.containers[label_container.container_index].options.label_text = ui_system_add_string(string_create_static(label_text));
 
     Widget_Handle handle = ui_system_push_widget(label_container, Widget_Type::TEXT_INPUT);
     Widget& widget = ui_system.widgets[handle.widget_index];
-    widget.options.input_text = ui_system_add_string(text);
+    if (handle.created_this_frame) {
+        widget.options.text_input.text_was_changed = false;
+    }
+    widget.options.text_input.text = ui_system_add_string(text);
+
+    Text_Input_State result;
+    result.text_was_changed = widget.options.text_input.text_was_changed;
+    result.new_text = string_create_static("");
+    if (result.text_was_changed) {
+        result.new_text = ui_system.input_string;
+        widget.options.text_input.text = ui_system_add_string(ui_system.input_string);
+    }
+    return result;
 }
 
 const int LABEL_CHAR_COUNT_SIZE = 12;
@@ -1008,30 +1106,30 @@ void widget_container_gather_width_information_recursive(Container_Handle contai
         auto& layout = widget.layout_info;
 
         // Default height info for all widgets
-        layout.height_can_grow      = false;
+        layout.height_can_grow = false;
         widget.layout_info.min_height = ui_system.line_item_height;
         widget.layout_info.max_height = ui_system.line_item_height;
 
         switch (widget.type)
         {
         case Widget_Type::LABEL: {
-            layout.min_width_collapsed        = widget.options.label_text.length * ui_system.char_size.x;
+            layout.min_width_collapsed = widget.options.label_text.length * ui_system.char_size.x;
             layout.min_width_without_collapse = layout.min_width_collapsed;
-            layout.min_width_for_line_merge   = layout.min_width_collapsed;
+            layout.min_width_for_line_merge = layout.min_width_collapsed;
             layout.can_combine_in_lines = false;
             break;
         }
         case Widget_Type::BUTTON: {
-            layout.min_width_collapsed        = BUTTON_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_collapsed = BUTTON_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
             layout.min_width_without_collapse = layout.min_width_collapsed;
-            layout.min_width_for_line_merge   = BUTTON_WANTED_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_for_line_merge = BUTTON_WANTED_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
             layout.can_combine_in_lines = true;
             break;
         }
         case Widget_Type::TEXT_INPUT: {
-            layout.min_width_collapsed        = TEXT_INPUT_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
-            layout.min_width_without_collapse = layout.min_width_collapsed; 
-            layout.min_width_for_line_merge   = TEXT_INPUT_MAX_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;;
+            layout.min_width_collapsed = TEXT_INPUT_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+            layout.min_width_without_collapse = layout.min_width_collapsed;
+            layout.min_width_for_line_merge = TEXT_INPUT_MAX_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;;
             layout.can_combine_in_lines = true;
             break;
         }
@@ -1043,9 +1141,9 @@ void widget_container_gather_width_information_recursive(Container_Handle contai
         }
 
         layout.line_index = i;
-        container.max_child_min_width_collapsed        = math_maximum(container.max_child_min_width_collapsed, layout.min_width_collapsed);
+        container.max_child_min_width_collapsed = math_maximum(container.max_child_min_width_collapsed, layout.min_width_collapsed);
         container.max_child_min_width_without_collapse = math_maximum(container.max_child_min_width_without_collapse, layout.min_width_without_collapse);
-        container.max_child_min_width_for_line_merge   = math_maximum(container.max_child_min_width_for_line_merge, layout.min_width_for_line_merge);
+        container.max_child_min_width_for_line_merge = math_maximum(container.max_child_min_width_for_line_merge, layout.min_width_for_line_merge);
         container.sum_child_min_width_collapsed += layout.min_width_collapsed;
         container.sum_child_min_width_without_collapse += layout.min_width_without_collapse;
         container.sum_child_min_width_for_line_merge += layout.min_width_for_line_merge;
@@ -1072,7 +1170,7 @@ void widget_container_gather_width_information_recursive(Container_Handle contai
         int widget_count = container.widget_indices.size;
         out_layout_info->min_width_collapsed = math_maximum(label_length, PAD_ADJACENT_LABLE_LINE_SPLIT + container.max_child_min_width_collapsed);
         // Note: There are multiple different behaviors we could implement here...
-        out_layout_info->min_width_without_collapse = 
+        out_layout_info->min_width_without_collapse =
             label_length + PAD_LABEL_BOX + container.sum_child_min_width_without_collapse + (widget_count - 1) * PAD_LABEL_BOX;
         out_layout_info->min_width_for_line_merge = label_length + container.sum_child_min_width_for_line_merge + (widget_count - 1) * PAD_LABEL_BOX;
         out_layout_info->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
@@ -1102,7 +1200,7 @@ void widget_container_calculate_x_bounds_and_height(Container_Handle container_h
 
     auto distribute_width_to_widgets_in_line = [&](
         int line_start_index, int line_end_index, int sum_min_width_per_widget, int start_x_offset, bool use_min_width_without_collapse
-    )
+        )
     {
         int count = line_end_index - line_start_index;
         if (count == 0) return;
@@ -1173,7 +1271,7 @@ void widget_container_calculate_x_bounds_and_height(Container_Handle container_h
         // }
 
         int child_index = 0;
-        const int BOX_WIDTH = ui_system.char_size.x * 12;
+        const int BOX_WIDTH = ui_system.char_size.x * 8;
         const int box_count = math_maximum(1, available_width / BOX_WIDTH);
         while (child_index < container.widget_indices.size)
         {
@@ -1197,7 +1295,7 @@ void widget_container_calculate_x_bounds_and_height(Container_Handle container_h
             }
 
             // Special case if no widget has enough space in line
-            if (line_start_index == child_index || line_start_index +1 == child_index) {
+            if (line_start_index == child_index || line_start_index + 1 == child_index) {
                 auto& widget = ui_system.widgets[container.widget_indices[line_start_index]];
                 auto& widget_layout = widget.layout_info;
 
@@ -1214,8 +1312,8 @@ void widget_container_calculate_x_bounds_and_height(Container_Handle container_h
             // Otherwise distribute boxes onto widgets
             int count = child_index - line_start_index;
             int extra_boxes_per_widget = remaining_boxes / count;
-            int box_remainder          = remaining_boxes % count;
-            const int last_box_extra = available_width - box_count * BOX_WIDTH;
+            int box_remainder = remaining_boxes % count;
+            const int first_box_extra = available_width - box_count * BOX_WIDTH;
 
             int cursor_x = x_pos;
             for (int i = line_start_index; i < child_index; i++)
@@ -1232,11 +1330,11 @@ void widget_container_calculate_x_bounds_and_height(Container_Handle container_h
                 }
 
                 int width = BOX_WIDTH * widget_boxes;
-                if (i == child_index - 1) {
-                    width += last_box_extra;
-                }
-                else {
+                if (i != child_index - 1) {
                     width -= PAD_WIDGETS_ON_LINE;
+                }
+                if (i == line_start_index) {
+                    width += first_box_extra;
                 }
 
                 widget_layout.box.min.x = cursor_x;
@@ -1504,22 +1602,16 @@ void widget_container_render_widgets_recursive(
         }
         mesh_push_text_clipped(mesh, glyph_atlas, text, text_pos + ivec2(text_offset, 0), text_clip_area);
     };
-    auto ui_string_to_string = [](UI_String string) -> String {
-        String result;
-        result.capacity = 0;
-        result.characters = &ui_system.string_buffer[string.start_index];
-        result.size = string.length;
-        return result;
-    };
 
     // Render widgets
     y_offset += container.scroll_bar_y_offset;
     for (int i = 0; i < container.widget_indices.size; i++)
     {
         int widget_index = container.widget_indices[i];
-        bool has_hover = widget_index == ui_system.window.mouse_hover_widget_index;
+        bool has_hover = widget_index == ui_system.mouse_hover_widget_index;
+        bool has_focus = widget_index == ui_system.focused_widget_index;
         auto& widget = ui_system.widgets[widget_index];
-        auto& box = widget.layout_info.box;
+        auto box = widget.layout_info.box;
         box.max.y += y_offset;
         box.min.y += y_offset;
         switch (widget.type)
@@ -1530,15 +1622,87 @@ void widget_container_render_widgets_recursive(
         }
         case Widget_Type::BUTTON: {
             if (has_hover) {
-                box_draw_text_in_box(box, ui_string_to_string(widget.options.button_text), true, clipping_box, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER);
+                box_draw_text_in_box(box, ui_string_to_string(widget.options.button.text), true, clipping_box, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER);
             }
             else {
-                box_draw_text_in_box(box, ui_string_to_string(widget.options.button_text), true, clipping_box, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
+                box_draw_text_in_box(box, ui_string_to_string(widget.options.button.text), true, clipping_box, COLOR_BUTTON_BG, COLOR_BUTTON_BORDER);
             }
             break;
         }
-        case Widget_Type::TEXT_INPUT: {
-            box_draw_text_in_box(box, ui_string_to_string(widget.options.input_text), false, clipping_box, COLOR_INPUT_BG, COLOR_INPUT_BORDER);
+        case Widget_Type::TEXT_INPUT:
+        {
+            vec4 bg_color = COLOR_INPUT_BG;
+            vec4 border_color = COLOR_INPUT_BORDER;
+            if (has_focus) {
+                border_color = COLOR_INPUT_BORDER_FOCUSED;
+            }
+            if (has_hover) {
+                bg_color = COLOR_INPUT_BG_HOVER;
+            }
+
+            if (has_focus)
+            {
+                mesh_push_box_with_border_clipped(mesh, box, clipping_box, bg_color, BORDER_SPACE, border_color);
+
+                BBox text_area = box;
+                text_area.min = box.min + ivec2(PAD_LEFT_RIGHT, PAD_BOT) + BORDER_SPACE;
+                text_area.max = box.max - ivec2(PAD_LEFT_RIGHT, PAD_TOP) - BORDER_SPACE;
+                BBox text_clip_box = bbox_intersection(text_area, clipping_box);
+
+                // Calculate Text-X offset inside box
+                auto& line_editor = ui_system.line_editor;
+                auto& x_offset = ui_system.input_x_offset;
+
+                // Adjust x-offset
+                {
+                    int available_text_space = text_area.max.x - text_area.min.x;
+                    int required_text_size = ui_system.char_size.x * ui_system.input_string.size;
+                    int cursor_pos = ui_system.char_size.x * line_editor.pos;
+                    if (available_text_space < required_text_size)
+                    {
+                        int start = -x_offset;
+                        int end = -x_offset + available_text_space;
+                        if (cursor_pos < start) {
+                            x_offset = -cursor_pos;
+                        }
+                        else if (cursor_pos >= end) {
+                            x_offset -= cursor_pos - end + 1;
+                        }
+                    }
+                    else {
+                        x_offset = 0;
+                    }
+                }
+
+                // Draw selection
+                if (line_editor.pos != line_editor.select_start)
+                {
+                    int start = math_minimum(line_editor.pos, line_editor.select_start);
+                    int end = math_maximum(line_editor.pos, line_editor.select_start);
+                    BBox selection = BBox(
+                        text_area.min + ivec2(start * ui_system.char_size.x + x_offset, 0),
+                        text_area.min + ivec2(end * ui_system.char_size.x + x_offset, ui_system.char_size.y)
+                    );
+                    vec4 selection_color = bg_color;
+                    selection_color.x *= 0.7f;
+                    selection_color.y *= 0.7f;
+                    selection_color.z *= 0.7f;
+                    mesh_push_box_clipped(mesh, selection, text_clip_box, selection_color);
+                }
+
+                // Draw Text
+                mesh_push_text_clipped(mesh, glyph_atlas, ui_system.input_string, text_area.min + ivec2(x_offset, 0), text_clip_box);
+
+                // Draw cursor 
+                ivec2 cursor_pos = text_area.min + ivec2(line_editor.pos * ui_system.char_size.x + x_offset, 0);
+                BBox cursor = BBox(cursor_pos, cursor_pos + ivec2(1, ui_system.char_size.y));
+                mesh_push_box_clipped(mesh, cursor, text_clip_box, vec4(0, 0, 0, 1));
+            }
+            else
+            {
+                box_draw_text_in_box(box, ui_string_to_string(widget.options.text_input.text), false, clipping_box, bg_color, border_color);
+            }
+
             break;
         }
         case Widget_Type::CONTAINER:
@@ -1576,7 +1740,7 @@ void widget_container_handle_scroll_bar_input(
         container->scroll_bar_drag_active = false;
     }
     if (!mouse_down) {
-        window->drag_active = false;
+        ui_system.drag_active = false;
         container->scroll_bar_drag_active = false;
     }
 
@@ -1608,22 +1772,22 @@ void widget_container_handle_scroll_bar_input(
         if (container->scroll_bar_drag_active)
         {
             if (mouse_down) {
-                bar_offset = container->drag_start_bar_offset - (mouse_pos.y - window->drag_start_mouse_pos.y); // Minus because bar-offset is given in negative y
+                bar_offset = container->drag_start_bar_offset - (mouse_pos.y - ui_system.drag_start_mouse_pos.y); // Minus because bar-offset is given in negative y
                 // Set pixel-scroll offset
                 container->scroll_bar_y_offset = bar_offset * max_pixel_scroll_offset / math_maximum(max_bar_offset, 1);
             }
             else {
                 container->scroll_bar_drag_active = false;
-                window->drag_active = false;
+                ui_system.drag_active = false;
             }
         }
         else if (bbox_contains_point(bar_box, mouse_pos))
         {
-            window->mouse_hovers_over_clickable = true;
-            if (!window->drag_active && mouse_clicked) {
+            ui_system.mouse_hovers_over_clickable = true;
+            if (!ui_system.drag_active && mouse_clicked) {
                 container->scroll_bar_drag_active = true;
-                window->drag_active = true;
-                window->drag_start_mouse_pos = mouse_pos;
+                ui_system.drag_active = true;
+                ui_system.drag_start_mouse_pos = mouse_pos;
                 container->drag_start_bar_offset = bar_offset;
             }
         }
@@ -1634,11 +1798,6 @@ void widget_container_handle_scroll_bar_input(
     for (int i = 0; i < container->widget_indices.size; i++)
     {
         auto& widget = ui_system.widgets[container->widget_indices[i]];
-        BBox widget_box = widget.layout_info.box;
-        widget_box.min.y += y_offset;
-        widget_box.max.y += y_offset;
-        if (!bbox_contains_point(bbox_intersection(widget_box, bbox_intersection(box, clipping_box)), mouse_pos)) continue;
-        window->mouse_hover_widget_index = container->widget_indices[i];
         if (widget.type == Widget_Type::CONTAINER) {
             widget_container_handle_scroll_bar_input(
                 window, &ui_system.containers[widget.options.container.container_index],
@@ -1660,6 +1819,7 @@ void widget_container_find_mouse_hover_widget(
     if (!mouse_inside_container) { return; }
 
     // Recurse to children
+    y_offset += container->scroll_bar_y_offset;
     for (int i = 0; i < container->widget_indices.size; i++)
     {
         auto& widget = ui_system.widgets[container->widget_indices[i]];
@@ -1667,11 +1827,11 @@ void widget_container_find_mouse_hover_widget(
         widget_box.min.y += y_offset;
         widget_box.max.y += y_offset;
         if (!bbox_contains_point(bbox_intersection(widget_box, bbox_intersection(box, clipping_box)), mouse_pos)) continue;
-        window->mouse_hover_widget_index = container->widget_indices[i];
+        ui_system.mouse_hover_widget_index = container->widget_indices[i];
         if (widget.type == Widget_Type::CONTAINER) {
             widget_container_find_mouse_hover_widget(
                 window, &ui_system.containers[widget.options.container.container_index],
-                &widget.layout_info, y_offset + container->scroll_bar_y_offset, bbox_intersection(clipping_box, box),
+                &widget.layout_info, y_offset, bbox_intersection(clipping_box, box),
                 mouse_pos
             );
         }
@@ -1687,22 +1847,22 @@ void ui_system_start_frame(Input* input)
     bool mouse_pressed = input->mouse_pressed[(int)Mouse_Key_Code::LEFT];
 
     UI_Window* window = &ui_system.window;
-    window->mouse_hovers_over_clickable = false;
+    ui_system.mouse_hovers_over_clickable = false;
 
     // Handle window resize/move
     {
         if (!mouse_down) {
-            window->drag_active = false;
+            ui_system.drag_active = false;
             window->window_drag_active = false;
             window->window_resize_active = false;
         }
         if (window->window_drag_active) {
-            window->position = window->window_pos_at_drag_start + mouse - window->drag_start_mouse_pos;
+            window->position = window->window_pos_at_drag_start + mouse - ui_system.drag_start_mouse_pos;
             window->window_resize_active = false;
         }
         if (window->window_resize_active)
         {
-            ivec2 new_size = window->window_size_at_resize_start + (mouse - window->drag_start_mouse_pos) * ivec2(1, -1);
+            ivec2 new_size = window->window_size_at_resize_start + (mouse - ui_system.drag_start_mouse_pos) * ivec2(1, -1);
             new_size.x = math_maximum(new_size.x, 50);
             new_size.y = math_maximum(new_size.y, 50);
             ivec2 top_left = window->position + window->size * ivec2(0, 1);
@@ -1719,50 +1879,101 @@ void ui_system_start_frame(Input* input)
     // Check window Resize + Drag and Drop
     {
         bool header_hover = bbox_sdf_to_point(header_box, mouse) - 4.0f <= 0.0f;
-        if (!window->drag_active && header_hover && mouse_pressed)
+        if (!ui_system.drag_active && header_hover && mouse_pressed)
         {
-            window->drag_active = true;
-            window->drag_start_mouse_pos = mouse;
+            ui_system.drag_active = true;
+            ui_system.drag_start_mouse_pos = mouse;
             window->window_drag_active = true;
             window->window_pos_at_drag_start = window->position;
             window->window_size_at_resize_start = window->size;
         }
 
         bool resize_hover = vector_length(vec2((float)mouse.x, (float)mouse.y) - vec2(window->position.x + window->size.x, window->position.y)) <= 8.0f;
-        if (!window->drag_active && resize_hover && mouse_pressed)
+        if (!ui_system.drag_active && resize_hover && mouse_pressed)
         {
-            window->drag_active = true;
-            window->drag_start_mouse_pos = mouse;
+            ui_system.drag_active = true;
+            ui_system.drag_start_mouse_pos = mouse;
             window->window_resize_active = true;
             window->window_pos_at_drag_start = window->position;
             window->window_size_at_resize_start = window->size;
         }
-        window->mouse_hovers_over_clickable = header_hover || resize_hover;
+        ui_system.mouse_hovers_over_clickable = header_hover || resize_hover;
     }
 
+    // Handle Scroll bars
     widget_container_handle_scroll_bar_input(
         window, &ui_system.containers[window->container.container_index], &window->container_layout_info, 0, widget_box,
         mouse, mouse_down, mouse_pressed, input->mouse_wheel_delta
     );
 
-    window->mouse_hover_widget_index = -1;
+    // Handle Mouse-Clicks on Widgets
+    ui_system.mouse_hover_widget_index = -1;
     widget_container_find_mouse_hover_widget(
         window, &ui_system.containers[window->container.container_index], &window->container_layout_info, 0, widget_box, mouse
     );
-    if (window->drag_active) {
-        window->mouse_hover_widget_index = -1;
+    if (ui_system.drag_active) {
+        ui_system.mouse_hover_widget_index = -1;
+    }
+
+    if (ui_system.mouse_hover_widget_index != -1 && !ui_system.drag_active && mouse_pressed)
+    {
+        auto& widget = ui_system.widgets[ui_system.mouse_hover_widget_index];
+        if (widget.type == Widget_Type::BUTTON) {
+            widget.options.button.was_clicked = true;
+        }
+        else if (widget.type == Widget_Type::TEXT_INPUT)
+        {
+            if (ui_system.focused_widget_index != ui_system.mouse_hover_widget_index)
+            {
+                ui_system.focused_widget_index = ui_system.mouse_hover_widget_index;
+                string_reset(&ui_system.input_string);
+                String text = ui_string_to_string(widget.options.text_input.text);
+                string_append_string(&ui_system.input_string, &text);
+                ui_system.line_editor = line_editor_make();
+                ui_system.line_editor.select_start = 0;
+                ui_system.line_editor.pos = ui_system.input_string.size;
+                ui_system.input_x_offset = 0;
+            }
+        }
+    }
+    // Reset 
+    if (mouse_pressed && ui_system.mouse_hover_widget_index != ui_system.focused_widget_index) {
+        ui_system.focused_widget_index = -1;
+    }
+
+    // Handle keyboard-messages
+    if (ui_system.focused_widget_index != -1)
+    {
+        auto& widget = ui_system.widgets[ui_system.focused_widget_index];
+        if (widget.type == Widget_Type::TEXT_INPUT)
+        {
+            for (int i = 0; i < input->key_messages.size; i++)
+            {
+                auto msg = input->key_messages[i];
+                if (msg.key_down && msg.key_code == Key_Code::RETURN) {
+                    widget.options.text_input.text_was_changed = true;
+                    ui_system.focused_widget_index = -1;
+                    break;
+                }
+                line_editor_feed_key_message(ui_system.line_editor, &ui_system.input_string, input->key_messages[i]);
+            }
+        }
     }
 }
 
 void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atlas_* glyph_atlas, Input* input)
 {
-    bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
     UI_Window* window = &ui_system.window;
+
+    bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
+    auto& info = rendering_core.render_information;
+    ivec2 screen_size = ivec2(info.backbuffer_width, info.backbuffer_height);
+    ivec2 mouse = ivec2(input->mouse_x, screen_size.y - input->mouse_y);
 
     // Compact widgets and container arrays, and reset data for next frame
     {
         if (!mouse_down) {
-            window->drag_active = false;
+            ui_system.drag_active = false;
             window->window_drag_active = false;
             window->window_resize_active = false;
         }
@@ -1807,7 +2018,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
         }
         dynamic_array_rollback_to_size(&ui_system.widgets, next_widget_index);
 
-        // Update indices in containers
+        // Update container data (Widget-Indices and reset)
         for (int i = 0; i < ui_system.containers.size; i++)
         {
             auto& container = ui_system.containers[i];
@@ -1815,7 +2026,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
             container.next_matching_index = 0;
 
             if (!container.scroll_bar_was_added) {
-                container.drag_start_bar_offset = 0;
+                container.scroll_bar_y_offset = 0;
                 container.scroll_bar_drag_active = false;
             }
             if (!mouse_down) {
@@ -1834,17 +2045,42 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
             dynamic_array_rollback_to_size(&container.widget_indices, next_child_index);
         }
 
-        // Update indices in Widgets
-        for (int i = 0; i < ui_system.widgets.size; i++) {
+        // Update widget data
+        for (int i = 0; i < ui_system.widgets.size; i++)
+        {
             auto& widget = ui_system.widgets[i];
-            if (widget.type == Widget_Type::CONTAINER) {
+            UI_String empty_string;
+            empty_string.length = 0;
+            empty_string.start_index = 0;
+            switch (widget.type)
+            {
+            case Widget_Type::CONTAINER: {
                 int new_container_index = moved_container_indices[widget.options.container.container_index];
                 assert(new_container_index != -1, "Shouldn't happen");
                 widget.options.container.container_index = new_container_index;
+                break;
+            }
+            case Widget_Type::BUTTON: {
+                widget.options.button.was_clicked = false;
+                break;
+            }
+            case Widget_Type::TEXT_INPUT: {
+                widget.options.text_input.text_was_changed = false;
+                break;
+            }
             }
         }
 
+        // Update window data
         ui_system.window.container.container_index = moved_container_indices[ui_system.window.container.container_index];
+
+        // Update ui_system data
+        if (ui_system.mouse_hover_widget_index != -1) {
+            ui_system.mouse_hover_widget_index = moved_widget_indices[ui_system.mouse_hover_widget_index]; // Note: Automatically sets to -1 on remove
+        }
+        if (ui_system.focused_widget_index != -1) {
+            ui_system.focused_widget_index = moved_widget_indices[ui_system.focused_widget_index]; // Note: Automatically sets to -1 on remove
+        }
     }
 
     // Do layout
@@ -1856,14 +2092,18 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
     {
         ui_system.containers[window->container.container_index].visited_this_frame = true;
         widget_container_gather_width_information_recursive(window->container, &window_layout);
-        if (input->key_pressed[(int)Key_Code::X]) {
-            window->size.x = window_layout.min_width_without_collapse + 4;
-        }
-        else if (input->key_pressed[(int)Key_Code::C]) {
-            window->size.x = window_layout.min_width_collapsed + 4;
-        }
-        else if (input->key_pressed[(int)Key_Code::V]) {
-            window->size.x = window_layout.min_width_for_line_merge + 4;
+        bool window_can_receive_keyboard_shortcut = ui_system.focused_widget_index == -1 && bbox_contains_point(window_box, mouse);
+        if (window_can_receive_keyboard_shortcut)
+        {
+            if (input->key_pressed[(int)Key_Code::X]) {
+                window->size.x = window_layout.min_width_without_collapse + 4;
+            }
+            else if (input->key_pressed[(int)Key_Code::C]) {
+                window->size.x = window_layout.min_width_collapsed + 4;
+            }
+            else if (input->key_pressed[(int)Key_Code::V]) {
+                window->size.x = window_layout.min_width_for_line_merge + 4;
+            }
         }
 
         window_box = BBox(window->position, window->position + window->size);
@@ -1879,7 +2119,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
         widget_container_calculate_x_bounds_and_height(
             window->container, &window_layout, widget_box.min.x, widget_box.max.x - widget_box.min.x
         );
-        if (input->key_pressed[(int)Key_Code::Y]) {
+        if (input->key_pressed[(int)Key_Code::Y] && window_can_receive_keyboard_shortcut) {
             window->size.y = window_layout.min_height + 4 + ui_system.line_item_height;
         }
         {
@@ -1899,28 +2139,25 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 
     // Render
     {
-        auto& info = rendering_core.render_information;
-        ivec2 screen_size = ivec2(info.backbuffer_width, info.backbuffer_height);
-        ivec2 mouse = ivec2(input->mouse_x, screen_size.y - input->mouse_y);
-        window->mouse_hover_widget_index = -1;
+        ui_system.mouse_hover_widget_index = -1;
         widget_container_find_mouse_hover_widget(
             window, &ui_system.containers[window->container.container_index], &window->container_layout_info, 0, widget_box, mouse
         );
-        if (window->mouse_hover_widget_index != -1 && !window->drag_active) {
-            Widget& widget = ui_system.widgets[window->mouse_hover_widget_index];
+        if (ui_system.mouse_hover_widget_index != -1 && !ui_system.drag_active) {
+            Widget& widget = ui_system.widgets[ui_system.mouse_hover_widget_index];
             if (widget.type == Widget_Type::BUTTON || widget.type == Widget_Type::TEXT_INPUT) {
-                window->mouse_hovers_over_clickable = true;
+                ui_system.mouse_hovers_over_clickable = true;
             }
         }
 
         // Set mouse cursor
-        if (window->mouse_hovers_over_clickable) {
-            window->last_cursor_was_drag = true;
+        if (ui_system.mouse_hovers_over_clickable) {
+            ui_system.last_cursor_was_drag = true;
             window_set_cursor_icon(whole_window, Cursor_Icon_Type::HAND);
         }
         else {
-            if (window->last_cursor_was_drag) {
-                window->last_cursor_was_drag = false;
+            if (ui_system.last_cursor_was_drag) {
+                ui_system.last_cursor_was_drag = false;
                 window_set_cursor_icon(whole_window, Cursor_Icon_Type::ARROW);
             }
         }
@@ -1991,6 +2228,48 @@ void imgui_test_entry()
     SCOPE_EXIT(glyph_atlas_destroy(&smoll_atlas));
     glyph_atlas_rasterize_font(&smoll_atlas, &atlas_writer, "resources/fonts/consola.ttf", 14);
 
+    const int CHECKBOX_DISTANCE_FROM_LINE = 2;
+    const int CHECKBOX_BORDER_THICKNESS = 1;
+    const int CHECKBOX_PADDING = 1;
+    const int check_box_size = glyph_atlas.char_box_size.y + 2 * BORDER_SPACE + PAD_TOP + PAD_BOT - 2 * CHECKBOX_DISTANCE_FROM_LINE;
+    const int check_mark_size = check_box_size - 2 * (CHECKBOX_PADDING + CHECKBOX_BORDER_THICKNESS);
+    //check_mark_size = ivec2(40, 40);
+    BBox check_mark_atlas_box = bitmap_atlas_make_space_for_sub_image(&atlas_writer, ivec2(check_mark_size));
+    for (int x_pixel = 0; x_pixel < check_mark_size; x_pixel++)
+    {
+        for (int y_pixel = 0; y_pixel < check_mark_size; y_pixel++) 
+        {
+            ivec2 pixel_pos = check_mark_atlas_box.min + ivec2(x_pixel, y_pixel);
+            u8* pixel_data = &bitmap_atlas.data[pixel_pos.x + pixel_pos.y * bitmap_atlas.pitch];
+            float pixel_width = 2.0f / check_mark_size;
+
+            // Normalized pos (-1 to 1)
+            vec2 pos = vec2(x_pixel / (float)check_mark_size, y_pixel / (float)check_mark_size);
+            pos = pos * 2 - 1;
+
+            float r = pixel_width * 2;
+            vec2 a = vec2(-1.0f + r, 0.0f);
+            vec2 b = vec2(-1.0f + 2.0f / 3.0f, -1.0f + r);
+            vec2 c = vec2(1.0f - r, 1.0f - r);
+            float sdf = distance_point_to_line_segment(pos, a, b) - r;
+            sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, c) - r);
+            
+            sdf += pixel_width;
+            float value = 0.0f;
+            if (sdf < 0.0f) {
+                value = 0.0f;
+            }
+            else if (sdf >= pixel_width) {
+                value = 1.0f;
+            }
+            else {
+                value = sdf / pixel_width;
+            }
+            value = 1.0f - value;
+            *pixel_data = math_clamp((int)(value * 255), 0, 255);
+        }
+    }
+
     // Create GPU texture
     Texture* texture = texture_create_from_bytes(
         Texture_Type::RED_U8,
@@ -2005,6 +2284,17 @@ void imgui_test_entry()
     Mesh* mesh = rendering_core_query_mesh("Mono_Render_Mesh", vertex_desc, true);
     Shader* shader = rendering_core_query_shader("mono_texture.glsl");
     ui_system_initialize(&glyph_atlas);
+
+    String texts[3];
+    for (int i = 0; i < 3; i++) {
+        const char* initial[3] = {
+            "Something that you soundlt ",
+            "Dont you carrera about me",
+            "Wellerman",
+        };
+        texts[i] = string_create(initial[i % 3]);
+    }
+    SCOPE_EXIT(for (int i = 0; i < 3; i++) { string_destroy(&texts[i]); });
 
     // Window Loop
     double time_last_update_start = timer_current_time_in_seconds();
@@ -2035,6 +2325,7 @@ void imgui_test_entry()
             }
         }
         rendering_core_prepare_frame(timer_current_time_in_seconds(), window_state->width, window_state->height);
+
         ui_system_start_frame(input);
 
         ui_system_push_label(ui_system.window.container, "Hello IMGUI world!");
@@ -2045,22 +2336,28 @@ void imgui_test_entry()
                 "Surname",
                 "Address",
             };
-            const char* texts[3] = {
-                "Something that you soundlt ",
-                "Dont you carrera about me",
-                "Wellerman",
-            };
-            ui_system_push_text_input(ui_system.window.container, labels[i % 3], string_create_static(texts[i % 3]));
+            String& text = texts[i % 3];
+            auto update = ui_system_push_text_input(ui_system.window.container, labels[i % 3], text);
+            if (update.text_was_changed) {
+                string_reset(&text);
+                string_append_string(&text, &update.new_text);
+            }
         }
-        ui_system_push_button(ui_system.window.container, "Frick me");
+        bool pressed = ui_system_push_button(ui_system.window.container, "Frick me");
+        if (pressed) {
+            printf("Frick me was pressed!\n");
+        }
         ui_system_push_text_input(ui_system.window.container, "Name:", string_create_static("Frank Woo"));
-        ui_system_push_button(ui_system.window.container, "Frick me");
+        pressed = ui_system_push_button(ui_system.window.container, "Frick me");
+        if (pressed) {
+            printf("Another one was pressed!\n");
+        }
         ui_system_push_text_input(ui_system.window.container, "Name:", string_create_static("Frank What why where"));
 
         ui_system_end_frame_and_render(window, mesh, &glyph_atlas, input);
 
         // Tests for Text-Rendering
-        if (false)
+        if (true)
         {
             // Render mesh with bitmap at the center of the screen
             auto& info = rendering_core.render_information;
@@ -2073,30 +2370,37 @@ void imgui_test_entry()
                 center = mouse;
             }
 
+            BBox box = BBox(center, center + ivec2(check_box_size));
+            vec4 red = vec4(1, 0, 0, 1);
+            vec4 green = vec4(0, 1, 0, 1);
+            mesh_push_box_with_border_clipped(mesh, box, box, COLOR_BUTTON_BG, CHECKBOX_BORDER_THICKNESS, COLOR_BUTTON_BORDER);
+            center = center + CHECKBOX_BORDER_THICKNESS + CHECKBOX_PADDING;
+            mesh_push_subimage(mesh, center, check_mark_atlas_box, glyph_atlas.bitmap_atlas_size);
+
             // mesh_push_text(mesh, &glyph_atlas, &bitmap_atlas, "Hello WORLDyyj!", center, screen_size);
             // center.y -= glyph_atlas.char_box_size.y;
             // mesh_push_text(mesh, &glyph_atlas, &bitmap_atlas, "Hello WORLDyyj!", center, screen_size);
 
-            mesh_push_subimage(mesh, center, BBox(ivec2(0), bitmap_atlas.size), bitmap_atlas.size);
+            // mesh_push_subimage(mesh, center, BBox(ivec2(0), bitmap_atlas.size), bitmap_atlas.size);
 
-            center.y -= glyph_atlas.char_box_size.y;
-            String msg = string_create_static("Hello wjoejyLD!|$()");
-            center.y -= 3;
-            int border = 1;
+            // center.y -= glyph_atlas.char_box_size.y;
+            // String msg = string_create_static("Hello wjoejyLD!|$()");
+            // center.y -= 3;
+            // int border = 1;
 
-            int pad_left_right = 1;
-            int pad_top = 1;
-            int pad_bot = 1;
+            // int pad_left_right = 1;
+            // int pad_top = 1;
+            // int pad_bot = 1;
 
-            float b_col = 0.4f;
-            float col = 0.2f;
-            mesh_push_text(mesh, &glyph_atlas, msg, center);
+            // float b_col = 0.4f;
+            // float col = 0.2f;
+            // mesh_push_text(mesh, &glyph_atlas, msg, center);
 
-            center.y -= 30;
-            mesh_push_text(mesh, &glyph_atlas, msg, center);
+            // center.y -= 30;
+            // mesh_push_text(mesh, &glyph_atlas, msg, center);
 
-            center.y -= smoll_atlas.char_box_size.y;
-            center.y -= 3;
+            // center.y -= smoll_atlas.char_box_size.y;
+            // center.y -= 3;
             // mesh_push_text(mesh, &smoll_atlas, &bitmap_atlas, "Smoller hello World", center);
         }
 
