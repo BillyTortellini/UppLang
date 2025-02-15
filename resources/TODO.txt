@@ -1,7 +1,33 @@
 
 
-Working on: Text-Input
-----------------------
+Fix:
+ * Button Input not working?
+ * Text-Input
+ * Text-Alignment left
+ * Toggle-Button
+
+Working on: Collapsable Sub_Headers
+-----------------------------------
+Question: Is this a widget type?
+
+Design: 
+    Symbol that differentiates it from button (Collapsed/opened) 
+    Left aligned text
+    If pressed, below a new container with indent appears
+    Arguably, Design could be different (Just symbol and text, or Border for all child-widgets)
+    In container widget the widget stores the container layout, now what?
+        Containers store their own layout, and container widget just uses the given one
+
+Decision:
+ 1. Make new widget
+
+If not new widget, then long Key-Message combination may be missed (Very unlikely case!)
+
+Next Plan:
+ Differentiate between Widgets and containers
+"Builder Code" handles widgets, ui_system handles containers and windows
+
+Containers still need some of the complexity
 
 
 
@@ -10,13 +36,14 @@ Working on: Text-Input
 TODO in UI:
 -----------
  * More Widgets
-    - Check_Box,
-    - Number_Input
     - Collapsable Sub_Header
     - Horizontal Seperator
- * Lists (Max-Size/Can grow)
- * Drop-Down menu for Enums
+ * Refactor some widgets? (Was pressed could be done in update code)
+ * Lists (Max-Size/Can grow/Background/Multi scroll-wheels)
+ * Drop-Down menu for Enums (Something like an overlay window)
  * Multiple UI-Windows with z-order/other options
+ * Pushing and Popping Containers in ui
+ * 
         
 
 
@@ -29,11 +56,18 @@ UI-Ideas:
  * A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
  * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
+ * Custom number formating (1 020 252 for integers)
     
     
 
 Done:
 -----
+ * Fixed Bug where drag does not work outside of window
+ * Text-Clipping Indicator (...)
+ * Input Filtering for Number-Input
+ * Text-Input with differentiation from normal input
+ * Added Check-Box widget
+
  * Added sdf representation of check_mark
  * Text_Input done for now
  * Cut (Keyboard shortcut CTRL-X)
