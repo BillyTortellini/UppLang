@@ -1,14 +1,11 @@
 
 
 Fix:
- * Button Input not working?
- * Text-Input
- * Text-Alignment left
- * Toggle-Button
+ * Fixed size width distribution! (Labels)
+ * Collapsable Layout
+    Add feature that the first widget is the 'Label'
 
-Working on: Collapsable Sub_Headers
------------------------------------
-Question: Is this a widget type?
+ * Push/Pop active Container 
 
 Design: 
     Symbol that differentiates it from button (Collapsed/opened) 
@@ -18,16 +15,6 @@ Design:
     In container widget the widget stores the container layout, now what?
         Containers store their own layout, and container widget just uses the given one
 
-Decision:
- 1. Make new widget
-
-If not new widget, then long Key-Message combination may be missed (Very unlikely case!)
-
-Next Plan:
- Differentiate between Widgets and containers
-"Builder Code" handles widgets, ui_system handles containers and windows
-
-Containers still need some of the complexity
 
 
 
@@ -38,12 +25,9 @@ TODO in UI:
  * More Widgets
     - Collapsable Sub_Header
     - Horizontal Seperator
- * Refactor some widgets? (Was pressed could be done in update code)
  * Lists (Max-Size/Can grow/Background/Multi scroll-wheels)
  * Drop-Down menu for Enums (Something like an overlay window)
  * Multiple UI-Windows with z-order/other options
- * Pushing and Popping Containers in ui
- * 
         
 
 

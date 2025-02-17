@@ -820,10 +820,11 @@ const vec4 COLOR_BUTTON_BORDER = vec4_color_from_rgb(0x19, 0x75, 0xD0);
 const vec4 COLOR_BUTTON_BG = vec4_color_from_rgb(0x0F, 0x47, 0x7E);
 const vec4 COLOR_BUTTON_BG_HOVER = vec4_color_from_rgb(0x71, 0xA9, 0xE2);
 
-const vec4 COLOR_INPUT_BG = vec4_color_from_code("#A7A7A7");
-const vec4 COLOR_INPUT_BG_NUMBER = vec4_color_from_code("#878787");
-const vec4 COLOR_INPUT_BG_HOVER = vec4_color_from_code("#699EB6");
-const vec4 COLOR_INPUT_BORDER = vec4_color_from_code("#696969");
+const vec4 COLOR_INPUT_BG             = vec4_color_from_code("#A7A7A7");
+const vec4 COLOR_INPUT_BG_NUMBER      = vec4_color_from_code("#878787");
+const vec4 COLOR_INPUT_BG_HOVER       = vec4_color_from_code("#699EB6");
+const vec4 COLOR_FOCUSED_BG           = vec4_color_from_code("#808080");
+const vec4 COLOR_INPUT_BORDER         = vec4_color_from_code("#696969");
 const vec4 COLOR_INPUT_BORDER_FOCUSED = vec4_color_from_code("#FF8F00");
 
 const vec4 COLOR_LIST_LINE_EVEN = vec4_color_from_rgb(0xFE, 0xCB, 0xA3);
@@ -846,7 +847,6 @@ enum class Layout_Type
 {
     NORMAL, // Stack-Horizontal with option to combine lines
     STACK_HORIZONTAL, // All widgets are added in a single line
-    LABELED_ITEMS // Collapsable label items
 };
 
 struct UI_String
@@ -865,6 +865,7 @@ struct Container_Element
     int min_width_collapsed;
     int min_width_without_collapse;
     int min_width_for_line_merge;
+    bool width_can_grow_beyond_max;
 
     // Given the available width, containers can calculate their height
     int min_height;
@@ -887,7 +888,7 @@ struct Widget_Container
             int min_line_count; // 0 for normal behavior
             int max_line_count; // 0 or -1 to disable, otherwise container won't grow
         } normal;
-        UI_String label_text;
+        bool horizontal_allow_collapse;
     } options;
     Dynamic_Array<Container_Element> elements;
 
@@ -897,11 +898,7 @@ struct Widget_Container
 
     // Intermediate layout data
     bool is_hidden;
-    int max_child_min_width_collapsed;
-    int max_child_min_width_without_collapse;
-    int max_child_min_width_for_line_merge;
-    int min_child_size_for_line_merge;
-    int sum_child_min_width_collapsed;
+    bool collaps_allowed;
     int sum_child_min_width_without_collapse;
     int sum_child_min_width_for_line_merge;
 
@@ -935,7 +932,8 @@ struct Widget
 {
     // Layout information
     int min_width;
-    int preferred_width; // More width than this is usually unnecssary
+    int max_width;
+    bool can_grow_beyond_max_width;
     int height;
     bool can_combine_in_lines;
 
@@ -948,13 +946,13 @@ struct Widget
     bool draw_background;
     vec4 background_color;
     vec4 hover_color;
+    vec4 focused_color;
     bool has_border;
     vec4 border_color;
     UI_String text_display; // Text to display when rendering
     Text_Alignment text_alignment;
     bool draw_icon;
     BBox icon_atlas_box;
-    bool has_fixed_width; // For checkboxes
     int offset_line_bot;
     int offset_line_top;
 
@@ -1212,6 +1210,12 @@ Container_Handle ui_system_add_container(Container_Handle container_handle)
     }
     parent.matching_failed_this_frame = true;
 
+    // Note: Add element to parent first, because adding to containers may invalidate parent pointer
+    Container_Element element;
+    element.is_widget = false;
+    element.element_index = ui_system.containers.size;
+    dynamic_array_push_back(&parent.elements, element);
+
     Widget_Container container;
     container.elements = dynamic_array_create<Container_Element>();
     container.scroll_bar_drag_active = false;
@@ -1219,11 +1223,6 @@ Container_Handle ui_system_add_container(Container_Handle container_handle)
     container.scroll_bar_y_offset = 0;
     container.visited_this_frame = true;
     dynamic_array_push_back(&ui_system.containers, container);
-
-    Container_Element element;
-    element.is_widget = false;
-    element.element_index = ui_system.containers.size - 1;
-    dynamic_array_push_back(&container.elements, element);
 
     Container_Handle result;
     result.container_index = element.element_index;
@@ -1248,14 +1247,14 @@ bool ui_system_push_button(Container_Handle container, const char* label_text)
         widget.text_alignment   = Text_Alignment::CENTER;
         widget.text_display     = ui_system_add_string(string_create_static(label_text));
         widget.draw_icon        = false;
-        widget.has_fixed_width  = false;
         widget.offset_line_bot  = 0;
         widget.offset_line_top  = 0;
 
         // Size options
-        widget.min_width            = BUTTON_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
-        widget.preferred_width      = BUTTON_WANTED_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
-        widget.height               = ui_system.line_item_height;
+        widget.min_width = BUTTON_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+        widget.max_width = BUTTON_WANTED_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+        widget.height    = ui_system.line_item_height;
+        widget.can_grow_beyond_max_width = true;
         widget.can_combine_in_lines = true;
 
         // Input options
@@ -1267,7 +1266,7 @@ bool ui_system_push_button(Container_Handle container, const char* label_text)
     return ui_system.mouse_hover_widget_index == handle.widget_index && ui_system.mouse_was_clicked;
 }
 
-void ui_system_push_label(Container_Handle container, const char* text)
+void ui_system_push_label(Container_Handle container, const char* text, bool restrain_label_size)
 {
     Widget_Handle handle = ui_system_add_widget(container);
     Widget& widget = ui_system.widgets[handle.widget_index];
@@ -1283,15 +1282,22 @@ void ui_system_push_label(Container_Handle container, const char* text)
         widget.text_alignment   = Text_Alignment::LEFT;
         widget.text_display     = ui_system_add_string(string_create_static(text));
         widget.draw_icon        = false;
-        widget.has_fixed_width  = false;
         widget.offset_line_bot  = 0;
         widget.offset_line_top  = 0;
 
         // Size options
-        widget.min_width            = widget.text_display.length * ui_system.char_size.x;
-        widget.preferred_width      = widget.min_width;
-        widget.height               = ui_system.line_item_height;
-        widget.can_combine_in_lines = false;
+        if (restrain_label_size) {
+            widget.min_width = LABEL_CHAR_COUNT_SIZE * ui_system.char_size.x;
+            widget.max_width = LABEL_CHAR_COUNT_SIZE * ui_system.char_size.x;
+            widget.can_grow_beyond_max_width = false;
+            widget.can_combine_in_lines = true;
+        }
+        else {
+            widget.min_width = widget.text_display.length * ui_system.char_size.x;
+            widget.max_width = widget.min_width;
+            widget.height = ui_system.line_item_height;
+            widget.can_combine_in_lines = false;
+        }
 
         // Input options
         widget.is_clickable = true;
@@ -1319,17 +1325,18 @@ Text_Input_State ui_system_push_text_input(Container_Handle container, String te
         widget.hover_color      = COLOR_INPUT_BG_HOVER;
         widget.has_border       = true;
         widget.border_color     = COLOR_INPUT_BORDER;
+        widget.focused_color    = COLOR_FOCUSED_BG;
         widget.text_alignment   = Text_Alignment::LEFT;
         widget.text_display     = ui_system_add_string(text);
         widget.draw_icon        = false;
-        widget.has_fixed_width  = false;
         widget.offset_line_bot  = 0;
         widget.offset_line_top  = 0;
 
         // Size options
-        widget.min_width            = TEXT_INPUT_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
-        widget.preferred_width      = TEXT_INPUT_MAX_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
-        widget.height               = ui_system.line_item_height;
+        widget.min_width = TEXT_INPUT_MIN_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+        widget.max_width = TEXT_INPUT_MAX_CHAR_COUNT * ui_system.char_size.x + TEXT_BORDER_SPACE;
+        widget.can_grow_beyond_max_width = true;
+        widget.height    = ui_system.line_item_height;
         widget.can_combine_in_lines = true;
 
         // Input options
@@ -1359,6 +1366,7 @@ int ui_system_push_int_input(Container_Handle container, int value)
     Widget& widget = ui_system.widgets[update_state.handle.widget_index];
     widget.text_input_type = Text_Input_Type::INT;
     widget.text_alignment = Text_Alignment::RIGHT;
+    widget.background_color = COLOR_INPUT_BG_NUMBER;
     if (update_state.text_was_changed)
     {
         String text = update_state.new_text;
@@ -1384,6 +1392,7 @@ float ui_system_push_float_input(Container_Handle container, float value)
 
     Widget& widget = ui_system.widgets[update_state.handle.widget_index];
     widget.text_input_type = Text_Input_Type::FLOAT;
+    widget.background_color = COLOR_INPUT_BG_NUMBER;
     if (update_state.text_was_changed)
     {
         String text = update_state.new_text;
@@ -1399,6 +1408,17 @@ float ui_system_push_float_input(Container_Handle container, float value)
     }
 
     return value;
+}
+
+bool ui_system_push_labeled_button(Container_Handle parent_container, const char* label_text, const char* button_text)
+{
+     Container_Handle container_handle = ui_system_add_container(parent_container);
+     Widget_Container& container = ui_system.containers[container_handle.container_index];
+     container.layout = Layout_Type::STACK_HORIZONTAL;
+     container.options.horizontal_allow_collapse = true;
+
+     ui_system_push_label(container_handle, label_text);
+     return ui_system_push_button(container_handle, button_text);
 }
 
 // Returns the updated enabled state
@@ -1422,14 +1442,14 @@ bool ui_system_push_checkbox(Container_Handle container, bool enabled)
         widget.text_alignment   = Text_Alignment::CENTER;
         widget.text_display     = empty_string;
         widget.draw_icon        = false;
-        widget.has_fixed_width  = true;
         widget.offset_line_bot  = CHECKBOX_DISTANCE_FROM_LINE;
         widget.offset_line_top  = CHECKBOX_DISTANCE_FROM_LINE;
 
         // Size options
-        widget.min_width       = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
-        widget.preferred_width = widget.min_width;
-        widget.height          = ui_system.line_item_height;
+        widget.min_width = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
+        widget.max_width = widget.min_width;
+        widget.height    = ui_system.line_item_height;
+        widget.can_grow_beyond_max_width = false;
         widget.can_combine_in_lines = true;
 
         // Input options
@@ -1460,11 +1480,11 @@ void ui_system_draw_text_with_clipping_indicator(Mesh* mesh, Glyph_Atlas_* glyph
     // Align text
     switch (alignment) {
     case Text_Alignment::LEFT: break;
-    case Text_Alignment::RIGHT: text_pos.x += available_text_space - required_text_space; break;
+    case Text_Alignment::RIGHT: text_pos.x = clipping_box.max.x - required_text_space; break;
     case Text_Alignment::CENTER: {
         // Center button text if enough space is available
         if (available_text_space > required_text_space) {
-            text_pos.x += (available_text_space - required_text_space) / 2;
+            text_pos.x = clipping_box.min.x + (available_text_space - required_text_space) / 2;
         }
         break;
     }
@@ -1506,7 +1526,7 @@ void ui_system_draw_text_with_clipping_indicator(Mesh* mesh, Glyph_Atlas_* glyph
     mesh_push_text_clipped(mesh, glyph_atlas, substring, text_pos, clipping_box);
 }
 
-void container_element_gather_width_information_recursive(Container_Element* element)
+void container_element_gather_width_information_recursive(Container_Element* element, bool collapse_allowed)
 {
     const int TEXT_BORDER_SPACE = BORDER_SPACE * 2 + PAD_LEFT_RIGHT * 2;
 
@@ -1516,7 +1536,7 @@ void container_element_gather_width_information_recursive(Container_Element* ele
         element->can_combine_in_lines = widget.can_combine_in_lines;
         element->min_width_collapsed = widget.min_width;
         element->min_width_without_collapse = widget.min_width;
-        element->min_width_for_line_merge = widget.preferred_width;
+        element->min_width_for_line_merge = widget.max_width;
         element->height_can_grow = false;
         element->min_height = widget.height;
         element->max_height = widget.height;
@@ -1526,29 +1546,29 @@ void container_element_gather_width_information_recursive(Container_Element* ele
     
     // Calculate child width infos
     Widget_Container& container = ui_system.containers[element->element_index];
-    container.max_child_min_width_collapsed = 0;
-    container.max_child_min_width_without_collapse = 0;
-    container.max_child_min_width_for_line_merge = 0;
-    container.sum_child_min_width_collapsed = 0;
+    int max_child_min_width_collapsed = 0;
+    int max_child_min_width_without_collapse = 0;
+    int max_child_min_width_for_line_merge = 0;
+    int sum_child_min_width_collpsed = 0;
     container.sum_child_min_width_without_collapse = 0;
     container.sum_child_min_width_for_line_merge = 0;
-    container.min_child_size_for_line_merge = container.elements.size == 0 ? 0 : 1000000;
     container.scroll_bar_was_added = false;
+    container.collaps_allowed = collapse_allowed;
     bool child_height_can_grow = false;
     bool has_child_that_cannot_combine_in_line = false;
     for (int i = 0; i < container.elements.size; i++)
     {
         Container_Element& child = container.elements[i];
-        container_element_gather_width_information_recursive(&child);
+        bool child_collapse_allowed = !(container.layout == Layout_Type::STACK_HORIZONTAL && !container.options.horizontal_allow_collapse);
+        container_element_gather_width_information_recursive(&child, collapse_allowed && child_collapse_allowed);
 
         child.line_index = i;
-        container.max_child_min_width_collapsed        = math_maximum(container.max_child_min_width_collapsed, child.min_width_collapsed);
-        container.max_child_min_width_without_collapse = math_maximum(container.max_child_min_width_without_collapse, child.min_width_without_collapse);
-        container.max_child_min_width_for_line_merge   = math_maximum(container.max_child_min_width_for_line_merge, child.min_width_for_line_merge);
-        container.sum_child_min_width_collapsed        += child.min_width_collapsed;
+        max_child_min_width_collapsed        = math_maximum(max_child_min_width_collapsed, child.min_width_collapsed);
+        max_child_min_width_without_collapse = math_maximum(max_child_min_width_without_collapse, child.min_width_without_collapse);
+        max_child_min_width_for_line_merge   = math_maximum(max_child_min_width_for_line_merge, child.min_width_for_line_merge);
+        sum_child_min_width_collpsed += child.min_width_collapsed;
         container.sum_child_min_width_without_collapse += child.min_width_without_collapse;
         container.sum_child_min_width_for_line_merge   += child.min_width_for_line_merge;
-        container.min_child_size_for_line_merge        = math_minimum(container.min_child_size_for_line_merge, child.min_width_for_line_merge);
         child_height_can_grow = child_height_can_grow | child.height_can_grow;
         has_child_that_cannot_combine_in_line = has_child_that_cannot_combine_in_line | !child.can_combine_in_lines;
     }
@@ -1559,32 +1579,32 @@ void container_element_gather_width_information_recursive(Container_Element* ele
     {
     case Layout_Type::NORMAL:
     {
-        element->min_width_collapsed = container.max_child_min_width_collapsed;
-        element->min_width_without_collapse = container.max_child_min_width_without_collapse;
-        element->min_width_for_line_merge = container.max_child_min_width_for_line_merge;
+        element->min_width_collapsed        = max_child_min_width_collapsed;
+        element->min_width_without_collapse = max_child_min_width_without_collapse;
+        element->min_width_for_line_merge   = max_child_min_width_for_line_merge;
         element->can_combine_in_lines = false;
-        break;
-    }
-    case Layout_Type::LABELED_ITEMS:
-    {
-        int label_length = LABEL_CHAR_COUNT_SIZE * ui_system.char_size.x;
-        int padding = (container.elements.size - 1) * PAD_LABEL_BOX;
-
-        // Note: There are multiple different behaviors we could implement here...
-        element->min_width_collapsed = math_maximum(label_length, PAD_ADJACENT_LABLE_LINE_SPLIT + container.max_child_min_width_collapsed);
-        element->min_width_without_collapse = label_length + PAD_LABEL_BOX + container.sum_child_min_width_without_collapse + padding;
-        element->min_width_for_line_merge = label_length + container.sum_child_min_width_for_line_merge + padding;
-        element->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
-
         break;
     }
     case Layout_Type::STACK_HORIZONTAL:
     {
         int padding = (container.elements.size - 1) * PAD_LABEL_BOX;
-        element->min_width_collapsed = container.sum_child_min_width_without_collapse + padding;
-        element->min_width_without_collapse = container.sum_child_min_width_without_collapse + padding;
-        element->min_width_for_line_merge = container.sum_child_min_width_for_line_merge + padding;
-        element->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+        if (container.elements.size >= 1 && container.options.horizontal_allow_collapse && collapse_allowed) 
+        {
+            auto& first_element = container.elements[0];
+            int padding = (container.elements.size - 1) * PAD_LABEL_BOX;
+
+            element->min_width_collapsed = PAD_ADJACENT_LABLE_LINE_SPLIT + max_child_min_width_collapsed;
+            element->min_width_without_collapse = container.sum_child_min_width_without_collapse + padding;
+            element->min_width_for_line_merge = container.sum_child_min_width_for_line_merge + padding;
+            element->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+
+        }
+        else {
+            element->min_width_collapsed        = sum_child_min_width_collpsed + padding;
+            element->min_width_without_collapse = sum_child_min_width_collpsed + padding;
+            element->min_width_for_line_merge = container.sum_child_min_width_for_line_merge + padding;
+            element->can_combine_in_lines = !has_child_that_cannot_combine_in_line;
+        }
         break;
     }
     default: panic("");
@@ -1598,78 +1618,10 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 
     // Calculate x-bounds for each widget
     container.line_count = 0;
-    auto distribute_width_in_line = [&](
-        int element_start_index, int element_end_index, int sum_min_width_per_widget, int start_x_offset, bool use_min_width_without_collapse
-        )
-    {
-        int count = element_end_index - element_start_index;
-        if (count == 0) return;
-
-        // Handle single widget line (Common case) first
-        if (count == 1) {
-            auto& child = container.elements[element_start_index];
-            child.box.min.x = x_pos + start_x_offset;
-            child.box.max.x = x_pos + available_width;
-            child.line_index = container.line_count;
-            return;
-        }
-
-        int padding_space = (count - 1) * PAD_WIDGETS_ON_LINE;
-        int overflow_budget = available_width - padding_space - sum_min_width_per_widget - start_x_offset;
-        int extra_per_widget = math_maximum(0, overflow_budget / count);
-        int remaining_pixels = math_maximum(0, overflow_budget % count);
-
-        int cursor_x = x_pos + start_x_offset;
-        for (int i = element_start_index; i < element_end_index; i++)
-        {
-            auto& child = container.elements[i];
-            int width = use_min_width_without_collapse ? child.min_width_without_collapse : child.min_width_for_line_merge;
-            width += extra_per_widget;
-            if (i == 0) { width += remaining_pixels; }
-
-            child.box.min.x = cursor_x;
-            child.box.max.x = cursor_x + width;
-            child.line_index = container.line_count;
-            cursor_x += width + PAD_WIDGETS_ON_LINE;
-        }
-    };
-
     switch (container.layout)
     {
     case Layout_Type::NORMAL:
     {
-        // int child_index = 0;
-        // while (child_index < container.widget_indices.size)
-        // {
-        //     // Find end of line
-        //     int element_start_index = child_index;
-        //     bool last_can_combine = true;
-        //     int remaining_width = available_width;
-        //     int line_sum_min_width_merge = 0;
-        //     while (child_index < container.widget_indices.size)
-        //     {
-        //         auto& widget_layout = ui_system.widgets[container.widget_indices[child_index]].layout_info;
-        //         bool add_widget_to_line = remaining_width >= widget_layout.min_width_for_line_merge && widget_layout.can_combine_in_lines && last_can_combine;
-        //         if (!add_widget_to_line) {
-        //             break;
-        //         }
-        //         line_sum_min_width_merge += widget_layout.min_width_for_line_merge;
-        //         remaining_width -= widget_layout.min_width_for_line_merge + PAD_WIDGETS_ON_LINE;
-        //         child_index += 1;
-        //     }
-
-        //     // Special case if no widget has enough space in line
-        //     if (element_start_index == child_index) {
-        //         auto& widget = ui_system.widgets[container.widget_indices[child_index]];
-        //         auto& widget_layout = widget.layout_info;
-        //         line_sum_min_width_merge += widget.layout_info.min_width_for_line_merge;
-        //         child_index += 1;
-        //     }
-
-        //     distribute_width_to_widgets_in_line(element_start_index, child_index, line_sum_min_width_merge, 0, false);
-        //     container.line_count += 1;
-        // }
-
         int child_index = 0;
         const int BOX_WIDTH = ui_system.char_size.x * 8;
         const int box_count = math_maximum(1, available_width / BOX_WIDTH);
@@ -1745,30 +1697,53 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
         }
         break;
     }
-    case Layout_Type::LABELED_ITEMS:
-    {
-        // Distribute x_pos if the label is collapsed or not
-        if (available_width < element->min_width_without_collapse)
-        {
-            for (int i = 0; i < container.elements.size; i++) {
-                auto& child = container.elements[i];
-                child.box.min.x = x_pos + PAD_ADJACENT_LABLE_LINE_SPLIT;
-                child.box.max.x = x_pos + available_width;
-                child.line_index = i; // Note: Not i + 1 (If we count label), because this is used later for calculating height (Grouping lines)
-            }
-            container.line_count = container.elements.size;
-        }
-        else {
-            // Distribute space to all widgets on line
-            int label_width = LABEL_CHAR_COUNT_SIZE * ui_system.char_size.x + PAD_LABEL_BOX;
-            distribute_width_in_line(0, container.elements.size, container.sum_child_min_width_without_collapse, label_width, true);
-        }
-        break;
-    }
     case Layout_Type::STACK_HORIZONTAL:
     {
         // Distribute space to all widgets on line
-        distribute_width_in_line(0, container.elements.size, container.sum_child_min_width_without_collapse, 0, true);
+        if (container.options.horizontal_allow_collapse && container.collaps_allowed && available_width < element->min_width_without_collapse) 
+        {
+            for (int i = 0; i < container.elements.size; i++) {
+                auto& child = container.elements[i];
+                child.box.min.x = x_pos + (i != 0 ? PAD_ADJACENT_LABLE_LINE_SPLIT : 0);
+                child.box.max.x = x_pos + available_width;
+                child.line_index = i;
+            }
+            container.line_count = container.elements.size;
+        }
+        else 
+        {
+            // Handle single widget line (Common case) first
+            if (container.elements.size == 0) break;
+            if (container.elements.size == 1) {
+                auto& child = container.elements[0];
+                child.box.min.x = x_pos;
+                child.box.max.x = x_pos + available_width;
+                child.line_index = container.line_count;
+                break;
+            }
+
+            int count = container.elements.size;
+            int padding_space = (count - 1) * PAD_WIDGETS_ON_LINE;
+            int overflow_budget = available_width - element->min_width_without_collapse;
+            int extra_per_widget = math_maximum(0, overflow_budget / count);
+            int remaining_pixels = math_maximum(0, overflow_budget % count);
+
+            int cursor_x = x_pos;
+            for (int i = element_start_index; i < element_end_index; i++)
+            {
+                auto& child = container.elements[i];
+                int width = use_min_width_without_collapse ? child.min_width_without_collapse : child.min_width_for_line_merge;
+                width += extra_per_widget;
+                if (i == 0) { width += remaining_pixels; }
+
+                child.box.min.x = cursor_x;
+                child.box.max.x = cursor_x + width;
+                child.line_index = container.line_count;
+                cursor_x += width + PAD_WIDGETS_ON_LINE;
+            }
+            distribute_width_in_line(0, container.elements.size, container.sum_child_min_width_without_collapse, 0, true);
+            container.line_count = 1;
+        }
         break;
     }
     default: panic("");
@@ -1833,13 +1808,7 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
         }
         break;
     }
-    case Layout_Type::STACK_HORIZONTAL:
-        break;
-    case Layout_Type::LABELED_ITEMS: {
-        if (available_width < element->min_width_without_collapse) {
-            element->min_height += ui_system.line_item_height + PAD_WIDGETS_BETWEEN_LINES;
-            element->max_height += ui_system.line_item_height + PAD_WIDGETS_BETWEEN_LINES;
-        }
+    case Layout_Type::STACK_HORIZONTAL: {
         break;
     }
     default: panic("");
@@ -1862,16 +1831,6 @@ void container_element_do_vertical_layout(Container_Element* element, int y_pos,
         // Re-Calculate Child layout after width change
         container_element_do_horizontal_layout_and_find_height(element, element->box.min.x, available_width);
         container.scroll_bar_was_added = true;
-    }
-
-    // Offset y_pos if we are collapsed
-    if (container.layout == Layout_Type::LABELED_ITEMS && available_width < element->min_width_without_collapse) {
-        y_pos -= ui_system.line_item_height + PAD_WIDGETS_BETWEEN_LINES;
-    }
-
-    if (available_width < element->min_width_for_line_merge) {
-        element->min_height += ui_system.line_item_height + PAD_WIDGETS_BETWEEN_LINES;
-        element->max_height += ui_system.line_item_height + PAD_WIDGETS_BETWEEN_LINES;
     }
 
     // Do Y-Layout (Basically all layouts do the same thing, using line-index to calculate height)
@@ -1965,14 +1924,14 @@ void container_element_render(
         ui_system_draw_text_with_clipping_indicator(mesh, glyph_atlas, text_pos, text, alignment, text_clip_area);
     };
 
-    if (element->is_widget) 
+    if (element->is_widget)
     {
         Widget& widget = ui_system.widgets[element->element_index];
         BBox box = element->box;
         box.min.y += y_offset;
         box.max.y += y_offset;
-        if (widget.has_fixed_width) {
-            box.max.x = box.min.x + widget.min_width;
+        if (!widget.can_grow_beyond_max_width) {
+            box.max.x = box.min.x + widget.max_width;
         }
         box.min.y += widget.offset_line_bot;
         box.max.y -= widget.offset_line_top;
@@ -1980,10 +1939,13 @@ void container_element_render(
         ivec2 text_pos = box.min;
         text_pos.y += PAD_BOT + BORDER_SPACE;
         text_pos.x += widget.has_border ? (PAD_LEFT_RIGHT + BORDER_SPACE) : 0;
-        if (widget.draw_background) 
+        vec4 bg_color = widget.background_color;
+        if (widget.draw_background)
         {
-            vec4 bg_color = widget.background_color;
-            if (widget.is_clickable && element->element_index == ui_system.mouse_hover_widget_index) {
+            if (widget.can_obtain_text_input && element->element_index == ui_system.focused_widget_index) {
+                bg_color = widget.focused_color;
+            }
+            else if (widget.is_clickable && element->element_index == ui_system.mouse_hover_widget_index) {
                 bg_color = widget.hover_color;
             }
             vec4 border_color = widget.border_color;
@@ -1998,10 +1960,67 @@ void container_element_render(
             text_pos.x += widget.icon_atlas_box.max.x - widget.icon_atlas_box.min.x + PAD_LEFT_RIGHT;
         }
 
-        if (element->element_index == ui_system.focused_widget_index) {
+        if (element->element_index == ui_system.focused_widget_index)
+        {
             // Draw edit text inside box!
+            BBox text_area = box;
+            text_area.min = text_pos;
+            text_area.max = box.max - ivec2(PAD_LEFT_RIGHT, PAD_TOP) - BORDER_SPACE;
+            BBox text_clip_box = bbox_intersection(text_area, clipping_box);
+
+            // Calculate Text-X offset inside box
+            auto& line_editor = ui_system.line_editor;
+            auto& x_offset = ui_system.input_x_offset;
+
+            // Adjust x-offset
+            {
+                int available_text_space = text_area.max.x - text_area.min.x;
+                int required_text_size = ui_system.char_size.x * ui_system.input_string.size;
+                int cursor_pos = ui_system.char_size.x * line_editor.pos;
+                if (available_text_space < required_text_size)
+                {
+                    int start = -x_offset;
+                    int end = -x_offset + available_text_space;
+                    if (cursor_pos < start) {
+                        x_offset = -cursor_pos;
+                    }
+                    else if (cursor_pos >= end) {
+                        x_offset -= cursor_pos - end + 1;
+                    }
+                }
+                else {
+                    x_offset = 0;
+                }
+            }
+
+            // Draw selection
+            if (line_editor.pos != line_editor.select_start)
+            {
+                int start = math_minimum(line_editor.pos, line_editor.select_start);
+                int end = math_maximum(line_editor.pos, line_editor.select_start);
+                BBox selection = BBox(
+                    text_area.min + ivec2(start * ui_system.char_size.x + x_offset, 0),
+                    text_area.min + ivec2(end * ui_system.char_size.x + x_offset, ui_system.char_size.y)
+                );
+                vec4 selection_color = bg_color;
+                selection_color.x *= 0.7f;
+                selection_color.y *= 0.7f;
+                selection_color.z *= 0.7f;
+                mesh_push_box_clipped(mesh, selection, text_clip_box, selection_color);
+            }
+
+            // Draw Text
+            mesh_push_text_clipped(mesh, glyph_atlas, ui_system.input_string, text_area.min + ivec2(x_offset, 0), text_clip_box);
+
+            // Draw cursor 
+            ivec2 cursor_pos = text_area.min + ivec2(line_editor.pos * ui_system.char_size.x + x_offset, 0);
+            BBox cursor = BBox(cursor_pos, cursor_pos + ivec2(1, ui_system.char_size.y));
+            mesh_push_box_clipped(mesh, cursor, text_clip_box, vec4(0, 0, 0, 1));
         }
         else if (widget.text_display.length > 0) {
+            if (widget.draw_background) {
+                box.max.x -= BORDER_SPACE + PAD_LEFT_RIGHT;
+            }
             ui_system_draw_text_with_clipping_indicator(mesh, glyph_atlas, text_pos, ui_string_to_string(widget.text_display), widget.text_alignment, bbox_intersection(box, clipping_box));
         }
     }
@@ -2042,13 +2061,6 @@ void container_element_render(
         // Render elements
         for (int i = 0; i < container.elements.size; i++) {
             container_element_render(&container.elements[i], clipping_box, y_offset + container.scroll_bar_y_offset, mesh, glyph_atlas);
-        }
-
-        if (container.layout == Layout_Type::LABELED_ITEMS) {
-            BBox label_box = box;
-            label_box.min.y = label_box.max.y - LINE_ITEM_HEIGHT;
-            label_box.max.x = label_box.min.x + LABEL_CHAR_COUNT_SIZE * char_size.x;
-            box_draw_label(label_box, ui_string_to_string(container.options.label_text), clipping_box);
         }
     }
 }
@@ -2155,9 +2167,7 @@ void container_element_find_mouse_hover_widget(Container_Element* element, int y
     Widget_Container* container = &ui_system.containers[element->element_index];
     y_offset += container->scroll_bar_y_offset;
     for (int i = 0; i < container->elements.size; i++) {
-        container_element_find_mouse_hover_widget(
-            &container->elements[i], y_offset + container->scroll_bar_y_offset, bbox_intersection(clipping_box, box), mouse_pos
-        );
+        container_element_find_mouse_hover_widget(&container->elements[i], y_offset, bbox_intersection(clipping_box, box), mouse_pos);
     }
 }
 
@@ -2373,7 +2383,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
             }
 
             int next_child_index = 0;
-            for (int j = 0; j < container.elements.size; j++) 
+            for (int j = 0; j < container.elements.size; j++)
             {
                 Container_Element& element = container.elements[j];
 
@@ -2419,7 +2429,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
     BBox client_box = window_box;
     BBox widget_box = window_box;
     {
-        container_element_gather_width_information_recursive(&root_element);
+        container_element_gather_width_information_recursive(&root_element, true);
         bool window_can_receive_keyboard_shortcut = ui_system.focused_widget_index == -1 && bbox_contains_point(window_box, mouse);
         if (window_can_receive_keyboard_shortcut)
         {
@@ -2616,34 +2626,35 @@ void imgui_test_entry()
 
         Container_Handle root_container;
         root_container.container_index = ui_system.window.root_container.element_index;
-        ui_system_push_label(root_container, "Hello IMGUI world!");
-        for (int i = 0; i < 4; i++)
-        {
-            const char* labels[3] = {
-                "Name",
-                "Surname",
-                "Address",
-            };
-            String& text = texts[i % 3];
-            auto update = ui_system_push_text_input(root_container, text);
-            if (update.text_was_changed) {
-                string_reset(&text);
-                string_append_string(&text, &update.new_text);
-            }
-        }
-        bool pressed = ui_system_push_button(root_container, "Frick me");
-        if (pressed) {
-            printf("Frick me was pressed!\n");
-        }
-        ui_system_push_text_input(root_container, string_create_static("Longer text than I wanted, lol"));
-        check_box_enabled = ui_system_push_checkbox(root_container, check_box_enabled);
-        pressed = ui_system_push_button(root_container, "Frick me");
-        if (pressed) {
-            printf("Another one was pressed!\n");
-        }
-        ui_system_push_text_input(root_container, string_create_static("Frank What why where"));
-        int_value = ui_system_push_int_input(root_container, int_value);
-        float_value = ui_system_push_float_input(root_container, float_value);
+        // ui_system_push_label(root_container, "Hello IMGUI world!");
+        ui_system_push_labeled_button(root_container, "Click for test", "Frigging");
+        // for (int i = 0; i < 4; i++)
+        // {
+        //     const char* labels[3] = {
+        //         "Name",
+        //         "Surname",
+        //         "Address",
+        //     };
+        //     String& text = texts[i % 3];
+        //     auto update = ui_system_push_text_input(root_container, text);
+        //     if (update.text_was_changed) {
+        //         string_reset(&text);
+        //         string_append_string(&text, &update.new_text);
+        //     }
+        // }
+        // bool pressed = ui_system_push_button(root_container, "Frick me");
+        // if (pressed) {
+        //     printf("Frick me was pressed!\n");
+        // }
+        // ui_system_push_text_input(root_container, string_create_static("Longer text than I wanted, lol"));
+        // check_box_enabled = ui_system_push_checkbox(root_container, check_box_enabled);
+        // pressed = ui_system_push_button(root_container, "Frick me");
+        // if (pressed) {
+        //     printf("Another one was pressed!\n");
+        // }
+        // ui_system_push_text_input(root_container, string_create_static("Frank What why where"));
+        // int_value = ui_system_push_int_input(root_container, int_value);
+        // float_value = ui_system_push_float_input(root_container, float_value);
 
         ui_system_end_frame_and_render(window, mesh, &glyph_atlas, input);
 
