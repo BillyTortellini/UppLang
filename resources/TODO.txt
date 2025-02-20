@@ -1,19 +1,27 @@
 
 
-Fix:
- * Fixed size width distribution! (Labels)
- * Collapsable Layout
-    Add feature that the first widget is the 'Label'
+Containers need to store their parent containers, so that scrolling can move up/down in hierarchy
 
- * Push/Pop active Container 
+Multiple windows on screen
+Z-Order with multiple windows (Clicking sets highest z order)
 
-Design: 
-    Symbol that differentiates it from button (Collapsed/opened) 
-    Left aligned text
-    If pressed, below a new container with indent appears
-    Arguably, Design could be different (Just symbol and text, or Border for all child-widgets)
-    In container widget the widget stores the container layout, now what?
-        Containers store their own layout, and container widget just uses the given one
+Resize options for windows
+Window Anchor to left/right/whatever
+
+
+TODO: 
+Window Update:
+ * Multi-Window support (Z-Order)
+ * Multiple Window-Position modes:
+    - Floating window (Current)
+    - Anchor to window side (Left or right, resizable side)
+    - Drop-Down (Anchor to some widget element, position usually bottom left, but depends on available space)
+ * Previous Frame Matching information (Hashtable + next element lookup)
+
+Container/Element/Window matching algorithm:
+So we need window matching, I guess
+ui_system_set_matching_info()
+ui_push_window(Window_Options)
 
 
 
@@ -22,17 +30,15 @@ Design:
 
 TODO in UI:
 -----------
- * More Widgets
-    - Collapsable Sub_Header
-    - Horizontal Seperator
- * Lists (Max-Size/Can grow/Background/Multi scroll-wheels)
- * Drop-Down menu for Enums (Something like an overlay window)
  * Multiple UI-Windows with z-order/other options
+ * Drop-Down menu for Enums (Something like an overlay window)
         
 
 
 UI-Ideas:
 ---------
+ * Simple data storage (E.g. store boolean, float, int, string, dynamic_array from last frame in last matched thingy)
+ * Scroll wheel with multiple Scroll bars should affect lowest one first
  * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
  * Label and Button-Groups, so labels can have the same width in same group
  * Vertical layout could use disable collapse on child-widgets
@@ -41,11 +47,31 @@ UI-Ideas:
  * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
  * Custom number formating (1 020 252 for integers)
+ * Maybe bring back max height for containerz
     
     
 
 Done:
 -----
+ * Reworked Drag-System (Window move, resize, scroll bar)
+ * Added Mulitple Windows, window matching
+ * Scroll-Bar refactor
+ * Container layout refactor
+ * Container padding + background color
+
+ * Fair height distribution with multiple lists!
+ * Multi-Scroll bar handling
+ * Subsections
+ * Bitmap writer sdf refactor
+ * Triangle sdf
+ * Fixed uninitialized normal-layout min-max
+ * Fixed error in line height
+ * Pixel perfect glyph + sdf drawing + offset
+ * Added hidden elements (Matching feature)
+
+ * Push/Pop active Container + Add 'counter' when pushing/popping container!
+ * Fixed size width distribution! (Vertical layout, maybe also box-layout!)
+
  * Fixed Bug where drag does not work outside of window
  * Text-Clipping Indicator (...)
  * Input Filtering for Number-Input

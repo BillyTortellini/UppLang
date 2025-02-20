@@ -58,7 +58,7 @@ float vector_length(const vec2& v) {
     return sqrtf(v.x*v.x + v.y*v.y);
 }
 
-float vector_length_sqared(const vec2& v) {
+float vector_length_squared(const vec2& v) {
     return v.x*v.x + v.y*v.y;
 }
 
@@ -67,7 +67,7 @@ float vector_distance_between(const vec2& v1, const vec2& v2) {
 }
 
 float vector_distance_between_squared(const vec2& v1, const vec2& v2) {
-    return vector_length_sqared(v1-v2);
+    return vector_length_squared(v1-v2);
 }
 
 vec2 vector_normalize(const vec2& v) {

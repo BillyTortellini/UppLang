@@ -3,6 +3,7 @@
 #include <initializer_list>
 #include "../utility/utils.hpp"
 #include "../math/scalars.hpp"
+#include <algorithm>
 
 template<typename T>
 struct Array
@@ -99,4 +100,9 @@ void array_bubble_sort(Array<T> array, bool (*in_order_fn)(T* a, T* b))
             }
         }
     }
+}
+
+template<typename T, typename Comparator>
+void array_sort(Array<T> array, Comparator comparator) {
+    std::sort(&array.data[0], &array.data[array.size], comparator);
 }
