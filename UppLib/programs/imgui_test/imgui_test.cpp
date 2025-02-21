@@ -839,6 +839,9 @@ vec4 vec4_color_from_code(const char* c_str)
 	return vec4_color_from_rgb(r, g, b);
 }
 
+const float WINDOW_RESIZE_RADIUS = 5;
+const float WINDOW_RESIZE_RADIUS_INSIDE_HEADER = 2;
+
 // Widget Sizes and Paddings
 const int PAD_TOP = 2;
 const int PAD_BOT = 1;
@@ -868,9 +871,13 @@ const int LIST_CONTAINER_MIN_CHAR_COUNT = 16;
 const int CHECKBOX_DISTANCE_FROM_LINE = 2;
 const int CHECKBOX_PADDING = 1;
 
+const int MIN_WINDOW_WIDTH = 60;
+const int MIN_WINDOW_HEIGHT = 40;
+
 // Colors
 const vec4 COLOR_WINDOW_BG = vec4_color_from_rgb(0x16, 0x85, 0x5B);
 const vec4 COLOR_WINDOW_BG_HEADER = vec4_color_from_rgb(0x62, 0xA1, 0x99);
+const vec4 COLOR_WINDOW_BORDER = vec4_color_from_rgb(0, 0, 0);
 const vec4 COLOR_LIST_BG = vec4_color_from_rgb(0x05, 0x50, 0x50);
 const vec4 COLOR_SCROLL_BG = vec4_color_from_rgb(0xCE, 0xCE, 0xCE);
 const vec4 COLOR_SCROLL_BAR = vec4_color_from_rgb(0x9D, 0x9D, 0x9D);
@@ -905,7 +912,7 @@ struct Window_Handle
 {
 	int window_index;
 	bool created_this_frame;
-	Container_Handle root_container;
+	Container_Handle container;
 };
 
 enum class Layout_Type
@@ -987,6 +994,7 @@ struct Widget_Container
 
 	Dynamic_Array<Container_Element> elements;
 	Dynamic_Array<UI_Matching_Info> matching_infos; // Includes hidden containers (For matching)
+	Container_Handle parent_container; // -1 if root of a window
 
 	int next_matching_index;
 	bool visited_this_frame;
@@ -1051,18 +1059,37 @@ struct Widget
 
 	// Matching information
 	Container_Handle parent_container;
+	int element_index_in_container; // Note: This is only valid after layout was done!
 	bool visited_this_frame;
 	bool created_this_frame;
 };
 
+enum class Window_Layout
+{
+	FLOAT,
+	ANCHOR_RIGHT,
+	DROPDOWN
+};
+
+struct Window_Style
+{
+	Window_Layout layout;
+	bool has_title_bar;
+	UI_String title;
+	ivec2 min_size;
+	union {
+		Widget_Handle dropdown_parent_widget;
+	} options;
+};
+
 struct UI_Window
 {
-	UI_String title;
+	Window_Style style;
 	BBox window_box;
 	int z_index;
-	Container_Element root_container;
-
 	bool visited_this_frame;
+	bool created_this_frame;
+	Container_Element root;
 };
 
 enum class Drag_Status
@@ -1087,6 +1114,7 @@ struct UI_System
 	bool pop_container_after_next_push;
 	int next_window_index;
 	int max_window_z_index;
+	int new_windows_this_frame_count;
 
 	// Layout info
 	int line_item_height;
@@ -1095,14 +1123,17 @@ struct UI_System
 
 	// Hover infos (-1 if no hover)
 	int mouse_hover_window_index;
+	int mouse_hover_closest_window_index; // Note: May not be window index, as resize is also active a little bit outside of window
 	int mouse_hover_container_index;
 	int mouse_hover_widget_index;
 	Drag_Status mouse_hover_drag_status; // If mouse hovers over draggable
+	ivec2 mouse_hover_resize_direction;
 
 	// Input Data
 	Drag_Status drag_status;
 	int drag_index;
-	bool last_cursor_was_drag;
+	Cursor_Icon_Type last_cursor_icon_type;
+	ivec2 resize_direction;
 	ivec2 drag_start_mouse_pos;
 	BBox drag_start_window_box;
 	int drag_start_bar_offset;
@@ -1148,7 +1179,7 @@ void ui_system_initialize(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* atlas_
 	ui_system.mouse_was_clicked = false;
 	ui_system.mouse_hover_widget_index = -1;
 	ui_system.focused_widget_index = -1;
-	ui_system.last_cursor_was_drag = false;
+	ui_system.last_cursor_icon_type = Cursor_Icon_Type::ARROW;
 
 	ui_system.line_editor = line_editor_make();
 	ui_system.input_string = string_create();
@@ -1294,6 +1325,7 @@ Widget_Handle ui_system_add_widget(bool is_hidden = false)
 			container.next_matching_index += 1;
 			widget.visited_this_frame = true;
 			widget.created_this_frame = false;
+			widget.element_index_in_container = -1;
 
 			Widget_Handle result;
 			result.created_this_frame = widget.created_this_frame;
@@ -1309,6 +1341,7 @@ Widget_Handle ui_system_add_widget(bool is_hidden = false)
 	new_widget.created_this_frame = true;
 	new_widget.visited_this_frame = true;
 	new_widget.parent_container = container_handle;
+	new_widget.element_index_in_container = -1;
 	dynamic_array_push_back(&ui_system.widgets, new_widget);
 
 	UI_Matching_Info matching_info;
@@ -1325,14 +1358,14 @@ Widget_Handle ui_system_add_widget(bool is_hidden = false)
 
 Container_Handle ui_system_add_container(Container_Layout layout, bool is_hidden = false)
 {
-	Container_Handle container_handle;
-	container_handle.container_index = ui_system.container_stack[ui_system.container_stack.size - 1].container_index;
+	Container_Handle parent_handle;
+	parent_handle.container_index = ui_system.container_stack[ui_system.container_stack.size - 1].container_index;
 	if (ui_system.pop_container_after_next_push) {
 		ui_system.container_stack.size -= 1;
 		ui_system.pop_container_after_next_push = false;
 	}
 
-	Widget_Container& parent = ui_system.containers[container_handle.container_index];
+	Widget_Container& parent = ui_system.containers[parent_handle.container_index];
 
 	// Check if we can match widget to previous frame
 	if (!parent.matching_failed_this_frame && parent.next_matching_index < parent.matching_infos.size)
@@ -1349,6 +1382,7 @@ Container_Handle ui_system_add_container(Container_Layout layout, bool is_hidden
 			container.layout = layout;
 			container.matching_failed_this_frame = false;
 			container.next_matching_index = 0;
+			container.parent_container = parent_handle;
 
 			Container_Handle result;
 			result.container_index = next_match.element_index;
@@ -1365,6 +1399,7 @@ Container_Handle ui_system_add_container(Container_Layout layout, bool is_hidden
 	dynamic_array_push_back(&parent.matching_infos, matching_info);
 
 	Widget_Container container;
+	container.parent_container = parent_handle;
 	container.elements = dynamic_array_create<Container_Element>();
 	container.matching_infos = dynamic_array_create<UI_Matching_Info>();
 	container.scroll_bar_info.has_scroll_bar = false;
@@ -1380,7 +1415,7 @@ Container_Handle ui_system_add_container(Container_Layout layout, bool is_hidden
 	return result;
 }
 
-Window_Handle ui_system_add_window(String window_title)
+Window_Handle ui_system_add_window(Window_Style style)
 {
 	Window_Handle window_handle;
 	if (ui_system.next_window_index < ui_system.windows.size) 
@@ -1399,24 +1434,20 @@ Window_Handle ui_system_add_window(String window_title)
 		container.matching_infos = dynamic_array_create<UI_Matching_Info>();
 		container.scroll_bar_info.has_scroll_bar = false;
 		container.scroll_bar_info.pixel_scroll_y = 0;
-		container.visited_this_frame = true;
-		container.matching_failed_this_frame = false;
-		container.next_matching_index = 0;
-		container.layout = container_layout_make_default();
-		container.layout.options.normal.scroll_bar_enabled = true;
 		dynamic_array_push_back(&ui_system.containers, container);
-		window_handle.root_container.container_index = ui_system.containers.size - 1;
 
 		UI_Window window;
-		window.root_container.is_widget = false;
-		window.root_container.element_index = ui_system.containers.size - 1;
+		window.root.is_widget = false;
+		window.root.element_index = ui_system.containers.size - 1;
 		window.z_index = ui_system.max_window_z_index + 1;
 		ui_system.max_window_z_index += 1;
 
 		ivec2 screen_size = ivec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
 		ivec2 default_size = ivec2(400, 300);
-		window.window_box.min = screen_size / 2 - default_size / 2;
-		window.window_box.max = window.window_box.min + default_size;
+		ivec2 offset = ivec2(1, -1) * ui_system.new_windows_this_frame_count * 20;
+		ui_system.new_windows_this_frame_count += 1;
+		window.window_box.min = screen_size / 2 - default_size / 2 + offset;
+		window.window_box.max = window.window_box.min + default_size + offset;
 
 		dynamic_array_push_back(&ui_system.windows, window);
 		window_handle.window_index = ui_system.windows.size - 1;
@@ -1425,18 +1456,55 @@ Window_Handle ui_system_add_window(String window_title)
 
 	UI_Window* window = &ui_system.windows[window_handle.window_index];
 	window->visited_this_frame = true;
-	window->title = ui_system_add_string(window_title);
-	window_handle.root_container.container_index = window->root_container.element_index;
+	window->created_this_frame = window_handle.created_this_frame;
+	window->style = style;
+	window_handle.container.container_index = window->root.element_index;
 
-	auto& container = ui_system.containers[window->root_container.element_index];
+	auto& container = ui_system.containers[window->root.element_index];
 	container.visited_this_frame = true;
 	container.matching_failed_this_frame = false;
 	container.next_matching_index = 0;
+	container.parent_container.container_index = -1;
+	container.layout = container_layout_make_default();
+	container.layout.options.normal.scroll_bar_enabled = true;
+	container.layout.padding = 2;
 
 	return window_handle;
 }
 
 
+
+Window_Style window_style_make_floating(const char* title)
+{
+	Window_Style result;
+	result.has_title_bar = true;
+	result.title = ui_system_add_string(string_create_static(title));
+	result.layout = Window_Layout::FLOAT;
+	result.min_size = ivec2(60, 40);
+	return result;
+}
+
+Window_Style window_style_make_anchored(const char* title)
+{
+	Window_Style result;
+	result.has_title_bar = true;
+	result.title = ui_system_add_string(string_create_static(title));
+	result.layout = Window_Layout::ANCHOR_RIGHT;
+	result.min_size = ivec2(60, 40);
+	return result;
+}
+
+Window_Style window_style_make_dropdown(Widget_Handle parent_widget, int min_width)
+{
+	Window_Style result;
+	result.has_title_bar = false;
+	result.title.length = 0;
+	result.title.start_index = 0;
+	result.layout = Window_Layout::DROPDOWN;
+	result.options.dropdown_parent_widget = parent_widget;
+	result.min_size = ivec2(min_width, 0);
+	return result;
+}
 
 Container_Layout container_layout_make_default()
 {
@@ -1774,6 +1842,45 @@ UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_n
 }
 
 
+
+BBox ui_window_get_title_area(int window_index)
+{
+	auto& window = ui_system.windows[window_index];
+	BBox box = ui_system.windows[window_index].window_box;
+	if (!window.style.has_title_bar) {
+		box.min.y = box.max.y;
+		return box;
+	}
+
+	box.max.y -= BORDER_SPACE;
+	box.min.y = box.max.y - ui_system.line_item_height;
+	box.min.x += BORDER_SPACE;
+	box.max.x -= BORDER_SPACE;
+	return box;
+}
+
+BBox ui_window_get_client_area(int window_index)
+{
+	auto& window = ui_system.windows[window_index];
+	BBox box = ui_system.windows[window_index].window_box;
+	box.max.y -= BORDER_SPACE;
+	if (window.style.has_title_bar) {
+		box.max.y -= ui_system.line_item_height;
+	}
+	box.min.y += BORDER_SPACE;
+	box.min.x += BORDER_SPACE;
+	box.max.x -= BORDER_SPACE;
+	return box;
+}
+
+Window_Handle window_handle_create_from_index(int index) {
+	auto& window = ui_system.windows[index];
+	Window_Handle handle;
+	handle.window_index = index;
+	handle.created_this_frame = false;
+	handle.container.container_index = window.root.element_index;
+	return handle;
+}
 
 void ui_system_draw_text_with_clipping_indicator(
 	Mesh* mesh, Glyph_Atlas_* glyph_atlas, ivec2 position, String text, Text_Alignment alignment, BBox clipping_box)
@@ -2547,7 +2654,7 @@ void ui_element_find_mouse_hover_infos_recursive(Container_Element* element, ive
 
 	// Check if we hover over scroll bar
 	Scroll_Bar_Info scroll_info = container->scroll_bar_info;
-	if (scroll_info.has_scroll_bar && ui_system.mouse_hover_drag_status == Drag_Status::NONE) 
+	if (scroll_info.has_scroll_bar) 
 	{
 		BBox scroll_area = box;
 		scroll_area.min.x = scroll_area.max.x - SCROLL_BAR_WIDTH;
@@ -2573,35 +2680,105 @@ void ui_element_find_mouse_hover_infos_recursive(Container_Element* element, ive
 void ui_system_find_mouse_hover_infos(ivec2 mouse_pos)
 {
 	ui_system.mouse_hover_window_index = -1;
+	ui_system.mouse_hover_closest_window_index = -1;
 	ui_system.mouse_hover_container_index = -1;
 	ui_system.mouse_hover_widget_index = -1;
 	ui_system.mouse_hover_drag_status = Drag_Status::NONE;
+	ui_system.mouse_hover_resize_direction = ivec2(0);
 
 	// Find which window we are hovering over
+	float min_resize_distance = 1000000.0f;
 	for (int i = ui_system.window_z_sorting.size - 1; i >= 0; i--)
 	{
 		int window_index = ui_system.window_z_sorting[i];
 		UI_Window& window = ui_system.windows[window_index];
+
+		// Check for resize (Hovers over border)
+		auto box = window.window_box;
+		float distance_left  = distance_point_to_line_segment(vec2(mouse_pos.x, mouse_pos.y), vec2(box.min.x, box.min.y), vec2(box.min.x, box.max.y));
+		float distance_right = distance_point_to_line_segment(vec2(mouse_pos.x, mouse_pos.y), vec2(box.max.x, box.min.y), vec2(box.max.x, box.max.y));
+		float distance_top   = distance_point_to_line_segment(vec2(mouse_pos.x, mouse_pos.y), vec2(box.min.x, box.max.y), vec2(box.max.x, box.max.y));
+		float distance_bot   = distance_point_to_line_segment(vec2(mouse_pos.x, mouse_pos.y), vec2(box.min.x, box.min.y), vec2(box.max.x, box.min.y));
+
+		ivec2 resize_direction = ivec2(0);
+		if (distance_left <= distance_right && distance_left <= WINDOW_RESIZE_RADIUS) {
+			resize_direction.x = -1;
+		}
+		else if (distance_right < distance_left && distance_right <= WINDOW_RESIZE_RADIUS) {
+			resize_direction.x = 1;
+		}
+		if (distance_top <= distance_bot && distance_top <= WINDOW_RESIZE_RADIUS) {
+			resize_direction.y = 1;
+		}
+		else if (distance_bot < distance_top && distance_bot <= WINDOW_RESIZE_RADIUS) {
+			resize_direction.y = -1;
+		}
+
+		// Filter valid resize options
+		switch (window.style.layout)
+		{
+		case Window_Layout::FLOAT: break;
+		case Window_Layout::DROPDOWN: resize_direction = ivec2(0); break;
+		case Window_Layout::ANCHOR_RIGHT: {
+			resize_direction.y = 0;
+			if (resize_direction.x != -1) {
+				resize_direction.x = 0;
+			}
+			break;
+		}
+		default: panic("");
+		}
+
+		float min_dist = math_minimum(math_minimum(distance_left, distance_right), math_minimum(distance_top, distance_bot));
+		if (min_dist < min_resize_distance && (resize_direction.x != 0 || resize_direction.y != 0)) {
+			ui_system.mouse_hover_closest_window_index = window_index;
+			ui_system.mouse_hover_resize_direction = resize_direction;
+			min_resize_distance = min_dist;
+		}
+
+		// Terminate if mouse is completely inside window
 		if (bbox_contains_point(window.window_box, mouse_pos)) 
 		{
 			ui_system.mouse_hover_window_index = window_index;
+			ui_system.mouse_hover_closest_window_index = window_index; // Note: closest_window_index also respects z-order
 
-			BBox header_box = window.window_box;
-			header_box.min.y = header_box.max.y - ui_system.line_item_height;
-			if (bbox_contains_point(header_box, mouse_pos)) {
-				ui_system.mouse_hover_drag_status = Drag_Status::WINDOW_MOVE;
+			// Check for window move
+			if (window.style.has_title_bar && window.style.layout == Window_Layout::FLOAT)
+			{
+				BBox header_box = ui_window_get_title_area(window_index);
+				// Window hove has priority over Window-Resize at a specific distance
+				if (bbox_contains_point(header_box, mouse_pos) && min_dist > WINDOW_RESIZE_RADIUS_INSIDE_HEADER) {
+					ui_system.mouse_hover_drag_status = Drag_Status::WINDOW_MOVE;
+				}
 			}
 			break;
 		}
 	}
+
+	if (min_resize_distance <= WINDOW_RESIZE_RADIUS && 
+		(ui_system.mouse_hover_resize_direction.x != 0 || ui_system.mouse_hover_resize_direction.y != 0)) 
+	{
+		ui_system.mouse_hover_drag_status = Drag_Status::WINDOW_RESIZE;
+	}
+	else {
+		ui_system.mouse_hover_resize_direction = ivec2(0);
+	}
+
 	if (ui_system.mouse_hover_window_index == -1) return;
 
 	// Search window children for further hover info
-	UI_Window& hover_window = ui_system.windows[ui_system.mouse_hover_window_index];
-	BBox client_box = hover_window.window_box;
-	client_box.max.y -= ui_system.line_item_height;
-	ui_element_find_mouse_hover_infos_recursive(&hover_window.root_container, mouse_pos, client_box, 0);
+	auto& hover_window = ui_system.windows[ui_system.mouse_hover_window_index];
+	ui_element_find_mouse_hover_infos_recursive(
+		&hover_window.root, mouse_pos, ui_window_get_client_area(ui_system.mouse_hover_window_index), 0
+	);
 }
+
+struct Window_Z_Comparator
+{
+	bool operator()(int a, int b) {
+		return ui_system.windows[a].z_index <= ui_system.windows[b].z_index;
+	}
+};
 
 void ui_system_start_frame(Input* input)
 {
@@ -2617,6 +2794,7 @@ void ui_system_start_frame(Input* input)
 	ui_system.text_changed_widget_index = -1;
 	ui_system.mouse_was_clicked = mouse_pressed;
 	ui_system.next_window_index = 0;
+	ui_system.new_windows_this_frame_count = 0;
 
 	if (!mouse_down) {
 		ui_system.drag_status = Drag_Status::NONE;
@@ -2625,11 +2803,46 @@ void ui_system_start_frame(Input* input)
 	// Find mouse hover 
 	ui_system_find_mouse_hover_infos(mouse);
 
+	// Move window abover all others if mouse is pressed on it
+	if (ui_system.mouse_hover_window_index != -1 && mouse_pressed) {
+		auto& hover_window = ui_system.windows[ui_system.mouse_hover_window_index];
+		hover_window.z_index = ui_system.max_window_z_index + 1;
+		ui_system.max_window_z_index += 1;
+		dynamic_array_sort(&ui_system.window_z_sorting, Window_Z_Comparator());
+		ui_system_find_mouse_hover_infos(mouse);
+	}
+
 	// Handle mouse-wheel input
-	if (ui_system.mouse_hover_container_index != -1 && ui_system.drag_status == Drag_Status::NONE) {
-		auto& scroll_info = ui_system.containers[ui_system.mouse_hover_container_index].scroll_bar_info;
-		if (scroll_info.has_scroll_bar) {
-			scroll_info.pixel_scroll_y -= input->mouse_wheel_delta * MOUSE_WHEEL_SENSITIVITY;
+	if (ui_system.mouse_hover_container_index != -1 && ui_system.drag_status == Drag_Status::NONE) 
+	{
+		int container_index = ui_system.mouse_hover_container_index;
+		int pixel_scroll_value = input->mouse_wheel_delta * MOUSE_WHEEL_SENSITIVITY;
+		bool scroll_down = pixel_scroll_value < 0;
+		pixel_scroll_value = math_absolute(pixel_scroll_value);
+
+		while (pixel_scroll_value > 0 && container_index != -1)
+		{
+			auto& container = ui_system.containers[container_index];
+			auto& scroll_info = container.scroll_bar_info;
+
+			if (scroll_info.has_scroll_bar) 
+			{
+				if (scroll_down) 
+				{
+					int movable = scroll_info.max_pixel_scroll_offset - scroll_info.pixel_scroll_y;
+					scroll_info.pixel_scroll_y += math_minimum(pixel_scroll_value, movable);
+					pixel_scroll_value = math_maximum(0, pixel_scroll_value - movable);
+				}
+				else 
+				{
+					int movable = scroll_info.pixel_scroll_y;
+					scroll_info.pixel_scroll_y -= math_minimum(pixel_scroll_value, movable);
+					pixel_scroll_value = math_maximum(0, pixel_scroll_value - movable);
+				}
+			}
+			scroll_info.pixel_scroll_y = math_clamp(scroll_info.pixel_scroll_y, 0, scroll_info.max_pixel_scroll_offset);
+
+			container_index = container.parent_container.container_index;
 		}
 	}
 
@@ -2638,11 +2851,15 @@ void ui_system_start_frame(Input* input)
 	{
 		ui_system.drag_start_mouse_pos = mouse;
 		ui_system.drag_status = ui_system.mouse_hover_drag_status;
-		ui_system.drag_start_window_box = ui_system.windows[ui_system.mouse_hover_window_index].window_box;
+		ui_system.drag_start_window_box = ui_system.windows[ui_system.mouse_hover_closest_window_index].window_box;
 		switch (ui_system.drag_status)
 		{
-		case Drag_Status::WINDOW_MOVE: 
-		case Drag_Status::WINDOW_RESIZE: ui_system.drag_index = ui_system.mouse_hover_window_index; break;
+		case Drag_Status::WINDOW_MOVE: ui_system.drag_index = ui_system.mouse_hover_window_index; break;
+		case Drag_Status::WINDOW_RESIZE: {
+			ui_system.drag_index = ui_system.mouse_hover_closest_window_index;
+			ui_system.resize_direction = ui_system.mouse_hover_resize_direction;
+			break;
+		}
 		case Drag_Status::SCROLL_BAR: {
 			ui_system.drag_index = ui_system.mouse_hover_container_index; 
 			ui_system.drag_start_bar_offset = ui_system.containers[ui_system.mouse_hover_container_index].scroll_bar_info.bar_offset;
@@ -2677,15 +2894,25 @@ void ui_system_start_frame(Input* input)
 	}
 	case Drag_Status::WINDOW_RESIZE:
 	{
-		// if (window->window_resize_active)
-		// {
-		// 	ivec2 new_size = window->window_size_at_resize_start + (mouse - ui_system.drag_start_mouse_pos) * ivec2(1, -1);
-		// 	new_size.x = math_maximum(new_size.x, 50);
-		// 	new_size.y = math_maximum(new_size.y, 50);
-		// 	ivec2 top_left = window->position + window->size * ivec2(0, 1);
-		// 	window->size = new_size;
-		// 	window->position = top_left - new_size * ivec2(0, 1);
-		// }
+		BBox& box = ui_system.windows[ui_system.drag_index].window_box;
+		box = ui_system.drag_start_window_box;
+		int width = box.max.x - box.min.x;
+		int height = box.max.y - box.min.y;
+
+		ivec2 offset = mouse - ui_system.drag_start_mouse_pos;
+		ivec2 dir = ui_system.resize_direction;
+		if (dir.x == 1) {
+			box.max.x = box.min.x + math_maximum(width + offset.x, MIN_WINDOW_WIDTH);
+		}
+		else if (dir.x == -1) {
+			box.min.x = box.max.x - math_maximum(width - offset.x, MIN_WINDOW_WIDTH);
+		}
+		if (dir.y == 1) {
+			box.max.y = box.min.y + math_maximum(height + offset.y, MIN_WINDOW_HEIGHT);
+		}
+		else if (dir.y == -1) {
+			box.min.y = box.max.y - math_maximum(height - offset.y, MIN_WINDOW_HEIGHT);
+		}
 		break;
 	}
 	case Drag_Status::NONE: break;
@@ -2696,26 +2923,25 @@ void ui_system_start_frame(Input* input)
 	if (ui_system.mouse_hover_window_index != -1)
 	{
 		auto& window = ui_system.windows[ui_system.mouse_hover_window_index];
-		BBox header_box = window.window_box;
-		header_box.min.y = header_box.max.y - ui_system.line_item_height;
+		BBox header_box = ui_window_get_title_area(ui_system.mouse_hover_window_index);
 		if (bbox_contains_point(header_box, mouse)) 
 		{
 			int width  = window.window_box.max.x - window.window_box.min.x;
 			int height = window.window_box.max.y - window.window_box.min.y;
 			if (input->key_pressed[(int)Key_Code::X]) {
-				width = window.root_container.min_width_without_collapse;
+				width = window.root.min_width_without_collapse + 2 * BORDER_SPACE;
 			}
 			else if (input->key_pressed[(int)Key_Code::C]) {
-				width = window.root_container.min_width_collapsed;
+				width = window.root.min_width_collapsed + 2 * BORDER_SPACE;
 			}
 			else if (input->key_pressed[(int)Key_Code::V]) {
-				width = window.root_container.min_width_for_line_merge;
+				width = window.root.min_width_for_line_merge + 2 * BORDER_SPACE;
 			}
 			if (input->key_pressed[(int)Key_Code::Y]) {
-				height = window.root_container.min_height + ui_system.line_item_height;
+				height = window.root.min_height + ui_system.line_item_height + 2 * BORDER_SPACE;
 			}
 			if (input->key_pressed[(int)Key_Code::B]) {
-				height = window.root_container.wanted_height + ui_system.line_item_height;
+				height = window.root.wanted_height + ui_system.line_item_height + 2 * BORDER_SPACE;
 			}
 
 			window.window_box.max.x = window.window_box.min.x + width;
@@ -2785,13 +3011,6 @@ void ui_system_start_frame(Input* input)
 	}
 }
 
-struct Window_Z_Comparator
-{
-	bool operator()(int a, int b) {
-		return ui_system.windows[a].z_index <= ui_system.windows[b].z_index;
-	}
-};
-
 void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atlas_* glyph_atlas, Input* input)
 {
 	bool mouse_down = input->mouse_down[(int)Mouse_Key_Code::LEFT];
@@ -2821,6 +3040,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 			else {
 				moved_container_indices[i] = -1;
 				dynamic_array_destroy(&container.elements);
+				dynamic_array_destroy(&container.matching_infos);
 			}
 		}
 		dynamic_array_rollback_to_size(&ui_system.containers, next_container_index);
@@ -2833,6 +3053,7 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 		{
 			auto& widget = ui_system.widgets[i];
 			widget.created_this_frame = false;
+			widget.element_index_in_container = -1;
 			if (widget.visited_this_frame) {
 				widget.visited_this_frame = false;
 				ui_system.widgets[next_widget_index] = widget;
@@ -2859,11 +3080,15 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 			if (window.visited_this_frame)
 			{
 				window.visited_this_frame = false;
-				assert(!window.root_container.is_widget, "");
-				window.root_container.element_index = moved_container_indices[window.root_container.element_index];
+				assert(!window.root.is_widget, "");
+				window.root.element_index = moved_container_indices[window.root.element_index];
 				dynamic_array_push_back(&ui_system.window_z_sorting, next_window_index);
 				min_z_index = math_minimum(min_z_index, window.z_index);
 				max_z_index = math_maximum(max_z_index, window.z_index);
+				if (window.style.layout == Window_Layout::DROPDOWN) {
+					window.style.options.dropdown_parent_widget.widget_index = 
+						moved_widget_indices[window.style.options.dropdown_parent_widget.widget_index];
+				}
 
 				ui_system.windows[next_window_index] = window;
 				moved_window_indices[i] = next_window_index;
@@ -2889,6 +3114,10 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 			container.matching_failed_this_frame = false;
 			container.next_matching_index = 0;
 
+			if (container.parent_container.container_index != -1) {
+				container.parent_container.container_index = moved_container_indices[container.parent_container.container_index];
+			}
+
 			// Update matching infos + create visible elements array
 			int next_child_index = 0;
 			dynamic_array_reset(&container.elements);
@@ -2905,7 +3134,8 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 				}
 
 				// Compact
-				if (new_index != -1) {
+				if (new_index != -1) 
+				{
 					matching_info.element_index = new_index;
 					container.matching_infos[next_child_index] = matching_info;
 					next_child_index += 1;
@@ -2915,6 +3145,10 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 					element.is_widget = matching_info.is_widget;
 					element.element_index = matching_info.element_index;
 					dynamic_array_push_back(&container.elements, element);
+
+					if (element.is_widget) {
+						ui_system.widgets[element.element_index].element_index_in_container = element.element_index;
+					}
 				}
 			}
 			dynamic_array_rollback_to_size(&container.matching_infos, next_child_index);
@@ -2945,14 +3179,56 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 	for (int window_index = 0; window_index < ui_system.windows.size; window_index++)
 	{
 		UI_Window* window = &ui_system.windows[window_index];
-		Container_Element& root_element = window->root_container;
-		BBox& window_box = window->window_box;
-		BBox client_box = window_box;
-		client_box.max.y -= ui_system.line_item_height;
-		window->root_container.box = client_box;
+		switch (window->style.layout)
+		{
+		case Window_Layout::FLOAT: break;
+		case Window_Layout::DROPDOWN: {
+			continue;
+		}
+		case Window_Layout::ANCHOR_RIGHT: 
+		{
+			BBox& box = window->window_box;
+			int width = box.max.x - box.min.x;
+			box = BBox(ivec2(0), screen_size);
+			box.min.x = box.max.x - width;
+			break;
+		}
+		default: panic("");
+		}
+
+		Container_Element& root_element = window->root;
+		BBox client_box = ui_window_get_client_area(window_index);
+		window->root.box = client_box;
 
 		container_element_gather_width_information_recursive(&root_element, true);
 		container_element_do_horizontal_layout_and_find_height(&root_element, client_box.min.x, client_box.max.x - client_box.min.x);
+		container_element_do_vertical_layout(&root_element, client_box.max.y, client_box.max.y - client_box.min.y);
+	}
+
+	// Layout windows with DROPDOWN style (Require widget positions of other windows)
+	for (int window_index = 0; window_index < ui_system.windows.size; window_index++)
+	{
+		UI_Window* window = &ui_system.windows[window_index];
+		if (window->style.layout != Window_Layout::DROPDOWN) continue;
+
+		Container_Element& root_element = window->root;
+		container_element_gather_width_information_recursive(&root_element, true);
+
+		// Set window position + size
+		Widget& parent_widget = ui_system.widgets[window->style.options.dropdown_parent_widget.widget_index];
+		Container_Element& element = ui_system.containers[parent_widget.parent_container.container_index].elements[parent_widget.element_index_in_container];
+
+		ivec2 pos = element.box.min;
+		int width = math_maximum(window->style.min_size.x, element.box.max.x - element.box.min.x);
+		BBox& client_box = window->root.box;
+
+		client_box.min.x = pos.x + BORDER_SPACE;
+		client_box.max.x = pos.x + width + BORDER_SPACE;
+		container_element_do_horizontal_layout_and_find_height(&root_element, client_box.min.x, client_box.max.x - client_box.min.x);
+
+		int height = math_maximum(window->style.min_size.y, window->root.wanted_height);
+		client_box.max.y = pos.y;
+		client_box.min.y = pos.y - height;
 		container_element_do_vertical_layout(&root_element, client_box.max.y, client_box.max.y - client_box.min.y);
 	}
 
@@ -2961,45 +3237,76 @@ void ui_system_end_frame_and_render(Window* whole_window, Mesh* mesh, Glyph_Atla
 
 	// Update mouse cursor
 	{
-		bool mouse_hovers_over_clickable = ui_system.drag_status != Drag_Status::NONE;
-		if (ui_system.mouse_hover_widget_index != -1) {
-			Widget& widget = ui_system.widgets[ui_system.mouse_hover_widget_index];
-			if (widget.is_clickable) {
-				mouse_hovers_over_clickable = true;
+		Cursor_Icon_Type icon = Cursor_Icon_Type::ARROW;
+
+		Drag_Status drag_status = ui_system.drag_status;
+		ivec2 resize_dir = ui_system.resize_direction;
+		if (ui_system.drag_status == Drag_Status::NONE)
+		{
+			if (ui_system.mouse_hover_widget_index != -1) {
+				Widget& widget = ui_system.widgets[ui_system.mouse_hover_widget_index];
+				if (widget.is_clickable) {
+					icon = Cursor_Icon_Type::HAND;
+				}
+				if (widget.can_obtain_text_input) {
+					icon = Cursor_Icon_Type::IBEAM;
+				}
 			}
-		}
-		if (ui_system.mouse_hover_drag_status != Drag_Status::NONE) {
-			mouse_hovers_over_clickable = true;
+			else if (ui_system.mouse_hover_drag_status != Drag_Status::NONE) {
+				drag_status = ui_system.mouse_hover_drag_status;
+				resize_dir = ui_system.mouse_hover_resize_direction;
+			}
 		}
 
-		// Set mouse cursor
-		if (mouse_hovers_over_clickable) {
-			ui_system.last_cursor_was_drag = true;
-			window_set_cursor_icon(whole_window, Cursor_Icon_Type::HAND);
-		}
-		else {
-			if (ui_system.last_cursor_was_drag) {
-				ui_system.last_cursor_was_drag = false;
-				window_set_cursor_icon(whole_window, Cursor_Icon_Type::ARROW);
+		if (drag_status != Drag_Status::NONE)
+		{
+			if (drag_status == Drag_Status::WINDOW_RESIZE)
+			{
+				ivec2 dir = resize_dir;
+				if (dir.x == 0 && dir.y != 0) {
+					icon = Cursor_Icon_Type::SIZE_VERTICAL;
+				}
+				else if (dir.y == 0 && dir.x != 0) {
+					icon = Cursor_Icon_Type::SIZE_HORIZONTAL;
+				}
+				else if (dir.x != 0 && dir.y != 0 && dir.x + dir.y == 0) {
+					icon = Cursor_Icon_Type::SIZE_SOUTHEAST;
+				}
+				else {
+					icon = Cursor_Icon_Type::SIZE_NORTHEAST;
+				}
 			}
+			else {
+				icon = Cursor_Icon_Type::HAND;
+			}
+		}
+
+		if (icon != ui_system.last_cursor_icon_type) {
+			window_set_cursor_icon(whole_window, icon);
+			ui_system.last_cursor_icon_type = icon;
 		}
 	}
 
 	// Render
 	for (int i = 0; i < ui_system.window_z_sorting.size; i++)
 	{
-		UI_Window& window = ui_system.windows[ui_system.window_z_sorting[i]];
+		int window_index = ui_system.window_z_sorting[i];
+		UI_Window& window = ui_system.windows[window_index];
 		BBox window_box = window.window_box;
-		BBox header_box = window_box;
-		header_box.min.y = header_box.max.y - ui_system.line_item_height;
+		BBox client_box = ui_window_get_client_area(window_index);
 
 		// Render Window + widgets
-		mesh_push_box(mesh, header_box, COLOR_WINDOW_BG_HEADER);
-		mesh_push_box(mesh, window.root_container.box, COLOR_WINDOW_BG);
-		mesh_push_text_clipped(
-			mesh, glyph_atlas, ui_string_to_string(window.title), header_box.min + ivec2(BORDER_SPACE) + ivec2(PAD_LEFT_RIGHT, PAD_BOT), header_box
-		);
-		container_element_render(&window.root_container, window.root_container.box, 0, mesh, glyph_atlas);
+		mesh_push_inner_border_clipped(mesh, window_box, window_box, COLOR_WINDOW_BORDER, BORDER_SPACE);
+		if (window.style.has_title_bar) {
+			BBox header_box = ui_window_get_title_area(window_index);
+			mesh_push_box(mesh, header_box, COLOR_WINDOW_BG_HEADER);
+			mesh_push_text_clipped(
+				mesh, glyph_atlas, ui_string_to_string(window.style.title), 
+				header_box.min + ivec2(BORDER_SPACE) + ivec2(PAD_LEFT_RIGHT, PAD_BOT), header_box
+			);
+		}
+		mesh_push_box(mesh, client_box, COLOR_WINDOW_BG);
+		container_element_render(&window.root, window.root.box, 0, mesh, glyph_atlas);
 	}
 }
 
@@ -3133,85 +3440,91 @@ void imgui_test_entry()
 
 		ui_system_start_frame(input);
 
-		Window_Handle window_handle = ui_system_add_window(string_create_static("Test-Window"));
-		ui_system_push_active_container(window_handle.root_container, false);
-
-		// if (ui_system_push_button("Test, lol")) {
-		// 	printf("Test was clicked\n");
-		// }
-
-		UI_Subsection_Info info = ui_system_push_subsection(subsection_status, "Status", false);
-		subsection_status = info.enabled;
-		if (subsection_status) {
-			ui_system_push_active_container(info.container, false);
-			SCOPE_EXIT(ui_system_pop_active_container());
-			ui_system_push_next_component_label("Stack:");
-			ui_system_push_text_input(string_create_static("upp_main"));
-		}
-
-		info = ui_system_push_subsection(subsection_breakpoints, "Breakpoints", true);
-		subsection_breakpoints = info.enabled;
-		if (subsection_breakpoints) {
-			ui_system_push_active_container(info.container, false);
-			SCOPE_EXIT(ui_system_pop_active_container());
-
-			ui_system_push_label("Bp 1 at line #15", false);
-			ui_system_push_label("Bp 2 at line #105", false);
-			ui_system_push_label("Bp 3 at line #1", false);
-			ui_system_push_label("Bp 4 at line #32", false);
-			ui_system_push_label("Bp 5 at line #23", false);
-			ui_system_push_label("Bp 5 at line #23", false);
-			ui_system_push_label("Bp 5 at line #23", false);
-			ui_system_push_label("Bp 9 at line #1027", false);
-		}
-
-		info = ui_system_push_subsection(subsection_watch_values, "Watch-Values", true);
-		subsection_watch_values = info.enabled;
-		if (subsection_watch_values) {
-			ui_system_push_active_container(info.container, false);
-			SCOPE_EXIT(ui_system_pop_active_container());
-
-			for (int i = 0; i < watch_values.size; i++) {
-				auto value = watch_values[i];
-				ui_system_push_label(value.name.characters, false);
-			}
-			Text_Input_State input = ui_system_push_text_input(string_create_static("New value"));
-			if (input.text_was_changed) {
-				Watch_Value new_value;
-				new_value.name = string_copy(input.new_text);
-				new_value.type_id = 15;
-				dynamic_array_push_back(&watch_values, new_value);
-			}
-		}
-		ui_system_push_button("Test, lol");
-
-		ui_system_push_label("Hello IMGUI world!", false);
-		ui_system_push_label( "Test label to check if render works", false);
-		ui_system_push_next_component_label("Click for test");
-		ui_system_push_button("Click me!");
-		for (int i = 0; i < 4; i++)
+		// Test window
+		if (true)
 		{
-		    const char* labels[3] = {
-		        "Name",
-		        "Surname",
-		        "Address",
-		    };
-		    ui_system_push_next_component_label(labels[i % 3]);
-		    String& text = texts[i % 3];
-		    auto update = ui_system_push_text_input(text);
-		    if (update.text_was_changed) {
-		        string_reset(&text);
-		        string_append_string(&text, &update.new_text);
-		    }
+			Window_Handle window_handle = ui_system_add_window(window_style_make_anchored("Test-Window"));
+			ui_system_push_active_container(window_handle.container, false);
+
+			UI_Subsection_Info info = ui_system_push_subsection(subsection_status, "Status", false);
+			subsection_status = info.enabled;
+			if (subsection_status) {
+				ui_system_push_active_container(info.container, false);
+				SCOPE_EXIT(ui_system_pop_active_container());
+				ui_system_push_next_component_label("Stack:");
+				ui_system_push_text_input(string_create_static("upp_main"));
+			}
+
+			info = ui_system_push_subsection(subsection_breakpoints, "Breakpoints", true);
+			subsection_breakpoints = info.enabled;
+			if (subsection_breakpoints) {
+				ui_system_push_active_container(info.container, false);
+				SCOPE_EXIT(ui_system_pop_active_container());
+
+				ui_system_push_label("Bp 1 at line #15", false);
+				ui_system_push_label("Bp 2 at line #105", false);
+				ui_system_push_label("Bp 3 at line #1", false);
+				ui_system_push_label("Bp 4 at line #32", false);
+				ui_system_push_label("Bp 5 at line #23", false);
+				ui_system_push_label("Bp 5 at line #23", false);
+				ui_system_push_label("Bp 5 at line #23", false);
+				ui_system_push_label("Bp 9 at line #1027", false);
+			}
+
+			info = ui_system_push_subsection(subsection_watch_values, "Watch-Values", true);
+			subsection_watch_values = info.enabled;
+			if (subsection_watch_values) {
+				ui_system_push_active_container(info.container, false);
+				SCOPE_EXIT(ui_system_pop_active_container());
+
+				for (int i = 0; i < watch_values.size; i++) {
+					auto value = watch_values[i];
+					ui_system_push_label(value.name.characters, false);
+				}
+				Text_Input_State input = ui_system_push_text_input(string_create_static("New value"));
+				if (input.text_was_changed) {
+					Watch_Value new_value;
+					new_value.name = string_copy(input.new_text);
+					new_value.type_id = 15;
+					dynamic_array_push_back(&watch_values, new_value);
+				}
+			}
+			ui_system_push_button("Test, lol");
+
+			ui_system_push_label("Hello IMGUI world!", false);
+			ui_system_push_label("Test label to check if render works", false);
+			ui_system_push_next_component_label("Click for test");
+			ui_system_push_button("Click me!");
+			for (int i = 0; i < 4; i++)
+			{
+				const char* labels[3] = {
+					"Name",
+					"Surname",
+					"Address",
+				};
+				ui_system_push_next_component_label(labels[i % 3]);
+				String& text = texts[i % 3];
+				auto update = ui_system_push_text_input(text);
+				if (update.text_was_changed) {
+					string_reset(&text);
+					string_append_string(&text, &update.new_text);
+				}
+			}
+			bool pressed = ui_system_push_button("Frick me");
+			if (pressed) {
+				printf("Frick me was pressed!\n");
+			}
+			pressed = ui_system_push_button("Frick me");
+			if (pressed) {
+				printf("Another one was pressed!\n");
+			}
 		}
-		bool pressed = ui_system_push_button("Frick me");
-		if (pressed) {
-		    printf("Frick me was pressed!\n");
-		}
-		pressed = ui_system_push_button("Frick me");
-		if (pressed) {
-		    printf("Another one was pressed!\n");
-		}
+
+		Window_Handle new_window = ui_system_add_window(window_style_make_floating("Dropdown parent window"));
+		ui_system_push_active_container(new_window.container, false);
+		ui_system_push_button("Hello there");
+		ui_system_push_button("Hello there");
+		ui_system_push_button("Hello there");
 
 		ui_system_end_frame_and_render(window, mesh, &glyph_atlas, input);
 

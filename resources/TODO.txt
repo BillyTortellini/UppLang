@@ -1,58 +1,50 @@
 
+Add drop-down example, do correct handling of mouse clicks and other things (Builder code)
 
-Containers need to store their parent containers, so that scrolling can move up/down in hierarchy
-
-Multiple windows on screen
-Z-Order with multiple windows (Clicking sets highest z order)
-
-Resize options for windows
-Window Anchor to left/right/whatever
-
+Move drop-down list where enough space is available, maybe disable things
+Add Widget-Style struct, which is passed to add_widget (Like container/window style)
 
 TODO: 
 Window Update:
- * Multi-Window support (Z-Order)
  * Multiple Window-Position modes:
     - Floating window (Current)
     - Anchor to window side (Left or right, resizable side)
     - Drop-Down (Anchor to some widget element, position usually bottom left, but depends on available space)
- * Previous Frame Matching information (Hashtable + next element lookup)
 
-Container/Element/Window matching algorithm:
-So we need window matching, I guess
-ui_system_set_matching_info()
-ui_push_window(Window_Options)
+Matching-Update:
+    Container/Element/Window matching algorithm update
+    Frame Matching information (Hashtable + next element lookup)
 
+    So we need window matching, I guess
+        ui_system_set_matching_info("Fuck meh in se balz")
+        ui_push_window(Window_Options)
 
-
-
-
-
-TODO in UI:
------------
- * Multiple UI-Windows with z-order/other options
- * Drop-Down menu for Enums (Something like an overlay window)
-        
 
 
 UI-Ideas:
 ---------
  * Simple data storage (E.g. store boolean, float, int, string, dynamic_array from last frame in last matched thingy)
- * Scroll wheel with multiple Scroll bars should affect lowest one first
  * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
  * Label and Button-Groups, so labels can have the same width in same group
- * Vertical layout could use disable collapse on child-widgets
- * Normal Layout (Lines) should allow a list-style odd-even background color swap
- * A can_grow in the x-direction may also be usefull (To disable button growth and so some items get priorities)
- * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
+
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
  * Custom number formating (1 020 252 for integers)
- * Maybe bring back max height for containerz
+ * Can_Grow should be respected by box-layout
+ * Normal Layout (Lines) should allow a list-style odd-even background color swap
+ * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
     
     
 
 Done:
 -----
+ * Anchor left window layout
+ * Window resize on all sides
+ * Title bar was overlapping client area fixed (Also wanted height + min height now perfect)
+ * Windows now have borders
+ * Z-Order update with mouse-press
+ * Containers store their parent container
+ * Mouse-Wheel scroll now propagates over containers
+
  * Reworked Drag-System (Window move, resize, scroll bar)
  * Added Mulitple Windows, window matching
  * Scroll-Bar refactor
@@ -117,20 +109,6 @@ Done:
  * Create box-renderer with border colors
  * Box-Rendering around character, check fit 
     
-Scroll-Bar Input:
- - Arguably Question if UI-Input should be hiearchical (Scroll-Bar, Window-Resize, Other)
- - Some things to consider: 
-    * Input delay: Do we want to have a 1 frame input delay for things
-    * Multiple layout calculations should also be avoided (probably)
-What about the following scheme:
- - We know window positions from last frame/from setting fixed positions in code,
-    so we can Analyse Drag-And-Drop for window positions first.
- - Then we can do our normal layout, which needs to be done before input anyway
- - If we have a scroll-bar, we can test it for scrolling
- - Then we can do the window layout (- Scroll bar width), and proceed with other input
-
-What if an input changes the layout of things? (E.g. We clicked on a sub-header)?
- - This action has to be delayed to next frame, I don't think re-calculating the layout is really helpfull in this case
 
 
 
@@ -150,13 +128,6 @@ Current Plan:
     - Breakpoints
     - Watch-Window
  * Fix Debugger Stepping
-
-What do I need from Renderer:
- * Vertex-Colored Rectangles with Borders (Also rectangles) (On integer Sizes)
- * Mono-Textured (With alpha) Rectangle Rendering (Fonts and Symbols)
-
-So we want:
- * Lot's of Sheet
 
 
 
