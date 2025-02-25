@@ -87,6 +87,7 @@
     <ClInclude Include="utility\random.hpp" />
     <ClInclude Include="utility\rich_text.hpp" />
     <ClInclude Include="utility\system_clipboard.hpp" />
+    <ClInclude Include="utility\ui_system.hpp" />
     <ClInclude Include="utility\utils.hpp" />
     <ClInclude Include="win32\input.hpp" />
     <ClInclude Include="win32\process.hpp" />
@@ -159,6 +160,7 @@
     <ClCompile Include="utility\random.cpp" />
     <ClCompile Include="utility\rich_text.cpp" />
     <ClCompile Include="utility\system_clipboard.cpp" />
+    <ClCompile Include="utility\ui_system.cpp" />
     <ClCompile Include="utility\utils.cpp" />
     <ClCompile Include="win32\input.cpp" />
     <ClCompile Include="win32\process.cpp" />
@@ -270,6 +272,7 @@
     <Link>
       <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;diaguids.lib;zlibstatic.lib;DXGI.lib;bddisasmd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/ignore:4099 /ignore:4098 %(AdditionalOptions)</AdditionalOptions>
+      <SubSystem>NotSet</SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">

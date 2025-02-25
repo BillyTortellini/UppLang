@@ -5,8 +5,9 @@
 // ---------------
 // Up to 4 dimensional vectors and typical operations
 // of these vectors are defined here.
-// Vectors are immutable
+// Vectors are mutable
 
+#include "../utility/datatypes.hpp"
 #define NORMALIZE_SAFE_MIN 0.000001f
 
 // VEC 2
@@ -289,3 +290,6 @@ float vector_dot(const vec4& v1, const vec4& v2);
 vec4 vector_homogenize(const vec4& v); 
 float vector_get_minimum_axis(const vec4& v);
 float vector_get_maximum_axis(const vec4& v);
+
+vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b);
+vec4 vec4_color_from_code(const char* c_str);

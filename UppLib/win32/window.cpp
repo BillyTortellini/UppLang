@@ -1153,7 +1153,16 @@ void window_load_position(Window* window, const char* filename)
         win = pos.console_rect;
         if (hwnd != NULL) {
             if (win.left == win.right || win.top == win.bottom) return;
-            MoveWindow(hwnd, win.left, win.top, win.right - win.left, win.bottom - win.top, false);
+            BOOL success = MoveWindow(hwnd, win.left, win.top, win.right - win.left, win.bottom - win.top, false);
+            if (!success) {
+                printf("MoveWindow did not work on console window!\n");
+                helper_print_last_error();
+            }
+            success = SetWindowPos(hwnd, nullptr, win.left, win.top, win.right - win.left, win.bottom - win.top, SWP_NOZORDER);
+            if (!success) {
+                printf("MoveWindow did not work on console window!\n");
+                helper_print_last_error();
+            }
         }
     }
 }

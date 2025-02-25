@@ -10,6 +10,7 @@
 #define NORMALIZE_SAVE_MIN 0.000001f
 #include <cmath>
 #include "scalars.hpp"
+#include "../datastructures/string.hpp"
 
 // VEC 2
 vec2 operator-(const vec2& v) {
@@ -317,3 +318,35 @@ float vector_get_minimum_axis(const vec4& v) {
 float vector_get_maximum_axis(const vec4& v) {
     return math_maximum(v.x, math_maximum(v.y, math_maximum(v.y, v.w)));
 }
+
+
+vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b) {
+	return vec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+}
+
+vec4 vec4_color_from_code(const char* c_str)
+{
+	String str = string_create_static(c_str);
+	auto get_hex_digit_value = [](char c) -> int {
+		if (c >= '0' && c <= '9') return c - '0';
+		if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+		if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+		return -1;
+		};
+
+	// Check that hex-code format is correct
+	vec4 error = vec4(0, 0, 0, 1);
+	if (str.size != 7) return error;
+	if (str[0] != '#') return error;
+	for (int i = 1; i < str.size; i++) {
+		if (get_hex_digit_value(str[i]) == -1) return error;
+	}
+
+	u8 r = get_hex_digit_value(str[1]) * 16 + get_hex_digit_value(str[2]);
+	u8 g = get_hex_digit_value(str[3]) * 16 + get_hex_digit_value(str[4]);
+	u8 b = get_hex_digit_value(str[5]) * 16 + get_hex_digit_value(str[6]);
+
+	return vec4_color_from_rgb(r, g, b);
+}
+
+

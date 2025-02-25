@@ -1,31 +1,51 @@
 
-Add drop-down example, do correct handling of mouse clicks and other things (Builder code)
 
-Move drop-down list where enough space is available, maybe disable things
-Add Widget-Style struct, which is passed to add_widget (Like container/window style)
 
-TODO: 
-Window Update:
- * Multiple Window-Position modes:
-    - Floating window (Current)
-    - Anchor to window side (Left or right, resizable side)
-    - Drop-Down (Anchor to some widget element, position usually bottom left, but depends on available space)
+Bug-Fixes:
+
 
 Matching-Update:
-    Container/Element/Window matching algorithm update
-    Frame Matching information (Hashtable + next element lookup)
+----------------
+The elements that need to be consistent over frames are:
+ - Containers
+ - Widgets
+ - Windows
 
-    So we need window matching, I guess
-        ui_system_set_matching_info("Fuck meh in se balz")
-        ui_push_window(Window_Options)
+Matching is required for ImGui for the following things:
+ * Input (Mouse hover index, focused index)
+ * Data-Storage per widget (not implemented yet)
+
+'Normal' consistency (Matching to previous frame) is achieved by:
+ * Parent Object + Order of pushes
+
+If the order of pushes changes (e.g. if an element is shown once, then removed, like closing a window or deleting a list-item),
+then the matching will stop working.
+
+To still have accurate matching in such situations, the user will have to provide matching data before pushing an element.
+Common matching information could be:
+ * Filename + Line-number
+ * A custom string (e.g. title of window)
+ * Integer value (index in array or something like dat)
+ * A pointer to some data
+
+The matching would then proceed as follows:
+    If no matching information is available, test if the next element can be matched, if not,
+    add new element and stay at current element (For a possible recover? or just set matching-failed?)
+
+    If matching information is available test if the next element matches this information, otherwise we
+    have to look it up in a hashtable? (Linear search also possible, not sure if this wouldn't be simpler)
+    It's a new element if we cannot find it in the hashtable
+Note that the hashtable needs the parent-index as a key (Widget index), so this needs to be re-hashed every frame...
+    
 
 
 
 UI-Ideas:
 ---------
+ * UI-Matching Update 
  * Simple data storage (E.g. store boolean, float, int, string, dynamic_array from last frame in last matched thingy)
  * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
- * Label and Button-Groups, so labels can have the same width in same group
+ * Label and Button Size-Groups, so that elements in same group have same size 
 
  * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
  * Custom number formating (1 020 252 for integers)
@@ -37,6 +57,17 @@ UI-Ideas:
 
 Done:
 -----
+ * Researched windows console position, as it's not working by setting it with MoveWindow
+ * Fixed bugs with rendering
+ * Refactored window into custom header
+
+ * Rotating Icons and Dropdown icon placement
+ * All window layouts implemented
+ * Dropdown size and placement
+ * Dropdown style rework
+ * Dropdown z-index fixed
+ * Widget_Style struct + push rework
+
  * Anchor left window layout
  * Window resize on all sides
  * Title bar was overlapping client area fixed (Also wanted height + min height now perfect)
