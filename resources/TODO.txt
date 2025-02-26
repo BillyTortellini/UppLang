@@ -1,171 +1,36 @@
 
 
+Plan: Make a usable, _SIMPLE_ version of a debugger (Breakpoints, stepping, watch values, stack-window)
 
-Bug-Fixes:
-
-
-Matching-Update:
-----------------
-The elements that need to be consistent over frames are:
- - Containers
- - Widgets
- - Windows
-
-Matching is required for ImGui for the following things:
- * Input (Mouse hover index, focused index)
- * Data-Storage per widget (not implemented yet)
-
-'Normal' consistency (Matching to previous frame) is achieved by:
- * Parent Object + Order of pushes
-
-If the order of pushes changes (e.g. if an element is shown once, then removed, like closing a window or deleting a list-item),
-then the matching will stop working.
-
-To still have accurate matching in such situations, the user will have to provide matching data before pushing an element.
-Common matching information could be:
- * Filename + Line-number
- * A custom string (e.g. title of window)
- * Integer value (index in array or something like dat)
- * A pointer to some data
-
-The matching would then proceed as follows:
-    If no matching information is available, test if the next element can be matched, if not,
-    add new element and stay at current element (For a possible recover? or just set matching-failed?)
-
-    If matching information is available test if the next element matches this information, otherwise we
-    have to look it up in a hashtable? (Linear search also possible, not sure if this wouldn't be simpler)
-    It's a new element if we cannot find it in the hashtable
-Note that the hashtable needs the parent-index as a key (Widget index), so this needs to be re-hashed every frame...
-    
+TODO:
+ * Watch-Window (Not implemented yet)
+    - Variable-Printing should use other process-values (Reading from different memory sources...)
+    - UI option to remove/update watch-value
+ * Add continue, step-out-of, step-into and step-over buttons
+ * Fix Stepping Edge-Cases
+    - Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
+    - Fix Step-Over (Should respect breakpoints, use step-out of correctly)
+ * Implement breakpoint enabled info
+ * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
+    - Allow debugger to halt process arbitrarily (To add breakpoints)
+ * Store Debugger-Infos in Session
+    - Breakpoints should update with line-edits
+    - Watch-values/Breakpoints should be stored in session
+ * Better breakpoint/current location rendering (Images instead of >, colors, step out/step in information)
+    - Use SDF-Bitmaps (May need to rewrite a lot of shiz if we are using the UI-Rendering Code for this)
+ * Test step over code:
+    - If else
+    - Switch
+    - Loops
+    - Defer
+    - Stepping out of function?
+    - Gotos (Break/continue with labels)
+ * Polish
 
 
 
-UI-Ideas:
----------
- * UI-Matching Update 
- * Simple data storage (E.g. store boolean, float, int, string, dynamic_array from last frame in last matched thingy)
- * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
- * Label and Button Size-Groups, so that elements in same group have same size 
+DONE:
 
- * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
- * Custom number formating (1 020 252 for integers)
- * Can_Grow should be respected by box-layout
- * Normal Layout (Lines) should allow a list-style odd-even background color swap
- * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
-    
-    
-
-Done:
------
- * Researched windows console position, as it's not working by setting it with MoveWindow
- * Fixed bugs with rendering
- * Refactored window into custom header
-
- * Rotating Icons and Dropdown icon placement
- * All window layouts implemented
- * Dropdown size and placement
- * Dropdown style rework
- * Dropdown z-index fixed
- * Widget_Style struct + push rework
-
- * Anchor left window layout
- * Window resize on all sides
- * Title bar was overlapping client area fixed (Also wanted height + min height now perfect)
- * Windows now have borders
- * Z-Order update with mouse-press
- * Containers store their parent container
- * Mouse-Wheel scroll now propagates over containers
-
- * Reworked Drag-System (Window move, resize, scroll bar)
- * Added Mulitple Windows, window matching
- * Scroll-Bar refactor
- * Container layout refactor
- * Container padding + background color
-
- * Fair height distribution with multiple lists!
- * Multi-Scroll bar handling
- * Subsections
- * Bitmap writer sdf refactor
- * Triangle sdf
- * Fixed uninitialized normal-layout min-max
- * Fixed error in line height
- * Pixel perfect glyph + sdf drawing + offset
- * Added hidden elements (Matching feature)
-
- * Push/Pop active Container + Add 'counter' when pushing/popping container!
- * Fixed size width distribution! (Vertical layout, maybe also box-layout!)
-
- * Fixed Bug where drag does not work outside of window
- * Text-Clipping Indicator (...)
- * Input Filtering for Number-Input
- * Text-Input with differentiation from normal input
- * Added Check-Box widget
-
- * Added sdf representation of check_mark
- * Text_Input done for now
- * Cut (Keyboard shortcut CTRL-X)
- * Copy Paste (Line_Edit)
- * Text-Scrolling if cursor is out of frame...
- * Fix bug with collapsed input + y-offset (Double y-offset add)
- * Text input sending update to immediate mode user
- * Text input with single line edit
- * Added widget focus, added focus border for input
- * Moved global data from window to ui_system (Dragging)
- * Button-Input working
- * Improved Block line-merging (Now continuous)
- * Fixed Bug where hover-index at start and end frame was not correct (Rendering changed bounding box with y-offset)
- * Bug-Fixes with Mouse-Hover scroll offset and scroll offset not resetting when resizing window
-
- * Line-Mergin in Blocks
- * Immediate mode rework
- * Scroll-Bar input working again
- * Width distribution Rework
-
- * Added Height Distribution to UI
- * Scroll-Bar implemented
-
- * Better growing on widgets
- * Add Hitboxes to things
- * Merge Widget-Lines if enough space
- * Collaps Widget if not enough space
-
- * Text-Clipping 
- * Added better way to add Vertices to Mesh (Direct Access to Mesh-Attribute_Buffer)
- * Refactored Bitmap and Glyph-Atlas (Removed Sub-Image)
- * Refactored Box-Vertex creation
- * Rectangle-Clipping inside Window
- * Render first few widgets
-
- * Check which padding for text is reasonable (Different for bottom/Top of text I guess in single line buttons?)
- * Create box-renderer with border colors
- * Box-Rendering around character, check fit 
-    
-
-
-
-
-Current Plan:
- * Refactor Text-Renderer to better support fixed Pixel-Size and also Pixel-Alignment
-    Also use Integer Coordinates, everything else doesn't make sense for fonts (Except for rotated fonts and 3D things, but we don't need that now)
-    --> E.g. Text-Renderer supporting SDF-Fonts or Fixed-Size Fonts
- * Maybe some Mesh for batched-rendering?
- * Make Renderer for pre-defined, fixed resolution SDF-Symbols (Basic Texture Rendering, but create Texture on CPU from SDF functions)
- * Write new IMGUI, but making it more like DearImGui
-    - Single Window system at the top
-    - Set of Seperated-Widgets (Inputs, Sections, Labels, Text...)
- * Use ImGui for Debugger-Menu
-    - Stack-Frames
-    - Execution Control
-    - Breakpoints
-    - Watch-Window
- * Fix Debugger Stepping
-
-
-
-
-Watch-Window Design:
- * Probably open with keyboard-shortcut
- * List of watch-
 
 Debugger Features:
  * Stack-Frames 
@@ -207,393 +72,19 @@ Debugger Features:
         + Either enabled by default or accessible in value-display
     - Expression-Evaluation in Watch-Window
         + Member-Access, Array/Slice-Access, Referencing and Dereferencing, Binary-Ops 
+        + Simple Expression Evaluation should also be possible (Pointer stuff &/*, Array-access [], member-access with .x, maybe use ast-parsing for this?)
     - Debug variables
         + Storing values in variables at user-requested time or at breakpoint/address hit
         + Using these values in breakpoint conditions or Expression-Evaluation
 
 
 
-DONE:
- * Fixed Global-Variable Information in PDB (Changed traversal inside Symbols with SymTagExe)
- * Looked at PDB-Tree-Hierarchy Traversal for better understanding 
- * Cleaned-Up C compiler switches (wrong build.pdb being generated)
- * Parameter access now working
- * Fix Breakpoints (Fixed C-Translation for parameters and function names)
-
-
-
-Debugger TODO:
- * Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
- * Fix Step-Over (Should respect breakpoints, use step-out of correctly)
- * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
-
- * Debugger breakpoints should be stored in session + update with line edits
-    --> Breakpoints should show when there is no valid instruction there
- * Better breakpoint/current location rendering (Images instead of >, colors, step out/step in information)
-
- * GUI-Watch window for variables
- * Search depth for variables (Search some frames up the stack)
- * GUI Stack-Window (Show stack, select stack-frame (moves cursor))
- 
-
- * Printing variables needs more options (Show pointer values, use memory reads on other processes, options for arrays and struct-members)
- 
- * Simple Expression Evaluation should also be possible (Pointer stuff &/*, Array-access [], member-access with .x, maybe use ast-parsing for this?)
- * Maybe more output/info for pointers (e.g. section + function info, or data, or stack, or on heap...)
-
- - Test step over code:
-    * If else
-    * Switch
-    * Loops
-    * Defer
-    * Stepping out of function?
-    * Gotos (Break/continue with labels)
-
-
-
-Notes: Programming Language Idea:
- - We know when functions are called, and in what order.
- - If we had some sort of Programming state (Knowing when functions are called/in what state of objects),
-    we could have different access patterns for things. E.g. Optionals/Nullpointer could be some values,
-    things may not be initialized or others...
-
-
-
-
-
-TODO:
-
-
-
-
-DONE:
- - Added bandaid-solution for step-into with weird functions inbetween
- - Added some better output for stack-frames
-
- - Fixed C-Translation bug (If-Else and statements which include other statements...)
- - Add reference counting to address-breakpoints, as step-over may add/remove addresses
-
- - Added first implementation of step-over
- - Cleaned up Debugger: Correct shutdown with handles, clean stepping, clean breakpoints, correct startup-sequence handling
- - Correct shutdown for debugger
- - Implement software breakpoints
- - Merge source-debugger and debugger
-
- - Fix tokenization with muli-line undo
- - Fix IR-Instruction to C-Line translation on first line in function
-
- - IDE should focus Window when breakpoint is hit
- - Show translations in debugger (F4 while debugger is running)
-
-
-Things to think about:
- - For which use cases do I need the translation in both directions (Assembly <---> Upp),
-    and depending on that we need to define what is stored for e.g. IR-Instructions (Start-end characters)
- - Nested IR-Instructions exist:
-    * For/While/If/Block
-    * Also labels and gotos
-
-Debugger next Features:
- * Setting breakpoints, continue
- * Show currently executing line
- * Step over (step until instruction index changes?), step out of, step into
-
-
-
-Source-Code Translation to 
- * Source-Line to zero, one or multiple addresses (Usually one, if not polymorphic)
-    - Breakpoint should be set on each instance? (Maybe if, while and for need special treatment)
- * Virtual-Address (compiled instruction) --> Source-Line + Analysis-Pass (Polymorphic info)
-    1. Find source-function (section search)
-    2. Line-Infos per source-function (Ranges), binary search maybe
- * Step into, step out of, step over...
-    - into: Step until ast::statement changes?
-    - over: breakpoint on next statement (Watch out for for loops and things)
-    - out-of: Breakpoint on return-address
- * Translating functions to modtree-functions...
-
-
- 
-
-
-What do I want from my debugger:
- * Setting breakpoints, stopping at breakpoints (Software breakpoints)
- * Stops when debug_break is hit, or on other program violations (Should probably be implemented at some point)
- * Step over (statement, BP at end of instruction/start of next instruction), step into (function-call, step until statement-index has changed?), step-out of (BP at return-address + stack needs to be smaller)
- * Variable watch window (type variable name and value is shown)
- * Stack-Frames (Call-Hierarchy), which also affects variable-name resolution in watch-window
-
-First running version:
- - Start debugger, which should set a breakpoint at main?
-
-TODO: C-Generator translation
- --> IR-Instruction to Line-Number / backwards
- --> Name 'mangling' for function, variable and global names
-    Do we need to know which block is which block? --> Check pdb-info again...
-        I guess not, as we can use identifier to go from variable-name to something something...
-
-So we actually already store thingz
-
-
-Upp-Code --> C-Source Line mapping:
-    Upp-Code --> Tokens --> AST::Node and Token-Ranges --> IR-Instruction AST::Expr/Statement --> C IR-Instruction line-range
-
-
-TODO:
- - IR-Code and Bytecode/C-Generator need to store translation names
- - New UI-Mode for debugging (Setting breakpoints, maybe command parsing for other things?)
-
 ISSUE-TRACKER:
-    Bugs with Editor-Synchronization:
-     - I managed to have history/tokens desynched with undo
-    
     Debugger Improvements which could be done:
-     - Software breakpoints would be nice
      - Stack walking Epilog check should check for jmp instructions with correct encoding...
      - Load PDB's for DLLs when available
-     - Breakpoints need to be set after initial process_create event...
-
-DONE:
- - Fixed loops after IR-Code Mapping update
- - Fixed end of file bug (AST-Range)
- - IR-Code to AST mapping
- - Refactored Debugger (New file)
-
- - Refactor into new file
- - Handle Chained unwind infos
- - Stack walking Epilog handling (Except for jmps instead of ret)
- - Executing Op-Codes and doing stack-walk!
- - Check if opcode-version 2 works
- - Parsing mach_frame code now doesn't use error, also version 2 is ignored, some more bug fixes...
- - Bug: Adder not shown in pdb --> undecorated names are actually not mangled names...
-
- - Setting breakpoints at symbols (main function)
- - Show disassembly of main function
- - Command to query symbol (location)
- - Show all assembly instructions in current function
- - All functions should have the same layout, with address, length and name + A reference to Source-Information if available.
- - Generate compiler information when loading modules/dlls, (more infos for main-code)
-
- - Load all symbols from all dlls
- - On break, show closest function start
- - Run process and store all necessary data from PE (Name, sections infos, pdb filename?)
- - Query all necessary information from pdb into Custom-Format before running the process
- - Line-Information from PDB
- - Read Section infos from PE (portable executable) image
 
 
-Intermediate Goal:
-    Loading Information for _single_ object file:
-        - Function information (which functions are compiled in this module)
-        - Local variable symbols
-        - Line-Information for each function
-    On Startup:
-        - Translate RVAs of PDB to loaded code (How tho?)
-        - Set breakpoint at main function entry
-        - Show disassembly of whole main function
-        - Allow stepping over lines (Set breakpoint at next line, sl command)
-        - Show variable values 
-
-
-Open Questions:
- * Where is Line-Information stored in PDB files (DIA SDK)
- * Does stack-walking information include function start/end addresses?
- * How to 'guess' in which dll/code we currently are (Based on section)
- * How to translate virtual addresses (sector + offset) from PDB into live image (Sector table?)
- * Optimized Symbol information (How to get to a symbols value in optimized code?)
-
-
-
-* PDB should provide 
-    - Line to Assembly info
-    - Function location info
-    - Variable/Parameter/Global location info
-* Find out where Symbol-Info is stored in PDB
-
-Debugger:
- * Load module/source-code infos from EXE and PDB
- * Figure out where we are in code...
-
-TODO:
- * Don't reparse if no changes...
- * Member-Access and Symbol-Lookup re-implementation in editor
-
-
-Next Tasks:
- * Synchronization
-    - Identifier_Pool synchronization
-    - Symbol_Lookup_Visited table --> Querying symbol table needs this, e.g. both editor-completions and compilord
-    - Open_Tab/Close_Tab load file (open_in_tab_index)
- * No Parsing if code didn't change?
-
-TODO:
- * AST-Data?
-    --> Share between Compilation-Unit and Source-Code...
-        Compiler does not re-parse if data already exists
-        When changes are made the source-code takes the tree...
-
- * Synchronization:
-
- * Pressing run/compile (F5) needs to wait for compilation
-
- * Compiler/Editor decoupling
-
-DONE:
- * Calculate suggestions only on render, or on insert_suggestions
- * If we are on a Symbol-Lookup or Member-Access Suggestions (previous was . or ~), don't show suggestions if we didn't find symobl/member access
- * On insert suggestion synchronize with compiler if no suggestions are available
-
-
-Current problems and solutions:
- * Identifier_Pool shared by both Compiler and Editor (For lexing/auto-formating)
-    Solution:
-        - Add all predefined IDs beforehand
-        - Before lexing/auto-formating, use semaphore
-
-Question:
- - When do we do token-synchronization
- - When do we doe auto-formating of lines/text
-
-Tokens required for:
- - AST-Lookup (used for symbol-table ranges)
-
- - Syntax-Editor uses Auto-Formating
- - Auto-Formating needs Lexing (e.g. if.What)
- - Lexing needs Identifer_Pool (Strings/Identifiers)
-
-Compiler also needs Identifier_Pool
- - Compiler may load files which aren't open in Editor
- - After loading files they need to be lexed before parsing
- - Requires Identifier Pool
-
-
-
-TODO:
- * Code-Completion from analysis-info, not from passes
- * Use history for updating
-
-General Idea:
- 1. Keep line markups updated with history
- 2. Symbol tables and Error-Positions need to go back/forth in history (Positions
-
- * Compilation_Units shouldn't re-parse if nothing changed
-
-
-TODO:
- 0. Update Source_Code to be owned by editor --> Kinda done
- 1. Editor_Analysis_Info
-    Created after Compilation/Semantic_Analyser executes from analysed code.
- 2. Use Analysis_Info in code-editor instead of direct querying
- 3. Use History to only analyse every few seconds after something has changed (Compiler_Info needs to keep constant-pool/type system in memory)
- 
- 4. Rewrite Code-Source so that Editor has 2 versions of source, and compiler takes list of code-sources
- 5. Decouple Compiler into another thread, and query Editor_Analysis_Infos after compiler finishes
-
-Arguably we need to keep 
- * Type_System
- * Constant_Pool
- * Identifier_Pool
-To still use the symbols and all...
-
-
-
-Maybe new Approach:
- * After compilation Editor-Info package is created, containing:
-    - Symbol-Infos
-    - Symbol-Table Hierarchy (For Code-completion/Goto-Definition/Querying)
-    - All used datatypes as strings?
-    - Expression Result infos?
-    - Errors
-
-Let's see what I'm currently using in syntax_editor:
-    Suggestion-Types:
-        Symbols
-        IDs
-        Struct Member
-        Enum Member
-    Syntax Highlighting:
-        Errors
-    Others:
-        Goto Symbol definition
-        Symbol table in current context
-    Suggestions:
-        Member-Access:
-            Auto-Enum
-            Struct Members + Subtypes
-            Array/Slice members
-            Optional members
-            Struct/Instance-Template Members
-            Enum Memmbers
-        Path-Lookup
-        Symbol-Lookup
-        Context functions
-        Break/Continue Labels
-        Import Functions
-        DEFAULT: If all empty, add symbols from current symbol table
-    Rendering:
-        Coloring can be done on a line-by line basis...
-        Initial coloring based on token type
-        Highlight all references to symbol under cursor
-        Highlight all symbols by their symbol-type
-        Member-Access get colored based on member-type
-        Auto-Enum gets enum color
-        Struct-Members/Parameters/Enum members get colored
-        
-
-
-            
-
-Also some thoughts:
- * Removing token access in syntax editor would be nice, so
-    lexing and auto-formating can happen at render time...
-
-
-
-
-Editor and Compiler Threads:
- 1. Create Compilation_Data structure
-        Everything from one compilation will be added here
- 2. Rewrite Source_Code so that Editor has 2 versions, and compilation will add one
- 3. Decouple Editor from Compiler (Only update every 1 second or something for starters)
-
-
-TODO:
-
-
- * String handling and string builder in Upp
-
-DONE:
- * Fixed bug with importing symbols and workload dependencies (Single line of code, last_import_workload = nullptr)
- * Fixed goto in different files
- * If comment is on line before definition, show comment in context...
- * Code-Completion on file imports (fuzzy find files)
- * Code-Completion for continue/break (Block-Ids)
- * Pressing Shift-Enter after Shift enter should just do a tab delete...
- * Normal-Binops should use expected type when both sides require context (e.g. y: u64 = 2 * x)
- * Assign-Binops (+=, -=) should deduce context for integers... (e.g. += 1 should work on all integers!)
- * Fixed release bug (operator_context_key_equals was invalid)
- * Implemented hash-table by copying hashset
- * Improved analysis-passes
- * Fix bake bug (See screenshot)
- * Fixed cam_end invalid index bug (Cam_start/end are updated on synchronize)
-
-
-Check how fast syntax_editor_update is (without compilation)
- --> E.g. with particle effects and sheet
- --> Check optimized version
-
-Think about editor-speed/lag:
- * 2 Threads for compiler + editor
- * Incremental compilation
-
-
-
-Dynamic_Array:
-    insert_ordered
-    swap_remove
-    remove_ordered
-    reverse
-    last
 
 Language/Editor Miscallenious:
  * Raw-Equals ~== and ~!=, like *== and *!=
@@ -659,8 +150,8 @@ Missing Testcases:
            * Visual line
            * Visual mode
         - Call-Hierarchy Analysis mode
-
 -----------------
+
 Code improvements:
     * Polymorphic Custom-Operators can be hashed based on type, so we don't have to instanciate/reanalyse header for every instance...
     * C-Importer could use tools to figure out Macros, and C-Compiler could just call them (e.g. tag modtree functions as such)
@@ -673,6 +164,62 @@ Code improvements:
 
 
 
+
+
+UI-Improvements:
+----------------
+ * Fuse UI_Widget and UI_Container/Container_Element (All widgets may have children)
+ * Windows-Move and Resize should be settable, also title and position
+ * Widget Growth (in y and x) should use min-size, max-size (Wanted) and wanted + further growth priority
+ * Size groups for min-size and wanted size (Usable for tables/having same label lengths)
+ * Right-Click menues
+ * Hover-Text
+
+ * UI-Matching Update 
+ * Simple data storage (E.g. store boolean, float, int, string, dynamic_array from last frame in last matched thingy)
+ * Keyboard controls with tab/shift-tab and also a Key to focus parent widget container?
+ * Label and Button Size-Groups, so that elements in same group have same size 
+
+ * Rounded corners for boxes can be rendered rather simple with texture painting (1 texture to fill border with bg-color, one to draw border color)
+ * Custom number formating (1 020 252 for integers)
+ * Can_Grow should be respected by box-layout
+ * Normal Layout (Lines) should allow a list-style odd-even background color swap
+ * X-Axis Scrollbar if elements fall below minimum readable size (Note: This would apply to the maximum of the all widgets, so it would make a difference)
+    
+UI-Matching-Update:
+-------------------
+The elements that need to be consistent over frames are:
+ - Containers
+ - Widgets
+ - Windows
+
+Matching is required for ImGui for the following things:
+ * Input (Mouse hover index, focused index)
+ * Data-Storage per widget (not implemented yet)
+
+'Normal' consistency (Matching to previous frame) is achieved by:
+ * Parent Object + Order of pushes
+
+If the order of pushes changes (e.g. if an element is shown once, then removed, like closing a window or deleting a list-item),
+then the matching will stop working.
+
+To still have accurate matching in such situations, the user will have to provide matching data before pushing an element.
+Common matching information could be:
+ * Filename + Line-number
+ * A custom string (e.g. title of window)
+ * Integer value (index in array or something like dat)
+ * A pointer to some data
+
+The matching would then proceed as follows:
+    If no matching information is available, test if the next element can be matched, if not,
+    add new element and stay at current element (For a possible recover? or just set matching-failed?)
+
+    If matching information is available test if the next element matches this information, otherwise we
+    have to look it up in a hashtable? (Linear search also possible, not sure if this wouldn't be simpler)
+    It's a new element if we cannot find it in the hashtable
+Note that the hashtable needs the parent-index as a key (Widget index), so this needs to be re-hashed every frame...
+    
+    
 
 
 
@@ -707,54 +254,6 @@ Implementation:
  * Casting null
  * Setting normal pointers to null should be possible
 Optionals and casting
-
-
-
------------------
-- Editor-Update -
------------------
-Features: (Done first, then ranked by priority)
- - Auto-Formating
- - Motions + Vim commands
- - Better Context-Info
- - Function call information
-    * Show current call parameters
-    * Show current parameter
-    * Missing parameter informations?
- - Multiple-file handling (One 'main' project file + some imported/openend file information)
-    * Option to open multiple files in tabs
-    * Switching from one tab to another (vim gt, gT)
-    * Closing tabs? :x...
-    * Either in tabs or concatenated at the end of the file?
- - Fuzzy Goto definition/symbol
-    * Fuzzy search to multiple definitions
-    * Over multiple files when imports are used
- - Line-numbers (relative or not...)
- - Better Code-Completion (Probably just a small upgrade for fuzzy-finding)
- - Code-Folding
-    * Commands to fold/unfold + recursively
-    * Movements should respect folding
- - Visual block-mode
- - Jumping between last positions 
-    * Maybe even have a GUI for the jump list with functions + indices
-
-Required:
-
-Almost required:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

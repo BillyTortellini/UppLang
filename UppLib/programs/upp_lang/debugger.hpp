@@ -9,6 +9,7 @@ struct Compilation_Unit;
 struct Compiler_Analysis_Data;
 struct IR_Code_Block;
 struct IR_Function;
+struct Datatype;
 namespace AST {
     struct Statement;
 }
@@ -82,14 +83,32 @@ enum class X64_Flags
     RESUME            = 0x1 << 16
 };
 
-// struct X64_Register_State
-// {
-//     u64 integer_registers[(int)X64_Integer_Register::MAX_VALUE];
-//     u64 mmx_registers[8];
-//     u64 xmm_registers[16];
-//     u64 rip;
-//     u64 flags;
-// };
+struct X64_XMM_Value
+{
+    u64 low_bytes;
+    u64 high_bytes;
+};
+
+struct X64_Register_State
+{
+    u64 integer_registers[(int)X64_Integer_Register::MAX_VALUE];
+    X64_XMM_Value xmm_registers[16];
+    u64 rip;
+    u32 flags;
+};
+
+struct Closest_Symbol_Info
+{
+    int pe_index;
+    int section_index;
+    String section_name;
+    String pe_name;
+
+    int exception_handling_index; // -1 if not found
+    bool found_symbol;
+    u64 distance;
+    String symbol_name; // Name from pdb or PE export table
+};
 
 struct Assembly_Source_Information
 {
@@ -110,7 +129,8 @@ struct Assembly_Source_Information
 struct Stack_Frame
 {
     u64 instruction_pointer;
-    u64 stack_frame_start_address; // Address of return instruction
+    u64 stack_frame_start_address; // Start of stack-frame, at this address the return address is stored
+    X64_Register_State register_state;
 };
 
 enum class Halt_Type
@@ -144,6 +164,13 @@ struct Source_Breakpoint
     int active_reference_count; // Active if greater 0
 };
 
+struct Debugger_Value_Read
+{
+    bool success;
+    Datatype* result_type;
+    const char* error_msg;
+};
+
 Debugger* debugger_create();
 void debugger_destroy(Debugger* debugger);
 void debugger_reset(Debugger* debugger);
@@ -158,7 +185,11 @@ void debugger_step_out(Debugger* debugger);
 
 Debugger_State debugger_get_state(Debugger* debugger);
 Assembly_Source_Information debugger_get_assembly_source_information(Debugger* debugger, u64 virtual_address);
+Closest_Symbol_Info debugger_find_closest_symbol_name(Debugger* debugger, u64 address);
+void closest_symbol_info_append_to_string(Debugger* debugger, Closest_Symbol_Info symbol_info, String* string);
 void debugger_wait_for_console_command(Debugger* debugger);
+Debugger_Value_Read debugger_read_variable_value(
+    Debugger* debugger, String variable_name, Dynamic_Array<u8>* value_buffer, int stack_frame_start, int max_frame_depth);
 
 Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_index, Compilation_Unit* unit);
 void debugger_remove_source_breakpoint(Debugger* debugger, Source_Breakpoint* breakpoint);

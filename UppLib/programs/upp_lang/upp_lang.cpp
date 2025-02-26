@@ -341,80 +341,6 @@ void upp_lang_main()
 
             // Syntax editor
             syntax_editor_render();
-
-            /*
-            primitive_renderer_2D_add_rectangle(primitive_renderer_2D, vec2(600, 300), vec2(50, 200), 0.0f, Anchor_2D::CENTER_CENTER, vec3(1.0f, 0.2f, 0.7f));
-            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(400, 400), 200.0f, 0.0f, vec3(0.0f, 1.0f, 0.3f));
-            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(500, 500), 150.0f, 0.0f, vec3(0.5f, 1.0f, 0.3f));
-            primitive_renderer_2D_add_circle(primitive_renderer_2D, vec2(700, 400), 50.0f, 0.0f, vec3(1.0f, 0.5f, 1.0f));
-            {
-                float size = -2.0f;
-                float y = 200;
-                float biggerness = 0.3f;
-                for (int i = 0; i < 30; i++) {
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, vec2(500.0f, y), vec2(700.0f, y + 50.0f),
-                        Line_Cap::FLAT, Line_Cap::FLAT,
-                        size, 0.0f, vec3(1.0f));
-                    y = y + math_maximum(5.0f, size * 5.0f);
-                    size = size + biggerness;
-                }
-            }
-            {
-                float size = 1.0f;
-                float y = 200;
-                float biggerness = 0.3f;
-                y += math_sine(core.render_information.current_time_in_seconds) * 30.0f;
-                for (int i = 0; i < 30; i++) {
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, vec2(720.0f, y), vec2(920.0f, y + 50.0f),
-                        Line_Cap::FLAT, Line_Cap::ROUND,
-                        size, 0.0f, vec3(1.0f));
-                    y = y + math_maximum(5.0f, size * 5.0f);
-                    size = size + biggerness;
-                }
-            }
-            {
-                vec2 center = vec2(300, 300);
-                int spokes = 80;
-                float width = 150.0f;
-                float thickness = 1.0f;
-                float t = core.render_information.current_time_in_seconds / 6.0f;
-                for (int i = 0; i < spokes; i++) {
-                    vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end,
-                        Line_Cap::FLAT, Line_Cap::ROUND,
-                        thickness, 0.0f, vec3(1.0f));
-                }
-            }
-            {
-                vec2 center = vec2(300, 600);
-                int spokes = 20;
-                float width = 150.0f;
-                float thickness = 10.0f;
-                float t = core.render_information.current_time_in_seconds / 3.0f;
-                for (int i = 0; i < spokes; i++) {
-                    vec2 end = vec2(math_sine(2.0f * PI * ((float)i / spokes) + t), math_cosine(2.0f * PI * ((float)i / spokes) + t)) * width + center;
-                    primitive_renderer_2D_add_line(primitive_renderer_2D, center, end,
-                        Line_Cap::FLAT, Line_Cap::FLAT,
-                        thickness, 0.0f, vec3(1.0f));
-                }
-            }
-            main :: (_)
-            MAX_BUFFER_SIZE::50
-            WHATEVER::20
-            main::(
-
-            {
-                float thickness = 5.0f;
-                primitive_renderer_2D_start_line_train(primitive_renderer_2D, vec3(1.0f), 0.0f);
-                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(300, 100), thickness);
-                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(400, 100), thickness);
-                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(300, 50), thickness);
-                primitive_renderer_2D_add_line_train_point(primitive_renderer_2D, vec2(400, 70), thickness);
-                primitive_renderer_2D_end_line_train(primitive_renderer_2D);
-            }
-
-            primitive_renderer_2D_render(primitive_renderer_2D, &core);
-            */
         }
 
         input_reset(input); // Clear input for next frame
@@ -431,7 +357,7 @@ void upp_lang_main()
             */
 
             // Sleep
-            const int TARGET_FPS = 30;
+            const int TARGET_FPS = 60;
             const double SECONDS_PER_FRAME = 1.0 / TARGET_FPS;
             timer_sleep_until(time_frame_start + SECONDS_PER_FRAME);
         }

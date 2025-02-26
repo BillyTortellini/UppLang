@@ -1873,12 +1873,20 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 				// Otherwise we need to adjust extra_per_widget_value
 				overflow_budget = overflow_budget + child.min_width_collapsed - child.min_width_for_line_merge;
 				growing_element_count -= 1;
+				if (growing_element_count == 0) {
+					extra_per_widget = available_width;
+					break;
+				}
 				int new_extra_per_widget = overflow_budget / math_maximum(1, growing_element_count);
 				assert(new_extra_per_widget >= extra_per_widget, "This should always grow when we hit the maximum for a child");
 				extra_per_widget = new_extra_per_widget;
 			}
 
 			int remaining_pixels = overflow_budget % math_maximum(1, growing_element_count);
+			if (growing_element_count == 0) {
+				remaining_pixels = 0;
+			}
+
 			int cursor_x = x_pos;
 			for (int i = 0; i < container.elements.size; i++)
 			{
@@ -2474,7 +2482,7 @@ struct Window_Z_Comparator
 	}
 };
 
-void ui_system_start_frame(Input* input)
+UI_Input_Info ui_system_start_frame(Input* input)
 {
 	auto& info = rendering_core.render_information;
 	ivec2 screen_size = ivec2(info.backbuffer_width, info.backbuffer_height);
@@ -2613,6 +2621,13 @@ void ui_system_start_frame(Input* input)
 	default: panic("");
 	}
 
+	UI_Input_Info input_info;
+	input_info.has_mouse_hover = 
+		ui_system.mouse_hover_window_index != -1 || 
+		ui_system.drag_status != Drag_Status::NONE || 
+		ui_system.mouse_hover_drag_status != Drag_Status::NONE;
+	input_info.has_keyboard_input = ui_system.focused_widget_index != -1;
+
 	// Debug window shortcut system (X, Y, C, V for sizing)
 	if (ui_system.mouse_hover_window_index != -1)
 	{
@@ -2703,6 +2718,9 @@ void ui_system_start_frame(Input* input)
 			line_editor_feed_key_message(ui_system.line_editor, &ui_system.input_string, input->key_messages[i]);
 		}
 	}
+
+	input_info.has_keyboard_input = input_info.has_keyboard_input || ui_system.focused_widget_index != -1;
+	return input_info;
 }
 
 void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_Pass* render_pass_alpha_blended)
@@ -3213,8 +3231,8 @@ Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size)
 		style.can_combine_in_lines = true;
 	}
 	else {
-		style.min_width = style.text_display.length * ui_system.char_size.x;
-		style.max_width = style.min_width;
+		style.max_width = style.text_display.length * ui_system.char_size.x;
+		style.min_width = math_minimum(style.text_display.length, 8) * ui_system.char_size.x;
 		style.can_combine_in_lines = false;
 	}
 
@@ -3445,21 +3463,17 @@ void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_value
 	}
 }
 
-static struct Watch_Value
-{
-	String name;
-	int type_id; // Whatever
-};
+Container_Handle ui_system_push_line_container() {
+	return ui_system_add_container(container_layout_make_horizontal(false));
+}
 
 void ui_system_push_test_windows()
 {
 	static bool test_initialized = false;
 	static String texts[3];
-	static Dynamic_Array<Watch_Value> watch_values;
 	if (!test_initialized)
 	{
 		test_initialized = true;
-		watch_values = dynamic_array_create<Watch_Value>();
 
 		for (int i = 0; i < 3; i++) {
 			const char* initial[3] = {
@@ -3514,18 +3528,6 @@ void ui_system_push_test_windows()
 	if (subsection_watch_values) {
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
-
-		for (int i = 0; i < watch_values.size; i++) {
-			auto value = watch_values[i];
-			ui_system_push_label(value.name.characters, false);
-		}
-		Text_Input_State input = ui_system_push_text_input(string_create_static("New value"));
-		if (input.text_was_changed) {
-			Watch_Value new_value;
-			new_value.name = string_copy(input.new_text);
-			new_value.type_id = 15;
-			dynamic_array_push_back(&watch_values, new_value);
-		}
 	}
 	ui_system_push_button("Test, lol");
 

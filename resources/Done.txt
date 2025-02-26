@@ -1,0 +1,162 @@
+
+Done:
+-----
+
+26.02.2025:
+ * Selecting Stack-Frame now influences watch-values
+ * Search-Depth for Watch-Values
+ * Watch-Window with values (Refactored debugger value query)
+ * Breakpoint list
+ * Status Debugger-Menu (Stack frames)
+ * UI_System reports if mouse and keyboard are captured, so editor doesn't handle input simultaniously
+
+25.02.2025:
+ * Researched windows console position, as it's not working by setting it with MoveWindow
+ * Fixed bugs with rendering
+ * Refactored window into custom header
+
+Previous:
+ * Rotating Icons and Dropdown icon placement
+ * All window layouts implemented
+ * Dropdown size and placement
+ * Dropdown style rework
+ * Dropdown z-index fixed
+ * Widget_Style struct + push rework
+
+ * Anchor left window layout
+ * Window resize on all sides
+ * Title bar was overlapping client area fixed (Also wanted height + min height now perfect)
+ * Windows now have borders
+ * Z-Order update with mouse-press
+ * Containers store their parent container
+ * Mouse-Wheel scroll now propagates over containers
+
+ * Reworked Drag-System (Window move, resize, scroll bar)
+ * Added Mulitple Windows, window matching
+ * Scroll-Bar refactor
+ * Container layout refactor
+ * Container padding + background color
+
+ * Fair height distribution with multiple lists!
+ * Multi-Scroll bar handling
+ * Subsections
+ * Bitmap writer sdf refactor
+ * Triangle sdf
+ * Fixed uninitialized normal-layout min-max
+ * Fixed error in line height
+ * Pixel perfect glyph + sdf drawing + offset
+ * Added hidden elements (Matching feature)
+
+ * Push/Pop active Container + Add 'counter' when pushing/popping container!
+ * Fixed size width distribution! (Vertical layout, maybe also box-layout!)
+
+ * Fixed Bug where drag does not work outside of window
+ * Text-Clipping Indicator (...)
+ * Input Filtering for Number-Input
+ * Text-Input with differentiation from normal input
+ * Added Check-Box widget
+
+ * Added sdf representation of check_mark
+ * Text_Input done for now
+ * Cut (Keyboard shortcut CTRL-X)
+ * Copy Paste (Line_Edit)
+ * Text-Scrolling if cursor is out of frame...
+ * Fix bug with collapsed input + y-offset (Double y-offset add)
+ * Text input sending update to immediate mode user
+ * Text input with single line edit
+ * Added widget focus, added focus border for input
+ * Moved global data from window to ui_system (Dragging)
+ * Button-Input working
+ * Improved Block line-merging (Now continuous)
+ * Fixed Bug where hover-index at start and end frame was not correct (Rendering changed bounding box with y-offset)
+ * Bug-Fixes with Mouse-Hover scroll offset and scroll offset not resetting when resizing window
+
+Before UI-Update:
+ * Line-Mergin in Blocks
+ * Immediate mode rework
+ * Scroll-Bar input working again
+ * Width distribution Rework
+
+ * Added Height Distribution to UI
+ * Scroll-Bar implemented
+
+ * Better growing on widgets
+ * Add Hitboxes to things
+ * Merge Widget-Lines if enough space
+ * Collaps Widget if not enough space
+
+ * Text-Clipping 
+ * Added better way to add Vertices to Mesh (Direct Access to Mesh-Attribute_Buffer)
+ * Refactored Bitmap and Glyph-Atlas (Removed Sub-Image)
+ * Refactored Box-Vertex creation
+ * Rectangle-Clipping inside Window
+ * Render first few widgets
+
+ * Check which padding for text is reasonable (Different for bottom/Top of text I guess in single line buttons?)
+ * Create box-renderer with border colors
+ * Box-Rendering around character, check fit 
+    
+ * Fixed Global-Variable Information in PDB (Changed traversal inside Symbols with SymTagExe)
+ * Looked at PDB-Tree-Hierarchy Traversal for better understanding 
+ * Cleaned-Up C compiler switches (wrong build.pdb being generated)
+ * Parameter access now working
+ * Fix Breakpoints (Fixed C-Translation for parameters and function names)
+
+ * Added bandaid-solution for step-into with weird functions inbetween
+ * Added some better output for stack-frames
+
+ * Fixed C-Translation bug (If-Else and statements which include other statements...)
+ * Add reference counting to address-breakpoints, as step-over may add/remove addresses
+
+ * Added first implementation of step-over
+ * Cleaned up Debugger: Correct shutdown with handles, clean stepping, clean breakpoints, correct startup-sequence handling
+ * Correct shutdown for debugger
+ * Implement software breakpoints
+ * Merge source-debugger and debugger
+
+ * Fix tokenization with muli-line undo
+ * Fix IR-Instruction to C-Line translation on first line in function
+
+ * IDE should focus Window when breakpoint is hit
+ * Show translations in debugger (F4 while debugger is running)
+
+ * Fixed loops after IR-Code Mapping update
+ * Fixed end of file bug (AST-Range)
+ * IR-Code to AST mapping
+ * Refactored Debugger (New file)
+
+ * Refactor into new file
+ * Handle Chained unwind infos
+ * Stack walking Epilog handling (Except for jmps instead of ret)
+ * Executing Op-Codes and doing stack-walk!
+ * Check if opcode-version 2 works
+ * Parsing mach_frame code now doesn't use error, also version 2 is ignored, some more bug fixes...
+ * Bug: Adder not shown in pdb --> undecorated names are actually not mangled names...
+
+ * Setting breakpoints at symbols (main function)
+ * Show disassembly of main function
+ * Command to query symbol (location)
+ * Show all assembly instructions in current function
+ * All functions should have the same layout, with address, length and name + A reference to Source-Information if available.
+ * Generate compiler information when loading modules/dlls, (more infos for main-code)
+
+ * Load all symbols from all dlls
+ * On break, show closest function start
+ * Run process and store all necessary data from PE (Name, sections infos, pdb filename?)
+ * Query all necessary information from pdb into Custom-Format before running the process
+ * Line-Information from PDB
+ * Read Section infos from PE (portable executable) image
+
+ * Fixed bug with importing symbols and workload dependencies (Single line of code, last_import_workload = nullptr)
+ * Fixed goto in different files
+ * If comment is on line before definition, show comment in context...
+ * Code-Completion on file imports (fuzzy find files)
+ * Code-Completion for continue/break (Block-Ids)
+ * Pressing Shift-Enter after Shift enter should just do a tab delete...
+ * Normal-Binops should use expected type when both sides require context (e.g. y: u64 = 2 * x)
+ * Assign-Binops (+=, -=) should deduce context for integers... (e.g. += 1 should work on all integers!)
+ * Fixed release bug (operator_context_key_equals was invalid)
+ * Implemented hash-table by copying hashset
+ * Improved analysis-passes
+ * Fix bake bug (See screenshot)
+ * Fixed cam_end invalid index bug (Cam_start/end are updated on synchronize)

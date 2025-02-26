@@ -559,6 +559,9 @@
     <Text Include="..\resources\Editor_Thoughts.txt">
       <Filter>Resource Files</Filter>
     </Text>
+    <Text Include="..\resources\Done.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\resources\shaders\test.glsl">

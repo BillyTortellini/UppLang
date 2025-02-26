@@ -71,10 +71,16 @@ struct Window_Style
 	} options;
 };
 
+struct UI_Input_Info
+{
+	bool has_mouse_hover;
+	bool has_keyboard_input;
+};
+
 
 void ui_system_initialize();
 void ui_system_shutdown();
-void ui_system_start_frame(Input* input);
+UI_Input_Info ui_system_start_frame(Input* input);
 void ui_system_end_frame_and_render(Window* whole_window, Input* input, Render_Pass* render_pass_alpha_blended);
 
 void ui_system_push_active_container(Container_Handle handle, bool pop_after_next_push);
@@ -122,4 +128,7 @@ float ui_system_push_float_input(float value);
 bool ui_system_push_checkbox(bool enabled);
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar);
 void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values);
+Container_Handle ui_system_push_line_container();
+
+
 void ui_system_push_test_windows();
