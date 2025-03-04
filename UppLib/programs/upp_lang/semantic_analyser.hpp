@@ -824,8 +824,14 @@ struct Semantic_Error
 
 void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section = Parser::Section::WHOLE);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
-void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format = datatype_format_make_default());
-void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
+void error_information_append_to_string(
+    const Error_Information& info, Compiler_Analysis_Data* analysis_data, 
+    String* string, Datatype_Format format = datatype_format_make_default()
+);
+void error_information_append_to_rich_text(
+    const Error_Information& info, Compiler_Analysis_Data* analysis_data, Rich_Text::Rich_Text* text, 
+    Datatype_Format format = datatype_format_make_default()
+);
 void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation);
 
 
@@ -848,8 +854,8 @@ struct Semantic_Analyser
     Module_Progress* root_module;
     Symbol* error_symbol;
     Workload_Executer* workload_executer;
-    ModTree_Global* global_allocator; // Datatype: *Allocator
-    ModTree_Global* default_allocator; // Datatype: Allocator
+    ModTree_Global* global_allocator; // Datatype: Allocator
+    ModTree_Global* system_allocator; // Datatype: Allocator
     Symbol_Table* root_symbol_table;
 
     Hashtable<AST::Expression*, Datatype_Template*> valid_template_parameters;

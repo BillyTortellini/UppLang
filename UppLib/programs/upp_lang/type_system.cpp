@@ -1990,40 +1990,6 @@ void type_system_add_predefined_types(Type_System* system)
         test_type_similarity<Upp_C_String>(types->c_string);
     }
 
-    // Allocator + Allocator-Functions
-    {
-        types->allocator = type_system_make_struct_empty(Structure_Type::STRUCT, ids.allocator, 0);
-        Datatype_Pointer* allocator_pointer = type_system_make_pointer(upcast(types->allocator));
-
-        types->allocate_function = type_system_make_function( {
-                make_param(upcast(allocator_pointer), "allocator"), 
-                make_param(upcast(types->u64_type), "size"), 
-                make_param(upcast(types->u32_type), "alignment")
-            }, 
-            types->byte_pointer_optional
-        );
-        types->free_function = type_system_make_function( {
-                make_param(upcast(allocator_pointer), "allocator"), 
-                make_param(types->byte_pointer, "pointer"), 
-                make_param(upcast(types->u64_type), "size")
-            }, 
-            upcast(types->bool_type)
-        );
-        types->reallocate_function = type_system_make_function( {
-                make_param(upcast(allocator_pointer), "allocator"), 
-                make_param(types->byte_pointer, "pointer"), 
-                make_param(upcast(types->u64_type), "previous_size"),
-                make_param(upcast(types->u64_type), "new_size"),
-            }, 
-            types->byte_pointer_optional
-        );
-
-        add_member_cstr(&types->allocator->content, "allocate_fn", upcast(types->allocate_function));
-        add_member_cstr(&types->allocator->content, "free_fn", upcast(types->free_function));
-        add_member_cstr(&types->allocator->content, "reallocate_fn", upcast(types->reallocate_function));
-        type_system_finish_struct(types->allocator);
-    }
-
     // Any
     {
         types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
@@ -2031,6 +1997,39 @@ void type_system_add_predefined_types(Type_System* system)
         add_member_cstr(&types->any_type->content, "type", types->type_handle);
         type_system_finish_struct(types->any_type);
         test_type_similarity<Upp_Any>(upcast(types->any_type));
+    }
+
+    // Allocator + Allocator-Functions
+    {
+        types->allocator = type_system_make_struct_empty(Structure_Type::STRUCT, ids.allocator, 0);
+        Datatype* allocator_pointer = upcast(type_system_make_pointer(upcast(types->allocator), false));
+
+        types->allocate_function = type_system_make_function( {
+                make_param(allocator_pointer,       "data"), 
+                make_param(upcast(types->u64_type), "size"), 
+                make_param(upcast(types->u32_type), "alignment")
+            }, 
+            types->byte_pointer
+        );
+        types->free_function = type_system_make_function( {
+                make_param(allocator_pointer,       "data"), 
+                make_param(types->byte_pointer,     "pointer"), 
+                make_param(upcast(types->u64_type), "size")
+            } 
+        );
+        types->resize_function = type_system_make_function( {
+                make_param(allocator_pointer,       "data"), 
+                make_param(types->byte_pointer,     "pointer"), 
+                make_param(upcast(types->u64_type), "previous_size"),
+                make_param(upcast(types->u64_type), "new_size"),
+            }, 
+            upcast(types->bool_type)
+        );
+
+        add_member_cstr(&types->allocator->content, "allocate", upcast(types->allocate_function));
+        add_member_cstr(&types->allocator->content, "free", upcast(types->free_function));
+        add_member_cstr(&types->allocator->content, "resize", upcast(types->resize_function));
+        type_system_finish_struct(types->allocator);
     }
 
     // Type Information

@@ -1,9 +1,49 @@
 
 
-Plan: Make a usable, _SIMPLE_ version of a debugger (Breakpoints, stepping, watch values, stack-window)
-
 TODO:
- * Watch-Window (Not implemented yet)
+ * Implement Arena Allocator
+ * Rewrite Dynamic-Array
+
+
+TODO: Upp-Basic Library (While fixing bugs in language)
+ - Arena
+ - Dynamic_Array 
+ - Strings
+    * Static Strings
+    * String-Builder
+    * Formatting
+    * Printing
+ - Hashtable
+
+
+
+DONE:
+04.03.2025
+ * Restored previous Allocator behavior
+
+03.03.2025
+ * Refactored base allocator interface (Now holds allocator data member)
+ * Fixed bug where Error-Information doesn't display on hover (Semantic-error info was not set!)
+ * Add toggle for cursor hover-information
+ * Visual Line Selection errors when folds are enabled
+ * Updated imports so we can have import Arena~Arena
+ * Off by one error in syntax highlighting
+
+28.02.2025
+ * Fixed error-hover information
+ * Refactored Rich-Text rendering
+
+27.02.2025
+ * Researching Memory-Allocators
+ * Store Debugger-Infos in Session
+ * Toggling Debugger-Window
+
+
+
+
+
+DEBUGGER Tasks:
+ * Watch-Window
     - Variable-Printing should use other process-values (Reading from different memory sources...)
     - UI option to remove/update watch-value
  * Add continue, step-out-of, step-into and step-over buttons
@@ -11,13 +51,10 @@ TODO:
     - Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
     - Fix Step-Over (Should respect breakpoints, use step-out of correctly)
  * Implement breakpoint enabled info
- * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
-    - Allow debugger to halt process arbitrarily (To add breakpoints)
- * Store Debugger-Infos in Session
-    - Breakpoints should update with line-edits
-    - Watch-values/Breakpoints should be stored in session
  * Better breakpoint/current location rendering (Images instead of >, colors, step out/step in information)
     - Use SDF-Bitmaps (May need to rewrite a lot of shiz if we are using the UI-Rendering Code for this)
+ * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
+    - Allow debugger to halt process arbitrarily (To add breakpoints)
  * Test step over code:
     - If else
     - Switch
@@ -26,11 +63,6 @@ TODO:
     - Stepping out of function?
     - Gotos (Break/continue with labels)
  * Polish
-
-
-
-DONE:
-
 
 Debugger Features:
  * Stack-Frames 

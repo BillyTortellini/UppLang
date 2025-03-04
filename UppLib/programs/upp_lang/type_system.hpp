@@ -305,7 +305,8 @@ struct Upp_Allocator
 {
     i64 allocate_fn_index_plus_one;
     i64 free_fn_index_plus_one;
-    i64 reallocate_fn_index_plus_one;
+    i64 resize_fn_index_plus_one;
+    Upp_Any data;
 };
 
 
@@ -492,7 +493,7 @@ struct Predefined_Types
     Datatype_Function* allocate_function;
     Datatype_Function* free_function;
     Datatype_Function* hardcoded_reallocate;
-    Datatype_Function* reallocate_function;
+    Datatype_Function* resize_function;
 
     // Types for built-in/hardcoded functions
     Datatype_Function* type_malloc;

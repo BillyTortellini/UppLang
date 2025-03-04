@@ -363,6 +363,8 @@ struct Syntax_Editor
     int navigate_error_cam_start;
     int navigate_error_index;
 
+    bool show_semantic_infos;
+
     // Rendering
     Dynamic_Array<Particle> particles;
     double last_update_time;
@@ -2265,6 +2267,8 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
     syntax_editor.last_search_was_forward = false;
     syntax_editor.last_search_was_to = false;
 
+    syntax_editor.show_semantic_infos = false;
+
     compiler_initialize();
 
     String default_filename = string_create_static("upp_code/editor_text.upp");
@@ -2468,11 +2472,12 @@ void code_diff_destroy(Code_Diff* code_diff)
     dynamic_array_destroy(&code_diff->line_inserts_and_deletes);
 }
 
-void code_diff_update_folds_and_jumps(Code_Diff code_diff, int tab_index)
+void code_diff_update_folds_jumps_and_breakpoints(Code_Diff code_diff, int tab_index)
 {
     auto& tab = syntax_editor.tabs[tab_index];
     auto& folds = tab.folds;
     auto& jump_list = tab.jump_list;
+    auto& breakpoints = tab.breakpoints;
     bool folds_changed = false;
     bool jump_list_changed = false;
 
@@ -2526,6 +2531,28 @@ void code_diff_update_folds_and_jumps(Code_Diff code_diff, int tab_index)
                 if (line_index <= pos.line) {
                     pos.line -= 1;
                     jump_list_changed = true;
+                }
+            }
+        }
+
+        // Update breakpoints
+        for (int j = 0; j < breakpoints.size; j++)
+        {
+            auto& breakpoint = breakpoints[j];
+            if (line_insert.is_insert) {
+                if (line_index <= breakpoint.line_number) {
+                    breakpoint.line_number += 1;
+                }
+            }
+            else
+            {
+                if (line_index == breakpoint.line_number) {
+                    // Remove breakpoint
+                    dynamic_array_swap_remove(&breakpoints, j);
+                    j -= 1;
+                }
+                else if (line_index < breakpoint.line_number) {
+                    breakpoint.line_number -= 1;
                 }
             }
         }
@@ -2690,7 +2717,7 @@ void syntax_editor_synchronize_code_information()
         SCOPE_EXIT(code_diff_destroy(&code_diff));
         code_diff_update_tokenization(code_diff, tab.code);
         code_diff_update_analysis_infos(code_diff, tab.code);
-        code_diff_update_folds_and_jumps(code_diff, tab_index);
+        code_diff_update_folds_jumps_and_breakpoints(code_diff, tab_index);
         tab.last_code_info_synch = now;
     }
 }
@@ -2826,7 +2853,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
                 code_diff_update_tokenization(code_diff, tab.compilation_unit->code);
                 code_diff_update_analysis_infos(code_diff, tab.code);
-                // Note: Don't do code_diff_update_folds_and_jumps, as this is data in tab, and is already up-to-date
+                // Note: Don't do code_diff_update_folds_jumps_and_breakpoints, as this is data in tab, and is already up-to-date
                 syntax_editor_update_line_visible_and_fold_info(i);
             }
         }
@@ -2880,7 +2907,15 @@ void syntax_editor_save_state(String file_path)
             auto& fold = tab.folds[j];
             string_append_formated(&output, "fold=%d;%d;%d\n", fold.line_start, fold.line_end, fold.indentation);
         }
+        for (int j = 0; j < tab.breakpoints.size; j++) {
+            auto& bp = tab.breakpoints[j];
+            string_append_formated(&output, "breakpoint=%d\n", bp.line_number);
+        }
     }
+    for (int i = 0; i < editor.watch_values.size; i++) {
+        string_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
+    }
+
     file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
 }
 
@@ -2893,6 +2928,21 @@ void syntax_editor_load_state(String file_path)
     SCOPE_EXIT(file_io_unload_text_file(&file_opt));
     if (!file_opt.available) {
         return;
+    }
+
+    // Reset current data
+    {
+        debugger_reset(editor.debugger);
+        for (int i = 0; i < editor.tabs.size; i++) {
+            auto& tab = editor.tabs[i];
+            dynamic_array_reset(&tab.breakpoints);
+        }
+        for (int i = 0; i < editor.watch_values.size; i++) {
+            auto& value = editor.watch_values[i];
+            string_destroy(&value.name);
+            string_destroy(&value.value_as_text);
+        }
+        dynamic_array_reset(&editor.watch_values);
     }
 
     String session = file_opt.value;
@@ -2999,6 +3049,24 @@ void syntax_editor_load_state(String file_path)
             if (success) {
                 syntax_editor_add_fold(start, end, indentation);
             }
+        }
+        else if (string_equals_cstring(&setting, "breakpoint")) 
+        {
+            if (last_tab_valid) {
+                auto& tab = editor.tabs[editor.open_tab_index];
+                Line_Breakpoint breakpoint;
+                breakpoint.src_breakpoint = nullptr;
+                breakpoint.enabled = true;
+                breakpoint.line_number = 0;
+                dynamic_array_push_back(&tab.breakpoints, breakpoint);
+                int_value_to_set = &tab.breakpoints[tab.breakpoints.size - 1].line_number;
+            }
+        }
+        else if (string_equals_cstring(&setting, "watch_value")) {
+            Watch_Value watch_value;
+            watch_value.name = string_copy(value);
+            watch_value.value_as_text = string_create();
+            dynamic_array_push_back(&editor.watch_values, watch_value);
         }
         else {
             logg("Unrecognized session option: %s\n", setting.characters);
@@ -3254,13 +3322,23 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
     auto& editor = syntax_editor;
     auto& tab = editor.tabs[editor.open_tab_index];
 
-    auto& infos = source_code_get_line(tab.code, index.line)->item_infos;
+    auto line = source_code_get_line(tab.code, index.line);
+    auto& infos = line->item_infos;
     int previous_expr_depth = -1;
     int previous_call_depth = -1;
     for (int i = 0; i < infos.size; i++)
     {
         auto info = infos[i];
-        if (index.character < info.start_char || index.character >= info.end_char) continue;
+
+        bool on_info = false;
+        if (info.start_char == info.end_char && info.start_char == line->text.size && index.character == math_maximum(0, line->text.size - 1)) {
+            on_info = true;
+        }
+        else {
+            on_info = index.character >= info.start_char && index.character < info.end_char;
+        }
+        if (!on_info) continue;
+
         switch (info.type)
         {
         case Code_Analysis_Item_Type::CALL_INFORMATION: {
@@ -5872,9 +5950,10 @@ void syntax_editor_update(bool& animations_running)
     }
 
     // Check shortcuts pressed
-    if (syntax_editor.input->key_pressed[(int)Key_Code::O] && 
-        syntax_editor.input->key_down[(int)Key_Code::CTRL] && 
-        syntax_editor.input->key_down[(int)Key_Code::SHIFT]) 
+    static bool show_debugger_ui = false;
+    if (input->key_pressed[(int)Key_Code::O] && 
+        input->key_down[(int)Key_Code::CTRL] && 
+        input->key_down[(int)Key_Code::SHIFT]) 
     {
         String filename = string_create();
         SCOPE_EXIT(string_destroy(&filename));
@@ -5884,25 +5963,33 @@ void syntax_editor_update(bool& animations_running)
             syntax_editor_switch_tab(tab_index);
         }
     }
-    else if (syntax_editor.input->key_pressed[(int)Key_Code::S] && syntax_editor.input->key_down[(int)Key_Code::CTRL]) {
+    else if (input->key_pressed[(int)Key_Code::S] && input->key_down[(int)Key_Code::CTRL]) {
         syntax_editor_save_text_file();
     }
-    else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
+    else if (input->key_pressed[(int)Key_Code::F8]) {
         syntax_editor_wait_for_newest_compiler_info(false);
         compiler_run_testcases(true);
+    }
+    else if (input->key_pressed[(int)Key_Code::B] && input->key_down[(int)Key_Code::CTRL]) 
+    {
+        show_debugger_ui = !show_debugger_ui;
+    }
+    else if (input->key_pressed[(int)Key_Code::SPACE] && input->key_down[(int)Key_Code::CTRL]) {
+        editor.show_semantic_infos = !editor.show_semantic_infos;
     }
 
     // Debugger-UI
     const bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
     bool handle_key_messages_in_editor = true;
+    UI_Input_Info input_info = ui_system_start_frame(input);
+    if (input_info.has_keyboard_input) {
+        handle_key_messages_in_editor = false;
+    }
+    if (show_debugger_ui)
     {
         String tmp_str = string_create();
         SCOPE_EXIT(string_destroy(&tmp_str));
 
-        UI_Input_Info input_info = ui_system_start_frame(input);
-        if (input_info.has_keyboard_input) {
-            handle_key_messages_in_editor = false;
-        }
 
         Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
         ui_system_push_active_container(handle.container, false);
@@ -6036,7 +6123,6 @@ void syntax_editor_update(bool& animations_running)
         }
     }
 
-
     // Handle Editor inputs
     if (handle_key_messages_in_editor) {
         for (int i = 0; i < input->key_messages.size; i++) {
@@ -6144,7 +6230,7 @@ void syntax_editor_update(bool& animations_running)
         mode = Editor_Mode::NORMAL;
     }
 
-    bool synch_with_compiler = syntax_editor.input->key_pressed[(int)Key_Code::B] && syntax_editor.input->key_down[(int)Key_Code::CTRL];
+    bool synch_with_compiler = syntax_editor.input->key_pressed[(int)Key_Code::N] && syntax_editor.input->key_down[(int)Key_Code::CTRL];
     bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
     if (editor.compiler_work_started) {
         animations_running = true;
@@ -6230,6 +6316,7 @@ void syntax_editor_update(bool& animations_running)
         watch_values_update();
 
         window_set_focus(editor.window);
+        show_debugger_ui = true;
         return;
     }
 
@@ -6638,7 +6725,9 @@ void syntax_editor_render()
                 default: continue;
                 }
 
-                Rich_Text::line_set_text_color_range(text, color, line->visible_index - cam_start_visible, token.start_index, token.end_index);
+                Rich_Text::mark_line(
+                    text, Rich_Text::Mark_Type::TEXT_COLOR, color, line->visible_index - cam_start_visible, token.start_index, token.end_index
+                );
             }
         }
     }
@@ -6671,11 +6760,11 @@ void syntax_editor_render()
         // Highlight visual block lines
         if (editor.mode == Editor_Mode::VISUAL_BLOCK)
         {
-            int start_index = math_minimum(cursor.line, editor.visual_block_start_line);
+            int index = math_minimum(cursor.line, editor.visual_block_start_line);
             int end_index = math_maximum(cursor.line, editor.visual_block_start_line);
-            int index = source_code_get_line(code, start_index)->visible_index;
-            end_index = source_code_get_line(code, end_index)->visible_index;
-            while (true)
+            index = math_maximum(cam_start, index);
+            end_index = math_minimum(cam_end, end_index);
+            while (index <= end_index)
             {
                 auto line = source_code_get_line(code, index);
                 if (!line->is_folded) {
@@ -6721,7 +6810,7 @@ void syntax_editor_render()
                 auto& infos = line->item_infos;
                 for (int i = 0; i < infos.size; i++)
                 {
-                    auto info = infos[i];
+                    const auto& info = infos[i];
                     vec3 color;
                     Rich_Text::Mark_Type mark_type = Rich_Text::Mark_Type::TEXT_COLOR;
                     switch (info.type)
@@ -6755,7 +6844,19 @@ void syntax_editor_render()
                         break;
                     }
                     case Code_Analysis_Item_Type::MARKUP: color = info.options.markup_color; break;
-                    case Code_Analysis_Item_Type::ERROR_ITEM: color = vec3(1.0f, 0.0f, 0.0f); mark_type = Rich_Text::Mark_Type::UNDERLINE; break;
+                    case Code_Analysis_Item_Type::ERROR_ITEM: 
+                    {
+                        // Special handling, as errors may appear at the end of the line
+                        int end_char = info.end_char;
+                        if (info.start_char == info.end_char) {
+                            end_char += 1;
+                        }
+                        color = vec3(1.0f, 0.0f, 0.0f); 
+                        mark_type = Rich_Text::Mark_Type::UNDERLINE;
+                        Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, end_char);
+                        continue;
+                        break;
+                    }
                     default: continue;
                     }
                     Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, info.end_char);
@@ -6877,7 +6978,7 @@ void syntax_editor_render()
             }
         }
     };
-    auto error_append_to_rich_text = [](Compiler_Error_Info error, Rich_Text::Rich_Text* text, bool with_info) {
+    auto error_append_to_rich_text = [&](Compiler_Error_Info error, Rich_Text::Rich_Text* text, bool with_info) {
         Rich_Text::set_text_color(text, vec3(1.0f, 0.5f, 0.5f));
         Rich_Text::set_underline(text, vec3(1.0f, 0.5f, 0.5f));
         Rich_Text::append(text, "Error:");
@@ -6891,7 +6992,7 @@ void syntax_editor_render()
             for (int j = 0; j < semantic_error.information.size; j++) {
                 auto& error_info = semantic_error.information[j];
                 Rich_Text::add_line(text, false, 1);
-                error_information_append_to_rich_text(error_info, text);
+                error_information_append_to_rich_text(error_info, editor.analysis_data, text);
             }
         }
     };
@@ -6900,6 +7001,7 @@ void syntax_editor_render()
         editor.mode != Editor_Mode::FUZZY_FIND_DEFINITION &&
         editor.mode != Editor_Mode::TEXT_SEARCH &&
         editor.mode != Editor_Mode::ERROR_NAVIGATION &&
+        !(editor.mode == Editor_Mode::NORMAL && !editor.show_semantic_infos) &&
         (cursor.line >= cam_start && cursor.line <= cam_end) &&
         !cursor_is_on_fold;
 
@@ -7252,7 +7354,9 @@ void syntax_editor_render()
     }
 
     // Draw mode overlays
-    if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH || editor.mode == Editor_Mode::ERROR_NAVIGATION)
+    if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || 
+        editor.mode == Editor_Mode::TEXT_SEARCH || 
+        editor.mode == Editor_Mode::ERROR_NAVIGATION)
     {
         auto& line_edit = editor.search_text_edit;
 

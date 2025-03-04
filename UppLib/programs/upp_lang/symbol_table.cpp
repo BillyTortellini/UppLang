@@ -100,202 +100,185 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
     }
     else {
         // Overloading is only allowed for functions or a type + module combo
-        auto symbol_is_type = [&](Symbol* symbol) -> bool {
-            return symbol->type == Symbol_Type::TYPE;
+		// Note that it may be possible to break this currently using Import or Alias symbols
+		//		which may affect the way errors are reported (TODO: Think about this)
+        auto symbol_disallows_overload = [&](Symbol* symbol) -> bool {
+            return symbol->type == Symbol_Type::VARIABLE || 
+                symbol->type == Symbol_Type::VARIABLE_UNDEFINED || 
+                symbol->type == Symbol_Type::PARAMETER ||
+                symbol->type == Symbol_Type::GLOBAL;
         };
 
-        bool overload_valid = false;
-        if (type == Symbol_Type::FUNCTION || type == Symbol_Type::POLYMORPHIC_FUNCTION)
-        {
-            overload_valid = true;
-            for (int i = 0; i < symbols->size; i++) {
-                auto other_type = (*symbols)[i]->type;
-                if (other_type != Symbol_Type::FUNCTION && other_type != Symbol_Type::POLYMORPHIC_FUNCTION) {
-                    overload_valid = false;
-                    break;
-                }
-            }
-        }
-        else if (type == Symbol_Type::MODULE) 
-        {
-            overload_valid = true;
-            for (int i = 0; i < symbols->size; i++) {
-                auto other_symbol = (*symbols)[i];
-                if (!symbol_is_type(other_symbol)) {
-                    overload_valid = false;
-                    break;
-                }
-            }
-        }
-        else if (symbol_is_type(new_sym))
-        {
-            overload_valid = true;
-            for (int i = 0; i < symbols->size; i++) {
-                auto other_symbol = (*symbols)[i];
-                if (other_symbol->type != Symbol_Type::MODULE) {
-                    overload_valid = false;
-                    break;
-                }
-            }
-        }
+        // Overloading is allowed for all types, except for variables
+        bool overload_valid = true;
+		if (symbol_disallows_overload(new_sym)) {
+			overload_valid = false;
+		}
+		for (int i = 0; i < symbols->size; i++) {
+			auto other = (*symbols)[i];
+			if (symbol_disallows_overload(other)) {
+				overload_valid = false;
+				break;
+			}
+		}
 
-        if (!overload_valid) {
-            // Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
-            log_semantic_error("Symbol already defined in this scope", definition_node);
-            new_sym->id = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
-            return new_sym;
-        }
-    }
+		if (!overload_valid) {
+			// Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
+			log_semantic_error("Symbol already defined in this scope", definition_node);
+			new_sym->id = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
+			return new_sym;
+		}
+	}
 
-    // Add to symbol_table
-    dynamic_array_push_back(symbols, new_sym);
-    return new_sym;
+	// Add to symbol_table
+	dynamic_array_push_back(symbols, new_sym);
+	return new_sym;
 }
 
 
 void symbol_table_query_id_recursive(
-    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
+	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
 )
 {
-    // Check if already visited
-    if (hashset_contains(already_visited, table)) {
-        return;
-    }
-    hashset_insert_element(already_visited, table);
+	// Check if already visited
+	if (hashset_contains(already_visited, table)) {
+		return;
+	}
+	hashset_insert_element(already_visited, table);
 
-    // Check if all symbols should be added (If id parameter == 0)
-    bool stop_further_lookup = false;
-    if (id != 0) {
-        // Try to find symbol
-        Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&table->symbols, id);
-        if (symbols != 0) {
-            for (int i = 0; i < symbols->size; i++) {
-                Symbol* symbol = (*symbols)[i];
-                if ((int)symbol->access_level <= (int)access_level) {
-                    dynamic_array_push_back(results, symbol);
-                    if (symbol->access_level == Symbol_Access_Level::INTERNAL) {
-                        // Once a internal symbol is found (variable/parameter), stop the search. 
-                        // Update: Why is this the case? Probably because overloading for variables isn't available yet?
-                        stop_further_lookup = true;
-                    }
-                }
-            }
-        }
-    }
-    else {
-        // Otherwise add all symbols in this table
-        for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
-            Dynamic_Array<Symbol*>* symbols = iter.value;
-            for (int i = 0; i < symbols->size; i++) {
-                dynamic_array_push_back(results, (*symbols)[i]);
-            }
-        }
-    }
+	// Check if all symbols should be added (If id parameter == 0)
+	bool stop_further_lookup = false;
+	if (id != 0) {
+		// Try to find symbol
+		Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&table->symbols, id);
+		if (symbols != 0) {
+			for (int i = 0; i < symbols->size; i++) {
+				Symbol* symbol = (*symbols)[i];
+				if ((int)symbol->access_level <= (int)access_level) {
+					dynamic_array_push_back(results, symbol);
+					if (symbol->access_level == Symbol_Access_Level::INTERNAL) {
+						// Once a internal symbol is found (variable/parameter), stop the search. 
+						// Update: Why is this the case? Probably because overloading for variables isn't available yet?
+						stop_further_lookup = true;
+					}
+				}
+			}
+		}
+	}
+	else {
+		// Otherwise add all symbols in this table
+		for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
+			Dynamic_Array<Symbol*>* symbols = iter.value;
+			for (int i = 0; i < symbols->size; i++) {
+				dynamic_array_push_back(results, (*symbols)[i]);
+			}
+		}
+	}
 
-    if (stop_further_lookup) {
-        return;
-    }
+	if (stop_further_lookup) {
+		return;
+	}
 
-    // With includes, even if we have found a symbol, we keep searching
-    for (int i = 0; i < table->included_tables.size && search_includes; i++) {
-        auto included = table->included_tables[i];
-        symbol_table_query_id_recursive(
-            included.table,
-            id,
-            included.transitive,
-            (Symbol_Access_Level)(math_minimum((int) access_level, (int) included.access_level)),
-            results,
-            already_visited
-        );
-    }
+	// With includes, even if we have found a symbol, we keep searching
+	for (int i = 0; i < table->included_tables.size && search_includes; i++) {
+		auto included = table->included_tables[i];
+		symbol_table_query_id_recursive(
+			included.table,
+			id,
+			included.transitive,
+			(Symbol_Access_Level)(math_minimum((int)access_level, (int)included.access_level)),
+			results,
+			already_visited
+		);
+	}
 }
 
 void symbol_table_query_id(
-    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited) 
+	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited)
 {
-    hashset_reset(already_visited);
-    return symbol_table_query_id_recursive(table, id, search_includes, access_level, results, already_visited);
+	hashset_reset(already_visited);
+	return symbol_table_query_id_recursive(table, id, search_includes, access_level, results, already_visited);
 }
 
 void symbol_type_append_to_string(Symbol_Type type, String* string)
 {
-    switch (type)
-    {
-    case Symbol_Type::VARIABLE_UNDEFINED:
-        string_append_formated(string, "Variable Undefined");
-        break;
-    case Symbol_Type::PARAMETER:
-        string_append_formated(string, "Parameter");
-        break;
-    case Symbol_Type::POLYMORPHIC_FUNCTION:
-        string_append_formated(string, "Polymorphic Function");
-        break;
-    case Symbol_Type::DEFINITION_UNFINISHED:
-        string_append_formated(string, "Definition Unfinished");
-        break;
-    case Symbol_Type::POLYMORPHIC_VALUE:
-        string_append_formated(string, "Polymorphic value");
-        break;
-    case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
-        string_append_formated(string, "Alias or imported symbol");
-        break;
-    case Symbol_Type::VARIABLE:
-        string_append_formated(string, "Variable");
-        break;
-    case Symbol_Type::GLOBAL:
-        string_append_formated(string, "Global");
-        break;
-    case Symbol_Type::TYPE:
-        string_append_formated(string, "Type");
-        break;
-    case Symbol_Type::ERROR_SYMBOL:
-        string_append_formated(string, "Error");
-        break;
-    case Symbol_Type::COMPTIME_VALUE:
-        string_append_formated(string, "Constant");
-        break;
-    case Symbol_Type::HARDCODED_FUNCTION:
-        string_append_formated(string, "Hardcoded Function");
-        break;
-    case Symbol_Type::FUNCTION:
-        string_append_formated(string, "Function");
-        break;
-    case Symbol_Type::MODULE:
-        string_append_formated(string, "Module");
-        break;
-    default: panic("What");
-    }
+	switch (type)
+	{
+	case Symbol_Type::VARIABLE_UNDEFINED:
+		string_append_formated(string, "Variable Undefined");
+		break;
+	case Symbol_Type::PARAMETER:
+		string_append_formated(string, "Parameter");
+		break;
+	case Symbol_Type::POLYMORPHIC_FUNCTION:
+		string_append_formated(string, "Polymorphic Function");
+		break;
+	case Symbol_Type::DEFINITION_UNFINISHED:
+		string_append_formated(string, "Definition Unfinished");
+		break;
+	case Symbol_Type::POLYMORPHIC_VALUE:
+		string_append_formated(string, "Polymorphic value");
+		break;
+	case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
+		string_append_formated(string, "Alias or imported symbol");
+		break;
+	case Symbol_Type::VARIABLE:
+		string_append_formated(string, "Variable");
+		break;
+	case Symbol_Type::GLOBAL:
+		string_append_formated(string, "Global");
+		break;
+	case Symbol_Type::TYPE:
+		string_append_formated(string, "Type");
+		break;
+	case Symbol_Type::ERROR_SYMBOL:
+		string_append_formated(string, "Error");
+		break;
+	case Symbol_Type::COMPTIME_VALUE:
+		string_append_formated(string, "Constant");
+		break;
+	case Symbol_Type::HARDCODED_FUNCTION:
+		string_append_formated(string, "Hardcoded Function");
+		break;
+	case Symbol_Type::FUNCTION:
+		string_append_formated(string, "Function");
+		break;
+	case Symbol_Type::MODULE:
+		string_append_formated(string, "Module");
+		break;
+	default: panic("What");
+	}
 }
 
 void symbol_append_to_string(Symbol* symbol, String* string)
 {
-    string_append_formated(string, "%s ", symbol->id->characters);
-    symbol_type_append_to_string(symbol->type, string);
+	string_append_formated(string, "%s ", symbol->id->characters);
+	symbol_type_append_to_string(symbol->type, string);
 }
 
 void symbol_table_append_to_string_with_parent_info(String* string, Symbol_Table* table, bool is_parent, bool print_root)
 {
-    // if (!print_root && table->parent == 0) return;
-    if (!is_parent) {
-        string_append_formated(string, "Symbols: \n");
-    }
-    for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
-    {
-        Dynamic_Array<Symbol*> symbols = *(iter.value);
-        for (int i = 0; i < symbols.size; i++) {
-            Symbol* s = symbols[i];
-            if (is_parent) {
-                string_append_formated(string, "\t");
-            }
-            symbol_append_to_string(s, string);
-            string_append_formated(string, "\n");
-        }
-    }
-    // if (table->parent != 0) {
-    //     symbol_table_append_to_string_with_parent_info(c_string, table->parent, true, print_root);
-    // }
+	// if (!print_root && table->parent == 0) return;
+	if (!is_parent) {
+		string_append_formated(string, "Symbols: \n");
+	}
+	for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
+	{
+		Dynamic_Array<Symbol*> symbols = *(iter.value);
+		for (int i = 0; i < symbols.size; i++) {
+			Symbol* s = symbols[i];
+			if (is_parent) {
+				string_append_formated(string, "\t");
+			}
+			symbol_append_to_string(s, string);
+			string_append_formated(string, "\n");
+		}
+	}
+	// if (table->parent != 0) {
+	//     symbol_table_append_to_string_with_parent_info(c_string, table->parent, true, print_root);
+	// }
 }
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root) {
-    symbol_table_append_to_string_with_parent_info(string, table, false, print_root);
+	symbol_table_append_to_string_with_parent_info(string, table, false, print_root);
 }

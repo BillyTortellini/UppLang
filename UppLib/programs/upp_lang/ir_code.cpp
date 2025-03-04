@@ -1511,14 +1511,14 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         assert(type_info->options.type->memory_info.available, "");
         auto& mem = type_info->options.type->memory_info.value;
 
-        auto allocate_from_global_allocator = [](IR_Code_Block* ir_block, IR_Data_Access* size, IR_Data_Access* alignment, IR_Data_Access* destination)
+        auto allocate_from_global_allocator = [](IR_Data_Access* size, IR_Data_Access* alignment, IR_Data_Access* destination)
         {
             auto& types = compiler.analysis_data->type_system.predefined_types;
             auto& analyser = compiler.semantic_analyser;
 
-            IR_Data_Access* alloc_fn_access = ir_data_access_create_global(analyser->global_allocator);
-            alloc_fn_access = ir_data_access_create_dereference(alloc_fn_access);
-            alloc_fn_access = ir_data_access_create_member(alloc_fn_access, types.allocator->content.members[0]);
+            IR_Data_Access* allocator_ptr_access = ir_data_access_create_global(analyser->global_allocator);
+            IR_Data_Access* allocator_access = ir_data_access_create_dereference(allocator_ptr_access);
+            IR_Data_Access* alloc_fn_access = ir_data_access_create_member(allocator_access, types.allocator->content.members[0]);
 
             IR_Instruction alloc_instr;
             alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -1526,11 +1526,12 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             alloc_instr.options.call.options.pointer_access = alloc_fn_access;
             alloc_instr.options.call.destination = destination;
             alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
-            dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_global(analyser->global_allocator));
+            dynamic_array_push_back(&alloc_instr.options.call.arguments, allocator_ptr_access);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, size);
             dynamic_array_push_back(&alloc_instr.options.call.arguments, alignment);
             add_instruction(alloc_instr);
         };
+
         if (new_expr.count_expr.available)
         {
             assert(result_type->type == Datatype_Type::SLICE, "HEY");
@@ -1555,7 +1556,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             u32 alignment_u32 = (u32)mem.alignment;
             allocate_from_global_allocator(
-                ir_block,
                 mult_instr.options.binary_op.destination,
                 ir_data_access_create_constant(upcast(types.u32_type), array_create_static_as_bytes(&alignment_u32, 1)),
                 slice_data_access
@@ -1567,7 +1567,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             IR_Data_Access* destination = make_destination_access_on_demand(result_type);
             u32 alignment_u32 = (u32)mem.alignment;
             allocate_from_global_allocator(
-                ir_block,
                 ir_data_access_create_constant_u64(mem.size),
                 ir_data_access_create_constant(upcast(types.u32_type), array_create_static_as_bytes(&alignment_u32, 1)),
                 destination
@@ -2596,9 +2595,10 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         }
 
         // Call delete function on current allocator
-        IR_Data_Access* delete_fn_access = ir_data_access_create_global(analyser->global_allocator);
-        delete_fn_access = ir_data_access_create_dereference(delete_fn_access);
-        delete_fn_access = ir_data_access_create_member(delete_fn_access, types.allocator->content.members[1]);
+        IR_Data_Access* allocator_ptr_access = ir_data_access_create_global(analyser->global_allocator);
+        IR_Data_Access* delete_fn_access = ir_data_access_create_member(
+            ir_data_access_create_dereference(allocator_ptr_access), types.allocator->content.members[1]
+        );
 
         IR_Data_Access* byte_ptr_access = ir_data_access_create_intermediate(types.byte_pointer);
         IR_Instruction byte_ptr_cast;
@@ -2614,7 +2614,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         alloc_instr.options.call.options.pointer_access = delete_fn_access;
         alloc_instr.options.call.destination = ir_data_access_create_intermediate(upcast(types.bool_type));
         alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_global(analyser->global_allocator));
+        dynamic_array_push_back(&alloc_instr.options.call.arguments, allocator_ptr_access);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, byte_ptr_access);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, size_access);
         add_instruction(alloc_instr);
@@ -2782,10 +2782,10 @@ void ir_generator_finish(bool gen_bytecode)
         ir_generator.program->entry_function = entry_function;
         ir_generator.current_block = entry_function->code;
 
-        // Initialize default allocator
+        // Initialize system allocator
         {
-            // Inititalize default allocator (Load function pointers)
-            IR_Data_Access* alloc_access = ir_data_access_create_global(compiler.semantic_analyser->default_allocator);
+            // Inititalize system allocator (Load function pointers)
+            IR_Data_Access* alloc_access = ir_data_access_create_global(compiler.semantic_analyser->system_allocator);
             IR_Instruction address_instr;
             address_instr.type = IR_Instruction_Type::FUNCTION_ADDRESS;
 
@@ -2801,10 +2801,10 @@ void ir_generator_finish(bool gen_bytecode)
             address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->content.members[2]);
             add_instruction(address_instr);
 
-            // Set global allocator to default allocator
+            // Set system allocator as default allocator
             IR_Instruction move_instr;
             move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.source = ir_data_access_create_address_of(ir_data_access_create_global(compiler.semantic_analyser->default_allocator));
+            move_instr.options.move.source = ir_data_access_create_address_of(alloc_access);
             move_instr.options.move.destination = ir_data_access_create_global(compiler.semantic_analyser->global_allocator);
             add_instruction(move_instr);
         }
@@ -2920,7 +2920,7 @@ void ir_generator_reset()
         {
             auto fn = default_alloc_function;
             ir_generator.current_block = fn->code;
-            IR_Data_Access* pointer_value = ir_data_access_create_intermediate(types.byte_pointer_optional);
+            IR_Data_Access* pointer_value = ir_data_access_create_intermediate(types.byte_pointer);
             IR_Data_Access* size_param_u64 = ir_data_access_create_parameter(fn, 1);
 
             IR_Instruction call_instr;
@@ -2957,58 +2957,21 @@ void ir_generator_reset()
 
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = ir_data_access_create_constant_bool(true);
+            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
             add_instruction(return_instr);
         }
 
-        // Default realloc function
-        IR_Function* default_reallocate_function = ir_function_create(types.reallocate_function, -1);
+        // Default resize function
+        IR_Function* default_reallocate_function = ir_function_create(types.resize_function, -1);
         {
             auto fn = default_reallocate_function;
             ir_generator.current_block = fn->code;
 
-            IR_Data_Access* pointer_value = ir_data_access_create_parameter(fn, 1);
-            IR_Data_Access* new_size_u64 = ir_data_access_create_parameter(fn, 3);
-            IR_Data_Access* new_pointer_value = ir_data_access_create_intermediate(types.byte_pointer_optional);
-
-            // Allocate new memory
-            IR_Instruction alloc_call_instr;
-            alloc_call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            alloc_call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            alloc_call_instr.options.call.options.hardcoded = Hardcoded_Type::MALLOC_SIZE_U64;
-            alloc_call_instr.options.call.destination = new_pointer_value;
-            alloc_call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            dynamic_array_push_back(&alloc_call_instr.options.call.arguments, new_size_u64);
-            add_instruction(alloc_call_instr);
-
-            // Copy old data into new data
-            IR_Instruction memcpy_call;
-            memcpy_call.type = IR_Instruction_Type::FUNCTION_CALL;
-            memcpy_call.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            memcpy_call.options.call.options.hardcoded = Hardcoded_Type::MEMORY_COPY;
-            memcpy_call.options.call.destination = ir_data_access_create_nothing();
-            memcpy_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
-            dynamic_array_push_back(&memcpy_call.options.call.arguments, new_pointer_value);
-            dynamic_array_push_back(&memcpy_call.options.call.arguments, pointer_value);
-            dynamic_array_push_back(&memcpy_call.options.call.arguments, new_size_u64);
-            add_instruction(memcpy_call);
-
-            // Delete old data
-            IR_Instruction call_instr;
-            call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = Hardcoded_Type::FREE_POINTER;
-            call_instr.options.call.destination = ir_data_access_create_nothing();
-            call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            dynamic_array_push_back(&call_instr.options.call.arguments, pointer_value);
-            add_instruction(call_instr);
-
-            // And return new memory pointer
+            // Default allocator can never resize allocations
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = new_pointer_value;
+            return_instr.options.return_instr.options.return_value = ir_data_access_create_constant_bool(false);
             add_instruction(return_instr);
         }
 
@@ -3019,10 +2982,12 @@ void ir_generator_reset()
         Upp_Allocator allocator;
         allocator.allocate_fn_index_plus_one = default_alloc_function->function_slot_index + 1;
         allocator.free_fn_index_plus_one = default_free_function->function_slot_index + 1;
-        allocator.reallocate_fn_index_plus_one = default_reallocate_function->function_slot_index + 1;
+        allocator.resize_fn_index_plus_one = default_reallocate_function->function_slot_index + 1;
+        allocator.data.type.index = types.byte_pointer->type_handle.index;
+        allocator.data.data = nullptr;
 
-        *(Upp_Allocator*)compiler.semantic_analyser->default_allocator->memory = allocator;
-        *(Upp_Allocator**)compiler.semantic_analyser->global_allocator->memory = (Upp_Allocator*)compiler.semantic_analyser->default_allocator->memory;
+        *(Upp_Allocator*)compiler.semantic_analyser->system_allocator->memory = allocator;
+        *(Upp_Allocator**)compiler.semantic_analyser->global_allocator->memory = (Upp_Allocator*) compiler.semantic_analyser->system_allocator->memory;
 
         ir_generator.current_block = nullptr;
     }

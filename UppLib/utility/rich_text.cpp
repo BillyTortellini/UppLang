@@ -40,10 +40,6 @@ namespace Rich_Text
         return true;
     }
 
-    Style_Change style_change_make(int char_start, Text_Style style) {
-        return { char_start, style };
-    }
-    
 
 
     // Rich Text
@@ -172,38 +168,35 @@ namespace Rich_Text
         if (line.is_seperator) return;
     }
 
-    void push_current_style(Rich_Text* text) 
+
+
+    // If end == -1, then this change goes from start to end of line
+    // If start == -1, then take start as current text pos
+    // If line_index == -1, then take current line
+    void line_add_style_change(Rich_Text* text, Mark_Type mark_type, bool deactivate, vec3 color, int line_index, int start, int end)
     {
-        auto& lines = text->lines;
-        if (lines.size == 0) return;
-        auto& line = lines[lines.size - 1];
-
-        // Add new change if non-exist currently
-        if (line.style_changes.size == 0) 
-        {
-            if (line.text.size == 0) {
-                line.default_style = text->style;
-                return;
-            }
-            dynamic_array_push_back(&line.style_changes, style_change_make(line.text.size, text->style));
-            return;
+        if (line_index < 0) {
+            line_index = text->lines.size - 1;
         }
+        if (line_index < 0 || line_index >= text->lines.size) return;
+        auto& line = text->lines[line_index];
+        if (line.is_seperator) return;
+        if (start == -1) { start = math_maximum(0, line.text.size); }
+        if (end != -1 && end <= start) return;
 
-        auto& last_change = line.style_changes[line.style_changes.size - 1];
-        if (last_change.char_start == line.text.size) {
-            last_change.style = text->style;
-            return;
-        }
 
-        if (text_style_equals(last_change.style, text->style)) {
-            return;
-        }
-        dynamic_array_push_back(&line.style_changes, style_change_make(line.text.size, text->style));
+        Style_Change change;
+        change.type = mark_type;
+        change.is_deactivate = deactivate;
+        change.char_start = start < 0 ? line.text.size : start;
+        change.char_end = end;
+        change.color = color;
+        dynamic_array_push_back(&line.style_changes, change);
     }
 
     void set_text_color(Rich_Text* text, vec3 color) {
         text->style.text_color = color;
-        push_current_style(text);
+        line_add_style_change(text, Mark_Type::TEXT_COLOR, false, color, -1, -1, -1);
     }
 
     void set_text_color(Rich_Text* text) {
@@ -214,136 +207,30 @@ namespace Rich_Text
     {
         text->style.has_bg = true;
         text->style.bg_color = color;
-        push_current_style(text);
+        line_add_style_change(text, Mark_Type::BACKGROUND_COLOR, false, color, -1, -1, -1);
     }
 
     void stop_bg(Rich_Text* text) {
         text->style.has_bg = false;
-        push_current_style(text);
+        line_add_style_change(text, Mark_Type::BACKGROUND_COLOR, true, vec3(1), -1, -1, -1);
     }
 
     void set_underline(Rich_Text* text, vec3 color)
     {
         text->style.has_underline = true;
         text->style.underline_color = color;
-        push_current_style(text);
+        line_add_style_change(text, Mark_Type::UNDERLINE, false, color, -1, -1, -1);
     }
 
     void stop_underline(Rich_Text* text) {
         text->style.has_underline = false;
-        push_current_style(text);
+        line_add_style_change(text, Mark_Type::UNDERLINE, true, vec3(1), -1, -1, -1);
     }
-
-
     
     // Update format functions
-    typedef void (*update_style_fn) (Text_Style& style, void* userdata);
-    void line_update_style_range(Rich_Text* text, update_style_fn update_fn, void* userdata, int line_index, int char_start, int char_end)
-    {
-        // Sanitize indices
-        if (line_index < 0 || line_index >= text->lines.size) return;
-        if (char_start >= char_end) return;
-        auto& line = text->lines[line_index];
-        if (line.text.size == 0 || line.is_seperator) return;
-        char_end = math_clamp(char_end, 0, line.text.size);
-        char_start = math_clamp(char_start, 0, math_maximum(0, char_end-1));
-        if (char_start >= char_end) return;
-
-        // Normalize line style changes (Style changes != 0, first style change has char_start 0)
-        dynamic_array_insert_ordered(&line.style_changes, style_change_make(0, line.default_style), 0);
-
-        // Helper
-        auto find_last_change_index = [&](int char_index) -> int {
-            int last_change_index = 0;
-            for (int i = 0; i < line.style_changes.size; i++) {
-                auto& change = line.style_changes[i];
-                if (change.char_start <= char_index) {
-                    last_change_index = i;
-                }
-                else {
-                    break;
-                }
-            }
-            return last_change_index;
-        };
-
-        // Insert changes at range start and end
-        int last_change_before_start_index = find_last_change_index(char_start);
-        Text_Style last_style = line.style_changes[last_change_before_start_index].style;
-        dynamic_array_insert_ordered(&line.style_changes, style_change_make(char_start, last_style), last_change_before_start_index + 1);
-        int last_change_before_end = find_last_change_index(char_end-1); // Last change at end of range
-        dynamic_array_insert_ordered(&line.style_changes, style_change_make(char_end, last_style), last_change_before_end + 1);
-
-        // Run update style function on all styles in range
-        for (int i = 0; i < line.style_changes.size; i++) {
-            auto& change = line.style_changes[i];
-            if (change.char_start >= char_start && change.char_start < char_end) {
-                update_fn(change.style, userdata);
-            }
-        }
-
-        // Remove all duplicated styles that may have been generated
-        for (int i = 0; i < line.style_changes.size; i++) 
-        {
-            auto& change = line.style_changes[i];
-            Style_Change prev_change;
-            if (i == 0) {
-                prev_change = style_change_make(0, line.default_style);
-            }
-            else {
-                prev_change = line.style_changes[i - 1];
-            }
-
-            // Remove previous change if both have same char_start
-            if (prev_change.char_start == change.char_start && i != 0) {
-                dynamic_array_remove_ordered(&line.style_changes, i - 1);
-                i -= 1;
-                continue;
-            }
-
-            // Remove change if previous change has same style
-            if (text_style_equals(change.style, prev_change.style)) {
-                dynamic_array_remove_ordered(&line.style_changes, i);
-                i -= 1;
-                continue;
-            }
-        }
-    }
-
-    void line_set_underline_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end) {
-        auto set_underline = [](Text_Style& style, void* userdata) {
-            style.has_underline = true;
-            style.underline_color = *(vec3*)userdata;
-        };
-        line_update_style_range(text, set_underline, (void*)&color, line, char_start, char_end);
-    }
-
-    void line_set_bg_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end) {
-        auto set_bg_color = [](Text_Style& style, void* userdata) {
-            style.has_bg = true;
-            style.bg_color = *(vec3*)userdata;
-        };
-        line_update_style_range(text, set_bg_color, (void*)&color, line, char_start, char_end);
-    }
-
-    void line_set_text_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end) {
-        auto set_text_color = [](Text_Style& style, void* userdata) {
-            style.text_color = *(vec3*)userdata;
-        };
-        line_update_style_range(text, set_text_color, (void*)&color, line, char_start, char_end);
-    }
-
     void mark_line(Rich_Text* text, Mark_Type mark_type, vec3 color, int line, int char_start, int char_end) {
-        switch (mark_type)
-        {
-        case Mark_Type::TEXT_COLOR:        line_set_text_color_range(text, color, line, char_start, char_end); break;
-        case Mark_Type::BACKGROUND_COLOR:  line_set_bg_color_range(text, color, line, char_start, char_end); break;
-        case Mark_Type::UNDERLINE:         line_set_underline_range(text, color, line, char_start, char_end); break;
-        default: panic("");
-        }
+        line_add_style_change(text, mark_type, false, color, line, char_start, char_end);
     }
-
-
 
     void append_to_string(Rich_Text* text, String* string, int indentation_spaces)
     {
@@ -479,6 +366,22 @@ namespace Text_Display
         return block_end;
     }
 
+    struct Style_Change_Index
+    {
+        int char_index;
+        int change_index;
+        bool is_end;
+    };
+    struct Style_Change_Index_Comparator {
+        bool operator()(const Style_Change_Index a, const Style_Change_Index b) {
+            if (a.char_index == b.char_index) {
+                if (a.is_end && !b.is_end) return true;
+                if (b.is_end && !a.is_end) return false;
+            }
+            return a.char_index < b.char_index;
+        }
+    };
+
     void render(Text_Display* display, Render_Pass* render_pass)
     {
         Rich_Text::Rich_Text* text = display->text;
@@ -535,6 +438,10 @@ namespace Text_Display
 
         // Render lines
         int max_char_count = (bb.max.x - bb.min.x) / display->char_size.x;
+        Dynamic_Array<Style_Change_Index> change_indices = dynamic_array_create<Style_Change_Index>();
+        Dynamic_Array<Rich_Text::Text_Style> style_stack = dynamic_array_create<Rich_Text::Text_Style>();
+        SCOPE_EXIT(dynamic_array_destroy(&change_indices));
+        SCOPE_EXIT(dynamic_array_destroy(&style_stack));
         for (int line_index = 0; line_index < lines.size; line_index++)
         {
             auto& line = lines[line_index];
@@ -551,52 +458,106 @@ namespace Text_Display
                 continue;
             }
 
-            for (int i = 0; i <= line.style_changes.size; i++)
+            auto render_substring_in_style = [&](int start_char, int end_char, Rich_Text::Text_Style style)
             {
-                // Get current and last change
-                Rich_Text::Style_Change change;
-                Rich_Text::Style_Change last_change;
-                if (i < line.style_changes.size) {
-                    change = line.style_changes[i];
-                }
-                else {
-                    change = style_change_make(line.text.size, line.default_style);
-                }
-                if (i == 0) {
-                    last_change = style_change_make(0, line.default_style);
-                }
-                else {
-                    last_change = line.style_changes[i - 1];
-                }
-
                 // Skip if range is empty
-                if (last_change.char_start == change.char_start) continue;
-                vec2 text_start_pos = get_char_position(display, line_index, last_change.char_start, Anchor::BOTTOM_LEFT);
+                if (end_char <= start_char) return;
+                vec2 text_start_pos = get_char_position(display, line_index, start_char, Anchor::BOTTOM_LEFT);
 
                 // Render background and underline
+                vec2 min = text_start_pos;
+                vec2 max = min + char_size * vec2(end_char - start_char, 1);
+                max.x = math_minimum(max.x, line_bb.max.x);
+                if (max.x - min.x >= 0.5f)
                 {
-                    vec2 min = text_start_pos;
-                    vec2 max = min + char_size * vec2(change.char_start - last_change.char_start, 1);
-                    max.x = math_minimum(max.x, line_bb.max.x);
-                    if (max.x - min.x >= 0.5f)
-                    {
-                        if (last_change.style.has_underline) {
-                            renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, vec2(max.x, min.y + 2)), last_change.style.underline_color);
-                            min.y += 2; // Background should not draw over underline
-                        }
+                    if (style.has_underline) {
+                        renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, vec2(max.x, min.y + 2)), style.underline_color);
+                        min.y += 2; // Background should not draw over underline
+                    }
 
-                        if (last_change.style.has_bg) {
-                            renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, max), last_change.style.bg_color);
-                        }
+                    if (style.has_bg) {
+                        renderer_2D_add_rectangle(renderer_2D, bounding_box_2_make_min_max(min, max), style.bg_color);
                     }
                 }
 
                 // Draw text
-                String substring = string_create_substring_static(&line.text, last_change.char_start, change.char_start);
+                String substring = string_create_substring_static(&line.text, start_char, end_char);
+                if (substring.size == 0) return;
                 text_renderer_add_text(
-                    text_renderer, substring, text_start_pos, Anchor::BOTTOM_LEFT, display->char_size, last_change.style.text_color, optional_make_success(line_bb)
+                    text_renderer, substring, text_start_pos, Anchor::BOTTOM_LEFT, display->char_size, style.text_color, optional_make_success(line_bb)
                 );
+            };
+
+            // Generate and sort change-indices
+            dynamic_array_reset(&change_indices);
+            dynamic_array_reset(&style_stack);
+            for (int i = 0; i < line.style_changes.size; i++) 
+            {
+                auto& change = line.style_changes[i];
+                if (change.char_end == -1) {
+                    change.char_end = line.text.size;
+                }
+                if (change.char_end <= change.char_start) continue;
+
+                Style_Change_Index index;
+                index.char_index = change.char_start;
+                index.change_index = i;
+                index.is_end = false;
+                dynamic_array_push_back(&change_indices, index);
+
+                index.char_index = change.char_end;
+                index.is_end = true;
+                dynamic_array_push_back(&change_indices, index);
             }
+            dynamic_array_stable_sort(&change_indices, Style_Change_Index_Comparator());
+
+            Rich_Text::Text_Style style = line.default_style;
+            int last_change_index = 0;
+            for (int j = 0; j < change_indices.size; j++)
+            {
+                auto& change_index = change_indices[j];
+                auto& change = line.style_changes[change_index.change_index];
+
+                // Render line up to this point in old style
+                render_substring_in_style(last_change_index, change_index.char_index, style);
+                last_change_index = change_index.char_index;
+
+                if (change_index.is_end) {
+                    style = style_stack[style_stack.size - 1];
+                    style_stack.size -= 1;
+                    continue;
+                }
+                else {
+                    dynamic_array_push_back(&style_stack, style);
+                }
+
+                // Apply
+                switch (change.type)
+                {
+                case Rich_Text::Mark_Type::BACKGROUND_COLOR: {
+                    style.has_bg = !change.is_deactivate;
+                    style.bg_color = change.color;
+                    break;
+                }
+                case Rich_Text::Mark_Type::UNDERLINE: {
+                    style.has_underline = !change.is_deactivate;
+                    style.underline_color = change.color;
+                    break;
+                }
+                case Rich_Text::Mark_Type::TEXT_COLOR: {
+                    if (change.is_deactivate) {
+                        style.text_color = line.default_style.text_color;
+                    }
+                    else {
+                        style.text_color = change.color;
+                    }
+                    break;
+                }
+				default: panic("");
+                }
+            }
+            // Render end of line (From last style change to end of line)
+            render_substring_in_style(last_change_index, line.text.size, style);
         }
 
         renderer_2D_draw(renderer_2D, render_pass);

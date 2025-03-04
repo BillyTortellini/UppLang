@@ -329,7 +329,7 @@ void compiler_analysis_update_source_code_information()
         Compiler_Error_Info error_info;
         error_info.message = error.msg;
         error_info.unit = unit;
-        error_info.semantic_error_index = -1;
+        error_info.semantic_error_index = i;
         error_info.text_index = token_range_to_text_range(ranges[0], unit->code).start;
         dynamic_array_push_back(&errors, error_info);
 

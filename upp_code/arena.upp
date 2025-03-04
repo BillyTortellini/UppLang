@@ -1,0 +1,29 @@
+
+import Upp~Allocator
+import Upp~u64
+import Upp~Bytes
+
+Arena_Buffer :: struct
+	buffer: Bytes
+	previous: *Arena_Buffer
+
+Arena :: struct
+	parent_allocator: Allocator
+	buffer: Bytes
+	in_use: u64
+	max_used: u64
+
+create :: (allocator: Allocator, capacity: u64 = 0) -> Arena
+	arena: Arena
+	arena.parent_allocator = allocator
+	arena.in_use = 0
+	arena.max_used = 0
+	arena.buffer.data = null
+	arena.buffer.size = 0
+	return arena
+
+test :: ()
+	a: Bytes
+	a.data
+	a.size
+

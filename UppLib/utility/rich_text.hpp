@@ -29,15 +29,18 @@ namespace Rich_Text
 
     struct Style_Change
     {
+        Mark_Type type;
+        vec3 color;
+        bool is_deactivate; // To disable underline/bg-color
         int char_start;
-        Text_Style style;
+        int char_end;
     };
 
     struct Rich_Line 
     {
         String text;
-        Dynamic_Array<Style_Change> style_changes;
         Text_Style default_style; 
+        Dynamic_Array<Style_Change> style_changes;
         int indentation;
         bool is_seperator; // E.g. just a blank ---- line
         bool has_bg;
@@ -72,10 +75,6 @@ namespace Rich_Text
     void stop_bg(Rich_Text* text);
     void set_underline(Rich_Text* text, vec3 color);
     void stop_underline(Rich_Text* text);
-
-    void line_set_underline_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
-    void line_set_bg_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
-    void line_set_text_color_range(Rich_Text* text, vec3 color, int line, int char_start, int char_end);
     void mark_line(Rich_Text* text, Mark_Type mark_type, vec3 color, int line, int char_start, int char_end);
 
     void append_to_string(Rich_Text* text, String* string, int indentation_spaces);

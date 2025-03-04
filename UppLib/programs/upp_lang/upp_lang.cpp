@@ -275,11 +275,17 @@ void upp_lang_main()
     int frame = 0;
     double time_last_update_start = timer_current_time_in_seconds();
     float angle = 0.0f;
+    window_set_focus(window);
     while (true)
     {
         double time_frame_start = timer_current_time_in_seconds();
         float time_since_last_update = (float)(time_frame_start - time_last_update_start);
         time_last_update_start = time_frame_start;
+
+        // Quick and dirty fix, as with new VisualStudio/Windows11 the console gets focused instead of the Window!
+        if (frame == 1) {
+            window_set_focus(window);
+        }
 
         frame += 1;
         bool wait_for_messages = true;

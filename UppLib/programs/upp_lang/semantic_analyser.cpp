@@ -3,7 +3,6 @@
 #include "../../datastructures/string.hpp"
 #include "../../utility/hash_functions.hpp"
 #include "../../datastructures/hashset.hpp"
-#include "../../datastructures/string.hpp"
 #include "../../datastructures/list.hpp"
 #include "../../datastructures/dependency_graph.hpp"
 #include "../../utility/file_io.hpp"
@@ -1916,7 +1915,19 @@ void symbol_lookup_resolve(
     for (int i = 0; i < results.size; i++)
     {
         Symbol* symbol = results[i];
-        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) {
+        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) 
+        {
+            auto current = semantic_analyser.current_workload;
+
+            // Handle special case where we are inside the alias-workload we want to resolve
+            // E.g. import Test~Test (Importing struct Test from module Test)
+            // In this case we don't report ourselves as a possible alias
+            if (current == upcast(symbol->options.alias_workload)) {
+                dynamic_array_swap_remove(&results, i);
+                i -= 1;
+                continue;
+            }
+
             bool dependency_failed = false;
             analysis_workload_add_dependency_internal(
                 semantic_analyser.current_workload, upcast(symbol->options.alias_workload), dependency_failure_info_make(&dependency_failed, lookup));
@@ -11882,7 +11893,7 @@ void semantic_analyser_reset()
         semantic_analyser.error_symbol = nullptr;
         semantic_analyser.workload_executer = nullptr;
         semantic_analyser.global_allocator = nullptr;
-        semantic_analyser.default_allocator = nullptr;
+        semantic_analyser.system_allocator = nullptr;
         semantic_analyser.root_symbol_table = nullptr;
 
         hashtable_reset(&semantic_analyser.valid_template_parameters);
@@ -12014,16 +12025,16 @@ void semantic_analyser_reset()
         );
         global_allocator_symbol->options.global = semantic_analyser.global_allocator;
 
-        // Add default allocator
+        // Add system allocator
         auto default_allocator_symbol = symbol_table_define_symbol(
             upp_table, 
-            identifier_pool_add(pool, string_create_static("default_allocator")), 
+            identifier_pool_add(pool, string_create_static("system_allocator")), 
             Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
         );
-        semantic_analyser.default_allocator = modtree_program_add_global(
+        semantic_analyser.system_allocator = modtree_program_add_global(
             upcast(upcast(types.allocator)), default_allocator_symbol, false
         );
-        default_allocator_symbol->options.global = semantic_analyser.default_allocator;
+        default_allocator_symbol->options.global = semantic_analyser.system_allocator;
     }
 }
 
@@ -12046,9 +12057,11 @@ void semantic_analyser_destroy()
 
 
 // ERRORS
-void error_information_append_to_rich_text(const Error_Information& info, Rich_Text::Rich_Text* text, Datatype_Format format)
+void error_information_append_to_rich_text(
+    const Error_Information& info, Compiler_Analysis_Data* analysis_data, Rich_Text::Rich_Text* text, Datatype_Format format
+)
 {
-    auto type_system = &compiler.analysis_data->type_system;
+    auto type_system = &analysis_data->type_system;
     Rich_Text::set_text_color(text, Syntax_Color::TEXT);
     switch (info.type)
     {
@@ -12145,12 +12158,15 @@ void error_information_append_to_rich_text(const Error_Information& info, Rich_T
     }
 }
 
-void error_information_append_to_string(const Error_Information& info, String* string, Datatype_Format format)
+void error_information_append_to_string(
+    const Error_Information& info, Compiler_Analysis_Data* analysis_data, 
+    String* string, Datatype_Format format
+)
 {
     Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
     SCOPE_EXIT(Rich_Text::destroy(&text));
     Rich_Text::add_line(&text);
-    error_information_append_to_rich_text(info, &text, format);
+    error_information_append_to_rich_text(info, analysis_data, &text, format);
     Rich_Text::append_to_string(&text, string, 2);
 }
 
@@ -12172,7 +12188,7 @@ void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* 
             for (int k = 0; k < indentation + 1; k++) {
                 string_append(string, "    ");
             }
-            error_information_append_to_string(info, string);
+            error_information_append_to_string(info, analysis_data, string);
             string_append(string, "\t");
         }
     }
