@@ -587,6 +587,7 @@ Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, i
 Datatype* datatype_get_non_const_type(Datatype* datatype);
 bool type_mods_pointer_is_constant(Type_Mods mods, int pointer_level);
 bool type_mods_pointer_is_optional(Type_Mods mods, int pointer_level);
+bool type_mods_are_equal(const Type_Mods& a, const Type_Mods& b);
 Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level = -1);
 Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
 Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int subtype_index);

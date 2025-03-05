@@ -1217,23 +1217,16 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             signature = function->signature;
             break;
         }
-        case Expression_Result_Type::DOT_CALL: {
-            auto& dot_call = call_info->options.dot_call;
-            if (dot_call.is_polymorphic)
-            {
-                auto function = call_info->options.dot_call.options.polymorphic.instance;
-                assert(function != nullptr, "Must be instanciated at ir_code");
-                assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
-                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call_instr.options.call.options.function = function;
-                signature = function->signature;
-            }
-            else
-            {
-                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                call_instr.options.call.options.function = dot_call.options.function;
-                signature = dot_call.options.function->signature;
-            }
+        case Expression_Result_Type::DOT_CALL: 
+        {
+            assert(call_info->specifics.member_access.type == Member_Access_Type::DOT_CALL, "");
+            auto function = call_info->specifics.member_access.options.dot_call_function;
+            assert(function != nullptr, "Must be instanciated at ir_code");
+            assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
+
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.options.function = function;
+            signature = function->signature;
             break;
         }
         case Expression_Result_Type::POLYMORPHIC_STRUCT:

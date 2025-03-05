@@ -2026,9 +2026,9 @@ void type_system_add_predefined_types(Type_System* system)
             upcast(types->bool_type)
         );
 
-        add_member_cstr(&types->allocator->content, "allocate", upcast(types->allocate_function));
-        add_member_cstr(&types->allocator->content, "free", upcast(types->free_function));
-        add_member_cstr(&types->allocator->content, "resize", upcast(types->resize_function));
+        add_member_cstr(&types->allocator->content, "allocate_fn", upcast(types->allocate_function));
+        add_member_cstr(&types->allocator->content, "free_fn", upcast(types->free_function));
+        add_member_cstr(&types->allocator->content, "resize_fn", upcast(types->resize_function));
         type_system_finish_struct(types->allocator);
     }
 
@@ -2302,6 +2302,16 @@ bool type_mods_pointer_is_optional(Type_Mods mods, int pointer_level)
 {
     assert(pointer_level < 32, "");
     return (mods.optional_flags & (1 << pointer_level)) != 0;
+}
+
+bool type_mods_are_equal(const Type_Mods& a, const Type_Mods& b) 
+{
+    return 
+        a.constant_flags == b.constant_flags &&
+        a.is_constant == b.is_constant &&
+        a.optional_flags == b.optional_flags &&
+        a.pointer_level == b.pointer_level &&
+        a.subtype_index == b.subtype_index;
 }
 
 Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level)

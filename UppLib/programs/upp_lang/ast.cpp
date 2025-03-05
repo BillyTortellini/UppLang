@@ -9,6 +9,7 @@ namespace AST
         switch (node->type)
         {
         case Node_Type::SWITCH_CASE: 
+        case Node_Type::GET_OVERLOAD_ARGUMENT: 
         case Node_Type::SYMBOL_LOOKUP: 
         case Node_Type::IMPORT: 
         case Node_Type::PARAMETER: 
@@ -86,6 +87,10 @@ namespace AST
                 }
                 break;
             }
+            case Expression_Type::GET_OVERLOAD: {
+                dynamic_array_destroy(&expr->options.get_overload.arguments);
+                break;
+            }
             case Expression_Type::STRUCTURE_TYPE: {
                 auto& s = expr->options.structure;
                 if (s.parameters.data != 0) {
@@ -152,6 +157,11 @@ namespace AST
             auto param = (Parameter*)node;
             FILL(param->type);
             FILL_OPTIONAL(param->default_value);
+            break;
+        }
+        case Node_Type::GET_OVERLOAD_ARGUMENT: {
+            auto arg = (Get_Overload_Argument*)node;
+            FILL_OPTIONAL(arg->type_expr);
             break;
         }
         case Node_Type::PATH_LOOKUP: {
@@ -340,6 +350,11 @@ namespace AST
             }
             case Expression_Type::INSTANCIATE: {
                 FILL(expr->options.instanciate_expr);
+                break;
+            }
+            case Expression_Type::GET_OVERLOAD: {
+                FILL(expr->options.get_overload.path);
+                FILL_ARRAY(expr->options.get_overload.arguments);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -604,6 +619,11 @@ namespace AST
             FILL_OPTIONAL(param->default_value);
             break;
         }
+        case Node_Type::GET_OVERLOAD_ARGUMENT: {
+            auto arg = (Get_Overload_Argument*)node;
+            FILL_OPTIONAL(arg->type_expr);
+            break;
+        }
         case Node_Type::PATH_LOOKUP: {
             auto path = (Path_Lookup*)node;
             FILL_ARRAY(path->parts);
@@ -720,6 +740,11 @@ namespace AST
             }
             case Expression_Type::INSTANCIATE: {
                 FILL(expr->options.instanciate_expr);
+                break;
+            }
+            case Expression_Type::GET_OVERLOAD: {
+                FILL(expr->options.get_overload.path);
+                FILL_ARRAY(expr->options.get_overload.arguments);
                 break;
             }
             case Expression_Type::ARRAY_INITIALIZER: {
@@ -979,6 +1004,9 @@ namespace AST
         case Node_Type::PATH_LOOKUP:
             string_append_formated(str, "PATH_LOOKUP ");
             break;
+        case Node_Type::GET_OVERLOAD_ARGUMENT:
+            string_append_formated(str, "GET_OVERLOAD_ARG ");
+            break;
         case Node_Type::SYMBOL_LOOKUP:
             string_append_formated(str, "SYMBOL_LOOKUP ");
             string_append_string(str, ((Symbol_Lookup*)base)->name);
@@ -1030,6 +1058,7 @@ namespace AST
             case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
             case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
             case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
+            case Expression_Type::GET_OVERLOAD: string_append_formated(str, "GET_OVERLOAD"); break;
             case Expression_Type::PATH_LOOKUP: string_append_formated(str, "EXPR_LOOKUP "); break;
             case Expression_Type::LITERAL_READ: {
                 string_append_formated(str, "LITERAL_READ "); 
@@ -1207,6 +1236,9 @@ namespace AST
         }
         bool type_correct(Symbol_Lookup* base) {
             return base->base.type == Node_Type::SYMBOL_LOOKUP;
+        }
+        bool type_correct(Get_Overload_Argument* base) {
+            return base->base.type == Node_Type::GET_OVERLOAD_ARGUMENT;
         }
         bool type_correct(Path_Lookup* base) {
             return base->base.type == Node_Type::PATH_LOOKUP;

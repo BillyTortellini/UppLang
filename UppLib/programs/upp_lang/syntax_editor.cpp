@@ -358,6 +358,7 @@ struct Syntax_Editor
     int visible_line_count;
     int visual_block_start_line;
 
+    Dynamic_Array<int> error_indices_sorted;
     Text_Index navigate_error_mode_cursor_before;
     int navigate_error_mode_tab_before;
     int navigate_error_cam_start;
@@ -2136,11 +2137,14 @@ void syntax_editor_add_fold(int line_start, int line_end, int indentation)
     syntax_editor_update_line_visible_and_fold_info(syntax_editor.open_tab_index);
 }
 
-struct Comparator_Error_Display 
+struct Comparator_Compiler_Error 
 {
-    bool operator()(const Compiler_Error_Info& a, const Compiler_Error_Info& b) 
+    bool operator()(const int& a_index, const int& b_index) 
     {
         auto& editor = syntax_editor;
+        Compiler_Error_Info& a = editor.analysis_data->compiler_errors[a_index];
+        Compiler_Error_Info& b = editor.analysis_data->compiler_errors[b_index];
+
         int tab_a = -1;
         int tab_b = -1;
         for (int i = 0; i < editor.tabs.size; i++) {
@@ -2154,10 +2158,6 @@ struct Comparator_Error_Display
         }
 
         if (tab_a != tab_b) {
-            // Return errors in current tab first
-            if (tab_a == editor.open_tab_index) return true;
-            else if (tab_b == editor.open_tab_index) return false;
-            // Otherwise return in open tab order
             return tab_a < tab_b;
         }
 
@@ -2167,6 +2167,18 @@ struct Comparator_Error_Display
         return a.text_index.character < b.text_index.character;
     }
 };
+
+void sort_error_indices()
+{
+    auto& editor = syntax_editor;
+    auto& indices = editor.error_indices_sorted;
+    dynamic_array_reset(&indices);
+    dynamic_array_reserve(&indices, editor.analysis_data->compiler_errors.size);
+    for (int i = 0; i < editor.analysis_data->compiler_errors.size; i++) {
+        dynamic_array_push_back(&indices, i);
+    }
+    dynamic_array_sort(&indices, Comparator_Compiler_Error());
+}
 
 void syntax_editor_switch_tab(int new_tab_index)
 {
@@ -2178,7 +2190,7 @@ void syntax_editor_switch_tab(int new_tab_index)
     auto& tab = editor.tabs[editor.open_tab_index];
     // Re-Sort errors since sorting depends on open tab
     if (editor.analysis_data != nullptr) {
-        dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
+        sort_error_indices();
     }
 }
 
@@ -2269,6 +2281,8 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 
     syntax_editor.show_semantic_infos = false;
 
+    syntax_editor.error_indices_sorted = dynamic_array_create<int>();
+
     compiler_initialize();
 
     String default_filename = string_create_static("upp_code/editor_text.upp");
@@ -2305,6 +2319,7 @@ void syntax_editor_destroy()
     string_destroy(&syntax_editor.fuzzy_search_text);
     string_destroy(&syntax_editor.search_text);
     compiler_destroy();
+    dynamic_array_destroy(&syntax_editor.error_indices_sorted);
 
     identifier_pool_destroy(&syntax_editor.auto_format_identifier_pool);
     dynamic_array_destroy(&editor.last_insert_commands);
@@ -2813,7 +2828,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
         }
         editor.analysis_data = compiler.analysis_data;
         compiler.analysis_data = nullptr;
-        dynamic_array_sort(&editor.analysis_data->compiler_errors, Comparator_Error_Display());
+        sort_error_indices();
         dynamic_array_reset(&editor.suggestions);
         editor.compile_count += 1;
     }
@@ -3331,7 +3346,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
         auto info = infos[i];
 
         bool on_info = false;
-        if (info.start_char == info.end_char && info.start_char == line->text.size && index.character == math_maximum(0, line->text.size - 1)) {
+        if (info.start_char == info.end_char && index.character == info.start_char) {
             on_info = true;
         }
         else {
@@ -4610,7 +4625,6 @@ void syntax_editor_insert_yank(bool before_cursor)
 void center_cursor_on_error(int error_index)
 {
     auto& editor = syntax_editor;
-    auto& index = editor.navigate_error_index;
 
     if (editor.analysis_data == nullptr) {
         return;
@@ -4967,7 +4981,7 @@ void normal_command_execute(Normal_Mode_Command& command)
         editor.navigate_error_mode_tab_before = editor.open_tab_index;
         editor.navigate_error_cam_start = 0;
         editor.navigate_error_index = 0;
-        center_cursor_on_error(editor.navigate_error_index);
+        center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
         break;
     }
     case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE: {
@@ -5825,10 +5839,10 @@ void syntax_editor_process_key_message(Key_Message& msg)
             auto& errors = editor.analysis_data->compiler_errors;
             index += msg.character == 'j' ? 1 : -1;
             index = math_clamp(index, 0, errors.size - 1);
-            center_cursor_on_error(index);
+            center_cursor_on_error(editor.error_indices_sorted[index]);
         }
         else if (msg.character == 'l' || msg.character == 'h') {
-            center_cursor_on_error(editor.navigate_error_index);
+            center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
         }
 
         break;
@@ -7379,7 +7393,7 @@ void syntax_editor_render()
             }
 
             for (int i = 0; i < errors.size; i++) {
-                auto& error = errors[i];
+                auto& error = errors[editor.error_indices_sorted[i]];
 
                 int error_line_index = rich_text.lines.size;
                 Rich_Text::add_line(&rich_text);

@@ -87,6 +87,17 @@ struct Custom_Operator_Key
     } options;
 };
 
+struct Dot_Call_Info
+{
+    bool as_member_access;
+    Type_Mods mods;
+    bool is_polymorphic;
+    union {
+        ModTree_Function* function;
+        Polymorphic_Function_Base* poly_base;
+    } options;
+};
+
 union Custom_Operator
 {
     struct {
@@ -116,15 +127,7 @@ union Custom_Operator
             Polymorphic_Function_Base* poly_base;
         } options;
     } custom_cast;
-    struct {
-        bool dot_call_as_member_access;
-        Type_Mods mods;
-        bool is_polymorphic;
-        union {
-            ModTree_Function* function;
-            Polymorphic_Function_Base* poly_base;
-        } options;
-    } dot_call;
+    Dynamic_Array<Dot_Call_Info>* dot_calls;
     struct {
         Type_Mods iterable_mods;
         bool is_polymorphic; 

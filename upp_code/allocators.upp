@@ -1,0 +1,92 @@
+
+import Upp~Allocator
+import Upp~u64
+import Upp~u32
+import Upp~Bytes
+import Upp~byte_pointer
+
+Allocator_Helpers :: module
+	
+	import Upp~Type_Handle as Type
+	import Upp~size_of
+	import Upp~align_of
+	
+	context add_dot_call(allocate)
+	context add_dot_call(free)
+	context add_dot_call(allocate_array)
+	context add_dot_call(free_array)
+	
+	allocate :: (allocator: *Allocator, $T: Type) -> *T
+		return cast_pointer {*T} allocator.allocate_fn(allocator, size_of(T), align_of(T))
+	
+	free :: (allocator: *Allocator, data: *$T)
+		allocator.free_fn(allocator, data, size_of(T))
+	
+	allocate_array :: (allocator: *Allocator, $T: Type, count: u64) -> []T
+		result: []T
+		result.size = size_of(T) * count
+		if result.size == 0
+			result.data =* null
+			return result
+		
+		result.data =* cast_pointer {*T} allocator.allocate_fn(allocator, result.size, Upp~align_of(T))
+		return result
+	
+	free_array :: (allocator: *Allocator, array: []$T)
+		allocator.free_fn(allocator, array.data, size_of(T) * array.size)
+	
+	allocate_bytes :: (allocator: *Allocator, count: u64) -> Bytes
+		
+	
+	free_bytes :: (allocator: *Allocator, bytes: Bytes)
+		
+
+Arena :: module
+	
+	context import Allocator_Helpers
+	
+	Arena :: struct
+		allocator: Allocator
+		parent_allocator: *Allocator
+		buffer: Bytes
+		in_use: u64
+		sum_previous_block_size: u64
+	
+	create :: (allocator: *Allocator, capacity: u64 = 0) -> Arena
+		buffer: Bytes
+		buffer.data =* null
+		buffer.size = 0
+		
+		result := Arena.{
+			.{allocate, cast_pointer free, resize}
+			allocator, buffer, 0, 0
+		}
+		reserve(result, capacity)
+		return result
+	
+	reserve :: (arena: *Arena, capacity: u64)
+		if arena.in_use - arena.sum_previous_block_size >= capacity
+			return
+		
+		// First block reservation
+		if arena.buffer.size == 0
+			test := arena.parent_allocator.allocate_array(Byte)
+			arena.buffer.data =
+		
+	
+	allocate :: (arena: *Arena, size: u64, alignment: u32) -> byte_pointer
+		
+	
+	free :: (arena: *Arena, pointer: byte_pointer, size: u64)
+		
+	
+	resize :: (arena: *Arena, pointer: byte_pointer, prev_size: u64, new_size: u64) -> bool
+		
+		return false
+	
+	test :: ()
+		a: Bytes
+		a.data
+		a.size
+
+

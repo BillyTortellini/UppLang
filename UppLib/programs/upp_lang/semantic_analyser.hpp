@@ -513,14 +513,7 @@ struct Expression_Info
         } polymorphic_function;
         struct {
             AST::Expression* first_argument;
-            bool is_polymorphic;
-            union {
-                ModTree_Function* function;
-                struct {
-                    Polymorphic_Function_Base* base;
-                    ModTree_Function* instance;
-                } polymorphic;
-            } options;
+            Dynamic_Array<Dot_Call_Info>* overloads; // Note: This is allocated in Compiler_Analysis_Data
         } dot_call;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
@@ -565,7 +558,7 @@ struct Parameter_Match
 {
     // Matching info
     String* name;
-    Datatype* param_type; // May be null
+    Datatype* param_type; // May be null, if it's a polymorphic parameter
     bool required; // Default values and implicit parameters don't require values
     bool requires_named_addressing; // Implicit arguments and #instanciate
     bool must_not_be_set; // #instanciate must not set specific arguments

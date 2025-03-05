@@ -5,6 +5,7 @@
 #include "source_code.hpp"
 #include "compiler_misc.hpp"
 #include "semantic_analyser.hpp"
+#include "symbol_table.hpp"
 
 void compiler_analysis_update_source_code_information();
 
@@ -36,10 +37,13 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Analysis_Pass*> allocated_passes;
     Dynamic_Array<Function_Progress*> allocated_function_progresses;
     Dynamic_Array<Operator_Context*> allocated_operator_contexts;
+    Dynamic_Array<Dynamic_Array<Dot_Call_Info>*> allocated_dot_calls;
 };
 
 Compiler_Analysis_Data* compiler_analysis_data_create();
 void compiler_analysis_data_destroy(Compiler_Analysis_Data* data);
+
+Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity = 0);
 
 
 

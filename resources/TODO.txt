@@ -1,42 +1,50 @@
 
-
 TODO:
- * Implement Arena Allocator
- * Rewrite Dynamic-Array
-
-
-TODO: Upp-Basic Library (While fixing bugs in language)
- - Arena
- - Dynamic_Array 
- - Strings
-    * Static Strings
-    * String-Builder
-    * Formatting
-    * Printing
- - Hashtable
+ * Code-Completion for Hashtags #instanciate, #add_overload, #bake, #get_overload
+ * Add testcases for overloading (Poly overloading and dot-call overloading)
+ * Add testcases for #get_overload
+ * Struct-Initializer for Slice
+ * Commenting in/out blocks has bugs (visual)
+ * Fix testcases
 
 
 
-DONE:
-04.03.2025
- * Restored previous Allocator behavior
+Example Code that I want:
+    allocator.allocate(15)  --> Bytes
+    allocator.allocate(int) --> *int
+    allocator.allocate(int, 15) --> []int
+    
+    allocator.free(bytes)
+    allocator.free(int_slice)
+    allocator.free(ptr)
 
-03.03.2025
- * Refactored base allocator interface (Now holds allocator data member)
- * Fixed bug where Error-Information doesn't display on hover (Semantic-error info was not set!)
- * Add toggle for cursor hover-information
- * Visual Line Selection errors when folds are enabled
- * Updated imports so we can have import Arena~Arena
- * Off by one error in syntax highlighting
+    allocator := Linear_Allocator~create(4 * 1024 * 1024 * 1024)
+    defer allocator.destroy()
+    arena := Arena~create(cast allocator, 1024)
+    free_list := Free_List~create(cast arena)
+    x :=* arena.allocate(int)
+    values := Dynamic_Array~create(cast arena, T=int)
+    values.add(15)
+    values.add(20)
+    values.add(32)
+    for v in values
+        printf("%d\n", v)
 
-28.02.2025
- * Fixed error-hover information
- * Refactored Rich-Text rendering
-
-27.02.2025
- * Researching Memory-Allocators
- * Store Debugger-Infos in Session
- * Toggling Debugger-Window
+TODO (Upp-Code):
+ * Allocators:
+    - Arena-Allocator
+    - Free_List 
+    - Fixed_Stack
+ * Basic Datastructures:
+    - Dynamic-Array
+    - String
+        + Static Strings
+        + String-Builder
+        + Formatting
+        + Printing
+    - Hashtable
+    - List
+ * Window and Graphics
 
 
 
@@ -109,8 +117,6 @@ Debugger Features:
         + Storing values in variables at user-requested time or at breakpoint/address hit
         + Using these values in breakpoint conditions or Expression-Evaluation
 
-
-
 ISSUE-TRACKER:
     Debugger Improvements which could be done:
      - Stack walking Epilog check should check for jmp instructions with correct encoding...
@@ -135,7 +141,6 @@ Missing Testcases:
 --------------------
 - MISSING FEATURES -
 --------------------
-    * Debugger
     * Incremental compiler (Hot-code reloading?)
     * Metaprogramming
         - Code generation with #insert (Or something like that, maybe bytecode insertion? (But should somehow be checked for validity?))
@@ -192,7 +197,6 @@ Code improvements:
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
     * Symbol table lookups could be combined into a single hashtable?
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
-    * Sizeof_program.obj now appears in main folder...
 
 
 

@@ -77,6 +77,8 @@ enum class Keyword
     CAST_POINTER,
     BAKE,
     INSTANCIATE,
+    GET_OVERLOAD,
+    GET_OVERLOAD_POLY,
     IMPORT,
     AS,
     CONTEXT,

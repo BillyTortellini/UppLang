@@ -1,6 +1,37 @@
 
 Done:
 -----
+05.03.2025
+ * Fixed bugs with dot-call overloads
+ * Added #get_overload
+ * Overload-Resolution for dot-calls
+ * Error_Checkpoint bug fix (Setting main to not runnable during overloads/error-checkpoints)
+ * Overload-Resolution with polymorphic functions (Specialization should work)
+ * Converting Dot-Call-Infos into Overload-Candidates
+ * Storing dot-calls as lists, context-change now adds to list
+
+04.03.2025
+ * Dot calls now support polymorphic arguments
+ * Fixed bug with token-range for Parse_Section::Enclosure on Arguments
+ * Fixed Bug with sorting/displaying error-messages
+ * Restored previous Allocator behavior
+
+03.03.2025
+ * Refactored base allocator interface (Now holds allocator data member)
+ * Fixed bug where Error-Information doesn't display on hover (Semantic-error info was not set!)
+ * Add toggle for cursor hover-information
+ * Visual Line Selection errors when folds are enabled
+ * Updated imports so we can have import Arena~Arena
+ * Off by one error in syntax highlighting
+
+28.02.2025
+ * Fixed error-hover information
+ * Refactored Rich-Text rendering
+
+27.02.2025
+ * Researching Memory-Allocators
+ * Store Debugger-Infos in Session
+ * Toggling Debugger-Window
 
 26.02.2025:
  * Selecting Stack-Frame now influences watch-values

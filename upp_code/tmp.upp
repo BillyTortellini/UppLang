@@ -1,0 +1,42 @@
+
+add :: (a: int, b: int) -> int
+	return a + b
+
+add :: (a: float, b: float) -> float
+	return a + b
+
+add :: (a: $T, b: T) -> T
+	return a + b
+
+Node :: struct
+	value: int
+
+add :: (node: *Node, a: int)
+	node.value += a
+
+add :: (node: *Node, b: bool)
+	if b
+		node.value *= 2
+
+add :: (node: *Node, a: int, b: int) -> int
+	node.value = node.value * a + b
+	return node.value
+
+main :: ()
+	a := add(5, 10)
+	f := add(5.5, 10)
+	
+	x: Upp~u64 = 5
+	z := add(x, x)
+	
+	n: Node = .{20}
+	add(n, 5)
+	add(n, true)
+	
+	Upp~print_i32(a)
+	Upp~print_line()
+	Upp~print_f32(f)
+	Upp~print_line()
+	Upp~print_i32( cast z)
+	Upp~print_line()
+	Upp~print_i32(n.value)

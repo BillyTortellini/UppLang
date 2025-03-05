@@ -681,6 +681,9 @@ Text_Range token_range_to_text_range(Token_Range range, Source_Code* code)
     if (range.end.token >= end_line->tokens.size) {
         result.end.character = end_line->text.size;
     }
+    else if (range.end.token == range.start.token && range.end.line == range.start.line) {
+        result.end.character = end_line->tokens[range.end.token].end_index;
+    }
     else if (range.end.token - 1 >= 0) {
         result.end.character = end_line->tokens[range.end.token - 1].end_index;
     }

@@ -64,17 +64,18 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENTS,           // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
-        ARGUMENT,            // Expression with optional base_name
-        SUBTYPE_INITIALIZER, // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
-        PARAMETER,           // Name/Type compination with optional default value + comptime
-        SYMBOL_LOOKUP,       // A single identifier lookup
-        PATH_LOOKUP,         // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        IMPORT,              // Aliases/Symbol-Import/File-Loading
-        ENUM_MEMBER,         // ID with or without value-expr
-        STRUCT_MEMBER,       // Either a normal member or a struct-subtype
-        SWITCH_CASE,         // Expression 
-        CONTEXT_CHANGE,      // Changing some operator context
+        ARGUMENTS,             // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
+        ARGUMENT,              // Expression with optional base_name
+        GET_OVERLOAD_ARGUMENT, // Either just id, or id = type_expr
+        SUBTYPE_INITIALIZER,   // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
+        PARAMETER,             // Name/Type compination with optional default value + comptime
+        SYMBOL_LOOKUP,         // A single identifier lookup
+        PATH_LOOKUP,           // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
+        IMPORT,                // Aliases/Symbol-Import/File-Loading
+        ENUM_MEMBER,           // ID with or without value-expr
+        STRUCT_MEMBER,         // Either a normal member or a struct-subtype
+        SWITCH_CASE,           // Expression 
+        CONTEXT_CHANGE,        // Changing some operator context
         EXTERN_IMPORT,
     };
 
@@ -102,6 +103,13 @@ namespace AST
         // Depending on import type one of those is set, the other will be 0
         Path_Lookup* path;
         String* file_name;
+    };
+
+    struct Get_Overload_Argument
+    {
+        Node base;
+        String* id;
+        Optional<Expression*> type_expr;
     };
 
     enum class Context_Change_Type
@@ -277,6 +285,7 @@ namespace AST
         BAKE_EXPR,
         BAKE_BLOCK,
         INSTANCIATE,
+        GET_OVERLOAD,
         OPTIONAL_CHECK, // x?
 
         // Memory Reads
@@ -376,6 +385,11 @@ namespace AST
                 Structure_Type type;
             } structure;
             Expression* instanciate_expr; // Should be a function call...
+            struct {
+                Path_Lookup* path;
+                Dynamic_Array<Get_Overload_Argument*> arguments;
+                bool is_poly;
+            } get_overload;
             Dynamic_Array<Enum_Member_Node*> enum_members;
         } options;
     };
@@ -484,6 +498,7 @@ namespace AST
     namespace Helpers
     {
         bool type_correct(Definition* base);
+        bool type_correct(Get_Overload_Argument* base);
         bool type_correct(Definition_Symbol* base);
         bool type_correct(Switch_Case* base);
         bool type_correct(Statement* base);

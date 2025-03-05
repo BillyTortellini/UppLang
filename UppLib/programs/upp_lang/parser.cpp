@@ -717,6 +717,24 @@ namespace Parser
         return upcast(parse_argument(parent));
     }
 
+    AST::Node* parse_overload_argument(AST::Node* parent) 
+    {
+        if (!test_token(Token_Type::IDENTIFIER)) {
+            return nullptr;
+        }
+
+        auto result = allocate_base<AST::Get_Overload_Argument>(parent, AST::Node_Type::GET_OVERLOAD_ARGUMENT);
+        result->id = get_token()->options.identifier;
+        result->type_expr = optional_make_failure<AST::Expression*>();
+        advance_token();
+        if (test_operator(Operator::ASSIGN)) {
+            advance_token();
+            result->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+        }
+
+        return upcast(result);
+    }
+
     // Always returns node, even if no arguments were found...
     // So one should always test for ( or { before calling this...
     Arguments* parse_arguments(Node* parent, Parenthesis_Type parenthesis)
@@ -2001,6 +2019,31 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
+        if (test_keyword(Keyword::GET_OVERLOAD) || test_keyword(Keyword::GET_OVERLOAD_POLY))
+        {
+            bool is_poly = test_keyword(Keyword::GET_OVERLOAD_POLY);
+            Token_Index start = parser.state.pos;
+
+            advance_token();
+            result->type = Expression_Type::GET_OVERLOAD;
+            result->options.get_overload.is_poly = is_poly;
+            result->options.get_overload.path = parse_path_lookup(upcast(result));
+            result->options.get_overload.arguments = dynamic_array_create<AST::Get_Overload_Argument*>();
+            if (result->options.get_overload.path == 0) {
+                log_error("#get_overload expected a path_lookup", token_range_make_offset(start, 1));
+            }
+            if (!test_parenthesis('(')) {
+                log_error("#get_overload expected '(' after path_lookup", token_range_make_offset(start, 1));
+            }
+            auto add_to_expr = [](AST::Node* parent, AST::Node* child) {
+                AST::Expression* expr = downcast<AST::Expression>(parent);
+                AST::Get_Overload_Argument* arg = downcast<AST::Get_Overload_Argument>(child);
+                dynamic_array_push_back(&expr->options.get_overload.arguments, arg);
+            };
+            parse_list_of_items(upcast(result), parse_overload_argument, add_to_expr, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, true);
+            PARSE_SUCCESS(result);
+        }
+
         // Casts
         if (test_keyword(Keyword::CAST) || test_keyword(Keyword::CAST_POINTER))
         {
@@ -2591,6 +2634,14 @@ namespace Parser
             break;
         }
         default: panic("");
+        }
+    
+        // For handling empty enclosures
+        if (ranges->size == 0) {
+            Token_Range range;
+            range.start = base->range.start;
+            range.end = base->range.start;
+            dynamic_array_push_back(ranges, range);
         }
     }
 }

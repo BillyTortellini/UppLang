@@ -32,6 +32,8 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::EXTERN: return string_create_static("extern");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::INSTANCIATE: return string_create_static("#instanciate");
+    case Keyword::GET_OVERLOAD: return string_create_static("#get_overload");
+    case Keyword::GET_OVERLOAD_POLY: return string_create_static("#get_overload_poly");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CAST: return string_create_static("cast");
     case Keyword::CAST_POINTER: return string_create_static("cast_pointer");

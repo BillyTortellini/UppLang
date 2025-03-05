@@ -379,6 +379,7 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
     result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
     result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
     result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
+    result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
 
     return result;
 }
@@ -435,10 +436,18 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
     for (int i = 0; i < data->allocated_operator_contexts.size; i++) {
         auto context = data->allocated_operator_contexts[i];
         dynamic_array_destroy(&context->context_imports);
+
         hashtable_destroy(&context->custom_operators);
         delete data->allocated_operator_contexts[i];
     }
     dynamic_array_destroy(&data->allocated_operator_contexts);
+
+    for (int i = 0; i < data->allocated_dot_calls.size; i++) {
+        auto dot_calls = data->allocated_dot_calls[i];
+        dynamic_array_destroy(dot_calls);
+        delete dot_calls;
+    }
+    dynamic_array_destroy(&data->allocated_dot_calls);
 
     stack_allocator_destroy(&data->progress_allocator);
     stack_allocator_destroy(&data->global_variable_memory_pool);
@@ -460,4 +469,14 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
     }
 
     delete data;
+}
+
+Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity)
+{
+    Dynamic_Array<Dot_Call_Info> initial = dynamic_array_create<Dot_Call_Info>(capacity);
+    Dynamic_Array<Dot_Call_Info>* result = new Dynamic_Array<Dot_Call_Info>;
+    *result = initial;
+
+    dynamic_array_push_back(&data->allocated_dot_calls, result);
+    return result;
 }
