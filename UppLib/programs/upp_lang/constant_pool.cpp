@@ -233,9 +233,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
                 return;
             }
 
-            auto& id_pool = compiler.identifier_pool;
-            auto id = identifier_pool_add(&id_pool, string_create_static((const char*)string.bytes.data));
-
+            auto id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static((const char*)string.bytes.data));
             // Create c_string value pointing to identifier pool (Always null terminated)
             memory_set_bytes(&string, sizeof(Upp_C_String), 0);
             *(Upp_C_String*)memory = upp_c_string_from_id(id);;

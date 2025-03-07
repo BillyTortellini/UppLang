@@ -415,8 +415,8 @@ int run_import_gui()
 
 
     // Application Data
-    C_Importer c_importer = c_importer_create();
-    SCOPE_EXIT(c_importer_destroy(&c_importer));
+    C_Importer* c_importer = c_importer_create();
+    SCOPE_EXIT(c_importer_destroy(c_importer));
     Identifier_Pool identifier_pool = identifier_pool_create();
     SCOPE_EXIT(identifier_pool_destroy(&identifier_pool));
 
@@ -478,7 +478,7 @@ int run_import_gui()
 
             if (gui_push_button(file_dialog, string_create_static("Parse")) && importer.header_filepath.size != 0) 
             {
-                import_package = c_importer_import_header(&c_importer, importer.header_filepath, &identifier_pool, *importer.include_dirs, *importer.defines);
+                import_package = c_importer_import_header(c_importer, importer.header_filepath, *importer.include_dirs, *importer.defines);
                 if (import_package.available) {
                     importer.package = &import_package.value;
                     dynamic_array_reset(&importer.symbols_to_import);

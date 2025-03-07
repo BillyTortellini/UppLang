@@ -142,9 +142,13 @@ Identifier_Pool identifier_pool_create()
 
     // Add predefined IDs
     {
+        // Make dummy lock for predefined things
+        Identifier_Pool_Lock lock;
+        lock.pool = &result;
+
         auto& ids = result.predefined_ids;
         auto add_id = [&](const char* id) -> String* {
-            return identifier_pool_add_unsafe(&result, string_create_static(id));
+            return identifier_pool_add(&lock, string_create_static(id));
         };
 
         ids.size = add_id("size");
@@ -167,6 +171,11 @@ Identifier_Pool identifier_pool_create()
         ids.bytes = add_id("bytes");
         ids.lambda_function = add_id("lambda_function");
         ids.bake_function = add_id("bake_function");
+
+        ids.hashtag_instanciate = add_id("#instanciate");
+        ids.hashtag_bake = add_id("#bake");
+        ids.hashtag_get_overload = add_id("#get_overload");
+        ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
 
         ids.function = add_id("function");
         ids.create_fn = add_id("create_fn");
@@ -243,8 +252,22 @@ void identifier_pool_destroy(Identifier_Pool* pool)
     semaphore_destroy(pool->add_identifier_semaphore);
 }
 
-String* identifier_pool_add_unsafe(Identifier_Pool* pool, String identifier)
+Identifier_Pool_Lock identifier_pool_lock_aquire(Identifier_Pool* pool) {
+    semaphore_wait(pool->add_identifier_semaphore);
+    Identifier_Pool_Lock result;
+    result.pool = pool;
+    return result;
+}
+
+void identifier_pool_lock_release(Identifier_Pool_Lock& lock) {
+    assert(lock.pool != nullptr, "");
+    semaphore_increment(lock.pool->add_identifier_semaphore, 1);
+    lock.pool = nullptr;
+}
+
+String* identifier_pool_add(Identifier_Pool_Lock* lock, String identifier) 
 {
+    auto pool = lock->pool;
     String** found = hashtable_find_element(&pool->identifier_lookup_table, identifier);
     if (found != 0) {
         return *found;
@@ -258,12 +281,11 @@ String* identifier_pool_add_unsafe(Identifier_Pool* pool, String identifier)
     }
 }
 
-String* identifier_pool_add(Identifier_Pool* pool, String identifier)
-{
-    semaphore_wait(pool->add_identifier_semaphore);
-    String* result = identifier_pool_add_unsafe(pool, identifier);
-    semaphore_increment(pool->add_identifier_semaphore, 1);
-    return result;
+String* identifier_pool_lock_and_add(Identifier_Pool* pool, String identifier) {
+    Identifier_Pool_Lock lock = identifier_pool_lock_aquire(pool);
+    String* str = identifier_pool_add(&lock, identifier);
+    identifier_pool_lock_release(lock);
+    return str;
 }
 
 void identifier_pool_print(Identifier_Pool* pool)

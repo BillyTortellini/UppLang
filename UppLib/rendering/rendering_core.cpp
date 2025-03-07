@@ -783,7 +783,7 @@ void shader_add_shader_stage(Shader* shader, Shader_Stage stage, String source_c
     const char* sources[] = { source_code.characters };
     const GLint lengths[] = { source_code.size };
     glShaderSource(shader_id, 1, sources, lengths);
-    logg("compiling shader: \n\n%s\n\n", source_code.characters);
+    // logg("compiling shader: \n\n%s\n\n", source_code.characters);
     glCompileShader(shader_id);
     opengl_utils_check_shader_compilation_status(shader_id);
     glAttachShader(shader->program_id, shader_id);
@@ -869,7 +869,7 @@ bool shader_compile(Shader* shader)
 void hotreload_shader(void* userdata, const char* filename)
 {
     Shader* shader = (Shader*)userdata;
-    logg("Compiling shader: %s\n", filename);
+    // logg("Compiling shader: %s\n", filename);
 
     auto shader_code_opt = file_io_load_text_file(filename);
     SCOPE_EXIT(file_io_unload_text_file(&shader_code_opt));

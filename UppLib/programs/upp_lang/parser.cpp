@@ -732,6 +732,7 @@ namespace Parser
             result->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
         }
 
+        node_finalize_range(upcast(result));
         return upcast(result);
     }
 
@@ -2027,9 +2028,14 @@ namespace Parser
             advance_token();
             result->type = Expression_Type::GET_OVERLOAD;
             result->options.get_overload.is_poly = is_poly;
-            result->options.get_overload.path = parse_path_lookup(upcast(result));
+            result->options.get_overload.path = optional_make_failure<AST::Path_Lookup*>();
             result->options.get_overload.arguments = dynamic_array_create<AST::Get_Overload_Argument*>();
-            if (result->options.get_overload.path == 0) {
+            
+            AST::Path_Lookup* path = parse_path_lookup(upcast(result));
+            if (path != 0) {
+                result->options.get_overload.path = optional_make_success(path);
+            }
+            else {
                 log_error("#get_overload expected a path_lookup", token_range_make_offset(start, 1));
             }
             if (!test_parenthesis('(')) {

@@ -4,7 +4,7 @@
 #include "../../datastructures/dynamic_array.hpp"
 
 struct Token;
-struct Identifier_Pool;
+struct Identifier_Pool_Lock;
 struct Source_Code;
 
 // Tokens
@@ -166,6 +166,6 @@ String operator_get_string(Operator op);
 // Lexer
 void lexer_initialize();
 void lexer_shutdown();
-void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool* identifier_pool);
+void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool);
 void lexer_tokenize_line_as_comment(String text, Dynamic_Array<Token>* tokens);
 

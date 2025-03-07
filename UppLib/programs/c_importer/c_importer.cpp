@@ -175,50 +175,53 @@ Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
     result.lexer = lexer;
     result.index = 0;
     result.source_code = source_code;
-    result.identifier_typedef = identifier_pool_add(lexer->identifier_pool, string_create_static("typedef"));
-    result.identifier_unaligned = identifier_pool_add(lexer->identifier_pool, string_create_static("__unaligned"));
-    result.identifier_ptr32 = identifier_pool_add(lexer->identifier_pool, string_create_static("__ptr32"));
-    result.identifier_ptr64 = identifier_pool_add(lexer->identifier_pool, string_create_static("__ptr64"));
-    result.identifier_inline = identifier_pool_add(lexer->identifier_pool, string_create_static("inline"));
-    result.identifier_inline_alt = identifier_pool_add(lexer->identifier_pool, string_create_static("__inline"));
-    result.identifier_force_inline = identifier_pool_add(lexer->identifier_pool, string_create_static("__forceinline"));
-    result.identifier_static = identifier_pool_add(lexer->identifier_pool, string_create_static("static"));
-    result.identifier_enum = identifier_pool_add(lexer->identifier_pool, string_create_static("enum"));
-    result.identifier_union = identifier_pool_add(lexer->identifier_pool, string_create_static("union"));
-    result.identifier_char = identifier_pool_add(lexer->identifier_pool, string_create_static("char"));
-    result.identifier_short = identifier_pool_add(lexer->identifier_pool, string_create_static("short"));
-    result.identifier_int = identifier_pool_add(lexer->identifier_pool, string_create_static("int"));
-    result.identifier_wchar_t = identifier_pool_add(lexer->identifier_pool, string_create_static("wchar_t"));
-    result.identifier_wchar_t_alt = identifier_pool_add(lexer->identifier_pool, string_create_static("__wchar_t"));
-    result.identifier_int8 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int8"));
-    result.identifier_int16 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int16"));
-    result.identifier_int32 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int32"));
-    result.identifier_int64 = identifier_pool_add(lexer->identifier_pool, string_create_static("__int64"));
-    result.identifier_long = identifier_pool_add(lexer->identifier_pool, string_create_static("long"));
-    result.identifier_float = identifier_pool_add(lexer->identifier_pool, string_create_static("float"));
-    result.identifier_double = identifier_pool_add(lexer->identifier_pool, string_create_static("double"));
-    result.identifier_signed = identifier_pool_add(lexer->identifier_pool, string_create_static("signed"));
-    result.identifier_bool = identifier_pool_add(lexer->identifier_pool, string_create_static("bool"));
-    result.identifier_void = identifier_pool_add(lexer->identifier_pool, string_create_static("void"));
-    result.identifier_unsigned = identifier_pool_add(lexer->identifier_pool, string_create_static("unsigned"));
-    result.identifier_const = identifier_pool_add(lexer->identifier_pool, string_create_static("const"));
-    result.identifier_volatile = identifier_pool_add(lexer->identifier_pool, string_create_static("volatile"));
-    result.identifier_restrict = identifier_pool_add(lexer->identifier_pool, string_create_static("restrict"));
-    result.identifier_atomic = identifier_pool_add(lexer->identifier_pool, string_create_static("atomic"));
+    auto add_id = [&](const char* name) -> String* {
+        return identifier_pool_add(lexer->pool_lock, string_create_static(name));
+    };
+    result.identifier_typedef = add_id("typedef");
+    result.identifier_unaligned = add_id("__unaligned");
+    result.identifier_ptr32 = add_id("__ptr32");
+    result.identifier_ptr64 = add_id("__ptr64");
+    result.identifier_inline = add_id("inline");
+    result.identifier_inline_alt = add_id("__inline");
+    result.identifier_force_inline = add_id("__forceinline");
+    result.identifier_static = add_id("static");
+    result.identifier_enum = add_id("enum");
+    result.identifier_union = add_id("union");
+    result.identifier_char = add_id("char");
+    result.identifier_short = add_id("short");
+    result.identifier_int = add_id("int");
+    result.identifier_wchar_t = add_id("wchar_t");
+    result.identifier_wchar_t_alt = add_id("__wchar_t");
+    result.identifier_int8 = add_id("__int8");
+    result.identifier_int16 = add_id("__int16");
+    result.identifier_int32 = add_id("__int32");
+    result.identifier_int64 = add_id("__int64");
+    result.identifier_long = add_id("long");
+    result.identifier_float = add_id("float");
+    result.identifier_double = add_id("double");
+    result.identifier_signed = add_id("signed");
+    result.identifier_bool = add_id("bool");
+    result.identifier_void = add_id("void");
+    result.identifier_unsigned = add_id("unsigned");
+    result.identifier_const = add_id("const");
+    result.identifier_volatile = add_id("volatile");
+    result.identifier_restrict = add_id("restrict");
+    result.identifier_atomic = add_id("atomic");
 
-    result.identifier_call_conv_cdecl = identifier_pool_add(lexer->identifier_pool, string_create_static("__cdecl"));
-    result.identifier_call_conv_clrcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__clrcall"));
-    result.identifier_call_conv_fastcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__stdcall"));
-    result.identifier_call_conv_stdcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__fastcall"));
-    result.identifier_call_conv_thiscall = identifier_pool_add(lexer->identifier_pool, string_create_static("__thiscall"));
-    result.identifier_call_conv_vectorcall = identifier_pool_add(lexer->identifier_pool, string_create_static("__vectorcall"));
+    result.identifier_call_conv_cdecl = add_id("__cdecl");
+    result.identifier_call_conv_clrcall = add_id("__clrcall");
+    result.identifier_call_conv_fastcall = add_id("__stdcall");
+    result.identifier_call_conv_stdcall = add_id("__fastcall");
+    result.identifier_call_conv_thiscall = add_id("__thiscall");
+    result.identifier_call_conv_vectorcall = add_id("__vectorcall");
 
     // Create new tokens array, where lines starting with # are removed, and __pragma and __declspec compiler stuff is removed
     result.tokens = dynamic_array_create<C_Token>(lexer->tokens.size);
 
-    String* identifier_pragma_underscore = identifier_pool_add(lexer->identifier_pool, string_create_static("__pragma"));
-    String* identifier_declspec = identifier_pool_add(lexer->identifier_pool, string_create_static("__declspec"));
-    String* identifier_static_assert = identifier_pool_add(lexer->identifier_pool, string_create_static("static_assert"));
+    String* identifier_pragma_underscore = add_id("__pragma");
+    String* identifier_declspec = add_id("__declspec");
+    String* identifier_static_assert = add_id("static_assert");
     int last_line_index = -1;
     for (int i = 0; i < lexer->tokens.size; i++)
     {
@@ -1556,8 +1559,8 @@ void header_parser_parse(Header_Parser* parser)
     printf("\n");
     */
 
-    String* identifier_extern_c = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C"));
-    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->identifier_pool, string_create_static("C++"));
+    String* identifier_extern_c = identifier_pool_add(parser->lexer->pool_lock, string_create_static("C"));
+    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->pool_lock, string_create_static("C++"));
     while (parser->index + 2 < parser->tokens.size)
     {
         C_Token* t1 = &parser->tokens[parser->index];
@@ -1667,7 +1670,7 @@ Print_Destination print_destination_make(bool is_sizeof, bool is_alignof, bool i
 }
 
 Optional<C_Import_Package> c_importer_parse_header(
-    const char* file_name, Identifier_Pool* pool, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
+    const char* file_name, Identifier_Pool_Lock* pool_lock, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
 )
 {
     logg("Parsing header file: %s\n---------------------\n", file_name);
@@ -1715,7 +1718,7 @@ Optional<C_Import_Package> c_importer_parse_header(
     // Run lexer over file
     C_Lexer lexer = c_lexer_create();
     SCOPE_EXIT(c_lexer_destroy(&lexer));
-    c_lexer_lex(&lexer, &source_code, pool);
+    c_lexer_lex(&lexer, &source_code, pool_lock);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
         //code_source.identifiers.size, code_source.tokens.size, code_source.tokens_with_decoration.size - code_source.tokens.size);
@@ -1881,12 +1884,10 @@ Optional<C_Import_Package> c_importer_parse_header(
 }
 
 Optional<C_Import_Package> c_importer_import_header(
-    C_Importer* importer, String header_name, Identifier_Pool* identifier_pool, 
+    C_Importer* importer, String header_name,
     Dynamic_Array<String> include_directories, Dynamic_Array<String> defines
 )
 {
-    importer->identifier_pool = identifier_pool;
-
     // Look in cache for file (Not supported anymore because the include-gui doesn't need it)
     // auto cache_elem = hashtable_find_element(&importer->cache, header_name);
     // if (cache_elem != 0) {
@@ -1894,7 +1895,7 @@ Optional<C_Import_Package> c_importer_import_header(
     // }
 
     // Parse header if not in cache
-    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, importer->identifier_pool, include_directories, defines);
+    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, &importer->pool_lock, include_directories, defines);
     if (parsed_package.available)
     {
         String cache_file_name = string_create(header_name.characters);
@@ -1906,10 +1907,12 @@ Optional<C_Import_Package> c_importer_import_header(
     }
 }
 
-C_Importer c_importer_create()
+C_Importer* c_importer_create()
 {
-    C_Importer importer;
-    importer.cache = hashtable_create_empty<String, C_Import_Package>(64, hash_string, string_equals);
+    C_Importer* importer = new C_Importer;
+    importer->cache = hashtable_create_empty<String, C_Import_Package>(64, hash_string, string_equals);
+    importer->identifier_pool = identifier_pool_create();
+    importer->pool_lock = identifier_pool_lock_aquire(&importer->identifier_pool);
     return importer;
 
     /*
@@ -1946,5 +1949,8 @@ void c_importer_destroy(C_Importer* importer)
 
     hashtable_for_each(&importer->cache, c_package_cache_destroy);
     hashtable_destroy(&importer->cache);
+    identifier_pool_lock_release(importer->pool_lock);
+    identifier_pool_destroy(&importer->identifier_pool);
+    delete importer;
 }
 

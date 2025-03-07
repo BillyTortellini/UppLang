@@ -17,6 +17,7 @@ struct Datatype;
 struct Analysis_Pass;
 struct Datatype_Enum;
 struct Compilation_Unit;
+struct Identifier_Pool_Lock;
 
 namespace AST
 {
@@ -224,9 +225,8 @@ void source_code_fill_from_string(Source_Code* code, String text);
 void source_code_append_to_string(Source_Code* code, String* text);
 
 void update_line_block_comment_information(Source_Code* code, int line_index);
-void source_code_tokenize(Source_Code* code);
-void source_code_tokenize_line(Source_Code* code, int line_index);
-void source_code_tokenize_line(Source_Line* line);
+void source_code_tokenize(Source_Code* code, Identifier_Pool_Lock* pool_lock);
+void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock);
 
 void source_code_sanity_check(Source_Code* code);
 bool source_line_is_comment(Source_Line* line);

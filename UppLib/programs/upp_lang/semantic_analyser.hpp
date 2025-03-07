@@ -590,7 +590,9 @@ enum class Call_Type
 
     CONTEXT_OPTION,
     STRUCT_INITIALIZER,
-    UNION_INITIALIZER
+    UNION_INITIALIZER,
+
+    SLICE_INITIALIZER
 };
 
 struct Parameter_Matching_Info
@@ -617,6 +619,7 @@ struct Parameter_Matching_Info
             bool subtype_valid;
             bool supertype_valid;
         } struct_init;
+        Datatype_Slice* slice_type;
     } options;
 
     bool has_return_value;

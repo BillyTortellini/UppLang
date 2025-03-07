@@ -1553,7 +1553,7 @@ int struct_content_finish_recursive(Struct_Content* content, int memory_offset, 
         {
             String name = string_copy(*content->name);
             string_append_formated(&name, "_tag");
-            String* tag_enum_name = identifier_pool_add(&compiler.identifier_pool, name);
+            String* tag_enum_name = identifier_pool_lock_and_add(&compiler.identifier_pool, name);
             string_destroy(&name);
             tag_type = type_system_make_enum_empty(tag_enum_name);
         }
@@ -1949,18 +1949,19 @@ void type_system_add_predefined_types(Type_System* system)
 
 
     using AST::Structure_Type;
-    auto make_id = [&](const char* name) -> String* { return identifier_pool_add(&compiler.identifier_pool, string_create_static(name)); };
+
+    auto make_id = [&](const char* name) -> String* { return identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name)); };
     auto add_member_cstr = [&](Struct_Content* content, const char* member_name, Datatype* member_type) {
-        String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
+        String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(member_name));
         struct_add_member(content, id, member_type);
     };
     auto add_struct_subtype = [&](Struct_Content* content, const char* member_name) -> Struct_Content* {
-        String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static(member_name));
+        String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(member_name));
         return struct_add_subtype(content, id);
     };
     auto make_single_member_struct = [&](const char* struct_name, const char* member_name, Datatype* type) -> Datatype_Struct* 
     {
-        String* name_id = identifier_pool_add(&compiler.identifier_pool, string_create_static(struct_name));
+        String* name_id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(struct_name));
         auto result = type_system_make_struct_empty(AST::Structure_Type::STRUCT, name_id, 0);
         add_member_cstr(&result->content, member_name, type);
         type_system_finish_struct(result);
@@ -1968,7 +1969,7 @@ void type_system_add_predefined_types(Type_System* system)
     };
     auto make_param = [&](Datatype* signature, const char* name, bool default_value_exists = false) -> Function_Parameter {
         auto parameter = function_parameter_make_empty();
-        parameter.name = identifier_pool_add(&compiler.identifier_pool, string_create_static(name));
+        parameter.name = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name));
         parameter.type = signature;
         parameter.default_value_exists = default_value_exists;
         return parameter;
@@ -2121,7 +2122,7 @@ void type_system_add_predefined_types(Type_System* system)
         // ENUM
         {
             {
-                String* id = identifier_pool_add(&compiler.identifier_pool, string_create_static("Enum_Member"));
+                String* id = make_id("Enum_Member");
                 Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, id, 0);
                 add_member_cstr(&enum_member_type->content, "name", upcast(types->c_string));
                 add_member_cstr(&enum_member_type->content, "value", upcast(types->i32_type));

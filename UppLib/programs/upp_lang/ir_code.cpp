@@ -1315,8 +1315,32 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
+        // Handle slice-initializer first
+        auto arg_info = get_info(expression->options.struct_initializer.arguments);
+        if (arg_info->call_type == Call_Type::SLICE_INITIALIZER)
+        {
+            Datatype_Slice* slice_type = arg_info->options.slice_type;
+            assert(arg_info->matched_parameters.size == 2, "");
+
+            IR_Data_Access* slice_access = make_destination_access_on_demand(result_type);
+            IR_Data_Access* data_access = ir_data_access_create_member(slice_access, slice_type->data_member);
+            IR_Data_Access* size_access = ir_data_access_create_member(slice_access, slice_type->size_member);
+
+            bool args_are_swapped = arg_info->matched_parameters[0].argument_index == 1;
+            for (int i = 0; i < 2; i++)
+            {
+                AST::Expression* arg = expression->options.struct_initializer.arguments->arguments[i]->value;
+                bool is_data = i == 0;
+                if (args_are_swapped) is_data = false;
+                IR_Data_Access* write_to = is_data ? data_access : size_access;
+                ir_generator_generate_expression(arg, write_to);
+            }
+
+            return slice_access;
+        }
+
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
-        auto& init_info = get_info(expression->options.struct_initializer.arguments)->options.struct_init;
+        auto& init_info = arg_info->options.struct_init;
 
         // First, set all tags to correct values
         Datatype_Struct* structure = downcast<Datatype_Struct>(result_type->base_type);

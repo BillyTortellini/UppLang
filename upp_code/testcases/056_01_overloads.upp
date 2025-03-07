@@ -23,20 +23,19 @@ add :: (node: *Node, a: int, b: int) -> int
 	return node.value
 
 main :: ()
+	import Upp~type_of
+	
 	a := add(5, 10)
+	assert(type_of(a) == int)
 	f := add(5.5, 10)
+	assert(type_of(f) == float)
 	
 	x: Upp~u64 = 5
 	z := add(x, x)
+	assert(type_of(z) == Upp~u64)
 	
 	n: Node = .{20}
 	add(n, 5)
 	add(n, true)
-	
-	Upp~print_i32(a)
-	Upp~print_line()
-	Upp~print_f32(f)
-	Upp~print_line()
-	Upp~print_i32( cast z)
-	Upp~print_line()
-	Upp~print_i32(n.value)
+	add(n, 2, 5)
+	assert(n.value == 105)

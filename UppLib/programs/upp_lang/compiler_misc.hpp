@@ -186,6 +186,11 @@ struct Predefined_IDs
     String* is_available;
     String* uninitialized_token; // _
 
+    String* hashtag_instanciate;
+    String* hashtag_bake;
+    String* hashtag_get_overload;
+    String* hashtag_get_overload_poly;
+
     String* lambda_function;
     String* bake_function;
 
@@ -237,6 +242,12 @@ struct Predefined_IDs
     String* cast_option_enum_values[(int)Cast_Option::MAX_ENUM_VALUE];
 };
 
+struct Identifier_Pool;
+struct Identifier_Pool_Lock
+{
+    Identifier_Pool* pool;
+};
+
 struct Identifier_Pool
 {
     Hashtable<String, String*> identifier_lookup_table;
@@ -246,8 +257,12 @@ struct Identifier_Pool
 
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
-String* identifier_pool_add(Identifier_Pool* pool, String identifier);
-String* identifier_pool_add_unsafe(Identifier_Pool* pool, String identifier);
+
+Identifier_Pool_Lock identifier_pool_lock_aquire(Identifier_Pool* pool);
+void identifier_pool_lock_release(Identifier_Pool_Lock& lock);
+String* identifier_pool_add(Identifier_Pool_Lock* lock, String identifier);
+String* identifier_pool_lock_and_add(Identifier_Pool* pool, String identifier);
+
 void identifier_pool_print(Identifier_Pool* pool);
 
 

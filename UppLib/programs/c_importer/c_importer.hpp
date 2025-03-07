@@ -4,8 +4,10 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../utility/utils.hpp"
+#include "../upp_lang/compiler_misc.hpp"
 
 struct Datatype;
+struct Identifier_Pool_Lock;
 
 enum class C_Import_Primitive
 {
@@ -138,17 +140,17 @@ struct C_Import_Package
     C_Import_Type_System type_system;
 };
 
-struct Identifier_Pool;
 struct C_Importer
 {
-    Identifier_Pool* identifier_pool;
+    Identifier_Pool identifier_pool;
+    Identifier_Pool_Lock pool_lock;
     Hashtable<String, C_Import_Package> cache;
 };
 
-C_Importer c_importer_create();
+C_Importer* c_importer_create();
 void c_importer_destroy(C_Importer* importer);
 Optional<C_Import_Package> c_importer_import_header(
-    C_Importer* importer, String header_name, Identifier_Pool* identifier_pool, 
+    C_Importer* importer, String header_name,
     Dynamic_Array<String> include_directories, Dynamic_Array<String> defines
 );
 void c_import_type_append_to_string(C_Import_Type* type, String* string, int indentation, bool print_array_members);

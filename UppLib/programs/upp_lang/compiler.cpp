@@ -146,7 +146,9 @@ Compilation_Unit* compiler_add_compilation_unit(String file_path_param, bool ope
 
         auto source_code = source_code_create();
         source_code_fill_from_string(source_code, result.value);
-        source_code_tokenize(source_code);
+        auto lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+        source_code_tokenize(source_code, &lock);
+        identifier_pool_lock_release(lock);
 
         unit = new Compilation_Unit;
         unit->code = source_code;

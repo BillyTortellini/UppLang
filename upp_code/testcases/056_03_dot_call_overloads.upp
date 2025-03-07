@@ -1,0 +1,34 @@
+
+Node :: struct
+	value: int
+
+add :: (node: *Node, a: int)
+	node.value += a
+
+add :: (node: *Node, b: bool)
+	if b
+		node.value *= 2
+
+add :: (node: *Node, a: int, b: int) -> int
+	node.value = node.value * a + b
+	return node.value
+
+add :: (node: *Node, other: $T)
+	node.value += 5
+
+main :: ()
+	node := Node.{0}
+	
+	context add_dot_call( #get_overload add(node, a))
+	context add_dot_call( #get_overload add(node, b))
+	context add_dot_call( #get_overload add(node, a, b))
+	context add_dot_call( #get_overload_poly add())
+	
+	node.add(10)
+	assert(node.value == 10)
+	node.add(true)
+	assert(node.value == 20)
+	node.add(2, 3)
+	assert(node.value == 43)
+	node.add("Hello")
+	assert(node.value == 48)

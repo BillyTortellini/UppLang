@@ -13,8 +13,8 @@ Allocator_Helpers :: module
 	
 	context add_dot_call(allocate)
 	context add_dot_call(free)
-	context add_dot_call(allocate_array)
-	context add_dot_call(free_array)
+	context add_dot_call(allocate_array, false, "allocate")
+	context add_dot_call(free_array, false, "free")
 	
 	allocate :: (allocator: *Allocator, $T: Type) -> *T
 		return cast_pointer {*T} allocator.allocate_fn(allocator, size_of(T), align_of(T))

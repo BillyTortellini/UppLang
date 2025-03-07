@@ -480,26 +480,21 @@ void source_text_remove_invalid_whitespaces(String& text)
     }
 }
 
-void source_code_tokenize_line(Source_Line* line)
+void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock)
 {
     if (line->is_comment) {
         lexer_tokenize_line_as_comment(line->text, &line->tokens);
         return;
     }
-    lexer_tokenize_line(line->text, &line->tokens, &compiler.identifier_pool);
+    lexer_tokenize_line(line->text, &line->tokens, pool_lock);
 }
 
-void source_code_tokenize_line(Source_Code* code, int line_index)
-{
-    source_code_tokenize_line(source_code_get_line(code, line_index));
-}
-
-void source_code_tokenize(Source_Code* code)
+void source_code_tokenize(Source_Code* code, Identifier_Pool_Lock* pool_lock)
 {
     for (int i = 0; i < code->bundles.size; i++) {
         auto& bundle = code->bundles[i];
         for (int j = 0; j < bundle.lines.size; j++) {
-            source_code_tokenize_line(&bundle.lines[j]);
+            source_code_tokenize_line(&bundle.lines[j], pool_lock);
         }
     }
 }

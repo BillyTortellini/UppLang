@@ -386,7 +386,7 @@ namespace AST
             } structure;
             Expression* instanciate_expr; // Should be a function call...
             struct {
-                Path_Lookup* path;
+                Optional<Path_Lookup*> path; // Is not available if parsing failed!
                 Dynamic_Array<Get_Overload_Argument*> arguments;
                 bool is_poly;
             } get_overload;

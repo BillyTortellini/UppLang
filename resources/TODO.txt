@@ -1,13 +1,24 @@
 
 TODO:
- * Code-Completion for Hashtags #instanciate, #add_overload, #bake, #get_overload
- * Add testcases for overloading (Poly overloading and dot-call overloading)
- * Add testcases for #get_overload
- * Struct-Initializer for Slice
  * Commenting in/out blocks has bugs (visual)
- * Fix testcases
+ * Fix testcases (Probably just naming things right now)
 
 
+Done:
+
+
+DONE:
+07.03:
+ * Fixed synchronization bug
+ * Added identifier-pool lock
+ * Rewritten auto-formating with tokenizer
+
+06.03:
+ * Struct-Initializer for Slice
+ * Add testcases for #get_overload
+ * Add testcases for overloading (Poly overloading and dot-call overloading)
+ * Fixed Parser bounding-range bug for Overload_Argument
+ * Code-Completion for Hashtags #instanciate, #add_overload, #bake, #get_overload
 
 Example Code that I want:
     allocator.allocate(15)  --> Bytes

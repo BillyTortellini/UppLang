@@ -218,7 +218,7 @@ void lexer_tokenize_line_as_comment(String text, Dynamic_Array<Token>* tokens)
     dynamic_array_push_back(tokens, token);
 }
 
-void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool* identifier_pool)
+void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool_lock)
 {
     dynamic_array_reset(tokens);
     int index = 0;
@@ -260,7 +260,7 @@ void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_P
             }
             else {
                 token.type = Token_Type::IDENTIFIER;
-                token.options.identifier = identifier_pool_add(identifier_pool, substring);
+                token.options.identifier = identifier_pool_add(identifier_pool_lock, substring);
             }
         }
         else if (c == '"')
@@ -332,7 +332,7 @@ void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_P
                     }
                 }
                 if (!invalid_escape_found) {
-                    parsed_string = identifier_pool_add(identifier_pool, result_str);
+                    parsed_string = identifier_pool_add(identifier_pool_lock, result_str);
                 }
             }
 

@@ -1606,7 +1606,12 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     }
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
-        auto& init_info = get_info(expr->options.struct_initializer.arguments)->options.struct_init;
+        auto matching_info = get_info(expr->options.struct_initializer.arguments);
+        if (matching_info->call_type == Call_Type::SLICE_INITIALIZER) {
+            return comptime_result_make_unavailable(result_type, "Comptime slice initializer not implemented yet :P ");
+        }
+
+        auto& init_info = matching_info->options.struct_init;
         void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
         memory_set_bytes(result_buffer, result_type_size->size, 0);
 
@@ -7158,6 +7163,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			break;
 		}
 
+		case Call_Type::SLICE_INITIALIZER:
 		case Call_Type::CONTEXT_OPTION:
 		case Call_Type::INSTANCIATE:
 		case Call_Type::UNION_INITIALIZER:
@@ -7283,8 +7289,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
         SCOPE_EXIT(dynamic_array_destroy(&symbols));
         // Overload.path is nullptr only if there was a parsing error, so we don't need error-reporting here
-        if (overload.path != 0) {
-            path_lookup_resolve(overload.path, symbols);
+        if (overload.path.available) {
+            path_lookup_resolve(overload.path.value, symbols);
         }
 
         auto& args = overload.arguments;
@@ -7306,12 +7312,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
             }
         }
 
-        if (overload.path == 0) {
+        if (!overload.path.available) {
             semantic_analyser_set_error_flag(true);
             EXIT_ERROR(types.unknown_type);
         }
         if (symbols.size == 0) {
-            log_semantic_error("Could not find symbol for given path", upcast(overload.path));
+            log_semantic_error("Could not find symbol for given path", upcast(overload.path.value));
             EXIT_ERROR(types.unknown_type);
         }
 
@@ -7320,7 +7326,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         for (int i = 0; i < symbols.size; i++) 
         {
             auto symbol = symbols[i];
-            Expression_Info info = analyse_symbol_as_expression(symbol, expression_context_make_unknown(), overload.path->last);
+            Expression_Info info = analyse_symbol_as_expression(symbol, expression_context_make_unknown(), overload.path.value->last);
 
             bool remove_symbol = false;
             bool all_parameter_matched = false;
@@ -7436,7 +7442,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
         }
 
         if (symbols.size == 0) {
-            log_semantic_error("#get_overload failed, no symbol matched given parameters and types", upcast(overload.path));
+            log_semantic_error("#get_overload failed, no symbol matched given parameters and types", upcast(overload.path.value));
             EXIT_ERROR(types.unknown_type);
         }
         else if (symbols.size > 1) 
@@ -7445,14 +7451,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
                 semantic_analyser_set_error_flag(true);
                 EXIT_ERROR(types.unknown_type);
             }
-            log_semantic_error("#get_overload failed to distinguish symbols with given parameters/types", upcast(overload.path));
+            log_semantic_error("#get_overload failed to distinguish symbols with given parameters/types", upcast(overload.path.value));
             for (int i = 0; i < symbols.size; i++) {
                 log_error_info_symbol(symbols[i]);
             }
             EXIT_ERROR(types.unknown_type);
         }
 
-        path_lookup_set_result_symbol(overload.path, symbols[0]);
+        path_lookup_set_result_symbol(overload.path.value, symbols[0]);
         auto symbol = symbols[0];
         *info = result_info;
         return info;
@@ -8143,6 +8149,28 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				EXIT_VALUE(upcast(struct_type), true);
 			}
 		}
+        else if (type_for_init->type == Datatype_Type::SLICE)
+        {
+            Datatype_Slice* slice_type = downcast<Datatype_Slice>(type_for_init);
+
+			auto matching_info = get_info(init_node.arguments, true);
+			*matching_info = parameter_matching_info_create_empty(Call_Type::SLICE_INITIALIZER, 2);
+            matching_info->options.slice_type = slice_type;
+            auto& ids = compiler.identifier_pool.predefined_ids;
+		    parameter_matching_info_add_param(matching_info, ids.data, true, false, slice_type->data_member.type);
+		    parameter_matching_info_add_param(matching_info, ids.size, true, false, slice_type->size_member.type);
+
+			if (arguments_match_to_parameters(init_node.arguments, matching_info)) {
+                for (int i = 0; i < matching_info->matched_parameters.size; i++) {
+                    auto& matched_param = matching_info->matched_parameters[i];
+                    analyse_parameter_if_not_already_done(&matched_param, expression_context_make_specific_type(matched_param.param_type));
+                }
+			}
+            else {
+				parameter_matching_analyse_in_unknown_context(matching_info);
+            }
+			EXIT_VALUE(upcast(slice_type), true);
+        }
 		else
 		{
 			if (!datatype_is_unknown(type_for_init)) {
@@ -12351,9 +12379,10 @@ void semantic_analyser_reset()
 	}
 
 	// Create root tables and predefined Symbols 
+	auto pool_lock_value = identifier_pool_lock_aquire(&compiler.identifier_pool);
+    SCOPE_EXIT(identifier_pool_lock_release(pool_lock_value));
+    Identifier_Pool_Lock* pool_lock = &pool_lock_value;
 	{
-		auto pool = &compiler.identifier_pool;
-
 		// Create root table and default operator context
 		{
 			auto root_table = symbol_table_create();
@@ -12366,25 +12395,25 @@ void semantic_analyser_reset()
 		auto upp_table = symbol_table_create();
 		{
 			Symbol* result = symbol_table_define_symbol(
-				root, identifier_pool_add(pool, string_create_static("Upp")), Symbol_Type::MODULE, 0, Symbol_Access_Level::GLOBAL);
+				root, identifier_pool_add(pool_lock, string_create_static("Upp")), Symbol_Type::MODULE, 0, Symbol_Access_Level::GLOBAL);
 			result->options.module.progress = nullptr;
 			result->options.module.symbol_table = upp_table;
 
 			// Define int, float, bool
 			result = symbol_table_define_symbol(
-				root, identifier_pool_add(pool, string_create_static("int")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+				root, identifier_pool_add(pool_lock, string_create_static("int")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
 			result->options.type = upcast(types.i32_type);
 
 			result = symbol_table_define_symbol(
-				root, identifier_pool_add(pool, string_create_static("float")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+				root, identifier_pool_add(pool_lock, string_create_static("float")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
 			result->options.type = upcast(types.f32_type);
 
 			result = symbol_table_define_symbol(
-				root, identifier_pool_add(pool, string_create_static("bool")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+				root, identifier_pool_add(pool_lock, string_create_static("bool")), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
 			result->options.type = upcast(types.bool_type);
 
 			result = symbol_table_define_symbol(
-				root, identifier_pool_add(pool, string_create_static("assert")), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
+				root, identifier_pool_add(pool_lock, string_create_static("assert")), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
 			result->options.hardcoded = Hardcoded_Type::ASSERT_FN;
 		}
 
@@ -12392,7 +12421,7 @@ void semantic_analyser_reset()
 
 		auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
 			Symbol* result = symbol_table_define_symbol(
-				upp_table, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
+				upp_table, identifier_pool_add(pool_lock, string_create_static(name)), Symbol_Type::TYPE, 0, Symbol_Access_Level::GLOBAL);
 			result->options.type = type;
 			return result;
 			};
@@ -12418,7 +12447,7 @@ void semantic_analyser_reset()
 
 		auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
 			Symbol* result = symbol_table_define_symbol(
-				upp_table, identifier_pool_add(pool, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
+				upp_table, identifier_pool_add(pool_lock, string_create_static(name)), Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL);
 			result->options.hardcoded = type;
 			return result;
 			};
@@ -12462,7 +12491,7 @@ void semantic_analyser_reset()
 		// Add global allocator symbol
 		auto global_allocator_symbol = symbol_table_define_symbol(
 			upp_table,
-			identifier_pool_add(pool, string_create_static("global_allocator")),
+			identifier_pool_add(pool_lock, string_create_static("global_allocator")),
 			Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
 		);
 		semantic_analyser.global_allocator = modtree_program_add_global(
@@ -12473,7 +12502,7 @@ void semantic_analyser_reset()
 		// Add system allocator
 		auto default_allocator_symbol = symbol_table_define_symbol(
 			upp_table,
-			identifier_pool_add(pool, string_create_static("system_allocator")),
+			identifier_pool_add(pool_lock, string_create_static("system_allocator")),
 			Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL
 		);
 		semantic_analyser.system_allocator = modtree_program_add_global(

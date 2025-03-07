@@ -353,7 +353,7 @@ namespace AST
                 break;
             }
             case Expression_Type::GET_OVERLOAD: {
-                FILL(expr->options.get_overload.path);
+                FILL_OPTIONAL(expr->options.get_overload.path);
                 FILL_ARRAY(expr->options.get_overload.arguments);
                 break;
             }
@@ -743,7 +743,7 @@ namespace AST
                 break;
             }
             case Expression_Type::GET_OVERLOAD: {
-                FILL(expr->options.get_overload.path);
+                FILL_OPTIONAL(expr->options.get_overload.path);
                 FILL_ARRAY(expr->options.get_overload.arguments);
                 break;
             }
