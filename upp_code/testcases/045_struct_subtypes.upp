@@ -3,7 +3,7 @@ import Upp~c_string
 import Upp~u8
 import Upp~u32
 
-//
+///
 	The problem with C unions is that their usage is quite limited,
 	because we do not know which union-value is currently active/valid.
 	To achieve a tagged union similar to C,we would need something like this:
@@ -20,7 +20,7 @@ C_Style :: module
 		ipv6: c_string
 		tag: C_Address_Tag
 
-//
+///
 	This is exactly how Struct-Subtypes(Name may change)in Upp are implemented internally.
 	It may not seem very significant to add this to a language,
 	because it'only'removes some typing,but it brings good consequences:

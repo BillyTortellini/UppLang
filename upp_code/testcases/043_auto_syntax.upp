@@ -21,7 +21,7 @@ Color :: enum
 
 main :: ()
 	context set_cast_option(.ARRAY_TO_SLICE, .IMPLICIT)
-	//
+	///
 		The following Operations also have shorthand notations so
 		that the type is not necessary anymore
 		Enum Access:Color.RED-->.RED

@@ -141,20 +141,13 @@ Source_Line* source_code_get_line(Source_Code* code, int line_index)
 bool source_line_is_comment(Source_Line* line)
 {
     if (line->text.size < 2) return false;
-    if (line->text.characters[0] != '/' || line->text.characters[1] != '/') return false;
-    return true;
+    return line->text.characters[0] == '/' && line->text.characters[1] == '/';
 }
 
 bool source_line_is_multi_line_comment_start(Source_Line* line)
 {
-    if (line->text.size < 2) return false;
-    if (line->text.characters[0] != '/' || line->text.characters[1] != '/') return false;
-
-    for (int i = 2; i < line->text.size; i++) {
-        char c = line->text[i];
-        if (c != ' ' && c != '\r' && c != '\t') return false;
-    }
-    return true;
+    if (line->text.size < 3) return false;
+    return line->text.characters[0] == '/' && line->text.characters[1] == '/' && line->text.characters[2] == '/';
 }
 
 // Checks if the comment information is up-to date on the given line by checking the previous line.
@@ -480,12 +473,7 @@ void source_text_remove_invalid_whitespaces(String& text)
     }
 }
 
-void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock)
-{
-    if (line->is_comment) {
-        lexer_tokenize_line_as_comment(line->text, &line->tokens);
-        return;
-    }
+void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock) {
     lexer_tokenize_line(line->text, &line->tokens, pool_lock);
 }
 

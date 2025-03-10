@@ -1,5 +1,5 @@
 main :: ()
-	//
+	///
 		Pointer type-syntax:
 		Make pointer type: *[Datatype]
 		Address-Of: *[value]
@@ -20,7 +20,7 @@ main :: ()
 		except that they can still be null and that you can change the pointer
 		after initialization
 	
-	//
+	///
 		Because there is a difference between a pointer assignment and
 		a value assignment, we have different syntax for both cases
 		

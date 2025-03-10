@@ -16,14 +16,14 @@ main :: ()
 	// To obtain information about any type, we can use the built-in type_info() function
 	info = type_info(int)
 	
-	//
+	///
 		Type info contains all informations about a type,for example:
-		-size
-		-alignment
-		-struct members,with offsets and names
-		-enum members,with string names
-		-primitive type
-		-...
+		 - size
+		 - alignment
+		 - struct members,with offsets and names
+		 - enum members,with string names
+		 - primitive type
+		 - ...
 	int_size := info.size
 	int_alignment := info.alignment
 	
@@ -38,7 +38,7 @@ main :: ()
 	// With bake, this is a zero-cost operation
 	offset := #bake member_offset(Player, "alive")
 	assert(offset == 24)
-	//
+	///
 		This still seems kinda inconvenient compared to C's'offset_of'
 		But in the future you will be able to get almost the same syntax with
 		Macros.There will also be the possiblility to report errors inside

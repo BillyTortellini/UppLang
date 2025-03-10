@@ -47,7 +47,7 @@ Dynamic_Array :: module
 			
 			import Upp~size_of
 			import Upp~align_of
-			array.buffer.data =~ cast_pointer array.allocator.reallocate_fn(
+			array.buffer.data =~ cast_pointer array.allocator.resize_fn(
 				array.allocator, cast_pointer array.buffer.data.value, size_of(T) * array.buffer.size, size_of(T) * cast next_size
 			)
 			array.buffer.size = cast next_size

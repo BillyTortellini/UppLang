@@ -1,142 +1,142 @@
-main::()
-	//
-		In most common structured programming language,there are some extra
-		control-flow statments in specific blocks(for,while,switch)
-		-break	...exits current block,continues execution after this block
-		-continue...jumps to next loop iteration,incrementing the loop counter and checking the condition again
-		In Upp,these features also exist,but they require a named block to work.
+main :: ()
+	///
+		In most common structured programming language, there are some extra
+		control-flow statments in specific blocks (for, while, switch)
+		 - break...exits current block,continues execution after this block
+		 - continue...jumps to next loop iteration,incrementing the loop counter and checking the condition again
+		In Upp, these features also exist, but they require a named block to work.
 	
-		i:=0
-		while i<10
-			i=i+1
-		assert(i==10)
+		i := 0
+		while i < 10
+			i = i + 1
+		assert(i == 10)
 		
-		i=0
-		while i<10 i_loop:
-			i=i+1
-			if i==5
+		i = 0
+		while i < 10 i_loop:
+			i = i + 1
+			if i == 5
 				break i_loop
-		assert(i==5)
+		assert(i == 5)
 		
 		// If the condition expression is only a symbol read, the name of the block automatically takes that name
-		cond:=true
-		i=0
+		cond := true
+		i = 0
 		while cond
-			i=i+1
-			if i>10
+			i = i + 1
+			if i > 10
 				break cond
 	
 	
 	// Named blocks also exist for switches
-		color:enum
+		color: enum
 			RED
 			GREEN
-		=.RED
-		val:=0
-		break_cond:=true
+		= .RED
+		val := 0
+		break_cond := true
 		switch color
 			.RED
-				val=5
+				val = 5
 				if break_cond
 					break color
-				val=10
+				val = 10
 			.GREEN
 				
-		assert(val==5)
+		assert(val == 5)
 		
 		// This also works inside the default block:
-		val=0
+		val = 0
 		switch color
 			default
-				val=5
+				val = 5
 				if break_cond
 					break color
-				val=10
+				val = 10
 			.GREEN
 				
-		assert(val==5)
+		assert(val == 5)
 	
 	// The continue keyword also exists for loops
-		i:=0
-		val:=0
-		while i<10 sum_loop:
-			i=i+1
-			if i>=4
+		i := 0
+		val := 0
+		while i < 10 sum_loop:
+			i = i + 1
+			if i >= 4
 				continue sum_loop
-			val=val+i
-		assert(i==10)
-		assert(val==6)
+			val = val + i
+		assert(i == 10)
+		assert(val == 6)
 	
 	
 	// A difference to other languages is that this works for all blocks,
 	// meaning also if-, else- and anonymous-blocks
-		val:=0
+		val := 0
 		block_lbl:
-			val=10
-			if(val==10)
+			val = 10
+			if (val == 10)
 				break block_lbl
-			val=5
-		assert(val==10)
+			val = 5
+		assert(val == 10)
 		
-		val=0
+		val = 0
 		if true if_lbl:
-			val=10
+			val = 10
 			if true
 				break if_lbl
-			val=5
-		assert(val==10)
+			val = 5
+		assert(val == 10)
 	
 	
 	// This allows more complex control-flow, like breaking out of an outer loop
 		// No breaking in double loop
-		i:=0
-		val:=0
-		while i<10 outer:
-			j:=0
-			while j<10 inner:
-				val=val+1
-				j=j+1
-			i=i+1
-		assert(val==100)
+		i := 0
+		val := 0
+		while i < 10 outer:
+			j := 0
+			while j < 10 inner:
+				val = val + 1
+				j = j + 1
+			i = i + 1
+		assert(val == 100)
 		
 		// Breaking out of inner loop
-		i=0
-		val=0
-		while i<10 outer:
-			j:=0
-			while j<10 inner:
-				val=val+1
-				j=j+1
-				if j==5
+		i = 0
+		val = 0
+		while i < 10 outer:
+			j := 0
+			while j < 10 inner:
+				val = val + 1
+				j = j + 1
+				if j == 5
 					break inner
-			i=i+1
-		assert(val==50)
+			i = i + 1
+		assert(val == 50)
 		
 		// Breaking out of outer loop
-		i=0
-		val=0
-		while i<10 outer:
-			j:=0
-			while j<10 inner:
-				val=val+1
-				j=j+1
-				if j==5
+		i = 0
+		val = 0
+		while i < 10 outer:
+			j := 0
+			while j < 10 inner:
+				val = val + 1
+				j = j + 1
+				if j == 5
 					break outer
-			i=i+1
-		assert(val==5)
+			i = i + 1
+		assert(val == 5)
 	
-	//
-		Design-wise,this may seem like it encourages the progammer to write
+	///
+		Design-wise, this may seem like it encourages the progammer to write
 		complicated nested constructs instead of cleanly modularizing the code.
 		
-		But I don't think so,because if the problem you are having requires you to
-		exit the block,it is much cleaner if you are able to do so,instead of having
-		to write multiple helper functions or introduce break/continue variables.
+		But I don' t think so, because if the problem you are having requires you to
+		exit the block, it is much cleaner if you are able to do so, instead of having
+		to write multiple helper functions or introduce break / continue variables.
 		
 		Another point that may be criticised is that this comes very close to the concept of
-		goto,which is commonly seen as bad practice,especially when it comes to structure programming languages.
-		But this is actually alot saver than goto,because it is very clearly defined which scopes you are
-		exiting,which variables are valid,where you are jumping,and you cannot jump into other scopes.
+		goto, which is commonly seen as bad practice, especially when it comes to structure programming languages.
+		But this is actually alot saver than goto, because it is very clearly defined which scopes you are
+		exiting, which variables are valid, where you are jumping, and you cannot jump into other scopes.
 		
 	
 	

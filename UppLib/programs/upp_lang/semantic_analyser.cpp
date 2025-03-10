@@ -9508,8 +9508,10 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 		{
 			if (destination->type == Datatype_Type::FUNCTION)
 			{
-				// Note: Casting between two different function signatures only works if they have the same parameter/return types.
-				//       In C this would always result in the same type, but in upp the parameter names/default values change the function type
+				// Note: 
+                // In Upp function signatures are already different if the parameter _names_ are different, even though the types are the same
+                // Casting between two different function signatures only works if they have the same parameter/return types.
+				// In C this would always result in the same type, but in upp the parameter names/default values change the function type
 				auto src_fn = downcast<Datatype_Function>(source);
 				auto dst_fn = downcast<Datatype_Function>(destination);
 				bool cast_valid = true;
@@ -9530,7 +9532,9 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 					cast_valid = false;
 				}
 				else if (src_fn->return_type.available) {
-					cast_valid = types_are_equal(src_fn->return_type.value, dst_fn->return_type.value);
+                    if (!types_are_equal(src_fn->return_type.value, dst_fn->return_type.value)) {
+                        cast_valid = false;
+                    }
 				}
 
 				if (cast_valid) {

@@ -146,6 +146,7 @@ enum class Normal_Command_Type
     CHANGE_MOTION, // c [m] or C/cc
     REPLACE_CHAR, // r
     REPLACE_MOTION_WITH_YANK, // R
+	FORMAT_MOTION, // =
 
     // Yank/Put
     YANK_MOTION,   // y [m] or Y
@@ -1382,6 +1383,7 @@ namespace Parsing
         case 'd':
         case 'c':
         case 'y':
+		case '=':
         {
             if (!follow_char_valid) {
                 return parse_result_completable<Normal_Mode_Command>();
@@ -1397,9 +1399,12 @@ namespace Parsing
             else if (curr_char == 'y') {
                 command_type = Normal_Command_Type::YANK_MOTION;
             }
+            else if (curr_char == '=') {
+                command_type = Normal_Command_Type::FORMAT_MOTION;
+            }
             parse_motion_afterwards = true;
 
-            if (follow_char == curr_char) { // dd, yy or cc
+            if (follow_char == curr_char) { // dd, yy, cc or ==
                 index += 1;
                 return parse_result_success(normal_mode_command_make_line_motion(command_type, repeat_count - 1));
             }
@@ -1659,7 +1664,8 @@ namespace Text_Editing
 			}
 			if (token.options.keyword == Keyword::CAST || token.options.keyword == Keyword::CAST_POINTER ||
 				token.options.keyword == Keyword::BAKE || token.options.keyword == Keyword::INSTANCIATE ||
-				token.options.keyword == Keyword::GET_OVERLOAD || token.options.keyword == Keyword::GET_OVERLOAD_POLY) 
+				token.options.keyword == Keyword::GET_OVERLOAD || token.options.keyword == Keyword::GET_OVERLOAD_POLY ||
+				token.options.keyword == Keyword::MUTABLE) 
 			{
 				out_space_before = false;
 			}
@@ -1825,13 +1831,14 @@ namespace Text_Editing
 		return;
 	}
 
-	void tokenize_and_auto_format_line(int tab_index, int line_index, Identifier_Pool_Lock* pool_lock, Line_Diff* line_diff)
+	void tokenize_and_auto_format_line(int tab_index, int line_index, Identifier_Pool_Lock* pool_lock)
 	{
 		auto& editor = syntax_editor;
 		auto& tab = editor.tabs[tab_index];
 		auto code = tab.code;
 		Source_Line* line = source_code_get_line(code, line_index);
-		if (line->is_comment) {
+		if (line->is_comment || line->comment_block_indentation != -1) {
+			lexer_tokenize_line(line->text, &line->tokens, pool_lock);
 			return;
 		}
 
@@ -1847,10 +1854,21 @@ namespace Text_Editing
 			int i = 0;
 			bool prev_was_critical = false;
 			int cursor_offset = 0;
+			bool prev_was_slash = false;
+			bool prev_was_backslash = false;
+			bool inside_string = false;
+			bool inside_comment = false;
 			for (int i = 0; i < text.size; i++)
 			{
 				char c = text[i];
 				bool next_is_critical = i + 1 < text.size ? char_is_space_critical(text[i + 1]) : false;
+
+				if (c == '/' && prev_was_slash && !inside_string) {
+					inside_comment = true;
+				}
+				else if (c == '"' && !prev_was_backslash && !inside_comment) {
+					inside_string = !inside_string;
+				}
 
 				bool remove = false;
 				if (c < ' ') {
@@ -1881,6 +1899,10 @@ namespace Text_Editing
 					}
 				}
 
+				if (inside_comment || inside_string) {
+					remove = false;
+				}
+
 				if (remove)
 				{
 					if (cursor + cursor_offset > trimmed_text.size) {
@@ -1890,16 +1912,20 @@ namespace Text_Editing
 				else {
 					string_append_character(&trimmed_text, c);
 					prev_was_critical = char_is_space_critical(c);
+					prev_was_slash = c == '/';
+					prev_was_backslash = c == '\\';
 				}
 			}
 
 			// Trim spaces at end of line
-			while (trimmed_text.size > 0 && trimmed_text[text.size - 1] == ' ')
-			{
-				if (respect_cursor_space && cursor >= text.size) {
-					break;
+			if (!inside_comment && !inside_string) {
+				while (trimmed_text.size > 0 && trimmed_text[text.size - 1] == ' ')
+				{
+					if (respect_cursor_space && cursor >= text.size) {
+						break;
+					}
+					string_remove_character(&trimmed_text, text.size - 1);
 				}
-				string_remove_character(&trimmed_text, text.size - 1);
 			}
 
 			cursor += cursor_offset;
@@ -1941,7 +1967,7 @@ namespace Text_Editing
 			// Add space if required
 			if (curr.end_index == next.start_index + index_shift_for_tokens_after_current && space_between_tokens_expected) {
 				// Insert space between tokens
-				if (curr.end_index <= cursor) {
+				if (curr.end_index < cursor) {
 					cursor += 1;
 				}
 				string_insert_character_before(&trimmed_text, ' ', curr.end_index);
@@ -1963,36 +1989,15 @@ namespace Text_Editing
 				continue;
 			}
 
-			if (text_char == ' ') 
-			{
+			if (text_char == ' ') {
 				history_delete_char(&tab.history, text_index_make(line_index, text_index));
-
-				if (line_diff != nullptr) {
-					Line_Diff_Item item;
-					item.char_index = text_index;
-					item.is_insert = false;
-					item.length = 1;
-					dynamic_array_push_back(&line_diff->items, item);
-				}
 			}
-			else if (trimmed_char == ' ') 
-			{
+			else if (trimmed_char == ' ') {
 				history_insert_char(&tab.history, text_index_make(line_index, text_index), ' ');
-
-				if (line_diff != nullptr) {
-					Line_Diff_Item item;
-					item.char_index = text_index;
-					item.is_insert = true;
-					item.length = 1;
-					dynamic_array_push_back(&line_diff->items, item);
-				}
 			}
 			else {
 				panic("Text and trimmed text should only differ by spaces!");
 			}
-
-			text_index += 1;
-			trimmed_index += 1;
 		}
 
 		// 5. Set cursor
@@ -2000,177 +2005,6 @@ namespace Text_Editing
 			tab.cursor.character = cursor;
 		}
 	}
-
-	// If tab index == -1, then take current tab
-	// bool auto_format_line(int line_index, int tab_index, Identifier_Pool_Lock* pool_lock)
-	// {
-	// 	auto& editor = syntax_editor;
-	// 	auto& tab = editor.tabs[tab_index == -1 ? editor.open_tab_index : tab_index];
-	// 	auto code = tab.code;
-
-	// 	Source_Line* line = source_code_get_line(code, line_index);
-	// 	if (line->is_comment) {
-	// 		return false;
-	// 	}
-
-	// 	Dynamic_Array<Token> tokens = dynamic_array_create<Token>();
-	// 	SCOPE_EXIT(dynamic_array_destroy(&tokens));
-	// 	lexer_tokenize_line(line->text, &tokens, pool_lock);
-
-	// 	auto& text = line->text;
-	// 	bool cursor_on_line = tab.cursor.line == line_index;
-	// 	bool respect_cursor_space = editor.mode == Editor_Mode::INSERT && cursor_on_line;
-	// 	auto& pos = tab.cursor.character;
-
-	// 	// The auto-formater does the following things
-	// 	//  * Removes whitespaces between non-space critical characters, e.g. x : int  -->  x: int
-	// 	//  * Adds whitespaces between specific tokens,                  e.g. 5+15     -->  5 + 15
-	// 	//  * For writing, spaces before/after cursor aren't removed or added
-	// 	bool line_changed = false;
-
-	// 	// Delete whitespaces before first token
-	// 	{
-	// 		int delete_until = line->text.size;
-	// 		if (tokens.size > 0) {
-	// 			delete_until = tokens[0].start_index;
-	// 		}
-	// 		for (int i = 0; i < delete_until; i++) {
-	// 			history_delete_char(&tab.history, text_index_make(line_index, 0));
-	// 			line_changed = true;
-	// 			pos = math_maximum(0, pos - 1);
-	// 		}
-	// 		// Update token ranges
-	// 		for (int i = 0; i < tokens.size; i++) {
-	// 			tokens[i].start_index -= delete_until;
-	// 			tokens[i].end_index -= delete_until;
-	// 		}
-	// 	}
-
-	// 	// Go through tokens and check whitespaces between
-	// 	for (int i = 0; i < tokens.size - 1; i++)
-	// 	{
-	// 		Token& curr = tokens[i];
-	// 		Token& next = tokens[i + 1];
-
-	// 		// Check if spacing is expected between tokens
-	// 		bool space_between_tokens_expected = false;
-	// 		bool ignore_lex_changes = false;
-	// 		{
-	// 			bool space_before, space_after;
-	// 			token_expects_space_before_or_after(tokens, i, space_before, space_after, ignore_lex_changes);
-	// 			if (space_after) space_between_tokens_expected = true;
-	// 			token_expects_space_before_or_after(tokens, i + 1, space_before, space_after, ignore_lex_changes);
-	// 			if (space_before) space_between_tokens_expected = true;
-
-	// 			// Special handling for closing parenthesis, as I want a space there
-	// 			if (curr.type == Token_Type::PARENTHESIS && !curr.options.parenthesis.is_open && curr.options.parenthesis.type != Parenthesis_Type::BRACKETS &&
-	// 				next.type != Token_Type::OPERATOR && next.type != Token_Type::PARENTHESIS) {
-	// 				space_between_tokens_expected = true;
-	// 			}
-	// 		}
-
-	// 		// Check if spacing is as expected
-	// 		int index_shift_for_tokens_after_current = 0;
-	// 		if (curr.end_index == next.start_index)
-	// 		{
-	// 			if (space_between_tokens_expected) {
-	// 				// Insert space between tokens
-	// 				history_insert_char(&tab.history, text_index_make(line_index, curr.end_index), ' ');
-	// 				index_shift_for_tokens_after_current = 1;
-	// 			}
-	// 		}
-	// 		else if (curr.end_index != next.start_index)
-	// 		{
-	// 			char end = line->text.characters[curr.end_index - 1];
-	// 			char start = line->text.characters[next.start_index];
-
-	// 			// Remove excessive spaces (More than 1 space)
-	// 			{
-	// 				int space_count = next.start_index - curr.end_index;
-	// 				int delete_count = space_count - 1;
-	// 				if (respect_cursor_space && pos == curr.end_index + 1) {
-	// 					delete_count = 0;
-	// 				}
-	// 				for (int i = 0; i < delete_count; i++) {
-	// 					history_delete_char(&tab.history, text_index_make(line_index, curr.end_index));
-	// 					index_shift_for_tokens_after_current -= 1;
-	// 				}
-	// 			}
-
-	// 			// Check if the final space should be removed
-	// 			bool remove_space = !space_between_tokens_expected;
-
-	// 			// Don't remove space if it's critical
-	// 			if (remove_space && char_is_space_critical(start) && char_is_space_critical(end)) {
-	// 				remove_space = false;
-	// 			}
-
-	// 			// Don't remove space if it's just before the cursor token
-	// 			if (curr.end_index + 1 == pos && respect_cursor_space) {
-	// 				remove_space = false;
-	// 			}
-
-	// 			// Don't remove space if it could cause lexing to change
-	// 			// Therefore check all operators if they contain a substring of the two added letters
-	// 			ignore_lex_changes = true; // Currently, not sure if I want to keep that...
-	// 			if (!ignore_lex_changes)
-	// 			{
-	// 				for (int j = 0; j < (int)Operator::MAX_ENUM_VALUE && remove_space; j++)
-	// 				{
-	// 					String op_str = operator_get_string((Operator)j);
-	// 					for (int k = 0; k + 1 < op_str.size; k++) {
-	// 						if (op_str.characters[k] == end && op_str.characters[k + 1] == start) {
-	// 							remove_space = false;
-	// 							break;
-	// 						}
-	// 					}
-	// 				}
-	// 			}
-
-	// 			if (remove_space) {
-	// 				history_delete_char(&tab.history, text_index_make(line_index, curr.end_index));
-	// 				index_shift_for_tokens_after_current -= 1;
-	// 			}
-	// 		}
-
-	// 		// Update cursor + follow tokens if space was removed
-	// 		if (index_shift_for_tokens_after_current != 0)
-	// 		{
-	// 			line_changed = true;
-	// 			if (pos > curr.end_index && cursor_on_line) {
-	// 				pos = math_maximum(curr.end_index, pos + index_shift_for_tokens_after_current);
-	// 				syntax_editor_sanitize_cursor();
-	// 			}
-	// 			for (int j = i + 1; j < tokens.size; j++) {
-	// 				tokens[j].start_index += index_shift_for_tokens_after_current;
-	// 				tokens[j].end_index += index_shift_for_tokens_after_current;
-	// 			}
-	// 		}
-	// 	}
-
-	// 	// Delete whitespaces after last token
-	// 	if (tokens.size > 0)
-	// 	{
-	// 		const auto& last = tokens[tokens.size - 1];
-	// 		if (last.type == Token_Type::COMMENT) {
-	// 			return line_changed;
-	// 		}
-
-	// 		int delete_count = line->text.size - last.end_index; // Line text size changes, so store this first
-	// 		bool keep_cursor_space = cursor_on_line && pos > last.end_index;
-	// 		if (keep_cursor_space) delete_count -= 1;
-	// 		for (int i = 0; i < delete_count; i++) {
-	// 			history_delete_char(&tab.history, text_index_make(line_index, line->text.size - 1));
-	// 			line_changed = true;
-	// 		}
-
-	// 		if (keep_cursor_space) {
-	// 			pos = last.end_index + 1;
-	// 		}
-	// 	}
-
-	// 	return line_changed;
-	// }
 }
 
 
@@ -2263,7 +2097,8 @@ int syntax_editor_add_tab(String file_path)
 	auto lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
 	SCOPE_EXIT(identifier_pool_lock_release(lock));
 	for (int i = 0; i < tab.code->line_count; i++) {
-		Text_Editing::tokenize_and_auto_format_line(syntax_editor.tabs.size - 1, i, &lock, nullptr);
+		auto line = source_code_get_line(tab.code, i);
+		lexer_tokenize_line(line->text, &line->tokens, &lock);
 	}
 
 	return syntax_editor.tabs.size - 1;
@@ -2822,7 +2657,7 @@ void code_diff_update_folds_jumps_and_breakpoints(Code_Diff code_diff, int tab_i
 	}
 }
 
-void code_diff_update_tokenization(Code_Diff& code_diff, Source_Code* code, int tab_index, bool tokenize_only)
+void code_diff_update_tokenization(Code_Diff& code_diff, Source_Code* code, int tab_index)
 {
 	Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
 	SCOPE_EXIT(identifier_pool_lock_release(lock));
@@ -2830,12 +2665,7 @@ void code_diff_update_tokenization(Code_Diff& code_diff, Source_Code* code, int 
 	{
 		auto& line = code_diff.line_diffs[i];
 		if (line.items.size == 0) continue;
-		if (tokenize_only) {
-			source_code_tokenize_line(source_code_get_line(code, line.new_line_index), &lock);
-		}
-		else {
-			Text_Editing::tokenize_and_auto_format_line(tab_index, line.new_line_index, &lock, &line);
-		}
+		source_code_tokenize_line(source_code_get_line(code, line.new_line_index), &lock);
 	}
 }
 
@@ -2925,7 +2755,7 @@ void syntax_editor_synchronize_code_information()
 		history_get_changes_between(&tab.history, tab.last_code_info_synch, now, &changes);
 		Code_Diff code_diff = code_diff_create_from_changes(changes);
 		SCOPE_EXIT(code_diff_destroy(&code_diff));
-		code_diff_update_tokenization(code_diff, tab.code, tab_index, false);
+		code_diff_update_tokenization(code_diff, tab.code, tab_index);
 		code_diff_update_analysis_infos(code_diff, tab.code);
 		code_diff_update_folds_jumps_and_breakpoints(code_diff, tab_index);
 		tab.last_code_info_synch = history_get_timestamp(&tab.history);
@@ -3050,7 +2880,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				for (int i = 0; i < changes.size; i++) {
 					code_change_apply(tab.compilation_unit->code, &changes[i], true);
 				}
-				code_diff_update_tokenization(code_diff, tab.compilation_unit->code, i, true);
+				code_diff_update_tokenization(code_diff, tab.compilation_unit->code, i);
 				tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
 				tab.requires_recompile = false;
 			}
@@ -5072,6 +4902,15 @@ void normal_command_execute(Normal_Mode_Command& command)
 		syntax_editor_insert_yank(true);
 		break;
 	}
+	case Normal_Command_Type::FORMAT_MOTION: {
+		auto range = motion_evaluate(command.options.motion, cursor);
+		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+		for (int i = range.start.line; i <= range.end.line; i++) {
+			Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, i, &lock);
+		}
+		identifier_pool_lock_release(lock);
+		break;
+	}
 	case Normal_Command_Type::UNDO: {
 		history_undo(history);
 		auto cursor_history = history_get_cursor_pos(history);
@@ -5419,6 +5258,12 @@ void insert_command_execute(Insert_Command input)
 	assert(mode == Editor_Mode::INSERT, "");
 	syntax_editor_sanitize_cursor();
 	SCOPE_EXIT(syntax_editor_sanitize_cursor());
+
+	SCOPE_EXIT(
+		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+		Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, cursor.line, &lock);
+		identifier_pool_lock_release(lock);
+	);
 
 	if (editor.record_insert_commands) {
 		dynamic_array_push_back(&editor.last_insert_commands, input);
@@ -6918,8 +6763,14 @@ void syntax_editor_render()
 
 			// Push line
 			Rich_Text::add_line(text, false, line->indentation);
+			if (line->comment_block_indentation != -1 && line->is_comment) {
+				Rich_Text::set_text_color(text, Syntax_Color::COMMENT);
+			}
 			Rich_Text::append(text, line->text);
 			Rich_Text::append(text, " "); // So that we can have a underline if something is missing at end of line
+			if (line->comment_block_indentation != -1 && line->is_comment) {
+				continue;
+			}
 
 			// Color tokens based on type (Initial coloring, syntax highlighting is done later)
 			for (int j = 0; j < line->tokens.size; j++)

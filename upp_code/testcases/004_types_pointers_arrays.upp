@@ -1,5 +1,5 @@
 
-//
+///
 	Basic types can be combined with basic
 	type operators to create further types
 
@@ -9,8 +9,8 @@ main :: ()
 	x3: *int // Pointer type
 	
 	// Combinations
-	c0:*[5]int
-	c1:*[5]*int
-	c2:[10][5][]int
-	c3:****int
+	c0: *[5]int
+	c1: *[5]*int
+	c2: [10][5][]int
+	c3: ****int
 

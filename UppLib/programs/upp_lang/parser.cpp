@@ -72,6 +72,13 @@ namespace Parser
     // Error reporting
     void log_error(const char* msg, Token_Range range)
     {
+        if (range.end.line >= parser.code->line_count) {
+            range.end = token_index_make_line_end(parser.code, parser.code->line_count - 1);
+        }
+        if (range.start.line >= parser.code->line_count) {
+            range.start = token_index_make_line_end(parser.code, parser.code->line_count - 1);
+        }
+
         Error_Message err;
         err.msg = msg;
         err.range = range;
@@ -508,7 +515,7 @@ namespace Parser
             else
             {
                 // Otherwise parse line item if line isn't a comment or empty
-                if (!line->tokens.size == 0)
+                if (line->tokens.size != 0)
                 {
                     int line_before_index = pos.line;
                     parse_list_single_line(parent, parse_fn, add_to_parent_fn, nullptr, nullptr, seperator);

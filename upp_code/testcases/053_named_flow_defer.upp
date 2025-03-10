@@ -1,5 +1,5 @@
 main::()
-	//
+	///
 		Defer also works with named breaks/continues, making
 		the combination of the two features a very good tool for error handling/cleanup
 	

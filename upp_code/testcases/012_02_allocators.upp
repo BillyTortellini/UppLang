@@ -8,14 +8,14 @@ main :: ()
 	
 	alloc :=* Upp~global_allocator
 	ptr := alloc.allocate_fn(alloc, 100, 4)
-	assert(ptr?)
+	assert(ptr *!= cast_pointer null)
 	
-	ip: *int =* cast_pointer ptr.value
+	ip: *int =* cast_pointer ptr
 	ip = 10
 	ip += 5
 	assert(ip == 15)
 	
-	alloc.free_fn(alloc, ptr.value, 100)
+	alloc.free_fn(alloc, ptr, 100)
 	
 	
 	// Since the allocator is a global constant, it is possible to 
@@ -33,23 +33,22 @@ main :: ()
 		stack_index: int
 		alloc_count: int
 	
-	custom_alloc :: (allocator_base: *Allocator, size: u64, alignment: u32) -> ?byte_pointer
+	custom_alloc :: (allocator_base: *Allocator, size: u64, alignment: u32) -> byte_pointer
 		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
 		if alloc.stack_index + cast size >= STACK_SIZE
-			return null
+			return cast_pointer null
 		
 		alloc.alloc_count += 1
-		ptr: ?byte_pointer =* cast_pointer *alloc.memory[alloc.stack_index]
+		ptr: byte_pointer =* cast_pointer *alloc.memory[alloc.stack_index]
 		alloc.stack_index += cast {int} size
 		return ptr
 	
-	custom_dealloc :: (allocator_base: *Allocator, ptr: byte_pointer, size: u64) -> bool
-		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
+	custom_dealloc :: (data: *Allocator, pointer: byte_pointer, size: u64)
+		alloc :=* cast_pointer {*Stack_Allocator} data
 		alloc.alloc_count -= 1
-		return true
 	
-	custom_realloc :: (allocator: *Allocator, ptr: byte_pointer, prev: u64, next: u64) -> ?byte_pointer
-		return null
+	custom_realloc :: (allocator: *Allocator, ptr: byte_pointer, prev: u64, next: u64) -> bool
+		return false
 	
 	stack_alloc := Stack_Allocator.{
 		.{custom_alloc, custom_dealloc, custom_realloc}

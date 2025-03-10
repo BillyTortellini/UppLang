@@ -12,7 +12,7 @@ Player :: struct
 	alive: bool
 
 main :: ()
-	//
+	///
 		The Any type in this language is our version of the C-Style void*.
 		The difference is that Any also stores the type of the given value.
 		This type serves the same purpose as the tag of tagged unions.
@@ -61,17 +61,17 @@ main :: ()
 	
 	// Casting from any to a value will result in a crash if the types dont match, shown in next testcase
 	
-	//
-		One of the reasons we have tagged unions,slice types and Any type
+	///
+		One of the reasons we have tagged unions, slice types and Any type
 		is that this way we have eliminated all cases where the Compiler cannot determine
-		what type is currently active,making it possible to auto-generate
+		what type is currently active, making it possible to auto - generate
 		-Printing functions
 		-Serialization functions
 		-GUI interfaces for structs
 		-Memory inspectors
 		-...
-		Maybe,if our metaprogramming system gets good enough to be able to emulate this
-		functionality,these features(Or this syntax)will be removed from the compiler.
+		Maybe, if our metaprogramming system gets good enough to be able to emulate this
+		functionality, these features(Or this syntax) will be removed from the compiler.
 	
 
 context set_cast_option(.FROM_ANY, .INFERRED)
@@ -109,15 +109,15 @@ mini_calc :: (ops: []Any) -> struct {success: bool; value: int}
 				.ADD
 					result = result + cast {int} ops[i]
 				.SUB
-					result = result- cast {int} ops[i]
+					result = result - cast {int} ops[i]
 				.MULT
-					result = result* cast {int} ops[i]
+					result = result * cast {int} ops[i]
 		else if ops[i].type == c_string
-			if string_compare( cast ops[i], "+")
+			if string_compare(cast ops[i], "+")
 				status = .ADD
-			else if string_compare( cast ops[i], "*")
+			else if string_compare(cast ops[i], "*")
 				status = .MULT
-			else if string_compare( cast ops[i], "-")
+			else if string_compare(cast ops[i], "-")
 				status = .SUB
 			else
 				return .{success = false, value = result}

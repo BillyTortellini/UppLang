@@ -10,9 +10,9 @@ main :: ()
 	// Wont work: arr: [doubler(fib(5))]
 	x :: #bake doubler(fib(5))
 	arr: [x]bool
-	assert( cast arr.size == doubler(fib(5)))
+	assert(cast arr.size == doubler(fib(5)))
 	
-	//
+	///
 		Currently comptime values are needed in
 		 - Array Size Context
 		 - Template arguments

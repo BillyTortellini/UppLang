@@ -177,10 +177,11 @@ struct Source_Line
     // Comment/Lexing info
     bool is_comment; // True if we are inside a comment block or if the line starts with //
     // If it is a line of a comment block, the indention of the block, -1 if not a comment block line
-    // If this line is the start of the comment block, then -1 (Execpt in hierarchical comment stacks)
+    // If this line is the start of the comment block, then -1 (Except in hierarchical comment stacks)
     // Also for stacked/hierarchical comment blocks, this is the lowest indentation (And always > 0)
     int comment_block_indentation;  
 
+    // Fold information
     bool is_folded;
     int fold_index;
     int visible_index; // Index including folds

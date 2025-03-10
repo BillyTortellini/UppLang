@@ -1,4 +1,4 @@
-//
+///
 	A thing that people seem to enjoy about the Syntax of
 	Dynamically typed languages is that you don't need to specify the type
 	of a variable to use it.In Upp I try to emulate this by with the following features:

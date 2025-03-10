@@ -2005,24 +2005,27 @@ void type_system_add_predefined_types(Type_System* system)
         types->allocator = type_system_make_struct_empty(Structure_Type::STRUCT, ids.allocator, 0);
         Datatype* allocator_pointer = upcast(type_system_make_pointer(upcast(types->allocator), false));
 
+        // Note: 
+        // The type_system_make_constant calls were added, as parameters in Upp are 
+        // without further declaration always constant, so I think this makes more sense
         types->allocate_function = type_system_make_function( {
-                make_param(allocator_pointer,       "data"), 
-                make_param(upcast(types->u64_type), "size"), 
-                make_param(upcast(types->u32_type), "alignment")
+                make_param(type_system_make_constant(allocator_pointer),       "data"), 
+                make_param(type_system_make_constant(upcast(types->u64_type)), "size"), 
+                make_param(type_system_make_constant(upcast(types->u32_type)), "alignment")
             }, 
             types->byte_pointer
         );
         types->free_function = type_system_make_function( {
-                make_param(allocator_pointer,       "data"), 
-                make_param(types->byte_pointer,     "pointer"), 
-                make_param(upcast(types->u64_type), "size")
+                make_param(type_system_make_constant(allocator_pointer),       "data"), 
+                make_param(type_system_make_constant(types->byte_pointer),     "pointer"), 
+                make_param(type_system_make_constant(upcast(types->u64_type)), "size")
             } 
         );
         types->resize_function = type_system_make_function( {
-                make_param(allocator_pointer,       "data"), 
-                make_param(types->byte_pointer,     "pointer"), 
-                make_param(upcast(types->u64_type), "previous_size"),
-                make_param(upcast(types->u64_type), "new_size"),
+                make_param(type_system_make_constant(allocator_pointer),       "data"), 
+                make_param(type_system_make_constant(types->byte_pointer),     "pointer"), 
+                make_param(type_system_make_constant(upcast(types->u64_type)), "previous_size"),
+                make_param(type_system_make_constant(upcast(types->u64_type)), "new_size"),
             }, 
             upcast(types->bool_type)
         );

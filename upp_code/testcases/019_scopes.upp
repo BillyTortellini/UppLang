@@ -1,4 +1,4 @@
-//
+///
 	Currently neither Overloading nor Shadowing is allowed for any Symbols
 	This may change in the future for Module-Symbols, so that
 	Data-Types and instanciation does not require too much retyping.
@@ -8,22 +8,22 @@
 	 x: Dynamic_Array(int)
 	 x = Dynamic_Array~create(int)
 
-main::()
+main :: ()
 	
-		x:=10
+		x := 10
 		
-			y:=10
+			y := 10
 		
-			y:=10
+			y := 10
 	
-		x:=10
+		x := 10
 
-A::module
-	Node::struct
-		a:int
+A :: module
+	Node :: struct
+		a: int
 
-B::module
-	Node::struct
-		a:int
+B :: module
+	Node :: struct
+		a: int
 
 

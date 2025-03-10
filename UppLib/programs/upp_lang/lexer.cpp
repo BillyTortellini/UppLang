@@ -207,17 +207,6 @@ void lexer_shutdown() {
     hashtable_destroy(&lexer.keyword_table);
 }
 
-void lexer_tokenize_line_as_comment(String text, Dynamic_Array<Token>* tokens)
-{
-    dynamic_array_reset(tokens);
-    if (text.size == 0) return;
-    Token token;
-    token.start_index = 0;
-    token.end_index = text.size;
-    token.type = Token_Type::COMMENT;
-    dynamic_array_push_back(tokens, token);
-}
-
 void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool_lock)
 {
     dynamic_array_reset(tokens);

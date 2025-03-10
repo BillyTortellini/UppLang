@@ -1,10 +1,25 @@
 
 TODO:
- * Commenting in/out blocks has bugs (visual)
- * Fix testcases (Probably just naming things right now)
+ * Write Allocator library
+ * Rewrite Datastructures
+
+
+New Design:
+    * Lexer always tokenizes lines like normal, even if they are in comment block
+    * Source-Code still has is_comment and multi-line information...
+    * Editor needs to disable auto-formating when line is a comment
+    * Auto-format normal command when uncommenting stuff
+
 
 
 Done:
+ * Allocator-functions now have const parameters, so we don't have conversion issues
+ * Bug with function pointer conversion
+ * Bug with parser crashes
+ * Bug with in-keyword (auto-formating)
+ * Fixed testcases with new /// syntax
+ * Auto-formating respects strings and end-of line comments
+ * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
 
 
 DONE:

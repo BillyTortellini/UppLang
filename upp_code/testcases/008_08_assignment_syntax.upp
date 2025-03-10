@@ -1,8 +1,6 @@
 
-
-
 main :: ()
-	//
+	///
 		Because Pointers are treated like normal values in this language,
 		a normal syntax for assignments/definition would cause ambiguities,
 		which is why there is new syntax for some of these things
