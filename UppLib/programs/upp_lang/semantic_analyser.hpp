@@ -556,23 +556,23 @@ enum class Parameter_State
 
 struct Parameter_Match
 {
-    // Matching info
+    // Parameter-Info
     String* name;
-    Datatype* param_type; // May be null, if it's a polymorphic parameter
+    Datatype* param_type; // May be null, if it's a polymorphic parameter with dependencies
     bool required; // Default values and implicit parameters don't require values
     bool requires_named_addressing; // Implicit arguments and #instanciate
     bool must_not_be_set; // #instanciate must not set specific arguments
 
-    // Argument info (Can be used to instanciate)
+    // Argument-Info (Can be used to instanciate)
+    Parameter_State state;
     AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the correspoding argument
     Datatype* argument_type; // Type of analysed expression
     bool argument_is_temporary_value; // Required when expression == 0, to check if type_mods are compatible
     int argument_index; // -1 if argument is not set
 
-    // Analysis info
-    Parameter_State state;
+    // Matching info
     bool is_set;
-    bool reanalyse_param_type_flag;
+    bool reanalyse_param_type_flag; // Used by polymorphic functions (when we manually set inferred parameters)
     bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
 };
 

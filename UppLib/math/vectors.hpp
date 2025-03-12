@@ -293,3 +293,4 @@ float vector_get_maximum_axis(const vec4& v);
 
 vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b);
 vec4 vec4_color_from_code(const char* c_str);
+vec3 vec3_color_from_code(const char* c_str);

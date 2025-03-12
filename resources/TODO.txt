@@ -1,18 +1,67 @@
 
+
+
+CURRENT:
+--------
+Rework byte_pointer and u64 values...
+ * byte_pointer --> address, which also supports arithmetic (functions like a u64)
+ * usize and isize --> For Slices, Strings and all other things that need a size
+
+
 TODO:
- * Write Allocator library
- * Rewrite Datastructures
+-----
+ * new with [] is not working --> Refactor with {} things
+ * Fix memory leak
+
+ * Template-Parameters have no coloring?
+ * import file as has no coloring
+ * Code completion for keywords (cast_pointer, cast)
+ * Ctrl+U and Ctrl+D are not moving cursor
+ * Searching with / and ? does not loop around file...
+ * Overloads in code-completion not showing correctly
+ * Goto-Definition should remove folds... 
+
+Maybe later:
+ * Pointer comparison with constant/non-constant pointer --> Arguably we may just want a pointer cast here
+ * Bytes are a little bit fucky to work with...
+    .data being a pointer and optional
+    Also pointer arithmetic with u64 is kinda weird, gotta think about that
+    Should optional slices exist?
+ * Update Function-Parameter Preview
+    - In insert mode underlining current parameter does not work properly for last
+    
+
+Upp-Implementation for
+ * Allocators
+    - Arena
+        + Checkpoints missing
+        + Dot-Call allocations should be the same as Allocator_Helpers
+    - Free_List
+    - Fixed_Arena (Virtual Memory)
+ * Basic-Datastructures
+    Dynamic_Array
+    Hashtable
+    List
+ * Strings and formated printing
 
 
-New Design:
-    * Lexer always tokenizes lines like normal, even if they are in comment block
-    * Source-Code still has is_comment and multi-line information...
-    * Editor needs to disable auto-formating when line is a comment
-    * Auto-format normal command when uncommenting stuff
+DONE:
+-----
+12.03:
+ * Added testcase for polymorphic overload resolution
+ * Polymorphic Overload Resolution (With simple tree-matching)
+ * Bug with infinite loop when adding too many folds
+ * Free polymorphic overload fix (Argument-type is checked when we have 1 poly overload and one normal overload)
 
+11.03:
+ * Enum-Member auto-fill
+ * Fixed more markup bugs 
+ * Syntax-Highlighting for definitions
+ * Fixed parameter/global syntax-coloring bug
+ * Syntax-Color update (not great...)
+ * Finished Arena, fixed destroy bug
 
-
-Done:
+10.03:
  * Allocator-functions now have const parameters, so we don't have conversion issues
  * Bug with function pointer conversion
  * Bug with parser crashes
@@ -21,8 +70,6 @@ Done:
  * Auto-formating respects strings and end-of line comments
  * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
 
-
-DONE:
 07.03:
  * Fixed synchronization bug
  * Added identifier-pool lock

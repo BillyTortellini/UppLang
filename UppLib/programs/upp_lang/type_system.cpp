@@ -327,7 +327,7 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         if (!polymorphic->is_reference) {
             Rich_Text::append_formated(text, "$");
         }
-        Rich_Text::set_text_color(text, Syntax_Color::IDENTIFIER_FALLBACK);
+        Rich_Text::set_text_color(text, Syntax_Color::TEXT);
         Rich_Text::append_formated(text, "%s", polymorphic->symbol->id->characters);
         break;
     }
@@ -496,7 +496,7 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
             if (format.remove_const_from_function_params) {
                 param_type = datatype_get_non_const_type(param_type);
             }
-            Rich_Text::set_text_color(text, Syntax_Color::IDENTIFIER_FALLBACK);
+            Rich_Text::set_text_color(text, Syntax_Color::VALUE_DEFINITION);
             if (highlight_index == i) {
                 Rich_Text::set_bg(text, format.highlight_color);
             }

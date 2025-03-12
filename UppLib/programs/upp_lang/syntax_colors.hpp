@@ -9,11 +9,12 @@ namespace Syntax_Color
     extern vec3 KEYWORD;
     extern vec3 COMMENT;
     extern vec3 FUNCTION;
-    extern vec3 MODULE;
-    extern vec3 IDENTIFIER_FALLBACK;
+    extern vec3 MODULE; 
+
     extern vec3 TEXT;
     extern vec3 VARIABLE;
     extern vec3 TYPE;
+    extern vec3 VALUE_DEFINITION;
     extern vec3 PRIMITIVE;
     extern vec3 STRING;
     extern vec3 LITERAL_NUMBER;
@@ -28,3 +29,5 @@ namespace Syntax_Color
 
 enum class Symbol_Type;
 vec3 symbol_type_to_color(Symbol_Type type);
+struct Symbol;
+vec3 symbol_to_color(Symbol* symbol, bool is_definition);

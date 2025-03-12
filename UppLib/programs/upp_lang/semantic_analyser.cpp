@@ -979,6 +979,10 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
     // Create workload for global variables/comptime definitions
     AST::Node* mapping_node = definition->is_comptime ? upcast(definition->values[0]) : upcast(definition); // Otherwise syntax-editor will look at wrong path when looking at definition symbol
     auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(mapping_node);
+    {
+        auto info = pass_get_node_info(definition_workload->base.current_pass, definition->symbols[0], Info_Query::CREATE);
+        info->symbol = symbol;
+    }
     definition_workload->symbol = symbol;
     definition_workload->is_extern_import = false;
     auto& def = definition_workload->options.normal;
@@ -3131,7 +3135,7 @@ void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matc
         auto& param_info = matching_info->matched_parameters[i];
         if (param_info.state == Parameter_State::NOT_ANALYSED && param_info.expression != 0) {
             Expression_Context context = expression_context_make_unknown(true);
-            if (param_info.param_type != 0) {
+            if (param_info.param_type != 0 && !param_info.param_type->contains_template) {
                 context = expression_context_make_specific_type(param_info.param_type);
             }
             semantic_analyser_analyse_expression_value(param_info.expression, context);
@@ -3158,8 +3162,14 @@ struct Overload_Candidate
     // For convenience when resolving overloads
     Datatype* active_type;
     bool overloading_arg_matches_type;
+    bool overloading_arg_const_compatible;
     bool overloading_arg_type_mods_compatible;
     bool overloading_arg_can_be_cast;
+
+    // For poly overload resolution
+    bool poly_type_matches;
+    int poly_type_priority;
+    bool poly_match_requires_type_mods_change;
 };
 
 void overload_candidate_finish(
@@ -3194,7 +3204,8 @@ void overload_candidate_finish(
             auto& param = poly_base_info->parameters[i];
             bool required = true;
             Datatype* datatype = nullptr;
-            if (!param.depends_on_other_parameters && !param.contains_inferred_parameter) {
+            // Note: We only set datatype to nullptr if we have dependencies, otherwise we set it to the templated type
+            if (!param.depends_on_other_parameters) {
                 datatype = param.infos.type;
                 required = !param.infos.default_value_exists;
             }
@@ -3205,10 +3216,11 @@ void overload_candidate_finish(
         for (int i = 0; i < poly_base_info->inferred_parameters.size; i++)
         {
             auto& impl_info = poly_base_info->inferred_parameters[i];
-            if (impl_info.defined_in_parameter_index != poly_base_info->return_type_index) {
-                candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].param_type = nullptr;
-                candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].required = true;
-            }
+            // Note: This was removed when we added polymorphic overload resolution
+            //if (impl_info.defined_in_parameter_index != poly_base_info->return_type_index) {
+            //    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].param_type = nullptr;
+            //    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].required = true;
+            //}
             parameter_matching_info_add_param(&candidate.matching_info, impl_info.id, false, true, nullptr);
         }
 
@@ -3695,6 +3707,9 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
             symbol_table, parameter_node->name, (is_comptime ? Symbol_Type::POLYMORPHIC_VALUE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
             (is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL)
         );
+
+        // Store symbol infos
+        get_info(parameter_node, true)->symbol = symbol;
 
         if (is_comptime) {
             symbol->options.polymorphic_value.access_index = comptime_parameter_count;
@@ -6247,6 +6262,14 @@ bool expression_is_auto_expression(AST::Expression* expression)
                 expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
 
+bool expression_is_auto_expression_with_preferred_type(AST::Expression* expression)
+{
+    auto type = expression->type;
+    return (type == AST::Expression_Type::LITERAL_READ &&
+           (expression->options.literal_read.type == Literal_Type::INTEGER ||
+            expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
+}
+
 void analyse_member_initializers_in_unknown_context_recursive(AST::Arguments* args) 
 {
     auto matching_info = get_info(args, true);
@@ -6439,6 +6462,176 @@ void analyse_index_accept_all_ints_as_u64(AST::Expression* expr)
     }
 }
 
+struct Polymorphic_Overload_Resolve
+{
+    Hashset<Datatype*> visited;
+    bool match_success;
+    int match_priority; // Array/Slice/Struct-Instances have priority over 'normal' Pointer/Templates ($T and *$T)
+};
+
+void polymorphic_overload_resolve_match_recursive(Datatype* polymorphic_type, Datatype* match_against, Polymorphic_Overload_Resolve& resolve)
+{
+    if (!polymorphic_type->contains_template) {
+        if (!types_are_equal(polymorphic_type, match_against)) {
+            resolve.match_success = false;
+        }
+        return;
+    }
+    if (hashset_contains(&resolve.visited, polymorphic_type)) {
+        return;
+    }
+    hashset_insert_element(&resolve.visited, polymorphic_type);
+
+    // Check if we found match
+    if (polymorphic_type->type == Datatype_Type::TEMPLATE_TYPE) {
+        // Template can always be matched with other type, so we return here
+        return;
+    }
+    else if (polymorphic_type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE)
+    {
+        // Check for errors
+        auto struct_template = downcast<Datatype_Struct_Instance_Template>(polymorphic_type);
+        Datatype_Struct* struct_type = nullptr;
+        if (match_against->type == Datatype_Type::STRUCT) {
+            struct_type = downcast<Datatype_Struct>(match_against);
+        }
+        else {
+            resolve.match_success = false;
+            return;
+        }
+
+        if (struct_type->workload == 0) {
+            resolve.match_success = false;
+            return;
+        }
+        if (struct_type->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+            resolve.match_success = false;
+            return;
+        }
+        auto& struct_instance = struct_type->workload->polymorphic.instance;
+        if (struct_instance.parent != struct_template->struct_base) {
+            resolve.match_success = false;
+            return;
+        }
+
+        // Note: Here more advanced methos for overload resolution could compare arguments, but we don't do that now
+        resolve.match_priority = math_maximum(resolve.match_priority, 3);
+        return;
+    }
+
+    // Exit early if expected types don't match
+    if (polymorphic_type->type != match_against->type) {
+        resolve.match_success = false;
+        return;
+    }
+
+    switch (polymorphic_type->type)
+    {
+    case Datatype_Type::ARRAY: {
+        auto other_array = downcast<Datatype_Array>(match_against);
+        auto this_array = downcast<Datatype_Array>(polymorphic_type);
+
+        if (!other_array->count_known) {
+            resolve.match_success = false;
+            return; // Something has to be unknown/wrong for this to be true
+        }
+
+        // Check if we can match array size
+        if (this_array->polymorphic_count_variable != 0) {
+            // Match implicit parameter to element count
+        }
+        else {
+            if (!this_array->count_known) { // We should know our own size
+                resolve.match_success = false;
+                return;
+            }
+            if (this_array->element_count != other_array->element_count) {
+                resolve.match_success = false;
+                return;
+            }
+        }
+
+        resolve.match_priority = math_maximum(resolve.match_priority, 2);
+        // Continue matching element type
+        polymorphic_overload_resolve_match_recursive(
+            downcast<Datatype_Array>(polymorphic_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, resolve
+        );
+        return;
+    }
+    case Datatype_Type::OPTIONAL_TYPE: {
+        resolve.match_priority = math_maximum(resolve.match_priority, 1);
+        polymorphic_overload_resolve_match_recursive(
+            downcast<Datatype_Optional>(polymorphic_type)->child_type, downcast<Datatype_Optional>(match_against)->child_type, resolve
+        );
+        return;
+    }
+    case Datatype_Type::SLICE: {
+        resolve.match_priority = math_maximum(resolve.match_priority, 1);
+        polymorphic_overload_resolve_match_recursive(
+            downcast<Datatype_Slice>(polymorphic_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, resolve
+        );
+        return;
+    }
+    case Datatype_Type::POINTER: {
+        polymorphic_overload_resolve_match_recursive(
+            downcast<Datatype_Pointer>(polymorphic_type)->element_type, downcast<Datatype_Pointer>(match_against)->element_type, resolve
+        );
+        return;
+    }
+    case Datatype_Type::CONSTANT: {
+        polymorphic_overload_resolve_match_recursive(
+            downcast<Datatype_Constant>(polymorphic_type)->element_type, downcast<Datatype_Constant>(match_against)->element_type, resolve
+        );
+        return;
+    }
+    case Datatype_Type::SUBTYPE:
+    {
+        auto subtype_poly = downcast<Datatype_Subtype>(polymorphic_type);
+        auto subtype_against = downcast<Datatype_Subtype>(match_against);
+
+        if (subtype_poly->subtype_index != subtype_against->subtype_index || subtype_poly->subtype_name != subtype_against->subtype_name) {
+            resolve.match_success = false;
+            return;
+        }
+        polymorphic_overload_resolve_match_recursive(subtype_poly->base_type, subtype_against->base_type, resolve);
+        return;
+    }
+    case Datatype_Type::STRUCT: {
+        auto a = downcast<Datatype_Struct>(polymorphic_type);
+        auto b = downcast<Datatype_Struct>(match_against);
+        // I don't quite understand when this case should happen, but in my mind this is always false
+        resolve.match_success = false;
+        return;
+    }
+    case Datatype_Type::FUNCTION: {
+        resolve.match_priority = math_maximum(resolve.match_priority, 2);
+        auto a = downcast<Datatype_Function>(polymorphic_type);
+        auto b = downcast<Datatype_Function>(match_against);
+        if (a->parameters.size != b->parameters.size || a->return_type.available != b->return_type.available) {
+            resolve.match_success = false;
+            return;
+        }
+        for (int i = 0; i < a->parameters.size; i++) {
+            polymorphic_overload_resolve_match_recursive(a->parameters[i].type, b->parameters[i].type, resolve);
+        }
+        if (a->return_type.available) {
+            polymorphic_overload_resolve_match_recursive(a->return_type.value, b->return_type.value, resolve);
+        }
+        return;
+    }
+    case Datatype_Type::ENUM:
+    case Datatype_Type::UNKNOWN_TYPE:
+    case Datatype_Type::PRIMITIVE:
+    case Datatype_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+    case Datatype_Type::TEMPLATE_TYPE: panic("Previous code path should have handled this!");
+    default: panic("");
+    }
+
+    panic("");
+    return;
+}
+
 Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
 {
     auto& analyser = semantic_analyser;
@@ -6593,24 +6786,64 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			SCOPE_EXIT(dynamic_array_destroy(&arguments_missing_casts));
 			if (candidates.size > 1)
 			{
+                Polymorphic_Overload_Resolve poly_resolve;
+                poly_resolve.visited = hashset_create_pointer_empty<Datatype*>(8);
+                SCOPE_EXIT(hashset_destroy(&poly_resolve.visited));
+
 				auto remove_candidates_based_on_better_type_match =
-					[](Dynamic_Array<Overload_Candidate>& candidates, bool arg_is_temporary, Datatype* arg_type)
+					[&](Dynamic_Array<Overload_Candidate>& candidates, bool arg_is_temporary, Datatype* arg_type)
 					{
 						bool matching_candidate_exists = false;
+						bool const_compatible_exists = false;
 						bool type_mods_compatible_exists = false;
 						bool castable_exists = false;
-                        bool polymorphic_exists = false;
 
+                        int max_poly_priority = 0;
+                        bool poly_match_without_type_mods_change_exists = false;
+
+                        // Evaluate candidates
 						for (int j = 0; j < candidates.size; j++)
 						{
 							auto& candidate = candidates[j];
 							candidate.overloading_arg_can_be_cast = false;
 							candidate.overloading_arg_matches_type = false;
+							candidate.overloading_arg_const_compatible = false;
 							candidate.overloading_arg_type_mods_compatible = false;
+                            candidate.poly_type_matches = false;
+                            candidate.poly_type_priority = 0;
+                            candidate.poly_match_requires_type_mods_change = false;
 
                             if (candidate.active_type == nullptr) {
                                 // This is the case if we have a polymorphic parameter/return type
-                                polymorphic_exists = true;
+                                continue;
+                            }
+                            else if (candidate.active_type->contains_template) 
+                            {
+                                // Do poly resolve here
+                                hashset_reset(&poly_resolve.visited);
+                                poly_resolve.match_priority = 0;
+                                poly_resolve.match_success = true;
+
+								Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, arg_is_temporary);
+								if (!try_updating_type_mods(cast_info, candidate.active_type->mods)) {
+                                    poly_resolve.match_success = false;
+                                    continue;
+								}
+
+                                polymorphic_overload_resolve_match_recursive(candidate.active_type, cast_info.result_type, poly_resolve);
+                                candidate.poly_type_matches = poly_resolve.match_success;
+                                candidate.poly_type_priority = poly_resolve.match_priority;
+                                if (candidate.poly_type_matches) 
+                                {
+                                    candidate.poly_match_requires_type_mods_change = cast_info.deref_count != 0;
+                                    if (candidate.poly_type_priority > max_poly_priority) {
+                                        poly_match_without_type_mods_change_exists = false;
+                                    }
+                                    max_poly_priority = math_maximum(max_poly_priority, candidate.poly_type_priority);
+                                    if (!candidate.poly_match_requires_type_mods_change && candidate.poly_type_priority >= max_poly_priority) {
+                                        poly_match_without_type_mods_change_exists = true;
+                                    }
+                                }
                                 continue;
                             }
 
@@ -6623,6 +6856,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 							if (!candidate.overloading_arg_matches_type && types_are_equal(param_type->base_type, arg_type->base_type)) {
 								Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, arg_is_temporary);
 								if (try_updating_type_mods(cast_info, param_type->mods)) {
+                                    candidate.overloading_arg_const_compatible = cast_info.deref_count == 0;
+                                    if (candidate.overloading_arg_const_compatible) {
+                                        const_compatible_exists = true;
+                                    }
 									candidate.overloading_arg_type_mods_compatible = true;
 									type_mods_compatible_exists = true;
 								}
@@ -6643,26 +6880,46 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 						for (int j = 0; j < candidates.size; j++)
 						{
 							auto& candidate = candidates[j];
-                            if (candidate.active_type == nullptr) continue;
-
 							bool remove = false;
-							if (candidate.overloading_arg_matches_type) {
-								continue;
-							}
-							else if (candidate.overloading_arg_type_mods_compatible) {
-								if (matching_candidate_exists) {
-									remove = true;
-								}
-							}
-							else if (candidate.overloading_arg_can_be_cast) {
-								if (matching_candidate_exists || type_mods_compatible_exists) {
-									remove = true;
-								}
-							}
-							else {
-                                // Remove candidates that cannot be cast
-                                remove = true;
-							}
+
+                            if (candidate.active_type == nullptr) { continue; }
+                            else if (candidate.active_type->contains_template) 
+                            {
+                                if (!candidate.poly_type_matches) {
+                                    remove = true;
+                                }
+                                else if (candidate.poly_type_priority < max_poly_priority) {
+                                    remove = true;
+                                }
+                                else if (candidate.poly_match_requires_type_mods_change && poly_match_without_type_mods_change_exists) {
+                                    remove = true;
+                                }
+                            }
+                            else 
+                            {
+							    if (candidate.overloading_arg_matches_type) {
+							    	continue;
+							    }
+                                else if (candidate.overloading_arg_const_compatible) {
+                                    if (matching_candidate_exists) {
+                                        remove = true;
+                                    }
+                                }
+							    else if (candidate.overloading_arg_type_mods_compatible) {
+							    	if (matching_candidate_exists || const_compatible_exists) {
+							    		remove = true;
+							    	}
+							    }
+							    else if (candidate.overloading_arg_can_be_cast) {
+							    	if (matching_candidate_exists || type_mods_compatible_exists || const_compatible_exists) {
+							    		remove = true;
+							    	}
+							    }
+							    else {
+                                    // Remove candidates that cannot be cast
+                                    remove = true;
+							    }
+                            }
 
 							if (remove) {
 						        parameter_matching_info_destroy(&candidate.matching_info);
@@ -6694,10 +6951,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				for (int i = 0; i < call.arguments->arguments.size && candidates.size > 1; i++)
 				{
 					auto argument = call.arguments->arguments[i];
+                    if (expression_is_auto_expression(argument->value) && ! expression_is_auto_expression_with_preferred_type(argument->value)) {
+                        continue;
+                    }
 
 					// Check if parameter types differ between overloads (And set active_index for further comparison)
 					bool argument_usable = false;
 					Datatype* prev_type = nullptr;
+                    int poly_candidate_count = 0;
+                    int poly_candidates_without_dependencies = 0;
+                    int normal_candidates = 0;
 					for (int j = 0; j < candidates.size; j++)
 					{
 						auto& candidate = candidates[j];
@@ -6723,13 +6986,21 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 						assert(match != nullptr, "");
                         assert(match->is_set, "");
 
-                        // Polymorphic parameters, or parameters with dependencies aren't usable
+                        // Polymorphic parameters with dependencies on other parameters are not usable
+                        candidate.active_type = match->param_type;
 						if (match->param_type == nullptr) {
-                            candidate.active_type = nullptr;
+                            poly_candidate_count += 1;
 							continue;
 						}
+                        else if (match->param_type->contains_template) {
+                            poly_candidate_count += 1;
+                            poly_candidates_without_dependencies += 1;
+                            continue;
+                        }
+                        else {
+                            normal_candidates += 1;
+                        }
 
-                        candidate.active_type = match->param_type;
 						if (prev_type == nullptr) {
 							prev_type = match->param_type;
 						}
@@ -6737,6 +7008,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 							argument_usable = true;
 						}
 					}
+
+                    // Argument is usable if we have a polymorphic type, as the argument may not be castable
+                    if (normal_candidates > 0 && poly_candidate_count > 0) {
+                        argument_usable = true;
+                    }
+                    if (poly_candidates_without_dependencies > 1) {
+                        argument_usable = true;
+                    }
 
 					// Check if we can differentiate the call based on this parameter's type
 					if (!argument_usable || candidates.size <= 1) {
@@ -6867,7 +7146,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					assert(param_info != 0, "");
 
 					auto arg_info = get_info(argument->value);
-                    if (param_info->param_type != nullptr) {
+                    // Note: We don't apply casts if the argument is polymorphic, I guess the instanciation afterwards does the correct things?
+                    if (param_info->param_type != nullptr && !param_info->param_type->contains_template) {
 					    arg_info->cast_info = semantic_analyser_check_if_cast_possible(
 					    	arg_info->cast_info.initial_value_is_temporary, arg_info->cast_info.initial_type, param_info->param_type, Cast_Mode::IMPLICIT
 					    );
@@ -8598,7 +8878,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					return info;
 				}
 
-				type_wait_for_size_info_to_finish(datatype);
+				type_wait_for_size_info_to_finish(datatype->base_type);
 				Struct_Content* content = type_mods_get_subtype(structure, datatype->mods);
 
 				// Check tag access
@@ -11824,6 +12104,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			semantic_analyser_set_error_flag(true);
 			EXIT(Control_Flow::SEQUENTIAL);
 		}
+        delete_type = datatype_get_non_const_type(delete_type);
 		if (delete_type->type != Datatype_Type::POINTER && delete_type->type != Datatype_Type::SLICE) {
 			log_semantic_error("Delete is only valid on pointer or slice types", statement->options.delete_expr);
 			log_error_info_given_type(delete_type);
@@ -12561,7 +12842,7 @@ void error_information_append_to_rich_text(
 		break;
 	case Error_Information_Type::SYMBOL: {
 		Rich_Text::append_formated(text, "Symbol: ");
-		Rich_Text::set_text_color(text, symbol_type_to_color(info.options.symbol->type));
+		Rich_Text::set_text_color(text, symbol_to_color(info.options.symbol, true));
 		auto string = Rich_Text::start_line_manipulation(text);
 		symbol_append_to_string(info.options.symbol, string);
 		Rich_Text::stop_line_manipulation(text);

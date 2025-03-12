@@ -1,0 +1,51 @@
+
+///
+	Polymorphic overloads are currently not resolved precisely
+	(E.g. no full matching is done), but we are rather using approximations
+
+Node :: struct ($T: Upp~Type_Handle)
+	value: T
+
+test :: (a: int) -> int
+	return 0
+
+test :: (a: *int) -> int
+	return 1
+
+test :: (a: $T) -> int
+	return 2
+
+test :: (a: *$T) -> int
+	return 3
+
+test :: (a: []$T) -> int
+	return 4
+
+test :: (a: *[]$T) -> int
+	return 5
+
+test :: (a: *Node($T)) -> int
+	return 6
+
+test :: (a: *Node(int)) -> int
+	return 7
+
+main :: ()
+	arg_0: int
+	arg_1: *int
+	arg_2: bool
+	arg_3: *bool
+	arg_4: []int
+	arg_5: *[]int
+	arg_6: Node(bool)
+	arg_7: Node(int)
+	
+	assert(test(arg_0) == 0)
+	assert(test(arg_1) == 1)
+	assert(test(arg_2) == 2)
+	assert(test(arg_3) == 3)
+	assert(test(arg_4) == 4)
+	assert(test(arg_5) == 5)
+	assert(test(arg_6) == 6)
+	assert(test(arg_7) == 7)
+

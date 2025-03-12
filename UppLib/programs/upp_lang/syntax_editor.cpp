@@ -1665,7 +1665,7 @@ namespace Text_Editing
 			if (token.options.keyword == Keyword::CAST || token.options.keyword == Keyword::CAST_POINTER ||
 				token.options.keyword == Keyword::BAKE || token.options.keyword == Keyword::INSTANCIATE ||
 				token.options.keyword == Keyword::GET_OVERLOAD || token.options.keyword == Keyword::GET_OVERLOAD_POLY ||
-				token.options.keyword == Keyword::MUTABLE) 
+				token.options.keyword == Keyword::MUTABLE || token.options.keyword == Keyword::IN_KEYWORD) 
 			{
 				out_space_before = false;
 			}
@@ -3384,7 +3384,8 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 		switch (info.type)
 		{
 		case Code_Analysis_Item_Type::CALL_INFORMATION: {
-			if (info.tree_depth > previous_call_depth) {
+			if (info.tree_depth > previous_call_depth) 
+			{
 				result.call_info = info.options.call_information;
 				previous_call_depth = info.tree_depth;
 			}
@@ -6783,7 +6784,7 @@ void syntax_editor_render()
 				case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
 				case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
 				case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
-				case Token_Type::IDENTIFIER: color = Syntax_Color::IDENTIFIER_FALLBACK; break;
+				case Token_Type::IDENTIFIER: color = Syntax_Color::TEXT; break;
 				case Token_Type::LITERAL: {
 					switch (token.options.literal_value.type)
 					{
@@ -6908,7 +6909,7 @@ void syntax_editor_render()
 					case Code_Analysis_Item_Type::SYMBOL_LOOKUP:
 					{
 						auto symbol = info.options.symbol_info.symbol;
-						color = symbol_type_to_color(symbol->type);
+						color = symbol_to_color(symbol, info.options.symbol_info.is_definition);
 						// Highlight background if hover symbol
 						if (symbol == highlight_symbol && !(highlight_only_definition && !info.options.symbol_info.is_definition)) {
 							Rich_Text::mark_line(
@@ -6930,14 +6931,13 @@ void syntax_editor_render()
 						mark_type = Rich_Text::Mark_Type::UNDERLINE;
 						Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, end_char);
 						continue;
-						break;
 					}
 					default: continue;
 					}
 					Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, info.end_char);
 				}
 
-				if (line_index == cam_end) break;
+				if (line_index >= cam_end) break;
 			}
 		}
 	}
@@ -7012,7 +7012,7 @@ void syntax_editor_render()
 				}
 				case Suggestion_Type::SYMBOL: {
 					auto symbol = sugg.options.symbol;
-					vec3 color = symbol_type_to_color(symbol->type);
+					vec3 color = symbol_to_color(symbol, true);
 					Rich_Text::set_text_color(text, color);
 					Rich_Text::append(text, *symbol->id);
 					Rich_Text::set_text_color(text);
@@ -7186,7 +7186,7 @@ void syntax_editor_render()
 			if (symbol->type != Symbol_Type::TYPE)
 			{
 				Rich_Text::add_line(text, false, 2);
-				Rich_Text::set_text_color(text, symbol_type_to_color(symbol->type));
+				Rich_Text::set_text_color(text, symbol_to_color(symbol, true));
 				Rich_Text::append(text, *symbol->id);
 
 				if (after_text != 0) {
@@ -7216,7 +7216,7 @@ void syntax_editor_render()
 			int arg_index = hover_info.call_argument_index;
 
 			String* name = nullptr;
-			vec3 color = Syntax_Color::IDENTIFIER_FALLBACK;
+			vec3 color = Syntax_Color::TEXT;
 			bool is_dot_call = info->call_type == Call_Type::DOT_CALL || info->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
 			switch (info->call_type)
 			{
@@ -7238,7 +7238,7 @@ void syntax_editor_render()
 				Rich_Text::append(text, *name);
 			}
 			else {
-				Rich_Text::set_text_color(text, Syntax_Color::IDENTIFIER_FALLBACK);
+				Rich_Text::set_text_color(text, Syntax_Color::TEXT);
 				Rich_Text::append(text, "Params:");
 			}
 
@@ -7274,7 +7274,7 @@ void syntax_editor_render()
 					Rich_Text::set_underline(text, vec3(0.8f));
 				}
 
-				vec3 name_color = Syntax_Color::IDENTIFIER_FALLBACK;
+				vec3 name_color = Syntax_Color::VALUE_DEFINITION;
 				if (!param_info.is_set && param_info.required) {
 					name_color = vec3(1.0f, 0.5f, 0.5f);
 				}
@@ -7286,6 +7286,10 @@ void syntax_editor_render()
 					datatype_append_to_rich_text(param_info.param_type, type_system, text);
 				}
 				Rich_Text::set_text_color(text, vec3(1.0f));
+
+				if (!param_info.required) {
+					Rich_Text::append(text, " =..");
+				}
 
 				if (highlight) {
 					Rich_Text::stop_bg(text);

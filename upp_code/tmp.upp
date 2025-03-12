@@ -1,0 +1,57 @@
+
+import Upp~Bytes
+
+Test :: module
+	import Upp~u64
+	
+	Node :: struct
+		
+	
+	allocate :: (node: *Node, size: u64) -> Bytes
+		return .{null, 0}
+	
+	allocate :: (node: *Node, $T: Upp~Type_Handle) -> *T
+		return new T
+	
+	free :: (node: *Node, value: *$T)
+		delete value
+	
+	free :: (node: *Node, bytes: Bytes)
+		//
+	
+	context add_dot_call(#get_overload free())
+	context add_dot_call(#get_overload_poly free())
+	
+	context add_dot_call(#get_overload allocate())
+	context add_dot_call(#get_overload_poly allocate())
+
+
+test :: (a: $T)
+	Upp~print_string("Poly-Value\n")
+
+test :: (a: []$T)
+	Upp~print_string("Poly-Slice\n")
+
+main :: ()
+	import Test~Node
+	context import Test
+	
+		x: int
+		y: []int
+		z: *int
+		w: *[]int
+		
+		test(y)
+	
+	
+	n: Node
+	
+	///
+		x :=* n.allocate(int)
+		values := n.allocate(15)
+		n.free(x)
+		n.free(values)
+	
+	
+
+

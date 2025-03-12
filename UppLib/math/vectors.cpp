@@ -349,4 +349,9 @@ vec4 vec4_color_from_code(const char* c_str)
 	return vec4_color_from_rgb(r, g, b);
 }
 
+vec3 vec3_color_from_code(const char* c_str)
+{
+    vec4 v = vec4_color_from_code(c_str);
+    return vec3(v.x, v.y, v.z);
+}
 

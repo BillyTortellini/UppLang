@@ -69,6 +69,7 @@ void find_editor_infos_recursive(
     if (node_passes_opt != nullptr) {
         active_passes = node_passes_opt->passes;
     }
+    // We currently only have multiple passes in polymorphic situations, so we take the second pass if possible (To use instanced infos)
     Analysis_Pass* pass = nullptr;
     assert(active_passes.size > 0, "");
     if (active_passes.size == 1) {
@@ -133,9 +134,17 @@ void find_editor_infos_recursive(
                 if (value_info != nullptr)
                 {
                     Code_Analysis_Item_Option option;
-                    option.member_access.final_type = value_info->cast_info.result_type;
-                    option.member_access.initial_type = value_info->cast_info.initial_type;
-                    option.member_access.access_type = info->specifics.member_access.type;
+					if (info->specifics.member_access.type == Member_Access_Type::ENUM_MEMBER_ACCESS) {
+						assert(value_info->result_type == Expression_Result_Type::TYPE, "");
+						option.member_access.final_type = value_info->options.type;
+						option.member_access.initial_type = value_info->options.type;
+						option.member_access.access_type = info->specifics.member_access.type;
+					}
+					else {
+						option.member_access.final_type = value_info->cast_info.result_type;
+						option.member_access.initial_type = value_info->cast_info.initial_type;
+						option.member_access.access_type = info->specifics.member_access.type;
+					}
                     add_code_analysis_item(Code_Analysis_Item_Type::MEMBER_ACCESS, option, token_range_last_token(node->range, code), code, tree_depth);
                 }
             }
@@ -146,6 +155,9 @@ void find_editor_infos_recursive(
                     Code_Analysis_Item_Option option;
                     option.auto_enum_type = downcast<Datatype_Enum>(type);
                     add_code_analysis_item(Code_Analysis_Item_Type::AUTO_ENUM, option, token_range_last_token(node->range, code), code, tree_depth);
+
+					option.markup_color = Syntax_Color::ENUM_MEMBER;
+                    add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_last_token(node->range, code), code, tree_depth);
                 }
             }
 
@@ -199,284 +211,333 @@ void find_editor_infos_recursive(
         }
         break;
     }
-    case AST::Node_Type::DEFINITION_SYMBOL: 
-    case AST::Node_Type::SYMBOL_LOOKUP: 
-    case AST::Node_Type::PARAMETER: 
+    case AST::Node_Type::CONTEXT_CHANGE: 
     {
-        bool is_definition = false;
-        Token_Range range = token_range_first_token(node->range, code);
-        Symbol* symbol = nullptr;
-        AST::Symbol_Lookup* lookup = nullptr;
-        switch (node->type)
-        {
-        case AST::Node_Type::DEFINITION_SYMBOL: {
-            is_definition = true;
-            auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(node), Info_Query::TRY_READ);
-            symbol = info == 0 ? 0 : info->symbol;
-            break;
-        }
-        case AST::Node_Type::SYMBOL_LOOKUP: {
-            lookup = AST::downcast<AST::Symbol_Lookup>(node);
-            auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ);
-            symbol = info == nullptr ? 0 : info->symbol;
-            break;
-        }
-        case AST::Node_Type::PARAMETER: 
-        {
-            auto param = downcast<AST::Parameter>(node);
-            Token_Index start_token = node->range.start;
-            if (param->is_comptime) {
-                start_token.token += 1;
+        auto line = source_code_get_line(code, node->range.start.line);
+        if (node->range.start.token + 1 < line->tokens.size) {
+            if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
+                // Add symbol lookup info
+                Code_Analysis_Item_Option option;
+                option.markup_color = Syntax_Color::VARIABLE;
+                Token_Range range = token_range_make(node->range.start, node->range.start);
+                range.start.token += 1;
+                range.end.token += 2;
+                add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
             }
-            if (param->is_mutable) {
-                start_token.token += 1;
-            }
-            auto& tokens = source_code_get_line(code, start_token.line)->tokens;
-            range.start.line = start_token.line;
-            range.end.line = start_token.line;
-            range.start.token = math_maximum(start_token.token, tokens.size);
-            range.end.token = math_maximum(start_token.token + 1, tokens.size);
-            is_definition = true;
-
-            auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ);
-            symbol = info == 0 ? 0 : info->symbol;
-
-            break;
         }
-        default: panic("");
-        }
-
-        if (symbol != nullptr) {
-            // Add symbol lookup info
-            Code_Analysis_Item_Option option;
-            option.symbol_info.symbol = symbol;
-            option.symbol_info.is_definition = is_definition;
-            option.symbol_info.pass = pass;
-            option.symbol_info.lookup = lookup;
-            add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
-        }
-
         break;
     }
-    }
-
-    // Recurse to children
-    int index = 0;
-    auto child = AST::base_get_child(node, index);
-    while (child != 0)
+    case AST::Node_Type::IMPORT: 
     {
-        find_editor_infos_recursive(child, unit, active_passes, tree_depth + 1);
-        index += 1;
-        child = AST::base_get_child(node, index);
-    }
+        auto& tokens = source_code_get_line(code, node->range.start.line)->tokens;
+        auto import_node = AST::downcast<AST::Import>(node);
+        if (import_node->alias_name == nullptr) break;
+
+        int token_index = node->range.end.token - 1;
+        if (token_index < 0 || token_index >= tokens.size) break;
+		if (tokens[token_index].type != Token_Type::IDENTIFIER) break;
+
+		auto info = pass_get_node_info(pass, import_node->path, Info_Query::TRY_READ);
+		if (info == nullptr) break;
+		if (info->symbol == nullptr) break;
+
+		// Add symbol lookup info
+		Code_Analysis_Item_Option option;
+		option.symbol_info.is_definition = true; // Kinda true for alias
+		option.symbol_info.lookup = import_node->path->last;
+		option.symbol_info.pass = pass;
+		option.symbol_info.symbol = info->symbol;
+		Token_Range range = token_range_make(node->range.start, node->range.start);
+		range.start.token = token_index;
+		range.end.token = token_index + 1;
+		add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
+		break;
+	}
+	case AST::Node_Type::DEFINITION_SYMBOL:
+	case AST::Node_Type::SYMBOL_LOOKUP:
+	case AST::Node_Type::PARAMETER:
+	{
+		bool is_definition = false;
+		Token_Range range = token_range_first_token(node->range, code);
+		Symbol* symbol = nullptr;
+		AST::Symbol_Lookup* lookup = nullptr;
+		switch (node->type)
+		{
+		case AST::Node_Type::DEFINITION_SYMBOL: {
+			is_definition = true;
+			auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(node), Info_Query::TRY_READ);
+			symbol = info == 0 ? 0 : info->symbol;
+			break;
+		}
+		case AST::Node_Type::SYMBOL_LOOKUP: {
+			lookup = AST::downcast<AST::Symbol_Lookup>(node);
+			auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ);
+			symbol = info == nullptr ? 0 : info->symbol;
+			break;
+		}
+		case AST::Node_Type::PARAMETER:
+		{
+			auto param = downcast<AST::Parameter>(node);
+			Token_Index start_token = node->range.start;
+			if (param->is_comptime) {
+				start_token.token += 1;
+			}
+			if (param->is_mutable) {
+				start_token.token += 1;
+			}
+			auto& tokens = source_code_get_line(code, start_token.line)->tokens;
+			range.start.line = start_token.line;
+			range.end.line = start_token.line;
+			range.start.token = math_minimum(start_token.token, tokens.size);
+			range.end.token = math_minimum(start_token.token + 1, tokens.size);
+			is_definition = true;
+
+			auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ);
+			symbol = info == 0 ? 0 : info->symbol;
+
+			break;
+		}
+		default: panic("");
+		}
+
+		if (symbol != nullptr) {
+			// Add symbol lookup info
+			Code_Analysis_Item_Option option;
+			option.symbol_info.symbol = symbol;
+			option.symbol_info.is_definition = is_definition;
+			option.symbol_info.pass = pass;
+			option.symbol_info.lookup = lookup;
+			add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
+		}
+		else if (node->type == AST::Node_Type::PARAMETER) {
+			Code_Analysis_Item_Option option;
+			option.markup_color = Syntax_Color::VALUE_DEFINITION;
+			add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
+		}
+
+		break;
+	}
+	}
+
+	// Recurse to children
+	int index = 0;
+	auto child = AST::base_get_child(node, index);
+	while (child != 0)
+	{
+		find_editor_infos_recursive(child, unit, active_passes, tree_depth + 1);
+		index += 1;
+		child = AST::base_get_child(node, index);
+	}
 }
 
 void compiler_analysis_update_source_code_information()
 {
-    auto& errors = compiler.analysis_data->compiler_errors;
-    dynamic_array_reset(&errors);
+	auto& errors = compiler.analysis_data->compiler_errors;
+	dynamic_array_reset(&errors);
 
-    for (int i = 0; i < compiler.compilation_units.size; i++)
-    {
-        auto unit = compiler.compilation_units[i];
+	for (int i = 0; i < compiler.compilation_units.size; i++)
+	{
+		auto unit = compiler.compilation_units[i];
 
-        // Reset analysis data for unit
-        dynamic_array_reset(&unit->code->block_id_range);
-        dynamic_array_reset(&unit->code->symbol_table_ranges);
-        unit->code->root_table = nullptr;
-        for (int i = 0; i < unit->code->line_count; i++) {
-            dynamic_array_reset(&source_code_get_line(unit->code, i)->item_infos);
-        }
+		// Reset analysis data for unit
+		dynamic_array_reset(&unit->code->block_id_range);
+		dynamic_array_reset(&unit->code->symbol_table_ranges);
+		unit->code->root_table = nullptr;
+		for (int i = 0; i < unit->code->line_count; i++) {
+			dynamic_array_reset(&source_code_get_line(unit->code, i)->item_infos);
+		}
 
-        if (unit->module_progress == nullptr) {
-            continue;
-        }
+		if (unit->module_progress == nullptr) {
+			continue;
+		}
 
-        find_editor_infos_recursive(upcast(unit->root), unit, dynamic_array_create<Analysis_Pass*>(), 0);
+		Dynamic_Array<Analysis_Pass*> active_passes = dynamic_array_create<Analysis_Pass*>(0);
+		SCOPE_EXIT(dynamic_array_destroy(&active_passes));
+		find_editor_infos_recursive(upcast(unit->root), unit, active_passes, 0);
 
-        // Add parser errors
-        for (int i = 0; i < unit->parser_errors.size; i++)
-        {
-            const auto& error = unit->parser_errors[i];
-            Text_Range range = token_range_to_text_range(error.range, unit->code);
+		// Add parser errors
+		for (int i = 0; i < unit->parser_errors.size; i++)
+		{
+			const auto& error = unit->parser_errors[i];
+			Text_Range range = token_range_to_text_range(error.range, unit->code);
 
-            Compiler_Error_Info error_info;
-            error_info.message = error.msg;
-            error_info.unit = unit;
-            error_info.semantic_error_index = -1;
-            error_info.text_index = range.start;
-            dynamic_array_push_back(&errors, error_info);
+			Compiler_Error_Info error_info;
+			error_info.message = error.msg;
+			error_info.unit = unit;
+			error_info.semantic_error_index = -1;
+			error_info.text_index = range.start;
+			dynamic_array_push_back(&errors, error_info);
 
-            Code_Analysis_Item_Option option;
-            option.error_index = errors.size - 1;
-            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, error.range, unit->code, 0);
-        }
-    }
+			Code_Analysis_Item_Option option;
+			option.error_index = errors.size - 1;
+			add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, error.range, unit->code, 0);
+		}
+	}
 
-    // Add semantic errors
-    Dynamic_Array<Token_Range> ranges = dynamic_array_create<Token_Range>();
-    SCOPE_EXIT(dynamic_array_destroy(&ranges));
-    for (int i = 0; i < compiler.analysis_data->semantic_errors.size; i++)
-    {
-        const auto& error = compiler.analysis_data->semantic_errors[i];
+	// Add semantic errors
+	Dynamic_Array<Token_Range> ranges = dynamic_array_create<Token_Range>();
+	SCOPE_EXIT(dynamic_array_destroy(&ranges));
+	for (int i = 0; i < compiler.analysis_data->semantic_errors.size; i++)
+	{
+		const auto& error = compiler.analysis_data->semantic_errors[i];
 
-        auto unit = compiler_find_ast_compilation_unit(error.error_node);
+		auto unit = compiler_find_ast_compilation_unit(error.error_node);
 
-        dynamic_array_reset(&ranges);
-        Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &ranges);
-        assert(ranges.size != 0, "");
+		dynamic_array_reset(&ranges);
+		Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &ranges);
+		assert(ranges.size != 0, "");
 
-        Compiler_Error_Info error_info;
-        error_info.message = error.msg;
-        error_info.unit = unit;
-        error_info.semantic_error_index = i;
-        error_info.text_index = token_range_to_text_range(ranges[0], unit->code).start;
-        dynamic_array_push_back(&errors, error_info);
+		Compiler_Error_Info error_info;
+		error_info.message = error.msg;
+		error_info.unit = unit;
+		error_info.semantic_error_index = i;
+		error_info.text_index = token_range_to_text_range(ranges[0], unit->code).start;
+		dynamic_array_push_back(&errors, error_info);
 
-        // Add visible ranges
-        for (int j = 0; j < ranges.size; j++) {
-            Code_Analysis_Item_Option option;
-            option.error_index = errors.size - 1;
-            add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, ranges[j], unit->code, 0);
-        }
-    }
+		// Add visible ranges
+		for (int j = 0; j < ranges.size; j++) {
+			Code_Analysis_Item_Option option;
+			option.error_index = errors.size - 1;
+			add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, ranges[j], unit->code, 0);
+		}
+	}
 }
 
 u64 ast_info_key_hash(AST_Info_Key* key) {
-    return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
+	return hash_combine(hash_pointer(key->base), hash_pointer(key->pass));
 }
 
 bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
-    return a->base == b->base && a->pass == b->pass;
+	return a->base == b->base && a->pass == b->pass;
 }
 
 Compiler_Analysis_Data* compiler_analysis_data_create()
 {
-    Compiler_Analysis_Data* result = new Compiler_Analysis_Data;
+	Compiler_Analysis_Data* result = new Compiler_Analysis_Data;
 
-    result->compiler_errors = dynamic_array_create<Compiler_Error_Info>(); // List of parser and semantic errors
-    result->constant_pool = constant_pool_create();
-    result->type_system = type_system_create();
-    result->extern_sources = extern_sources_create();
+	result->compiler_errors = dynamic_array_create<Compiler_Error_Info>(); // List of parser and semantic errors
+	result->constant_pool = constant_pool_create();
+	result->type_system = type_system_create();
+	result->extern_sources = extern_sources_create();
 
-    // Semantic analyser
-    result->program = modtree_program_create();
-    result->function_slots = dynamic_array_create<Function_Slot>();
-    result->semantic_errors = dynamic_array_create<Semantic_Error>();
+	// Semantic analyser
+	result->program = modtree_program_create();
+	result->function_slots = dynamic_array_create<Function_Slot>();
+	result->semantic_errors = dynamic_array_create<Semantic_Error>();
 
-    result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
-    result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
-    result->root_module = nullptr;
+	result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
+	result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
+	result->root_module = nullptr;
 
-    // Workload executer
-    result->all_workloads = dynamic_array_create<Workload_Base*>();
+	// Workload executer
+	result->all_workloads = dynamic_array_create<Workload_Base*>();
 
-    // Allocations
-    result->global_variable_memory_pool = stack_allocator_create_empty(2048);
-    result->progress_allocator = stack_allocator_create_empty(2048);
-    result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
-    result->allocated_symbols = dynamic_array_create<Symbol*>();
-    result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
-    result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
-    result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
-    result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
+	// Allocations
+	result->global_variable_memory_pool = stack_allocator_create_empty(2048);
+	result->progress_allocator = stack_allocator_create_empty(2048);
+	result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
+	result->allocated_symbols = dynamic_array_create<Symbol*>();
+	result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
+	result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
+	result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
+	result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
 
-    return result;
+	return result;
 }
 
 void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 {
-    dynamic_array_destroy(&data->compiler_errors);
-    constant_pool_destroy(&data->constant_pool);
-    type_system_destroy(&data->type_system);
-    extern_sources_destroy(&data->extern_sources);
+	dynamic_array_destroy(&data->compiler_errors);
+	constant_pool_destroy(&data->constant_pool);
+	type_system_destroy(&data->type_system);
+	extern_sources_destroy(&data->extern_sources);
 
-    modtree_program_destroy(data->program);
-    dynamic_array_destroy(&data->function_slots);
+	modtree_program_destroy(data->program);
+	dynamic_array_destroy(&data->function_slots);
 
-    for (int i = 0; i < data->semantic_errors.size; i++) {
-        dynamic_array_destroy(&data->semantic_errors[i].information);
-    }
-    dynamic_array_destroy(&data->semantic_errors);
+	for (int i = 0; i < data->semantic_errors.size; i++) {
+		dynamic_array_destroy(&data->semantic_errors[i].information);
+	}
+	dynamic_array_destroy(&data->semantic_errors);
 
-    {
-        auto iter = hashtable_iterator_create(&data->ast_to_info_mapping);
-        while (hashtable_iterator_has_next(&iter)) {
-            Analysis_Info* info = *iter.value;
-            AST_Info_Key* key = iter.key;
-            if (key->base->type == AST::Node_Type::ARGUMENTS) {
-                parameter_matching_info_destroy(&info->parameter_matching_info);
-            }
-            delete* iter.value;
-            hashtable_iterator_next(&iter);
-        }
-        hashtable_destroy(&data->ast_to_info_mapping);
-    }
-    {
-        auto iter = hashtable_iterator_create(&data->ast_to_pass_mapping);
-        while (hashtable_iterator_has_next(&iter)) {
-            Node_Passes* workloads = iter.value;
-            dynamic_array_destroy(&workloads->passes);
-            hashtable_iterator_next(&iter);
-        }
-        hashtable_destroy(&data->ast_to_pass_mapping);
-    }
-    {
-        for (int i = 0; i < data->allocated_passes.size; i++) {
-            delete data->allocated_passes[i];
-        }
-        dynamic_array_destroy(&data->allocated_passes);
-    }
+	{
+		auto iter = hashtable_iterator_create(&data->ast_to_info_mapping);
+		while (hashtable_iterator_has_next(&iter)) {
+			Analysis_Info* info = *iter.value;
+			AST_Info_Key* key = iter.key;
+			if (key->base->type == AST::Node_Type::ARGUMENTS) {
+				parameter_matching_info_destroy(&info->parameter_matching_info);
+			}
+			delete* iter.value;
+			hashtable_iterator_next(&iter);
+		}
+		hashtable_destroy(&data->ast_to_info_mapping);
+	}
+	{
+		auto iter = hashtable_iterator_create(&data->ast_to_pass_mapping);
+		while (hashtable_iterator_has_next(&iter)) {
+			Node_Passes* workloads = iter.value;
+			dynamic_array_destroy(&workloads->passes);
+			hashtable_iterator_next(&iter);
+		}
+		hashtable_destroy(&data->ast_to_pass_mapping);
+	}
+	{
+		for (int i = 0; i < data->allocated_passes.size; i++) {
+			delete data->allocated_passes[i];
+		}
+		dynamic_array_destroy(&data->allocated_passes);
+	}
 
-    for (int i = 0; i < data->allocated_function_progresses.size; i++) {
-        function_progress_destroy(data->allocated_function_progresses[i]);
-    }
-    dynamic_array_destroy(&data->allocated_function_progresses);
+	for (int i = 0; i < data->allocated_function_progresses.size; i++) {
+		function_progress_destroy(data->allocated_function_progresses[i]);
+	}
+	dynamic_array_destroy(&data->allocated_function_progresses);
 
-    for (int i = 0; i < data->allocated_operator_contexts.size; i++) {
-        auto context = data->allocated_operator_contexts[i];
-        dynamic_array_destroy(&context->context_imports);
+	for (int i = 0; i < data->allocated_operator_contexts.size; i++) {
+		auto context = data->allocated_operator_contexts[i];
+		dynamic_array_destroy(&context->context_imports);
 
-        hashtable_destroy(&context->custom_operators);
-        delete data->allocated_operator_contexts[i];
-    }
-    dynamic_array_destroy(&data->allocated_operator_contexts);
+		hashtable_destroy(&context->custom_operators);
+		delete data->allocated_operator_contexts[i];
+	}
+	dynamic_array_destroy(&data->allocated_operator_contexts);
 
-    for (int i = 0; i < data->allocated_dot_calls.size; i++) {
-        auto dot_calls = data->allocated_dot_calls[i];
-        dynamic_array_destroy(dot_calls);
-        delete dot_calls;
-    }
-    dynamic_array_destroy(&data->allocated_dot_calls);
+	for (int i = 0; i < data->allocated_dot_calls.size; i++) {
+		auto dot_calls = data->allocated_dot_calls[i];
+		dynamic_array_destroy(dot_calls);
+		delete dot_calls;
+	}
+	dynamic_array_destroy(&data->allocated_dot_calls);
 
-    stack_allocator_destroy(&data->progress_allocator);
-    stack_allocator_destroy(&data->global_variable_memory_pool);
+	stack_allocator_destroy(&data->progress_allocator);
+	stack_allocator_destroy(&data->global_variable_memory_pool);
 
 
-    // Symbol tables + workloads
-    for (int i = 0; i < data->allocated_symbol_tables.size; i++) {
-        symbol_table_destroy(data->allocated_symbol_tables[i]);
-    }
-    dynamic_array_destroy(&data->allocated_symbol_tables);
+	// Symbol tables + workloads
+	for (int i = 0; i < data->allocated_symbol_tables.size; i++) {
+		symbol_table_destroy(data->allocated_symbol_tables[i]);
+	}
+	dynamic_array_destroy(&data->allocated_symbol_tables);
 
-    for (int i = 0; i < data->allocated_symbols.size; i++) {
-        symbol_destroy(data->allocated_symbols[i]);
-    }
-    dynamic_array_destroy(&data->allocated_symbols);
+	for (int i = 0; i < data->allocated_symbols.size; i++) {
+		symbol_destroy(data->allocated_symbols[i]);
+	}
+	dynamic_array_destroy(&data->allocated_symbols);
 
-    for (int i = 0; i < data->all_workloads.size; i++) {
-        analysis_workload_destroy(data->all_workloads[i]);
-    }
+	for (int i = 0; i < data->all_workloads.size; i++) {
+		analysis_workload_destroy(data->all_workloads[i]);
+	}
 
-    delete data;
+	delete data;
 }
 
 Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity)
 {
-    Dynamic_Array<Dot_Call_Info> initial = dynamic_array_create<Dot_Call_Info>(capacity);
-    Dynamic_Array<Dot_Call_Info>* result = new Dynamic_Array<Dot_Call_Info>;
-    *result = initial;
+	Dynamic_Array<Dot_Call_Info> initial = dynamic_array_create<Dot_Call_Info>(capacity);
+	Dynamic_Array<Dot_Call_Info>* result = new Dynamic_Array<Dot_Call_Info>;
+	*result = initial;
 
-    dynamic_array_push_back(&data->allocated_dot_calls, result);
-    return result;
+	dynamic_array_push_back(&data->allocated_dot_calls, result);
+	return result;
 }
