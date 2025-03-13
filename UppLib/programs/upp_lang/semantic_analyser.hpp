@@ -840,6 +840,8 @@ struct Function_Slot
     int index; // Not plus one !
     ModTree_Function* modtree_function; // May be null
     IR_Function* ir_function; // May be null
+    int bytecode_start_instruction; // -1 if not generate yet
+    int bytecode_end_instruction;
 };
 
 // ANALYSER

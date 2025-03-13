@@ -35,6 +35,9 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
     case Hardcoded_Type::MEMORY_COMPARE: string_append_formated(string, "MEMORY_COMPARE");break;
     case Hardcoded_Type::MEMORY_ZERO: string_append_formated(string, "MEMORY_ZERO");break;
 
+    case Hardcoded_Type::SYSTEM_ALLOC: string_append_formated(string, "SYSTEM_ALLOC");break;
+    case Hardcoded_Type::SYSTEM_FREE: string_append_formated(string, "SYSTEM_FREE");break;
+
     case Hardcoded_Type::BITWISE_NOT: string_append_formated(string, "BITWISE_NOT"); break;
     case Hardcoded_Type::BITWISE_AND: string_append_formated(string, "BITWISE_AND"); break;
     case Hardcoded_Type::BITWISE_OR: string_append_formated(string, "BITWISE_OR"); break;
@@ -67,12 +70,6 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
         break;
     case Hardcoded_Type::RANDOM_I32:
         string_append_formated(string, "RANDOM_I32");
-        break;
-    case Hardcoded_Type::MALLOC_SIZE_U64:
-        string_append_formated(string, "MALLOC_SIZE_U64");
-        break;
-    case Hardcoded_Type::FREE_POINTER:
-        string_append_formated(string, "FREE_POINTER");
         break;
     default: panic("Should not happen");
     }

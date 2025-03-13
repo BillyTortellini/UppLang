@@ -27,7 +27,6 @@ Bytecode_Generator bytecode_generator_create()
     result.instructions = dynamic_array_create<Bytecode_Instruction>(64);
 
     // Code Information
-    result.function_locations = hashtable_create_pointer_empty<IR_Function*, int>(64);
     result.function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
     result.code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
     result.stack_offsets = dynamic_array_create<Array<int>>(32);
@@ -45,7 +44,6 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->instructions);
 
     // Code Information
-    hashtable_destroy(&generator->function_locations);
     hashtable_destroy(&generator->function_parameter_stack_offset_index);
     hashtable_destroy(&generator->code_block_register_stack_offset_index);
     for (int i = 0; i < generator->stack_offsets.size; i++) {
@@ -67,7 +65,6 @@ void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
     {
         dynamic_array_reset(&generator->instructions);
         // Reset information
-        hashtable_reset(&generator->function_locations);
         hashtable_reset(&generator->code_block_register_stack_offset_index);
         hashtable_reset(&generator->function_parameter_stack_offset_index);
         for (int i = 0; i < generator->stack_offsets.size; i++) {
@@ -216,7 +213,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     // Check if it's on stack
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
         int stack_offset = data_access_is_completely_on_stack(generator, access);
         if (stack_offset != -1) {
@@ -235,7 +232,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::CONSTANT: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
         bytecode_generator_add_instruction(
             generator, instruction_make_2(Instruction_Type::LOAD_CONSTANT_ADDRESS, pointer_stack_offset, access->option.constant_index)
@@ -245,7 +242,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::GLOBAL_DATA: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
         bytecode_generator_add_instruction(
             generator, instruction_make_2(Instruction_Type::LOAD_GLOBAL_ADDRESS, pointer_stack_offset, access->option.global_index)
@@ -255,7 +252,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::ADDRESS_OF_VALUE: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
 
         // This is a little weird, as we seem to want a pointer to a pointer now...
@@ -273,7 +270,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::MEMBER_ACCESS: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
 
         data_access_get_pointer_to_value(generator, access->option.member_access.struct_access, pointer_stack_offset);
@@ -285,7 +282,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
         }
 
         auto& array_access = access->option.array_access;
@@ -501,10 +498,7 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Acc
 Bytecode_Type type_base_to_bytecode_type(Datatype* type)
 {
     type = datatype_get_non_const_type(type);
-    assert(type->type == Datatype_Type::PRIMITIVE || type->type == Datatype_Type::ENUM || type->type == Datatype_Type::TYPE_HANDLE, "HEY");
-    if (type->type == Datatype_Type::TYPE_HANDLE) {
-        return Bytecode_Type::UINT32;
-    }
+    assert(type->type == Datatype_Type::PRIMITIVE || type->type == Datatype_Type::ENUM, "HEY");
     if (type->type == Datatype_Type::ENUM) {
         return Bytecode_Type::INT32;
     }
@@ -512,9 +506,9 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
     auto primitive = downcast<Datatype_Primitive>(type);
     int type_size = type->memory_info.value.size;
     Bytecode_Type result;
-    switch (primitive->primitive_type)
+    switch (primitive->primitive_class)
     {
-    case Primitive_Type::INTEGER: {
+    case Primitive_Class::INTEGER: {
         switch (type_size) {
         case 1: result = Bytecode_Type::INT8; break;
         case 2: result = Bytecode_Type::INT16; break;
@@ -527,7 +521,7 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
         }
         break;
     }
-    case Primitive_Type::FLOAT: {
+    case Primitive_Class::FLOAT: {
         if (type_size == 4) {
             result = Bytecode_Type::FLOAT32; break;
         }
@@ -537,7 +531,9 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
         else panic("HEY");
         break;
     }
-    case Primitive_Type::BOOLEAN: result = Bytecode_Type::BOOL; break;
+    case Primitive_Class::ADDRESS: result = Bytecode_Type::UINT64; break;
+    case Primitive_Class::TYPE_HANDLE: result = Bytecode_Type::UINT32; break;
+    case Primitive_Class::BOOLEAN: result = Bytecode_Type::BOOL; break;
     default: panic("HEY");
     }
     return result;
@@ -659,8 +655,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
             // Prepare new stack frame
             generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // 16 byte should be the highest possible alignment
-            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer);
-            bytecode_generator_create_temporary_stack_offset(generator, types.byte_pointer); // For previous stack address
+            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // For previous stack address
 
             // Push all arguments as parameters into new stack-frame
             int next_argument_offset = generator->current_stack_offset;
@@ -884,8 +880,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             switch (cast->type)
             {
             case IR_Cast_Type::POINTERS:
-            case IR_Cast_Type::POINTER_TO_U64:
-            case IR_Cast_Type::U64_TO_POINTER: {
+            case IR_Cast_Type::POINTER_TO_ADDRESS:
+            case IR_Cast_Type::ADDRESS_TO_POINTER: {
                 bytecode_generator_move_accesses(generator, cast->destination, cast->source);
                 break;
             }
@@ -1015,7 +1011,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function)
 {
-    assert(hashtable_find_element(&generator->function_locations, function) == nullptr, "Function must not be compiled yet");
+    auto& slot = compiler.analysis_data->function_slots[function->function_slot_index];
+    assert(slot.bytecode_start_instruction == -1, "Function must not be generated yet!\n");
 
     // Generate parameter offsets
     {
@@ -1040,13 +1037,15 @@ void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Funct
     }
 
     // Register function
-    hashtable_insert_element(&generator->function_locations, function, generator->instructions.size);
+    slot.bytecode_start_instruction = generator->instructions.size;
 
     // Generate code
     bytecode_generator_generate_code_block(generator, function->code);
     if (generator->current_stack_offset > generator->maximum_function_stack_depth) {
         generator->maximum_function_stack_depth = generator->current_stack_offset;
     }
+
+    slot.bytecode_end_instruction = generator->instructions.size;
 }
 
 void bytecode_generator_update_references(Bytecode_Generator* generator)
@@ -1054,9 +1053,9 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
     // Fill out all function calls
     for (int i = 0; i < generator->fill_out_calls.size; i++) {
         Function_Reference& call_loc = generator->fill_out_calls[i];
-        int* location = hashtable_find_element(&generator->function_locations, call_loc.function);
-        assert(location != 0, "Should not happen");
-        generator->instructions[call_loc.instruction_index].op1 = *location;
+        int location = compiler.analysis_data->function_slots[call_loc.function->function_slot_index].bytecode_start_instruction;
+        assert(location != -1, "Function should have already been compiled!");
+        generator->instructions[call_loc.instruction_index].op1 = location;
     }
     dynamic_array_reset(&generator->fill_out_calls);
 
@@ -1070,9 +1069,9 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
 
 void bytecode_generator_set_entry_function(Bytecode_Generator* generator)
 {
-    int* entry_found = hashtable_find_element(&generator->function_locations, generator->ir_program->entry_function);
-    assert(entry_found != 0, "");
-    generator->entry_point_index = *entry_found;
+    int entry_index = compiler.analysis_data->function_slots[generator->ir_program->entry_function->function_slot_index].bytecode_start_instruction;
+    assert(entry_index != -1, "");
+    generator->entry_point_index = entry_index;
     assert(generator->entry_point_index >= 0 && generator->entry_point_index < generator->instructions.size, "");
 }
 
@@ -1292,22 +1291,50 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
-    string_append_formated(string, "Function starts:\n");
+    auto& slots = compiler.analysis_data->function_slots;
+
+    for (int i = 0; i < slots.size; i++)
     {
-        Hashtable_Iterator<IR_Function*, int> function_iter = hashtable_iterator_create(&generator->function_locations);
-        int i = 0;
-        while (hashtable_iterator_has_next(&function_iter)) {
-            string_append_formated(string, "\t%d: %d\n", i, *function_iter.value);
-            i++;
-            hashtable_iterator_next(&function_iter);
+        auto& slot = slots[i];
+        string_append_formated(string, "Function Slot #%d: ", i);
+        if (slot.modtree_function != nullptr) 
+        {
+            string_append_string(string, slot.modtree_function->name);
         }
-    }
-    string_append_formated(string, "Code: \n");
-    for (int i = 0; i < generator->instructions.size; i++)
-    {
-        Bytecode_Instruction& instruction = generator->instructions[i];
-        string_append_formated(string, "%4d: ", i);
-        bytecode_instruction_append_to_string(string, generator->instructions[i]);
+        else if (slot.ir_function != nullptr) 
+        {
+            if (slot.ir_function == ir_generator.default_allocate_function) {
+                string_append_formated(string, "System-Allocate fn");
+            }
+            else if (slot.ir_function == ir_generator.default_free_function) {
+                string_append_formated(string, "System-Free fn");
+            }
+            else if (slot.ir_function == ir_generator.default_reallocate_function) {
+                string_append_formated(string, "System-Reallocate fn");
+            }
+            else if (slot.ir_function == ir_generator.program->entry_function) {
+                string_append_formated(string, "Entry-Function");
+            }
+            else {
+                string_append_formated(string, "Anonymous IR-Function");
+            }
+        }
+        else {
+            string_append(string, "Neither ir function nor modtree-function available?");
+        }
+        string_append_character(string, '\n');
+        if (slot.bytecode_start_instruction == -1) {
+            string_append(string, "NO instructions generated!\n");
+            continue;
+        }
+
+        for (int i = slot.bytecode_start_instruction; i < slot.bytecode_end_instruction; i++)
+        {
+            Bytecode_Instruction& instruction = generator->instructions[i];
+            string_append_formated(string, "%4d: ", i);
+            bytecode_instruction_append_to_string(string, generator->instructions[i]);
+            string_append_formated(string, "\n");
+        }
         string_append_formated(string, "\n");
     }
 }

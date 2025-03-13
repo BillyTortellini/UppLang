@@ -1,7 +1,6 @@
 
 import Upp~Any
 import Upp~c_string
-import Upp~byte_pointer
 import Upp~i32
 import Upp~u32
 import Upp~u64

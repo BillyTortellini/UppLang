@@ -1,13 +1,11 @@
 
-import Upp~u64
+import Upp~usize
 import Upp~Any
 
 add_numbers :: (values: []int) -> int
 	sum := 0
-	i: u64 = 0
-	while i < values.size
-		sum = sum + values[i]
-		i = i + 1
+	for v in values
+		sum += v
 	return sum
 
 primitive_type_value :: (value: Any) -> int

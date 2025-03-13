@@ -1,10 +1,10 @@
 
-import Upp~u64
+import Upp~usize
 
 main :: ()
 	// New operator with () creates a slice
 	arr := new(20) int
-	i: u64 = 0
+	i: usize = 0
 	while i < arr.size
 		arr[i] = cast (arr.size - i - 1)
 		i = i + 1
@@ -19,7 +19,7 @@ main :: ()
 	delete arr
 
 array_bubble_sort :: (a: []int)
-	i: u64 = 0
+	i: usize = 0
 	while (i < a.size)
 		j := i + 1
 		while (j < a.size)

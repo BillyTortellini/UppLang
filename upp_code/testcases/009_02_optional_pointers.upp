@@ -13,16 +13,9 @@ apply :: (value: int, fn: ?(x: int) -> int) -> int
 		return fn.value(value)
 	return -1
 
-import Upp~byte_pointer
-
-test_bytes :: (ptr: ?byte_pointer) -> int
-	if ptr?
-		return ( cast_pointer {*int} ptr.value) + 1
-	return -1
-
 main :: ()
 	// Optional pointers differ from normal optionals,
-	// as pointers don't store a boolean, but rather use nullptr as the 
+	// as pointers don't store a boolean, but rather use null (Literal) as the 
 	// unavailable type
 	assert(Upp~type_info(?*int).size == 8)
 	
@@ -45,7 +38,7 @@ main :: ()
 	
 	// Also, normal pointers auto-cast to optional pointers
 	x = 2
-	ptr :=* x
+	ptr: *int =* x
 	assert(test(ptr) == 3)
 	
 	// As function-ptrs and byte-pointer are also pointer-types
@@ -55,15 +48,6 @@ main :: ()
 	assert(apply(10, fn_ptr) == -10)
 	fn_ptr = null
 	assert(apply(10, fn_ptr) == -1)
-	
-	// Same for byte-pointer
-		x = 5
-		ptr: ?byte_pointer
-		ptr =* cast_pointer *x
-		
-		assert(test_bytes(ptr) == 6)
-		ptr = null
-		assert(test_bytes(ptr) == -1)
 
 
 

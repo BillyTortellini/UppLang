@@ -524,41 +524,31 @@ void c_generator_output_type_reference(Datatype* type)
     {
         auto primitive = downcast<Datatype_Primitive>(type);
         int type_size = type->memory_info.value.size;
-        if (primitive->is_c_char) {
+        if (primitive->primitive_type == Primitive_Type::C_CHAR) {
             string_append(&access_name, "char");
             break;
         }
 
         switch (primitive->primitive_type)
         {
-        case Primitive_Type::BOOLEAN:
-            string_append(&access_name, "bool");
-            break;
-        case Primitive_Type::INTEGER:
-            switch (type_size)
-            {
-            case 1: string_append(&access_name, primitive->is_signed ? "i8" : "u8"); break;
-            case 2: string_append(&access_name, primitive->is_signed ? "i16" : "u16"); break;
-            case 4: string_append(&access_name, primitive->is_signed ? "i32" : "u32"); break;
-            case 8: string_append(&access_name, primitive->is_signed ? "i64" : "u64"); break;
-            default: panic("HEY");
-            }
-
-            break;
-        case Primitive_Type::FLOAT:
-            switch (type_size)
-            {
-            case 4: string_append(&access_name, "f32"); break;
-            case 8: string_append(&access_name, "f64"); break;
-            default: panic("HEY");
-            }
-            break;
-        default: panic("What");
+        case Primitive_Type::I8:  string_append(&access_name, "i8"); break;
+        case Primitive_Type::I16: string_append(&access_name, "i16"); break;
+        case Primitive_Type::I32: string_append(&access_name, "i32"); break;
+        case Primitive_Type::I64: string_append(&access_name, "i64"); break;
+        case Primitive_Type::U8:  string_append(&access_name, "u8"); break;
+        case Primitive_Type::U16: string_append(&access_name, "u16"); break;
+        case Primitive_Type::U32: string_append(&access_name, "u32"); break;
+        case Primitive_Type::U64: string_append(&access_name, "u64"); break;
+        case Primitive_Type::ADDRESS: string_append(&access_name, "_void_ptr"); break; // See datatypes.h
+        case Primitive_Type::ISIZE: string_append(&access_name, "i64"); break;
+        case Primitive_Type::USIZE: string_append(&access_name, "u64"); break;
+        case Primitive_Type::TYPE_HANDLE: string_append(&access_name, "Type_Handle_"); break; // See hardcoded_functions.h for definition
+        case Primitive_Type::C_CHAR: string_append(&access_name, "char"); break;
+        case Primitive_Type::F32: string_append(&access_name, "f32"); break;
+        case Primitive_Type::F64: string_append(&access_name, "f64"); break;
+        case Primitive_Type::BOOLEAN: string_append(&access_name, "bool"); break;
+        default: break;
         }
-        break;
-    }
-    case Datatype_Type::TYPE_HANDLE: {
-        string_append_formated(&access_name, "Type_Handle_"); // See hardcoded_functions.h for definition
         break;
     }
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
@@ -582,10 +572,6 @@ void c_generator_output_type_reference(Datatype* type)
             string_append_formated(enum_section, "    %s = %d,\n", member->name->characters, member->value);
         }
         string_append_formated(enum_section, "};\n");
-        break;
-    }
-    case Datatype_Type::BYTE_POINTER: {
-        string_append_formated(&access_name, "byte_pointer_"); // Defined in hardcoded_functions.h as void*
         break;
     }
     case Datatype_Type::SLICE:
@@ -924,8 +910,8 @@ void c_generator_generate()
         {
             C_Translation translation;
             translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.byte_pointer;
-            String name = string_create("byte_pointer_"); // See hardcoded_functions.h
+            translation.options.datatype = upcast(types.address);
+            String name = string_create("_void_ptr"); // See hardcoded_functions.h
             hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // Any
@@ -1128,13 +1114,9 @@ void c_generator_generate()
             case Datatype_Type::PRIMITIVE: {
                 auto primitive = downcast<Datatype_Primitive>(type);
                 Struct_Content* primitive_info = types.type_information_type->content.subtypes[(int)Datatype_Type::PRIMITIVE - 1];
-                string_append(gen.text, "info->subtypes_.Primitive.tag_ = ");
-                output_memory_as_new_constant((byte*)&primitive->primitive_type, primitive_info->tag_member.type, false, 1);
+                string_append(gen.text, "info->subtypes_.Primitive.type = ");
+                output_memory_as_new_constant((byte*)&primitive->primitive_type, upcast(types.primitive_type_enum), false, 1);
                 string_append(gen.text, ";\n");
-                if (primitive->primitive_type == Primitive_Type::INTEGER) {
-                    string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Primitive.subtypes_.Integer.is_signed = %s;\n", primitive->is_signed ? "true" : "false");
-                }
                 break;
             }
             case Datatype_Type::ARRAY: {
@@ -1248,9 +1230,6 @@ void c_generator_generate()
                 type_info_append_struct_content(&type_system.internal_type_infos[i]->options.structure.content, 1);
                 break;
             }
-
-            case Datatype_Type::TYPE_HANDLE:
-            case Datatype_Type::BYTE_POINTER:
             case Datatype_Type::UNKNOWN_TYPE:
             case Datatype_Type::TEMPLATE_TYPE:
             case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
@@ -1547,14 +1526,24 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             auto primitive = downcast<Datatype_Primitive>(type);
             int type_size = type->memory_info.value.size;
             byte* memory = base_memory;
-            switch (primitive->primitive_type)
+            switch (primitive->primitive_class)
             {
-            case Primitive_Type::BOOLEAN: {
+            case Primitive_Class::BOOLEAN: {
                 bool* value_ptr = (bool*)memory;
                 string_append(gen.text, *value_ptr ? "true" : "false");
                 break;
             }
-            case Primitive_Type::INTEGER: {
+            case Primitive_Class::TYPE_HANDLE: {
+                string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
+                break;
+            }
+            case Primitive_Class::ADDRESS: {
+                byte* pointer = *(byte**)memory;
+                assert(pointer == 0, "Pointers must be null in constant memory");
+                string_append(gen.text, "nullptr");
+                break;
+            }
+            case Primitive_Class::INTEGER: {
                 if (primitive->is_signed) {
                     switch (type_size)
                     {
@@ -1577,7 +1566,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 }
                 break;
             }
-            case Primitive_Type::FLOAT:
+            case Primitive_Class::FLOAT:
                 switch (type_size)
                 {
                 case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
@@ -1587,11 +1576,6 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 break;
             default: panic("What");
             }
-            break;
-        }
-        case Datatype_Type::TYPE_HANDLE: {
-            byte* memory = base_memory;
-            string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
             break;
         }
         case Datatype_Type::ENUM:
@@ -1634,7 +1618,6 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             break;
         }
         case Datatype_Type::POINTER:
-        case Datatype_Type::BYTE_POINTER:
         {
             byte* memory = base_memory;
             byte* pointer = *(byte**)memory;
@@ -1930,17 +1913,8 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         auto array_type = datatype_get_non_const_type(access->option.array_access.array_access->datatype);
         if (array_type->type == Datatype_Type::SLICE)
         {
-            if (types_are_equal(array_type, types.bytes)) {
-                // Convert to u8
-                string_append(gen.text, "((u8*)");
-                c_generator_output_data_access(access->option.array_access.array_access, true);
-                string_append(gen.text, ".data)[");
-            }
-            else {
-                c_generator_output_data_access(access->option.array_access.array_access, true);
-                string_append(gen.text, ".data[");
-            }
-
+            c_generator_output_data_access(access->option.array_access.array_access, true);
+            string_append(gen.text, ".data[");
             c_generator_output_data_access(access->option.array_access.index_access);
             string_append(gen.text, "]");
         }
@@ -2113,10 +2087,10 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 case Hardcoded_Type::RANDOM_I32:
                     string_append_formated(gen.text, "random_i32");
                     break;
-                case Hardcoded_Type::MALLOC_SIZE_U64:
-                    string_append_formated(gen.text, "malloc_size_i32");
+                case Hardcoded_Type::SYSTEM_ALLOC:
+                    string_append_formated(gen.text, "malloc_size_u64");
                     break;
-                case Hardcoded_Type::FREE_POINTER:
+                case Hardcoded_Type::SYSTEM_FREE:
                     string_append_formated(gen.text, "free_pointer");
                     break;
                 case Hardcoded_Type::MEMORY_COPY:

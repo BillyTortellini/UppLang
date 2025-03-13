@@ -9,18 +9,19 @@ Player :: struct
 	reference_id: *int
 
 main :: ()
-	
-	// Slices can have constant values
+	// Slices can be constant
 	values := int.[1, 2, 3, 4]
 	slice: []int = cast values
 	slice_const: const []int = cast values
 	const_const: const [] const int = cast values
 	
-	assert(type_of(slice.size) == u64)
+	import Upp~usize
+	
+	assert(type_of(slice.size) == usize)
 	assert(type_of(slice[0]) == int)
-	assert(type_of(slice_const.size) == const u64)
+	assert(type_of(slice_const.size) == const usize)
 	assert(type_of(slice_const[0]) == int)
-	assert(type_of(const_const.size) == const u64)
+	assert(type_of(const_const.size) == const usize)
 	assert(type_of(const_const[0]) == const int)
 	
 	slice_const[1] = 5

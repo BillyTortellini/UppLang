@@ -111,9 +111,6 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
     switch (type)
     {
     case Hardcoded_Type::ASSERT_FN: return an.type_assert;
-    case Hardcoded_Type::FREE_POINTER: return an.type_free;
-    case Hardcoded_Type::REALLOCATE: return an.hardcoded_reallocate;
-    case Hardcoded_Type::MALLOC_SIZE_U64: return an.type_malloc;
     case Hardcoded_Type::TYPE_INFO: return an.type_type_info;
     case Hardcoded_Type::TYPE_OF: return an.type_type_of;
 
@@ -124,6 +121,9 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
     case Hardcoded_Type::SIZE_OF: return an.type_size_of;
     case Hardcoded_Type::ALIGN_OF: return an.type_align_of;
     case Hardcoded_Type::PANIC_FN: return an.type_panic;
+
+    case Hardcoded_Type::SYSTEM_ALLOC: return an.hardcoded_system_alloc;
+    case Hardcoded_Type::SYSTEM_FREE: return an.hardcoded_system_free;
 
     case Hardcoded_Type::PRINT_BOOL: return an.type_print_bool;
     case Hardcoded_Type::PRINT_I32: return an.type_print_i32;
@@ -1020,6 +1020,8 @@ ModTree_Function* modtree_function_create_empty(Datatype_Function* signature, St
     slot.index = slots.size;
     slot.modtree_function = function;
     slot.ir_function = nullptr;
+    slot.bytecode_start_instruction = -1;
+    slot.bytecode_end_instruction = -1;
     dynamic_array_push_back(&slots, slot);
 
     function->called_from = dynamic_array_create<ModTree_Function*>();
@@ -1159,8 +1161,8 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast
     case Cast_Type::ENUM_TO_INT: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
     case Cast_Type::INT_TO_ENUM: instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
     case Cast_Type::POINTERS: 
-    case Cast_Type::U64_TO_POINTER:
-    case Cast_Type::POINTER_TO_U64: {
+    case Cast_Type::ADDRESS_TO_POINTER:
+    case Cast_Type::POINTER_TO_ADDRESS: {
         // Pointers values can be interchanged with other pointers or with u64 values
         return comptime_result_make_available(value.data, result_type); 
     }
@@ -4043,6 +4045,8 @@ struct Matching_Info
 
 bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info)
 {
+    auto& types = compiler.analysis_data->type_system.predefined_types;
+
     if (!polymorphic_type->contains_template) {
         return types_are_equal(polymorphic_type, match_against);
     }
@@ -4141,7 +4145,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
                 }
                 else 
                 {
-                    if (match_to_value.type->type == Datatype_Type::TYPE_HANDLE) {
+                    if (types_are_equal(match_to_value.type, types.type_handle)) {
                         Upp_Type_Handle handle_value = upp_constant_to_value<Upp_Type_Handle>(match_to_value);
                         if (handle_value.index >= (u32)compiler.analysis_data->type_system.types.size) {
                             return false;
@@ -4263,8 +4267,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
     }
     case Datatype_Type::ENUM:
     case Datatype_Type::UNKNOWN_TYPE:
-    case Datatype_Type::PRIMITIVE:
-    case Datatype_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
+    case Datatype_Type::PRIMITIVE: panic("Should be handled by previous code-path (E.g. non polymorphic!)"); break;
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
     case Datatype_Type::TEMPLATE_TYPE: panic("Previous code path should have handled this!");
     default: panic("");
@@ -4475,7 +4478,7 @@ Instanciation_Result instanciate_polymorphic_callable(
                     continue;
                 }
                 auto& constant = constant_result.value;
-                if (datatype_get_non_const_type(constant.type)->type == Datatype_Type::TYPE_HANDLE)
+                if (types_are_equal(datatype_get_non_const_type(constant.type), types.type_handle))
                 {
                     Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
                     if (handle.index >= (u32)compiler.analysis_data->type_system.types.size) {
@@ -5788,8 +5791,8 @@ void analysis_workload_entry(void* userdata)
 
         // Execute
         auto& slots = compiler.analysis_data->function_slots;
-        IR_Function* ir_func = slots[bake_function->function_slot_index].ir_function;
-        int func_start_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, ir_func);
+        auto& slot = slots[bake_function->function_slot_index];
+        int func_start_instr_index = slot.bytecode_start_instruction;
 
         Bytecode_Thread* thread = bytecode_thread_create(compiler.analysis_data, 10000);
         SCOPE_EXIT(bytecode_thread_destroy(thread));
@@ -6007,7 +6010,7 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
 
         if (given.size <= expected.size) {
             *out_error_msg = "Cannot downcast/switch to other subtype automatically";
-            return false; // Cannot downcast, or switch to other subtype
+            return false;
         }
 
         // Check if all subtypes match to given...
@@ -6445,7 +6448,7 @@ void analyse_index_accept_all_ints_as_u64(AST::Expression* expr)
     // Cast all integers to u64
     if (result_type->type == Datatype_Type::PRIMITIVE) {
         auto primitive = downcast<Datatype_Primitive>(result_type);
-        if (primitive->primitive_type == Primitive_Type::INTEGER)
+        if (primitive->primitive_class == Primitive_Class::INTEGER)
         {
             info->cast_info.cast_type = Cast_Type::INTEGERS;
             info->cast_info.result_type = upcast(types.u64_type);
@@ -6621,8 +6624,7 @@ void polymorphic_overload_resolve_match_recursive(Datatype* polymorphic_type, Da
     }
     case Datatype_Type::ENUM:
     case Datatype_Type::UNKNOWN_TYPE:
-    case Datatype_Type::PRIMITIVE:
-    case Datatype_Type::TYPE_HANDLE: panic("Should be handled by previous code-path (E.g. non polymorphic!)");
+    case Datatype_Type::PRIMITIVE:  panic("Should be handled by previous code-path (E.g. non polymorphic!)");
     case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
     case Datatype_Type::TEMPLATE_TYPE: panic("Previous code path should have handled this!");
     default: panic("");
@@ -7243,28 +7245,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				panic("");
 				EXIT_ERROR(arg_result->options.type);
 			}
-			case Hardcoded_Type::REALLOCATE:
-			{
-				auto slice_param = &matching_info->matched_parameters[0];
-				auto size_param = &matching_info->matched_parameters[1];
-
-				analyse_index_accept_all_ints_as_u64(size_param->expression);
-				size_param->state = Parameter_State::ANALYSED;
-				size_param->argument_type = upcast(types.u64_type);
-				size_param->argument_is_temporary_value = true;
-
-				Datatype* arg_type = analyse_parameter_if_not_already_done(slice_param, expression_context_make_auto_dereference());
-				if (arg_type->base_type->type != Datatype_Type::SLICE) {
-					log_semantic_error("Reallocate requires a slice as the first argument", slice_param->expression);
-				}
-				else {
-					if (!try_updating_expression_type_mods(slice_param->expression, type_mods_make(false, 1, 1, 0))) {
-						log_semantic_error("Reallocate argument must be a pointer to slice, as the slice is modified", slice_param->expression);
-					}
-				}
-				expression_info_set_no_value(info);
-				return info;
-			}
 			case Hardcoded_Type::SIZE_OF:
 			case Hardcoded_Type::ALIGN_OF:
 			{
@@ -7335,7 +7315,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype_Primitive* primitive = nullptr;
 				if (type_valid) {
 					primitive = downcast<Datatype_Primitive>(type);
-					type_valid = primitive->primitive_type == Primitive_Type::INTEGER;
+					type_valid = primitive->primitive_class == Primitive_Class::INTEGER;
 				}
 				if (!type_valid) {
 					log_semantic_error("Type for bitwise not must be an integer", arg_expr);
@@ -7367,7 +7347,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype_Primitive* primitive = nullptr;
 				if (type_valid) {
 					primitive = downcast<Datatype_Primitive>(type_a);
-					type_valid = primitive->primitive_type == Primitive_Type::INTEGER;
+					type_valid = primitive->primitive_class == Primitive_Class::INTEGER;
 				}
 				if (!type_valid) {
 					log_semantic_error("Type for bitwise operation must be an integer", expr_a);
@@ -7864,11 +7844,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype* expected = datatype_get_non_const_type(context.expected_type.type);
 				if (expected->type == Datatype_Type::PRIMITIVE)
 				{
-					auto primitive_type = downcast<Datatype_Primitive>(expected)->primitive_type;
-					if (primitive_type == Primitive_Type::INTEGER) {
+					auto primitive_class = downcast<Datatype_Primitive>(expected)->primitive_class;
+					if (primitive_class == Primitive_Class::INTEGER) {
 						check_for_auto_conversion = true;
 					}
-					else if (primitive_type == Primitive_Type::FLOAT)
+					else if (primitive_class == Primitive_Class::FLOAT)
 					{
 						if (expected->memory_info.value.size == 4) {
 							literal_type = upcast(types.f32_type);
@@ -7996,7 +7976,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 		case Literal_Type::NULL_VAL:
 		{
-			literal_type = types.byte_pointer_optional;
+			literal_type = upcast(types.address);
 			value_ptr = &value_nullptr;
 			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
 			{
@@ -8220,19 +8200,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	{
 		auto child_type = semantic_analyser_analyse_expression_type(expr->options.optional_child_type);
 
-		// Handle optional byte-pointer and function_pointer
+		// Handle optional function_pointer
 		bool is_constant = child_type->mods.is_constant;
 		child_type = datatype_get_non_const_type(child_type);
-		if (datatype_get_non_const_type(child_type)->type == Datatype_Type::BYTE_POINTER) {
-			auto byte_ptr = downcast<Datatype_Bytepointer>(child_type);
-			if (!byte_ptr->is_optional) {
-				if (is_constant) {
-					EXIT_TYPE(type_system_make_constant(types.byte_pointer_optional));
-				}
-				EXIT_TYPE(types.byte_pointer_optional);
-			}
-		}
-		else if (datatype_get_non_const_type(child_type)->type == Datatype_Type::FUNCTION) {
+		if (datatype_get_non_const_type(child_type)->type == Datatype_Type::FUNCTION) {
 			auto function_type = downcast<Datatype_Function>(child_type);
 			if (!function_type->is_optional) {
 				function_type = type_system_make_function_optional(function_type);
@@ -8293,16 +8264,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			info->specifics.is_optional_pointer_check = false;
 			EXIT_VALUE(upcast(types.bool_type), false);
 		}
-		else if (value_type->base_type->type == Datatype_Type::BYTE_POINTER)
+		else if (types_are_equal(value_type->base_type, upcast(types.address)))
 		{
 			// Dereference to final level
-			bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
+			bool success = try_updating_expression_type_mods(
+                expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index)
+            );
 			assert(success, "Dereferencing pointers to value should always work without optional flags");
-
-			auto ptr_type = downcast<Datatype_Bytepointer>(value_type->base_type);
-			if (!ptr_type->is_optional) {
-				log_semantic_error("Byte-pointer must be optional for optional-check (null-check) to work", expr);
-			}
 
 			info->specifics.is_optional_pointer_check = true;
 			EXIT_VALUE(upcast(types.bool_type), true);
@@ -8824,10 +8792,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					bool is_const = datatype->mods.is_constant;
 					datatype = datatype_get_non_const_type(datatype);
 					Datatype* result_type = 0;
-					if (datatype->type == Datatype_Type::BYTE_POINTER) {
-						result_type = types.byte_pointer;
-					}
-					else if (datatype->type == Datatype_Type::FUNCTION) {
+					if (datatype->type == Datatype_Type::FUNCTION) {
 						result_type = upcast(downcast<Datatype_Function>(datatype)->non_optional_type);
 					}
 					else {
@@ -9291,7 +9256,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			// Handle constant type_handles correctly
 			if (operand_result->result_type == Expression_Result_Type::CONSTANT &&
-				datatype_get_non_const_type(operand_result->options.constant.type)->type == Datatype_Type::TYPE_HANDLE)
+                types_are_equal(datatype_get_non_const_type(operand_result->options.constant.type), types.type_handle))
 			{
 				auto handle = upp_constant_to_value<Upp_Type_Handle>(operand_result->options.constant);
 				if ((int)handle.index < 0 || (int)handle.index >= type_system->types.size) {
@@ -9371,6 +9336,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		info->specifics.overload.function = 0;
 		auto& binop_node = expr->options.binop;
 		const bool is_pointer_comparison = binop_node.type == AST::Binop::POINTER_EQUAL || binop_node.type == AST::Binop::POINTER_NOT_EQUAL;
+        const bool is_comparison =
+            binop_node.type == AST::Binop::EQUAL ||
+            binop_node.type == AST::Binop::NOT_EQUAL ||
+            binop_node.type == AST::Binop::LESS ||
+            binop_node.type == AST::Binop::LESS_OR_EQUAL ||
+            binop_node.type == AST::Binop::GREATER ||
+            binop_node.type == AST::Binop::GREATER_OR_EQUAL ||
+            is_pointer_comparison;
 
 		// Evaluate operands
 		Datatype* left_type;
@@ -9395,18 +9368,32 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				left_type = semantic_analyser_analyse_expression_value(binop_node.left, unknown_context);
 				right_type = semantic_analyser_analyse_expression_value(binop_node.right, unknown_context);
 			}
-			else if (left_requires_context && !right_requires_context) {
+			else if (left_requires_context && !right_requires_context) 
+            {
 				right_type = semantic_analyser_analyse_expression_value(binop_node.right, unknown_context);
-				if (is_pointer_comparison) {
+                bool is_address = types_are_equal(datatype_get_non_const_type(right_type), upcast(types.address));
+                if (is_address) {
+					left_type = semantic_analyser_analyse_expression_value(
+                        binop_node.left, expression_context_make_specific_type(is_comparison ? upcast(types.address) : upcast(types.isize))
+                    );
+                }
+				else if (is_pointer_comparison) {
 					left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type));
 				}
 				else {
 					left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type->base_type));
 				}
 			}
-			else if (!left_requires_context && right_requires_context) {
+			else if (!left_requires_context && right_requires_context) 
+            {
 				left_type = semantic_analyser_analyse_expression_value(binop_node.left, unknown_context);
-				if (is_pointer_comparison) {
+                bool is_address = types_are_equal(datatype_get_non_const_type(left_type), upcast(types.address));
+                if (is_address) {
+					right_type = semantic_analyser_analyse_expression_value(
+                        binop_node.right, expression_context_make_specific_type(is_comparison ? upcast(types.address) : upcast(types.isize))
+                    );
+                }
+				else if (is_pointer_comparison) {
 					right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
 				}
 				else {
@@ -9435,10 +9422,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		Type_Mods expected_mods_left = type_mods_make(true, 0, 0, 0);
 		Type_Mods expected_mods_right = type_mods_make(true, 0, 0, 0);
-		left_type = left_type->base_type;
+		left_type = left_type->base_type; 
 		right_type = right_type->base_type;
 
-		// Check if overload is a primitive operation (ints, floats, bools)
+		// Check if binop is a primitive operation (ints, floats, bools)
 		if (types_are_equal(left_type, right_type))
 		{
 			result_type = left_type;
@@ -9448,6 +9435,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			bool bool_valid = false;
 			bool enum_valid = false;
 			bool type_type_valid = false;
+            bool address_valid = false;
 			switch (binop_node.type)
 			{
 			case AST::Binop::ADDITION:
@@ -9468,6 +9456,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				int_valid = true;
 				result_type = upcast(types.bool_type);
 				enum_valid = true;
+                address_valid = true;
 				break;
 			case AST::Binop::POINTER_EQUAL:
 			case AST::Binop::POINTER_NOT_EQUAL: {
@@ -9481,6 +9470,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				bool_valid = true;
 				enum_valid = true;
 				type_type_valid = true;
+                address_valid = true;
 				result_type = upcast(types.bool_type);
 				break;
 			case AST::Binop::AND:
@@ -9497,26 +9487,48 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			if (operand_type->type == Datatype_Type::PRIMITIVE)
 			{
 				auto primitive = downcast<Datatype_Primitive>(operand_type);
-				if (primitive->primitive_type == Primitive_Type::INTEGER) {
-					types_are_valid = int_valid;
-				}
-				else if (primitive->primitive_type == Primitive_Type::FLOAT) {
-					types_are_valid = float_valid;
-				}
-				else if (primitive->primitive_type == Primitive_Type::BOOLEAN) {
-					types_are_valid = bool_valid;
-				}
+                switch (primitive->primitive_class)
+                {
+                case Primitive_Class::INTEGER:     types_are_valid = int_valid; break;
+                case Primitive_Class::FLOAT:       types_are_valid = float_valid; break;
+                case Primitive_Class::BOOLEAN:     types_are_valid = bool_valid; break;
+                case Primitive_Class::ADDRESS:     types_are_valid = address_valid; break;
+                case Primitive_Class::TYPE_HANDLE: types_are_valid = type_type_valid; break;
+                default: panic("");
+                }
 			}
 			else if (operand_type->type == Datatype_Type::ENUM) {
 				types_are_valid = enum_valid;
-			}
-			else if (operand_type->type == Datatype_Type::TYPE_HANDLE) {
-				types_are_valid = type_type_valid;
 			}
 			else {
 				types_are_valid = false;
 			}
 		}
+
+        // Handle pointer-arithmetic (address +/- isize/usize, address - address)
+        if (!types_are_valid)
+        {
+            // Note: IR-Generator has code path that checks for these cases, and handles them seperately
+            bool left_is_address = types_are_equal(left_type, upcast(types.address));
+            bool right_is_address = types_are_equal(right_type, upcast(types.address));
+            bool left_is_int = 
+                left_type->type == Datatype_Type::PRIMITIVE && 
+                downcast<Datatype_Primitive>(left_type)->primitive_class == Primitive_Class::INTEGER;
+            bool right_is_int = 
+                right_type->type == Datatype_Type::PRIMITIVE && 
+                downcast<Datatype_Primitive>(right_type)->primitive_class == Primitive_Class::INTEGER;
+            if (left_is_address && right_is_address)
+            {
+                if (binop_node.type == AST::Binop::SUBTRACTION) {
+		            EXIT_VALUE(upcast(types.isize), true);
+                }
+            }
+            else if ((left_is_address && right_is_int) || (right_is_address && left_is_int)) {
+                if (binop_node.type == AST::Binop::ADDITION || binop_node.type == AST::Binop::SUBTRACTION) {
+		            EXIT_VALUE(upcast(types.address), true);
+                }
+            }
+        }
 
 		// Check for operator overloads if it isn't a primitive operation
 		auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
@@ -9640,13 +9652,13 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 		bool src_is_ptr = datatype_is_pointer(source_type, &src_is_opt);
 		bool dst_is_ptr = datatype_is_pointer(destination_type, &dst_is_opt);
 
-		// Check for from/to u64
-		if (src_is_ptr && types_are_equal(destination_type, upcast(types.u64_type))) {
-			result.cast_type = Cast_Type::POINTER_TO_U64;
+		// Check for from/to address
+		if (src_is_ptr && types_are_equal(datatype_get_non_const_type(destination_type), upcast(types.address))) {
+			result.cast_type = Cast_Type::POINTER_TO_ADDRESS;
 			allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::POINTER_TO_POINTER);
 		}
-		else if (dst_is_ptr && types_are_equal(source_type, upcast(types.u64_type))) {
-			result.cast_type = Cast_Type::U64_TO_POINTER;
+		else if (dst_is_ptr && types_are_equal(datatype_get_non_const_type(source_type), upcast(types.address))) {
+			result.cast_type = Cast_Type::ADDRESS_TO_POINTER;
 			allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::POINTER_TO_POINTER);
 		}
 		else if (src_is_ptr && dst_is_ptr) {
@@ -9674,34 +9686,11 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 		return result;
 	}
 
-	// from/to byte_pointer and any casts (Which have higher precedence than other cast types)
+	// Any casts and to-optional (Which have higher precedence than other cast types)
 	{
 		Cast_Mode allowed_mode = Cast_Mode::NONE;
 		bool result_is_temporary = true;
-		bool is_opt_pointer = false;
-		if (source_type->mods.pointer_level == 0 &&
-			source_type->base_type->type == Datatype_Type::BYTE_POINTER &&
-			datatype_is_pointer(destination_type, &is_opt_pointer))
-		{
-			bool byteptr_is_opt = downcast<Datatype_Bytepointer>(source_type->base_type)->is_optional;
-			result.cast_type = Cast_Type::POINTERS;
-			allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FROM_BYTE_POINTER);
-			if (byteptr_is_opt && !is_opt_pointer) {
-				allowed_mode = Cast_Mode::NONE;
-			}
-		}
-		else if (destination_type->mods.pointer_level == 0 &&
-			destination_type->base_type->type == Datatype_Type::BYTE_POINTER &&
-			datatype_is_pointer(source_type, &is_opt_pointer))
-		{
-			bool byte_is_opt = downcast<Datatype_Bytepointer>(destination_type->base_type)->is_optional;
-			result.cast_type = Cast_Type::POINTERS;
-			allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::TO_BYTE_POINTER);
-			if (is_opt_pointer && !byte_is_opt) {
-				allowed_mode = Cast_Mode::NONE;
-			}
-		}
-		else if (types_are_equal(datatype_get_non_const_type(source_type), upcast(types.any_type))) {
+		if (types_are_equal(datatype_get_non_const_type(source_type), upcast(types.any_type))) {
 			result.cast_type = Cast_Type::FROM_ANY;
 			allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FROM_ANY);
 			result_is_temporary = false;
@@ -9777,7 +9766,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 			if (destination->type == Datatype_Type::PRIMITIVE)
 			{
 				auto primitive = downcast<Datatype_Primitive>(destination);
-				if (primitive->primitive_type == Primitive_Type::INTEGER) {
+				if (primitive->primitive_class == Primitive_Class::INTEGER) {
 					result.cast_type = Cast_Type::ENUM_TO_INT;
 					allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::ENUM_TO_INT);
 				}
@@ -9834,44 +9823,47 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 				auto dst_size = destination->memory_info.value.size;
 
 				// Figure out allowed mode and cast type
-				if (src_primitive->primitive_type == Primitive_Type::INTEGER && dst_primitive->primitive_type == Primitive_Type::INTEGER)
+				if (src_primitive->primitive_class == Primitive_Class::INTEGER && dst_primitive->primitive_class == Primitive_Class::INTEGER)
 				{
 					result.cast_type = Cast_Type::INTEGERS;
+
 					Cast_Mode signed_mode = Cast_Mode::IMPLICIT;
-					if (src_primitive->is_signed != dst_primitive->is_signed) {
-						if (src_primitive->is_signed) {
-							signed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIGNED_TO_UNSIGNED);
-						}
-						else {
-							signed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_UNSIGNED_TO_SIGNED);
-						}
+					if (src_primitive->is_signed && !dst_primitive->is_signed) {
+						signed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIGNED_TO_UNSIGNED);
+					}
+					else if (!src_primitive->is_signed && dst_primitive->is_signed) {
+						signed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_UNSIGNED_TO_SIGNED);
 					}
 
 					Cast_Mode size_mode = Cast_Mode::IMPLICIT;
-					if (dst_size != src_size)
-					{
-						if (dst_size > src_size) {
-							size_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIZE_UPCAST);
-						}
-						else {
-							size_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIZE_DOWNCAST);
-						}
+					if (dst_size > src_size) {
+						size_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIZE_UPCAST);
+					}
+					else if (dst_size < src_size) {
+						size_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INTEGER_SIZE_DOWNCAST);
 					}
 
 					// For integer cast to work, both size and signed must be castable
 					allowed_mode = (Cast_Mode)math_minimum((int)size_mode, (int)signed_mode);
+
+                    // Casting to/from isize/usize requires special treatments too
+                    bool src_distinct = src_primitive->primitive_type == Primitive_Type::ISIZE || src_primitive->primitive_type == Primitive_Type::USIZE;
+                    bool dst_distinct = dst_primitive->primitive_type == Primitive_Type::ISIZE || dst_primitive->primitive_type == Primitive_Type::USIZE;
+                    if ((src_distinct || dst_distinct) && src_distinct != dst_distinct) {
+					    allowed_mode = (Cast_Mode)math_minimum((int)allowed_mode, (int)Cast_Mode::INFERRED);
+                    }
 				}
-				else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::INTEGER)
+				else if (dst_primitive->primitive_class == Primitive_Class::FLOAT && src_primitive->primitive_class == Primitive_Class::INTEGER)
 				{
 					result.cast_type = Cast_Type::INT_TO_FLOAT;
 					allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INT_TO_FLOAT);
 				}
-				else if (dst_primitive->primitive_type == Primitive_Type::INTEGER && src_primitive->primitive_type == Primitive_Type::FLOAT)
+				else if (dst_primitive->primitive_class == Primitive_Class::INTEGER && src_primitive->primitive_class == Primitive_Class::FLOAT)
 				{
 					result.cast_type = Cast_Type::FLOAT_TO_INT;
 					allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FLOAT_TO_INT);
 				}
-				else if (dst_primitive->primitive_type == Primitive_Type::FLOAT && src_primitive->primitive_type == Primitive_Type::FLOAT)
+				else if (dst_primitive->primitive_class == Primitive_Class::FLOAT && src_primitive->primitive_class == Primitive_Class::FLOAT)
 				{
 					result.cast_type = Cast_Type::FLOATS;
 					if (dst_size > src_size) {
@@ -9881,6 +9873,13 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 						allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::FLOAT_SIZE_DOWNCAST);
 					}
 				}
+                else if ((dst_primitive->primitive_class == Primitive_Class::ADDRESS && src_primitive->primitive_class == Primitive_Class::INTEGER) ||
+                    (dst_primitive->primitive_class == Primitive_Class::INTEGER && src_primitive->primitive_class == Primitive_Class::ADDRESS)) 
+                {
+                    // Currently integer from/to address is always inferred, maybe we want context options for this?
+                    result.cast_type = Cast_Type::INTEGERS;
+                    allowed_mode = Cast_Mode::INFERRED;
+                }
 				else { // Booleans can never be cast
 					allowed_mode = Cast_Mode::NONE;
 				}
@@ -9888,7 +9887,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 			else if (destination->type == Datatype_Type::ENUM)
 			{
 				// TODO: Int to enum casting should check if int can hold max/min enum value
-				if (src_primitive->primitive_type == Primitive_Type::INTEGER) {
+				if (src_primitive->primitive_class == Primitive_Class::INTEGER) {
 					result.cast_type = Cast_Type::INT_TO_ENUM;
 					allowed_mode = operator_context_get_cast_mode_option(operator_context, Cast_Option::INT_TO_ENUM);
 				}
@@ -12115,9 +12114,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 	{
 		auto& assignment = statement->options.binop_assignment;
 
-		int x = 15;
-		const int* xp = &x;
-
 		// Initialize info as non-overloaded (primitive binop)
 		info->specifics.overload.function = 0;
 		info->specifics.overload.switch_arguments = false;
@@ -12132,7 +12128,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 		}
 
 		Expression_Context right_context = expression_context_make_auto_dereference();
-		if (left_type->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(left_type)->primitive_type == Primitive_Type::INTEGER) {
+		if (left_type->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(left_type)->primitive_class == Primitive_Class::INTEGER) {
 			right_context = expression_context_make_specific_type(left_type);
 		}
 		// Analyse right side
@@ -12170,14 +12166,24 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			if (operand_type->base_type->type == Datatype_Type::PRIMITIVE)
 			{
 				auto primitive = downcast<Datatype_Primitive>(operand_type->base_type);
-				if (primitive->primitive_type == Primitive_Type::INTEGER) {
+				if (primitive->primitive_class == Primitive_Class::INTEGER) {
 					types_are_valid = int_valid;
 				}
-				else if (primitive->primitive_type == Primitive_Type::FLOAT) {
+				else if (primitive->primitive_class == Primitive_Class::FLOAT) {
 					types_are_valid = float_valid;
 				}
 			}
 		}
+
+        // Check for pointer-arithmetic
+        if (types_are_equal(left_type->base_type, upcast(types.address))) 
+        {
+            bool right_is_integer = datatype_get_non_const_type(right_type)->type == Datatype_Type::PRIMITIVE &&
+                downcast<Datatype_Primitive>(datatype_get_non_const_type(right_type))->primitive_class == Primitive_Class::INTEGER;
+            if (right_is_integer && (assignment.binop == AST::Binop::ADDITION || assignment.binop == AST::Binop::SUBTRACTION)) {
+			    EXIT(Control_Flow::SEQUENTIAL);
+            }
+        }
 
 		// Check for operator overloads if it isn't a primitive operation
 		auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
@@ -12710,7 +12716,7 @@ void semantic_analyser_reset()
 			result->options.type = type;
 			return result;
 			};
-		define_type_symbol("c_char", upcast(types.c_char_type));
+		define_type_symbol("c_char", upcast(types.c_char));
 		define_type_symbol("u8", upcast(types.u8_type));
 		define_type_symbol("u16", upcast(types.u16_type));
 		define_type_symbol("u32", upcast(types.u32_type));
@@ -12721,14 +12727,15 @@ void semantic_analyser_reset()
 		define_type_symbol("i64", upcast(types.i64_type));
 		define_type_symbol("f32", upcast(types.f32_type));
 		define_type_symbol("f64", upcast(types.f64_type));
-		define_type_symbol("Bytes", types.bytes);
 		define_type_symbol("c_string", types.c_string);
 		define_type_symbol("Allocator", upcast(types.allocator));
 		define_type_symbol("Type_Handle", types.type_handle);
 		define_type_symbol("Type_Info", upcast(types.type_information_type));
 		define_type_symbol("Any", upcast(types.any_type));
 		define_type_symbol("_", upcast(types.empty_struct_type));
-		define_type_symbol("byte_pointer", upcast(types.byte_pointer));
+		define_type_symbol("address", upcast(types.address));
+		define_type_symbol("isize", upcast(types.isize));
+		define_type_symbol("usize", upcast(types.usize));
 
 		auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
 			Symbol* result = symbol_table_define_symbol(
@@ -12752,7 +12759,6 @@ void semantic_analyser_reset()
 		define_hardcoded_symbol("memory_copy", Hardcoded_Type::MEMORY_COPY);
 		define_hardcoded_symbol("memory_zero", Hardcoded_Type::MEMORY_ZERO);
 		define_hardcoded_symbol("memory_compare", Hardcoded_Type::MEMORY_COMPARE);
-		define_hardcoded_symbol("reallocate", Hardcoded_Type::REALLOCATE);
 
 		define_hardcoded_symbol("panic", Hardcoded_Type::PANIC_FN);
 		define_hardcoded_symbol("size_of", Hardcoded_Type::SIZE_OF);

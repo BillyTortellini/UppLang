@@ -106,6 +106,8 @@ IR_Function* ir_function_create(Datatype_Function* signature, int slot_index = -
         slot.modtree_function = nullptr;
         slot.ir_function = nullptr;
         slot.index = slots.size;
+        slot.bytecode_start_instruction = -1;
+        slot.bytecode_end_instruction = -1;
         dynamic_array_push_back(&slots, slot);
         slot_index = slot.index;
     }
@@ -323,11 +325,11 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         case IR_Cast_Type::POINTERS:
             string_append_formated(string, "POINTERS");
             break;
-        case IR_Cast_Type::POINTER_TO_U64:
-            string_append_formated(string, "POINTER_TO_U64");
+        case IR_Cast_Type::POINTER_TO_ADDRESS:
+            string_append_formated(string, "POINTER_TO_ADDRESS");
             break;
-        case IR_Cast_Type::U64_TO_POINTER:
-            string_append_formated(string, "U64_TO_POINTER");
+        case IR_Cast_Type::ADDRESS_TO_POINTER:
+            string_append_formated(string, "ADDRESS_TO_POINTER");
             break;
         case IR_Cast_Type::ENUM_TO_INT:
             string_append_formated(string, "ENUM_TO_INT");
@@ -965,11 +967,52 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             return instr.options.call.destination;
         }
 
+        auto left = ir_generator_generate_expression(binop.left);
+        auto right = ir_generator_generate_expression(binop.right);
+
+        // Custom code-path for pointer-arithmetic
+        bool left_is_address = types_are_equal(datatype_get_non_const_type(left->datatype), upcast(types.address));
+        bool right_is_address = types_are_equal(datatype_get_non_const_type(right->datatype), upcast(types.address));
+
+        // Note: We want comparison binops for two addresse to not use this code-path
+        if ((left_is_address || right_is_address) && !(left_is_address && right_is_address))
+        {
+            auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
+            auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
+
+            // Convert left/right to usize, do binop, then convert back to address
+            IR_Instruction cast_instr;
+            cast_instr.type = IR_Instruction_Type::CAST;
+            cast_instr.options.cast.type = IR_Cast_Type::INTEGERS;
+            cast_instr.options.cast.source = left;
+            cast_instr.options.cast.destination = left_usize;
+            add_instruction(cast_instr);
+
+            cast_instr.options.cast.source = right;
+            cast_instr.options.cast.destination = right_usize;
+            add_instruction(cast_instr);
+
+            auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::BINARY_OP;
+            instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
+            instr.options.binary_op.operand_left = left_usize,
+            instr.options.binary_op.operand_right = right_usize;
+            instr.options.binary_op.destination = result_usize;
+            add_instruction(instr);
+
+            // Convert result
+            cast_instr.options.cast.source = result_usize;
+            cast_instr.options.cast.destination = make_destination_access_on_demand(value_type);
+            add_instruction(cast_instr);
+            return cast_instr.options.cast.destination;
+        }
+
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::BINARY_OP;
         instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
-        instr.options.binary_op.operand_left = ir_generator_generate_expression(binop.left);
-        instr.options.binary_op.operand_right = ir_generator_generate_expression(binop.right);
+        instr.options.binary_op.operand_left = left,
+        instr.options.binary_op.operand_right = right;
         instr.options.binary_op.destination = make_destination_access_on_demand(value_type);
         add_instruction(instr);
         return instr.options.binary_op.destination;
@@ -1075,79 +1118,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
                 call_instr.options.call.destination = ir_data_access_create_nothing();
                 return call_instr.options.call.destination;
-            }
-            case Hardcoded_Type::REALLOCATE:
-            {
-                auto param_mapping = get_info(call.arguments);
-
-                IR_Data_Access* slice_ptr_access = ir_generator_generate_expression(param_mapping->matched_parameters[0].expression);
-                IR_Data_Access* new_size_access = ir_generator_generate_expression(param_mapping->matched_parameters[1].expression);
-
-                assert(slice_ptr_access->datatype->mods.pointer_level == 1 && slice_ptr_access->datatype->base_type->type == Datatype_Type::SLICE, "");
-                Datatype_Slice* slice = downcast<Datatype_Slice>(slice_ptr_access->datatype->base_type);
-
-                IR_Data_Access* slice_size_access = ir_data_access_create_member(ir_data_access_create_dereference(slice_ptr_access), slice->size_member);
-                IR_Data_Access* slice_data_access = ir_data_access_create_member(ir_data_access_create_dereference(slice_ptr_access), slice->data_member);
-
-                IR_Data_Access* new_byte_size_access;
-                IR_Data_Access* old_byte_size_access;
-                if (slice->element_type->memory_info.value.size == 1) {
-                    new_byte_size_access = new_size_access;
-                    old_byte_size_access = slice_size_access;
-                }
-                else {
-                    old_byte_size_access = ir_data_access_create_intermediate(upcast(types.u64_type));
-                    new_byte_size_access = ir_data_access_create_intermediate(upcast(types.u64_type));
-
-                    IR_Instruction binop;
-                    binop.type = IR_Instruction_Type::BINARY_OP;
-                    binop.options.binary_op.type = IR_Binop::MULTIPLICATION;
-                    binop.options.binary_op.operand_left = new_size_access;
-                    binop.options.binary_op.operand_right = ir_data_access_create_constant_u64(slice->element_type->memory_info.value.size);
-                    binop.options.binary_op.destination = new_byte_size_access;
-                    add_instruction(binop);
-
-                    binop.options.binary_op.operand_left = slice_size_access;
-                    binop.options.binary_op.operand_right = ir_data_access_create_constant_u64(slice->element_type->memory_info.value.size);
-                    binop.options.binary_op.destination = old_byte_size_access;
-                    add_instruction(binop);
-                }
-
-                // Call reallocate function from memory allocator
-                IR_Data_Access* realloc_fn_access = ir_data_access_create_global(compiler.semantic_analyser->global_allocator);
-                realloc_fn_access = ir_data_access_create_dereference(realloc_fn_access);
-                realloc_fn_access = ir_data_access_create_member(realloc_fn_access, types.allocator->content.members[2]);
-
-                IR_Data_Access* reallocate_result_ptr = ir_data_access_create_intermediate(types.byte_pointer_optional);
-
-                IR_Instruction alloc_instr;
-                alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-                alloc_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-                alloc_instr.options.call.options.pointer_access = realloc_fn_access;
-                alloc_instr.options.call.destination = reallocate_result_ptr;
-                alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(4);
-                dynamic_array_push_back(&alloc_instr.options.call.arguments, ir_data_access_create_global(compiler.semantic_analyser->global_allocator));
-                dynamic_array_push_back(&alloc_instr.options.call.arguments, slice_data_access);
-                dynamic_array_push_back(&alloc_instr.options.call.arguments, old_byte_size_access);
-                dynamic_array_push_back(&alloc_instr.options.call.arguments, new_byte_size_access);
-                add_instruction(alloc_instr);
-
-                // Set new pointer
-                IR_Instruction cast_ptr_instr;
-                cast_ptr_instr.type = IR_Instruction_Type::CAST;
-                cast_ptr_instr.options.cast.destination = slice_data_access;
-                cast_ptr_instr.options.cast.source = reallocate_result_ptr;
-                cast_ptr_instr.options.cast.type = IR_Cast_Type::POINTERS;
-                add_instruction(cast_ptr_instr);
-
-                // Set new size
-                IR_Instruction move_size_instr;
-                move_size_instr.type = IR_Instruction_Type::MOVE;
-                move_size_instr.options.move.destination = slice_size_access;
-                move_size_instr.options.move.source = new_size_access;
-                add_instruction(move_size_instr);
-
-                return ir_data_access_create_nothing();
             }
             case Hardcoded_Type::PANIC_FN:
             {
@@ -1737,11 +1707,11 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
     case Cast_Type::POINTERS: {
         return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::POINTERS);
     }
-    case Cast_Type::POINTER_TO_U64: {
-        return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::POINTER_TO_U64);
+    case Cast_Type::POINTER_TO_ADDRESS: {
+        return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::POINTER_TO_ADDRESS);
     }
-    case Cast_Type::U64_TO_POINTER: {
-        return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::U64_TO_POINTER);
+    case Cast_Type::ADDRESS_TO_POINTER: {
+        return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::ADDRESS_TO_POINTER);
     }
     case Cast_Type::ENUM_TO_INT: {
         return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::ENUM_TO_INT);
@@ -2003,6 +1973,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 {
     auto stat_info = get_info(statement);
     auto& gen = ir_generator;
+    auto& types = compiler.analysis_data->type_system.predefined_types;
 
     auto backup_block = gen.current_block;
     gen.current_block = ir_block;
@@ -2513,13 +2484,48 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         // Handle binop
         if (info->specifics.overload.function == 0)
         {
-            IR_Instruction binop;
-            binop.type = IR_Instruction_Type::BINARY_OP;
-            binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
-            binop.options.binary_op.destination = left_access;
-            binop.options.binary_op.operand_left = left_access;
-            binop.options.binary_op.operand_right = right_access;
-            add_instruction(binop);
+            // Handle pointer arithmetic
+            if (types_are_equal(left_access->datatype->base_type, upcast(types.address)))
+            {
+                auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
+                auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
+
+                // Convert left/right to usize, do binop, then convert back to address
+                IR_Instruction cast_instr;
+                cast_instr.type = IR_Instruction_Type::CAST;
+                cast_instr.options.cast.type = IR_Cast_Type::INTEGERS;
+                cast_instr.options.cast.source = left_access;
+                cast_instr.options.cast.destination = left_usize;
+                add_instruction(cast_instr);
+
+                cast_instr.options.cast.source = right_access;
+                cast_instr.options.cast.destination = right_usize;
+                add_instruction(cast_instr);
+
+                // Do binop
+                auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
+                IR_Instruction instr;
+                instr.type = IR_Instruction_Type::BINARY_OP;
+                instr.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
+                instr.options.binary_op.operand_left = left_usize,
+                instr.options.binary_op.operand_right = right_usize;
+                instr.options.binary_op.destination = result_usize;
+                add_instruction(instr);
+
+                // Convert result
+                cast_instr.options.cast.source = result_usize;
+                cast_instr.options.cast.destination = left_access;
+                add_instruction(cast_instr);
+            }
+            else {
+                IR_Instruction binop;
+                binop.type = IR_Instruction_Type::BINARY_OP;
+                binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
+                binop.options.binary_op.destination = left_access;
+                binop.options.binary_op.operand_left = left_access;
+                binop.options.binary_op.operand_right = right_access;
+                add_instruction(binop);
+            }
         }
         else
         {
@@ -2617,13 +2623,13 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             ir_data_access_create_dereference(allocator_ptr_access), types.allocator->content.members[1]
         );
 
-        IR_Data_Access* byte_ptr_access = ir_data_access_create_intermediate(types.byte_pointer);
-        IR_Instruction byte_ptr_cast;
-        byte_ptr_cast.type = IR_Instruction_Type::CAST;
-        byte_ptr_cast.options.cast.destination = byte_ptr_access;
-        byte_ptr_cast.options.cast.source = pointer_to_delete_access;
-        byte_ptr_cast.options.cast.type = IR_Cast_Type::POINTERS;
-        add_instruction(byte_ptr_cast);
+        IR_Data_Access* address_access = ir_data_access_create_intermediate(upcast(types.address));
+        IR_Instruction address_case;
+        address_case.type = IR_Instruction_Type::CAST;
+        address_case.options.cast.destination = address_access;
+        address_case.options.cast.source = pointer_to_delete_access;
+        address_case.options.cast.type = IR_Cast_Type::POINTER_TO_ADDRESS;
+        add_instruction(address_case);
 
         IR_Instruction alloc_instr;
         alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -2632,18 +2638,9 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         alloc_instr.options.call.destination = ir_data_access_create_intermediate(upcast(types.bool_type));
         alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, allocator_ptr_access);
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, byte_ptr_access);
+        dynamic_array_push_back(&alloc_instr.options.call.arguments, address_access);
         dynamic_array_push_back(&alloc_instr.options.call.arguments, size_access);
         add_instruction(alloc_instr);
-
-        // Set pointer access to null
-        IR_Instruction set_null_instr;
-        set_null_instr.type = IR_Instruction_Type::CAST;
-        set_null_instr.options.cast.destination = pointer_to_delete_access;
-        void* null_val = nullptr;
-        set_null_instr.options.cast.source = ir_data_access_create_constant(types.byte_pointer, array_create_static_as_bytes(&null_val, 1));
-        set_null_instr.options.cast.type = IR_Cast_Type::POINTERS;
-        add_instruction(set_null_instr);
 
         break;
     }
@@ -2937,14 +2934,14 @@ void ir_generator_reset()
         {
             auto fn = default_alloc_function;
             ir_generator.current_block = fn->code;
-            IR_Data_Access* pointer_value = ir_data_access_create_intermediate(types.byte_pointer);
+            IR_Data_Access* address_access = ir_data_access_create_intermediate(upcast(types.address));
             IR_Data_Access* size_param_u64 = ir_data_access_create_parameter(fn, 1);
 
             IR_Instruction call_instr;
             call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = Hardcoded_Type::MALLOC_SIZE_U64;
-            call_instr.options.call.destination = pointer_value;
+            call_instr.options.call.options.hardcoded = Hardcoded_Type::SYSTEM_ALLOC;
+            call_instr.options.call.destination = address_access;
             call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&call_instr.options.call.arguments, size_param_u64);
             add_instruction(call_instr);
@@ -2952,7 +2949,7 @@ void ir_generator_reset()
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = pointer_value;
+            return_instr.options.return_instr.options.return_value = address_access;
             add_instruction(return_instr);
         }
 
@@ -2966,7 +2963,7 @@ void ir_generator_reset()
             IR_Instruction call_instr;
             call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = Hardcoded_Type::FREE_POINTER;
+            call_instr.options.call.options.hardcoded = Hardcoded_Type::SYSTEM_FREE;
             call_instr.options.call.destination = ir_data_access_create_nothing();
             call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&call_instr.options.call.arguments, pointer_value);
@@ -2984,7 +2981,7 @@ void ir_generator_reset()
             auto fn = default_reallocate_function;
             ir_generator.current_block = fn->code;
 
-            // Default allocator can never resize allocations
+            // System allocator currently never resizes
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
@@ -3000,8 +2997,6 @@ void ir_generator_reset()
         allocator.allocate_fn_index_plus_one = default_alloc_function->function_slot_index + 1;
         allocator.free_fn_index_plus_one = default_free_function->function_slot_index + 1;
         allocator.resize_fn_index_plus_one = default_reallocate_function->function_slot_index + 1;
-        allocator.data.type.index = types.byte_pointer->type_handle.index;
-        allocator.data.data = nullptr;
 
         *(Upp_Allocator*)compiler.semantic_analyser->system_allocator->memory = allocator;
         *(Upp_Allocator**)compiler.semantic_analyser->global_allocator->memory = (Upp_Allocator*) compiler.semantic_analyser->system_allocator->memory;

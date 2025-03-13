@@ -122,7 +122,6 @@ struct Bytecode_Generator
 {
     // Result data
     Dynamic_Array<Bytecode_Instruction> instructions;
-    Hashtable<IR_Function*, int> function_locations;
 
     // Program Information
     Dynamic_Array<Array<int>> stack_offsets; // For both registers and functions

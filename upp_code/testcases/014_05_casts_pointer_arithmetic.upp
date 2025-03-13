@@ -1,24 +1,23 @@
 
-import Upp~u64
-import Upp~type_info
+import Upp~address
+import Upp~size_of
 
-main::()
-	// Casting between pointers is done with cast_pointer keyword,
-	// which can also cast pointers to u64 and back (to get the pointer address)
+main :: ()
+	///
+		Normal pointers don't support pointer arithmetic in upp,
+		but the Primitive 'address' type just holds a single memory address,
+		and it supports limited arithmetic with integers
 	
-	values:[3]int=.[1,2,3]
+	values: [3]int = .[1, 2, 3]
 	
-	ip:=*values[0]
-	address:u64=cast_pointer{u64}ip
-	address=address+cast{u64}type_info(int).size
-	return
+	ip :=* values[0]
+	ptr: address = cast_pointer ip
+	ptr = ptr + size_of(int) 
 	
-	return
+	ip =* cast_pointer ptr
+	ip = 5
 	
-	ip=*cast_pointer{*int}address
-	ip=5
-	
-	assert(values[0]==1)
-	assert(values[1]==5)
-	assert(values[2]==3)
+	assert(values[0] == 1)
+	assert(values[1] == 5)
+	assert(values[2] == 3)
 	

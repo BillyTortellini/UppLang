@@ -1,5 +1,5 @@
 
-import Upp~u64
+import Upp~usize
 import Upp~c_string
 
 Player :: struct
@@ -8,7 +8,7 @@ Player :: struct
 	alive: bool
 
 add_ints :: (ints: []int) -> int
-	i: u64 = 0
+	i: usize = 0
 	sum := 0
 	while i < ints.size
 		sum = sum + ints[i]

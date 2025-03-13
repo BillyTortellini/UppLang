@@ -16,6 +16,7 @@ static void logger_default_log_function(const char* message) {
 static void logger_default_panic_function(const char* message) {
     printf("\n\nSYSTEM_PANIC %s", message);
     printf("\n\n");
+    __debugbreak();
     // system("pause");
     //exit(-1);
 }

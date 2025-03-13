@@ -133,9 +133,16 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         panic("Shouldn't happen");
         return;
     }
-    case Datatype_Type::TYPE_HANDLE:
-    case Datatype_Type::ENUM:
+    case Datatype_Type::ENUM: return;
     case Datatype_Type::PRIMITIVE: {
+        auto primitive = downcast<Datatype_Primitive>(signature);
+        if (primitive->primitive_type == Primitive_Type::ADDRESS) {
+            void* pointer = *(void**)memory;
+            if (pointer != nullptr) {
+                result = constant_pool_result_make_error("Found address that isn't nullptr");
+                return;
+            }
+        }
         return;
     }
     case Datatype_Type::CONSTANT: {
@@ -152,7 +159,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         }
         return;
     }
-    case Datatype_Type::BYTE_POINTER:
     case Datatype_Type::POINTER:
     {
         void* pointer = *(void**)memory;

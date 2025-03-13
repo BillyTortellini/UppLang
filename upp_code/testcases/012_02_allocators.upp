@@ -4,11 +4,11 @@ main :: ()
 	// currently set allocator (Implemented as a global for now)
 	// The difference to calling the function directly is that
 	// new and delete expect the allocation to succeed (Otherwise panic),
-	// and that the type is already corrected
+	// and that the type is already corrected (We get a type pointer instead of address)
 	
 	alloc :=* Upp~global_allocator
 	ptr := alloc.allocate_fn(alloc, 100, 4)
-	assert(ptr *!= cast_pointer null)
+	assert(ptr != null)
 	
 	ip: *int =* cast_pointer ptr
 	ip = 10
@@ -22,9 +22,9 @@ main :: ()
 	// create and set other allocators
 	
 	STACK_SIZE :: 256
-	import Upp~byte_pointer
+	import Upp~address
 	import Upp~Allocator
-	import Upp~u64
+	import Upp~usize
 	import Upp~u32
 	import Upp~u8
 	Stack_Allocator :: struct
@@ -33,21 +33,21 @@ main :: ()
 		stack_index: int
 		alloc_count: int
 	
-	custom_alloc :: (allocator_base: *Allocator, size: u64, alignment: u32) -> byte_pointer
+	custom_alloc :: (allocator_base: *Allocator, size: usize, alignment: u32) -> address
 		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
 		if alloc.stack_index + cast size >= STACK_SIZE
 			return cast_pointer null
 		
 		alloc.alloc_count += 1
-		ptr: byte_pointer =* cast_pointer *alloc.memory[alloc.stack_index]
+		ptr: address = cast_pointer *alloc.memory[alloc.stack_index]
 		alloc.stack_index += cast {int} size
 		return ptr
 	
-	custom_dealloc :: (data: *Allocator, pointer: byte_pointer, size: u64)
+	custom_dealloc :: (data: *Allocator, pointer: address, size: usize)
 		alloc :=* cast_pointer {*Stack_Allocator} data
 		alloc.alloc_count -= 1
 	
-	custom_realloc :: (allocator: *Allocator, ptr: byte_pointer, prev: u64, next: u64) -> bool
+	custom_realloc :: (allocator: *Allocator, ptr: address, prev: usize, next: usize) -> bool
 		return false
 	
 	stack_alloc := Stack_Allocator.{

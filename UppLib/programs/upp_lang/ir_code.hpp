@@ -169,8 +169,8 @@ enum class IR_Cast_Type
     FLOAT_TO_INT,
     INT_TO_FLOAT,
     POINTERS,
-    POINTER_TO_U64,
-    U64_TO_POINTER,
+    POINTER_TO_ADDRESS,
+    ADDRESS_TO_POINTER,
     ENUM_TO_INT,
     INT_TO_ENUM,
 };

@@ -759,7 +759,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 return true;
             }
 
-            jmp_to_instr_index = *hashtable_find_element(&compiler.bytecode_generator->function_locations, slot.ir_function);
+            jmp_to_instr_index = slot.bytecode_start_instruction;
         }
 
         if (jmp_to_instr_index < 0 || jmp_to_instr_index > instructions.size) {
@@ -806,7 +806,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         memory_set_bytes(&thread->return_register[0], 256, 0);
         switch (hardcoded_type)
         {
-        case Hardcoded_Type::MALLOC_SIZE_U64: 
+        case Hardcoded_Type::SYSTEM_ALLOC: 
         {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             u64 size = *(u64*)argument_start;
@@ -827,7 +827,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             memory_copy(thread->return_register, &alloc_data, sizeof(void*));
             break;
         }
-        case Hardcoded_Type::FREE_POINTER: 
+        case Hardcoded_Type::SYSTEM_FREE: 
         {
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             void* free_data = *(void**)argument_start;

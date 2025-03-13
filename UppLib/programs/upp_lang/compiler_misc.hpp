@@ -14,6 +14,11 @@ struct Module_Progress;
 struct ModTree_Function;
 struct Datatype_Struct;
 
+// Note:
+// Cast type records all cast where 'an actual operation' happens, e.g. new values are created
+// The type of the result may still change, even if there is no cast involved,
+// which happens with auto-dereference, subtype-changes, to/from optional pointer and const-changes
+// To get a full picture of all performed operations the Expression_Cast_Info struct is required
 enum class Cast_Type
 {
     INTEGERS,
@@ -21,15 +26,15 @@ enum class Cast_Type
     FLOAT_TO_INT,
     INT_TO_FLOAT,
     POINTERS,
-    POINTER_TO_U64,
-    U64_TO_POINTER,
+    POINTER_TO_ADDRESS,
+    ADDRESS_TO_POINTER,
     ENUM_TO_INT,
     INT_TO_ENUM,
     ARRAY_TO_SLICE, 
     TO_ANY,
     FROM_ANY,
     TO_OPTIONAL,
-    CUSTOM_CAST,
+    CUSTOM_CAST, 
 
     NO_CAST, // No cast needed, source-type == destination-type
     UNKNOWN, // Either source or destination type are/contain error/unknown type
@@ -59,7 +64,7 @@ enum class Cast_Option
     INT_TO_FLOAT,
     FLOAT_TO_INT,
 
-    POINTER_TO_POINTER, // Includes casts between pointer, byte_pointer, function-pointer and u64 (But only with cast_pointer)
+    POINTER_TO_POINTER, // Includes casts between pointer, function-pointer and address (But only with cast_pointer)
     TO_BYTE_POINTER, // Does not affect cast_pointer
     FROM_BYTE_POINTER, // Does not affect cast_pointer
 
@@ -101,16 +106,15 @@ enum class Hardcoded_Type
     MEMORY_ZERO,
     MEMORY_COMPARE,
 
+    SYSTEM_ALLOC,
+    SYSTEM_FREE,
+
     BITWISE_NOT,
     BITWISE_AND,
     BITWISE_OR,
     BITWISE_XOR,
     BITWISE_SHIFT_LEFT,
     BITWISE_SHIFT_RIGHT,
-
-    MALLOC_SIZE_U64,
-    FREE_POINTER,
-    REALLOCATE,
 
     PRINT_I32,
     PRINT_F32,

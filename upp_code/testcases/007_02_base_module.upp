@@ -5,10 +5,13 @@
 
 main :: ()
 	// Here are all primitive types currently available
-	x0: int
+	x0: int // aliases i32
+	assert(int == Upp~i32)
 	x1: float
+	assert(float == Upp~f32)
 	x_1: bool
 	
+	// Integer types
 	x2: Upp~u8
 	x3: Upp~u16
 	x4: Upp~u32
@@ -18,9 +21,16 @@ main :: ()
 	x8: Upp~i32
 	x9: Upp~i64
 	
+	// Float types
 	x10: Upp~f32
 	x11: Upp~f64
 	
-	p: Upp~byte_pointer
+	// Boolean
+	b: bool
+	
+	// Other predefined types
+	a: Upp~address // Like void* in C 
+	z1: Upp~isize // Either 32 bit or 64 bit size, depending on Machine
+	z2: Upp~usize // Either 32 bit or 64 bit size, depending on Machine
 
 

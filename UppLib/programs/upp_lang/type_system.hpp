@@ -66,19 +66,19 @@ struct Upp_Type_Handle
 // NOTE: This enum has to be in synch with type_info options, see add_predefined_types
 enum class Datatype_Type
 {
-    PRIMITIVE = 1, // Int, float, bool
+    PRIMITIVE = 1, // Int, float, bool, type_handle, address, isize, usize
     ARRAY, // Array with compile-time known size, like [5]int
     SLICE, // Pointer + size
-    POINTER,
     STRUCT,
     ENUM,
     FUNCTION,
-    SUBTYPE,
-    TYPE_HANDLE,
-    BYTE_POINTER, // Same as void* in C++
+    UNKNOWN_TYPE, // For error propagation
+
+    // Modifier-Types
+    POINTER,
     CONSTANT,
     OPTIONAL_TYPE,
-    UNKNOWN_TYPE, // For error propagation
+    SUBTYPE,
 
     // Types for polymorphism
     TEMPLATE_TYPE,
@@ -128,11 +128,40 @@ struct Datatype
     Type_Mods mods; // These are the modifiers which when applied to the base_type gets us this type
 };
 
-enum class Primitive_Type
+enum class Primitive_Class
 {
     INTEGER = 1,
-    FLOAT = 2,
-    BOOLEAN = 3
+    FLOAT,
+    BOOLEAN,
+    ADDRESS,
+    TYPE_HANDLE
+};
+
+enum class Primitive_Type
+{
+    // Basic integers
+    I8 = 1,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+
+    // 'Integer-Aliases'
+    ADDRESS,
+    ISIZE,
+    USIZE,
+    TYPE_HANDLE, // 32-bit unsigned int
+    C_CHAR,      // Exists for c-strings? Because c differentiates 3! different char types, signed, unsigned and other
+
+    // Floats
+    F32,
+    F64,
+
+    // Boolean
+    BOOLEAN
 };
 
 struct Datatype_Primitive
@@ -140,8 +169,8 @@ struct Datatype_Primitive
     Datatype base;
     // Note: Size of primitive (e.g. 16 or 32 bit) is determined by type size, e.g. base.size
     Primitive_Type primitive_type;
-    bool is_signed; // Only valid for integers
-    bool is_c_char; // Required for C-Generation as C differentiates between signed, unsigned and normal char.
+    Primitive_Class primitive_class;
+    bool is_signed; // True for all non-unsigned integers, on c_char this is set to false
 };
 
 struct Datatype_Array
@@ -182,12 +211,6 @@ struct Datatype_Function
     Optional<Datatype*> return_type;
     bool is_optional;
     Datatype_Function* non_optional_type;
-};
-
-struct Datatype_Bytepointer
-{
-    Datatype base;
-    bool is_optional;
 };
 
 struct Datatype_Subtype
@@ -306,15 +329,13 @@ struct Upp_Allocator
     i64 allocate_fn_index_plus_one;
     i64 free_fn_index_plus_one;
     i64 resize_fn_index_plus_one;
-    Upp_Any data;
 };
 
 
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive
 {
-    bool is_signed;
-    Primitive_Type tag;
+    Primitive_Type type;
 };
 
 struct Internal_Type_Function
@@ -375,11 +396,6 @@ struct Internal_Type_Enum
     Upp_C_String name;
 };
 
-struct Internal_Type_Bytepointer
-{
-    bool is_optional;
-};
-
 struct Internal_Type_Pointer
 {
     Upp_Type_Handle child_type;
@@ -401,9 +417,8 @@ struct Internal_Type_Information
     union {
         Internal_Type_Pointer pointer;
         Internal_Type_Optional optional;
-        Internal_Type_Bytepointer byte_pointer;
-        Upp_Type_Handle constant;
         Internal_Type_Array array;
+        Upp_Type_Handle constant;
         Internal_Type_Slice slice;
         Internal_Type_Primitive primitive;
         Internal_Type_Function function;
@@ -460,8 +475,6 @@ struct Type_Deduplication
 struct Predefined_Types
 {
     // Primitive types
-    Datatype_Primitive* c_char_type;
-    Datatype_Primitive* bool_type;
     Datatype_Primitive* i8_type;
     Datatype_Primitive* i16_type;
     Datatype_Primitive* i32_type;
@@ -470,16 +483,20 @@ struct Predefined_Types
     Datatype_Primitive* u16_type;
     Datatype_Primitive* u32_type;
     Datatype_Primitive* u64_type;
+
     Datatype_Primitive* f32_type;
     Datatype_Primitive* f64_type;
+
+    Datatype_Primitive* c_char;
+    Datatype_Primitive* address;
+    Datatype_Primitive* isize;
+    Datatype_Primitive* usize;
+    Datatype_Primitive* bool_type;
+    Datatype*           type_handle;
 
     // Prebuilt structs/types used by compiler
     Datatype* c_string;
     Datatype* unknown_type;
-    Datatype* type_handle;
-    Datatype* byte_pointer;
-    Datatype* byte_pointer_optional;
-    Datatype* bytes; // Slice with byte_pointer
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* internal_struct_content_type;
@@ -488,16 +505,15 @@ struct Predefined_Types
 
     Datatype_Enum* cast_mode;
     Datatype_Enum* cast_option;
+    Datatype_Enum* primitive_type_enum;
 
     Datatype_Struct* allocator;
     Datatype_Function* allocate_function;
     Datatype_Function* free_function;
-    Datatype_Function* hardcoded_reallocate;
     Datatype_Function* resize_function;
 
-    // Types for built-in/hardcoded functions
-    Datatype_Function* type_malloc;
-    Datatype_Function* type_free;
+    Datatype_Function* hardcoded_system_alloc;
+    Datatype_Function* hardcoded_system_free;
 
     Datatype_Function* type_memory_copy;
     Datatype_Function* type_memory_zero;
@@ -601,7 +617,6 @@ Upp_C_String upp_c_string_empty();
 inline Datatype* upcast(Datatype* value)           { return value; }
 inline Datatype* upcast(Datatype_Optional* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Function* value)  { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Bytepointer* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct* value)    { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Enum* value)      { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Array* value)     { return (Datatype*)value; }
@@ -615,7 +630,6 @@ inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Optional* unused) { return Datatype_Type::OPTIONAL_TYPE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
-inline Datatype_Type get_datatype_type(Datatype_Bytepointer* unused) { return Datatype_Type::BYTE_POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Function* unused) { return Datatype_Type::FUNCTION; }
 inline Datatype_Type get_datatype_type(Datatype_Enum* unused) { return Datatype_Type::ENUM; }
 inline Datatype_Type get_datatype_type(Datatype_Array* unused) { return Datatype_Type::ARRAY; }

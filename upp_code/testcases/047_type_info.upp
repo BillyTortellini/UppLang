@@ -2,7 +2,7 @@ import Upp~c_string
 import Upp~Type_Info
 import Upp~type_info
 import Upp~Type_Handle
-import Upp~u64
+import Upp~usize
 
 Player :: struct
 	age: int
@@ -51,7 +51,7 @@ member_offset :: (type: Type_Handle, name: c_string) -> int
 		return -1
 	
 	members := info.Struct.content.members
-	i: u64 = 0
+	i: usize = 0
 	offset := -1
 	while i < members.size search_loop:
 		if string_compare(members[i].name, name)
@@ -63,7 +63,7 @@ member_offset :: (type: Type_Handle, name: c_string) -> int
 string_compare :: (str1: c_string, str2: c_string) -> bool
 	if str1.bytes.size != str2.bytes.size
 		return false
-	i: u64 = 0
+	i: usize = 0
 	while i < str1.bytes.size
 		if str1.bytes[i] != str2.bytes[i]
 			return false

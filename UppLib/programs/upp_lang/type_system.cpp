@@ -138,17 +138,6 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         string_append_formated(string, "Ptr %p", data);
         break;
     }
-    case Datatype_Type::BYTE_POINTER:
-    {
-        string_append_formated(string, "byte_pointer");
-        byte* data = *((byte**)value_ptr);
-        if (data == 0) {
-            string_append_formated(string, "nullptr");
-            return;
-        }
-        string_append_formated(string, "Ptr %p", data);
-        break;
-    }
     case Datatype_Type::OPTIONAL_TYPE:
     {
         auto opt = downcast<Datatype_Optional>(type);
@@ -159,18 +148,6 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         }
         else {
             string_append_formated(string, "Optional Unavailable");
-        }
-        break;
-    }
-    case Datatype_Type::TYPE_HANDLE: 
-    {
-        Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
-        if (handle.index < (u32) type_system->types.size) {
-            Datatype* type = type_system->types[handle.index];
-            datatype_append_to_string(string, type_system, type);
-        }
-        else {
-            string_append_formated(string, "Invalid_Type_Handle(#%d)", handle.index);
         }
         break;
     }
@@ -253,14 +230,38 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
     {
         auto primitive = downcast<Datatype_Primitive>(type);
         int size = primitive->base.memory_info.value.size;
-        switch (primitive->primitive_type)
+
+        switch (primitive->primitive_class)
         {
-        case Primitive_Type::BOOLEAN: {
+        case Primitive_Class::ADDRESS: 
+        {
+            string_append_formated(string, "address");
+            byte* data = *((byte**)value_ptr);
+            if (data == 0) {
+                string_append_formated(string, "nullptr");
+                return;
+            }
+            string_append_formated(string, "Ptr %p", data);
+            break;
+        }
+        case Primitive_Class::TYPE_HANDLE: 
+        {
+            Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
+            if (handle.index < (u32) type_system->types.size) {
+                Datatype* type = type_system->types[handle.index];
+                datatype_append_to_string(string, type_system, type);
+            }
+            else {
+                string_append_formated(string, "Invalid_Type_Handle(#%d)", handle.index);
+            }
+            break;
+        }
+        case Primitive_Class::BOOLEAN: {
             bool val = *(bool*)value_ptr;
             string_append_formated(string, "%s", val ? "TRUE" : "FALSE");
             break;
         }
-        case Primitive_Type::INTEGER: {
+        case Primitive_Class::INTEGER: {
             int value = 0;
             if (primitive->is_signed)
             {
@@ -287,7 +288,7 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
             string_append_formated(string, "%d", value);
             break;
         }
-        case Primitive_Type::FLOAT: {
+        case Primitive_Class::FLOAT: {
             if (size == 4) {
                 string_append_formated(string, "%3.2f", *(float*)value_ptr);
             }
@@ -354,11 +355,6 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         break;
     }
     case Datatype_Type::SLICE: {
-        if (types_are_equal(signature, type_system->predefined_types.bytes)) {
-            Rich_Text::set_text_color(text, Syntax_Color::TYPE);
-            Rich_Text::append_formated(text, "Bytes");
-            break;
-        }
         auto slice_type = downcast<Datatype_Slice>(signature);
         Rich_Text::append_formated(text, "[]");
         datatype_append_to_rich_text(slice_type->element_type, type_system, text, format);
@@ -382,40 +378,44 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         datatype_append_to_rich_text(opt->child_type, type_system, text, format);
         break;
     }
-    case Datatype_Type::BYTE_POINTER: {
-        Rich_Text::set_text_color(text, Syntax_Color::TYPE);
-        if (downcast<Datatype_Bytepointer>(signature)->is_optional) {
-            Rich_Text::append_character(text, '?');
-        }
-        Rich_Text::append_formated(text, "byte_pointer");
-        break;
-    }
-    case Datatype_Type::TYPE_HANDLE: {
-        Rich_Text::set_text_color(text, Syntax_Color::TYPE);
-        Rich_Text::append_formated(text, "Type_Handle");
-        break;
-    }
     case Datatype_Type::PRIMITIVE: 
     {
         Rich_Text::set_text_color(text, Syntax_Color::TYPE);
         auto primitive = downcast<Datatype_Primitive>(signature);
         auto memory = primitive->base.memory_info.value;
-        switch (primitive->primitive_type)
+        switch (primitive->primitive_class)
         {
-        case Primitive_Type::BOOLEAN: Rich_Text::append_formated(text, "bool"); break;
-        case Primitive_Type::INTEGER: {
+        case Primitive_Class::ADDRESS: 
+        {
+            Rich_Text::set_text_color(text, Syntax_Color::TYPE);
+            Rich_Text::append_formated(text, "address");
+            break;
+        }
+        case Primitive_Class::TYPE_HANDLE: {
+            Rich_Text::set_text_color(text, Syntax_Color::TYPE);
+            Rich_Text::append_formated(text, "Type_Handle");
+            break;
+        }
+        case Primitive_Class::BOOLEAN: Rich_Text::append_formated(text, "bool"); break;
+        case Primitive_Class::INTEGER: {
             if (memory.size == 4 && primitive->is_signed) {
                 Rich_Text::append(text, "int");
             }
-            else if (primitive->is_c_char) {
+            else if (primitive->primitive_type == Primitive_Type::C_CHAR) {
                 Rich_Text::append(text, "c_char"); break;
+            }
+            else if (primitive->primitive_type == Primitive_Type::ISIZE) {
+                Rich_Text::append(text, "isize"); break;
+            }
+            else if (primitive->primitive_type == Primitive_Type::USIZE) {
+                Rich_Text::append(text, "usize"); break;
             }
             else {
                 Rich_Text::append_formated(text, "%s%d", (primitive->is_signed ? "i" : "u"), memory.size * 8); break;
             }
             break;
         }
-        case Primitive_Type::FLOAT: {
+        case Primitive_Class::FLOAT: {
             if (memory.size == 4) {
                 Rich_Text::append(text, "float");
             }
@@ -914,17 +914,16 @@ Datatype datatype_make_simple_base(Datatype_Type type, int size, int alignment) 
     return result;
 }
 
-Datatype_Primitive* type_system_make_primitive(Primitive_Type type, int size, bool is_signed)
+Datatype_Primitive* type_system_make_primitive(Primitive_Type type, Primitive_Class primitive_class, int size, bool is_signed)
 {
     Datatype_Primitive* result = new Datatype_Primitive;
     result->base = datatype_make_simple_base(Datatype_Type::PRIMITIVE, size, size);
-    result->is_signed = is_signed;
-    result->is_c_char = false;
     result->primitive_type = type;
+    result->primitive_class = primitive_class;
+    result->is_signed = is_signed;
 
     auto& internal_info = type_system_register_type(upcast(result))->options.primitive;
-    internal_info.is_signed = is_signed;
-    internal_info.tag = type;
+    internal_info.type = type;
 
     return result;
 }
@@ -1093,6 +1092,8 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 Datatype_Slice* type_system_make_slice(Datatype* element_type)
 {
     auto& type_system = compiler.analysis_data->type_system;
+    auto& types = type_system.predefined_types;
+    auto& ids = compiler.identifier_pool.predefined_ids;
 
     Type_Deduplication dedup;
     dedup.type = Type_Deduplication_Type::SLICE;
@@ -1115,12 +1116,12 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->base.contains_template = element_type->contains_template;
 
     result->element_type = element_type;
-    result->data_member.id = compiler.identifier_pool.predefined_ids.data;
+    result->data_member.id = ids.data;
     result->data_member.type = upcast(type_system_make_pointer(element_type, true));
     result->data_member.offset = 0;
     result->data_member.content = 0;
-    result->size_member.id = compiler.identifier_pool.predefined_ids.size;
-    result->size_member.type = upcast(compiler.analysis_data->type_system.predefined_types.u64_type);
+    result->size_member.id = ids.size;
+    result->size_member.type = upcast(types.usize);
     result->size_member.offset = 8;
     result->size_member.content = 0;
 
@@ -1864,63 +1865,34 @@ void type_system_add_predefined_types(Type_System* system)
     auto& ids = compiler.identifier_pool.predefined_ids;
     Predefined_Types* types = &system->predefined_types;
 
-    types->c_char_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, false);
-    types->c_char_type->is_c_char = true;
-    types->bool_type = type_system_make_primitive(Primitive_Type::BOOLEAN, 1, false);
-    types->i8_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, true);
-    types->i16_type = type_system_make_primitive(Primitive_Type::INTEGER, 2, true);
-    types->i32_type = type_system_make_primitive(Primitive_Type::INTEGER, 4, true);
-    types->i64_type = type_system_make_primitive(Primitive_Type::INTEGER, 8, true);
-    types->u8_type = type_system_make_primitive(Primitive_Type::INTEGER, 1, false);
-    types->u16_type = type_system_make_primitive(Primitive_Type::INTEGER, 2, false);
-    types->u32_type = type_system_make_primitive(Primitive_Type::INTEGER, 4, false);
-    types->u64_type = type_system_make_primitive(Primitive_Type::INTEGER, 8, false);
-    types->f32_type = type_system_make_primitive(Primitive_Type::FLOAT, 4, true);
-    types->f64_type = type_system_make_primitive(Primitive_Type::FLOAT, 8, true);
+    // Primitive types
     {
+        types->i8_type = type_system_make_primitive(Primitive_Type::I8, Primitive_Class::INTEGER, 1, true);
+        types->i16_type = type_system_make_primitive(Primitive_Type::I16, Primitive_Class::INTEGER, 2, true);
+        types->i32_type = type_system_make_primitive(Primitive_Type::I32, Primitive_Class::INTEGER, 4, true);
+        types->i64_type = type_system_make_primitive(Primitive_Type::I64, Primitive_Class::INTEGER, 8, true);
+        types->u8_type = type_system_make_primitive(Primitive_Type::U8, Primitive_Class::INTEGER, 1, false);
+        types->u16_type = type_system_make_primitive(Primitive_Type::U16, Primitive_Class::INTEGER, 2, false);
+        types->u32_type = type_system_make_primitive(Primitive_Type::U32, Primitive_Class::INTEGER, 4, false);
+        types->u64_type = type_system_make_primitive(Primitive_Type::U64, Primitive_Class::INTEGER, 8, false);
+
+        types->f32_type = type_system_make_primitive(Primitive_Type::F32, Primitive_Class::FLOAT, 4, true);
+        types->f64_type = type_system_make_primitive(Primitive_Type::F64, Primitive_Class::FLOAT, 8, true);
+
+        types->c_char = type_system_make_primitive(Primitive_Type::C_CHAR, Primitive_Class::INTEGER, 1, false);
+        types->bool_type = type_system_make_primitive(Primitive_Type::BOOLEAN, Primitive_Class::BOOLEAN, 1, false);
+        types->address = type_system_make_primitive(Primitive_Type::ADDRESS, Primitive_Class::ADDRESS, 8, false);
+        types->isize = type_system_make_primitive(Primitive_Type::ISIZE, Primitive_Class::INTEGER, 8, true);
+        types->usize = type_system_make_primitive(Primitive_Type::USIZE, Primitive_Class::INTEGER, 8, false);
+        types->type_handle = upcast(type_system_make_primitive(Primitive_Type::TYPE_HANDLE, Primitive_Class::TYPE_HANDLE, 4, false));
+    }
+
+    // Other basic types
+    {
+        // Unknown
         types->unknown_type = new Datatype;
         *types->unknown_type = datatype_make_simple_base(Datatype_Type::UNKNOWN_TYPE, 1, 1);
         type_system_register_type(types->unknown_type);
-
-        types->type_handle = new Datatype;
-        *types->type_handle = datatype_make_simple_base(Datatype_Type::TYPE_HANDLE, sizeof(Upp_Type_Handle), alignof(Upp_Type_Handle));
-        type_system_register_type(types->type_handle);
-
-        auto byte_pointer = new Datatype_Bytepointer;
-        byte_pointer->base = datatype_make_simple_base(Datatype_Type::BYTE_POINTER, sizeof(void*), alignof(void*));
-        byte_pointer->is_optional = false;
-        type_system_register_type(upcast(byte_pointer))->options.byte_pointer.is_optional = false;
-        types->byte_pointer = upcast(byte_pointer);
-
-        auto byte_pointer_opt = new Datatype_Bytepointer;
-        byte_pointer_opt->base = datatype_make_simple_base(Datatype_Type::BYTE_POINTER, sizeof(void*), alignof(void*));
-        byte_pointer_opt->is_optional = true;
-        type_system_register_type(upcast(byte_pointer_opt))->options.byte_pointer.is_optional = true;
-        types->byte_pointer_optional = upcast(byte_pointer_opt);
-
-        // Bytes types
-        {
-            Datatype_Slice* result = new Datatype_Slice;
-            result->base = datatype_make_simple_base(Datatype_Type::SLICE, 16, 8);
-            result->base.memory_info.value.contains_reference = true;
-            result->base.memory_info.value.contains_padding_bytes = false;
-            result->base.contains_template = false;
-
-            result->element_type = upcast(types->u8_type);
-            result->data_member.id = compiler.identifier_pool.predefined_ids.data;
-            result->data_member.type = types->byte_pointer_optional;
-            result->data_member.offset = 0;
-            result->data_member.content = nullptr;
-            result->size_member.id = compiler.identifier_pool.predefined_ids.size;
-            result->size_member.type = upcast(compiler.analysis_data->type_system.predefined_types.u64_type);
-            result->size_member.offset = 8;
-            result->size_member.content = nullptr;
-
-            auto& internal_info = type_system_register_type(upcast(result))->options.slice;
-            internal_info.element_type = types->u8_type->base.type_handle;
-
-            types->bytes = upcast(result);
-        }
     }
 
     {
@@ -1947,9 +1919,7 @@ void type_system_add_predefined_types(Type_System* system)
         type_system_finish_enum(types->cast_option);
     }
 
-
     using AST::Structure_Type;
-
     auto make_id = [&](const char* name) -> String* { return identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name)); };
     auto add_member_cstr = [&](Struct_Content* content, const char* member_name, Datatype* member_type) {
         String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(member_name));
@@ -1984,7 +1954,7 @@ void type_system_add_predefined_types(Type_System* system)
     // String
     {
         Datatype_Struct* c_string = type_system_make_struct_empty(Structure_Type::STRUCT, ids.c_string, 0);
-        Datatype_Slice* slice_type = type_system_make_slice(type_system_make_constant(upcast(types->c_char_type)));
+        Datatype_Slice* slice_type = type_system_make_slice(type_system_make_constant(upcast(types->c_char)));
         struct_add_member(&c_string->content, ids.bytes, upcast(slice_type));
         type_system_finish_struct(c_string);
         types->c_string = upcast(c_string);
@@ -1994,7 +1964,7 @@ void type_system_add_predefined_types(Type_System* system)
     // Any
     {
         types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
-        add_member_cstr(&types->any_type->content, "data", upcast(types->byte_pointer));
+        add_member_cstr(&types->any_type->content, "data", upcast(types->address));
         add_member_cstr(&types->any_type->content, "type", types->type_handle);
         type_system_finish_struct(types->any_type);
         test_type_similarity<Upp_Any>(upcast(types->any_type));
@@ -2009,23 +1979,23 @@ void type_system_add_predefined_types(Type_System* system)
         // The type_system_make_constant calls were added, as parameters in Upp are 
         // without further declaration always constant, so I think this makes more sense
         types->allocate_function = type_system_make_function( {
-                make_param(type_system_make_constant(allocator_pointer),       "data"), 
-                make_param(type_system_make_constant(upcast(types->u64_type)), "size"), 
+                make_param(type_system_make_constant(allocator_pointer),       "allocator"), 
+                make_param(type_system_make_constant(upcast(types->usize)),    "size"), 
                 make_param(type_system_make_constant(upcast(types->u32_type)), "alignment")
             }, 
-            types->byte_pointer
+            upcast(types->address)
         );
         types->free_function = type_system_make_function( {
-                make_param(type_system_make_constant(allocator_pointer),       "data"), 
-                make_param(type_system_make_constant(types->byte_pointer),     "pointer"), 
-                make_param(type_system_make_constant(upcast(types->u64_type)), "size")
+                make_param(type_system_make_constant(allocator_pointer),      "allocator"), 
+                make_param(type_system_make_constant(upcast(types->address)), "pointer"), 
+                make_param(type_system_make_constant(upcast(types->usize)),   "size")
             } 
         );
         types->resize_function = type_system_make_function( {
-                make_param(type_system_make_constant(allocator_pointer),       "data"), 
-                make_param(type_system_make_constant(types->byte_pointer),     "pointer"), 
-                make_param(type_system_make_constant(upcast(types->u64_type)), "previous_size"),
-                make_param(type_system_make_constant(upcast(types->u64_type)), "new_size"),
+                make_param(type_system_make_constant(allocator_pointer),      "allocator"), 
+                make_param(type_system_make_constant(upcast(types->address)), "pointer"), 
+                make_param(type_system_make_constant(upcast(types->usize)),   "previous_size"),
+                make_param(type_system_make_constant(upcast(types->usize)),   "new_size"),
             }, 
             upcast(types->bool_type)
         );
@@ -2034,6 +2004,19 @@ void type_system_add_predefined_types(Type_System* system)
         add_member_cstr(&types->allocator->content, "free_fn", upcast(types->free_function));
         add_member_cstr(&types->allocator->content, "resize_fn", upcast(types->resize_function));
         type_system_finish_struct(types->allocator);
+    }
+
+    // Hardcoded system alloc/free
+    {
+        types->hardcoded_system_alloc = type_system_make_function( {
+                make_param(type_system_make_constant(upcast(types->usize)), "size")
+            }, 
+            upcast(types->address)
+        );
+        types->hardcoded_system_free = type_system_make_function( {
+                make_param(type_system_make_constant(upcast(types->address)), "pointer")
+            } 
+        );
     }
 
     // Type Information
@@ -2049,96 +2032,122 @@ void type_system_add_predefined_types(Type_System* system)
         auto subtype_primitive = add_struct_subtype(&type_info_type->content, "Primitive");
         auto subtype_array = add_struct_subtype(&type_info_type->content, "Array");
         auto subtype_slice = add_struct_subtype(&type_info_type->content, "Slice");
-        auto subtype_pointer = add_struct_subtype(&type_info_type->content, "Pointer");
         auto subtype_struct = add_struct_subtype(&type_info_type->content, "Struct");
         auto subtype_enum = add_struct_subtype(&type_info_type->content, "Enum");
         auto subtype_function = add_struct_subtype(&type_info_type->content, "Function");
-        auto subtype_subtype = add_struct_subtype(&type_info_type->content, "Subtype");
-        auto subtype_type_handle = add_struct_subtype(&type_info_type->content, "Type_Handle");
-        auto subtype_byte_pointer = add_struct_subtype(&type_info_type->content, "Byte_Pointer");
+        auto subtype_unknown = add_struct_subtype(&type_info_type->content, "Unknown");
+
+        auto subtype_pointer = add_struct_subtype(&type_info_type->content, "Pointer");
         auto subtype_constant = add_struct_subtype(&type_info_type->content, "Constant");
         auto subtype_optional = add_struct_subtype(&type_info_type->content, "Optional");
-        auto subtype_unknown = add_struct_subtype(&type_info_type->content, "Unknown");
+        auto subtype_subtype = add_struct_subtype(&type_info_type->content, "Subtype");
         
-        add_member_cstr(subtype_constant, "element_type", types->type_handle);
-        add_member_cstr(subtype_byte_pointer, "is_optional", upcast(types->bool_type));
+        // Fill subtypes
+        {
+            add_member_cstr(subtype_constant, "element_type", types->type_handle);
 
-        // Pointer
-        {
-            add_member_cstr(subtype_pointer, "element_type", types->type_handle);
-            add_member_cstr(subtype_pointer, "is_optional", upcast(types->bool_type));
-        }
-
-        // Optional
-        {
-            add_member_cstr(subtype_optional, "child_type", types->type_handle);
-            add_member_cstr(subtype_optional, "available_offset", upcast(types->i32_type));
-        }
-
-        // Primitive
-        {
-            Struct_Content* integer_info = add_struct_subtype(subtype_primitive, "Integer");
-            add_member_cstr(integer_info, "is_signed", upcast(types->bool_type));
-            add_struct_subtype(subtype_primitive, "Float");
-            add_struct_subtype(subtype_primitive, "Bool");
-        }
-        // Array
-        {
-            add_member_cstr(subtype_array, "element_type", types->type_handle);
-            add_member_cstr(subtype_array, "size", upcast(types->i32_type));
-        }
-        // Slice
-        {
-            add_member_cstr(subtype_slice, "element_type", types->type_handle);
-        }
-        // Struct
-        {
-            Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
+            // Pointer
             {
-                add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
-                add_member_cstr(&struct_member_type->content, "type", types->type_handle);
-                add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
-                type_system_finish_struct(struct_member_type);
+                add_member_cstr(subtype_pointer, "element_type", types->type_handle);
+                add_member_cstr(subtype_pointer, "is_optional", upcast(types->bool_type));
             }
-            types->internal_member_info_type = struct_member_type;
 
-            Datatype_Struct* internal_content = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
+            // Optional
             {
-                add_member_cstr(&internal_content->content, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
-                add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(internal_content))));
-                add_member_cstr(&internal_content->content, "tag_member", upcast(struct_member_type));
-                add_member_cstr(&internal_content->content, "name", upcast(types->c_string));
+                add_member_cstr(subtype_optional, "child_type", types->type_handle);
+                add_member_cstr(subtype_optional, "available_offset", upcast(types->i32_type));
             }
-            type_system_finish_struct(internal_content);
-            test_type_similarity<Internal_Type_Struct_Content>(upcast(internal_content));
-            types->internal_struct_content_type = internal_content;
 
-            add_member_cstr(subtype_struct, "content", upcast(internal_content));
-            add_member_cstr(subtype_struct, "is_union", upcast(types->bool_type));
-        }
-        // Subtype
-        {
-            add_member_cstr(subtype_subtype, "base_type", types->type_handle);
-            add_member_cstr(subtype_subtype, "name", upcast(types->c_string));
-            add_member_cstr(subtype_subtype, "index", upcast(types->i32_type));
-        }
-        // ENUM
-        {
+            // Primitive
             {
-                String* id = make_id("Enum_Member");
-                Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, id, 0);
-                add_member_cstr(&enum_member_type->content, "name", upcast(types->c_string));
-                add_member_cstr(&enum_member_type->content, "value", upcast(types->i32_type));
-                type_system_finish_struct(enum_member_type);
-                add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
+                types->primitive_type_enum = type_system_make_enum_empty(
+                    identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static("Primitive_Type"))
+                );
+                auto add_enum_member = [&](Datatype_Enum* enum_type, const char* name, int value) {
+                    Enum_Member item;
+                    item.name = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name));
+                    item.value = value;
+                    dynamic_array_push_back(&enum_type->members, item);
+                };
+
+                add_enum_member(types->primitive_type_enum, "I8", 1);
+                add_enum_member(types->primitive_type_enum, "I16", 2);
+                add_enum_member(types->primitive_type_enum, "I32", 3);
+                add_enum_member(types->primitive_type_enum, "I64", 4);
+                add_enum_member(types->primitive_type_enum, "U8", 5);
+                add_enum_member(types->primitive_type_enum, "U16", 6);
+                add_enum_member(types->primitive_type_enum, "U32", 7);
+                add_enum_member(types->primitive_type_enum, "U64", 8);
+                add_enum_member(types->primitive_type_enum, "ADDRESS", 9);
+                add_enum_member(types->primitive_type_enum, "ISIZE", 10);
+                add_enum_member(types->primitive_type_enum, "USIZE", 11);
+                add_enum_member(types->primitive_type_enum, "TYPE_HANDLE", 12);
+                add_enum_member(types->primitive_type_enum, "C_CHAR", 13);
+                add_enum_member(types->primitive_type_enum, "F32", 14);
+                add_enum_member(types->primitive_type_enum, "F64", 15);
+                add_enum_member(types->primitive_type_enum, "BOOL", 16);
+                type_system_finish_enum(types->primitive_type_enum);
+
+                add_member_cstr(subtype_primitive, "type", upcast(types->primitive_type_enum));
             }
-            add_member_cstr(subtype_enum, "name", upcast(types->c_string));
-        }
-        // Function
-        {
-            add_member_cstr(subtype_function, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
-            add_member_cstr(subtype_function, "return_type", types->type_handle);
-            add_member_cstr(subtype_function, "has_return_type", upcast(types->bool_type));
+            // Array
+            {
+                add_member_cstr(subtype_array, "element_type", types->type_handle);
+                add_member_cstr(subtype_array, "size", upcast(types->i32_type));
+            }
+            // Slice
+            {
+                add_member_cstr(subtype_slice, "element_type", types->type_handle);
+            }
+            // Struct
+            {
+                Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
+                {
+                    add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
+                    add_member_cstr(&struct_member_type->content, "type", types->type_handle);
+                    add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
+                    type_system_finish_struct(struct_member_type);
+                }
+                types->internal_member_info_type = struct_member_type;
+
+                Datatype_Struct* internal_content = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Struct_Content"), 0);
+                {
+                    add_member_cstr(&internal_content->content, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
+                    add_member_cstr(&internal_content->content, "subtypes", upcast(type_system_make_slice(upcast(internal_content))));
+                    add_member_cstr(&internal_content->content, "tag_member", upcast(struct_member_type));
+                    add_member_cstr(&internal_content->content, "name", upcast(types->c_string));
+                }
+                type_system_finish_struct(internal_content);
+                test_type_similarity<Internal_Type_Struct_Content>(upcast(internal_content));
+                types->internal_struct_content_type = internal_content;
+
+                add_member_cstr(subtype_struct, "content", upcast(internal_content));
+                add_member_cstr(subtype_struct, "is_union", upcast(types->bool_type));
+            }
+            // Subtype
+            {
+                add_member_cstr(subtype_subtype, "base_type", types->type_handle);
+                add_member_cstr(subtype_subtype, "name", upcast(types->c_string));
+                add_member_cstr(subtype_subtype, "index", upcast(types->i32_type));
+            }
+            // ENUM
+            {
+                {
+                    String* id = make_id("Enum_Member");
+                    Datatype_Struct* enum_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, id, 0);
+                    add_member_cstr(&enum_member_type->content, "name", upcast(types->c_string));
+                    add_member_cstr(&enum_member_type->content, "value", upcast(types->i32_type));
+                    type_system_finish_struct(enum_member_type);
+                    add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
+                }
+                add_member_cstr(subtype_enum, "name", upcast(types->c_string));
+            }
+            // Function
+            {
+                add_member_cstr(subtype_function, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
+                add_member_cstr(subtype_function, "return_type", types->type_handle);
+                add_member_cstr(subtype_function, "has_return_type", upcast(types->bool_type));
+            }
         }
 
         // Finish type-information
@@ -2161,32 +2170,24 @@ void type_system_add_predefined_types(Type_System* system)
         );
 
         types->type_memory_copy = type_system_make_function({
-                make_param(types->byte_pointer, "destination"), 
-                make_param(types->byte_pointer, "source"),
-                make_param(upcast(types->u64_type), "size")
+                make_param(upcast(types->address), "destination"), 
+                make_param(upcast(types->address), "source"),
+                make_param(upcast(types->usize),   "size")
             }, 
             nullptr
         );
         types->type_memory_zero = type_system_make_function({
-                make_param(types->byte_pointer, "destination"), 
-                make_param(upcast(types->u64_type), "size")
+                make_param(upcast(types->address), "destination"), 
+                make_param(upcast(types->usize), "size")
             }, 
             nullptr
         );
         types->type_memory_compare = type_system_make_function({
-                make_param(types->byte_pointer, "a"), 
-                make_param(types->byte_pointer, "b"),
-                make_param(upcast(types->u64_type), "size")
+                make_param(upcast(types->address), "a"), 
+                make_param(upcast(types->address), "b"),
+                make_param(upcast(types->usize), "size")
             }, 
             upcast(types->bool_type)
-        );
-
-        types->type_free = type_system_make_function({ make_param(upcast(types->byte_pointer), "pointer") });
-        types->type_malloc = type_system_make_function({ make_param(upcast(types->u64_type), "size") }, upcast(types->byte_pointer_optional));
-        types->hardcoded_reallocate = type_system_make_function({ 
-                make_param(upcast(types->any_type), "slice"),
-                make_param(upcast(types->u64_type), "new_size") 
-            }
         );
 
         types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });
@@ -2362,11 +2363,15 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
         }
         return true;
     }
-    else if (datatype->type == Datatype_Type::BYTE_POINTER) {
-        if (out_is_optional != nullptr) {
-            *out_is_optional = downcast<Datatype_Bytepointer>(datatype)->is_optional;
+    else if (datatype->type == Datatype_Type::PRIMITIVE) {
+        auto primitive = downcast<Datatype_Primitive>(datatype);
+        if (primitive->primitive_type == Primitive_Type::ADDRESS) {
+            if (out_is_optional != nullptr) {
+                *out_is_optional = true;
+            }
+            return true;
         }
-        return true;
+        return false;
     }
     else if (datatype->type == Datatype_Type::FUNCTION) {
         if (out_is_optional != nullptr) {

@@ -1,20 +1,28 @@
 
 
-
 CURRENT:
 --------
-Rework byte_pointer and u64 values...
- * byte_pointer --> address, which also supports arithmetic (functions like a u64)
- * usize and isize --> For Slices, Strings and all other things that need a size
 
-
+General Issue with Current Editor:
+ * We don't display enough information about auto-expressions
+   - What operations are applied automatically, what was the base type, highlight expression
+   - What cast-types are applied, why/when
+ * Function Overloads 
+    - Available Overloads
+    - Choosen overload
+    - Parameter previews
+    - Also for dot-calls
+ * Polymorphic Information (Select polymorphic instanciation index)
+ * Coloring is still of for lots of things
+    - Template Parameters
+    - Named parameters
+    - Import file as has no coloring
+  
 TODO:
 -----
- * new with [] is not working --> Refactor with {} things
+ * new with [] is not working --> Refactor with {} syntax
  * Fix memory leak
 
- * Template-Parameters have no coloring?
- * import file as has no coloring
  * Code completion for keywords (cast_pointer, cast)
  * Ctrl+U and Ctrl+D are not moving cursor
  * Searching with / and ? does not loop around file...
@@ -23,12 +31,7 @@ TODO:
 
 Maybe later:
  * Pointer comparison with constant/non-constant pointer --> Arguably we may just want a pointer cast here
- * Bytes are a little bit fucky to work with...
-    .data being a pointer and optional
-    Also pointer arithmetic with u64 is kinda weird, gotta think about that
-    Should optional slices exist?
- * Update Function-Parameter Preview
-    - In insert mode underlining current parameter does not work properly for last
+ * Print pointer hardcoded function would be nice --> Print Hex u64 value
     
 
 Upp-Implementation for
@@ -47,6 +50,10 @@ Upp-Implementation for
 
 DONE:
 -----
+13.03:
+ * Fixed all testcases with new systems
+ * Reworked byte_pointer, added new types: address, isize, usize
+
 12.03:
  * Added testcase for polymorphic overload resolution
  * Polymorphic Overload Resolution (With simple tree-matching)
@@ -120,6 +127,14 @@ TODO (Upp-Code):
  * Window and Graphics
 
 
+Address/isize/usize Semantics:
+  Address to/from Pointer requires cast_pointer
+  Address to/from Integer requires cast (inferred) 
+  isize/usize to/from Integer always need cast, 32/64 bit does not make much sense otherwise
+  Address supports basic arithmetic
+    - Address +/- integer
+    - Address - Address
+  
 
 
 
