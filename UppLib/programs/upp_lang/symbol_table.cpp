@@ -13,7 +13,7 @@ Symbol_Table* symbol_table_create()
     auto analyser = compiler.semantic_analyser;
     Symbol_Table* result = new Symbol_Table;
     dynamic_array_push_back(&compiler.analysis_data->allocated_symbol_tables, result);
-    result->included_tables = dynamic_array_create<Included_Table>(1);
+    result->included_tables = dynamic_array_create<Included_Table>();
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
     result->operator_context = 0;
     return result;
@@ -34,6 +34,7 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
         dynamic_array_destroy(iter.value);
     }
     hashtable_destroy(&symbol_table->symbols);
+	dynamic_array_destroy(&symbol_table->included_tables);
     delete symbol_table;
 }
 

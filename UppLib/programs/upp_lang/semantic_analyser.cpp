@@ -253,6 +253,7 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     case Info_Query::CREATE: {
         Analysis_Info* new_info = new Analysis_Info;
         memory_zero(new_info);
+        new_info->is_parameter_matching = node->type == AST::Node_Type::ARGUMENTS;
         bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
         assert(inserted, "Must not happen");
         return new_info;
@@ -267,6 +268,7 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
         // Otherwise create new
         Analysis_Info* new_info = new Analysis_Info;
         memory_zero(new_info);
+        new_info->is_parameter_matching = node->type == AST::Node_Type::ARGUMENTS;
         bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
         assert(inserted, "Must not happen");
         return new_info;
@@ -1716,6 +1718,7 @@ Expression_Context expression_context_make_unknown(bool unknown_due_to_error = f
 Expression_Context expression_context_make_auto_dereference() {
     Expression_Context context;
     context.type = Expression_Context_Type::AUTO_DEREFERENCE;
+    context.unknown_due_to_error = false;
     return context;
 }
 
@@ -1866,8 +1869,8 @@ void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
     expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
-void expression_info_set_constant_u64(Expression_Info* info, u64 value) {
-    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.u64_type), array_create_static((byte*)&value, sizeof(u64)), 0);
+void expression_info_set_constant_usize(Expression_Info* info, u64 value) {
+    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.usize), array_create_static((byte*)&value, sizeof(u64)), 0);
 }
 
 void expression_info_set_constant_u32(Expression_Info* info, u32 value) {
@@ -7257,7 +7260,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype* expr_type = analyse_parameter_if_not_already_done(param, expression_context_make_specific_type(types.type_handle));
 				if (datatype_is_unknown(expr_type)) {
 					if (is_size_of) {
-						expression_info_set_constant_u64(info, 1);
+						expression_info_set_constant_usize(info, 1);
 					}
 					else {
 						expression_info_set_constant_u32(info, 1);
@@ -7269,7 +7272,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					matching_info->matched_parameters[0].expression, "size_of/align_of requires comptime type-handle");
 				if (!result.available) {
 					if (is_size_of) {
-						expression_info_set_constant_u64(info, 1);
+						expression_info_set_constant_usize(info, 1);
 					}
 					else {
 						expression_info_set_constant_u32(info, 1);
@@ -7281,7 +7284,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (handle.index >= (u32)compiler.analysis_data->type_system.types.size) {
 					log_semantic_error("Invalid type-handle value", matching_info->matched_parameters[0].expression);
 					if (is_size_of) {
-						expression_info_set_constant_u64(info, 1);
+						expression_info_set_constant_usize(info, 1);
 					}
 					else {
 						expression_info_set_constant_u32(info, 1);
@@ -7293,7 +7296,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				type_wait_for_size_info_to_finish(type);
 				auto& memory = type->memory_info.value;
 				if (is_size_of) {
-					expression_info_set_constant_u64(info, memory.size);
+					expression_info_set_constant_usize(info, memory.size);
 				}
 				else {
 					expression_info_set_constant_u32(info, memory.alignment);
@@ -8911,7 +8914,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					auto array = downcast<Datatype_Array>(datatype);
 					if (member_node.name == ids.size) {
 						if (array->count_known) {
-							expression_info_set_constant_u64(info, array->element_count);
+							expression_info_set_constant_usize(info, array->element_count);
 						}
 						else {
 							EXIT_ERROR(upcast(types.u64_type));
@@ -12817,6 +12820,7 @@ void semantic_analyser_destroy()
 	hashset_destroy(&semantic_analyser.symbol_lookup_visited);
 	hashtable_destroy(&semantic_analyser.valid_template_parameters);
 	stack_allocator_destroy(&semantic_analyser.comptime_value_allocator);
+    workload_executer_destroy();
 }
 
 

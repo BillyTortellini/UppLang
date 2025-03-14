@@ -97,6 +97,7 @@ void compiler_destroy()
 
     if (compiler.analysis_data != nullptr) {
         compiler_analysis_data_destroy(compiler.analysis_data);
+        compiler.analysis_data = nullptr;
     }
     identifier_pool_destroy(&compiler.identifier_pool);
 

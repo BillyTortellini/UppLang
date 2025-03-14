@@ -1,6 +1,45 @@
 
 Done:
 -----
+13.03:
+ * Fixed all testcases with new systems
+ * Reworked byte_pointer, added new types: address, isize, usize
+
+12.03:
+ * Added testcase for polymorphic overload resolution
+ * Polymorphic Overload Resolution (With simple tree-matching)
+ * Bug with infinite loop when adding too many folds
+ * Free polymorphic overload fix (Argument-type is checked when we have 1 poly overload and one normal overload)
+
+11.03:
+ * Enum-Member auto-fill
+ * Fixed more markup bugs 
+ * Syntax-Highlighting for definitions
+ * Fixed parameter/global syntax-coloring bug
+ * Syntax-Color update (not great...)
+ * Finished Arena, fixed destroy bug
+
+10.03:
+ * Allocator-functions now have const parameters, so we don't have conversion issues
+ * Bug with function pointer conversion
+ * Bug with parser crashes
+ * Bug with in-keyword (auto-formating)
+ * Fixed testcases with new /// syntax
+ * Auto-formating respects strings and end-of line comments
+ * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
+
+07.03:
+ * Fixed synchronization bug
+ * Added identifier-pool lock
+ * Rewritten auto-formating with tokenizer
+
+06.03:
+ * Struct-Initializer for Slice
+ * Add testcases for #get_overload
+ * Add testcases for overloading (Poly overloading and dot-call overloading)
+ * Fixed Parser bounding-range bug for Overload_Argument
+ * Code-Completion for Hashtags #instanciate, #add_overload, #bake, #get_overload
+
 05.03.2025
  * Fixed bugs with dot-call overloads
  * Added #get_overload

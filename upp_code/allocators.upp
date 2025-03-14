@@ -1,9 +1,8 @@
 
 import Upp~Allocator
-import Upp~u64
+import Upp~usize
 import Upp~u32
-import Upp~Bytes
-import Upp~byte_pointer
+import Upp~address
 
 // Provides dot_calls for allocators, and also a more convenient way to resize
 Allocator_Helpers :: module

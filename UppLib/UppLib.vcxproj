@@ -39,6 +39,7 @@
     <ClInclude Include="programs\c_importer\c_lexer.hpp" />
     <ClInclude Include="programs\c_importer\import_gui.hpp" />
     <ClInclude Include="programs\imgui_test\imgui_test.hpp" />
+    <ClInclude Include="programs\test\test.hpp" />
     <ClInclude Include="programs\upp_lang\ast.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp" />
@@ -114,6 +115,7 @@
     <ClCompile Include="programs\c_importer\c_lexer.cpp" />
     <ClCompile Include="programs\c_importer\import_gui.cpp" />
     <ClCompile Include="programs\imgui_test\imgui_test.cpp" />
+    <ClCompile Include="programs\test\test.cpp" />
     <ClCompile Include="programs\upp_lang\ast.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_interpreter.cpp" />

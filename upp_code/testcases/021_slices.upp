@@ -3,7 +3,7 @@ import Upp~usize
 
 main :: ()
 	// New operator with () creates a slice
-	arr := new(20) int
+	arr := new{20} int
 	i: usize = 0
 	while i < arr.size
 		arr[i] = cast (arr.size - i - 1)

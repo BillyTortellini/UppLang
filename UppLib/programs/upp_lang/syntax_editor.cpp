@@ -1658,7 +1658,13 @@ namespace Text_Editing
 			out_space_after = true;
 			if (token.options.keyword == Keyword::NEW && token_index + 1 < tokens.size) {
 				const auto& next = tokens[token_index + 1];
-				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
+				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::BRACES) {
+					out_space_after = false;
+				}
+			}
+			if ((token.options.keyword == Keyword::CAST || token.options.keyword == Keyword::CAST_POINTER) && token_index + 1 < tokens.size) {
+				const auto& next = tokens[token_index + 1];
+				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::BRACES) {
 					out_space_after = false;
 				}
 			}
@@ -2782,7 +2788,7 @@ unsigned long compiler_thread_entry_fn(void* userdata)
 		compiler_analysis_update_source_code_information();
 
 		// Artificial sleep, to see how 'sluggish' editor becomes...
-		//timer_sleep_for(1.0);
+		// timer_sleep_for(1.0);
 
 		semaphore_increment(editor.compilation_finish_semaphore, 1);
 		//logg("Compiler thread waiting now\n");
@@ -2850,6 +2856,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 	{
 		if (editor.analysis_data != nullptr) {
 			compiler_analysis_data_destroy(editor.analysis_data);
+			editor.analysis_data = nullptr;
 		}
 		editor.analysis_data = compiler.analysis_data;
 		compiler.analysis_data = nullptr;
@@ -3910,6 +3917,16 @@ void code_completion_find_suggestions()
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
 			}
 		}
+
+		// Experimental: Add longer keywords to suggestions
+		fuzzy_search_add_item(*ids.cast_pointer, unranked_suggestions.size);
+		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.cast_pointer, Syntax_Color::KEYWORD));
+		fuzzy_search_add_item(*ids.defer_restore, unranked_suggestions.size);
+		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer_restore, Syntax_Color::KEYWORD));
+		fuzzy_search_add_item(*ids.cast, unranked_suggestions.size);
+		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.cast, Syntax_Color::KEYWORD));
+		fuzzy_search_add_item(*ids.defer, unranked_suggestions.size);
+		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer, Syntax_Color::KEYWORD));
 	}
 
 	// Add results to suggestions
@@ -4037,7 +4054,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 
 	bool repeat_movement = true;
 	bool set_horizontal_pos = true;
-	for (int i = 0; i < movement.repeat_count && repeat_movement; i++)
+	for (int repeat_index = 0; repeat_index < movement.repeat_count && repeat_movement; repeat_index++)
 	{
 		switch (movement.type)
 		{
@@ -4269,14 +4286,14 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			// Otherwise go through lines from start and try to find occurance
 			Text_Index index = pos;
 			bool found = false;
-			for (int i = index.line; i >= 0 && i < tab.code->line_count; i += search_reverse ? -1 : 1)
+			for (int offset = 0; offset < tab.code->line_count; offset += 1)
 			{
-				auto line = source_code_get_line(tab.code, i);
-				int pos = 0;
+				int line_index = math_modulo(index.line + offset * (search_reverse ? -1 : 1), tab.code->line_count);
+				auto line = source_code_get_line(tab.code, line_index);
 
 				if (search_reverse)
 				{
-					if (i == index.line && index.character == 0) {
+					if (line_index == index.line && index.character == 0) {
 						continue;
 					}
 
@@ -4287,7 +4304,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 					}
 
 					int max = line->text.size;
-					if (index.line == i) {
+					if (index.line == line_index) {
 						max = index.character - 1;
 					}
 					while (last_substring_start + 1 < max) {
@@ -4300,17 +4317,19 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 
 					if (last_substring_start + 1 < max) {
 						found = true;
-						index = text_index_make(i, last_substring_start);
+						index = text_index_make(line_index, last_substring_start);
 						break;
 					}
 				}
-				else {
-					if (i == index.line) {
+				else 
+				{
+					int pos = 0;
+					if (line_index == index.line) {
 						pos = index.character + 1;
 					}
 					int start = string_contains_substring(line->text, pos, search_text);
 					if (start != -1) {
-						index = text_index_make(i, start);
+						index = text_index_make(line_index, start);
 						found = true;
 						break;
 					}
@@ -4775,8 +4794,11 @@ void normal_command_execute(Normal_Mode_Command& command)
 
 	switch (command.type)
 	{
-	case Normal_Command_Type::MOVEMENT: {
+	case Normal_Command_Type::MOVEMENT: 
+	{
 		auto movement = command.options.movement;
+
+		// Handle moving into fold
 		if (line->is_folded && (movement.type == Movement_Type::MOVE_LEFT || movement.type == Movement_Type::MOVE_RIGHT)) {
 			// Delete this fold
 			auto& folds = tab.folds;
@@ -4932,7 +4954,16 @@ void normal_command_execute(Normal_Mode_Command& command)
 	case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
 	case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
 		int dir = command.type == Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
+		int prev = tab.cam_start;
 		tab.cam_start = Line_Movement::move_visible_lines_up_or_down(tab.cam_start, editor.visible_line_count / 2 * dir);
+
+		// Move cursor if viewport has changed
+		if (prev != tab.cam_start) {
+			Movement movement = Parsing::movement_make(
+				(dir == 1 ? Movement_Type::MOVE_DOWN : Movement_Type::MOVE_UP), math_absolute(tab.cam_start - prev));
+			cursor = movement_evaluate(movement, cursor);
+			syntax_editor_sanitize_cursor();
+		}
 		break;
 	}
 	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
@@ -5487,6 +5518,26 @@ void insert_command_execute(Insert_Command input)
 	}
 }
 
+void remove_folds_on_cursor()
+{
+	auto& editor = syntax_editor;
+	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& cursor = tab.cursor;
+	auto line = source_code_get_line(tab.code, cursor.line);
+
+	if (line->is_folded) {
+		auto& folds = tab.folds;
+		for (int i = 0; i < folds.size; i++) {
+			auto& fold = folds[i];
+			if (fold.line_start <= cursor.line && fold.line_end >= cursor.line) {
+				dynamic_array_remove_ordered(&folds, i);
+				i -= 1;
+			}
+		}
+		syntax_editor_update_line_visible_and_fold_info(editor.open_tab_index);
+	}
+}
+
 void syntax_editor_process_key_message(Key_Message& msg)
 {
 	auto& mode = syntax_editor.mode;
@@ -5673,21 +5724,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 
 		// Otherwise go through lines from start and try to find occurance
 		tab.cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), editor.search_start_pos);
-
-		// Remove all folds
-		auto line = source_code_get_line(tab.code, tab.cursor.line);
-		if (line->is_folded) {
-			auto& folds = tab.folds;
-			for (int i = 0; i < folds.size; i++) {
-				auto& fold = folds[i];
-				if (fold.line_start <= tab.cursor.line && fold.line_end >= tab.cursor.line) {
-					dynamic_array_remove_ordered(&folds, i);
-					i -= 1;
-				}
-			}
-			syntax_editor_update_line_visible_and_fold_info(editor.open_tab_index);
-		}
-
+		remove_folds_on_cursor();
 		break;
 	}
 	case Editor_Mode::FUZZY_FIND_DEFINITION:
@@ -5726,6 +5763,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 				syntax_editor_switch_tab(tab_index);
 			}
 			syntax_editor_add_position_to_jump_list();
+			remove_folds_on_cursor();
 			return;
 		}
 
@@ -5811,7 +5849,12 @@ void syntax_editor_process_key_message(Key_Message& msg)
 				symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
 				is_intern = true;
 			}
-			assert(symbol_table != 0, "At least root table should always be available");
+
+			// Note: Usually root-symbol table is never null, but it may happen
+			// on the very first compile after initialize, or if compiler has analysis disabled
+			if (symbol_table == nullptr) {
+				break;
+			}
 
 			// Follow path
 			Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();

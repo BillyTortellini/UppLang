@@ -195,6 +195,11 @@ struct Predefined_IDs
     String* hashtag_get_overload;
     String* hashtag_get_overload_poly;
 
+    String* cast_pointer;
+    String* defer_restore;
+    String* cast;
+    String* defer;
+
     String* lambda_function;
     String* bake_function;
 

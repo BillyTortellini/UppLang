@@ -58,6 +58,9 @@ namespace Parser
         // PERF: A block allocator could probably be used here
         auto result = new T;
         memory_zero(result);
+        dynamic_array_push_back(&parser.unit->allocated_nodes, &result->base);
+        parser.state.allocated_count = parser.unit->allocated_nodes.size;
+
         Node* base = &result->base;
         base->parent = parent;
         base->type = type;
@@ -1032,11 +1035,11 @@ namespace Parser
         {
             auto& ids = compiler.identifier_pool.predefined_ids;
 
-            CHECKPOINT_SETUP;
             if (!test_keyword_offset(Keyword::CONTEXT, 0)) {
-                CHECKPOINT_EXIT;
+                return 0;
             }
 
+		    CHECKPOINT_SETUP;
             auto result = allocate_base<Context_Change>(parent, Node_Type::CONTEXT_CHANGE);
             advance_token();
             result->type = Context_Change_Type::INVALID;
@@ -1086,8 +1089,11 @@ namespace Parser
 
         Definition* parse_definition(Node* parent)
         {
+            if (!test_token(Token_Type::IDENTIFIER)) {
+                return nullptr;
+            }
+                
             CHECKPOINT_SETUP;
-            if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
@@ -2225,10 +2231,10 @@ namespace Parser
             result->type = Expression_Type::NEW_EXPR;
             result->options.new_expr.count_expr.available = false;
             advance_token();
-            if (test_parenthesis_offset('(', 0)) {
+            if (test_parenthesis_offset('{', 0)) {
                 advance_token();
                 result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
-                if (!finish_parenthesis<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
+                if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
             }
             result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);
@@ -2435,7 +2441,7 @@ namespace Parser
         Expression* start_expr = parse_single_expression(parent);
         if (start_expr == 0) return 0;
 
-        Dynamic_Array<Binop_Link> links = dynamic_array_create<Binop_Link>(1);
+        Dynamic_Array<Binop_Link> links = dynamic_array_create<Binop_Link>();
         SCOPE_EXIT(dynamic_array_destroy(&links));
         while (true)
         {
@@ -2503,15 +2509,18 @@ namespace Parser
     {
         auto code = parser.code;
 
-        parser.state.pos = token_index_make(0, 0);
-        parser.state.line = source_code_get_line(parser.code, 0);
-
         // Create root
         auto root = allocate_base<Module>(0, Node_Type::MODULE);
         parser.unit->root = root;
         root->definitions = dynamic_array_create<Definition*>();
         root->import_nodes = dynamic_array_create<Import*>();
         root->context_changes = dynamic_array_create<Context_Change*>();
+
+        // Initialize state
+        parser.state.pos = token_index_make(0, 0);
+        parser.state.line = source_code_get_line(parser.code, 0);
+        parser.state.allocated_count = parser.unit->allocated_nodes.size;
+        parser.state.error_count = parser.unit->parser_errors.size;
 
         // Parse root
         parse_block_of_items(upcast(root), wrapper_parse_module_item, module_add_child, Operator::SEMI_COLON, 0, false);

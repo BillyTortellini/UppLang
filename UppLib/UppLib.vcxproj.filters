@@ -103,6 +103,12 @@
     <Filter Include="Source Files\Programs\Imgui_Test">
       <UniqueIdentifier>{41595b8d-31e9-4144-aad9-62bd3c180cf8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\Programs\Test">
+      <UniqueIdentifier>{b7e6fafc-a884-4a82-8c1b-0baa109e1a49}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Programs\Test">
+      <UniqueIdentifier>{70188079-535c-47da-abab-f7adc6b52dc9}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -333,6 +339,9 @@
     <ClInclude Include="utility\ui_system.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="programs\test\test.hpp">
+      <Filter>Header Files\Programs\Test</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -547,6 +556,9 @@
     </ClCompile>
     <ClCompile Include="utility\ui_system.cpp">
       <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\test\test.cpp">
+      <Filter>Source Files\Programs\Test</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

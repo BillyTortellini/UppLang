@@ -1,7 +1,24 @@
 
-
 CURRENT:
 --------
+
+
+TODO:
+-----
+
+    
+
+DONE:
+-----
+14.03:
+ * Fixed memory-leaks
+ * size_of should return usize
+ * Goto-Definition removes folds
+ * Ctrl+U and Ctrl+D are not moving cursor
+ * Searching with / and ? does not loop around file...
+ * new with [] is not working --> Refactor with {} syntax
+ * Code completion for keywords (cast_pointer, cast)
+
 
 General Issue with Current Editor:
  * We don't display enough information about auto-expressions
@@ -18,22 +35,6 @@ General Issue with Current Editor:
     - Named parameters
     - Import file as has no coloring
   
-TODO:
------
- * new with [] is not working --> Refactor with {} syntax
- * Fix memory leak
-
- * Code completion for keywords (cast_pointer, cast)
- * Ctrl+U and Ctrl+D are not moving cursor
- * Searching with / and ? does not loop around file...
- * Overloads in code-completion not showing correctly
- * Goto-Definition should remove folds... 
-
-Maybe later:
- * Pointer comparison with constant/non-constant pointer --> Arguably we may just want a pointer cast here
- * Print pointer hardcoded function would be nice --> Print Hex u64 value
-    
-
 Upp-Implementation for
  * Allocators
     - Arena
@@ -48,46 +49,6 @@ Upp-Implementation for
  * Strings and formated printing
 
 
-DONE:
------
-13.03:
- * Fixed all testcases with new systems
- * Reworked byte_pointer, added new types: address, isize, usize
-
-12.03:
- * Added testcase for polymorphic overload resolution
- * Polymorphic Overload Resolution (With simple tree-matching)
- * Bug with infinite loop when adding too many folds
- * Free polymorphic overload fix (Argument-type is checked when we have 1 poly overload and one normal overload)
-
-11.03:
- * Enum-Member auto-fill
- * Fixed more markup bugs 
- * Syntax-Highlighting for definitions
- * Fixed parameter/global syntax-coloring bug
- * Syntax-Color update (not great...)
- * Finished Arena, fixed destroy bug
-
-10.03:
- * Allocator-functions now have const parameters, so we don't have conversion issues
- * Bug with function pointer conversion
- * Bug with parser crashes
- * Bug with in-keyword (auto-formating)
- * Fixed testcases with new /// syntax
- * Auto-formating respects strings and end-of line comments
- * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
-
-07.03:
- * Fixed synchronization bug
- * Added identifier-pool lock
- * Rewritten auto-formating with tokenizer
-
-06.03:
- * Struct-Initializer for Slice
- * Add testcases for #get_overload
- * Add testcases for overloading (Poly overloading and dot-call overloading)
- * Fixed Parser bounding-range bug for Overload_Argument
- * Code-Completion for Hashtags #instanciate, #add_overload, #bake, #get_overload
 
 Example Code that I want:
     allocator.allocate(15)  --> Bytes
@@ -109,22 +70,6 @@ Example Code that I want:
     values.add(32)
     for v in values
         printf("%d\n", v)
-
-TODO (Upp-Code):
- * Allocators:
-    - Arena-Allocator
-    - Free_List 
-    - Fixed_Stack
- * Basic Datastructures:
-    - Dynamic-Array
-    - String
-        + Static Strings
-        + String-Builder
-        + Formatting
-        + Printing
-    - Hashtable
-    - List
- * Window and Graphics
 
 
 Address/isize/usize Semantics:

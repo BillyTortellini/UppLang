@@ -465,10 +465,10 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 		while (hashtable_iterator_has_next(&iter)) {
 			Analysis_Info* info = *iter.value;
 			AST_Info_Key* key = iter.key;
-			if (key->base->type == AST::Node_Type::ARGUMENTS) {
+			if (info->is_parameter_matching) {
 				parameter_matching_info_destroy(&info->parameter_matching_info);
 			}
-			delete* iter.value;
+			delete info;
 			hashtable_iterator_next(&iter);
 		}
 		hashtable_destroy(&data->ast_to_info_mapping);
@@ -528,6 +528,7 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	for (int i = 0; i < data->all_workloads.size; i++) {
 		analysis_workload_destroy(data->all_workloads[i]);
 	}
+	dynamic_array_destroy(&data->all_workloads);
 
 	delete data;
 }

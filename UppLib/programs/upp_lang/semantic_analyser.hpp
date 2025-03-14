@@ -703,18 +703,21 @@ struct Module_Info {
     Symbol_Table* symbol_table;
 };
 
-union Analysis_Info
+struct Analysis_Info
 {
-    Expression_Info info_expr;
-    Statement_Info info_stat;
-    Code_Block_Info info_block;
-    Case_Info info_case;
-    Parameter_Matching_Info parameter_matching_info;
-    Parameter_Info param_info;
-    Definition_Symbol_Info definition_symbol_info;
-    Symbol_Lookup_Info symbol_lookup_info;
-    Path_Lookup_Info path_info;
-    Module_Info module_info;
+    union {
+        Expression_Info info_expr;
+        Statement_Info info_stat;
+        Code_Block_Info info_block;
+        Case_Info info_case;
+        Parameter_Matching_Info parameter_matching_info;
+        Parameter_Info param_info;
+        Definition_Symbol_Info definition_symbol_info;
+        Symbol_Lookup_Info symbol_lookup_info;
+        Path_Lookup_Info path_info;
+        Module_Info module_info;
+    };
+    bool is_parameter_matching; // Used for cleanup, nothing else
 };
 
 enum class Info_Query

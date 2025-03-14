@@ -174,6 +174,11 @@ Identifier_Pool identifier_pool_create()
         ids.hashtag_get_overload = add_id("#get_overload");
         ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
 
+        ids.cast_pointer = add_id("cast_pointer");
+        ids.defer_restore = add_id("defer_restore");
+        ids.cast = add_id("cast");
+        ids.defer = add_id("defer");
+
         ids.function = add_id("function");
         ids.create_fn = add_id("create_fn");
         ids.next_fn = add_id("next_fn");
