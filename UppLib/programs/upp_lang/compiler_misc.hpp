@@ -41,6 +41,8 @@ enum class Cast_Type
     INVALID, // Cast is not valid
 };
 
+const char* cast_type_to_string(Cast_Type type);
+
 enum class Timing_Task
 {
     LEXING,

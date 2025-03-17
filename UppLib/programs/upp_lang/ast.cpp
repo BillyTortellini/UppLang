@@ -919,6 +919,80 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 #undef FILL_ARRAY
 }
 
+void expression_append_to_string(AST::Expression* expr, String* str)
+{
+	switch (expr->type)
+	{
+	case Expression_Type::BINARY_OPERATION: {
+		string_append_formated(str, "Binop \"");
+		switch (expr->options.binop.type)
+		{
+		case AST::Binop::ADDITION: string_append_formated(str, "+"); break;
+		case AST::Binop::SUBTRACTION: string_append_formated(str, "-"); break;
+		case AST::Binop::DIVISION: string_append_formated(str, "/"); break;
+		case AST::Binop::MULTIPLICATION: string_append_formated(str, "*"); break;
+		case AST::Binop::MODULO: string_append_formated(str, "%"); break;
+		case AST::Binop::AND: string_append_formated(str, "&&"); break;
+		case AST::Binop::OR: string_append_formated(str, "||"); break;
+		case AST::Binop::EQUAL: string_append_formated(str, "=="); break;
+		case AST::Binop::NOT_EQUAL: string_append_formated(str, "!="); break;
+		case AST::Binop::LESS: string_append_formated(str, "<"); break;
+		case AST::Binop::LESS_OR_EQUAL: string_append_formated(str, "<="); break;
+		case AST::Binop::GREATER: string_append_formated(str, ">"); break;
+		case AST::Binop::GREATER_OR_EQUAL: string_append_formated(str, ">="); break;
+		case AST::Binop::POINTER_EQUAL: string_append_formated(str, "*=="); break;
+		case AST::Binop::POINTER_NOT_EQUAL: string_append_formated(str, "*!="); break;
+		case AST::Binop::INVALID: string_append_formated(str, "INVALID"); break;
+		default: panic("");
+		}
+		string_append_formated(str, "\"");
+		break;
+	}
+	case Expression_Type::UNARY_OPERATION: string_append_formated(str, "Unop"); break;
+	case Expression_Type::OPTIONAL_CHECK: string_append_formated(str, "Optional Check"); break;
+	case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "Optional Type"); break;
+	case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "Optional Pointer"); break;
+	case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "Template Parameter \"%s\"", expr->options.polymorphic_symbol_id->characters); break;
+	case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
+	case Expression_Type::NEW_EXPR: string_append_formated(str, "New expr"); break;
+	case Expression_Type::CAST: string_append_formated(str, "Cast"); break;
+	case Expression_Type::BAKE_BLOCK: string_append_formated(str, "Bake Block"); break;
+	case Expression_Type::BAKE_EXPR: string_append_formated(str, "Bake Expr"); break;
+	case Expression_Type::INSTANCIATE: string_append_formated(str, "#instanciate"); break;
+	case Expression_Type::GET_OVERLOAD: string_append_formated(str, "#get_overload"); break;
+	case Expression_Type::PATH_LOOKUP: string_append_formated(str, "Lookup "); break;
+	case Expression_Type::LITERAL_READ: {
+		string_append_formated(str, "Literal \"");
+		auto& read = expr->options.literal_read;
+		switch (read.type) {
+		case Literal_Type::BOOLEAN: string_append_formated(str, read.options.boolean ? "true" : "false"); break;
+		case Literal_Type::INTEGER: string_append_formated(str, "%d", read.options.int_val); break;
+		case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
+		case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
+		case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
+		default: panic("");
+		}
+		string_append_formated(str, "\"");
+		break;
+	}
+	case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "Array_Access"); break;
+	case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "Member_Access"); break;
+	case Expression_Type::MODULE: string_append_formated(str, "Module"); break;
+	case Expression_Type::FUNCTION: string_append_formated(str, "Function"); break;
+	case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "Function_Signature"); break;
+	case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "Struct Type"); break;
+	case Expression_Type::ENUM_TYPE: string_append_formated(str, "Enum Type"); break;
+	case Expression_Type::ARRAY_TYPE: string_append_formated(str, "Array Type"); break;
+	case Expression_Type::SLICE_TYPE: string_append_formated(str, "Slice Type"); break;
+	case Expression_Type::CONST_TYPE: string_append_formated(str, "Const Type"); break;
+	case Expression_Type::ERROR_EXPR: string_append_formated(str, "Error"); break;
+	case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "Struct Initializer"); break;
+	case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "Array Initializer"); break;
+	case Expression_Type::AUTO_ENUM: string_append_formated(str, "Auto-Enum"); break;
+	default: panic("");
+	}
+}
+
 void base_append_to_string(Node* base, String* str)
 {
 	switch (base->type)

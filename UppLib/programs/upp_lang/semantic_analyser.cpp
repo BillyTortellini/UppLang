@@ -105,9 +105,9 @@ T* downcast(Workload_Base* workload) {
 
 
 // Helpers
-Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type)
+Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type, Compiler_Analysis_Data* analysis_data)
 {
-    auto& an = compiler.analysis_data->type_system.predefined_types;
+    auto& an = analysis_data->type_system.predefined_types;
     switch (type)
     {
     case Hardcoded_Type::ASSERT_FN: return an.type_assert;
@@ -1788,7 +1788,7 @@ void expression_info_set_hardcoded(Expression_Info* info, Hardcoded_Type hardcod
     info->result_type = Expression_Result_Type::HARDCODED_FUNCTION;
     info->is_valid = true;
     info->options.hardcoded = hardcoded;
-    info->cast_info.result_type = upcast(hardcoded_type_to_signature(hardcoded));
+    info->cast_info.result_type = upcast(hardcoded_type_to_signature(hardcoded, compiler.analysis_data));
     info->cast_info.initial_type = info->cast_info.result_type;
     info->cast_info.initial_value_is_temporary = true;
     info->cast_info.result_value_is_temporary = true;
@@ -3366,7 +3366,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
     {
         candidate.matching_info.call_type = Call_Type::HARDCODED;
         candidate.matching_info.options.hardcoded = info.options.hardcoded;
-        function_type = hardcoded_type_to_signature(info.options.hardcoded);
+        function_type = hardcoded_type_to_signature(info.options.hardcoded, compiler.analysis_data);
         break;
     }
     case Expression_Result_Type::DOT_CALL:
@@ -7368,7 +7368,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			}
 
-			info->specifics.function_call_signature = hardcoded_type_to_signature(matching_info->options.hardcoded);
+			info->specifics.function_call_signature = hardcoded_type_to_signature(matching_info->options.hardcoded, compiler.analysis_data);
 			break;
 		}
 

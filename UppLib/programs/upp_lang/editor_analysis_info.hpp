@@ -7,6 +7,11 @@
 #include "semantic_analyser.hpp"
 #include "symbol_table.hpp"
 
+namespace AST
+{
+    struct Node;
+};
+
 void compiler_analysis_update_source_code_information();
 
 struct Compiler_Analysis_Data
@@ -38,6 +43,7 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Function_Progress*> allocated_function_progresses;
     Dynamic_Array<Operator_Context*> allocated_operator_contexts;
     Dynamic_Array<Dynamic_Array<Dot_Call_Info>*> allocated_dot_calls;
+    Dynamic_Array<AST::Node*> allocated_nodes;
 };
 
 Compiler_Analysis_Data* compiler_analysis_data_create();

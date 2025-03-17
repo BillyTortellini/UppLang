@@ -2031,7 +2031,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(call->options.pointer_access->datatype));
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                function_sig = hardcoded_type_to_signature(call->options.hardcoded);
+                function_sig = hardcoded_type_to_signature(call->options.hardcoded, compiler.analysis_data);
                 break;
             default: panic("hey");
             }

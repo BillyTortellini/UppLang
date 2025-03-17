@@ -1174,7 +1174,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             }
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             call_instr.options.call.options.hardcoded = hardcoded;
-            signature = hardcoded_type_to_signature(hardcoded);
+            signature = hardcoded_type_to_signature(hardcoded, compiler.analysis_data);
             break;
         }
         case Expression_Result_Type::POLYMORPHIC_FUNCTION:

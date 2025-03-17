@@ -18,12 +18,15 @@ struct Analysis_Pass;
 struct Datatype_Enum;
 struct Compilation_Unit;
 struct Identifier_Pool_Lock;
+struct Expression_Info;
 
 namespace AST
 {
     struct Symbol_Lookup;
     struct Node;
     struct Module;
+    struct Expression;
+    struct Arguments;
 }
 
 
@@ -87,21 +90,12 @@ enum class Member_Access_Type
 
 enum class Code_Analysis_Item_Type
 {
-    SYMBOL_LOOKUP,
-    MEMBER_ACCESS,
-    AUTO_ENUM,
-    CALL_INFORMATION,
-    ARGUMENT_NODE,
     EXPRESSION_INFO,
+    SYMBOL_LOOKUP,
+    CALL_INFORMATION,
+    ARGUMENT,
     MARKUP,
-    ERROR_ITEM,
-};
-
-struct Code_Analysis_Item_Member_Access
-{
-    Member_Access_Type access_type;
-    Datatype* final_type;
-    Datatype* initial_type;
+    ERROR_ITEM
 };
 
 struct Code_Analysis_Item_Symbol_Info{
@@ -112,20 +106,28 @@ struct Code_Analysis_Item_Symbol_Info{
 };
 
 struct Code_Analysis_Item_Expression{
-    Datatype* before_cast_type;
-    Datatype* after_cast_type;
-    Cast_Type cast_type;
+    AST::Expression* expr;
+    Expression_Info* info;
+    Datatype* member_access_value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
+};
+
+struct Code_Analysis_Item_Call_Info {
+    Parameter_Matching_Info* matching_info;
+    AST::Arguments* arguments;
+};
+
+struct Code_Analysis_Argument_Info {
+    Parameter_Matching_Info* matching_info;
+    int argument_index;
 };
 
 union Code_Analysis_Item_Option
 {
     Code_Analysis_Item_Option() {};
-    Code_Analysis_Item_Member_Access member_access; 
-    Code_Analysis_Item_Expression expression_info;
+    Code_Analysis_Item_Expression expression;
     Code_Analysis_Item_Symbol_Info symbol_info;
-    Parameter_Matching_Info* call_information;
-    Datatype_Enum* auto_enum_type;
-    int argument_index;
+    Code_Analysis_Item_Call_Info call_info;
+    Code_Analysis_Argument_Info argument_info;
     vec3 markup_color;
     int error_index;
 };

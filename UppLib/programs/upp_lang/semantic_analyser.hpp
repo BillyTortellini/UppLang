@@ -870,7 +870,7 @@ void semantic_analyser_reset();
 void semantic_analyser_finish();
 Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload);
 
-Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type);
+Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type, Compiler_Analysis_Data* analysis_data);
 
 
 

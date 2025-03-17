@@ -489,6 +489,7 @@ namespace AST
     Node* base_get_child(Node* node, int child_index);
     void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill);
     void base_print(Node* node);
+    void expression_append_to_string(AST::Expression* expr, String* str);
     void base_append_to_string(Node* base, String* str);
 
     void context_change_type_append_to_string(Context_Change_Type type, String* string);

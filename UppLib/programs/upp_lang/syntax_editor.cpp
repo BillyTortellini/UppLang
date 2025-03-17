@@ -3263,11 +3263,9 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 // Code Queries
 struct Position_Info
 {
-	Code_Analysis_Item_Symbol_Info* symbol_info;
 	Code_Analysis_Item_Expression* expression_info;
-	Code_Analysis_Item_Member_Access* member_access;
-	Datatype_Enum* auto_enum_type;
-	Parameter_Matching_Info* call_info;
+	Code_Analysis_Item_Symbol_Info* symbol_info;
+	Code_Analysis_Item_Call_Info* call_info;
 	int call_argument_index;
 };
 
@@ -3365,8 +3363,6 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 	result.expression_info = nullptr;
 	result.call_info = nullptr;
 	result.call_argument_index = -1;
-	result.member_access = nullptr;
-	result.auto_enum_type = nullptr;
 
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -3377,7 +3373,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 	int previous_call_depth = -1;
 	for (int i = 0; i < infos.size; i++)
 	{
-		auto info = infos[i];
+		auto& info = infos[i];
 
 		bool on_info = false;
 		if (info.start_char == info.end_char && index.character == info.start_char) {
@@ -3390,24 +3386,50 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 
 		switch (info.type)
 		{
-		case Code_Analysis_Item_Type::CALL_INFORMATION: {
+		case Code_Analysis_Item_Type::CALL_INFORMATION: 
+		{
 			if (info.tree_depth > previous_call_depth) 
 			{
-				result.call_info = info.options.call_information;
+				result.call_info = &info.options.call_info;
 				previous_call_depth = info.tree_depth;
+
+				// Find argument index by counting commas
+				if (index.character == info.start_char) {
+					result.call_argument_index = 0;
+				}
+				else if (index.character == info.end_char - 1) {
+					result.call_argument_index = info.options.call_info.arguments->arguments.size - 1; // Note: -1 is also fine here
+				}
+				else 
+				{
+					// Figure out closest argument
+					int closest_index = -1;
+					int min_dist = 1000000;
+					for (int j = 0; j < infos.size; j++) {
+						auto other_info = infos[j];
+						if (other_info.type != Code_Analysis_Item_Type::ARGUMENT) continue;
+						auto arg_info = other_info.options.argument_info;
+						if (arg_info.matching_info != info.options.call_info.matching_info) continue;
+						int distance = math_minimum(
+							math_absolute(index.character - other_info.start_char), 
+							math_absolute(index.character - (other_info.end_char - 1))
+						);
+						if (index.character >= other_info.start_char && index.character < other_info.end_char) {
+							distance = 0;
+						}
+
+						if (distance < min_dist) {
+							min_dist = distance;
+							closest_index = arg_info.argument_index;
+						}
+					}
+					result.call_argument_index = closest_index;
+				}
 			}
-			break;
-		}
-		case Code_Analysis_Item_Type::ARGUMENT_NODE: {
-			result.call_argument_index = info.options.argument_index;
 			break;
 		}
 		case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
 			result.symbol_info = &infos[i].options.symbol_info;
-			break;
-		}
-		case Code_Analysis_Item_Type::AUTO_ENUM: {
-			result.auto_enum_type = info.options.auto_enum_type;
 			break;
 		}
 		case Code_Analysis_Item_Type::ERROR_ITEM: {
@@ -3418,15 +3440,12 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 		}
 		case Code_Analysis_Item_Type::EXPRESSION_INFO: {
 			if (info.tree_depth > previous_expr_depth) {
-				result.expression_info = &infos[i].options.expression_info;
+				result.expression_info = &infos[i].options.expression;
 				previous_expr_depth = info.tree_depth;
 			}
 			break;
 		}
-		case Code_Analysis_Item_Type::MEMBER_ACCESS: {
-			result.member_access = &infos[i].options.member_access;
-			break;
-		}
+		case Code_Analysis_Item_Type::ARGUMENT:
 		case Code_Analysis_Item_Type::MARKUP: {
 			break;
 		}
@@ -3591,10 +3610,11 @@ void code_completion_find_suggestions()
 	auto& suggestions = editor.suggestions;
 	auto& cursor = tab.cursor;
 
+	// Early exit if we have suggestions cached
 	syntax_editor_synchronize_code_information();
 	if (text_index_equal(tab.last_code_completion_query_pos, cursor) &&
 		editor.last_code_completion_tab == editor.open_tab_index &&
-		tab.last_code_completion_info_index == editor.compile_count)
+		tab.last_code_completion_info_index == editor.compile_count) 
 	{
 		return;
 	}
@@ -3630,6 +3650,7 @@ void code_completion_find_suggestions()
 	{
 		bool add_file_suggestion = false;
 
+		// Figure out if we are on import-keyword
 		int word_end = cursor.character;
 		auto char_is_quotation = [](char c, void* userdata) -> bool {return c == '\"'; };
 		word_end = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_quotation, nullptr, true, true);
@@ -3654,6 +3675,8 @@ void code_completion_find_suggestions()
 
 		return;
 	}
+
+
 
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
@@ -3682,8 +3705,6 @@ void code_completion_find_suggestions()
 		}
 	}
 	fuzzy_search_start_search(partially_typed, 10);
-
-	// Check if we are on special node
 	syntax_editor_synchronize_code_information();
 
 	Text_Index cursor_char_index = tab.cursor;
@@ -3706,20 +3727,28 @@ void code_completion_find_suggestions()
 	else if (is_member_access)
 	{
 		Datatype* type = nullptr;
-		if (position_info.member_access != nullptr)
+
+		auto expr_info = position_info.expression_info;
+		if (expr_info != nullptr && expr_info->expr->type == AST::Expression_Type::MEMBER_ACCESS && expr_info->member_access_value_type != nullptr)
 		{
-			auto& access = *position_info.member_access;
-			type = access.final_type;
-			if (access.initial_type->mods.optional_flags != 0) {
+			// Note: For member-accesses, we need the type of the value, not the member-access expression
+			type = expr_info->member_access_value_type;
+			if (type->mods.optional_flags != 0) {
 				fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
 				type = nullptr;
 			}
 		}
-		if (type == nullptr && position_info.auto_enum_type != nullptr) {
-			type = upcast(position_info.auto_enum_type);
+		else if (expr_info != nullptr && expr_info->expr->type == AST::Expression_Type::AUTO_ENUM)
+		{
+			if (expr_info->info->context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+				if (datatype_get_non_const_type(expr_info->info->context.expected_type.type)->type == Datatype_Type::ENUM) {
+					type = upcast(datatype_get_non_const_type(expr_info->info->context.expected_type.type));
+				}
+			}
 		}
 
+		// Add possible member-accesses for given type
 		if (type != 0)
 		{
 			auto original = type;
@@ -6474,6 +6503,75 @@ void syntax_editor_update(bool& animations_running)
 
 // Syntax Highlighting
 // Rendering
+void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, const char** out_text)
+{
+	Datatype* type = nullptr;
+	const char* after_text = nullptr;
+	switch (symbol->type)
+	{
+	case Symbol_Type::COMPTIME_VALUE:
+		after_text = "Comptime";
+		type = symbol->options.constant.type;
+		break;
+	case Symbol_Type::HARDCODED_FUNCTION:
+		type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded, syntax_editor.analysis_data));
+		break;
+	case Symbol_Type::GLOBAL:
+		after_text = "Global";
+		type = upcast(symbol->options.global->type);
+		break;
+	case Symbol_Type::FUNCTION:
+		after_text = "Function";
+		type = upcast(symbol->options.function->signature);
+		break;
+	case Symbol_Type::PARAMETER: {
+		after_text = "Parameter";
+		if (pass == nullptr) {
+			type = symbol->options.parameter.function->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+			break;
+		}
+		auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
+		type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+		break;
+	}
+	case Symbol_Type::POLYMORPHIC_VALUE:
+	{
+		after_text = "Polymorphic Symbol";
+		if (pass == nullptr) break;
+
+		auto poly_values = pass->origin_workload->polymorphic_values;
+		if (pass->is_header_reanalysis) {
+			if (pass->instance_workload == nullptr) {
+				break;
+			}
+			poly_values = pass->instance_workload->polymorphic_values;
+		}
+		assert(poly_values.data != nullptr, "");
+
+		const auto& value = poly_values[symbol->options.polymorphic_value.access_index];
+		switch (value.type)
+		{
+		case Poly_Value_Type::SET: type = value.options.value.type; break;
+		case Poly_Value_Type::TEMPLATED_TYPE: type = value.options.template_type; break;
+		case Poly_Value_Type::UNSET: type = value.options.unset_type; break;
+		default: panic("");
+		}
+		break;
+	}
+	case Symbol_Type::TYPE:
+		type = symbol->options.type;
+		break;
+	case Symbol_Type::VARIABLE:
+		type = symbol->options.variable_type;
+		after_text = "Variable";
+		break;
+	default: break;
+	}
+
+	*out_text = after_text;
+	*out_type = type;
+}
+
 void syntax_editor_render()
 {
 	auto& editor = syntax_editor;
@@ -6930,12 +7028,15 @@ void syntax_editor_render()
 				for (int i = 0; i < infos.size; i++)
 				{
 					const auto& info = infos[i];
-					vec3 color;
+					vec3 color = vec3(1, 0, 0);
 					Rich_Text::Mark_Type mark_type = Rich_Text::Mark_Type::TEXT_COLOR;
+					int start = info.start_char;
 					switch (info.type)
 					{
-					case Code_Analysis_Item_Type::MEMBER_ACCESS: {
-						switch (info.options.member_access.access_type)
+					case Code_Analysis_Item_Type::EXPRESSION_INFO: {
+						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
+						start += 1; // Skip member access '.'
+						switch (info.options.expression.info->specifics.member_access.type)
 						{
 						case Member_Access_Type::DOT_CALL:
 						case Member_Access_Type::DOT_CALL_AS_MEMBER: color = Syntax_Color::FUNCTION; break;
@@ -6977,7 +7078,7 @@ void syntax_editor_render()
 					}
 					default: continue;
 					}
-					Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, info.end_char);
+					Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, start, info.end_char);
 				}
 
 				if (line_index >= cam_end) break;
@@ -7035,6 +7136,15 @@ void syntax_editor_render()
 		{
 			auto type_system = &syntax_editor.analysis_data->type_system;
 			auto suggestions = syntax_editor.suggestions;
+
+			int max_suggestion_length = 0;
+			for (int i = 0; i < suggestions.size; i++) {
+				max_suggestion_length = math_maximum(max_suggestion_length, suggestions[i].text->size);
+			}
+
+			// Limit suggestion length to 36 characters?
+			max_suggestion_length = math_minimum(max_suggestion_length, 36);
+
 			for (int i = 0; i < suggestions.size; i++)
 			{
 				auto& sugg = suggestions[i];
@@ -7045,40 +7155,38 @@ void syntax_editor_render()
 					Rich_Text::set_underline(text, Syntax_Color::STRING);
 				}
 
+				String sugg_text = string_create_static("");
+				Datatype* sugg_type = nullptr;
+				Symbol_Type symbol_type = (Symbol_Type)-1;
+
 				switch (sugg.type)
 				{
 				case Suggestion_Type::ID: {
 					auto c = sugg.options.id_color;
 					Rich_Text::set_text_color(text, vec3(c.r, c.g, c.b));
-					Rich_Text::append(text, *sugg.text);
+					sugg_text = *sugg.text;
 					break;
 				}
 				case Suggestion_Type::SYMBOL: {
 					auto symbol = sugg.options.symbol;
 					vec3 color = symbol_to_color(symbol, true);
 					Rich_Text::set_text_color(text, color);
-					Rich_Text::append(text, *symbol->id);
-					Rich_Text::set_text_color(text);
-					Rich_Text::append(text, ": ");
-					String* string = Rich_Text::start_line_manipulation(text);
-					symbol_type_append_to_string(symbol->type, string);
-					Rich_Text::stop_line_manipulation(text);
+					symbol_type = symbol->type;
+					const char* unused = nullptr;
+					symbol_get_infos(symbol, nullptr, &sugg_type, &unused);
+					sugg_text = *symbol->id;
 					break;
 				}
 				case Suggestion_Type::STRUCT_MEMBER: {
 					Rich_Text::set_text_color(text, Syntax_Color::MEMBER);
-					Rich_Text::append(text, *sugg.text);
-					Rich_Text::set_text_color(text);
-					Rich_Text::append(text, ": ");
-					datatype_append_to_rich_text(sugg.options.struct_member.member_type, type_system, text);
+					sugg_text = *sugg.text;
+					sugg_type = sugg.options.struct_member.member_type;
 					break;
 				}
 				case Suggestion_Type::ENUM_MEMBER: {
 					Rich_Text::set_text_color(text, Syntax_Color::ENUM_MEMBER);
-					Rich_Text::append(text, *sugg.text);
-					Rich_Text::set_text_color(text);
-					Rich_Text::append(text, ": ");
-					datatype_append_to_rich_text(upcast(sugg.options.enum_member.enumeration), type_system, text);
+					sugg_text = *sugg.text;
+					sugg_type = upcast(sugg.options.enum_member.enumeration);
 					break;
 				}
 				case Suggestion_Type::FILE: {
@@ -7089,10 +7197,45 @@ void syntax_editor_render()
 					else {
 						Rich_Text::set_text_color(text, vec3(1.0f));
 					}
-					Rich_Text::append(text, *sugg.text);
+					sugg_text = *sugg.text;
 					break;
 				}
 				default: panic("");
+				}
+
+				// Append suggestion text at appropriate length
+				if (sugg_text.size > max_suggestion_length) {
+					String cpy = sugg_text;
+					sugg_text = string_create_substring_static(&cpy, 0, max_suggestion_length - 2);
+					Rich_Text::append(text, sugg_text);
+					Rich_Text::set_text_color(text);
+					Rich_Text::append(text, "..");
+				}
+				else {
+					Rich_Text::append(text, sugg_text);
+					// Fill with spacebar until we hit max length
+					for (int i = 0; i < max_suggestion_length - sugg_text.size; i++) {
+						Rich_Text::append_character(text, ' ');
+					}
+				}
+
+				if ((int)symbol_type != -1 || sugg_type != nullptr) {
+					Rich_Text::set_text_color(text);
+					Rich_Text::append(text, ": ");
+				}
+
+				// Append Symbol-Type
+				if ((int)symbol_type != -1) {
+					String* string = Rich_Text::start_line_manipulation(text);
+					symbol_type_append_to_string(symbol_type, string);
+					Rich_Text::stop_line_manipulation(text);
+					if (sugg_type != nullptr) {
+						Rich_Text::append_character(text, ' ');
+					}
+				}
+
+				if (sugg_type != nullptr) {
+					datatype_append_to_rich_text(sugg_type, type_system, text);
 				}
 			}
 		};
@@ -7129,6 +7272,8 @@ void syntax_editor_render()
 	SCOPE_EXIT(Rich_Text::destroy(&context_text));
 
 	auto type_system = &syntax_editor.analysis_data->type_system;
+	String tmp = string_create();
+	SCOPE_EXIT(string_destroy(&tmp));
 	if (show_context)
 	{
 		Rich_Text::Rich_Text* text = &context_text;
@@ -7168,85 +7313,81 @@ void syntax_editor_render()
 			const char* after_text = nullptr;
 			Symbol* symbol = hover_info.symbol_info->symbol;
 			Analysis_Pass* pass = hover_info.symbol_info->pass;
-			switch (symbol->type)
-			{
-			case Symbol_Type::COMPTIME_VALUE:
-				after_text = "Comptime";
-				type = symbol->options.constant.type;
-				break;
-			case Symbol_Type::HARDCODED_FUNCTION:
-				break;
-			case Symbol_Type::GLOBAL:
-				after_text = "Global";
-				type = upcast(symbol->options.global->type);
-				break;
-			case Symbol_Type::FUNCTION:
-				after_text = "Function";
-				type = upcast(symbol->options.function->signature);
-				break;
-			case Symbol_Type::PARAMETER: {
-				auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
-				type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
-				after_text = "Parameter";
-				break;
-			}
-			case Symbol_Type::POLYMORPHIC_VALUE:
-			{
-				auto poly_values = pass->origin_workload->polymorphic_values;
-				if (pass->is_header_reanalysis) {
-					if (pass->instance_workload == nullptr) {
-						break;
-					}
-					poly_values = pass->instance_workload->polymorphic_values;
-				}
-				assert(poly_values.data != nullptr, "");
+			symbol_get_infos(symbol, pass, &type, &after_text);
 
-				const auto& value = poly_values[symbol->options.polymorphic_value.access_index];
-				switch (value.type)
-				{
-				case Poly_Value_Type::SET: type = value.options.value.type; break;
-				case Poly_Value_Type::TEMPLATED_TYPE: type = value.options.template_type; break;
-				case Poly_Value_Type::UNSET: type = value.options.unset_type; break;
-				default: panic("");
-				}
-				break;
-			}
-			case Symbol_Type::TYPE:
-				type = symbol->options.type;
-				break;
-			case Symbol_Type::VARIABLE:
-				type = symbol->options.variable_type;
-				after_text = "Variable";
-				break;
-			default: break;
-			}
+			Rich_Text::append(text, "Symbol: ");
+			vec3 symbol_color = symbol_to_color(symbol, true);
+			Rich_Text::set_text_color(text, symbol_color);
+			Rich_Text::append(text, *symbol->id);
+			Rich_Text::set_text_color(text);
+
+			string_reset(&tmp);
+			symbol_type_append_to_string(symbol->type, &tmp);
+			Rich_Text::append(text, ", ");
+			Rich_Text::set_text_color(text, symbol_color);
+			Rich_Text::append(text, tmp);
 
 			if (type != 0) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append(text, "Datatype: ");
 				datatype_append_to_rich_text(type, type_system, text);
 				Rich_Text::set_text_color(text);
-			}
-
-			if (symbol->type != Symbol_Type::TYPE)
-			{
-				Rich_Text::add_line(text, false, 2);
-				Rich_Text::set_text_color(text, symbol_to_color(symbol, true));
-				Rich_Text::append(text, *symbol->id);
-
-				if (after_text != 0) {
-					Rich_Text::set_text_color(text);
-					Rich_Text::append(text, ": ");
-					Rich_Text::append(text, after_text);
-				}
 			}
 		}
 
 		// Analysis-Info
-		if (hover_info.expression_info != nullptr && show_normal_mode_context)
+		if (show_normal_mode_context && hover_info.expression_info != nullptr)
 		{
 			Rich_Text::add_seperator_line(text);
 			Rich_Text::add_line(text);
-			Rich_Text::append(text, "Expr: ");
-			datatype_append_to_rich_text(hover_info.expression_info->after_cast_type, type_system, text);
+
+			// Add expression type
+			Rich_Text::append(text, "Expression: ");
+			string_reset(&tmp);
+			AST::expression_append_to_string(hover_info.expression_info->expr, &tmp);
+			Rich_Text::append(text, tmp);
+
+			// Add Datatype
+			auto& cast_info = hover_info.expression_info->info->cast_info;
+			Rich_Text::add_line(text, false, 1);
+			Rich_Text::append(text, "Result-Type:  ");
+			datatype_append_to_rich_text(cast_info.result_type, type_system, text);
+			if (cast_info.result_value_is_temporary) {
+				Rich_Text::set_text_color(text);
+				Rich_Text::append(text, ", temporary");
+			}
+
+			// Add cast infos
+			if (!types_are_equal(cast_info.initial_type, cast_info.result_type)) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append(text, "Initial-Type: ");
+				datatype_append_to_rich_text(cast_info.initial_type, type_system, text);
+				if (cast_info.initial_value_is_temporary) {
+					Rich_Text::set_text_color(text);
+					Rich_Text::append(text, ", temporary");
+				}
+			}
+			if (cast_info.deref_count != 0) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append_formated(text, "Deref-Count: %d", cast_info.deref_count);
+			}
+			if (cast_info.cast_type != Cast_Type::NO_CAST) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append(text, "Cast-Type: ");
+				Rich_Text::append(text, cast_type_to_string(cast_info.cast_type));
+			}
+
+			// Show context info
+			auto& context = hover_info.expression_info->info->context;
+			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append(text, "Context expected: ");
+				datatype_append_to_rich_text(context.expected_type.type, type_system, text);
+			}
+			else if (context.type == Expression_Context_Type::AUTO_DEREFERENCE) {
+				Rich_Text::add_line(text, false, 1);
+				Rich_Text::append(text, "Context: Auto-Derefernce");
+			}
 		}
 
 		// Call-info
@@ -7255,7 +7396,7 @@ void syntax_editor_render()
 			Rich_Text::Rich_Text* text = &call_info_text;
 			Rich_Text::add_line(text);
 
-			auto info = hover_info.call_info;
+			auto info = hover_info.call_info->matching_info;
 			int arg_index = hover_info.call_argument_index;
 
 			String* name = nullptr;

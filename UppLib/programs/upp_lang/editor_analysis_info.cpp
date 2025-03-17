@@ -111,130 +111,126 @@ void find_editor_infos_recursive(
         break;
     }
     case AST::Node_Type::EXPRESSION: 
-    {
-        auto expr = downcast<AST::Expression>(node);
-        Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
+	{
+		auto expr = downcast<AST::Expression>(node);
+		Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
 
-        if (expr->type == AST::Expression_Type::FUNCTION) {
-            if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-                Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
-                Symbol_Table_Range table_range;
-                table_range.range = token_range_to_text_range(node->bounding_range, code);
-                table_range.symbol_table = table;
-                table_range.tree_depth = tree_depth;
-                dynamic_array_push_back(&code->symbol_table_ranges, table_range);
-            }
-        }
+		if (expr->type == AST::Expression_Type::FUNCTION) {
+			if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
+				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
+				Symbol_Table_Range table_range;
+				table_range.range = token_range_to_text_range(node->bounding_range, code);
+				table_range.symbol_table = table;
+				table_range.tree_depth = tree_depth;
+				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+			}
+		}
 
-        if (info != nullptr)
-        {
-            if (expr->type == AST::Expression_Type::MEMBER_ACCESS)
-            {
-                auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
-                if (value_info != nullptr)
-                {
-                    Code_Analysis_Item_Option option;
-					if (info->specifics.member_access.type == Member_Access_Type::ENUM_MEMBER_ACCESS) {
-						assert(value_info->result_type == Expression_Result_Type::TYPE, "");
-						option.member_access.final_type = value_info->options.type;
-						option.member_access.initial_type = value_info->options.type;
-						option.member_access.access_type = info->specifics.member_access.type;
-					}
-					else {
-						option.member_access.final_type = value_info->cast_info.result_type;
-						option.member_access.initial_type = value_info->cast_info.initial_type;
-						option.member_access.access_type = info->specifics.member_access.type;
-					}
-                    add_code_analysis_item(Code_Analysis_Item_Type::MEMBER_ACCESS, option, token_range_last_token(node->range, code), code, tree_depth);
-                }
-            }
-            else if (expr->type == AST::Expression_Type::AUTO_ENUM)
-            {
-                auto type = datatype_get_non_const_type(info->cast_info.initial_type);
-                if (type->type == Datatype_Type::ENUM) {
-                    Code_Analysis_Item_Option option;
-                    option.auto_enum_type = downcast<Datatype_Enum>(type);
-                    add_code_analysis_item(Code_Analysis_Item_Type::AUTO_ENUM, option, token_range_last_token(node->range, code), code, tree_depth);
 
-					option.markup_color = Syntax_Color::ENUM_MEMBER;
-                    add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_last_token(node->range, code), code, tree_depth);
-                }
-            }
+		if (info == nullptr) break;
 
-            // Expression info
-            Code_Analysis_Item_Option option;
-            option.expression_info.after_cast_type  = info->cast_info.result_type;
-            option.expression_info.before_cast_type = info->cast_info.initial_type;
-            option.expression_info.cast_type = info->cast_info.cast_type;
-            add_code_analysis_item(Code_Analysis_Item_Type::EXPRESSION_INFO, option, node->range, code, tree_depth);
-        }
+		// Special Case: Member-Accesses should always generate an Expression_Info, so we can still have code-completion even with errors
+		if (!info->is_valid && expr->type != AST::Expression_Type::MEMBER_ACCESS) {
+			break;
+		}
 
-        break;
-    }
-    case AST::Node_Type::STRUCT_MEMBER: {
-        auto member = downcast<AST::Structure_Member_Node>(node);
-        Code_Analysis_Item_Option option;
-        option.markup_color = member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE;
-        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
-        break;
-    }
-    case AST::Node_Type::ENUM_MEMBER: {
-        Code_Analysis_Item_Option option;
-        option.markup_color = Syntax_Color::ENUM_MEMBER;
-        add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
-        break;
-    }
-    case AST::Node_Type::ARGUMENT: {
-        int index = 0;
-        auto parent_args = downcast<AST::Arguments>(node->parent);
-        for (int i = 0; i < parent_args->arguments.size; i++) {
-            if (upcast(parent_args->arguments[i]) == node) {
-                index = i;
-                break;
-            }
-        }
+		Datatype* member_value_type = nullptr;
+		if (expr->type == AST::Expression_Type::AUTO_ENUM)
+		{
+			auto type = datatype_get_non_const_type(info->cast_info.initial_type);
+			if (type->type == Datatype_Type::ENUM) {
+				Code_Analysis_Item_Option option;
+				option.markup_color = Syntax_Color::ENUM_MEMBER;
+				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_last_token(node->range, code), code, tree_depth);
+			}
+		}
+		else if (expr->type == AST::Expression_Type::MEMBER_ACCESS) {
+			auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
+			if (value_info != nullptr && value_info->is_valid) {
+				member_value_type = value_info->cast_info.result_type;
+			}
+		}
 
-        Code_Analysis_Item_Option option;
-        option.argument_index = index;
-        add_code_analysis_item(Code_Analysis_Item_Type::ARGUMENT_NODE, option, node->range, code, tree_depth);
-        break;
-    }
-    case AST::Node_Type::ARGUMENTS: 
-    {
-        auto arguments = downcast<AST::Arguments>(node);
-        Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
+		// Expression info
+		Code_Analysis_Item_Option option;
+		option.expression.expr = expr;
+		option.expression.info = info;
+		option.expression.member_access_value_type = member_value_type;
+		add_code_analysis_item(Code_Analysis_Item_Type::EXPRESSION_INFO, option, node->range, code, tree_depth);
+		break;
+	}
+	case AST::Node_Type::STRUCT_MEMBER: {
+		auto member = downcast<AST::Structure_Member_Node>(node);
+		Code_Analysis_Item_Option option;
+		option.markup_color = member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE;
+		add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
+		break;
+	}
+	case AST::Node_Type::ENUM_MEMBER: {
+		Code_Analysis_Item_Option option;
+		option.markup_color = Syntax_Color::ENUM_MEMBER;
+		add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
+		break;
+	}
+	case AST::Node_Type::ARGUMENTS:
+	{
+		auto arguments = downcast<AST::Arguments>(node);
+		Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
 
-        if (info != nullptr) {
-            Code_Analysis_Item_Option option;
-            option.call_information = info;
-            add_code_analysis_item(Code_Analysis_Item_Type::CALL_INFORMATION, option, node->range, code, tree_depth);
-        }
-        break;
-    }
-    case AST::Node_Type::CONTEXT_CHANGE: 
-    {
-        auto line = source_code_get_line(code, node->range.start.line);
-        if (node->range.start.token + 1 < line->tokens.size) {
-            if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
-                // Add symbol lookup info
-                Code_Analysis_Item_Option option;
-                option.markup_color = Syntax_Color::VARIABLE;
-                Token_Range range = token_range_make(node->range.start, node->range.start);
-                range.start.token += 1;
-                range.end.token += 2;
-                add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
-            }
-        }
-        break;
-    }
-    case AST::Node_Type::IMPORT: 
-    {
-        auto& tokens = source_code_get_line(code, node->range.start.line)->tokens;
-        auto import_node = AST::downcast<AST::Import>(node);
-        if (import_node->alias_name == nullptr) break;
+		if (info != nullptr) {
+			Code_Analysis_Item_Option option;
+			option.call_info.matching_info = info;
+			option.call_info.arguments = arguments;
+			add_code_analysis_item(Code_Analysis_Item_Type::CALL_INFORMATION, option, node->range, code, tree_depth);
+		}
+		break;
+	}
+	case AST::Node_Type::ARGUMENT:
+	{
+		auto arguments = downcast<AST::Arguments>(node->parent);
+		Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
+		if (info == nullptr) break;
 
-        int token_index = node->range.end.token - 1;
-        if (token_index < 0 || token_index >= tokens.size) break;
+		int arg_index = -1;
+		for (int i = 0; i < arguments->arguments.size; i++) {
+			if (upcast(arguments->arguments[i]) == node) {
+				arg_index = i;
+				break;
+			}
+		}
+
+		if (info != nullptr) {
+			Code_Analysis_Item_Option option;
+			option.argument_info.argument_index = arg_index;
+			option.argument_info.matching_info = info;
+			add_code_analysis_item(Code_Analysis_Item_Type::ARGUMENT, option, node->range, code, tree_depth);
+		}
+		break;
+	}
+	case AST::Node_Type::CONTEXT_CHANGE:
+	{
+		auto line = source_code_get_line(code, node->range.start.line);
+		if (node->range.start.token + 1 < line->tokens.size) {
+			if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
+				// Add symbol lookup info
+				Code_Analysis_Item_Option option;
+				option.markup_color = Syntax_Color::VARIABLE;
+				Token_Range range = token_range_make(node->range.start, node->range.start);
+				range.start.token += 1;
+				range.end.token += 2;
+				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
+			}
+		}
+		break;
+	}
+	case AST::Node_Type::IMPORT:
+	{
+		auto& tokens = source_code_get_line(code, node->range.start.line)->tokens;
+		auto import_node = AST::downcast<AST::Import>(node);
+		if (import_node->alias_name == nullptr) break;
+
+		int token_index = node->range.end.token - 1;
+		if (token_index < 0 || token_index >= tokens.size) break;
 		if (tokens[token_index].type != Token_Type::IDENTIFIER) break;
 
 		auto info = pass_get_node_info(pass, import_node->path, Info_Query::TRY_READ);
@@ -347,6 +343,10 @@ void compiler_analysis_update_source_code_information()
 			dynamic_array_reset(&source_code_get_line(unit->code, i)->item_infos);
 		}
 
+		// Store nodes
+		dynamic_array_append_other(&compiler.analysis_data->allocated_nodes, &unit->allocated_nodes);
+		dynamic_array_reset(&unit->allocated_nodes);
+
 		if (unit->module_progress == nullptr) {
 			continue;
 		}
@@ -441,6 +441,7 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
 	result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
 	result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
+	result->allocated_nodes = dynamic_array_create<AST::Node*>();
 
 	return result;
 }
@@ -454,6 +455,12 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 
 	modtree_program_destroy(data->program);
 	dynamic_array_destroy(&data->function_slots);
+
+	for (int i = 0; i < data->allocated_nodes.size; i++) {
+		AST::Node* node = data->allocated_nodes[i];
+		AST::base_destroy(node);
+	}
+	dynamic_array_destroy(&data->allocated_nodes);
 
 	for (int i = 0; i < data->semantic_errors.size; i++) {
 		dynamic_array_destroy(&data->semantic_errors[i].information);

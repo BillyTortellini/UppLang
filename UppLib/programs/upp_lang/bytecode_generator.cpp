@@ -648,7 +648,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_pointer_stack_offset = data_access_read_value(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                function_sig = hardcoded_type_to_signature(call->options.hardcoded);
+                function_sig = hardcoded_type_to_signature(call->options.hardcoded, compiler.analysis_data);
                 break;
             default: panic("Error");
             }

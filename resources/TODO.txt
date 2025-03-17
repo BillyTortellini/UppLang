@@ -1,23 +1,34 @@
 
 CURRENT:
 --------
+ * Polymorphic Instances
+    --> Not sure if I want to do that now...
+
+
+Idea!
+-----
+Editor-Analysis Info can just point to data in analysis-data!
+We can store infos for different passes in custom data
 
 
 TODO:
 -----
 
-    
+Preview-Rework
+ * Show function types
 
-DONE:
------
-14.03:
- * Fixed memory-leaks
- * size_of should return usize
- * Goto-Definition removes folds
- * Ctrl+U and Ctrl+D are not moving cursor
- * Searching with / and ? does not loop around file...
- * new with [] is not working --> Refactor with {} syntax
- * Code completion for keywords (cast_pointer, cast)
+Function Call info should show correct parameter
+Function-Overloads?
+
+Polymorphic Instances:
+ Hmmm...
+
+I still don't quite remember why the editor does not just query analysis-data?
+ --> By having changes from last compile, this shouldn't be that hard?
+ --> I don't remember my reasons for not doing that shit...
+ --> Parser uses Token-Indices, I don't remember why
+
+
 
 
 General Issue with Current Editor:
@@ -35,6 +46,21 @@ General Issue with Current Editor:
     - Named parameters
     - Import file as has no coloring
   
+
+    
+
+DONE:
+-----
+14.03:
+ * Fixed memory-leaks
+ * size_of should return usize
+ * Goto-Definition removes folds
+ * Ctrl+U and Ctrl+D are not moving cursor
+ * Searching with / and ? does not loop around file...
+ * new with [] is not working --> Refactor with {} syntax
+ * Code completion for keywords (cast_pointer, cast)
+
+
 Upp-Implementation for
  * Allocators
     - Arena
@@ -230,6 +256,7 @@ Code improvements:
     * Analysis-Pass hashtable could be improved by combining blocks of ast-code into regions (But!: Incremental parsing)
     * Symbol table lookups could be combined into a single hashtable?
     * Remove Polymorphic Base analysis, which makes it easier to add #if and #insert_string 
+    * Module/Symbol analysis could probably be without workloads in a single pass with dependencies
 
 
 
