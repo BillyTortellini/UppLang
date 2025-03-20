@@ -229,9 +229,9 @@ void upp_lang_main()
     rendering_core_initialize(window_state->width, window_state->height, window_state->dpi);
     SCOPE_EXIT(rendering_core_destroy());
 
-    GLint maxAttribs = 0;
-    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
-    logg("Maximum attribs: %d\n", maxAttribs);
+    // GLint maxAttribs = 0;
+    // glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &maxAttribs);
+    // logg("Maximum attribs: %d\n", maxAttribs);
 
     Text_Renderer* text_renderer = text_renderer_create_from_font_atlas_file("resources/fonts/glyph_atlas.atlas");
     SCOPE_EXIT(text_renderer_destroy(text_renderer));

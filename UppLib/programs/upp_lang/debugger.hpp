@@ -3,6 +3,7 @@
 #include "../../utility/datatypes.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
+#include "memory_source.hpp"
 
 struct Debugger;
 struct Compilation_Unit;
@@ -154,6 +155,7 @@ struct Debugger_State
     Debug_Process_State process_state;
     Halt_Type halt_type; // Following are only valid in halted state
     const char* exception_name; // Only valid when exception occured
+    Memory_Source memory_source;
 };
 
 struct Source_Breakpoint

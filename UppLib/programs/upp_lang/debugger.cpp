@@ -13,53 +13,16 @@
 #include "c_backend.hpp"
 #include "editor_analysis_info.hpp"
 #include "ir_code.hpp"
+#include "memory_source.hpp"
 
 #include <dia2.h>
 #include <atlbase.h>
 
-const bool DEBUG_OUTPUT_ENABLED = true;
+const bool DEBUG_OUTPUT_ENABLED = false;
 
 
 // Prototypes
 u64 debugger_find_address_of_function(Debugger* debugger, String name);
-
-
-
-void wide_string_from_utf8(Dynamic_Array<wchar_t>* character_buffer, const char* string)
-{
-    size_t length = strlen(string);
-    dynamic_array_reserve(character_buffer, (int)length * 4); // 4 byte for each char _must_ be enough for now (I don't know enough about UTF-16)
-    dynamic_array_reset(character_buffer);
-
-    // Early exit on length 0 as MultiByteToWodeChar uses 0 as error-code
-    if (length == 0) {
-        character_buffer->data[0] = '\0';
-        character_buffer->size = 0;
-        return;
-    }
-
-    int written_chars = MultiByteToWideChar(CP_UTF8, 0, string, (int)length + 1, character_buffer->data, character_buffer->capacity);
-    if (written_chars == 0) {
-        character_buffer->data[0] = '\0';
-        character_buffer->size = 0;
-        return;
-    }
-    character_buffer->size = written_chars;
-}
-
-void wide_string_to_utf8(const wchar_t* wide_string, String* string)
-{
-    string_reset(string);
-    int character_count = lstrlenW(wide_string) + 1;
-    string_reserve(string, character_count * 4); // Max 4 bytes per char in UTF-8
-    int written_chars = WideCharToMultiByte(CP_UTF8, 0, wide_string, character_count, string->characters, string->capacity, 0, 0);
-    if (written_chars == 0) {
-        string->size = 0;
-        string->characters[0] = '\0';
-        return;
-    }
-    string->size = (int)strlen(string->characters);
-}
 
 const char* x64_integer_register_to_name(X64_Integer_Register reg)
 {
@@ -84,8 +47,6 @@ const char* x64_integer_register_to_name(X64_Integer_Register reg)
     }
     return "Unknown";
 }
-
-
 
 namespace PDB_Analysis
 {
@@ -1209,138 +1170,6 @@ namespace PDB_Analysis
     }
 }
 
-namespace Process_Memory
-{
-    template<typename T>
-    bool read_single_value(HANDLE process_handle, void* virtual_address, T* out_data) {
-        if (virtual_address == nullptr || process_handle == nullptr) return false;
-        u64 bytes_written = 0;
-        if (!ReadProcessMemory(process_handle, virtual_address, (void*)out_data, sizeof(T), &bytes_written)) {
-            return false;
-        }
-        return bytes_written == sizeof(T);
-    }
-
-    bool read_bytes(HANDLE process_handle, void* virtual_address, void* out_data, int size) {
-        if (virtual_address == nullptr || process_handle == nullptr || size <= 0) return false;
-        u64 bytes_written = 0;
-        if (!ReadProcessMemory(process_handle, virtual_address, out_data, size, &bytes_written)) {
-            return false;
-        }
-        return bytes_written == size;
-    }
-
-    bool write_byte(HANDLE process_handle, void* virtual_address, u8 value) {
-        if (virtual_address == nullptr || process_handle == nullptr) return false;
-        u64 bytes_written = 0;
-        BOOL success = WriteProcessMemory(process_handle, virtual_address, &value, 1, nullptr);
-        return success != 0;
-    }
-
-    template<typename T>
-    bool read_array(HANDLE process_handle, void* virtual_address, Dynamic_Array<T>* buffer, u64 expected_count) {
-        dynamic_array_reset(buffer);
-        if (virtual_address == nullptr || expected_count == 0 || process_handle == nullptr) return false;
-        dynamic_array_reserve(buffer, expected_count);
-        u64 bytes_written = 0;
-        if (!ReadProcessMemory(process_handle, virtual_address, (void*)buffer->data, sizeof(T) * expected_count, &bytes_written)) {
-            return false;
-        }
-        if (bytes_written == sizeof(T) * expected_count) {
-            buffer->size = expected_count;
-            return true;
-        }
-        buffer->size = 0;
-        return false;
-    }
-
-    void read_as_much_as_possible(HANDLE process_handle, void* virtual_address, Dynamic_Array<u8>* out_bytes, u64 read_size)
-    {
-        dynamic_array_reset(out_bytes);
-        dynamic_array_reserve(out_bytes, read_size);
-
-        if (virtual_address == nullptr || read_size == 0 || process_handle == nullptr) {
-            return;
-        }
-
-        // Check if reading whole read_size succeeds
-        size_t bytes_written = 0;
-        if (ReadProcessMemory(process_handle, virtual_address, out_bytes->data, read_size, &bytes_written) != 0) {
-            out_bytes->size = read_size;
-            return;
-        }
-
-        // Otherwise find largest read size with VirtualQueryEx
-        {
-            MEMORY_BASIC_INFORMATION memory_info;
-            int written_bytes = VirtualQueryEx(process_handle, virtual_address, &memory_info, sizeof(memory_info));
-            if (written_bytes == 0) { // Virtual query failed
-                return;
-            }
-
-            if (memory_info.State != MEM_COMMIT) {
-                return;
-            }
-
-            i64 max_read_length = (i64)memory_info.RegionSize - ((i64)virtual_address - (i64)memory_info.BaseAddress);
-            if (max_read_length <= 0) {
-                return;
-            }
-            read_size = math_minimum((u64)max_read_length, read_size);
-        }
-
-        // Try reading size again
-        if (ReadProcessMemory(process_handle, virtual_address, out_bytes->data, read_size, &bytes_written) != 0) {
-            return;
-        }
-        out_bytes->size = (int)bytes_written;
-    }
-
-    bool read_string(HANDLE process_handle, void* virtual_address, String* out_string, u64 max_size, bool is_wide_char, Dynamic_Array<u8>* byte_buffer)
-    {
-        string_reset(out_string);
-        if (virtual_address == nullptr || max_size == 0 || process_handle == nullptr) {
-            return false;
-        }
-        if (is_wide_char) {
-            max_size = 2 * max_size + 1;
-        }
-
-        read_as_much_as_possible(process_handle, virtual_address, byte_buffer, max_size);
-        if (byte_buffer->size == 0) {
-            return false;
-        }
-
-        if (is_wide_char)
-        {
-            const wchar_t* char_ptr = (wchar_t*)byte_buffer->data;
-            int max_length = max_size / 2;
-            int wchar_count = -1;
-            for (int i = 0; i < max_length; i++) {
-                if (char_ptr[i] == 0) {
-                    wchar_count = i;
-                    break;
-                }
-            }
-
-            // If string wasn't null-terminated, return false...
-            if (wchar_count == -1) {
-                return false;
-            }
-
-            wide_string_to_utf8((wchar_t*)byte_buffer->data, out_string);
-            return out_string->size > 0;
-        }
-        else {
-            string_reserve(out_string, byte_buffer->size + 1);
-            memory_copy(out_string->characters, byte_buffer->data, byte_buffer->size);
-            out_string->characters[byte_buffer->size] = '\0';
-            out_string->size = (int)strlen(out_string->characters);
-        }
-        return true;
-    }
-}
-
 namespace PE_Analysis
 {
     // Export Infos
@@ -1528,7 +1357,7 @@ namespace PE_Analysis
     }
 
     int add_unwind_block(
-        PE_Info* pe_info, HANDLE process_handle, u64 unwind_data_rva, u64 base_virtual_address,
+        PE_Info* pe_info, Memory_Source memory_source, u64 unwind_data_rva, u64 base_virtual_address,
         Hashtable<u64, int>* already_generated_blocks, Hashset<Function_Unwind_Info>* already_generated_fn_infos,
         Dynamic_Array<Unwind_Code_Slot>& code_slot_buffer)
     {
@@ -1550,8 +1379,7 @@ namespace PE_Analysis
 
         // Load unwind data
         UNWIND_INFO unwind_info;
-        bool success = Process_Memory::read_single_value(
-            process_handle,
+        bool success = memory_source.read_single_value(
             (void*)(base_virtual_address + unwind_data_rva),
             &unwind_info
         );
@@ -1569,8 +1397,7 @@ namespace PE_Analysis
         // Read unwind_code slots (Immediately after unwind data in memory)
         if (success)
         {
-            success = Process_Memory::read_array(
-                process_handle,
+            success = memory_source.read_array(
                 (void*)(base_virtual_address + unwind_data_rva + sizeof(UNWIND_INFO)),
                 &code_slot_buffer,
                 unwind_info.CountOfCodes
@@ -1699,8 +1526,7 @@ namespace PE_Analysis
         if (success && unwind_info.Flags & UNW_FLAG_CHAININFO)
         {
             RUNTIME_FUNCTION chain_info;
-            success = Process_Memory::read_single_value(
-                process_handle,
+            success = memory_source.read_single_value(
                 (void*)(base_virtual_address + unwind_data_rva + sizeof(UNWIND_INFO) + ((unwind_info.CountOfCodes + 1) & ~1) * sizeof(u16)),
                 &chain_info
             );
@@ -1708,7 +1534,7 @@ namespace PE_Analysis
             if (success)
             {
                 int chain_block_index = add_unwind_block(
-                    pe_info, process_handle, chain_info.UnwindData,
+                    pe_info, memory_source, chain_info.UnwindData,
                     base_virtual_address, already_generated_blocks, already_generated_fn_infos, code_slot_buffer
                 );
                 pe_info->unwind_blocks[unwind_block_index].next_chained_unwind_block_index = chain_block_index;
@@ -1725,9 +1551,10 @@ namespace PE_Analysis
         return unwind_block_index;
     }
 
-    bool pe_info_fill_from_executable_image(PE_Info* pe_info, u64 base_virtual_address, HANDLE process_handle, void* image_name_addr_opt, bool name_is_unicode)
+    bool pe_info_fill_from_executable_image(
+        PE_Info* pe_info, u64 base_virtual_address, Memory_Source memory_source, void* image_name_addr_opt, bool name_is_unicode)
     {
-        if (base_virtual_address == 0 || process_handle == nullptr) return false;
+        if (base_virtual_address == 0 || memory_source.process_handle == nullptr) return false;
         pe_info->base_address = base_virtual_address;
 
         Dynamic_Array<u8> byte_buffer = dynamic_array_create<u8>(512);
@@ -1736,9 +1563,9 @@ namespace PE_Analysis
         // Load name if specified from debugger infos (parameters)
         if (image_name_addr_opt != nullptr) {
             void* address = nullptr;
-            bool success = Process_Memory::read_single_value(process_handle, image_name_addr_opt, &address);
+            bool success = memory_source.read_single_value(image_name_addr_opt, &address);
             if (success && address != nullptr) {
-                Process_Memory::read_string(process_handle, address, &pe_info->name, MAX_STRING_LENGTH, name_is_unicode, &byte_buffer);
+                memory_source.read_null_terminated_string(address, &pe_info->name, MAX_STRING_LENGTH, name_is_unicode, &byte_buffer);
             }
         }
 
@@ -1755,10 +1582,10 @@ namespace PE_Analysis
         location_exception_data.Size = 0;
 
         // Read DOS and PE Header
-        if (!Process_Memory::read_single_value(process_handle, (void*)base_virtual_address, &header_dos)) {
+        if (!memory_source.read_single_value((void*)base_virtual_address, &header_dos)) {
             return false;
         }
-        if (!Process_Memory::read_single_value(process_handle, (void*)(base_virtual_address + header_dos.e_lfanew), &header_nt)) {
+        if (!memory_source.read_single_value((void*)(base_virtual_address + header_dos.e_lfanew), &header_nt)) {
             return false;
         }
 
@@ -1777,7 +1604,7 @@ namespace PE_Analysis
             // Note: dynamic_array size is zero if this fails --> Maybe we want to not store success for failure...
             Dynamic_Array<IMAGE_SECTION_HEADER> section_infos = dynamic_array_create<IMAGE_SECTION_HEADER>(section_count);
             SCOPE_EXIT(dynamic_array_destroy(&section_infos));
-            Process_Memory::read_array(process_handle, section_table_virtual_address, &section_infos, section_count);
+            memory_source.read_array(section_table_virtual_address, &section_infos, section_count);
 
             // Not sure if we want to fully abort if we cannot query section infos, but it's probably the right thing to do...
             if (section_infos.size == 0) {
@@ -1812,23 +1639,22 @@ namespace PE_Analysis
         IMAGE_EXPORT_DIRECTORY header_export_table;
         bool export_header_loaded = false;
         if (location_export_table.Size != 0) {
-            export_header_loaded = Process_Memory::read_single_value(
-                process_handle, (void*)(base_virtual_address + location_export_table.VirtualAddress), &header_export_table
+            export_header_loaded = memory_source.read_single_value(
+                (void*)(base_virtual_address + location_export_table.VirtualAddress), &header_export_table
             );
         }
         if (export_header_loaded)
         {
             // Load name from export table if not already set
             if (pe_info->name.size == 0 && header_export_table.Name != 0) {
-                Process_Memory::read_string(
-                    process_handle, (void*)(base_virtual_address + header_export_table.Name), &pe_info->name, MAX_STRING_LENGTH, false, &byte_buffer
+                memory_source.read_null_terminated_string(
+                    (void*)(base_virtual_address + header_export_table.Name), &pe_info->name, MAX_STRING_LENGTH, false, &byte_buffer
                 );
             }
 
             Dynamic_Array<u32> function_locations = dynamic_array_create<u32>(header_export_table.NumberOfFunctions);
             SCOPE_EXIT(dynamic_array_destroy(&function_locations));
-            bool function_locations_read = Process_Memory::read_array(
-                process_handle,
+            bool function_locations_read = memory_source.read_array(
                 (void*)(base_virtual_address + header_export_table.AddressOfFunctions),
                 &function_locations,
                 header_export_table.NumberOfFunctions
@@ -1850,7 +1676,7 @@ namespace PE_Analysis
                     if (is_forwarder)
                     {
                         String forwarder_name = string_create();
-                        Process_Memory::read_string(process_handle, (void*)(base_virtual_address + rva), &forwarder_name, 260, false, &byte_buffer);
+                        memory_source.read_null_terminated_string((void*)(base_virtual_address + rva), &forwarder_name, 260, false, &byte_buffer);
                         // Note: normally forwarder name should have a specific format, but we don't care for now...
                         symbol_info.forwarder_name = optional_make_success(forwarder_name);
                     }
@@ -1864,14 +1690,12 @@ namespace PE_Analysis
             SCOPE_EXIT(dynamic_array_destroy(&symbol_indices_unbiased));
             SCOPE_EXIT(dynamic_array_destroy(&symbol_name_rvas));
 
-            bool indices_available = Process_Memory::read_array(
-                process_handle,
+            bool indices_available = memory_source.read_array(
                 (void*)(base_virtual_address + header_export_table.AddressOfNameOrdinals),
                 &symbol_indices_unbiased,
                 header_export_table.NumberOfNames
             );
-            bool names_available = Process_Memory::read_array(
-                process_handle,
+            bool names_available = memory_source.read_array(
                 (void*)(base_virtual_address + header_export_table.AddressOfNames),
                 &symbol_name_rvas,
                 header_export_table.NumberOfNames
@@ -1898,8 +1722,8 @@ namespace PE_Analysis
                     }
 
                     String name = string_create();
-                    bool name_read_success = Process_Memory::read_string(
-                        process_handle, (void*)(base_virtual_address + name_rva), &name, MAX_STRING_LENGTH, false, &byte_buffer
+                    bool name_read_success = memory_source.read_null_terminated_string(
+                        (void*)(base_virtual_address + name_rva), &name, MAX_STRING_LENGTH, false, &byte_buffer
                     );
                     if (function_locations_read && name_read_success)
                     {
@@ -1927,8 +1751,7 @@ namespace PE_Analysis
             for (int i = 0; i < debug_info_count; i++)
             {
                 IMAGE_DEBUG_DIRECTORY debug_table_entry;
-                bool load_worked = Process_Memory::read_single_value(
-                    process_handle,
+                bool load_worked = memory_source.read_single_value(
                     (void*)(base_virtual_address + location_debug_table.VirtualAddress + i * sizeof(IMAGE_DEBUG_DIRECTORY)),
                     &debug_table_entry
                 );
@@ -1952,8 +1775,7 @@ namespace PE_Analysis
                 // PDB_INFO_DUMMY dummy_info;
                 // read_process_memory_datatype((u8*)base_of_module + debug_table_entry.AddressOfRawData, &dummy_info);
 
-                Process_Memory::read_string(
-                    process_handle,
+                memory_source.read_null_terminated_string(
                     (void*)(base_virtual_address + debug_table_entry.AddressOfRawData + sizeof(PDB_INFO_DUMMY)),
                     &pe_info->pdb_name,
                     MAX_STRING_LENGTH,
@@ -1969,8 +1791,7 @@ namespace PE_Analysis
             int function_count = location_exception_data.Size / sizeof(RUNTIME_FUNCTION);
             Dynamic_Array<RUNTIME_FUNCTION> runtime_functions = dynamic_array_create<RUNTIME_FUNCTION>();
             SCOPE_EXIT(dynamic_array_destroy(&runtime_functions));
-            Process_Memory::read_array(
-                process_handle,
+            memory_source.read_array(
                 (void*)(base_virtual_address + location_exception_data.VirtualAddress),
                 &runtime_functions,
                 function_count
@@ -1995,7 +1816,7 @@ namespace PE_Analysis
                 fn_unwind_info.end_rva = runtime_function.EndAddress;
                 fn_unwind_info.export_symbol_info_index = -1;
                 fn_unwind_info.unwind_block_index = add_unwind_block(
-                    pe_info, process_handle, runtime_function.UnwindData, base_virtual_address,
+                    pe_info, memory_source, runtime_function.UnwindData, base_virtual_address,
                     &already_analysed_unwind_blocks, &already_analysed_function_infos, code_slot_buffer
                 );
 
@@ -2168,6 +1989,7 @@ struct Debugger
     // Process Infos
     HANDLE process_handle; // From CreateProcessA
     HANDLE main_thread_handle; // From CreateProcessA
+    Memory_Source memory_source;
 
     DWORD  main_thread_id; // From CreateProcessA
     DWORD  process_id; // From CreateProcessA
@@ -2221,6 +2043,7 @@ Debugger* debugger_create()
     result->pdb_info = nullptr;
     result->main_thread_handle = nullptr;
     result->process_handle = nullptr;
+    result->memory_source.process_handle = nullptr;
 
     result->state.process_state = Debug_Process_State::NO_ACTIVE_PROCESS;
     result->stack_frames = dynamic_array_create<Stack_Frame>();
@@ -2623,7 +2446,7 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
     dynamic_array_reset(&instructions);
 
     // Read bytes
-    Process_Memory::read_as_much_as_possible(debugger->process_handle, (void*)virtual_address, &byte_buffer, read_size);
+    debugger->memory_source.read_as_much_as_possible((void*)virtual_address, &byte_buffer, read_size);
 
     // Handle software breakpoints
     for (int i = 0; i < debugger->address_breakpoints.size; i++) {
@@ -2934,7 +2757,7 @@ void do_stack_walk(Debugger* debugger)
 							auto& operand = instr.Operands[0];
 							X64_Integer_Register reg_id = (X64_Integer_Register)operand.Info.Register.Reg;
 							u64* reg = get_reg_ptr(reg_id, &context);
-							success = Process_Memory::read_single_value(debugger->process_handle, (void*)context.Rsp, reg);
+							success = debugger->memory_source.read_single_value((void*)context.Rsp, reg);
 						}
 						else {
 							break;
@@ -2973,19 +2796,19 @@ void do_stack_walk(Debugger* debugger)
 						break;
 					case Unwind_Code_Type::PUSH_REG: {
 						u64* reg = get_reg_ptr(code.options.push_reg, &context);
-						success = Process_Memory::read_single_value(debugger->process_handle, (void*)context.Rsp, reg);
+						success = debugger->memory_source.read_single_value((void*)context.Rsp, reg);
 						context.Rsp = context.Rsp + 8;
 						break;
 					}
 					case Unwind_Code_Type::SAVE_REG: {
 						u64* reg = get_reg_ptr(code.options.save_reg.reg, &context);
-						success = Process_Memory::read_single_value(debugger->process_handle, (void*)(context.Rsp + code.options.save_reg.offset_from_rsp), reg);
+						success = debugger->memory_source.read_single_value((void*)(context.Rsp + code.options.save_reg.offset_from_rsp), reg);
 						break;
 					}
 					case Unwind_Code_Type::SAVE_XMM_128: {
 						M128A* xmm_reg = get_xmm_ptr(code.options.save_xmm_128.xmm_number, &context);
-						success = Process_Memory::read_single_value(
-							debugger->process_handle, (void*)(context.Rsp + code.options.save_xmm_128.offset_from_rsp), xmm_reg);
+						success = debugger->memory_source.read_single_value(
+							(void*)(context.Rsp + code.options.save_xmm_128.offset_from_rsp), xmm_reg);
 						break;
 					}
 					case Unwind_Code_Type::SET_FRAME_POINTER_REGISTER: {
@@ -3015,7 +2838,7 @@ void do_stack_walk(Debugger* debugger)
 
 			// Load return address
 			u64 return_addr = 0;
-			bool success = Process_Memory::read_single_value(debugger->process_handle, (void*)context.Rsp, &return_addr);
+			bool success = debugger->memory_source.read_single_value((void*)context.Rsp, &return_addr);
 			if (!success) {
 				printf("Couldn't load return-address from stack!\n");
 				return;
@@ -3289,7 +3112,7 @@ bool debugger_add_address_breakpoint(Debugger* debugger, u64 address)
 	if (breakpoint.is_software_breakpoint)
 	{
 		breakpoint.options.software_bp.is_installed = false;
-		bool success = Process_Memory::read_single_value<byte>(debugger->process_handle, (void*)address, &breakpoint.options.software_bp.original_byte);
+		bool success = debugger->memory_source.read_single_value((void*)address, &breakpoint.options.software_bp.original_byte);
 		if (!success) {
 			return false;
 		}
@@ -3409,6 +3232,19 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 		if (debug_event.dwDebugEventCode == RIP_EVENT) {
 			panic("RIP event occured!\n");
 		}
+
+        // Print exit code
+        {
+            int exit_code_value = (int)debug_event.u.ExitProcess.dwExitCode;
+            Exit_Code exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Exit code value from program execution was invalid");
+            if (exit_code_value >= 0 && exit_code_value < (int)Exit_Code_Type::MAX_ENUM_VALUE) {
+                exit_code = exit_code_make((Exit_Code_Type)exit_code_value);
+            }
+            String tmp = string_create();
+            SCOPE_EXIT(string_destroy(&tmp));
+            exit_code_append_to_string(&tmp, exit_code);
+            printf("Debug Process exited with code: %s\n", tmp.characters);
+        }
 
 		// Note: ContinueDebugEvent closes the process handle and the thread handle received through the create_process_debug_event
 		ContinueDebugEvent(debug_event.dwProcessId, debug_event.dwThreadId, DBG_CONTINUE);
@@ -3579,8 +3415,8 @@ void debugger_handle_last_debug_event(Debugger* debugger)
 		auto& debug_str = debug_event.u.DebugString;
 		auto& str = debugger->string_buffer;
 		string_reset(&str);
-		bool success = Process_Memory::read_string(
-			debugger->process_handle, (void*)(debug_str.lpDebugStringData),
+		bool success = debugger->memory_source.read_null_terminated_string(
+			(void*)(debug_str.lpDebugStringData),
 			&str, debug_str.nDebugStringLength + 1, debug_str.fUnicode, &debugger->byte_buffer
 		);
 		if (success) {
@@ -3640,7 +3476,7 @@ void debugger_single_step_thread(Debugger* debugger, HANDLE thread_handle)
 
 		if (bp.is_software_breakpoint) {
 			if (bp.options.software_bp.is_installed) {
-				Process_Memory::write_byte(debugger->process_handle, (void*)bp.address, bp.options.software_bp.original_byte);
+				debugger->memory_source.write((void*)bp.address, &bp.options.software_bp.original_byte, 1);
 				FlushInstructionCache(debugger->process_handle, (void*)bp.address, 1);
 				bp.options.software_bp.is_installed = false;
 			}
@@ -3720,7 +3556,7 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
 
 		if (bp.is_software_breakpoint) {
 			if (bp.options.software_bp.is_installed) {
-				bool success = Process_Memory::write_byte(debugger->process_handle, (void*)bp.address, bp.options.software_bp.original_byte);
+				bool success = debugger->memory_source.write((void*)bp.address, &bp.options.software_bp.original_byte, 1);
 				FlushInstructionCache(debugger->process_handle, (void*)bp.address, 1);
 				bp.options.software_bp.is_installed = false;
 			}
@@ -3761,7 +3597,8 @@ void debugger_continue_from_last_debug_event(Debugger* debugger)
 		auto& bp = debugger->address_breakpoints[i];
 		if (!bp.is_software_breakpoint) continue;
 		if (bp.options.software_bp.is_installed) continue;
-		Process_Memory::write_byte(debugger->process_handle, (void*)bp.address, 0xCC);
+        byte value = 0xCC;
+        debugger->memory_source.write((void*)bp.address, &value, 1);
 		FlushInstructionCache(debugger->process_handle, (void*)bp.address, 1);
 		bp.options.software_bp.is_installed = true;
 	}
@@ -3923,6 +3760,7 @@ bool debugger_start_process(
 		debugger->process_id = process_info.dwProcessId;
 		debugger->main_thread_handle = process_info.hThread;
 		debugger->main_thread_id = process_info.dwThreadId;
+        debugger->memory_source = Memory_Source(debugger->process_handle);
 
 		ResumeThread(process_info.hThread);
 		debugger->state.process_state = Debug_Process_State::RUNNING;
@@ -4189,6 +4027,7 @@ bool debugger_start_process(
 }
 
 Debugger_State debugger_get_state(Debugger* debugger) {
+    debugger->state.memory_source = debugger->memory_source;
 	return debugger->state;
 }
 
@@ -4475,10 +4314,9 @@ Debugger_Value_Read debugger_read_variable_value(
 		);
 		read_error_msg = "Value is relative to register which is currently not query-able";
 		if (read_success) {
-			read_success = Process_Memory::read_bytes(
-				debugger->process_handle,
-				(void*)(address + pdb_location.options.register_relative.offset),
+			read_success = debugger->memory_source.read(
 				write_to_ptr,
+				(void*)(address + pdb_location.options.register_relative.offset),
 				read_size
 			);
 			read_error_msg = "Reading process memory failed (Register-relative read)";
@@ -4499,7 +4337,7 @@ Debugger_Value_Read debugger_read_variable_value(
 	case PDB_Analysis::PDB_Location_Type::STATIC: {
 		u64 address = static_location_to_virtual_address(debugger, pdb_location.options.static_loc);
 		if (address != 0) {
-			read_success = Process_Memory::read_bytes(debugger->process_handle, (void*)address, write_to_ptr, read_size);
+			read_success = debugger->memory_source.read(write_to_ptr, (void*)address, read_size);
 			read_error_msg = "Reading value from process memory failed (Static memory)";
 		}
 		else {
@@ -4765,7 +4603,10 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				String str = string_create();
 				SCOPE_EXIT(string_destroy(&str));
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
-				datatype_append_value_to_string(value_read.result_type, &debugger->analysis_data->type_system, byte_buffer.data, &str);
+                datatype_append_value_to_string(
+                    value_read.result_type, &debugger->analysis_data->type_system, byte_buffer.data, &str,
+                    datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source
+                );
 				printf("Variable-value: \"%s\"\n", str.characters);
 
 			}

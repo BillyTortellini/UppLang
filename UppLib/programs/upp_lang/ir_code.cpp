@@ -4,6 +4,7 @@
 #include "ast.hpp"
 #include "symbol_table.hpp"
 #include "editor_analysis_info.hpp"
+#include "memory_source.hpp"
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR_Data_Access* destination = 0);
@@ -157,7 +158,10 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         string_append_formated(string, "Constant #%d ", const_index);
         datatype_append_to_string(string, type_system, constant->type);
         string_append_formated(string, " ");
-        datatype_append_value_to_string(constant->type, type_system, constant->memory, string);
+        datatype_append_value_to_string(
+            constant->type, type_system, constant->memory, string, datatype_value_format_single_line(),
+            0, Memory_Source(nullptr), Memory_Source(nullptr)
+        );
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
@@ -975,7 +979,16 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         bool right_is_address = types_are_equal(datatype_get_non_const_type(right->datatype), upcast(types.address));
 
         // Note: We want comparison binops for two addresse to not use this code-path
-        if ((left_is_address || right_is_address) && !(left_is_address && right_is_address))
+        bool is_comparison = 
+            binop.type == AST::Binop::EQUAL || 
+            binop.type == AST::Binop::NOT_EQUAL || 
+            binop.type == AST::Binop::POINTER_EQUAL || 
+            binop.type == AST::Binop::POINTER_NOT_EQUAL || 
+            binop.type == AST::Binop::LESS || 
+            binop.type == AST::Binop::LESS_OR_EQUAL || 
+            binop.type == AST::Binop::GREATER || 
+            binop.type == AST::Binop::GREATER_OR_EQUAL;
+        if ((left_is_address || right_is_address) && !(left_is_address && right_is_address && is_comparison))
         {
             auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
             auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));

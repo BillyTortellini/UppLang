@@ -134,28 +134,111 @@ void find_editor_infos_recursive(
 			break;
 		}
 
-		Datatype* member_value_type = nullptr;
+		Code_Analysis_Item_Option option;
+		option.expression.expr = expr;
+		option.expression.info = info;
+		option.expression.is_member_access = false;
+
 		if (expr->type == AST::Expression_Type::AUTO_ENUM)
 		{
 			auto type = datatype_get_non_const_type(info->cast_info.initial_type);
 			if (type->type == Datatype_Type::ENUM) {
-				Code_Analysis_Item_Option option;
-				option.markup_color = Syntax_Color::ENUM_MEMBER;
-				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_last_token(node->range, code), code, tree_depth);
+				Code_Analysis_Item_Option markup_option;
+				markup_option.markup_color = Syntax_Color::ENUM_MEMBER;
+				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, markup_option, token_range_last_token(node->range, code), code, tree_depth);
+
+				option.expression.is_member_access = true;
+				option.expression.member_access_info.value_type = type;
+				option.expression.member_access_info.has_definition = false;
+				option.expression.member_access_info.member_definition_unit = nullptr;
+				Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
+				if (enum_type->definition_node != nullptr)
+				{
+					option.expression.member_access_info.has_definition = true;
+					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(enum_type->definition_node);
+					option.expression.member_access_info.definition_index = token_index_to_text_index(
+						enum_type->definition_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
+					);
+				}
 			}
 		}
-		else if (expr->type == AST::Expression_Type::MEMBER_ACCESS) {
+		else if (expr->type == AST::Expression_Type::MEMBER_ACCESS) 
+		{
+			option.expression.is_member_access = true;
+			option.expression.member_access_info.has_definition = false;
+			option.expression.member_access_info.value_type = nullptr;
+
 			auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
 			if (value_info != nullptr && value_info->is_valid) {
-				member_value_type = value_info->cast_info.result_type;
+				option.expression.member_access_info.value_type = value_info->cast_info.result_type;
+				if (value_info->result_type == Expression_Result_Type::TYPE) {
+					option.expression.member_access_info.value_type = value_info->options.type;
+				}
+			}
+			if (!info->is_valid) break;
+
+			auto& access_info = info->specifics.member_access;
+			AST::Node* goto_node = nullptr;
+			switch (access_info.type)
+			{
+			case Member_Access_Type::OPTIONAL_PTR_ACCESS: 
+			case Member_Access_Type::STRUCT_SUBTYPE: 
+			case Member_Access_Type::STRUCT_UP_OR_DOWNCAST:
+			case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: 
+				break;
+			case Member_Access_Type::STRUCT_MEMBER_ACCESS:
+			{
+				if (access_info.options.member.definition_node == nullptr) break;
+				goto_node = access_info.options.member.definition_node;
+				break;
+			}
+			case Member_Access_Type::ENUM_MEMBER_ACCESS: {
+				Datatype* type = option.expression.member_access_info.value_type;
+				if (type == nullptr) break;
+				type = datatype_get_non_const_type(type);
+				if (type->type != Datatype_Type::ENUM) break;
+				auto enum_type = downcast<Datatype_Enum>(type);
+				goto_node = enum_type->definition_node;
+				break;
+			}
+			case Member_Access_Type::DOT_CALL_AS_MEMBER: 
+			case Member_Access_Type::DOT_CALL: 
+			{
+				ModTree_Function* fn = access_info.options.dot_call_function;
+				switch (fn->function_type)
+				{
+				case ModTree_Function_Type::NORMAL: {
+					goto_node = upcast(fn->options.normal.progress->header_workload->function_node);
+					break;
+				}
+				case ModTree_Function_Type::BAKE: {
+					// This does not happen in goto definition on member access
+					break;
+				}
+				case ModTree_Function_Type::EXTERN: {
+					if (fn->options.extern_definition->symbol != nullptr) {
+						goto_node = fn->options.extern_definition->symbol->definition_node;
+					}
+					break;
+				}
+				default: panic("");
+				}
+				break;
+			}
+			default: panic("");
+			}
+
+			if (goto_node != nullptr)
+			{
+				option.expression.member_access_info.has_definition = true;
+				option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(goto_node);
+				option.expression.member_access_info.definition_index = token_index_to_text_index(
+					goto_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
+				);
 			}
 		}
 
 		// Expression info
-		Code_Analysis_Item_Option option;
-		option.expression.expr = expr;
-		option.expression.info = info;
-		option.expression.member_access_value_type = member_value_type;
 		add_code_analysis_item(Code_Analysis_Item_Type::EXPRESSION_INFO, option, node->range, code, tree_depth);
 		break;
 	}

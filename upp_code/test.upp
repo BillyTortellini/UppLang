@@ -1,33 +1,27 @@
 
-// import "dynamic_array.upp"
-import "hashset.upp"
 
-import Upp~Bytes
 
-print_bytes :: (bytes: Bytes)
-	import Upp~*
-	
-	for b, i in bytes
-		print_i32( cast b)
-		if i != bytes.size - 1
-			print_string(", ")
-	print_line()
 
-value_as_bytes :: (value: *$T) -> Bytes
-	result: Bytes
-	result.data =* cast_pointer value
-	result.size = Upp~size_of(T)
-	return result
 
-main :: ()
-	import Upp~*
-	
-	Hashset~test()
-	
-	small: i16 = 523
-	print_bytes(value_as_bytes(small))
-	i: int = 1024
-	print_bytes(value_as_bytes(i))
-	
-	
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+adder :: (a: int, b: int) -> int
+	sum := a + b
+	return sum

@@ -491,7 +491,7 @@ void glyph_atlas_rasterize_font(Glyph_Atlas_* glyph_atlas, Bitmap_Atlas_Writer* 
 		glyph_atlas->character_to_glyph_map[current_character] = glyph_atlas->glyph_informations.size - 1;
 	}
 
-	printf("Max-Y character: '%c' (#%d)\n", max_y_index, max_y_index);
+	//printf("Max-Y character: '%c' (#%d)\n", max_y_index, max_y_index);
 
 	// Adjust placement offsets so we only deal with 
 	for (int i = 0; i < glyph_atlas->glyph_informations.size; i++) {
@@ -1133,6 +1133,7 @@ struct UI_System
 	BBox atlas_box_check_mark;
 	BBox atlas_box_text_clipping; // ... symbol
 	BBox atlas_box_left_triangle;
+	BBox atlas_box_close_symbol;
 };
 
 static UI_System ui_system;
@@ -1201,6 +1202,24 @@ void ui_system_initialize()
 		const int check_box_size = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
 		const int check_mark_size = check_box_size - 2 * (CHECKBOX_PADDING + BORDER_SPACE);
 		ui_system.atlas_box_check_mark = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, check_mark_size, sdf_check_mark);
+
+		auto sdf_close_symbol = [](vec2 pos, int pixel_size) -> float {
+			float pixel_width = 1.0f / pixel_size;
+			float thickness = 5 * pixel_width;
+			float r = thickness / 2.0f;
+			float border_spacing = r + pixel_width;
+			float max = 1.0f - border_spacing;
+			vec2 a = vec2(-max, -max);
+			vec2 b = vec2(max, -max);
+			vec2 c = vec2(max, max);
+			vec2 d = vec2(-max, max);
+			float sdf = distance_point_to_line_segment(pos, a, c);
+			sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, d));
+			// Add thickness
+			sdf -= r;
+			return sdf;
+		};
+		ui_system.atlas_box_close_symbol = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, check_mark_size, sdf_close_symbol);
 
 		auto sdf_left_triangle = [](vec2 pos, int pixel_size) -> float {
 			float pixel_width = 1.0f / pixel_size;
@@ -1874,7 +1893,7 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 				overflow_budget = overflow_budget + child.min_width_collapsed - child.min_width_for_line_merge;
 				growing_element_count -= 1;
 				if (growing_element_count == 0) {
-					extra_per_widget = available_width;
+					extra_per_widget = available_width - element->min_width_without_collapse;
 					break;
 				}
 				int new_extra_per_widget = overflow_budget / math_maximum(1, growing_element_count);
@@ -1900,7 +1919,7 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 				child.box.min.x = cursor_x;
 				child.box.max.x = cursor_x + child_space;
 				child.line_index = 0;
-				cursor_x += child_space + PAD_WIDGETS_ON_LINE;
+				cursor_x += child_space + PAD_LABEL_BOX;
 			}
 			container.line_count = 1;
 		}
@@ -3220,10 +3239,10 @@ Button_Input ui_system_push_button(const char* label_text)
 	return result;
 }
 
-Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size)
+Widget_Handle ui_system_push_label(String text, bool restrain_label_size)
 {
 	Widget_Style style = widget_style_make_empty();
-	style.text_display = ui_system_add_string(string_create_static(text));
+	style.text_display = ui_system_add_string(text);
 	style.can_grow_beyond_max_width = false;
 	if (restrain_label_size) {
 		style.min_width = LABEL_CHAR_COUNT_SIZE * ui_system.char_size.x;
@@ -3237,6 +3256,10 @@ Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size)
 	}
 
 	return ui_system_add_widget(style);
+}
+
+Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size) {
+	return ui_system_push_label(string_create_static(text), restrain_label_size);
 }
 
 Text_Input_State ui_system_push_text_input(String text)
@@ -3323,7 +3346,7 @@ void ui_system_push_next_component_label(const char* label_text)
 {
 	Container_Handle container_handle = ui_system_add_container(container_layout_make_horizontal(true));
 	ui_system_push_active_container(container_handle, true);
-	ui_system_push_label(label_text, true);
+	ui_system_push_label(string_create_static(label_text), true);
 	ui_system_push_active_container(container_handle, true);
 }
 
@@ -3355,6 +3378,32 @@ bool ui_system_push_checkbox(bool enabled)
 
 	return enabled;
 }
+
+bool ui_system_push_close_button()
+{
+	Widget_Style style = widget_style_make_empty();
+	style.draw_background = true;
+	style.background_color = COLOR_BUTTON_BG;
+	style.hover_color = COLOR_BUTTON_BG_HOVER;
+	style.has_border = true;
+	style.border_color = COLOR_BUTTON_BORDER;
+	style.offset_line_bot = CHECKBOX_DISTANCE_FROM_LINE;
+	style.offset_line_top = CHECKBOX_DISTANCE_FROM_LINE;
+
+	style.min_width = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
+	style.max_width = style.min_width;
+	style.can_grow_beyond_max_width = false;
+	style.is_clickable = true;
+
+	Widget_Handle handle = ui_system_add_widget(style);
+	Widget& widget = ui_system.widgets[handle.widget_index];
+	widget.style.draw_icon = true;
+	widget.style.icon_atlas_box = ui_system.atlas_box_close_symbol;
+	widget.style.icon_padding = BORDER_SPACE + CHECKBOX_PADDING;
+
+	return ui_system.mouse_hover_widget_index == handle.widget_index && ui_system.mouse_was_clicked;
+}
+
 
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar)
 {
@@ -3493,6 +3542,25 @@ void ui_system_push_test_windows()
 	static bool subsection_watch_values = true;
 	static bool drop_down_open = false;
 
+	if (false)
+	{
+		Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
+		ui_system_push_active_container(handle.container, false);
+		SCOPE_EXIT(ui_system_pop_active_container());
+
+		// auto subsection_info = ui_system_push_subsection(true, "Watch_Window", true);
+		// ui_system_push_active_container(subsection_info.container, false);
+		// SCOPE_EXIT(ui_system_pop_active_container());
+
+		ui_system_push_active_container(ui_system_push_line_container(), false);
+		SCOPE_EXIT(ui_system_pop_active_container());
+
+		ui_system_push_button("Frick dis");
+		ui_system_push_close_button();
+		ui_system_push_label("Henlo", false);
+
+		return;
+	}
 
 
 	Window_Handle window_handle = ui_system_add_window(window_style_make_anchored("Test-Window"));
@@ -3513,14 +3581,14 @@ void ui_system_push_test_windows()
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_label("Bp 1 at line #15", false);
-		ui_system_push_label("Bp 2 at line #105", false);
-		ui_system_push_label("Bp 3 at line #1", false);
-		ui_system_push_label("Bp 4 at line #32", false);
-		ui_system_push_label("Bp 5 at line #23", false);
-		ui_system_push_label("Bp 5 at line #23", false);
-		ui_system_push_label("Bp 5 at line #23", false);
-		ui_system_push_label("Bp 9 at line #1027", false);
+		ui_system_push_label(string_create_static("Bp 1 at line #15"), false);
+		ui_system_push_label(string_create_static("Bp 2 at line #105"), false);
+		ui_system_push_label(string_create_static("Bp 3 at line #1"), false);
+		ui_system_push_label(string_create_static("Bp 4 at line #32"), false);
+		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
+		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
+		ui_system_push_label(string_create_static("Bp 5 at line #23"), false);
+		ui_system_push_label(string_create_static("Bp 9 at line #1027"), false);
 	}
 
 	info = ui_system_push_subsection(subsection_watch_values, "Watch-Values", true);
@@ -3528,11 +3596,16 @@ void ui_system_push_test_windows()
 	if (subsection_watch_values) {
 		ui_system_push_active_container(info.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
+
+		ui_system_push_active_container(ui_system_push_line_container(), false);
+		ui_system_push_text_input(string_create_static(""));
+		ui_system_push_label("Hello there", true);
+		ui_system_pop_active_container();
 	}
 	ui_system_push_button("Test, lol");
 
-	ui_system_push_label("Hello IMGUI world!", false);
-	ui_system_push_label("Test label to check if render works", false);
+	ui_system_push_label(string_create_static("Hello IMGUI world!"), false);
+	ui_system_push_label(string_create_static("Test label to check if render works"), false);
 	ui_system_push_next_component_label("Click for test");
 	ui_system_push_button("Click me!");
 	for (int i = 0; i < 4; i++)

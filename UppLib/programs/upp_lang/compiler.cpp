@@ -21,7 +21,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
+bool enable_c_generation = true;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -29,20 +29,20 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
-bool output_bytecode = true;
+bool output_ir = false;
+bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
 bool enable_testcases = false;
 bool enable_stresstest = false;
-bool run_testcases_compiled = false;
+bool run_testcases_compiled = true;
 
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = false;
+bool execute_binary = true;
 
 
 // This variable gets written to in compiler_compile

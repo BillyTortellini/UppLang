@@ -1,56 +1,94 @@
 
-CURRENT:
+
+CURRENT: 
 --------
- * Polymorphic Instances
-    --> Not sure if I want to do that now...
 
 
-Idea!
------
-Editor-Analysis Info can just point to data in analysis-data!
-We can store infos for different passes in custom data
+Watch-Values:
+-------------
+Solution I want:
+ * Watch-Value in single line or multiple line layout
+ * Removable watch-values
+ * Expression-Evaluator with
+    - Symbol-Name (Path lookup?)
+    - Dereference/Address-of operator (*i, &i)
+    - Array-Access (Slices and Arrays)
+        --> Single constant integer
+    - Member-Access on structs
+    - cast_pointer would be really neat tho (E.g. looking at address as some pointer...)
+ * Format-Options after expression, seperated with ',' (e.g. ip, hex) --> 0x05234
+    - Primitive Formating
+    - How many array members and things
+    - Show pointer information (e.g. function pointer which function... and others, e.g. section, heap/stack, other)
+ * Buttons for step-over/into/out-of
+ * Window with shortcuts and formating listed (Because I will forgetti)
+ * Custom-Views for Datatypes would be neat, e.g.
+    --> Dynamic-Array could show return array elements
+    --> List also like array elements
+    --> Hashtable could have active/inactive array elements
 
+Implementation Order:
+ 1. X Make Watch-Values multi-line
+ 2. X Add remove button to watch values
+    X Fix container extending beyond window border problem
+ 3. X Memory-Source on Datatype-Value to string
+ 4. X Formating-Options for Datatype-Value (Multiple lines, arrays, other things)
+ 5.   Expression-Evaluator
+ 6.   Add formating option parsing (Hexadecimal/binary int display, maybe others)
+        What's the point right now?
 
 TODO:
 -----
-
-Preview-Rework
- * Show function types
-
-Function Call info should show correct parameter
-Function-Overloads?
-
-Polymorphic Instances:
- Hmmm...
-
-I still don't quite remember why the editor does not just query analysis-data?
- --> By having changes from last compile, this shouldn't be that hard?
- --> I don't remember my reasons for not doing that shit...
- --> Parser uses Token-Indices, I don't remember why
+ * Watch-Value Upgrade
+ * Display Debugger current position > next to breakpoints, not over breakpoints
+ * Show Source-File name per breakpoint
+ * Step-Into/Step-Over should follow cursor
+    Clicking on a stack frame should take you to the position...
 
 
 
+Language Ideas:
+ Dot-Call syntax different from member access, e.g. 
+    x.>add(15)
+    x..add(15)
+    x--add(15)
+    x..add(100)
+ This makes auto-complete better, and differentiates the two concepts,
+ also syntax-highlighting would work better here
+ It should also be easy to implement
+Bytecode Debugger would be neat, and maybe not even that hard to implement?
 
-General Issue with Current Editor:
- * We don't display enough information about auto-expressions
-   - What operations are applied automatically, what was the base type, highlight expression
-   - What cast-types are applied, why/when
- * Function Overloads 
-    - Available Overloads
-    - Choosen overload
-    - Parameter previews
-    - Also for dot-calls
- * Polymorphic Information (Select polymorphic instanciation index)
- * Coloring is still of for lots of things
-    - Template Parameters
-    - Named parameters
-    - Import file as has no coloring
-  
-
+Editor-Information:
+ * Show more informations about Expressions, e.g. Binop-Value types, Unop-Types
+ * Function call infos, dot-call infos, member access infos (E.g. offset, alignment...)
+Feature: Switching between Analysis-Passes in Editor
+    A polymorphic object (function/struct) will have multiple passes on some node
+    But! The Analysis-Items we generate are based on the AST, which does not change from node
+        to node. So we just need to store multiple values per analysis-item, and the editor switches over that
     
 
 DONE:
 -----
+20.03:
+ * Any-Type and string printing
+ * Print Value Formating options and Memory_Source
+ * Refactored Process-Memory into Memory_Source
+
+19.03:
+ * Fixed testcases compiled
+ * Remove unwanted console outputs
+
+18.03:
+ * Fixed C-Compiler error with address arithmetic
+ * Fixed breakpoints and multiple tabs
+ * Goto Definition for Enums
+ * Goto Definition for Member-Access and Dot-Call
+ * Removed Pointer-Behavior for address
+ * Rewriting Arena allocator with new address/usize types
+
+17.03:
+ * Editor Analysis-Info rework
+
 14.03:
  * Fixed memory-leaks
  * size_of should return usize
@@ -97,15 +135,6 @@ Example Code that I want:
     for v in values
         printf("%d\n", v)
 
-
-Address/isize/usize Semantics:
-  Address to/from Pointer requires cast_pointer
-  Address to/from Integer requires cast (inferred) 
-  isize/usize to/from Integer always need cast, 32/64 bit does not make much sense otherwise
-  Address supports basic arithmetic
-    - Address +/- integer
-    - Address - Address
-  
 
 
 

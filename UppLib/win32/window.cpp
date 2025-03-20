@@ -698,7 +698,7 @@ Window* window_create(const char* window_title, int multisample_count)
         if (!opengl_load_all_functions()) {
             panic("Could not load opengl_functions");
         }
-        opengl_print_all_extensions((void*)&hdc);
+        // opengl_print_all_extensions((void*)&hdc);
 
         // Display new Window
         ShowWindow(hwnd, SW_SHOWNORMAL);

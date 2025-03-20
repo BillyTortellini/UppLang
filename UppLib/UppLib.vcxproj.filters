@@ -342,6 +342,9 @@
     <ClInclude Include="programs\test\test.hpp">
       <Filter>Header Files\Programs\Test</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\memory_source.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -559,6 +562,9 @@
     </ClCompile>
     <ClCompile Include="programs\test\test.cpp">
       <Filter>Source Files\Programs\Test</Filter>
+    </ClCompile>
+    <ClCompile Include="programs\upp_lang\memory_source.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

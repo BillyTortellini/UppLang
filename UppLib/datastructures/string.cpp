@@ -507,7 +507,7 @@ bool string_contains_only_characters_in_set(String* string, String set, bool use
 }
 
 bool string_equals_cstring(String* string, const char* compare) {
-    int c_size = strlen(compare);
+    int c_size = (int)strlen(compare);
     if (string->size != c_size) return false;
     if (strncmp(string->characters, compare, string->size) == 0) {
         return true;

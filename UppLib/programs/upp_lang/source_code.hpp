@@ -16,7 +16,6 @@ struct Compilation_Unit;
 struct Datatype;
 struct Analysis_Pass;
 struct Datatype_Enum;
-struct Compilation_Unit;
 struct Identifier_Pool_Lock;
 struct Expression_Info;
 
@@ -108,7 +107,13 @@ struct Code_Analysis_Item_Symbol_Info{
 struct Code_Analysis_Item_Expression{
     AST::Expression* expr;
     Expression_Info* info;
-    Datatype* member_access_value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
+    bool is_member_access;
+    struct {
+        Datatype* value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
+        bool has_definition;
+        Text_Index definition_index;
+        Compilation_Unit* member_definition_unit;
+    } member_access_info;
 };
 
 struct Code_Analysis_Item_Call_Info {

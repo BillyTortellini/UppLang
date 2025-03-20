@@ -6,6 +6,7 @@
 #include "ast.hpp"
 #include "constant_pool.hpp"
 #include "../../utility/rich_text.hpp"
+#include "memory_source.hpp"
 
 struct Symbol;
 struct Datatype;
@@ -45,8 +46,11 @@ struct Struct_Member
     Datatype* type;
     String* id;
     int offset; // Offset from base struct
-    Struct_Content* content; // In which struct-content this member is defined
+    Struct_Content* content; // In which struct-content this member is defined, may be null for slices or other things
+    AST::Node* definition_node; // May be null, used for goto-definition in editor
 };
+
+Struct_Member struct_member_make(Datatype* type, String* id, Struct_Content* content, int offset, AST::Node* definition_node);
 
 struct Enum_Member
 {
@@ -187,7 +191,7 @@ struct Datatype_Array
 struct Datatype_Slice {
     Datatype base;
     Datatype* element_type;
-    Struct_Member data_member; // This may be problematic, as struct member doesn't have pointer to constant
+    Struct_Member data_member; // This may be problematic, as struct member doesn't have pointer to struct-content
     Struct_Member size_member;
 };
 
@@ -221,10 +225,12 @@ struct Datatype_Subtype
     int subtype_index;
 };
 
+// Note: Datatype_Optionl is seperate from option-pointers, as pointer types have a is_optional boolean
 struct Datatype_Optional
 {
     Datatype base;
     Datatype* child_type;
+
     Struct_Member value_member;
     Struct_Member is_available_member;
 };
@@ -235,6 +241,7 @@ struct Struct_Content
     Datatype_Struct* structure;
     Subtype_Index* index; // Contains name + index in parent
     String* name; // For base struct this is the struct-name, otherwise subtype names/ids
+    AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
 
     // Content
     Dynamic_Array<Struct_Member> members;
@@ -259,6 +266,7 @@ struct Datatype_Enum
     Datatype base;
     Dynamic_Array<Enum_Member> members;
     String* name;
+    AST::Node* definition_node;
 
     bool values_are_sequential;
     int sequence_start_value; // Usually 1
@@ -293,7 +301,26 @@ Datatype_Format datatype_format_make_default();
 
 void datatype_append_to_rich_text(Datatype* type, Type_System* type_system, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
 void datatype_append_to_string(String* string, Type_System* type_system, Datatype* signature, Datatype_Format format = datatype_format_make_default());
-void datatype_append_value_to_string(Datatype* type, Type_System* type_system, byte* value_ptr, String* string);
+
+struct Datatype_Value_Format
+{
+    bool single_line; // If structs etc should use lines and indentation, or comma seperated values
+    bool show_datatype; // E.g. Node{15, 12} vs {15, 12}, or Color.RED vs .RED (enums)
+    bool show_member_names; // E.g. Node{value = 15, alive = 10) vs Node{15, 10}
+    int max_array_display_size; // -1 to disable, limits arrays like int.[#20, 10, 20, 30, ...]
+    bool follow_pointers; // 
+    int max_indentation_before_single_line; // -1 to disable, otherwise we format as single line at a specific indentation
+    int max_indentation; // Should always be used, as we could have recursive datastructures
+    int indentation_spaces;
+};
+Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int max_indentation_before_single_line);
+Datatype_Value_Format datatype_value_format_single_line();
+
+// We have both local and pointer memory sources, to facilitate all use-cases
+void datatype_append_value_to_string(
+    Datatype* type, Type_System* type_system, byte* value_ptr, String* string, Datatype_Value_Format format,
+    int indentation, Memory_Source local_memory, Memory_Source pointer_memory
+);
 
 
 
@@ -585,10 +612,10 @@ Datatype_Function* type_system_make_function(std::initializer_list<Function_Para
 Datatype_Function* type_system_make_function_optional(Datatype_Function* function);
 
 // Note: empty types need to be finished before they are used!
-Datatype_Enum* type_system_make_enum_empty(String* name);
+Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);
 Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload = 0);
-void struct_add_member(Struct_Content* content, String* id, Datatype* member_type);
-Struct_Content* struct_add_subtype(Struct_Content* content, String* id);
+void struct_add_member(Struct_Content* content, String* id, Datatype* member_type, AST::Node* definition_node = nullptr);
+Struct_Content* struct_add_subtype(Struct_Content* content, String* id, AST::Node* definition_node = nullptr);
 Struct_Content* struct_content_get_parent(Struct_Content* content); // Returns 0 if it's base-content
 void type_system_finish_struct(Datatype_Struct* structure);
 void type_system_finish_enum(Datatype_Enum* enum_type);

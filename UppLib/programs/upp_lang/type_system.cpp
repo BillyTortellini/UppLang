@@ -53,27 +53,129 @@ void type_base_destroy(Datatype* base)
     }
 }
 
-void datatype_append_value_to_string(Datatype* type, Type_System* type_system, byte* value_ptr, String* string)
+void datatype_append_value_to_string(
+    Datatype* type, Type_System* type_system, byte* value_ptr, String* string, Datatype_Value_Format format, 
+    int indentation, Memory_Source local_memory, Memory_Source pointer_memory)
 {
+    // Add indentation
+    bool single_line = indentation >= format.max_indentation_before_single_line || format.single_line;
+    auto append_indentation = [&](int extra) {
+        if (!single_line) {
+            for (int i = 0; i < format.indentation_spaces * (indentation + extra); i++) {
+                string_append_character(string, ' ');
+            }
+        }
+    };
+
+    // Check for errors
     if (!type->memory_info.available) {
-        string_append_formated(string, "Type size not finished yet");
+        string_append_formated(string, "TYPE_SIZE_NOT_FINISHED(");
+        datatype_append_to_string(string, type_system, type);
+        string_append(string, ")");
+        return;
     }
     auto memory = type->memory_info.value;
-    if (!memory_is_readable(value_ptr, memory.size)) {
-        string_append_formated(string, "Memory not readable");
+    if (!local_memory.get_page_info(value_ptr, memory.size).readable) {
+        string_append_formated(string, "MEMORY_NOT_READABLE");
+        return;
+    }
+
+    // Handle special types (string, any)
+    auto& types = type_system->predefined_types;
+    if (types_are_equal(type, upcast(types.any_type))) 
+    {
+        Upp_Any any_value;
+        if (!local_memory.read_single_value(value_ptr, &any_value)) {
+            string_append_formated(string, "MEMORY_NOT_READABLE");
+            return;
+        }
+
+        Datatype* type = nullptr;
+        if (any_value.type.index < (u32) type_system->types.size) {
+            type = type_system->types[any_value.type.index];
+            datatype_append_to_string(string, type_system, type);
+        }
+        else {
+            string_append_formated(string, "Any_With_Invalid_Type_Handle(#%d)", any_value.type.index);
+            return;
+        }
+
+        string_append(string, "Any.{");
+        if (single_line) {
+            string_append(string, " ");
+        }
+        else {
+            string_append(string, "\n");
+            append_indentation(1);
+        }
+
+        datatype_append_value_to_string(type, type_system, (byte*)any_value.data, string, format, indentation + 1, pointer_memory, pointer_memory);
+
+        if (single_line) {
+            string_append(string, " }");
+        }
+        else {
+            string_append(string, "\n");
+            append_indentation(0);
+            string_append(string, "}");
+        }
+
+        return;
+    }
+    else if (types_are_equal(type, types.c_string))
+    {
+        Upp_C_String c_string;
+        if (!local_memory.read_single_value(value_ptr, &c_string)) {
+            string_append_formated(string, "MEMORY_NOT_READABLE");
+            return;
+        }
+        if (c_string.bytes.data == nullptr || c_string.bytes.size == 0) {
+            string_append_formated(string, "c_string.{ size = %d, bytes = %p }", c_string.bytes.size, c_string.bytes.data);
+            return;
+        }
+
+        String tmp = string_create();
+        SCOPE_EXIT(string_destroy(&tmp));
+        Dynamic_Array<u8> buffer = dynamic_array_create<u8>(math_minimum(1024ull, c_string.bytes.size));
+        SCOPE_EXIT(dynamic_array_destroy(&buffer));
+
+        pointer_memory.read_null_terminated_string((void*)c_string.bytes.data, &tmp, c_string.bytes.size + 1, false, &buffer);
+        string_append_formated(string, "\"%s\"", tmp.characters);
+        return;
     }
 
     switch (type->type)
     {
-    case Datatype_Type::FUNCTION:
+    case Datatype_Type::FUNCTION: {
+        void* ptr = nullptr;
+        if (!local_memory.read_single_value(value_ptr, &ptr)) {
+            string_append_formated(string, "MEMORY_NOT_READABLE");
+            break;
+        }
+        // TODO: At some point we could probably print function information here
+        // E.g. add Debugger* to format struct, so we can query infos
+        if (format.show_datatype) {
+            string_append(string, "Function: ");
+        }
+        string_append_formated(string, "%p", ptr);
         break;
-    case Datatype_Type::UNKNOWN_TYPE:
+    }
+    case Datatype_Type::UNKNOWN_TYPE: {
+        string_append(string, "UNKNOWN_TYPE");
         break;
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+    }
+    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
+        // How do we ever print a value of this?
+        string_append(string, "STRUCT_INSTANCE_TEMPLATE?");
         break;
+    }
     case Datatype_Type::CONSTANT: {
         auto constant = downcast<Datatype_Constant>(type);
-        datatype_append_value_to_string(constant->element_type, type_system, value_ptr, string);
+        datatype_append_value_to_string(constant->element_type, type_system, value_ptr, string, format, indentation, local_memory, pointer_memory);
+        break;
+    }
+    case Datatype_Type::TEMPLATE_TYPE: {
+        string_append_formated(string, "TEMPLATE_TYPE?");
         break;
     }
     case Datatype_Type::ARRAY:
@@ -82,69 +184,137 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         int element_count = 0;
         Datatype* element_type = 0;
         byte* array_data = 0;
-        bool can_print = true;
-        if (type->type == Datatype_Type::ARRAY) {
+        if (type->type == Datatype_Type::ARRAY) 
+        {
             auto array_type = downcast<Datatype_Array>(type);
             element_type = array_type->element_type;
             if (!array_type->count_known) {
-                string_append_formated(string, "[Size_not_available]");
+                string_append_formated(string, "ARRAY_UNKNOWN_SIZE");
                 return;
             }
             element_count = array_type->element_count;
             array_data = value_ptr;
         }
         else {
+            Upp_Slice_Base slice;
+            if (!local_memory.read_single_value(value_ptr, &slice)) {
+                string_append_formated(string, "SLICE_MEMORY_NOT_AVAILABLE");
+                return;
+            }
+
+            local_memory = pointer_memory; // For data-access we now need to use pointer-memory (E.g. of another process)
             auto slice_type = downcast<Datatype_Slice>(type);
             element_type = slice_type->element_type;
-            array_data = *((byte**)value_ptr);
-            element_count = *((int*)(value_ptr + 8));
+            array_data = (byte*) slice.data;
+            element_count = slice.size;
         }
 
         if (!element_type->memory_info.available) {
-            string_append_formated(string, "Element size not ready");
-            return;
-        }
-        auto element_size = element_type->memory_info.value.size;
-        if (!memory_is_readable(array_data, element_count * element_size)) {
-            string_append_formated(string, "Memory not readable");
+            string_append_formated(string, "[ELEMENT_MEMORY_NOT_AVAILABLE]");
             return;
         }
 
-        string_append_formated(string, "[#%d ", element_count);
-        for (int i = 0; i < element_count && i < 3; i++) {
-            byte* element_ptr = value_ptr + (i * element_type->memory_info.value.alignment);
-            datatype_append_value_to_string(element_type, type_system, element_ptr, string);
-            if (i != element_count - 1) {
-                string_append_formated(string, ", ");
+        if (format.show_datatype) {
+            datatype_append_to_string(string, type_system, element_type);
+            string_append_formated(string, ".");
+        }
+
+        if (element_count <= 0 || array_data == nullptr) {
+            string_append_formated(string, "[data = %p, size= %d]", array_data, element_count);
+            return;
+        }
+        if (!local_memory.get_page_info(array_data, element_type->memory_info.value.size * element_count).readable) {
+            string_append_formated(string, "[data = %p, size= %d, MEMORY_NOT_READABLE]", array_data, element_count);
+            return;
+        }
+
+        string_append_character(string, '[');
+        if (element_count > format.max_array_display_size) {
+            string_append_formated(string, "#%d | ", element_count);
+        }
+        int display_count = math_minimum(element_count, format.max_array_display_size);
+        for (int i = 0; i < display_count; i += 1) {
+            if (single_line) {
+                if (i != 0) {
+                    string_append(string, ", ");
+                }
+            }
+            else {
+                string_append(string, "\n");
+                append_indentation(1);
+            }
+            byte* data = array_data + i * element_type->memory_info.value.size;
+            datatype_append_value_to_string(element_type, type_system, data, string, format, indentation + 1, local_memory, pointer_memory);
+        }
+
+        // Append ... if we did not display all elements
+        if (element_count > format.max_array_display_size) {
+            if (single_line) {
+                string_append(string, ", ...");
+            }
+            else {
+                string_append(string, "\n");
+                append_indentation(1);
+                string_append(string, "...");
             }
         }
-        if (element_count > 3) {
-            string_append_formated(string, " ...");
+        
+        if (single_line) {
+            string_append(string, "]");
         }
-        string_append_formated(string, "]");
-        break;
-    }
-    case Datatype_Type::TEMPLATE_TYPE: {
-        string_append_formated(string, "Polymorphic?");
+        else {
+            string_append(string, "\n");
+            append_indentation(0);
+            string_append(string, "]");
+        }
         break;
     }
     case Datatype_Type::POINTER:
     {
-        byte* data = *((byte**)value_ptr);
-        if (data == 0) {
-            string_append_formated(string, "nullptr");
+        Datatype_Pointer* pointer = downcast<Datatype_Pointer>(type);
+        byte* data;
+        if (!local_memory.read_single_value(value_ptr, &data)) {
+            string_append_formated(string, "COULD_NOT_READ_ADDRESS");
             return;
         }
-        string_append_formated(string, "Ptr %p", data);
+        if (data == 0) {
+            string_append_formated(string, "null");
+            return;
+        }
+        local_memory = pointer_memory;
+
+        string_append_formated(string, "%p { ", data);
+        if (!single_line) {
+            string_append(string, "\n");
+            append_indentation(indentation + 1);
+        }
+        datatype_append_value_to_string(pointer->element_type, type_system, data, string, format, indentation + 1, local_memory, pointer_memory);
+        if (!single_line) {
+            string_append(string, "\n");
+            append_indentation(0);
+            string_append(string, "}");
+        }
+        else {
+            string_append(string, " }");
+        }
         break;
     }
     case Datatype_Type::OPTIONAL_TYPE:
     {
         auto opt = downcast<Datatype_Optional>(type);
-        bool available = *(bool*)(((byte*)value_ptr) + opt->is_available_member.offset);
+        byte* available_ptr = value_ptr + opt->is_available_member.offset;
+        bool available = false;
+        bool success = local_memory.read_single_value(available_ptr, &available);
+        if (!success) {
+            string_append_formated(string, "ERROR_ACCESSING_AVAILABLE_MEMBER");
+            break;
+        }
+
         if (available) {
-            string_append_formated(string, "Opt: ");
-            datatype_append_value_to_string(opt->child_type, type_system, value_ptr, string);
+            string_append_formated(string, "Opt-Value: ");
+            datatype_append_value_to_string(
+                opt->child_type, type_system, value_ptr + opt->value_member.offset, string, format, indentation + 1, local_memory, pointer_memory
+            );
         }
         else {
             string_append_formated(string, "Optional Unavailable");
@@ -154,47 +324,76 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
     case Datatype_Type::SUBTYPE: 
     {
         auto subtype = downcast<Datatype_Subtype>(type);
-        datatype_append_value_to_string(subtype->base_type, type_system, value_ptr, string);
+        datatype_append_value_to_string(subtype->base_type, type_system, value_ptr, string, format, indentation + 1, local_memory, pointer_memory);
         break;
     }
     case Datatype_Type::STRUCT:
     {
         auto struct_type = downcast<Datatype_Struct>(type);
 
-        if (struct_type->struct_type == Structure_Type::UNION) {
-            break;
+        if (format.show_datatype) {
+            string_append_formated(string, "%s.", struct_type->content.name->characters);
         }
+        string_append(string, "{ ");
 
         Struct_Content* content = &struct_type->content;
-        int closing_parenthesis_count = 0;
         while (true)
         {
-            string_append_formated(string, "%s{", content->name->characters);
-            closing_parenthesis_count += 1;
             for (int i = 0; i < content->members.size; i++)
             {
+                if (single_line) {
+                    if (i != 0) {
+                        string_append(string, ", ");
+                    }
+                }
+                else {
+                    string_append(string, "\n");
+                    append_indentation(1);
+                }
+
                 Struct_Member* mem = &content->members[i];
                 byte* mem_ptr = value_ptr + mem->offset;
-                datatype_append_value_to_string(mem->type, type_system, mem_ptr, string);
-                if (i != content->members.size - 1) {
-                    string_append_formated(string, ", ");
+                if (format.show_member_names) {
+                    string_append_string(string, mem->id);
+                    string_append(string, " = ");
                 }
+                datatype_append_value_to_string(mem->type, type_system, mem_ptr, string, format, indentation + 1, local_memory, pointer_memory);
             }
 
             // Check if subtype exist
             if (content->subtypes.size == 0) {
                 break;
             }
-            int subtype_index = (*(i32*)(value_ptr + struct_type->content.tag_member.offset)) - 1; // Tag is always stored as plus one
-            if (subtype_index = 0 || subtype_index >= content->subtypes.size) {
+
+            if (single_line) {
+                string_append(string, " ");
+            }
+            else {
+                string_append(string, "\n");
+                append_indentation(1);
+            }
+
+            int subtype_index = -1;
+            if (!local_memory.read_single_value(value_ptr + struct_type->content.tag_member.offset, &subtype_index)) {
+                string_append_formated(string, "SUBTYPE_LOAD_ERROR");
+                break;
+            }
+            subtype_index -= 1; // Tags are always stored with +1 offset
+            if (subtype_index == -1 || subtype_index > content->subtypes.size) {
                 string_append_formated(string, ", INVALID_SUBTYPE #%d", subtype_index + 1);
                 break;
             }
             content = content->subtypes[subtype_index];
+            string_append_formated(string, ".%s: ", content->name->characters);
         }
 
-        for (int i = 0; i < closing_parenthesis_count; i++) {
-            string_append_formated(string, "}");
+        if (single_line) {
+            string_append(string, " }");
+        }
+        else {
+            string_append(string, "\n");
+            append_indentation(0);
+            string_append(string, "}");
         }
         break;
     }
@@ -202,28 +401,29 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
     {
         auto enum_type = downcast<Datatype_Enum>(type);
         auto& members = enum_type->members;
-        if (enum_type->name != 0) {
-            string_append_formated(string, "%s{", enum_type->name->characters);
-        }
-        else {
-            string_append_formated(string, "Enum{");
-        }
-        int value = *(i32*)value_ptr;
-        Enum_Member* found = 0;
-        for (int i = 0; i < members.size; i++) {
-            Enum_Member* mem = &members[i];
-            if (value == mem->value) {
-                found = mem;
-                break;
+        if (format.show_datatype) {
+            if (enum_type->name != 0) {
+                string_append_formated(string, "%s", enum_type->name->characters);
+            }
+            else {
+                string_append_formated(string, "Enum");
             }
         }
-        if (found == 0) {
-            string_append_formated(string, "INVALID_VALUE");
+        string_append(string, ".");
+
+        int value = 0;
+        if (!local_memory.read_single_value(value_ptr, &value)) {
+            string_append_formated(string, "ACCESS_ERROR");
+            break;
+        }
+
+        Optional<Enum_Member> member = enum_type_find_member_by_value(enum_type, value);
+        if (!member.available) {
+            string_append_formated(string, "INVALID_VALUE(#%d)", value);
         }
         else {
-            string_append_formated(string, found->name->characters);
+            string_append_formated(string, member.value.name->characters);
         }
-        string_append_formated(string, "}");
         break;
     }
     case Datatype_Type::PRIMITIVE:
@@ -235,10 +435,13 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         {
         case Primitive_Class::ADDRESS: 
         {
-            string_append_formated(string, "address");
-            byte* data = *((byte**)value_ptr);
+            void* data = nullptr;
+            if (!local_memory.read_single_value(value_ptr, &data)) {
+                string_append(string, "CANNOT_ACCESS_POINTER_ADDRESS");
+                break;
+            }
             if (data == 0) {
-                string_append_formated(string, "nullptr");
+                string_append_formated(string, "null");
                 return;
             }
             string_append_formated(string, "Ptr %p", data);
@@ -246,7 +449,11 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         }
         case Primitive_Class::TYPE_HANDLE: 
         {
-            Upp_Type_Handle handle = *((Upp_Type_Handle*)value_ptr);
+            Upp_Type_Handle handle;
+            if (!local_memory.read_single_value(value_ptr, &handle)) {
+                string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                break;
+            }
             if (handle.index < (u32) type_system->types.size) {
                 Datatype* type = type_system->types[handle.index];
                 datatype_append_to_string(string, type_system, type);
@@ -257,20 +464,33 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
             break;
         }
         case Primitive_Class::BOOLEAN: {
-            bool val = *(bool*)value_ptr;
+            bool val = false;
+            if (!local_memory.read_single_value(value_ptr, &val)) {
+                string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                break;
+            }
             string_append_formated(string, "%s", val ? "TRUE" : "FALSE");
             break;
         }
         case Primitive_Class::INTEGER: {
             int value = 0;
+            bool success = true;
+
+            u8 buffer[8];
+            void* buffer_ptr = &buffer[0];
+
+            if (!local_memory.read(buffer_ptr, value_ptr, size)) {
+                string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                break;
+            }
             if (primitive->is_signed)
             {
                 switch (size)
                 {
-                case 1: value = (i32) * (i8*)value_ptr; break;
-                case 2: value = (i32) * (i16*)value_ptr; break;
-                case 4: value = (i32) * (i32*)value_ptr; break;
-                case 8: value = (i32) * (i64*)value_ptr; break;
+                case 1: value = (i32) * (i8*)buffer_ptr; break;
+                case 2: value = (i32) * (i16*)buffer_ptr; break;
+                case 4: value = (i32) * (i32*)buffer_ptr; break;
+                case 8: value = (i32) * (i64*)buffer_ptr; break;
                 default: panic("HEY");
                 }
             }
@@ -278,10 +498,10 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
             {
                 switch (size)
                 {
-                case 1: value = (i32) * (u8*)value_ptr; break;
-                case 2: value = (i32) * (u16*)value_ptr; break;
-                case 4: value = (i32) * (u32*)value_ptr; break;
-                case 8: value = (i32) * (u64*)value_ptr; break;
+                case 1: value = (i32) * (u8*)buffer_ptr; break;
+                case 2: value = (i32) * (u16*)buffer_ptr; break;
+                case 4: value = (i32) * (u32*)buffer_ptr; break;
+                case 8: value = (i32) * (u64*)buffer_ptr; break;
                 default: panic("HEY");
                 }
             }
@@ -290,12 +510,24 @@ void datatype_append_value_to_string(Datatype* type, Type_System* type_system, b
         }
         case Primitive_Class::FLOAT: {
             if (size == 4) {
-                string_append_formated(string, "%3.2f", *(float*)value_ptr);
+                float value = 0.0f;
+                if (!local_memory.read_single_value(value_ptr, &value)) {
+                    string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                    break;
+                }
+                string_append_formated(string, "%4.3f", value);
             }
             else if (size == 8) {
-                string_append_formated(string, "%3.2f", *(float*)value_ptr);
+                double value = 0.0f;
+                if (!local_memory.read_single_value(value_ptr, &value)) {
+                    string_append(string, "PRIMITIVE_ACCESS_ERROR");
+                    break;
+                }
+                string_append_formated(string, "%4.3f", value);
             }
-            else panic("HEY");
+            else {
+                panic("HEY"); 
+            }
             break;
         }
         default: panic("HEY");
@@ -313,6 +545,31 @@ Datatype_Format datatype_format_make_default()
     format.highlight_parameter_index = -1;
     format.remove_const_from_function_params = true;
     format.highlight_color = vec3(0.3f);
+    return format;
+}
+
+Datatype_Value_Format datatype_value_format_single_line() {
+    Datatype_Value_Format format;
+    format.follow_pointers = false;
+    format.indentation_spaces = 0;
+    format.single_line = true;
+    format.max_indentation_before_single_line = 0;
+    format.max_array_display_size = 3;
+    format.show_datatype = false;
+    format.show_member_names = false;
+    return format;
+}
+
+Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int max_indentation_before_single_line) 
+{
+    Datatype_Value_Format format;
+    format.follow_pointers = true;
+    format.indentation_spaces = 2;
+    format.single_line = false;
+    format.max_indentation_before_single_line = max_indentation_before_single_line;
+    format.max_array_display_size = max_array_values;
+    format.show_datatype = true;
+    format.show_member_names = true;
     return format;
 }
 
@@ -468,7 +725,9 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
                     auto& constant = poly_value.options.value;
 
                     auto string = Rich_Text::start_line_manipulation(text);
-                    datatype_append_value_to_string(constant.type, type_system, constant.memory, string);
+                    datatype_append_value_to_string(
+                        constant.type, type_system, constant.memory, string, datatype_value_format_single_line(), 
+                        0, Memory_Source(nullptr), Memory_Source(nullptr));
                     Rich_Text::stop_line_manipulation(text);
                     if (i != instance_values.size - 1) {
                         Rich_Text::append_formated(text, ", ");
@@ -1116,14 +1375,8 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
     result->base.contains_template = element_type->contains_template;
 
     result->element_type = element_type;
-    result->data_member.id = ids.data;
-    result->data_member.type = upcast(type_system_make_pointer(element_type, true));
-    result->data_member.offset = 0;
-    result->data_member.content = 0;
-    result->size_member.id = ids.size;
-    result->size_member.type = upcast(types.usize);
-    result->size_member.offset = 8;
-    result->size_member.content = 0;
+    result->data_member = struct_member_make(upcast(type_system_make_pointer(element_type, true)), ids.data, nullptr, 0, nullptr);
+    result->size_member = struct_member_make(upcast(types.usize), ids.size, nullptr, 8, nullptr);
 
     auto& internal_info = type_system_register_type(upcast(result))->options.slice;
     internal_info.element_type = element_type->type_handle;
@@ -1196,16 +1449,10 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
     result->base = datatype_make_simple_base(Datatype_Type::OPTIONAL_TYPE, 1, 1);
     result->base.contains_template = child_type->contains_template;
 
-    result->value_member.id = ids.value;
-    result->value_member.type = child_type;
-    result->value_member.content = nullptr;
-    result->value_member.offset = 0;
+    result->value_member = struct_member_make(child_type, ids.value, nullptr, 0, nullptr);
+    result->is_available_member = struct_member_make(upcast(type_system.predefined_types.bool_type), ids.is_available, nullptr, 0, nullptr);
 
-    result->is_available_member.id = ids.is_available;
-    result->is_available_member.type = upcast(type_system.predefined_types.bool_type);
-    result->is_available_member.content = nullptr;
-    result->is_available_member.offset = 0;
-
+    // Note: is_available offset will be set when type is finished
     if (child_type->memory_info.available) {
         result->base.memory_info = child_type->memory_info;
         result->base.memory_info_workload = nullptr;
@@ -1433,29 +1680,40 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
     result->is_extern_struct = false;
 
     result->content.name = name;
-    result->content.tag_member.id = 0;
-    result->content.tag_member.offset = 0;
-    result->content.tag_member.content = &result->content;
     result->content.structure = result;
     result->content.index = &compiler.analysis_data->type_system.subtype_base_index;
     result->content.members = dynamic_array_create<Struct_Member>();
     result->content.subtypes = dynamic_array_create<Struct_Content*>();
+    result->content.definition_node = nullptr;
+    if (workload != nullptr) {
+        result->content.definition_node = upcast(workload->struct_node);
+    }
+    result->content.tag_member = struct_member_make(
+        nullptr, compiler.identifier_pool.predefined_ids.tag, &result->content, 0, result->content.definition_node
+    );
 
     type_system_register_type(upcast(result)); // Is only initialized when memory_info is done
     return result;
 }
 
-void struct_add_member(Struct_Content* content, String* id, Datatype* member_type)
+Struct_Member struct_member_make(Datatype* type, String* id, Struct_Content* content, int offset, AST::Node* definition_node)
 {
     Struct_Member member;
+    member.type = type;
     member.id = id;
-    member.offset = 0;
-    member.type = member_type;
     member.content = content;
-    dynamic_array_push_back(&content->members, member);
+    member.offset = offset;
+    member.definition_node = definition_node;
+    return member;
 }
 
-Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
+void struct_add_member(Struct_Content* content, String* id, Datatype* member_type, AST::Node* definition_node)
+{
+    assert(!content->structure->base.memory_info.available, "Cannot add member to already finished struct");
+    dynamic_array_push_back(&content->members, struct_member_make(member_type, id, content, 0, definition_node));
+}
+
+Struct_Content* struct_add_subtype(Struct_Content* content, String* id, AST::Node* definition_node)
 {
     Struct_Content* subtype = new Struct_Content;
     subtype->members = dynamic_array_create<Struct_Member>();
@@ -1468,6 +1726,7 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id)
     subtype->max_alignment = 0;
     subtype->structure = content->structure;
     subtype->index = subtype_index_make_subtype(content->index, id, content->subtypes.size);
+    subtype->definition_node = definition_node;
     dynamic_array_push_back(&content->subtypes, subtype);
     return subtype;
 }
@@ -1785,7 +2044,7 @@ void type_system_finish_struct(Datatype_Struct* structure)
     }
 }
 
-Datatype_Enum* type_system_make_enum_empty(String* name)
+Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node)
 {
     assert(name != 0, "I've decided that all enums must have names, even if you have to generate them");
 
@@ -1794,6 +2053,7 @@ Datatype_Enum* type_system_make_enum_empty(String* name)
     result->base.memory_info = optional_make_failure<Datatype_Memory_Info>(); // Is not initialized until enum is finished
     result->name = name;
     result->members = dynamic_array_create<Enum_Member>(3);
+    result->definition_node = definition_node;
 
     type_system_register_type(upcast(result));
     return result;
@@ -2357,21 +2617,13 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
         *out_is_optional = false;
     }
 
+    // Note: The decision was made to make datatype address not count as pointer
+
     if (datatype->mods.pointer_level > 0) {
         if (out_is_optional != nullptr) {
             *out_is_optional = type_mods_pointer_is_optional(datatype->mods, datatype->mods.pointer_level - 1);
         }
         return true;
-    }
-    else if (datatype->type == Datatype_Type::PRIMITIVE) {
-        auto primitive = downcast<Datatype_Primitive>(datatype);
-        if (primitive->primitive_type == Primitive_Type::ADDRESS) {
-            if (out_is_optional != nullptr) {
-                *out_is_optional = true;
-            }
-            return true;
-        }
-        return false;
     }
     else if (datatype->type == Datatype_Type::FUNCTION) {
         if (out_is_optional != nullptr) {

@@ -228,7 +228,7 @@ struct Line_Breakpoint
 {
     int line_number;
     Source_Breakpoint* src_breakpoint; 
-    bool enabled;
+    bool enabled; // This is toggle via UI, but I'm not sure if it's already implemented
 };
 
 struct Editor_Tab
@@ -2405,7 +2405,7 @@ void syntax_editor_save_text_file()
 			logg("Saving file failed for path \"%s\"\n", path.characters);
 		}
 		else {
-			logg("Saved file \"%s\"!\n", path.characters);
+			// logg("Saved file \"%s\"!\n", path.characters);
 		}
 	}
 }
@@ -3103,12 +3103,22 @@ void syntax_editor_load_state(String file_path)
 		{
 			if (last_tab_valid) {
 				auto& tab = editor.tabs[editor.open_tab_index];
+
+				auto int_parse = string_parse_int(&value);
+				if (!int_parse.available) {
+					continue;
+				}
+				int line_no = int_parse.value;
+				if (line_no < 0 || line_no >= tab.code->line_count) {
+					printf("Invalid breakpoint in session file\n");
+					continue;
+				}
+
 				Line_Breakpoint breakpoint;
 				breakpoint.src_breakpoint = nullptr;
 				breakpoint.enabled = true;
-				breakpoint.line_number = 0;
+				breakpoint.line_number = line_no;
 				dynamic_array_push_back(&tab.breakpoints, breakpoint);
-				int_value_to_set = &tab.breakpoints[tab.breakpoints.size - 1].line_number;
 			}
 		}
 		else if (string_equals_cstring(&setting, "watch_value")) {
@@ -3729,22 +3739,14 @@ void code_completion_find_suggestions()
 		Datatype* type = nullptr;
 
 		auto expr_info = position_info.expression_info;
-		if (expr_info != nullptr && expr_info->expr->type == AST::Expression_Type::MEMBER_ACCESS && expr_info->member_access_value_type != nullptr)
+		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr)
 		{
 			// Note: For member-accesses, we need the type of the value, not the member-access expression
-			type = expr_info->member_access_value_type;
+			type = expr_info->member_access_info.value_type;
 			if (type->mods.optional_flags != 0) {
 				fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
 				type = nullptr;
-			}
-		}
-		else if (expr_info != nullptr && expr_info->expr->type == AST::Expression_Type::AUTO_ENUM)
-		{
-			if (expr_info->info->context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-				if (datatype_get_non_const_type(expr_info->info->context.expected_type.type)->type == Datatype_Type::ENUM) {
-					type = upcast(datatype_get_non_const_type(expr_info->info->context.expected_type.type));
-				}
 			}
 		}
 
@@ -4979,20 +4981,16 @@ void normal_command_execute(Normal_Mode_Command& command)
 		}
 		break;
 	}
-
 	case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
 	case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
 		int dir = command.type == Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
-		int prev = tab.cam_start;
+		int cursor_to_cam_start = 
+			source_code_get_line(tab.code, tab.cam_start)->visible_index - 
+			source_code_get_line(tab.code, cursor.line)->visible_index;
 		tab.cam_start = Line_Movement::move_visible_lines_up_or_down(tab.cam_start, editor.visible_line_count / 2 * dir);
 
-		// Move cursor if viewport has changed
-		if (prev != tab.cam_start) {
-			Movement movement = Parsing::movement_make(
-				(dir == 1 ? Movement_Type::MOVE_DOWN : Movement_Type::MOVE_UP), math_absolute(tab.cam_start - prev));
-			cursor = movement_evaluate(movement, cursor);
-			syntax_editor_sanitize_cursor();
-		}
+		cursor.line = Line_Movement::move_visible_lines_up_or_down(tab.cam_start, -cursor_to_cam_start);
+		syntax_editor_sanitize_cursor();
 		break;
 	}
 	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
@@ -5051,10 +5049,27 @@ void normal_command_execute(Normal_Mode_Command& command)
 	{
 		syntax_editor_synchronize_code_information();
 		Position_Info position_info = code_query_find_position_infos(cursor, nullptr);
+
+		// Goto symbol definition if symbol
 		if (position_info.symbol_info != nullptr) {
 			syntax_editor_goto_symbol_definition(position_info.symbol_info->symbol);
 			syntax_editor_add_position_to_jump_list();
 		}
+
+		// Handle Goto-Member access
+		if (position_info.expression_info == nullptr) break;
+		if (!position_info.expression_info->is_member_access) break;
+		if (!position_info.expression_info->member_access_info.has_definition) break;
+		auto& info = position_info.expression_info->member_access_info;
+		Text_Index old_index = info.definition_index;
+
+		// Switch to unit
+		int index = syntax_editor_add_tab(info.member_definition_unit->filepath); // Doesn't add a tab if already open
+		syntax_editor_switch_tab(index);
+
+		auto& tab = editor.tabs[editor.open_tab_index];
+		tab.cursor = code_query_text_index_at_last_synchronize(old_index, editor.open_tab_index, false);
+		syntax_editor_sanitize_cursor();
 		break;
 	}
 	case Normal_Command_Type::REPEAT_LAST_COMMAND:
@@ -6021,7 +6036,8 @@ void watch_values_update()
 {
 	auto& editor = syntax_editor;
 	auto debugger = editor.debugger;
-	if (debugger_get_state(debugger).process_state != Debug_Process_State::HALTED) {
+	auto debugger_state = debugger_get_state(debugger);
+	if (debugger_state.process_state != Debug_Process_State::HALTED) {
 		return;
 	}
 
@@ -6034,7 +6050,14 @@ void watch_values_update()
 
 		Debugger_Value_Read result = debugger_read_variable_value(debugger, watch_value.name, &byte_buffer, editor.selected_stack_frame, 3);
 		if (result.success) {
-			datatype_append_value_to_string(result.result_type, &editor.analysis_data->type_system, byte_buffer.data, &watch_value.value_as_text);
+			auto format = datatype_value_format_multi_line(8, 3);
+			format = datatype_value_format_single_line();
+			format.show_member_names = false;
+			format.show_datatype = false;
+			datatype_append_value_to_string(
+				result.result_type, &editor.analysis_data->type_system, byte_buffer.data, &watch_value.value_as_text,
+				format, 0, Memory_Source(nullptr), debugger_state.memory_source
+			);
 		}
 		else {
 			string_append_formated(&watch_value.value_as_text, result.error_msg);
@@ -6123,15 +6146,16 @@ void syntax_editor_update(bool& animations_running)
 	// Debugger-UI
 	const bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 	bool handle_key_messages_in_editor = true;
+	bool update_watch_values = false;
 	UI_Input_Info input_info = ui_system_start_frame(input);
 	if (input_info.has_keyboard_input) {
 		handle_key_messages_in_editor = false;
 	}
+
 	if (show_debugger_ui)
 	{
 		String tmp_str = string_create();
 		SCOPE_EXIT(string_destroy(&tmp_str));
-
 
 		Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
 		ui_system_push_active_container(handle.container, false);
@@ -6186,7 +6210,7 @@ void syntax_editor_update(bool& animations_running)
 				ui_system_push_dropdown(dropdown_state, dynamic_array_as_array(&strings));
 				if (dropdown_state.value_was_changed) {
 					editor.selected_stack_frame = dropdown_state.value;
-					watch_values_update();
+					update_watch_values = true;
 				}
 			}
 			else {
@@ -6202,20 +6226,25 @@ void syntax_editor_update(bool& animations_running)
 			ui_system_push_active_container(subsection_info.container, false);
 			SCOPE_EXIT(ui_system_pop_active_container());
 
-			auto& breakpoints = editor.tabs[editor.open_tab_index].breakpoints;
-			for (int i = 0; i < breakpoints.size; i++)
+			for (int i = 0; i < editor.tabs.size; i++)
 			{
-				auto& breakpoint = breakpoints[i];
-				// How do my breakpoints look like? Enabled/Disable checkbox, line number, line-preview, remove (X)?
-				ui_system_push_active_container(ui_system_push_line_container(), false);
-				SCOPE_EXIT(ui_system_pop_active_container());
-				breakpoint.enabled = ui_system_push_checkbox(breakpoint.enabled);
-				// Note: Breakpoint.enabled doesn't do anything yet
-				string_reset(&tmp_str);
-				String src_text = source_code_get_line(editor.tabs[editor.open_tab_index].code, breakpoint.line_number)->text;
-				string_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
-				ui_system_push_label(tmp_str.characters, false);
+				auto& tab = editor.tabs[i];
+				auto& breakpoints = tab.breakpoints;
+				for (int i = 0; i < breakpoints.size; i++)
+				{
+					auto& breakpoint = breakpoints[i];
+					// How do my breakpoints look like? Enabled/Disable checkbox, line number, line-preview, remove (X)?
+					ui_system_push_active_container(ui_system_push_line_container(), false);
+					SCOPE_EXIT(ui_system_pop_active_container());
+					breakpoint.enabled = ui_system_push_checkbox(breakpoint.enabled);
+					// Note: Breakpoint.enabled doesn't do anything yet
+					string_reset(&tmp_str);
+					String src_text = source_code_get_line(tab.code, breakpoint.line_number)->text;
+					string_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
+					ui_system_push_label(tmp_str.characters, false);
+				}
 			}
+
 		}
 
 		static bool watch_window_open = true;
@@ -6231,14 +6260,34 @@ void syntax_editor_update(bool& animations_running)
 			{
 				auto& watch_value = watch_values[i];
 				ui_system_push_active_container(ui_system_push_line_container(), false);
-				SCOPE_EXIT(ui_system_pop_active_container());
 
-				ui_system_push_label(watch_value.name.characters, true);
-				if (debugger_running) {
-					ui_system_push_label(watch_value.value_as_text.characters, false);
+				Text_Input_State state = ui_system_push_text_input(watch_value.name);
+				if (state.text_was_changed) {
+					string_reset(&watch_value.name);
+					string_append_string(&watch_value.name, &state.new_text);
+					string_reset(&watch_value.value_as_text);
+					update_watch_values = true;
+					animations_running = true;
 				}
-				else {
-					ui_system_push_label(" - Value not available - ", false);
+				bool pressed = ui_system_push_close_button();
+				ui_system_pop_active_container();
+				if (pressed) {
+					string_destroy(&watch_value.name);
+					string_destroy(&watch_value.value_as_text);
+					dynamic_array_remove_ordered(&watch_values, i);
+					i -= 1;
+					animations_running = true;
+					continue;
+				}
+
+				if (!debugger_running) {
+					continue;
+				}
+
+				Array<String> lines = string_split(watch_value.value_as_text, '\n');
+				SCOPE_EXIT(string_split_destroy(lines));
+				for (int i = 0; i < lines.size; i++) {
+					ui_system_push_label(lines[i], false);
 				}
 			}
 
@@ -6276,7 +6325,7 @@ void syntax_editor_update(bool& animations_running)
 	// Generate GUI (Tabs)
 	{
 		auto root_node = gui_add_node(gui_root_handle(), gui_size_make_fill(), gui_size_make_fill(), gui_drawable_make_none());
-		auto tabs_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.1f, 0.1f, 0.7f, 1.0f)));
+		auto tabs_container = gui_add_node(root_node, gui_size_make_fill(), gui_size_make_fit(), gui_drawable_make_rect(vec4(0.1f, 0.1f, 0.1f, 1.0f)));
 		if (editor.tabs.size > 1)
 		{
 			gui_node_set_layout(tabs_container, GUI_Stack_Direction::LEFT_TO_RIGHT, GUI_Alignment::MIN);
@@ -6381,7 +6430,6 @@ void syntax_editor_update(bool& animations_running)
 	// Handle debugger
 	if (debugger_running)
 	{
-		bool update_watch_values = false;
 		if (build_and_run) { // F5
 			debugger_resume_until_next_halt_or_exit(editor.debugger);
 			update_watch_values = true;
@@ -6446,19 +6494,23 @@ void syntax_editor_update(bool& animations_running)
 		{
 			auto& editor = syntax_editor;
 			auto debugger = editor.debugger;
-			auto& tab = editor.tabs[editor.open_tab_index];
 
-			auto& line_breakpoints = tab.breakpoints;
-			for (int i = 0; i < line_breakpoints.size; i++) {
-				auto& line_bp = line_breakpoints[i];
-				line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit);
+			for (int i = 0; i < editor.tabs.size; i++)
+			{
+				auto& tab = editor.tabs[i];
+				auto& line_breakpoints = tab.breakpoints;
+				for (int i = 0; i < line_breakpoints.size; i++) {
+					auto& line_bp = line_breakpoints[i];
+					line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit);
+				}
 			}
+
 		}
 		debugger_resume_until_next_halt_or_exit(editor.debugger); // Run until we hit one of our breakpoints
 		watch_values_update();
 
 		window_set_focus(editor.window);
-		show_debugger_ui = true;
+		// show_debugger_ui = true;
 		return;
 	}
 
@@ -7033,7 +7085,8 @@ void syntax_editor_render()
 					int start = info.start_char;
 					switch (info.type)
 					{
-					case Code_Analysis_Item_Type::EXPRESSION_INFO: {
+					case Code_Analysis_Item_Type::EXPRESSION_INFO: 
+					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'
 						switch (info.options.expression.info->specifics.member_access.type)
@@ -7045,7 +7098,7 @@ void syntax_editor_render()
 						case Member_Access_Type::STRUCT_MEMBER_ACCESS: color = Syntax_Color::MEMBER; break;
 						case Member_Access_Type::STRUCT_SUBTYPE:
 						case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: color = Syntax_Color::SUBTYPE; break;
-						case Member_Access_Type::ENUM_MEMBER_ACCESS: Syntax_Color::ENUM_MEMBER; break;
+						case Member_Access_Type::ENUM_MEMBER_ACCESS: color = Syntax_Color::ENUM_MEMBER; break;
 						default: panic("");
 						}
 						break;
@@ -7386,7 +7439,7 @@ void syntax_editor_render()
 			}
 			else if (context.type == Expression_Context_Type::AUTO_DEREFERENCE) {
 				Rich_Text::add_line(text, false, 1);
-				Rich_Text::append(text, "Context: Auto-Derefernce");
+				Rich_Text::append(text, "Context: Auto-Dereference");
 			}
 		}
 

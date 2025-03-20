@@ -119,6 +119,7 @@ struct Dropdown_State
 	bool value_was_changed;
 };
 
+Widget_Handle ui_system_push_label(String text, bool restrain_label_size);
 Widget_Handle ui_system_push_label(const char* text, bool restrain_label_size);
 void ui_system_push_next_component_label(const char* label_text);
 Button_Input ui_system_push_button(const char* label_text);
@@ -126,6 +127,7 @@ Text_Input_State ui_system_push_text_input(String text);
 int ui_system_push_int_input(int value);
 float ui_system_push_float_input(float value);
 bool ui_system_push_checkbox(bool enabled);
+bool ui_system_push_close_button();
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar);
 void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values);
 Container_Handle ui_system_push_line_container();

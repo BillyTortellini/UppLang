@@ -715,10 +715,10 @@ void add_struct_members_empty_recursive(
     {
         auto member_node = member_nodes[i];
         if (member_node->is_expression) {
-            struct_add_member(content, member_node->name, compiler.analysis_data->type_system.predefined_types.unknown_type);
+            struct_add_member(content, member_node->name, compiler.analysis_data->type_system.predefined_types.unknown_type, upcast(member_node));
         }
         else {
-            auto subtype = struct_add_subtype(content, member_node->name);
+            auto subtype = struct_add_subtype(content, member_node->name, upcast(member_node));
             add_struct_members_empty_recursive(subtype, member_node->options.subtype_members, report_errors, content->name, struct_params);
         }
 
@@ -8032,7 +8032,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 		}
 
-		Datatype_Enum* enum_type = type_system_make_enum_empty(enum_name);
+		Datatype_Enum* enum_type = type_system_make_enum_empty(enum_name, upcast(expr));
 		int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
 		for (int i = 0; i < members.size; i++)
 		{
@@ -8266,17 +8266,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			assert(success, "Dereferencing pointers to value should always work without optional flags");
 			info->specifics.is_optional_pointer_check = false;
 			EXIT_VALUE(upcast(types.bool_type), false);
-		}
-		else if (types_are_equal(value_type->base_type, upcast(types.address)))
-		{
-			// Dereference to final level
-			bool success = try_updating_expression_type_mods(
-                expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index)
-            );
-			assert(success, "Dereferencing pointers to value should always work without optional flags");
-
-			info->specifics.is_optional_pointer_check = true;
-			EXIT_VALUE(upcast(types.bool_type), true);
 		}
 		else if (value_type->base_type->type == Datatype_Type::FUNCTION)
 		{
@@ -8936,6 +8925,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					else {
 						member = slice->data_member;
 					}
+
 					if (is_const) {
 						member.type = type_system_make_constant(member.type);
 					}
@@ -9374,13 +9364,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			else if (left_requires_context && !right_requires_context) 
             {
 				right_type = semantic_analyser_analyse_expression_value(binop_node.right, unknown_context);
-                bool is_address = types_are_equal(datatype_get_non_const_type(right_type), upcast(types.address));
-                if (is_address) {
-					left_type = semantic_analyser_analyse_expression_value(
-                        binop_node.left, expression_context_make_specific_type(is_comparison ? upcast(types.address) : upcast(types.isize))
-                    );
-                }
-				else if (is_pointer_comparison) {
+				if (is_pointer_comparison) {
 					left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type));
 				}
 				else {
@@ -9390,13 +9374,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			else if (!left_requires_context && right_requires_context) 
             {
 				left_type = semantic_analyser_analyse_expression_value(binop_node.left, unknown_context);
-                bool is_address = types_are_equal(datatype_get_non_const_type(left_type), upcast(types.address));
-                if (is_address) {
-					right_type = semantic_analyser_analyse_expression_value(
-                        binop_node.right, expression_context_make_specific_type(is_comparison ? upcast(types.address) : upcast(types.isize))
-                    );
-                }
-				else if (is_pointer_comparison) {
+				if (is_pointer_comparison) {
 					right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type));
 				}
 				else {
@@ -9413,9 +9391,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Handle pointer comparisons
 		if (is_pointer_comparison)
 		{
+            bool unused = false;
 			if (!types_are_equal(left_type, right_type)) {
 				log_semantic_error("Pointer comparison only works if both types are the same", expr, Parser::Section::WHOLE);
 			}
+            else if (!datatype_is_pointer(left_type, &unused)) {
+				log_semantic_error("Value must be pointer for pointer-comparison", expr, Parser::Section::WHOLE);
+                log_error_info_given_type(left_type);
+            }
 			EXIT_VALUE(upcast(types.bool_type), true);
 		}
 

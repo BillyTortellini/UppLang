@@ -35,7 +35,7 @@ void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, siz
         }
         else 
         {
-            Array<byte> new_pool = array_create<byte>(curr_size * 2);
+            Array<byte> new_pool = array_create<byte>((int)curr_size * 2);
             dynamic_array_push_back(&allocator->memory, new_pool);
             allocator->current_pool_index = allocator->memory.size - 1;
             curr_size = allocator->memory[allocator->current_pool_index].size;
@@ -44,7 +44,7 @@ void* stack_allocator_allocate_size(Stack_Allocator* allocator, size_t size, siz
         end = size;
     }
     allocator->stack_pointer = next_aligned;
-    void* data = &allocator->memory[allocator->current_pool_index][allocator->stack_pointer];
+    void* data = &allocator->memory[allocator->current_pool_index][(int)allocator->stack_pointer];
     memory_set_bytes(data, size, 0);
     allocator->stack_pointer = end;
     return data;
