@@ -8,6 +8,35 @@ struct Input;
 struct Window;
 struct Render_Pass;
 
+enum class Icon_Rotation
+{
+	NONE,
+	ROT_90,
+	ROT_180,
+	ROT_270
+};
+
+enum class Icon_Type
+{
+	TRIANGLE_LEFT,
+	TRIANGLE_LEFT_SMALL,
+	ARROW_LEFT,
+	X_MARK,
+	CHECK_MARK,
+	NONE,
+
+	MAX_ENUM_VALUE
+};
+
+struct UI_Icon
+{
+	Icon_Type type;
+	Icon_Rotation rotation;
+	vec3 color;
+};
+
+UI_Icon ui_icon_make(Icon_Type type, Icon_Rotation rotation, vec3 color);
+
 struct ivec2
 {
     ivec2() {}
@@ -126,8 +155,10 @@ Button_Input ui_system_push_button(const char* label_text);
 Text_Input_State ui_system_push_text_input(String text);
 int ui_system_push_int_input(int value);
 float ui_system_push_float_input(float value);
+
+bool ui_system_push_icon_button(UI_Icon icon, bool draw_background, Widget_Handle* out_widget_handle = nullptr);
+bool ui_system_push_checkbox_style(bool enabled, UI_Icon enabled_icon, UI_Icon disabled_icon, bool draw_background);
 bool ui_system_push_checkbox(bool enabled);
-bool ui_system_push_close_button();
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar);
 void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values);
 Container_Handle ui_system_push_line_container();

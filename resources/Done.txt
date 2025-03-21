@@ -1,6 +1,47 @@
 
 Done:
 -----
+21.03:
+ * Added Synchronization for compilation units-array (Not the nicest solution, but hey...)
+ * Member-Access and Array-Access for Watch-values
+ * Remove on breakpoints in ui-window
+ * Debugger-UI added Step-Controls
+ * Added Icons to UI
+ * Watch-Value toggle to display single/extended
+ * Current instr/upper stack instr should have coloring if they are selected, but otherwise stay the same
+ * Continue/Step-Into/Step-Over should follow cursor
+ * Clicking on a stack frame should take you to the position...
+ * Updated Current-Line + Stack-Frames rendering (Not above breakpoints)
+
+20.03:
+ * Any-Type and string printing
+ * Print Value Formating options and Memory_Source
+ * Refactored Process-Memory into Memory_Source
+
+19.03:
+ * Fixed testcases compiled
+ * Remove unwanted console outputs
+
+18.03:
+ * Fixed C-Compiler error with address arithmetic
+ * Fixed breakpoints and multiple tabs
+ * Goto Definition for Enums
+ * Goto Definition for Member-Access and Dot-Call
+ * Removed Pointer-Behavior for address
+ * Rewriting Arena allocator with new address/usize types
+
+17.03:
+ * Editor Analysis-Info rework
+
+14.03:
+ * Fixed memory-leaks
+ * size_of should return usize
+ * Goto-Definition removes folds
+ * Ctrl+U and Ctrl+D are not moving cursor
+ * Searching with / and ? does not loop around file...
+ * new with [] is not working --> Refactor with {} syntax
+ * Code completion for keywords (cast_pointer, cast)
+
 13.03:
  * Fixed all testcases with new systems
  * Reworked byte_pointer, added new types: address, isize, usize

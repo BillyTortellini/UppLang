@@ -10,6 +10,14 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
+UI_Icon ui_icon_make(Icon_Type type, Icon_Rotation rotation, vec3 color)
+{
+	UI_Icon icon;
+	icon.type = type;
+	icon.rotation = rotation;
+	icon.color = color;
+	return icon;
+}
 
 // Constants
 const float WINDOW_RESIZE_RADIUS = 5;
@@ -41,8 +49,8 @@ const int BUTTON_MIN_CHAR_COUNT = 6;
 const int BUTTON_WANTED_CHAR_COUNT = 10;
 const int LIST_CONTAINER_MIN_CHAR_COUNT = 16;
 
-const int CHECKBOX_DISTANCE_FROM_LINE = 2;
-const int CHECKBOX_PADDING = 1;
+const float ICON_SIZE_TO_LINE_SIZE = 0.8f;
+const int ICON_PADDING = 2;
 
 const int MIN_WINDOW_WIDTH = 60;
 const int MIN_WINDOW_HEIGHT = 40;
@@ -72,14 +80,6 @@ const vec4 COLOR_DROPDOWN_BG = vec4_color_from_rgb(100, 100, 100);
 const vec4 COLOR_DROPDOWN_HOVER = vec4_color_from_rgb(130, 130, 130);
 
 
-
-enum class Icon_Rotation
-{
-	NONE,
-	ROT_90,
-	ROT_180,
-	ROT_270
-};
 
 struct BBox
 {
@@ -646,7 +646,7 @@ void mesh_push_text_clipped(Mesh* mesh, Glyph_Atlas_* atlas, String text, ivec2 
 	}
 }
 
-void mesh_push_icon(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitmap_size, Icon_Rotation rotation)
+void mesh_push_icon(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitmap_size, Icon_Rotation rotation, vec4 color)
 {
 	vec2 screen_size = vec2(rendering_core.render_information.backbuffer_width, rendering_core.render_information.backbuffer_height);
 	vec2 bitmap_size = vec2(atlas_bitmap_size.x, atlas_bitmap_size.y);
@@ -669,7 +669,6 @@ void mesh_push_icon(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitma
 		pos_data[2] = normalized_pos + normalized_size * vec2(1, 1);
 		pos_data[3] = normalized_pos + normalized_size * vec2(0, 1);
 
-		vec4 color(1.0f);
 		color_data[0] = color;
 		color_data[1] = color;
 		color_data[2] = color;
@@ -722,7 +721,7 @@ void mesh_push_icon(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitma
 	}
 }
 
-void mesh_push_icon_clipped(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitmap_size, BBox clipping_box, Icon_Rotation rotation)
+void mesh_push_icon_clipped(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atlas_bitmap_size, BBox clipping_box, Icon_Rotation rotation, vec4 color)
 {
 	BBox box = BBox(position, position + subimage.max - subimage.min);
 	BBox clipped_box = bbox_intersection(box, clipping_box);
@@ -730,7 +729,7 @@ void mesh_push_icon_clipped(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atl
 		return;
 	}
 	if (bbox_equals(clipped_box, box)) { // No clipping
-		mesh_push_icon(mesh, position, subimage, atlas_bitmap_size, rotation);
+		mesh_push_icon(mesh, position, subimage, atlas_bitmap_size, rotation, color);
 		return;
 	}
 
@@ -799,7 +798,6 @@ void mesh_push_icon_clipped(Mesh* mesh, ivec2 position, BBox subimage, ivec2 atl
 		default: panic("");
 		}
 
-		vec4 color(1.0f);
 		color_data[0] = color;
 		color_data[1] = color;
 		color_data[2] = color;
@@ -1040,11 +1038,7 @@ struct Widget_Style
 	// Icons and offsets
 	bool draw_icon;
 	bool icon_left_aligned;
-	Icon_Rotation icon_rotation;
-	BBox icon_atlas_box;
-	int icon_padding;
-	int offset_line_bot;
-	int offset_line_top;
+	UI_Icon icon;
 };
 
 struct Widget
@@ -1096,6 +1090,7 @@ struct UI_System
 	int line_item_height;
 	ivec2 char_size;
 	int max_descender_height;
+	int icon_size;
 
 	// Hover infos (-1 if no hover)
 	int mouse_hover_window_index;
@@ -1130,10 +1125,8 @@ struct UI_System
 	Shader* shader;
 	Texture* texture;
 
-	BBox atlas_box_check_mark;
-	BBox atlas_box_text_clipping; // ... symbol
-	BBox atlas_box_left_triangle;
-	BBox atlas_box_close_symbol;
+	BBox icon_boxes[(int)Icon_Type::MAX_ENUM_VALUE];
+	BBox atlas_box_text_clipping;
 };
 
 static UI_System ui_system;
@@ -1180,59 +1173,102 @@ void ui_system_initialize()
 		ui_system.char_size = ui_system.glyph_atlas.char_box_size;
 		ui_system.line_item_height = PAD_TOP + PAD_BOT + 2 * BORDER_SPACE + ui_system.char_size.y;
 		ui_system.max_descender_height = ui_system.glyph_atlas.max_descender_height;
-
-
+		ui_system.icon_size = (int) (ui_system.line_item_height * ICON_SIZE_TO_LINE_SIZE);
 
 		// Draw symbols into glyph-atlas
-		auto sdf_check_mark = [](vec2 pos, int pixel_size) -> float {
-			float pixel_width = 1.0f / pixel_size;
-			float thickness = 5 * pixel_width;
-			float r = thickness / 2.0f;
-			float border_spacing = r + pixel_width;
-			float max = 1.0f - border_spacing;
-			vec2 a = vec2(-max, 0.0f);
-			vec2 b = vec2(-1.0f + 2.0f / 3.0f, -max);
-			vec2 c = vec2(max);
-			float sdf = distance_point_to_line_segment(pos, a, b);
-			sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, c));
-			// Add thickness
-			sdf -= r;
-			return sdf;
+		for (int i = 0; i < (int)Icon_Type::MAX_ENUM_VALUE; i++)
+		{
+			Icon_Type type = (Icon_Type)i;
+
+			auto sdf_check_mark = [](vec2 pos, int pixel_size) -> float {
+				float pixel_width = 1.0f / pixel_size;
+				float thickness = 5 * pixel_width;
+				float r = thickness / 2.0f;
+				float border_spacing = r + pixel_width;
+				float max = 1.0f - border_spacing;
+				vec2 a = vec2(-max, 0.0f);
+				vec2 b = vec2(-1.0f + 2.0f / 3.0f, -max);
+				vec2 c = vec2(max);
+				float sdf = distance_point_to_line_segment(pos, a, b);
+				sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, c));
+				// Add thickness
+				sdf -= r;
+				return sdf;
 			};
-		const int check_box_size = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
-		const int check_mark_size = check_box_size - 2 * (CHECKBOX_PADDING + BORDER_SPACE);
-		ui_system.atlas_box_check_mark = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, check_mark_size, sdf_check_mark);
 
-		auto sdf_close_symbol = [](vec2 pos, int pixel_size) -> float {
-			float pixel_width = 1.0f / pixel_size;
-			float thickness = 5 * pixel_width;
-			float r = thickness / 2.0f;
-			float border_spacing = r + pixel_width;
-			float max = 1.0f - border_spacing;
-			vec2 a = vec2(-max, -max);
-			vec2 b = vec2(max, -max);
-			vec2 c = vec2(max, max);
-			vec2 d = vec2(-max, max);
-			float sdf = distance_point_to_line_segment(pos, a, c);
-			sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, d));
-			// Add thickness
-			sdf -= r;
-			return sdf;
-		};
-		ui_system.atlas_box_close_symbol = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, check_mark_size, sdf_close_symbol);
+			auto sdf_close_symbol = [](vec2 pos, int pixel_size) -> float {
+				float pixel_width = 1.0f / pixel_size;
+				float thickness = 5 * pixel_width;
+				float r = thickness / 2.0f;
+				float border_spacing = r + pixel_width;
+				float max = 1.0f - border_spacing;
+				vec2 a = vec2(-max, -max);
+				vec2 b = vec2(max, -max);
+				vec2 c = vec2(max, max);
+				vec2 d = vec2(-max, max);
+				float sdf = distance_point_to_line_segment(pos, a, c);
+				sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, d));
+				// Add thickness
+				sdf -= r;
+				return sdf;
+			};
 
-		auto sdf_left_triangle = [](vec2 pos, int pixel_size) -> float {
-			float pixel_width = 1.0f / pixel_size;
-			float r = pixel_width * 2; // Radius doesn't really mean much for triangle sdf
-			float max = 1.0f - (r + pixel_width); // Keep outline 1 pixel width away from border (For anti-aliasing)
-			vec2 a = vec2(-max);
-			vec2 b = vec2(max, 0.0f);
-			vec2 c = vec2(-max, max);
+			auto sdf_left_arrow = [](vec2 pos, int pixel_size) -> float {
+				float pixel_width = 1.0f / pixel_size;
+				float thickness = 5 * pixel_width;
+				float r = thickness / 2.0f;
+				float border_spacing = r + pixel_width;
+				float max = 1.0f - border_spacing;
+				vec2 a = vec2(-max, 0.0f);
+				vec2 b = vec2(max, 0.0f);
+				vec2 c = vec2(0.0f, max);
+				vec2 d = vec2(0.0f, -max);
+				float sdf = distance_point_to_line_segment(pos, a, b);
+				sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, c));
+				sdf = math_minimum(sdf, distance_point_to_line_segment(pos, b, d));
+				// Add thickness
+				sdf -= r;
+				return sdf;
+			};
 
-			return sdf_triangle(pos, a, b, c) - r;
-		};
-		int triangle_size = ui_system.char_size.y / 2.5f;
-		ui_system.atlas_box_left_triangle = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, triangle_size, sdf_left_triangle);
+			auto sdf_left_triangle = [](vec2 pos, int pixel_size) -> float {
+				float pixel_width = 1.0f / pixel_size;
+				float r = pixel_width * 2; // Radius doesn't really mean much for triangle sdf
+				float max = 1.0f - (r + pixel_width); // Keep outline 1 pixel width away from border (For anti-aliasing)
+				vec2 a = vec2(-max);
+				vec2 b = vec2(max, 0.0f);
+				vec2 c = vec2(-max, max);
+
+				return sdf_triangle(pos, a, b, c) - r;
+			};
+
+			auto sdf_left_triangle_small = [](vec2 pos, int pixel_size) -> float {
+				float pixel_width = 1.0f / pixel_size;
+				float r = pixel_width * 2; // Radius doesn't really mean much for triangle sdf
+				float max = 1.0f - (r + pixel_width); // Keep outline 1 pixel width away from border (For anti-aliasing)
+				float scale = 0.3;
+				vec2 a = vec2(-max) * scale;
+				vec2 b = vec2(max, 0.0f) * scale;
+				vec2 c = vec2(-max, max) * scale;
+
+				return sdf_triangle(pos, a, b, c) - r;
+				};
+
+			auto sdf_none = [](vec2 pos, int pixel_size) { return 1000.0f; };
+
+			bitmap_atlas_sdf_function sdf = nullptr;
+			switch (type)
+			{
+			case Icon_Type::TRIANGLE_LEFT: sdf = sdf_left_triangle; break;
+			case Icon_Type::TRIANGLE_LEFT_SMALL: sdf = sdf_left_triangle_small; break;
+			case Icon_Type::CHECK_MARK: sdf = sdf_check_mark; break;
+			case Icon_Type::X_MARK: sdf = sdf_close_symbol; break;
+			case Icon_Type::ARROW_LEFT: sdf = sdf_left_arrow; break;
+			case Icon_Type::NONE: sdf = sdf_none; break;
+			default: panic("");
+			}
+			ui_system.icon_boxes[i] = bitmap_atlas_writer_add_sdf_symbol(&atlas_writer, ui_system.icon_size, sdf);
+		}
 
 		ui_system.atlas_box_text_clipping = bitmap_atlas_make_space_for_sub_image(&atlas_writer, ui_system.char_size);
 		for (int x_pixel = 0; x_pixel < ui_system.char_size.x; x_pixel++) {
@@ -1612,14 +1648,16 @@ void ui_system_draw_text_with_clipping_indicator(
 	if (first_fully_visible != 0)
 	{
 		text_pos.x += first_fully_visible * ui_system.char_size.x;
-		mesh_push_icon_clipped(mesh, text_pos, ui_system.atlas_box_text_clipping, glyph_atlas->bitmap_atlas_size, clipping_box, Icon_Rotation::NONE);
+		mesh_push_icon_clipped(
+			mesh, text_pos, ui_system.atlas_box_text_clipping, glyph_atlas->bitmap_atlas_size, clipping_box, Icon_Rotation::NONE, vec4(1.0f));
 		text_pos.x += ui_system.char_size.x;
 		start_draw_char = first_fully_visible + 1;
 	}
 	if (last_fully_visible != text.size - 1) {
 		end_draw_char = last_fully_visible;
 		ivec2 dot_pos = text_pos + ivec2((last_fully_visible - start_draw_char) * ui_system.char_size.x, 0);
-		mesh_push_icon_clipped(mesh, dot_pos, ui_system.atlas_box_text_clipping, glyph_atlas->bitmap_atlas_size, clipping_box, Icon_Rotation::NONE);
+		mesh_push_icon_clipped(
+			mesh, dot_pos, ui_system.atlas_box_text_clipping, glyph_atlas->bitmap_atlas_size, clipping_box, Icon_Rotation::NONE, vec4(1.0f));
 	}
 
 	String substring = string_create_substring_static(&text, start_draw_char, end_draw_char);
@@ -1729,7 +1767,7 @@ struct Max_Width_Child
 struct Max_Width_Child_Comparator
 {
 	bool operator()(const Max_Width_Child& a, const Max_Width_Child& b) {
-		return a.max_width <= b.max_width;
+		return a.max_width < b.max_width;
 	}
 };
 
@@ -2194,8 +2232,6 @@ void container_element_render(
 		if (!widget_style.can_grow_beyond_max_width) {
 			box.max.x = box.min.x + widget_style.max_width;
 		}
-		box.min.y += widget_style.offset_line_bot;
-		box.max.y -= widget_style.offset_line_top;
 
 		// Draw background
 		ivec2 text_pos = box.min;
@@ -2220,24 +2256,31 @@ void container_element_render(
 		// Draw icon
 		if (widget_style.draw_icon) 
 		{
-			int width = widget_style.icon_atlas_box.max.x - widget_style.icon_atlas_box.min.x;
-			int padding = widget_style.icon_padding;
-			if (widget_style.icon_left_aligned) {
-				mesh_push_icon_clipped(
-					mesh, box.min + widget_style.icon_padding, 
-					widget_style.icon_atlas_box, glyph_atlas->bitmap_atlas_size, 
-					bbox_intersection(clipping_box, box), widget_style.icon_rotation
-				);
-				text_pos.x = box.min.x + width + widget_style.icon_padding * 2;
+			const int icon_size = ui_system.icon_size;
+			ivec2 icon_pos = box.min;
+			int padding = ICON_PADDING + widget_style.has_border ? BORDER_SPACE : 0;
+			// Icon-Y always centers it inside box
+			icon_pos.y = box.min.y + (box.max.y - box.min.y - icon_size) / 2;
+			BBox box_after = box;
+			if (widget_style.text_display.length > 0) 
+			{
+				if (widget_style.icon_left_aligned) {
+					icon_pos.x = box.min.x + padding;
+					text_pos.x = box.min.x + icon_size + padding * 2;
+				}
+				else {
+					icon_pos.x = box.max.x - icon_size - padding;
+					box_after.max.x -= icon_size + padding * 2;
+				}
 			}
 			else {
-				mesh_push_icon_clipped(
-					mesh, ivec2(box.max.x - width - padding, box.min.y + padding), 
-					widget_style.icon_atlas_box, glyph_atlas->bitmap_atlas_size, 
-					bbox_intersection(clipping_box, box), widget_style.icon_rotation
-				);
-				box.max.x -= widget_style.icon_atlas_box.max.x - widget_style.icon_atlas_box.min.x + widget_style.icon_padding * 2;
+				icon_pos.x = box.min.x + (box.max.x - box.min.x - icon_size) / 2 + padding;
 			}
+			mesh_push_icon_clipped(
+				mesh, icon_pos, ui_system.icon_boxes[(int)widget_style.icon.type], ui_system.atlas_bitmap.size,
+				bbox_intersection(clipping_box, box), widget_style.icon.rotation, vec4(widget_style.icon.color, 1.0f)
+			);
+			box = box_after;
 		}
 
 		// Draw text
@@ -3107,10 +3150,9 @@ Widget_Style widget_style_make_empty()
 	style.text_display.start_index = 0;
 	style.draw_icon = false;
 	style.icon_left_aligned = true;
-	style.icon_padding = 0;
-	style.icon_rotation = Icon_Rotation::NONE;
-	style.offset_line_bot = 0;
-	style.offset_line_top = 0;
+	style.icon.type = Icon_Type::TRIANGLE_LEFT;
+	style.icon.color = vec3(1.0f, 0.0f, 0.0f);
+	style.icon.rotation = Icon_Rotation::NONE;
 
 	// Size options
 	style.min_width = 0;
@@ -3350,60 +3392,52 @@ void ui_system_push_next_component_label(const char* label_text)
 	ui_system_push_active_container(container_handle, true);
 }
 
-// Returns the updated enabled state
-bool ui_system_push_checkbox(bool enabled)
+bool ui_system_push_icon_button(UI_Icon icon, bool draw_border, Widget_Handle* out_widget_handle)
 {
 	Widget_Style style = widget_style_make_empty();
 	style.draw_background = true;
 	style.background_color = COLOR_BUTTON_BG;
 	style.hover_color = COLOR_BUTTON_BG_HOVER;
-	style.has_border = true;
+	style.has_border = draw_border;
 	style.border_color = COLOR_BUTTON_BORDER;
-	style.offset_line_bot = CHECKBOX_DISTANCE_FROM_LINE;
-	style.offset_line_top = CHECKBOX_DISTANCE_FROM_LINE;
 
-	style.min_width = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
+	int padding = ICON_PADDING + draw_border ? BORDER_SPACE : 0;
+	style.min_width = ui_system.line_item_height;
 	style.max_width = style.min_width;
 	style.can_grow_beyond_max_width = false;
 	style.is_clickable = true;
+	style.draw_icon = true;
+	style.icon = icon;
 
 	Widget_Handle handle = ui_system_add_widget(style);
-	Widget& widget = ui_system.widgets[handle.widget_index];
-	if (ui_system.mouse_hover_widget_index == handle.widget_index && ui_system.mouse_was_clicked) {
-		enabled = !enabled;
+	if (out_widget_handle != nullptr) {
+		*out_widget_handle = handle;
 	}
-	widget.style.draw_icon = enabled;
-	widget.style.icon_atlas_box = ui_system.atlas_box_check_mark;
-	widget.style.icon_padding = BORDER_SPACE + CHECKBOX_PADDING;
-
-	return enabled;
-}
-
-bool ui_system_push_close_button()
-{
-	Widget_Style style = widget_style_make_empty();
-	style.draw_background = true;
-	style.background_color = COLOR_BUTTON_BG;
-	style.hover_color = COLOR_BUTTON_BG_HOVER;
-	style.has_border = true;
-	style.border_color = COLOR_BUTTON_BORDER;
-	style.offset_line_bot = CHECKBOX_DISTANCE_FROM_LINE;
-	style.offset_line_top = CHECKBOX_DISTANCE_FROM_LINE;
-
-	style.min_width = ui_system.line_item_height - 2 * CHECKBOX_DISTANCE_FROM_LINE;
-	style.max_width = style.min_width;
-	style.can_grow_beyond_max_width = false;
-	style.is_clickable = true;
-
-	Widget_Handle handle = ui_system_add_widget(style);
-	Widget& widget = ui_system.widgets[handle.widget_index];
-	widget.style.draw_icon = true;
-	widget.style.icon_atlas_box = ui_system.atlas_box_close_symbol;
-	widget.style.icon_padding = BORDER_SPACE + CHECKBOX_PADDING;
-
 	return ui_system.mouse_hover_widget_index == handle.widget_index && ui_system.mouse_was_clicked;
 }
 
+bool ui_system_push_checkbox_style(bool enabled, UI_Icon enabled_icon, UI_Icon disabled_icon, bool draw_background)
+{
+	Widget_Handle handle;
+	bool pressed = ui_system_push_icon_button(enabled_icon, draw_background, &handle);
+	if (pressed) {
+		enabled = !enabled;
+	}
+	
+	Widget& widget = ui_system.widgets[handle.widget_index];
+	widget.style.icon = enabled ? enabled_icon : disabled_icon;
+	return enabled;
+}
+
+bool ui_system_push_checkbox(bool enabled)
+{
+	return ui_system_push_checkbox_style(
+		enabled,
+		ui_icon_make(Icon_Type::CHECK_MARK, Icon_Rotation::NONE, vec3(1.0f)),
+		ui_icon_make(Icon_Type::NONE, Icon_Rotation::NONE, vec3(1.0f)),
+		true
+	);
+}
 
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar)
 {
@@ -3411,18 +3445,15 @@ UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_n
 		string_create_static(section_name), COLOR_BUTTON_BG, COLOR_BUTTON_BG_HOVER, COLOR_BUTTON_BORDER, Text_Alignment::LEFT
 	);
 	style.draw_icon = true;
-	style.icon_atlas_box = ui_system.atlas_box_left_triangle;
-	style.icon_rotation = enabled ? Icon_Rotation::ROT_90 : Icon_Rotation::NONE;
+	style.icon = ui_icon_make(Icon_Type::TRIANGLE_LEFT_SMALL, enabled ? Icon_Rotation::ROT_90 : Icon_Rotation::NONE, vec3(1.0f));
 	style.can_combine_in_lines = false;
-	int free_space = math_maximum(0, ui_system.line_item_height - (ui_system.atlas_box_left_triangle.max.y - ui_system.atlas_box_left_triangle.min.y));
-	style.icon_padding = free_space / 2;
 	style.is_clickable = true;
 
 	Widget_Handle handle = ui_system_add_widget(style);
 	Widget& widget = ui_system.widgets[handle.widget_index];
 	if (ui_system.mouse_hover_widget_index == handle.widget_index && ui_system.mouse_was_clicked) {
 		enabled = !enabled;
-		widget.style.icon_rotation = enabled ? Icon_Rotation::ROT_90 : Icon_Rotation::NONE;
+		widget.style.icon.rotation = enabled ? Icon_Rotation::ROT_90 : Icon_Rotation::NONE;
 	}
 
 	Container_Layout layout = container_layout_make_default();
@@ -3451,13 +3482,10 @@ void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_value
 	style.min_width = ui_system.char_size.x * 6 + PAD_LEFT_RIGHT + 2 * BORDER_SPACE;
 	style.max_width = ui_system.char_size.x * 24 + PAD_LEFT_RIGHT + 2 * BORDER_SPACE;
 	style.can_grow_beyond_max_width = true;
-	style.icon_atlas_box = ui_system.atlas_box_left_triangle;
-	style.icon_rotation = Icon_Rotation::ROT_90;
+	style.icon = ui_icon_make(Icon_Type::TRIANGLE_LEFT_SMALL, Icon_Rotation::ROT_90, vec3(1.0f));
 	style.draw_icon = true;
 	style.icon_left_aligned = false;
 	style.can_combine_in_lines = false;
-	int free_space = math_maximum(0, ui_system.line_item_height - (ui_system.atlas_box_left_triangle.max.y - ui_system.atlas_box_left_triangle.min.y));
-	style.icon_padding = free_space / 2;
 
 	Widget_Handle widget_handle = ui_system_add_widget(style);
 	if (widget_handle.created_this_frame) {
@@ -3548,6 +3576,10 @@ void ui_system_push_test_windows()
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
+		ui_system_push_checkbox(true);
+		ui_system_push_checkbox(false);
+		return;
+
 		// auto subsection_info = ui_system_push_subsection(true, "Watch_Window", true);
 		// ui_system_push_active_container(subsection_info.container, false);
 		// SCOPE_EXIT(ui_system_pop_active_container());
@@ -3556,7 +3588,7 @@ void ui_system_push_test_windows()
 		SCOPE_EXIT(ui_system_pop_active_container());
 
 		ui_system_push_button("Frick dis");
-		ui_system_push_close_button();
+		ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1.0f)), true);
 		ui_system_push_label("Henlo", false);
 
 		return;
@@ -3631,6 +3663,17 @@ void ui_system_push_test_windows()
 	if (pressed) {
 		printf("Another one was pressed!\n");
 	}
+
+	ui_system_push_active_container(ui_system_push_line_container(), false);
+	ui_system_push_checkbox(true);
+	ui_system_push_checkbox(false);
+	ui_system_push_icon_button(ui_icon_make(Icon_Type::CHECK_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
+	ui_system_push_icon_button(ui_icon_make(Icon_Type::ARROW_LEFT, Icon_Rotation::NONE, vec3(1, 1, 0)), true);
+	ui_system_push_icon_button(ui_icon_make(Icon_Type::TRIANGLE_LEFT, Icon_Rotation::NONE, vec3(0, 1, 0)), true);
+	ui_system_push_icon_button(ui_icon_make(Icon_Type::TRIANGLE_LEFT_SMALL, Icon_Rotation::NONE, vec3(1, 1, 1)), true);
+	ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 1, 1)), false);
+
+	ui_system_pop_active_container();
 
 	Window_Handle new_window = ui_system_add_window(window_style_make_floating("Dropdown parent window"));
 	ui_system_push_active_container(new_window.container, false);

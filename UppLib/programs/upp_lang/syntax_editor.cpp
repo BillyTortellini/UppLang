@@ -302,6 +302,7 @@ struct Watch_Value
 {
     String name;
     String value_as_text;
+	bool show_multiline;
 };
 
 struct Syntax_Editor
@@ -2968,6 +2969,45 @@ void syntax_editor_save_state(String file_path)
 	file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
 }
 
+// Returns true if breakpoint was removed
+bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
+{
+	if (tab_index < 0 || tab_index >= syntax_editor.tabs.size) return false;
+	auto& tab = syntax_editor.tabs[tab_index];
+	if (line_index < 0 || line_index >= tab.code->line_count) return false;
+
+	auto& breakpoints = tab.breakpoints;
+	int index = -1;
+	for (int i = 0; i < breakpoints.size; i++) {
+		if (breakpoints[i].line_number == line_index) {
+			index = i;
+			break;
+		}
+	}
+
+	// Remove breakpoint if already exists
+	bool debugger_running = debugger_get_state(syntax_editor.debugger).process_state == Debug_Process_State::HALTED;
+	if (index != -1) {
+		auto& bp = breakpoints[index];
+		if (bp.src_breakpoint != nullptr && debugger_running) {
+			debugger_remove_source_breakpoint(syntax_editor.debugger, bp.src_breakpoint);
+		}
+		dynamic_array_swap_remove(&breakpoints, index);
+		return true;
+	}
+
+	Line_Breakpoint bp;
+	bp.line_number = line_index;
+	bp.src_breakpoint = nullptr;
+	bp.enabled = true;
+	if (debugger_running) {
+		bp.src_breakpoint = debugger_add_source_breakpoint(syntax_editor.debugger, bp.line_number, tab.compilation_unit);
+	}
+	dynamic_array_push_back(&breakpoints, bp);
+
+	return false;
+}
+
 void syntax_editor_load_state(String file_path)
 {
 	auto& editor = syntax_editor;
@@ -3114,17 +3154,14 @@ void syntax_editor_load_state(String file_path)
 					continue;
 				}
 
-				Line_Breakpoint breakpoint;
-				breakpoint.src_breakpoint = nullptr;
-				breakpoint.enabled = true;
-				breakpoint.line_number = line_no;
-				dynamic_array_push_back(&tab.breakpoints, breakpoint);
+				syntax_editor_toggle_line_breakpoint(editor.open_tab_index, line_no);
 			}
 		}
 		else if (string_equals_cstring(&setting, "watch_value")) {
 			Watch_Value watch_value;
 			watch_value.name = string_copy(value);
 			watch_value.value_as_text = string_create();
+			watch_value.show_multiline = false;
 			dynamic_array_push_back(&editor.watch_values, watch_value);
 		}
 		else {
@@ -3396,9 +3433,9 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 
 		switch (info.type)
 		{
-		case Code_Analysis_Item_Type::CALL_INFORMATION: 
+		case Code_Analysis_Item_Type::CALL_INFORMATION:
 		{
-			if (info.tree_depth > previous_call_depth) 
+			if (info.tree_depth > previous_call_depth)
 			{
 				result.call_info = &info.options.call_info;
 				previous_call_depth = info.tree_depth;
@@ -3410,7 +3447,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 				else if (index.character == info.end_char - 1) {
 					result.call_argument_index = info.options.call_info.arguments->arguments.size - 1; // Note: -1 is also fine here
 				}
-				else 
+				else
 				{
 					// Figure out closest argument
 					int closest_index = -1;
@@ -3421,7 +3458,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 						auto arg_info = other_info.options.argument_info;
 						if (arg_info.matching_info != info.options.call_info.matching_info) continue;
 						int distance = math_minimum(
-							math_absolute(index.character - other_info.start_char), 
+							math_absolute(index.character - other_info.start_char),
 							math_absolute(index.character - (other_info.end_char - 1))
 						);
 						if (index.character >= other_info.start_char && index.character < other_info.end_char) {
@@ -3624,7 +3661,7 @@ void code_completion_find_suggestions()
 	syntax_editor_synchronize_code_information();
 	if (text_index_equal(tab.last_code_completion_query_pos, cursor) &&
 		editor.last_code_completion_tab == editor.open_tab_index &&
-		tab.last_code_completion_info_index == editor.compile_count) 
+		tab.last_code_completion_info_index == editor.compile_count)
 	{
 		return;
 	}
@@ -4352,7 +4389,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 						break;
 					}
 				}
-				else 
+				else
 				{
 					int pos = 0;
 					if (line_index == index.line) {
@@ -4825,7 +4862,7 @@ void normal_command_execute(Normal_Mode_Command& command)
 
 	switch (command.type)
 	{
-	case Normal_Command_Type::MOVEMENT: 
+	case Normal_Command_Type::MOVEMENT:
 	{
 		auto movement = command.options.movement;
 
@@ -4984,8 +5021,8 @@ void normal_command_execute(Normal_Mode_Command& command)
 	case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
 	case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
 		int dir = command.type == Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
-		int cursor_to_cam_start = 
-			source_code_get_line(tab.code, tab.cam_start)->visible_index - 
+		int cursor_to_cam_start =
+			source_code_get_line(tab.code, tab.cam_start)->visible_index -
 			source_code_get_line(tab.code, cursor.line)->visible_index;
 		tab.cam_start = Line_Movement::move_visible_lines_up_or_down(tab.cam_start, editor.visible_line_count / 2 * dir);
 
@@ -5283,33 +5320,7 @@ void normal_command_execute(Normal_Mode_Command& command)
 	}
 	case Normal_Command_Type::TOGGLE_LINE_BREAKPOINT:
 	{
-		auto& breakpoints = tab.breakpoints;
-		int index = -1;
-		for (int i = 0; i < breakpoints.size; i++) {
-			if (breakpoints[i].line_number == cursor.line) {
-				index = i;
-				break;
-			}
-		}
-
-		// Remove breakpoint if already exists
-		if (index != -1) {
-			auto& bp = breakpoints[index];
-			if (bp.src_breakpoint != nullptr && debugger_running) {
-				debugger_remove_source_breakpoint(editor.debugger, bp.src_breakpoint);
-			}
-			dynamic_array_swap_remove(&breakpoints, index);
-			break;
-		}
-
-		Line_Breakpoint bp;
-		bp.line_number = cursor.line;
-		bp.src_breakpoint = nullptr;
-		bp.enabled = true;
-		if (debugger_running) {
-			bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, bp.line_number, tab.compilation_unit);
-		}
-		dynamic_array_push_back(&breakpoints, bp);
+		syntax_editor_toggle_line_breakpoint(editor.open_tab_index, cursor.line);
 		break;
 	}
 	default: panic("");
@@ -5337,9 +5348,9 @@ void insert_command_execute(Insert_Command input)
 
 	SCOPE_EXIT(
 		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
-		Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, cursor.line, &lock);
-		identifier_pool_lock_release(lock);
-	);
+	Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, cursor.line, &lock);
+	identifier_pool_lock_release(lock);
+		);
 
 	if (editor.record_insert_commands) {
 		dynamic_array_push_back(&editor.last_insert_commands, input);
@@ -6032,6 +6043,14 @@ int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block* block, 
 	return -1;
 }
 
+// Note: For expression-evaluation, only member-access and array-access are currently supported
+struct Watch_Value_Post_Op
+{
+	bool is_member_access;
+	String member_name;
+	int array_access;
+};
+
 void watch_values_update()
 {
 	auto& editor = syntax_editor;
@@ -6041,6 +6060,8 @@ void watch_values_update()
 		return;
 	}
 
+	Dynamic_Array<Watch_Value_Post_Op> post_ops = dynamic_array_create<Watch_Value_Post_Op>();
+	SCOPE_EXIT(dynamic_array_destroy(&post_ops));
 	Dynamic_Array<u8> byte_buffer = dynamic_array_create<u8>(16);
 	SCOPE_EXIT(dynamic_array_destroy(&byte_buffer));
 	for (int i = 0; i < editor.watch_values.size; i++)
@@ -6048,21 +6069,276 @@ void watch_values_update()
 		auto& watch_value = editor.watch_values[i];
 		string_reset(&watch_value.value_as_text);
 
-		Debugger_Value_Read result = debugger_read_variable_value(debugger, watch_value.name, &byte_buffer, editor.selected_stack_frame, 3);
-		if (result.success) {
-			auto format = datatype_value_format_multi_line(8, 3);
+		// Parse post-ops
+		bool success = true;
+		String value_name = string_create_substring_static(&watch_value.name, 0, watch_value.name.size);
+		dynamic_array_reset(&post_ops);
+		{
+			int index = 0; 
+			auto& text = watch_value.name;
+			int first_op_index = text.size + 1;
+
+			// Skip characters until first . or [
+			while (index < text.size)
+			{
+				char c = text[index];
+				if (c == '.' || c == '[') {
+					break;
+				}
+				if (!char_is_valid_identifier(c)) {
+					success = false;
+					break;
+				}
+				index += 1;
+			}
+			value_name = string_create_substring_static(&watch_value.name, 0, index);
+
+			// Parse post ops
+			while (index < text.size && success)
+			{
+				char c = text[index];
+				if (c == '.') 
+				{
+					first_op_index = math_minimum(first_op_index, index);
+
+					int member_access_start = index + 1;
+					int member_access_end = index + 1;
+					while (member_access_end < text.size) {
+						char c = text[member_access_end];
+						if (char_is_valid_identifier(c)) {
+							member_access_end += 1;
+							continue;
+						}
+						break;
+					}
+
+					if (member_access_start != member_access_end) {
+						Watch_Value_Post_Op op;
+						op.is_member_access = true;
+						op.member_name = string_create_substring_static(&text, member_access_start, member_access_end);
+						dynamic_array_push_back(&post_ops, op);
+					}
+					else {
+						success = false;
+					}
+					index = member_access_end;
+					continue;
+				}
+				else if (c == '[') 
+				{
+					first_op_index = math_minimum(first_op_index, index);
+
+					index += 1;
+					int value = 0;
+					while (index < text.size) {
+						char c = text[index];
+						if (char_is_digit(c)) {
+							value = value * 10 + char_digit_value(c);
+						}
+						else if (c == ']') {
+							index += 1;
+							break;
+						}
+						else {
+							success = false;
+							break;
+						}
+						index += 1;
+					}
+					Watch_Value_Post_Op op;
+					op.is_member_access = false;
+					op.array_access = value;
+					dynamic_array_push_back(&post_ops, op);
+				}
+				else {
+					index += 1;
+				}
+			}
+		}
+
+		if (!success) {
+			string_append_formated(&watch_value.value_as_text, "Parsing Watch-Value failed");
+			continue;
+		}
+
+		// Read value
+		Debugger_Value_Read result = debugger_read_variable_value(debugger, value_name, &byte_buffer, editor.selected_stack_frame, 3);
+		if (!result.success) {
+			string_append_formated(&watch_value.value_as_text, result.error_msg);
+			continue;
+		}
+
+		// Apply post ops to value
+		byte* value_ptr = byte_buffer.data;
+		Memory_Source local_source = Memory_Source(nullptr);
+		Datatype* type = result.result_type;
+		for (int i = 0; i < post_ops.size && success; i++)
+		{
+			auto& post_op = post_ops[i];
+
+			type = datatype_get_non_const_type(type);
+			// Dereference pointers
+			while (type->type == Datatype_Type::POINTER) 
+			{
+				void* pointer = nullptr; 
+				if (!local_source.read_single_value(value_ptr, &pointer)) {
+					string_append(&watch_value.value_as_text, "Pointer dereference failed!");
+					success = false;
+					break;
+				}
+				if (pointer == nullptr) {
+					string_append(&watch_value.value_as_text, "Auto-derefernce failed, pointer was null");
+					success = false;
+					break;
+				}
+				value_ptr = (byte*)pointer;
+				type = datatype_get_non_const_type(downcast<Datatype_Pointer>(type)->element_type);
+				local_source = debugger_get_state(debugger).memory_source;
+			}
+
+			if (post_op.is_member_access) 
+			{
+				Struct_Content* content = nullptr;
+				if (type->type == Datatype_Type::SUBTYPE) {
+					content = type_mods_get_subtype(downcast<Datatype_Struct>(type->base_type), type->mods);
+				}
+				else if (type->type == Datatype_Type::STRUCT) {
+					content = &downcast<Datatype_Struct>(type->base_type)->content;
+				}
+				else {
+					string_append(&watch_value.value_as_text, "Member access only valid on structs in Watch-values");
+					success = false;
+					break;
+				}
+
+				int member_index = -1;
+				for (int i = 0; i < content->members.size; i++) {
+					auto member = content->members[i];
+					if (string_equals(member.id, &post_op.member_name)) {
+						member_index = i;
+						break;
+					}
+				}
+
+				if (member_index == -1) {
+					string_append(&watch_value.value_as_text, "Struct did not contain member");
+					success = false;
+					break;
+				}
+
+				Struct_Member& member = content->members[member_index];
+				value_ptr = value_ptr + member.offset;
+				type = datatype_get_non_const_type(member.type);
+			}
+			else
+			{
+				// Array access
+				Datatype* element_type = nullptr;
+				int element_count = 0;
+				if (type->type == Datatype_Type::ARRAY) 
+				{
+					auto array_type = downcast<Datatype_Array>(type);
+					if (!array_type->count_known) {
+						string_append(&watch_value.value_as_text, "Array count not known");
+						success = false;
+						break;
+					}
+					element_count = array_type->element_count;
+					element_type = array_type->element_type;
+				}
+				else if (type->type == Datatype_Type::SLICE) 
+				{
+					auto slice_type = downcast<Datatype_Slice>(type);
+					Upp_Slice_Base slice_value;
+					if (!local_source.read_single_value(value_ptr, &slice_value)) {
+						string_append(&watch_value.value_as_text, "Slice memory access failed");
+						success = false;
+						break;
+					}
+					if (slice_value.data == nullptr) {
+						string_append(&watch_value.value_as_text, "Slice data was nullptr");
+						success = false;
+						break;
+					}
+
+					element_type = slice_type->element_type;
+					value_ptr = (byte*)slice_value.data;
+					local_source = debugger_get_state(debugger).memory_source;
+					element_count = slice_value.size;
+				}
+				else {
+					string_append(&watch_value.value_as_text, "Array access only valid on Arrays/Slices");
+					success = false;
+					break;
+				}
+
+				// Add array-offset to value-ptr
+				if (post_op.array_access < 0 || post_op.array_access >= element_count) {
+					string_append(&watch_value.value_as_text, "Array access index out of bounds");
+					success = false;
+					break;
+				}
+				if (!element_type->memory_info.available) {
+					string_append(&watch_value.value_as_text, "Array memory not available");
+					success = false;
+					break;
+				}
+				value_ptr = value_ptr + element_type->memory_info.value.size * post_op.array_access;
+				type = element_type;
+			}
+		}
+		if (!success) {
+			continue;
+		}
+
+
+		Datatype_Value_Format format = datatype_value_format_multi_line(8, 3);
+		if (!watch_value.show_multiline) {
 			format = datatype_value_format_single_line();
 			format.show_member_names = false;
 			format.show_datatype = false;
-			datatype_append_value_to_string(
-				result.result_type, &editor.analysis_data->type_system, byte_buffer.data, &watch_value.value_as_text,
-				format, 0, Memory_Source(nullptr), debugger_state.memory_source
-			);
 		}
-		else {
-			string_append_formated(&watch_value.value_as_text, result.error_msg);
-		}
+		datatype_append_value_to_string(
+			type, &editor.analysis_data->type_system, value_ptr, &watch_value.value_as_text,
+			format, 0, local_source, debugger_state.memory_source
+		);
 	}
+}
+
+void cursor_goto_selected_stack_frame()
+{
+	auto& editor = syntax_editor;
+
+	// Find position of stack frame
+	if (debugger_get_state(editor.debugger).process_state != Debug_Process_State::HALTED) {
+		return;
+	}
+	Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
+	if (editor.selected_stack_frame < 0 || editor.selected_stack_frame >= stack_frames.size) {
+		return;
+	}
+	auto frame = stack_frames[editor.selected_stack_frame];
+	Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
+	if (info.unit == nullptr) {
+		return;
+	}
+	Compilation_Unit* unit = info.unit;
+	int line_index = info.upp_line_index;
+
+	// Switch to correct tab
+	if (editor.tabs[editor.open_tab_index].compilation_unit != unit) {
+		int tab_index = syntax_editor_add_tab(unit->filepath);
+		syntax_editor_switch_tab(tab_index);
+	}
+
+	// Move cursor
+	auto& tab = editor.tabs[editor.open_tab_index];
+	tab.cursor.line = line_index;
+	tab.cursor.character = 0;
+	syntax_editor_sanitize_cursor();
+
+	tab.last_render_cursor_pos.line = -1; // So that camera moves to cursor
+	remove_folds_on_cursor();
 }
 
 void syntax_editor_update(bool& animations_running)
@@ -6147,6 +6423,13 @@ void syntax_editor_update(bool& animations_running)
 	const bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 	bool handle_key_messages_in_editor = true;
 	bool update_watch_values = false;
+	bool action_continue = false;
+	bool action_stop = false;
+	bool action_step_over = false;
+	bool action_step_into = false;
+	bool action_step_out_of = false;
+	bool action_print_line_info = false;
+	bool action_open_debugger_command_line = false;
 	UI_Input_Info input_info = ui_system_start_frame(input);
 	if (input_info.has_keyboard_input) {
 		handle_key_messages_in_editor = false;
@@ -6208,10 +6491,19 @@ void syntax_editor_update(bool& animations_running)
 				static Dropdown_State dropdown_state;
 				dropdown_state.value = editor.selected_stack_frame;
 				ui_system_push_dropdown(dropdown_state, dynamic_array_as_array(&strings));
-				if (dropdown_state.value_was_changed) {
+				if (dropdown_state.value_was_changed)
+				{
 					editor.selected_stack_frame = dropdown_state.value;
 					update_watch_values = true;
+					cursor_goto_selected_stack_frame();
 				}
+
+				ui_system_push_active_container(ui_system_push_line_container(), false);
+				action_continue = ui_system_push_icon_button(ui_icon_make(Icon_Type::TRIANGLE_LEFT, Icon_Rotation::NONE, vec3(0, 1, 0)), true);
+				action_step_over = ui_system_push_icon_button(ui_icon_make(Icon_Type::ARROW_LEFT, Icon_Rotation::NONE, vec3(1)), true);
+				action_step_into = ui_system_push_icon_button(ui_icon_make(Icon_Type::ARROW_LEFT, Icon_Rotation::ROT_90, vec3(1)), true);
+				action_step_out_of = ui_system_push_icon_button(ui_icon_make(Icon_Type::ARROW_LEFT, Icon_Rotation::ROT_270, vec3(1)), true);
+				ui_system_pop_active_container();
 			}
 			else {
 				ui_system_push_label("Debugger not running", false);
@@ -6226,9 +6518,8 @@ void syntax_editor_update(bool& animations_running)
 			ui_system_push_active_container(subsection_info.container, false);
 			SCOPE_EXIT(ui_system_pop_active_container());
 
-			for (int i = 0; i < editor.tabs.size; i++)
-			{
-				auto& tab = editor.tabs[i];
+			auto push_tab_breakpoints = [&](int tab_index) {
+				auto& tab = editor.tabs[tab_index];
 				auto& breakpoints = tab.breakpoints;
 				for (int i = 0; i < breakpoints.size; i++)
 				{
@@ -6238,13 +6529,31 @@ void syntax_editor_update(bool& animations_running)
 					SCOPE_EXIT(ui_system_pop_active_container());
 					breakpoint.enabled = ui_system_push_checkbox(breakpoint.enabled);
 					// Note: Breakpoint.enabled doesn't do anything yet
+
+					bool remove = ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
+					if (remove) {
+						syntax_editor_toggle_line_breakpoint(tab_index, breakpoint.line_number);
+						i -= 1;
+						continue;
+					}
+
 					string_reset(&tmp_str);
 					String src_text = source_code_get_line(tab.code, breakpoint.line_number)->text;
 					string_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
 					ui_system_push_label(tmp_str.characters, false);
 				}
-			}
+				};
 
+			push_tab_breakpoints(editor.open_tab_index);
+			for (int i = 0; i < editor.tabs.size; i++)
+			{
+				auto& tab = editor.tabs[i];
+				if (i == editor.open_tab_index) continue;
+				if (tab.breakpoints.size == 0) continue;
+				String name = string_create_filename_from_path_static(&tab.compilation_unit->filepath);
+				ui_system_push_label(name, false);
+				push_tab_breakpoints(i);
+			}
 		}
 
 		static bool watch_window_open = true;
@@ -6269,7 +6578,14 @@ void syntax_editor_update(bool& animations_running)
 					update_watch_values = true;
 					animations_running = true;
 				}
-				bool pressed = ui_system_push_close_button();
+
+				bool show_multiline = ui_system_push_checkbox(watch_value.show_multiline);
+				if (show_multiline != watch_value.show_multiline) {
+					watch_value.show_multiline = show_multiline;
+					update_watch_values = true;
+				}
+
+				bool pressed = ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
 				ui_system_pop_active_container();
 				if (pressed) {
 					string_destroy(&watch_value.name);
@@ -6297,7 +6613,8 @@ void syntax_editor_update(bool& animations_running)
 			{
 				bool is_valid = true;
 				for (int i = 0; i < input.new_text.size; i++) {
-					if (!char_is_valid_identifier(input.new_text[i])) {
+					char c = input.new_text[i];
+					if (!(char_is_valid_identifier(c) || c == '[' || c == ']' || c == '.')) {
 						is_valid = false;
 						break;
 					}
@@ -6307,6 +6624,7 @@ void syntax_editor_update(bool& animations_running)
 					Watch_Value new_value;
 					new_value.name = string_copy(input.new_text);
 					new_value.value_as_text = string_create();
+					new_value.show_multiline = false;
 					dynamic_array_push_back(&editor.watch_values, new_value);
 					watch_values_update();
 				}
@@ -6430,37 +6748,55 @@ void syntax_editor_update(bool& animations_running)
 	// Handle debugger
 	if (debugger_running)
 	{
-		if (build_and_run) { // F5
-			debugger_resume_until_next_halt_or_exit(editor.debugger);
-			update_watch_values = true;
-			window_set_focus(editor.window);
-		}
+		bool execution_changed = false;
 
 		// Print mapping infos if this is se case
-		if (syntax_editor.input->key_pressed[(int)Key_Code::F4]) {
+		auto& keys = syntax_editor.input->key_pressed;
+		if (keys[(int)Key_Code::F4]) { action_print_line_info = true; }
+		else if (keys[(int)Key_Code::F5]) { action_continue = true; }
+		else if (keys[(int)Key_Code::F6]) { action_step_over = true; }
+		else if (keys[(int)Key_Code::F7]) { action_step_into = true; }
+		else if (keys[(int)Key_Code::F8]) { action_step_out_of = true; }
+		else if (keys[(int)Key_Code::F9]) { action_stop = true; }
+
+		// Execute Actions
+		if (action_print_line_info) {
 			auto& tab = editor.tabs[editor.open_tab_index];
 			debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.analysis_data);
 		}
-		else if (syntax_editor.input->key_pressed[(int)Key_Code::F8]) {
-			debugger_reset(editor.debugger);
-		}
-		else if (syntax_editor.input->key_pressed[(int)Key_Code::F6]) {
-			debugger_step_over_statement(editor.debugger, false);
-			window_set_focus(editor.window);
-			update_watch_values = true;
-		}
-		else if (syntax_editor.input->key_pressed[(int)Key_Code::F7]) {
-			debugger_step_over_statement(editor.debugger, true);
-			window_set_focus(editor.window);
-			update_watch_values = true;
-		}
-		else if (syntax_editor.input->key_pressed[(int)Key_Code::F9]) {
+		if (action_open_debugger_command_line) {
 			window_set_focus_on_console();
 			debugger_wait_for_console_command(editor.debugger);
-			window_set_focus(editor.window);
-			update_watch_values = true;
+			execution_changed = true;
+		}
+		else if (action_stop) {
+			debugger_reset(editor.debugger);
+			execution_changed = true;
+		}
+		else if (action_continue) {
+			debugger_resume_until_next_halt_or_exit(editor.debugger);
+			execution_changed = true;
+		}
+		else if (action_step_over) {
+			debugger_step_over_statement(editor.debugger, false);
+			execution_changed = true;
+		}
+		else if (action_step_into) {
+			debugger_step_over_statement(editor.debugger, true);
+			execution_changed = true;
+		}
+		else if (action_step_out_of) {
+			debugger_step_out(editor.debugger);
+			execution_changed = true;
 		}
 
+		// Update cursor/watch-values on changes
+		if (execution_changed) {
+			window_set_focus(editor.window);
+			update_watch_values = true;
+			editor.selected_stack_frame = 0;
+			cursor_goto_selected_stack_frame();
+		}
 		if (update_watch_values) {
 			watch_values_update();
 		}
@@ -6624,6 +6960,19 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 	*out_type = type;
 }
 
+enum class Line_Symbol_Type
+{
+	CURRENT_INSTRUCTION,
+	ABOVE_STACK,
+	LEAVING_FUNCTION,
+	BREAKPOINT
+};
+
+struct Line_Symbol {
+	Line_Symbol_Type type;
+	int line_index;
+};
+
 void syntax_editor_render()
 {
 	auto& editor = syntax_editor;
@@ -6767,6 +7116,7 @@ void syntax_editor_render()
 	// Render line numbers (And breakpoints)
 	int cam_start_visible = source_code_get_line(code, cam_start)->visible_index;
 	{
+		// Figure out how much space is used by line-numbers + symbols
 		auto get_digits = [](int number) -> int {
 			int digits = 1;
 			while ((number / 10) != 0) {
@@ -6778,23 +7128,23 @@ void syntax_editor_render()
 
 		vec2 char_size = editor.text_display.char_size;
 		int line_num_digits = math_maximum(get_digits(tab.code->line_count), 4) + 1;
+		const int char_count_before = line_num_digits + 1 + 2; // Number of line-digits + 1 offset for current line + 2 for breakpoints/current instr
+		code_box.min.x += char_size.x * char_count_before; // Move code-box to the right
 
-		// Move code-box to the right
-		code_box.min.x += char_size.x * (line_num_digits + 1 + 1);
-
-		int cursor_visible_index = source_code_get_line(code, cursor.line)->visible_index;
-
-		int current_execution_line_index = -1;
-		const char* current_line_symbol = ">";
+		// Find line symbols
 		Array<Stack_Frame> stack_frames = debugger_get_stack_frames(editor.debugger);
-		if (stack_frames.size > 0)
+		Dynamic_Array<Line_Symbol> line_symbols = dynamic_array_create<Line_Symbol>();
+		SCOPE_EXIT(dynamic_array_destroy(&line_symbols));
+		int green_line_index = -1;
+		for (int i = 0; i < stack_frames.size; i++)
 		{
-			auto& frame = stack_frames[0];
+			auto& frame = stack_frames[i];
 			Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
 
 			// Find unit and upp_line_index of currently executing instruction
 			int upp_line_index = -1;
 			Compilation_Unit* unit = nullptr;
+			bool leaving_function = false;
 			if (info.unit != nullptr) {
 				upp_line_index = info.upp_line_index;
 				unit = info.unit;
@@ -6805,7 +7155,7 @@ void syntax_editor_render()
 				int distance_to_start = math_absolute((i64)frame.instruction_pointer - (i64)info.function_start_address);
 				int distance_to_end = math_absolute((i64)frame.instruction_pointer - (i64)info.function_end_address);
 				if (distance_to_end < distance_to_start && distance_to_end < 8) { // Just some things to figure out if we are in prolog
-					current_line_symbol = "<"; // To indicate we are currently leaving the function
+					leaving_function = true;
 				}
 
 				auto modtree_fn = editor.analysis_data->function_slots[info.ir_function->function_slot_index].modtree_function;
@@ -6839,50 +7189,93 @@ void syntax_editor_render()
 				}
 			}
 
-			if (upp_line_index != -1 && editor.tabs[editor.open_tab_index].compilation_unit == unit) {
-				current_execution_line_index = upp_line_index;
+			if (upp_line_index == -1 || editor.tabs[editor.open_tab_index].compilation_unit != unit) {
+				continue;
 			}
+
+			Line_Symbol line_symbol;
+			line_symbol.line_index = upp_line_index;
+			line_symbol.type = i == 0 ? Line_Symbol_Type::CURRENT_INSTRUCTION : Line_Symbol_Type::ABOVE_STACK;
+			if (leaving_function) {
+				line_symbol.type = Line_Symbol_Type::LEAVING_FUNCTION;
+			}
+			if (i == editor.selected_stack_frame) {
+				green_line_index = line_symbol.line_index;
+			}
+			dynamic_array_push_back(&line_symbols, line_symbol);
+		}
+
+		for (int i = 0; i < tab.breakpoints.size; i++) {
+			auto bp = tab.breakpoints[i];
+			Line_Symbol symbol;
+			symbol.type = Line_Symbol_Type::BREAKPOINT;
+			symbol.line_index = bp.line_number;
+			dynamic_array_push_back(&line_symbols, symbol);
 		}
 
 		// Draw line numbers
 		String text = string_create();
 		SCOPE_EXIT(string_destroy(&text));
 		int last_visible_index = -1;
+		int cursor_visible_index = source_code_get_line(code, cursor.line)->visible_index;
 
-		for (int i = cam_start; i <= cam_end; i++)
+		int prev = -1;
+		for (int i = cam_start; i <= cam_end; i = Line_Movement::move_visible_lines_up_or_down(i, 1))
 		{
-			auto line = source_code_get_line(code, i);
-			int visible_index = line->visible_index;
-			if (last_visible_index == visible_index) {
-				continue;
+			// Prevent infinite loop with visible lines...
+			if (i == prev) {
+				break;
 			}
-			last_visible_index = visible_index;
+			prev = i;
 
-			int height = code_box.max.y;
-			float y_pos = height - (visible_index - cam_start_visible) * char_size.y;
+			const int visible_index = source_code_get_line(code, i)->visible_index;
+			float y_pos = code_box.max.y - (visible_index - cam_start_visible) * char_size.y;
 
-			bool has_bp = false;
-			bool is_current_execution = i == current_execution_line_index;
-			for (int j = 0; j < tab.breakpoints.size; j++) {
-				if (tab.breakpoints[j].line_number == i) {
-					has_bp = true;
-					break;
+			// Find line symbols
+			bool is_breakpoint = false;
+			bool is_current_instr = false;
+			bool is_stack_instr = false;
+			bool is_leaving_function = false;
+			for (int j = 0; j < line_symbols.size; j++) {
+				auto line_symbol = line_symbols[j];
+				if (line_symbol.line_index != i) continue;
+				switch (line_symbol.type) {
+				case Line_Symbol_Type::BREAKPOINT: is_breakpoint = true; break;
+				case Line_Symbol_Type::CURRENT_INSTRUCTION: is_current_instr = true; break;
+				case Line_Symbol_Type::ABOVE_STACK: is_stack_instr = true; break;
+				case Line_Symbol_Type::LEAVING_FUNCTION: is_leaving_function = true; break;
+				default: panic("");
 				}
 			}
-			if (is_current_execution) {
+
+			// Draw line symbols
+			vec3 pos_color = i == green_line_index ? vec3(0.2f, 1.0f, 0.2f) : vec3(1.0f, 1.0f, 0.0f);
+			if (is_current_instr) {
 				text_renderer_add_text(
-					editor.text_renderer, string_create_static(current_line_symbol), vec2(line_num_digits * char_size.x, y_pos), Anchor::TOP_LEFT,
-					char_size, vec3(1.0f, 1.0f, 0.0f)
+					editor.text_renderer, string_create_static(">"), vec2((line_num_digits + 1) * char_size.x, y_pos), Anchor::TOP_LEFT,
+					char_size, pos_color
 				);
 			}
-			else if (has_bp) {
+			else if (is_leaving_function) {
+				text_renderer_add_text(
+					editor.text_renderer, string_create_static("<"), vec2((line_num_digits + 1) * char_size.x, y_pos), Anchor::TOP_LEFT,
+					char_size, pos_color
+				);
+			}
+			else if (is_stack_instr) {
+				text_renderer_add_text(
+					editor.text_renderer, string_create_static("*"), vec2((line_num_digits + 1) * char_size.x, y_pos), Anchor::TOP_LEFT,
+					char_size, pos_color
+				);
+			}
+			if (is_breakpoint) {
 				text_renderer_add_text(
 					editor.text_renderer, string_create_static("o"), vec2(line_num_digits * char_size.x, y_pos), Anchor::TOP_LEFT,
 					char_size, vec3(1.0f, 0.0f, 0.0f)
 				);
 			}
 
-
+			// Draw line number
 			int number = math_absolute(cursor_visible_index - visible_index);
 			float x_pos = (line_num_digits - get_digits(number)) * char_size.x;;
 			vec3 color = vec3(0.f, .5f, 1.0f);
@@ -7085,7 +7478,7 @@ void syntax_editor_render()
 					int start = info.start_char;
 					switch (info.type)
 					{
-					case Code_Analysis_Item_Type::EXPRESSION_INFO: 
+					case Code_Analysis_Item_Type::EXPRESSION_INFO:
 					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'

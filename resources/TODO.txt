@@ -4,64 +4,21 @@ CURRENT:
 --------
 
 
-Watch-Values:
--------------
-Solution I want:
- * Watch-Value in single line or multiple line layout
- * Removable watch-values
- * Expression-Evaluator with
-    - Symbol-Name (Path lookup?)
-    - Dereference/Address-of operator (*i, &i)
-    - Array-Access (Slices and Arrays)
-        --> Single constant integer
-    - Member-Access on structs
-    - cast_pointer would be really neat tho (E.g. looking at address as some pointer...)
- * Format-Options after expression, seperated with ',' (e.g. ip, hex) --> 0x05234
-    - Primitive Formating
-    - How many array members and things
-    - Show pointer information (e.g. function pointer which function... and others, e.g. section, heap/stack, other)
- * Buttons for step-over/into/out-of
- * Window with shortcuts and formating listed (Because I will forgetti)
- * Custom-Views for Datatypes would be neat, e.g.
-    --> Dynamic-Array could show return array elements
-    --> List also like array elements
-    --> Hashtable could have active/inactive array elements
-
-Implementation Order:
- 1. X Make Watch-Values multi-line
- 2. X Add remove button to watch values
-    X Fix container extending beyond window border problem
- 3. X Memory-Source on Datatype-Value to string
- 4. X Formating-Options for Datatype-Value (Multiple lines, arrays, other things)
- 5.   Expression-Evaluator
- 6.   Add formating option parsing (Hexadecimal/binary int display, maybe others)
-        What's the point right now?
-
-TODO:
------
- * Watch-Value Upgrade
- * Display Debugger current position > next to breakpoints, not over breakpoints
- * Show Source-File name per breakpoint
- * Step-Into/Step-Over should follow cursor
-    Clicking on a stack frame should take you to the position...
-
-
-
 Language Ideas:
- Dot-Call syntax different from member access, e.g. 
-    x.>add(15)
-    x..add(15)
-    x--add(15)
-    x..add(100)
- This makes auto-complete better, and differentiates the two concepts,
- also syntax-highlighting would work better here
- It should also be easy to implement
-Bytecode Debugger would be neat, and maybe not even that hard to implement?
+ * Dot-Call syntax different from member access, e.g. 
+        x.>add(15)
+        x..add(15)
+        x--add(15)
+        x..add(100)
+    This makes auto-complete better, and differentiates the two concepts,
+    also syntax-highlighting would work better here
+    It should also be easy to implement
+* Bytecode Debugger would be neat, and maybe not even that hard to implement?
 
-Editor-Information:
+Editor-Upgrades:
  * Show more informations about Expressions, e.g. Binop-Value types, Unop-Types
  * Function call infos, dot-call infos, member access infos (E.g. offset, alignment...)
-Feature: Switching between Analysis-Passes in Editor
+ * Switching between Analysis-Passes in Editor (Polymorphic instances)
     A polymorphic object (function/struct) will have multiple passes on some node
     But! The Analysis-Items we generate are based on the AST, which does not change from node
         to node. So we just need to store multiple values per analysis-item, and the editor switches over that
@@ -69,34 +26,6 @@ Feature: Switching between Analysis-Passes in Editor
 
 DONE:
 -----
-20.03:
- * Any-Type and string printing
- * Print Value Formating options and Memory_Source
- * Refactored Process-Memory into Memory_Source
-
-19.03:
- * Fixed testcases compiled
- * Remove unwanted console outputs
-
-18.03:
- * Fixed C-Compiler error with address arithmetic
- * Fixed breakpoints and multiple tabs
- * Goto Definition for Enums
- * Goto Definition for Member-Access and Dot-Call
- * Removed Pointer-Behavior for address
- * Rewriting Arena allocator with new address/usize types
-
-17.03:
- * Editor Analysis-Info rework
-
-14.03:
- * Fixed memory-leaks
- * size_of should return usize
- * Goto-Definition removes folds
- * Ctrl+U and Ctrl+D are not moving cursor
- * Searching with / and ? does not loop around file...
- * new with [] is not working --> Refactor with {} syntax
- * Code completion for keywords (cast_pointer, cast)
 
 
 Upp-Implementation for
@@ -138,17 +67,13 @@ Example Code that I want:
 
 
 
-DEBUGGER Tasks:
- * Watch-Window
-    - Variable-Printing should use other process-values (Reading from different memory sources...)
-    - UI option to remove/update watch-value
+DEBUGGER Upgrades:
+------------------
  * Add continue, step-out-of, step-into and step-over buttons
  * Fix Stepping Edge-Cases
     - Fix Step-Out edge-cases (Should step over executing ir-instruction (CALL), and should work with recursive functions)
     - Fix Step-Over (Should respect breakpoints, use step-out of correctly)
  * Implement breakpoint enabled info
- * Better breakpoint/current location rendering (Images instead of >, colors, step out/step in information)
-    - Use SDF-Bitmaps (May need to rewrite a lot of shiz if we are using the UI-Rendering Code for this)
  * Make Debugger asynchronos to editor (e.g. editor runs at 30/60 FPS while debugger-process is running, and check status once in a while)
     - Allow debugger to halt process arbitrarily (To add breakpoints)
  * Test step over code:
@@ -212,7 +137,8 @@ ISSUE-TRACKER:
 
 
 
-Language/Editor Miscallenious:
+Language/Editor Upgrades:
+-------------------------
  * Raw-Equals ~== and ~!=, like *== and *!=
  * Generated C-Code should be more readable
  * struct-initializer with hierarchy suggestions aren't shown correctly

@@ -261,9 +261,11 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
             }
 
             if (should_delete) {
+                semaphore_wait(compiler.add_compilation_unit_semaphore);
                 compilation_unit_destroy(unit);
                 dynamic_array_swap_remove(&compiler.compilation_units, i);
                 i -= 1;
+                semaphore_increment(compiler.add_compilation_unit_semaphore, 1);
             }
         }
         compiler.main_unit->used_in_last_compile = true;
@@ -275,10 +277,12 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
     }
 
     // Parse all compilation units
+    semaphore_wait(compiler.add_compilation_unit_semaphore);
     for (int i = 0; i < compiler.compilation_units.size; i++) {
         auto unit = compiler.compilation_units[i];
         compiler_parse_unit(unit);
     }
+    semaphore_increment(compiler.add_compilation_unit_semaphore, 1);
 
     Timing_Task before = compiler.task_current;
     SCOPE_EXIT(compiler_switch_timing_task(before));
@@ -507,6 +511,8 @@ bool compiler_errors_occured(Compiler_Analysis_Data* analysis_data)
 {
     if (analysis_data == nullptr) return true;
     if (analysis_data->semantic_errors.size > 0) return true;
+    semaphore_wait(compiler.add_compilation_unit_semaphore);
+    SCOPE_EXIT(semaphore_increment(compiler.add_compilation_unit_semaphore, 1));
     for (int i = 0; i < compiler.compilation_units.size; i++) {
         auto code = compiler.compilation_units[i];
         if (!code->used_in_last_compile) continue;
@@ -520,6 +526,8 @@ Compilation_Unit* compiler_find_ast_compilation_unit(AST::Node* base)
     while (base->parent != 0) {
         base = base->parent;
     }
+    semaphore_wait(compiler.add_compilation_unit_semaphore);
+    SCOPE_EXIT(semaphore_increment(compiler.add_compilation_unit_semaphore, 1));
     for (int i = 0; i < compiler.compilation_units.size; i++) {
         auto code = compiler.compilation_units[i];
         if (upcast(code->root) == base) {
@@ -647,6 +655,8 @@ void compiler_run_testcases(bool force_run)
             string_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
+                semaphore_wait(compiler.add_compilation_unit_semaphore);
+                SCOPE_EXIT(semaphore_increment(compiler.add_compilation_unit_semaphore, 1));
                 for (int i = 0; i < compiler.compilation_units.size; i++) {
                     auto code = compiler.compilation_units[i];
                     if (code->open_in_editor && !code->used_in_last_compile) continue;
