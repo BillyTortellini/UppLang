@@ -1148,7 +1148,10 @@ void base_append_to_string(Node* base, String* str)
 			break;
 		}
 		case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
-		case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
+		case Expression_Type::MEMBER_ACCESS: {
+			string_append_formated(str, expr->options.member_access.is_dot_call_access ? "DOT_CALL_ACCESS" : "MEMBER_ACCESS"); break;
+			break;
+		}
 		case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
 		case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
 		case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;

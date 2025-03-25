@@ -2211,6 +2211,14 @@ void type_system_add_predefined_types(Type_System* system)
         type_system_finish_struct(types->empty_struct_type);
     }
 
+    // Bytes
+    {
+        types->bytes = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Bytes"), 0);
+        add_member_cstr(&types->bytes->content, "data", upcast(types->address));
+        add_member_cstr(&types->bytes->content, "size", upcast(types->usize));
+        type_system_finish_struct(types->bytes);
+    }
+
     // String
     {
         Datatype_Struct* c_string = type_system_make_struct_empty(Structure_Type::STRUCT, ids.c_string, 0);

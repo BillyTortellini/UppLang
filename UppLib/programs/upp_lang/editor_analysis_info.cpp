@@ -175,7 +175,8 @@ void find_editor_infos_recursive(
 					option.expression.member_access_info.value_type = value_info->options.type;
 				}
 			}
-			if (!info->is_valid) break;
+			// Note: Info->is_valid does not really mean a lot anymore
+			// if (!info->is_valid) break;
 
 			auto& access_info = info->specifics.member_access;
 			AST::Node* goto_node = nullptr;
@@ -205,6 +206,7 @@ void find_editor_infos_recursive(
 			case Member_Access_Type::DOT_CALL: 
 			{
 				ModTree_Function* fn = access_info.options.dot_call_function;
+				if (fn == nullptr) break;
 				switch (fn->function_type)
 				{
 				case ModTree_Function_Type::NORMAL: {
@@ -323,7 +325,6 @@ void find_editor_infos_recursive(
 		// Add symbol lookup info
 		Code_Analysis_Item_Option option;
 		option.symbol_info.is_definition = true; // Kinda true for alias
-		option.symbol_info.lookup = import_node->path->last;
 		option.symbol_info.pass = pass;
 		option.symbol_info.symbol = info->symbol;
 		Token_Range range = token_range_make(node->range.start, node->range.start);
@@ -385,7 +386,6 @@ void find_editor_infos_recursive(
 			option.symbol_info.symbol = symbol;
 			option.symbol_info.is_definition = is_definition;
 			option.symbol_info.pass = pass;
-			option.symbol_info.lookup = lookup;
 			add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
 		}
 		else if (node->type == AST::Node_Type::PARAMETER) {

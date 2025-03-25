@@ -22,8 +22,9 @@ main :: ()
 	alive := p.is_alive
 	assert(alive)
 	
-	p.take_damage(50)
-	p.get_hit(100)
+	// Dot_calls use .> syntax since last update
+	p.>take_damage(50)
+	p.>get_hit(100)
 	
 	alive = p.is_alive
 	assert(!alive)

@@ -660,6 +660,9 @@ Function_Progress* function_progress_create_with_modtree_function(
         symbol->type = Symbol_Type::FUNCTION;
         symbol->options.function = progress->function;
     }
+    else if (base_progress != 0){
+        progress->function->name = base_progress->function->name;
+    }
 
     // Add workloads
     if (base_progress == 0) {
@@ -5915,15 +5918,6 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
 
 bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg)
 {
-    if (cast_info.result_type->mods.pointer_level == expected_mods.pointer_level &&
-        cast_info.result_type->mods.constant_flags == expected_mods.constant_flags &&
-        cast_info.result_type->mods.optional_flags == expected_mods.optional_flags &&
-        cast_info.result_type->mods.is_constant == expected_mods.is_constant &&
-        cast_info.result_type->mods.subtype_index == expected_mods.subtype_index)
-    {
-        return true;
-    }
-
     const char* dummy;
     if (out_error_msg == 0) {
         out_error_msg = &dummy;
@@ -8579,11 +8573,159 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::MEMBER_ACCESS:
 	{
 		auto& member_node = expr->options.member_access;
+        // Note: For suggestions in editor we set this to struct_up_or_downcast, so we have some initialized data
+        info->specifics.member_access.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
+
+        // Returns true if info was set (Some dot calls were found)
+        auto analyse_as_dot_call = [&](Datatype* datatype, bool as_member_access, Expression_Info* out_info) -> bool
+        {
+			// Find all dot-calls in current operator context
+			Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
+			SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
+			{
+				Custom_Operator_Key key;
+				key.type = AST::Context_Change_Type::DOT_CALL;
+				key.options.dot_call.datatype = datatype->base_type;
+				key.options.dot_call.id = member_node.name;
+
+				auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(1 + operator_context->context_imports.size);
+				SCOPE_EXIT(hashset_destroy(&visited));
+				operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
+
+				// Also add dot-calls for polymorphic base
+				if (datatype->base_type->type == Datatype_Type::STRUCT)
+				{
+					auto structure = downcast<Datatype_Struct>(datatype->base_type);
+					if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
+					{
+						auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
+						key.options.dot_call.datatype = upcast(base_struct);
+						hashset_reset(&visited);
+						operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
+					}
+				}
+			}
+
+            // Special path so error reporting does the right thing
+            if (dot_calls.size == 0 && as_member_access) {
+                return false;
+            }
+            
+            // Filter dot-calls
+            for (int i = 0; i < dot_calls.size; i++)
+            {
+				auto& call = dot_calls[i];
+				if (!try_updating_expression_type_mods(member_node.expr, call.mods) || call.as_member_access != as_member_access) {
+					dynamic_array_swap_remove(&dot_calls, i);
+					i -= 1;
+					continue;
+				}
+            }
+			// Deduplicate dot-calls (Keep calls which fit as_member_access)
+			for (int i = 0; i < dot_calls.size; i++)
+			{
+				auto& a = dot_calls[i];
+				for (int j = i + 1; j < dot_calls.size; j++)
+				{
+					auto& b = dot_calls[j];
+					if (a.as_member_access != b.as_member_access || a.is_polymorphic != b.is_polymorphic || !type_mods_are_equal(a.mods, b.mods)) {
+						continue;
+					}
+					if (a.is_polymorphic) {
+						if (a.options.poly_base != b.options.poly_base) {
+							continue;
+						}
+					}
+					else if (a.options.function != b.options.function) {
+						continue;
+					}
+
+					// Found duplicate
+					dynamic_array_swap_remove(&dot_calls, j);
+					j -= 1;
+				}
+			}
+
+            if (dot_calls.size == 0) {
+                log_semantic_error("Could not find appropriate dot call with this name", expr, Parser::Section::WHOLE_NO_CHILDREN);
+                log_error_info_id(member_node.name);
+                expression_info_set_error(out_info, types.unknown_type);
+                return true;
+            }
+
+            if (as_member_access) 
+            {
+                // Check for errors
+                if (dot_calls.size > 1) {
+                    log_semantic_error("Multiple dot_call as_member_access function with this name were found", expr, Parser::Section::WHOLE_NO_CHILDREN);
+                    expression_info_set_error(out_info, types.unknown_type);
+                    return true;
+                }
+
+				auto& dotcall = dot_calls[0];
+                bool success = try_updating_expression_type_mods(member_node.expr, dotcall.mods);
+                assert(success, "Should work here");
+
+				ModTree_Function* function = nullptr;
+				if (dotcall.is_polymorphic)
+				{
+					Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_DOT_CALL, 1);
+					SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
+					matching_info.options.poly_dotcall = dotcall.options.poly_base;
+					parameter_matching_info_add_analysed_param(&matching_info, member_node.expr);
+
+					// Instanciate
+					Instanciation_Result instance_result = instanciate_polymorphic_callable(
+						&matching_info, context, upcast(expr), Parser::Section::WHOLE_NO_CHILDREN
+					);
+					if (instance_result.type == Instanciation_Result_Type::FUNCTION) {
+						function = instance_result.options.function;
+					}
+					else {
+                        expression_info_set_error(out_info, types.unknown_type);
+                        return true;
+					}
+				}
+				else {
+					function = dotcall.options.function;
+				}
+
+				// Set dot-call in Expression-Info and return
+				info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
+				info->specifics.member_access.options.dot_call_function = function;
+				if (function->signature->return_type.available) {
+					expression_info_set_value(info, function->signature->return_type.value, true);
+				}
+				else {
+					expression_info_set_no_value(info);
+				}
+            }
+            else 
+            {
+				Dynamic_Array<Dot_Call_Info>* overloads = compiler_analysis_data_allocate_dot_calls(compiler.analysis_data, 0);
+				assert(overloads->data == nullptr, "");
+				*overloads = dot_calls;
+				dot_calls = dynamic_array_create<Dot_Call_Info>(); // Reset to empty, so we don't free our stuff
+				expression_info_set_dot_call(info, member_node.expr, overloads);
+            }
+			return true;
+        };
+
+        if (member_node.is_dot_call_access) {
+            auto result_type = semantic_analyser_analyse_expression_value(member_node.expr, expression_context_make_unknown());
+            if (datatype_is_unknown(result_type)) {
+			    EXIT_ERROR(types.unknown_type);
+            }
+            bool handled = analyse_as_dot_call(result_type, false, info);
+            assert(handled, "");
+            return info;
+        }
+
 		auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_unknown());
 		bool result_is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
 		auto& ids = compiler.identifier_pool.predefined_ids;
 
-		info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
 		auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant> {
 			if (struct_type->workload == 0) {
 				return optional_make_failure<Upp_Constant>();
@@ -8960,147 +9102,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 			}
 
-			// Check for dot-calls/custom member accesses
-			Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
-			SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
-			{
-				Custom_Operator_Key key;
-				key.type = AST::Context_Change_Type::DOT_CALL;
-				key.options.dot_call.datatype = datatype->base_type;
-				key.options.dot_call.id = member_node.name;
-
-				auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(1 + operator_context->context_imports.size);
-				SCOPE_EXIT(hashset_destroy(&visited));
-				operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
-
-				// Also add dot-calls for polymorphic base
-				if (datatype->base_type->type == Datatype_Type::STRUCT)
-				{
-					auto structure = downcast<Datatype_Struct>(datatype->base_type);
-					if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
-					{
-						auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
-						key.options.dot_call.datatype = upcast(base_struct);
-						hashset_reset(&visited);
-						operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
-					}
-				}
-			}
-
-			if (dot_calls.size > 0)
-			{
-				// Deduplicate dot-calls
-				for (int i = 0; i < dot_calls.size; i++)
-				{
-					auto& a = dot_calls[i];
-					for (int j = i + 1; j < dot_calls.size; j++)
-					{
-						auto& b = dot_calls[j];
-						if (a.as_member_access != b.as_member_access || a.is_polymorphic != b.is_polymorphic || !type_mods_are_equal(a.mods, b.mods)) {
-							continue;
-						}
-						if (a.is_polymorphic) {
-							if (a.options.poly_base != b.options.poly_base) {
-								continue;
-							}
-						}
-						else if (a.options.function != b.options.function) {
-							continue;
-						}
-
-						// Found duplicate
-						dynamic_array_swap_remove(&dot_calls, j);
-						j -= 1;
-					}
-				}
-
-				// Filter calls and find infos
-				Dot_Call_Info* as_member_access_call = nullptr;
-				bool found_multiple_as_member_access = false;
-				bool found_normal_dot_call = false;
-				for (int i = 0; i < dot_calls.size; i++)
-				{
-					auto& call = dot_calls[i];
-
-					// Remove from list if we cannot use the call
-					if (!try_updating_expression_type_mods(member_node.expr, call.mods)) {
-						dynamic_array_swap_remove(&dot_calls, i);
-						i -= 1;
-						continue;
-					}
-
-					if (call.as_member_access) {
-						if (as_member_access_call != nullptr) {
-							found_multiple_as_member_access = true;
-						}
-						as_member_access_call = &dot_calls[i];
-					}
-					else {
-						found_normal_dot_call = true;
-					}
-				}
-
-				// Check for errors
-				if (found_normal_dot_call && as_member_access_call != nullptr) {
-					log_semantic_error("Cannot disambiguate dot_call", expr, Parser::Section::WHOLE_NO_CHILDREN);
-					log_error_info_comptime_msg("Both normal dot_calls and as_member (Without parenthesis) are registered");
-					EXIT_ERROR(types.unknown_type);
-				}
-				else if (found_multiple_as_member_access) {
-					log_semantic_error("Cannot disambiguate dot_call", expr, Parser::Section::WHOLE_NO_CHILDREN);
-					log_error_info_comptime_msg("Multiple as_member dot_calls are registered for this type");
-					EXIT_ERROR(types.unknown_type);
-				}
-
-				// Handle as_member_access calls
-				if (as_member_access_call != 0)
-				{
-					auto& dotcall = *as_member_access_call;
-
-					ModTree_Function* function = nullptr;
-					if (dotcall.is_polymorphic)
-					{
-						Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_DOT_CALL, 1);
-						SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
-						matching_info.options.poly_dotcall = dotcall.options.poly_base;
-						parameter_matching_info_add_analysed_param(&matching_info, member_node.expr);
-
-						// Instanciate
-						Instanciation_Result instance_result = instanciate_polymorphic_callable(
-							&matching_info, context, upcast(expr), Parser::Section::WHOLE_NO_CHILDREN
-						);
-						if (instance_result.type == Instanciation_Result_Type::FUNCTION) {
-							function = instance_result.options.function;
-						}
-						else {
-							EXIT_ERROR(types.unknown_type);
-						}
-					}
-					else {
-						function = dotcall.options.function;
-					}
-
-					// Set dot-call in Expression-Info and return
-					info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
-					info->specifics.member_access.options.dot_call_function = function;
-
-					if (function->signature->return_type.available) {
-						expression_info_set_value(info, function->signature->return_type.value, true);
-					}
-					else {
-						expression_info_set_no_value(info);
-					}
-					return info;
-				}
-
-				Dynamic_Array<Dot_Call_Info>* overloads = compiler_analysis_data_allocate_dot_calls(compiler.analysis_data, 0);
-				assert(overloads->data == nullptr, "");
-				*overloads = dot_calls;
-				dot_calls = dynamic_array_create<Dot_Call_Info>(); // Reset to empty, so we don't free our stuff
-				expression_info_set_dot_call(info, member_node.expr, overloads);
-				return info;
-			}
+            // Check for dot-calls
+            bool handled = analyse_as_dot_call(datatype->base_type, true, info);
+            if (handled) {
+                return info;
+            }
 
 			// Error if no member access was found
 			log_semantic_error("Member access is not valid", expr);
@@ -11362,7 +11368,10 @@ bool code_block_is_loop(AST::Code_Block* block)
 {
 	if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
 		auto parent = (AST::Statement*)block->base.parent;
-		return parent->type == AST::Statement_Type::WHILE_STATEMENT || parent->type == AST::Statement_Type::FOR_LOOP || parent->type == AST::Statement_Type::FOREACH_LOOP;
+		return 
+            parent->type == AST::Statement_Type::WHILE_STATEMENT || 
+            parent->type == AST::Statement_Type::FOR_LOOP || 
+            parent->type == AST::Statement_Type::FOREACH_LOOP;
 	}
 	return false;
 }
@@ -11474,22 +11483,42 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 	case AST::Statement_Type::CONTINUE_STATEMENT:
 	{
 		bool is_continue = statement->type == AST::Statement_Type::CONTINUE_STATEMENT;
-		String* search_id = is_continue ? statement->options.continue_name : statement->options.break_name;
+		Optional<String*> search_id_opt = is_continue ? statement->options.continue_name : statement->options.break_name;
 		AST::Code_Block* found_block = 0;
 		auto& block_stack = semantic_analyser.current_workload->block_stack;
-		for (int i = block_stack.size - 1; i > 0; i--) // INFO: Block 0 is always the function body, which cannot be a target of break/continue
-		{
-			auto id = block_stack[i]->block_id;
-			if (id.available && id.value == search_id) {
-				found_block = block_stack[i];
-				break;
-			}
-		}
+
+        // INFO: Block 0 is always the function body, which cannot be a target of break/continue
+        if (search_id_opt.available) 
+        {
+		    for (int i = block_stack.size - 1; i > 0; i--) {
+		    	auto id = block_stack[i]->block_id;
+		    	if (id.available && id.value == search_id_opt.value) {
+		    		found_block = block_stack[i];
+		    		break;
+		    	}
+		    }
+        }
+        else 
+        {
+		    for (int i = block_stack.size - 1; i > 0; i--)
+		    {
+                auto block = block_stack[i];
+                // Note: Break and continue without a id only work on loops
+                if (!code_block_is_loop(block)) continue;
+		    	found_block = block_stack[i];
+		    	break;
+		    }
+        }
 
 		if (found_block == 0)
 		{
-			log_semantic_error("Label not found", statement);
-			log_error_info_id(search_id);
+            if (search_id_opt.available) {
+			    log_semantic_error("Block with given Label not found", statement);
+			    log_error_info_id(search_id_opt.value);
+            }
+            else {
+			    log_semantic_error("No surrounding block supports this operation", statement);
+            }
 			EXIT(Control_Flow::RETURNS);
 		}
 		else
@@ -11785,6 +11814,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			Symbol* symbol = symbol_table_define_symbol(
 				symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE, upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
 			);
+            get_info(for_loop.loop_variable_definition, true)->symbol = symbol;
+
 			info->specifics.for_loop.loop_variable_symbol = symbol;
 			Expression_Context context = expression_context_make_unknown();
 			if (for_loop.loop_variable_type.available) {
@@ -11836,6 +11867,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE,
 			upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL
 		);
+        get_info(for_loop.loop_variable_definition, true)->symbol = symbol;
 		loop_info.loop_variable_symbol = symbol;
 		symbol->options.variable_type = types.unknown_type; // Should be updated by further code
 
@@ -12073,6 +12105,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 				symbol_table, for_loop.index_variable_definition.value->name, Symbol_Type::VARIABLE,
 				upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL
 			);
+            get_info(for_loop.index_variable_definition.value, true)->symbol = index_symbol;
 			loop_info.index_variable_symbol = index_symbol;
 			index_symbol->options.variable_type = upcast(types.u64_type);
 		}
@@ -12722,6 +12755,7 @@ void semantic_analyser_reset()
 		define_type_symbol("address", upcast(types.address));
 		define_type_symbol("isize", upcast(types.isize));
 		define_type_symbol("usize", upcast(types.usize));
+		define_type_symbol("Bytes", upcast(types.bytes));
 
 		auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
 			Symbol* result = symbol_table_define_symbol(
@@ -12740,7 +12774,7 @@ void semantic_analyser_reset()
 		define_hardcoded_symbol("random_i32", Hardcoded_Type::RANDOM_I32);
 		define_hardcoded_symbol("type_of", Hardcoded_Type::TYPE_OF);
 		define_hardcoded_symbol("type_info", Hardcoded_Type::TYPE_INFO);
-		define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN);
+		// define_hardcoded_symbol("assert", Hardcoded_Type::ASSERT_FN); // Defined in global scope, not in Upp scope
 
 		define_hardcoded_symbol("memory_copy", Hardcoded_Type::MEMORY_COPY);
 		define_hardcoded_symbol("memory_zero", Hardcoded_Type::MEMORY_ZERO);

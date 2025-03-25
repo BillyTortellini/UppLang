@@ -1759,17 +1759,21 @@ namespace Parser
                 case Keyword::CONTINUE: {
                     advance_token();
                     result->type = Statement_Type::CONTINUE_STATEMENT;
-                    if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-                    result->options.continue_name = get_token(0)->options.identifier;
-                    advance_token();
+                    result->options.continue_name = optional_make_failure<String*>();
+                    if (test_token(Token_Type::IDENTIFIER)) {
+                        result->options.continue_name = optional_make_success(get_token(0)->options.identifier);
+                        advance_token();
+                    }
                     PARSE_SUCCESS(result);
                 }
                 case Keyword::BREAK: {
                     advance_token();
                     result->type = Statement_Type::BREAK_STATEMENT;
-                    if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-                    result->options.break_name = get_token(0)->options.identifier;
-                    advance_token();
+                    result->options.break_name = optional_make_failure<String*>();
+                    if (test_token(Token_Type::IDENTIFIER)) {
+                        result->options.break_name = optional_make_success(get_token(0)->options.identifier);
+                        advance_token();
+                    }
                     PARSE_SUCCESS(result);
                 }
                 }
@@ -2336,6 +2340,7 @@ namespace Parser
             {
                 result->type = Expression_Type::MEMBER_ACCESS;
                 result->options.member_access.expr = child;
+                result->options.member_access.is_dot_call_access = false;
                 if (test_token(Token_Type::IDENTIFIER)) {
                     result->options.member_access.name = get_token(0)->options.identifier;
                     advance_token();
@@ -2347,6 +2352,22 @@ namespace Parser
                 PARSE_SUCCESS(result);
             }
             CHECKPOINT_EXIT;
+        }
+        else if (test_operator(Operator::DOT_CALL)) 
+        {
+            advance_token();
+            result->type = Expression_Type::MEMBER_ACCESS;
+            result->options.member_access.expr = child;
+            result->options.member_access.is_dot_call_access = true;
+            if (test_token(Token_Type::IDENTIFIER)) {
+                result->options.member_access.name = get_token(0)->options.identifier;
+                advance_token();
+            }
+            else {
+                log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
+                result->options.member_access.name = compiler.identifier_pool.predefined_ids.empty_string;
+            }
+            PARSE_SUCCESS(result);
         }
         else if (test_parenthesis_offset('[', 0)) // Array access
         {

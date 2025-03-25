@@ -3,10 +3,7 @@ import Upp~Allocator
 import Upp~usize
 import Upp~u32
 import Upp~address
-
-Bytes :: struct
-	data: address
-	size: usize
+import Upp~Bytes
 
 // Provides dot_calls for allocators, and also a more convenient way to resize
 Allocator_Helpers :: module
@@ -14,20 +11,20 @@ Allocator_Helpers :: module
 	import Upp~size_of
 	import Upp~align_of
 	
-	context add_dot_call(allocate)
-	context add_dot_call(free)
+	context add_dot_call(allocate_poly, false, "allocate")
+	context add_dot_call(free_poly, false, "free")
 	context add_dot_call(allocate_array, false, "allocate")
 	context add_dot_call(free_array, false, "free")
 	context add_dot_call(allocate_bytes, false, "allocate")
 	context add_dot_call(free_bytes, false, "free")
 	
-	allocate :: (allocator: *Allocator, $T: Type) -> *T
+	allocate_poly :: (allocator: *Allocator) -> *$T
 		return cast_pointer{*T} allocator.allocate_fn(allocator, size_of(T), align_of(T))
 	
-	free :: (allocator: *Allocator, data: *$T)
+	free_poly :: (allocator: *Allocator, data: *$T)
 		allocator.free_fn(allocator, cast_pointer{address} data, size_of(T))
 	
-	allocate_array :: (allocator: *Allocator, $T: Type, count: usize) -> []T
+	allocate_array :: (allocator: *Allocator, count: usize) -> []$T
 		result: []T
 		result.size = count
 		if result.size == 0
@@ -40,9 +37,9 @@ Allocator_Helpers :: module
 	free_array :: (allocator: *Allocator, array: []$T)
 		allocator.free_fn(allocator, cast_pointer{address} array.data.value, size_of(T) * array.size)
 	
-	allocate_bytes :: (allocator: *Allocator, count: usize) -> Bytes
+	allocate_bytes :: (allocator: *Allocator, count: usize, alignment: u32) -> Bytes
 		result: Bytes
-		result.data = cast_pointer allocator.allocate_fn(allocator, count, 1)
+		result.data = cast_pointer allocator.allocate_fn(allocator, count, alignment)
 		result.size = count
 		return result
 	
@@ -74,13 +71,43 @@ Arena :: module
 	
 	context import Allocator_Helpers
 	import Upp~size_of
+	import Upp~align_of
 	
 	Context :: module
 		context add_dot_call(destroy)
+		context add_dot_call(resize_allocation)
 		context add_dot_call(resize_for_next_allocation)
-		context add_dot_call(allocate)
-		context add_dot_call(free)
-		context add_dot_call(resize)
+		
+		context add_dot_call(allocate_poly, false, "allocate")
+		context add_dot_call(free_poly, false, "free")
+		context add_dot_call(allocate_array, false, "allocate")
+		context add_dot_call(free_array, false, "free")
+		context add_dot_call(allocate_bytes, false, "allocate")
+		context add_dot_call(free_bytes, false, "free")
+		
+		context add_dot_call(make_checkpoint)
+		context add_dot_call(checkpoint_rewind, false, "rewind")
+		
+		context add_cast(Arena~get_allocator, .INFERRED)
+		context add_cast(Arena~get_allocator_const, .INFERRED)
+		
+		allocate_poly :: (arena: *Arena) -> *$T
+			return Allocator_Helpers~allocate_poly(arena.allocator)
+		
+		free_poly :: (arena: *Arena, pointer: *$T)
+			Allocator_Helpers~free_poly(arena.allocator, pointer)
+		
+		allocate_array :: (arena: *Arena, count: usize) -> []$T
+			return Allocator_Helpers~allocate_array(arena.allocator, count)
+		
+		free_array :: (arena: *Arena, array: []$T)
+			Allocator_Helpers~free_array(arena.allocator, array)
+		
+		allocate_bytes :: (arena: *Arena, size: usize, alignment: u32) -> Bytes
+			return Allocator_Helpers~allocate_bytes(arena.allocator, size, alignment)
+		
+		free_bytes :: (arena: *Arena, bytes: Bytes)
+			Allocator_Helpers~free_bytes(arena.allocator, bytes)
 	
 	Arena :: struct
 		allocator: Allocator
@@ -91,7 +118,7 @@ Arena :: module
 	
 	create :: (allocator: *Allocator, capacity: usize = 0) -> Arena
 		result := Arena.{
-			.{cast_pointer allocate, cast_pointer free, cast_pointer resize}
+			.{cast_pointer allocate, cast_pointer free, cast_pointer resize_allocation}
 			allocator, .{null, 0}, null
 		}
 		resize_for_next_allocation(result, capacity)
@@ -101,17 +128,19 @@ Arena :: module
 		buffer := arena.buffer
 		while buffer.data != null
 			next_buffer := cast_pointer{*Bytes} buffer.data
-			arena.parent_allocator.free(buffer)
+			arena.parent_allocator.>free(buffer)
 			buffer = next_buffer
 		arena.buffer = .{null, 0}
 	
 	// Resize/Allocates a buffer so that an allocation of capacity will work without resizing the arena
 	resize_for_next_allocation :: (arena: *Arena, capacity: usize)
-		if arena.buffer.size >= capacity
+		free_space := (arena.buffer.data + arena.buffer.size) - arena.next
+		assert(free_space >= 0)
+		if free_space >= cast capacity
 			return
 		
-		// find next buffer size
-		next_size := arena.buffer.size
+		// Find next buffer size
+		next_size := arena.buffer.size * 2 // New buffer gets at least double the size
 		if next_size <= 0 // First allocation handling
 			next_size = capacity
 		else
@@ -124,11 +153,11 @@ Arena :: module
 		
 		// Allocate new buffer
 		next_size += size_of(Bytes) // Additional space for previous allocation storage
-		next_buffer := arena.parent_allocator.allocate(next_size)
+		next_buffer := arena.parent_allocator.>allocate(next_size, 1)
 		cast_pointer{*Bytes} next_buffer.data = arena.buffer // Store reference to old buffer (This is null if first allocation)
 		
-		arena.next = arena.buffer.data + size_of(Bytes)
 		arena.buffer = next_buffer
+		arena.next = arena.buffer.data + size_of(Bytes)
 	
 	allocate :: (arena: *Arena, size: usize, alignment: u32) -> address
 		resize_for_next_allocation(arena, size + cast alignment) // Add alignment to make sure we have enough space
@@ -144,7 +173,7 @@ Arena :: module
 		if pointer + size == arena.next
 			arena.next -= size
 	
-	resize :: (arena: *Arena, pointer: address, prev_size: usize, new_size: usize) -> bool
+	resize_allocation :: (arena: *Arena, pointer: address, prev_size: usize, new_size: usize) -> bool
 		if !Memory~address_in_range(pointer, arena.buffer)
 			return false
 		
@@ -167,46 +196,94 @@ Arena :: module
 		
 		return false
 	
+	get_allocator :: (arena: *Arena) -> *Allocator
+		return arena.allocator
+	
+	get_allocator_const :: (arena: *Arena) -> const *Allocator
+		return arena.allocator
+	
+	Checkpoint :: struct
+		arena: *Arena
+		next: address
+	
+	make_checkpoint :: (arena: *Arena) -> Checkpoint
+		return .{arena, arena.next}
+	
+	checkpoint_rewind :: (checkpoint: *Checkpoint)
+		arena :=* checkpoint.arena
+		if Memory~address_in_range(checkpoint.next, arena.buffer)
+			arena.next = checkpoint.next
+		else
+			// This means a new buffer was allocated in the meantime,
+			// and this is currently handled by just resetting the largest buffer
+			arena.next = arena.buffer.data + size_of(Bytes)
+	
 	test :: ()
 		import Upp~*
-		
 		context import Context
 		
 		arena := Arena~create(global_allocator, 64)
 		
-		pointer := Arena~allocate(arena, size_of(int), align_of(int))
-		i: *int =* cast_pointer pointer
+		i: *int =* arena.>allocate(T = int)
+		i = 15
+		
 		print_string("First alloc ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		i = 15
-		
-		arena.destroy()
-		return
-		
-		i = 15
-		j :=* arena.allocator.allocate(int)
-		arena.allocator.free(j)
-		
-		k := arena.allocator.allocate(int, 15)
-		arena.allocator.free(k)
+		j :=* arena.allocator.>allocate(T = int)
+		j = i * 2
 		
 		print_string("Second alloc ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		arena.allocator.free_fn(arena.allocator, cast_pointer i, size_of(int))
+		arena.>free(j)
+		
 		print_string("First free ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		arena.allocator.free_fn(arena.allocator, cast_pointer j, size_of(int))
+		arena.>free(i)
 		print_string("Second free ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		arena.destroy()
+		values := arena.>allocate(32, T = int)
+		for v, i in values
+			v = cast i
+		
+		sum := 0
+		for i in values
+			sum += i
+		Upp~print_string("Sum: ")
+		Upp~print_i32(sum)
+		Upp~print_line()
+		
+		arena.>destroy()
+		
+		Upp~print_string("Finished")
+	
+	print_infos :: (arena: *Arena)
+		buffer_count := 0
+		buffer_sizes := 0
+		buffer := arena.buffer
+		while buffer.data != null
+			buffer_count += 1
+			buffer_sizes += cast buffer.size
+			next_buffer := cast_pointer{*Bytes} buffer.data
+			buffer = next_buffer
+		
+		in_use := buffer_sizes - cast arena.buffer.size + cast (arena.next - arena.buffer.data)
+		Upp~print_string("Using ")
+		Upp~print_i32(in_use)
+		Upp~print_string("/")
+		Upp~print_i32(buffer_sizes)
+		Upp~print_string(" in #")
+		Upp~print_i32(buffer_count)
+		Upp~print_string(" buffers")
+		
+		
 	
 
 

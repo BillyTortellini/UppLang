@@ -523,6 +523,7 @@ struct Predefined_Types
 
     // Prebuilt structs/types used by compiler
     Datatype* c_string;
+    Datatype_Struct* bytes;
     Datatype* unknown_type;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;

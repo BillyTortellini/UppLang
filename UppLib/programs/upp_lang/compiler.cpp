@@ -36,7 +36,7 @@ bool output_timing = true;
 // Testcases
 bool enable_testcases = false;
 bool enable_stresstest = false;
-bool run_testcases_compiled = true;
+bool run_testcases_compiled = false;
 
 // Execution
 bool enable_output = true;

@@ -1,14 +1,41 @@
 
 
+import "allocators.upp"
+import "dynamic_array.upp"
 
-
-
-
-adder :: (a: int, b: int) -> int
-	sum := a + b
-	return sum
-
-
-
-
+main :: ()
+	
+	context import Arena~Context
+	context import Dynamic_Array~Operators
+	
+	arena := Arena~create(Upp~global_allocator)
+	values := Dynamic_Array~create(cast arena, T = int)
+	
+	Arena~print_infos(arena)
+	Upp~print_line()
+	values.>push_back(10)
+	Arena~print_infos(arena)
+	Upp~print_line()
+	values.>push_back(20)
+	Arena~print_infos(arena)
+	Upp~print_line()
+	values.>push_back(100)
+	Arena~print_infos(arena)
+	Upp~print_line()
+	values.>push_back(20)
+	values.>push_back(13)
+	
+	for i in values
+		Upp~print_i32(i)
+		Upp~print_line()
+	
+	Arena~print_infos(arena)
+	Upp~print_line()
+	values.>destroy()
+	Arena~print_infos(arena)
+	Upp~print_line()
+	arena.>destroy()
+	Upp~print_string("After test")
+	
+	
 

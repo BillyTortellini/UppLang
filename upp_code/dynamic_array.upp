@@ -1,79 +1,82 @@
 
-Dynamic_Array :: struct (T: Upp~Type_Handle)
-	buffer: []T
-	allocator: *Upp~Allocator
-	size: int
+import Upp~usize
+import Upp~Type_Handle
+import Upp~Allocator
 
 Dynamic_Array :: module
-	import Upp~Type_Handle
-	import Upp~Allocator
 	
-	create :: (initial_capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Dynamic_Array($T)
-		result: Dynamic_Array(T)
-		result.allocator =~ allocator
-		result.size = 0
-		
-		if initial_capacity == 0
-			result.buffer.data =* null
-			result.buffer.size = 0
-		else
-			defer_restore Upp~global_allocator =~ allocator
-			result.buffer = new(initial_capacity) T
-		
+	import "allocators.upp"
+	context import Allocator_Helpers
+	import Upp~size_of
+	import Upp~align_of
+	
+	Dynamic_Array :: struct (T: Type_Handle)
+		allocator: *Allocator
+		buffer: []T
+		size: usize
+	
+	create :: (allocator: *Allocator, capacity: usize = 0) -> Dynamic_Array($T)
+		result := Dynamic_Array(T).{allocator, .{null, 0}, 0}
+		reserve(result, capacity)
 		return result
 	
 	destroy :: (array: *Dynamic_Array($T))
 		if array.buffer.size == 0
 			return
-		
-		defer_restore Upp~global_allocator =~ array.allocator
-		delete array.buffer
+		array.allocator.>free(array.buffer)
 	
-	reserve :: (array: *Dynamic_Array($T), new_capacity: int)
-		if cast array.buffer.size >= new_capacity
+	reserve :: (array: *Dynamic_Array($T), new_capacity: usize)
+		if array.buffer.size >= new_capacity
 			return
 		
 		if array.buffer.size == 0
-			defer_restore Upp~global_allocator =~ array.allocator
-			next_size := 1
-			while next_size < new_capacity
-				next_size *= 2
-			
-			array.buffer = new(next_size) T
-		else
-			next_size := cast {int} array.buffer.size
-			while next_size < new_capacity
-				next_size *= 2
-			
-			import Upp~size_of
-			import Upp~align_of
-			array.buffer.data =~ cast_pointer array.allocator.resize_fn(
-				array.allocator, cast_pointer array.buffer.data.value, size_of(T) * array.buffer.size, size_of(T) * cast next_size
-			)
-			array.buffer.size = cast next_size
+			array.buffer = array.allocator.>allocate(new_capacity, T = T)
+			return
+		
+		next_size := array.buffer.size
+		while next_size < new_capacity
+			next_size *= 2
+		
+		// Check if resize is possible
+		if array.allocator.resize_fn(array.allocator, cast_pointer array.buffer.data.value, array.buffer.size * size_of(T), next_size * size_of(T))
+			array.buffer.size = next_size
+			return
+		
+		// Otherwise create new buffer and copy over content
+		new_buffer := array.allocator.>allocate(next_size, T = T)
+		Upp~memory_copy(cast_pointer new_buffer.data, cast_pointer array.buffer.data, array.size * size_of(T))
+		array.allocator.>free(array.buffer)
+		array.buffer = new_buffer
 	
 	push_back :: (array: *Dynamic_Array($T), value: T)
+		Upp~print_string("Before reserve")
+		Upp~print_line()
 		reserve(array, array.size + 1)
+		Upp~print_string("Array size/capacity: ")
+		Upp~print_i32(cast array.size)
+		Upp~print_string("/")
+		Upp~print_i32(cast array.buffer.size)
+		Upp~print_line()
 		array.buffer[array.size] = value
 		array.size += 1
 	
 	at :: (array: Dynamic_Array($T), index: int) -> *T
-		assert(index < array.size)
+		assert(index < array.size && index >= 0)
 		return array.buffer[index]
 	
 	test :: ()
 		context import Dynamic_Array~Operators
 		import Dynamic_Array~create
 		
-		x: Dynamic_Array(int) = create()
+		x: Dynamic_Array(int) = create(Upp~global_allocator)
 		defer
-			x.destroy()
+			x.>destroy()
 		
-		x.push_back(1)
-		x.push_back(2)
-		x.push_back(3)
-		x.push_back(4)
-		x.push_back(12)
+		x.>push_back(1)
+		x.>push_back(2)
+		x.>push_back(3)
+		x.>push_back(4)
+		x.>push_back(12)
 		
 		import Upp~*
 		for v in x
@@ -84,7 +87,7 @@ Dynamic_Array :: module
 	Iterator :: module
 		Array_Iter :: struct ($T: Type_Handle)
 			array: *Dynamic_Array(T)
-			index: int
+			index: usize
 		
 		make :: (array: *Dynamic_Array($T)) -> Array_Iter(T)
 			return .{array, 0}
@@ -100,10 +103,10 @@ Dynamic_Array :: module
 	
 	Operators :: module
 		context add_iterator(Iterator~make, Iterator~has_next, Iterator~next, Iterator~get_value)
-		context add_dot_call(destroy)
-		context add_dot_call(push_back)
-		context add_dot_call(at)
-		context add_array_access(at)
+		context add_dot_call(Dynamic_Array~destroy)
+		context add_dot_call(Dynamic_Array~push_back)
+		context add_dot_call(Dynamic_Array~at)
+		context add_array_access(Dynamic_Array~at)
 
 
 

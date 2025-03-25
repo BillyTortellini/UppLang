@@ -17,6 +17,9 @@
 // - C_COMPILER -
 // --------------
 
+const bool ADD_WAIT_BEFORE_EXIT = true;
+
+
 void c_generator_output_global_access(int global_index);
 void c_generator_output_parameter_access(IR_Function* function, int parameter_index);
 
@@ -172,6 +175,7 @@ void c_compiler_compile()
 
     if (!comp.last_compile_successfull) {
         logg("\n!!! ERROR, C-COMPILE NOT SUCCESSFULL !!!\n\n");
+        assert(false, "Should not happen");
     }
 
     return;
@@ -1295,12 +1299,18 @@ void c_generator_generate()
     {
         string_append(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
-            "\nint main(int argc, char** argv) {random_initialize(); inititalize_type_infos_global_(); upp_entry_(); return 0;}\n"
+            "\nint main(int argc, char** argv) {\n    random_initialize(); \n    inititalize_type_infos_global_(); \n    upp_entry_();\n"
         );
+        if (ADD_WAIT_BEFORE_EXIT) {
+            string_append(&gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION], "    printf(\"\\n\\nEND OF PROGRAM\");\n");
+            string_append(&gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION], "    std::cin.ignore();\n");
+        }
+        string_append(&gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION], "    return 0;\n}\n\n");
 
         // Combine sections into one program
         string_append_formated(&source_code, "/* INTRODUCTION\n----------------*/\n");
         string_append(&source_code, "#pragma once\n#include <cstdlib>\n#include \"../hardcoded/hardcoded_functions.h\"\n#include \"../hardcoded/datatypes.h\"\n\n");
+        string_append(&source_code, "#include <iostream>\n#include <cstdio>\n");
         // string_append_formated(&source_code, "/* EXTERN HEADERS\n----------------*/\n");
         // string_append_string(&source_code, &section_extern_includes);
         // string_append_formated(&source_code, "\n/* STRING_DATA\n----------------*/\n");
@@ -2204,6 +2214,12 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             switch (return_instr->type)
             {
             case IR_Instruction_Return_Type::EXIT: {
+                if (return_instr->options.exit_code.type == Exit_Code_Type::SUCCESS && ADD_WAIT_BEFORE_EXIT) {
+                    string_append(gen.text, "printf(\"\\n\\nEND OF PROGRAM\");\n");
+                    string_add_indentation(gen.text, indentation_level);
+                    string_append(gen.text, "std::cin.ignore();\n");
+                    string_add_indentation(gen.text, indentation_level);
+                }
                 string_append_formated(gen.text, "exit(%d);\n", (i32)return_instr->options.exit_code.type);
                 break;
             }

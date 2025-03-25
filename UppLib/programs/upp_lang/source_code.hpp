@@ -101,7 +101,6 @@ struct Code_Analysis_Item_Symbol_Info{
     Symbol* symbol;
     bool is_definition;
     Analysis_Pass* pass;
-    AST::Symbol_Lookup* lookup;
 };
 
 struct Code_Analysis_Item_Expression{

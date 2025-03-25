@@ -1,4 +1,6 @@
 
+import Upp~Any
+import Upp~type_info
 
 print_any :: (any: Any)
 	info := type_info(any.type)

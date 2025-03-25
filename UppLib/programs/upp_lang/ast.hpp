@@ -355,6 +355,7 @@ namespace AST
             struct {
                 String* name;
                 Expression* expr;
+                bool is_dot_call_access; // ".>" instead of only "."
             } member_access;
             Module* module;
             struct {
@@ -477,8 +478,8 @@ namespace AST
                 Dynamic_Array<Switch_Case*> cases;
                 Optional<String*> label;
             } switch_statement;
-            String* break_name;
-            String* continue_name;
+            Optional<String*> break_name;
+            Optional<String*> continue_name;
             Optional<Expression*> return_value;
             Expression* delete_expr;
             Import* import_node;

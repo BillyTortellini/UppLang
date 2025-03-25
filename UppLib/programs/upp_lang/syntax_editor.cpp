@@ -1731,6 +1731,7 @@ namespace Text_Editing
 		case Operator::UNINITIALIZED:
 		case Operator::QUESTION_MARK:
 		case Operator::OPTIONAL_POINTER:
+		case Operator::DOT_CALL:
 		case Operator::DOLLAR: {
 			out_space_after = false;
 			out_space_before = false;
@@ -3528,7 +3529,8 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 
 // Code Completion
 void code_completion_find_dotcalls_in_context_recursive(
-	Operator_Context* context, Hashset<Operator_Context*>* visited, Datatype* datatype, Dynamic_Array<Editor_Suggestion>* unranked_suggestions
+	Operator_Context* context, Hashset<Operator_Context*>* visited, Datatype* datatype, Dynamic_Array<Editor_Suggestion>* unranked_suggestions,
+	bool as_member_access
 )
 {
 	if (hashset_contains(visited, context)) {
@@ -3542,15 +3544,26 @@ void code_completion_find_dotcalls_in_context_recursive(
 		Custom_Operator* op = iter.value;
 		if (key->type == AST::Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
 			String* id = key->options.dot_call.id;
-			fuzzy_search_add_item(*id, unranked_suggestions->size);
-			dynamic_array_push_back(unranked_suggestions, suggestion_make_id(id, Syntax_Color::FUNCTION));
+			auto& calls = *op->dot_calls;
+			bool found = false;
+			for (int i = 0; i < calls.size; i++) {
+				auto& call = calls[i];
+				if (call.as_member_access == as_member_access) {
+					found = true;
+					break;
+				}
+			}
+			if (found) {
+				fuzzy_search_add_item(*id, unranked_suggestions->size);
+				dynamic_array_push_back(unranked_suggestions, suggestion_make_id(id, Syntax_Color::FUNCTION));
+			}
 		}
 		hashtable_iterator_next(&iter);
 	}
 
 	for (int i = 0; i < context->context_imports.size; i++) {
 		auto other_context = context->context_imports[i];
-		code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions);
+		code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions, as_member_access);
 	}
 }
 
@@ -3732,6 +3745,7 @@ void code_completion_find_suggestions()
 	// Get partially typed word
 	String partially_typed = string_create_static("");
 	bool is_member_access = false;
+	bool is_dot_call_access = false;
 	bool is_path_lookup = false;
 	bool is_hashtag = false;
 	{
@@ -3743,6 +3757,10 @@ void code_completion_find_suggestions()
 
 		if (test_char(line->text, word_start, '#')) {
 			is_hashtag = true;
+		}
+		if ((test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) || 
+			(test_char(line->text, cursor.character - 2, '.') && test_char(line->text, cursor.character - 1, '>'))) {
+			is_dot_call_access = true;
 		}
 		if (test_char(line->text, word_start - 1, '.') || test_char(line->text, cursor.character - 1, '.')) {
 			is_member_access = true;
@@ -3770,6 +3788,34 @@ void code_completion_find_suggestions()
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload));
 		fuzzy_search_add_item(*ids.hashtag_get_overload_poly, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload_poly));
+	}
+	else if (is_dot_call_access) 
+	{
+		Datatype* type = nullptr;
+
+		auto expr_info = position_info.expression_info;
+		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr) 
+		{
+			// Note: For member-accesses, we need the type of the value, not the member-access expression
+			type = expr_info->member_access_info.value_type;
+
+			// Search for dot-calls
+			if (type->type == Datatype_Type::STRUCT)
+			{
+				auto struct_type = downcast<Datatype_Struct>(type);
+				if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+					type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
+				}
+			}
+			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
+			if (symbol_table != nullptr)
+			{
+				auto context = symbol_table->operator_context;
+				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
+				SCOPE_EXIT(hashset_destroy(&visited));
+				code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions, false);
+			}
+		}
 	}
 	else if (is_member_access)
 	{
@@ -3868,7 +3914,7 @@ void code_completion_find_suggestions()
 				auto context = symbol_table->operator_context;
 				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
 				SCOPE_EXIT(hashset_destroy(&visited));
-				code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions);
+				code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions, true);
 			}
 		}
 	}
@@ -6074,7 +6120,7 @@ void watch_values_update()
 		String value_name = string_create_substring_static(&watch_value.name, 0, watch_value.name.size);
 		dynamic_array_reset(&post_ops);
 		{
-			int index = 0; 
+			int index = 0;
 			auto& text = watch_value.name;
 			int first_op_index = text.size + 1;
 
@@ -6097,7 +6143,7 @@ void watch_values_update()
 			while (index < text.size && success)
 			{
 				char c = text[index];
-				if (c == '.') 
+				if (c == '.')
 				{
 					first_op_index = math_minimum(first_op_index, index);
 
@@ -6124,7 +6170,7 @@ void watch_values_update()
 					index = member_access_end;
 					continue;
 				}
-				else if (c == '[') 
+				else if (c == '[')
 				{
 					first_op_index = math_minimum(first_op_index, index);
 
@@ -6178,9 +6224,9 @@ void watch_values_update()
 
 			type = datatype_get_non_const_type(type);
 			// Dereference pointers
-			while (type->type == Datatype_Type::POINTER) 
+			while (type->type == Datatype_Type::POINTER)
 			{
-				void* pointer = nullptr; 
+				void* pointer = nullptr;
 				if (!local_source.read_single_value(value_ptr, &pointer)) {
 					string_append(&watch_value.value_as_text, "Pointer dereference failed!");
 					success = false;
@@ -6196,7 +6242,7 @@ void watch_values_update()
 				local_source = debugger_get_state(debugger).memory_source;
 			}
 
-			if (post_op.is_member_access) 
+			if (post_op.is_member_access)
 			{
 				Struct_Content* content = nullptr;
 				if (type->type == Datatype_Type::SUBTYPE) {
@@ -6235,7 +6281,7 @@ void watch_values_update()
 				// Array access
 				Datatype* element_type = nullptr;
 				int element_count = 0;
-				if (type->type == Datatype_Type::ARRAY) 
+				if (type->type == Datatype_Type::ARRAY)
 				{
 					auto array_type = downcast<Datatype_Array>(type);
 					if (!array_type->count_known) {
@@ -6246,7 +6292,7 @@ void watch_values_update()
 					element_count = array_type->element_count;
 					element_type = array_type->element_type;
 				}
-				else if (type->type == Datatype_Type::SLICE) 
+				else if (type->type == Datatype_Type::SLICE)
 				{
 					auto slice_type = downcast<Datatype_Slice>(type);
 					Upp_Slice_Base slice_value;
@@ -7482,6 +7528,9 @@ void syntax_editor_render()
 					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'
+						if (info.options.expression.expr->options.member_access.is_dot_call_access) {
+							start += 1;
+						}
 						switch (info.options.expression.info->specifics.member_access.type)
 						{
 						case Member_Access_Type::DOT_CALL:

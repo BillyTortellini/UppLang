@@ -2,44 +2,98 @@
 
 CURRENT: 
 --------
-
-
-Language Ideas:
- * Dot-Call syntax different from member access, e.g. 
-        x.>add(15)
-        x..add(15)
-        x--add(15)
-        x..add(100)
-    This makes auto-complete better, and differentiates the two concepts,
-    also syntax-highlighting would work better here
-    It should also be easy to implement
-* Bytecode Debugger would be neat, and maybe not even that hard to implement?
-
-Editor-Upgrades:
- * Show more informations about Expressions, e.g. Binop-Value types, Unop-Types
- * Function call infos, dot-call infos, member access infos (E.g. offset, alignment...)
- * Switching between Analysis-Passes in Editor (Polymorphic instances)
-    A polymorphic object (function/struct) will have multiple passes on some node
-    But! The Analysis-Items we generate are based on the AST, which does not change from node
-        to node. So we just need to store multiple values per analysis-item, and the editor switches over that
+ - Editor should be able to switch between instanciations
+ - Remove Base-Analysis 
     
 
-DONE:
------
+Upgrades:
+---------
+ * Polymorphic Upgrade
+    - Remove Base-Analysis 
+    - Editor should be able to switch between instanciations
+    - Only show errors from specific instanciations
+    - Polymorphic struct parameter upgrades
+        e.g. add :: (x: Dynamic_Array, y: x.T)
+ * Editor Upgrade
+    - Show overloaded functions (Which one is active + which are available)
+    - Syntax Highlighting for missing things
+        import filename as Something
+        Templated values...
+        Default-Syntax highlighting for e.g. .>, Path lookups, symbol-definitions
+            Will be overwritten by following highlights, but still
+    - More editor features?
+        * Multi-Cursor mode/last visual selection
+        * Toggle auto-formating
+ * UI-Update/Rework
+    - Combine Widget and Container into Node
+    - Rich-Text to UI would be neat yo
+    - Matching update
+    - Userdata 
+    - Right click menus
+    - Size-Groups
+ * Debugger Upgrade
+    - Fix Stepping in Debugger
+    - Mouse-Hover for variables
+    - Breakpoint Groups
+ * Language:
+    - function syntax update
+    - Macros?
+    - Optional Value access with some syntax?
 
+
+
+
+Fix hashset and hashtable
+ --> Should be working again
+
+Working with polymorphics is still really bad
+import file as does not show correct coloring!
+continue/break should just use the closest loop if no id is used...
 
 Upp-Implementation for
  * Allocators
     - Arena
-        + Checkpoints missing
-        + Dot-Call allocations should be the same as Allocator_Helpers
-    - Free_List
-    - Fixed_Arena (Virtual Memory)
+        + Scratch-Arena
  * Basic-Datastructures
-    Dynamic_Array
-    Hashtable
-    List
- * Strings and formated printing
+    - Hashtable
+        * Hash functions for basic datatypes
+ * Strings
+    - String_Builder
+    - Printed Formating
+        Var-Args?
+
+Missing:
+ - Free_List
+ - Fixed_Arena (Virtual Memory)
+ - List
+    
+Free-List types:
+ - Don't store size and alignment --> For same size allocations
+ - Store size
+Max 64 bit allocation:
+ --> 64 * 8 --> 2^9 bytes = 512 bytes for perfect free list
+ -->  
+
+DONE:
+-----
+25.03
+ * continue and break now work without ids
+ * Re-Add Bytes as struct in Upp-Language
+ * Debugger shows polymorphic functions as "lambda-function?"
+ * Add wait for input after running C-Program
+ * Fixed Arena/Dynamic_Array bugs
+
+24.03
+ * Fixed implicit cast bug
+ * for loop variable definitions aren't highlighted
+ * assert double definition bug
+ * Arena Implementation
+ * Fixed testcases
+ * Added dot-call code completion only on dot-calls
+ * Fixed member code-completion (expression-info is_valid problems...)
+ * Dot-Call Syntax update
+
+
 
 
 
@@ -67,6 +121,18 @@ Example Code that I want:
 
 
 
+
+Editor-Upgrades:
+----------------
+ * Show more informations about Expressions, e.g. Binop-Value types, Unop-Types
+ * Function call infos, dot-call infos, member access infos (E.g. offset, alignment...)
+ * Switching between Analysis-Passes in Editor (Polymorphic instances)
+    A polymorphic object (function/struct) will have multiple passes on some node
+    But! The Analysis-Items we generate are based on the AST, which does not change from node
+        to node. So we just need to store multiple values per analysis-item, and the editor switches over that
+
+
+
 DEBUGGER Upgrades:
 ------------------
  * Add continue, step-out-of, step-into and step-over buttons
@@ -84,6 +150,7 @@ DEBUGGER Upgrades:
     - Stepping out of function?
     - Gotos (Break/continue with labels)
  * Polish
+ * Bytecode-Debugger
 
 Debugger Features:
  * Stack-Frames 

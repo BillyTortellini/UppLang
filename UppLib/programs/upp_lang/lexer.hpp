@@ -24,6 +24,7 @@ enum class Operator
     SEMI_COLON,      // ;
     QUESTION_MARK,   // ?
     OPTIONAL_POINTER,   // ?*
+    DOT_CALL,        // .>
     NOT,
     AMPERSAND,
     LESS_THAN,

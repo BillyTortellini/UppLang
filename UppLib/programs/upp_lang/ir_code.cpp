@@ -172,7 +172,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
         auto& param = param_info.function->function_type->parameters[param_info.index];
-        string_append_formated(string, "Param #%s, type: ", param.name->characters);
+        string_append_formated(string, "Param \"%s\", type: ", param.name->characters);
         datatype_append_to_string(string, type_system, param.type);
         break;
     }
