@@ -160,6 +160,7 @@ struct Workload_Base
     bool is_finished;
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
+    Workload_Base* parent_workload;
 
     // Information required to be consistent during workload switches
     // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
@@ -879,3 +880,6 @@ void modtree_program_destroy(ModTree_Program* program);
 void parameter_matching_info_destroy(Parameter_Matching_Info* info);
 void function_progress_destroy(Function_Progress* progress);
 void analysis_workload_destroy(Workload_Base* workload);
+void analysis_workload_append_to_string(Workload_Base* workload, String* string);
+Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload); // Returns null if none found
+String* poly_header_get_value_name(Poly_Header* header, int value_access_index);

@@ -75,74 +75,14 @@ bool token_range_contains(Token_Range range, Token_Index index);
 
 
 // Analysis Info
-enum class Member_Access_Type
-{
-    STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
-    STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
-    ENUM_MEMBER_ACCESS,
-    DOT_CALL_AS_MEMBER,
-    DOT_CALL,
-    OPTIONAL_PTR_ACCESS,
-    STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
-    STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
-};
-
-enum class Code_Analysis_Item_Type
-{
-    EXPRESSION_INFO,
-    SYMBOL_LOOKUP,
-    CALL_INFORMATION,
-    ARGUMENT,
-    MARKUP,
-    ERROR_ITEM
-};
-
-struct Code_Analysis_Item_Symbol_Info{
-    Symbol* symbol;
-    bool is_definition;
-    Analysis_Pass* pass;
-};
-
-struct Code_Analysis_Item_Expression{
-    AST::Expression* expr;
-    Expression_Info* info;
-    bool is_member_access;
-    struct {
-        Datatype* value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
-        bool has_definition;
-        Text_Index definition_index;
-        Compilation_Unit* member_definition_unit;
-    } member_access_info;
-};
-
-struct Code_Analysis_Item_Call_Info {
-    Parameter_Matching_Info* matching_info;
-    AST::Arguments* arguments;
-};
-
-struct Code_Analysis_Argument_Info {
-    Parameter_Matching_Info* matching_info;
-    int argument_index;
-};
-
-union Code_Analysis_Item_Option
-{
-    Code_Analysis_Item_Option() {};
-    Code_Analysis_Item_Expression expression;
-    Code_Analysis_Item_Symbol_Info symbol_info;
-    Code_Analysis_Item_Call_Info call_info;
-    Code_Analysis_Argument_Info argument_info;
-    vec3 markup_color;
-    int error_index;
-};
-
 struct Code_Analysis_Item
 {
-    Code_Analysis_Item_Type type;
     int start_char;
     int end_char;
     int tree_depth;
-    Code_Analysis_Item_Option options;
+    int semantic_info_mapping_start_index;
+    int semantic_info_mapping_count;
+    int item_index;
 };
 
 struct Compiler_Error_Info
@@ -156,6 +96,7 @@ struct Compiler_Error_Info
 struct Symbol_Table_Range
 {
     Text_Range range;
+    Analysis_Pass* pass;
     Symbol_Table* symbol_table;
     int tree_depth;
 };

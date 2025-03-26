@@ -306,6 +306,7 @@ struct Datatype_Value_Format
 {
     bool single_line; // If structs etc should use lines and indentation, or comma seperated values
     bool show_datatype; // E.g. Node{15, 12} vs {15, 12}, or Color.RED vs .RED (enums)
+    Datatype_Format datatype_format;
     bool show_member_names; // E.g. Node{value = 15, alive = 10) vs Node{15, 10}
     int max_array_display_size; // -1 to disable, limits arrays like int.[#20, 10, 20, 30, ...]
     bool follow_pointers; // 

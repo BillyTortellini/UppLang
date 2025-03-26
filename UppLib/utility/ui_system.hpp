@@ -162,6 +162,7 @@ bool ui_system_push_checkbox(bool enabled);
 UI_Subsection_Info ui_system_push_subsection(bool enabled, const char* section_name, bool own_scrollbar);
 void ui_system_push_dropdown(Dropdown_State& state, Array<String> possible_values);
 Container_Handle ui_system_push_line_container();
+Container_Handle ui_system_push_indented_container(int indent_count, bool draw_background, vec3 bg_color);
 
 
 void ui_system_push_test_windows();

@@ -153,6 +153,18 @@ struct Exit_Code
 Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg = 0);
 void exit_code_append_to_string(String* string, Exit_Code code);
 
+enum class Member_Access_Type
+{
+    STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
+    STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
+    ENUM_MEMBER_ACCESS,
+    DOT_CALL_AS_MEMBER,
+    DOT_CALL,
+    OPTIONAL_PTR_ACCESS,
+    STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
+    STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
+};
+
 
 // Code Source
 struct Source_Code;

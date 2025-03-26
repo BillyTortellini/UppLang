@@ -2,18 +2,22 @@
 
 CURRENT: 
 --------
- - Editor should be able to switch between instanciations
- - Remove Base-Analysis 
-    
+ - For-Loop variable should be usize by default, not u64
+ - Run Instance-Analysis even if base-analysis fails
+    * Maybe do something about errors?
+ - Filter symbol-table ranges with passes
+
+DONE:
+ - Switching between analysis-passes
 
 Upgrades:
 ---------
  * Polymorphic Upgrade
     - Remove Base-Analysis 
-    - Editor should be able to switch between instanciations
     - Only show errors from specific instanciations
     - Polymorphic struct parameter upgrades
-        e.g. add :: (x: Dynamic_Array, y: x.T)
+            e.g. add :: (x: Dynamic_Array, y: x.T)
+        * Check out how hard this would be to implement first, this isn't a high priority feature yet
  * Editor Upgrade
     - Show overloaded functions (Which one is active + which are available)
     - Syntax Highlighting for missing things
@@ -46,9 +50,7 @@ Upgrades:
 Fix hashset and hashtable
  --> Should be working again
 
-Working with polymorphics is still really bad
 import file as does not show correct coloring!
-continue/break should just use the closest loop if no id is used...
 
 Upp-Implementation for
  * Allocators
@@ -76,6 +78,9 @@ Max 64 bit allocation:
 
 DONE:
 -----
+26.03
+ * Added Pass-Filters in Editor
+
 25.03
  * continue and break now work without ids
  * Re-Add Bytes as struct in Upp-Language

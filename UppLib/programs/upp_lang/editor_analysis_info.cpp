@@ -32,10 +32,26 @@ Token_Range token_range_first_token(Token_Range range, Source_Code* code)
     return token_range_make(range.start, range.start);
 }
 
-void add_code_analysis_item(Code_Analysis_Item_Type type, Code_Analysis_Item_Option option, Token_Range token_range, Source_Code* code, int tree_depth)
+void add_semantic_info(int analysis_item_index, Semantic_Info_Type type, Semantic_Info_Option option, Analysis_Pass* pass)
 {
-    Text_Range range = token_range_to_text_range(token_range, code);
+	auto analysis_data = compiler.analysis_data;
 
+	// Add Semantic_Info
+	Semantic_Info info;
+	info.type = type;
+	info.options = option;
+	info.analysis_item_index = analysis_item_index;
+	info.pass = pass;
+	dynamic_array_push_back(&analysis_data->semantic_infos, info);
+}
+
+int add_code_analysis_item(Token_Range token_range, Source_Code* code, int tree_depth)
+{
+	auto analysis_data = compiler.analysis_data;
+	int analysis_item_index = analysis_data->next_analysis_item_index;
+	analysis_data->next_analysis_item_index += 1;
+
+    Text_Range range = token_range_to_text_range(token_range, code);
     for (int i = range.start.line; i <= range.end.line; i++)
     {
         auto line = source_code_get_line(code, i);
@@ -49,232 +65,257 @@ void add_code_analysis_item(Code_Analysis_Item_Type type, Code_Analysis_Item_Opt
         }
 
         Code_Analysis_Item result;
-        result.type = type;
-        result.options = option;
         result.start_char = start_index;
-        result.tree_depth = tree_depth;
         result.end_char = end_index;
+        result.tree_depth = tree_depth;
+		// These values are calculated afterwards
+		result.semantic_info_mapping_count = 0;
+		result.semantic_info_mapping_start_index = -1;
+		result.item_index = analysis_item_index;
         dynamic_array_push_back(&line->item_infos, result);
     }
+
+	return analysis_item_index;
 };
+
+void add_markup(Token_Range range, Source_Code* code, int tree_depth, vec3 color)
+{
+	int analysis_item_index = add_code_analysis_item(range, code, tree_depth);
+	Semantic_Info_Option option;
+	option.markup_color = color;
+	add_semantic_info(analysis_item_index, Semantic_Info_Type::MARKUP, option, nullptr);
+}
+
 
 
 void find_editor_infos_recursive(
-    AST::Node* node, Compilation_Unit* unit, Dynamic_Array<Analysis_Pass*> active_passes, int tree_depth)
+	AST::Node* node, Compilation_Unit* unit, Dynamic_Array<Analysis_Pass*>& active_passes, int tree_depth)
 {
-    auto code = unit->code;
+	auto code = unit->code;
 
-    // Check if passes are changed at this node
-    auto node_passes_opt = hashtable_find_element(&compiler.analysis_data->ast_to_pass_mapping, node);
-    if (node_passes_opt != nullptr) {
-        active_passes = node_passes_opt->passes;
-    }
-    // We currently only have multiple passes in polymorphic situations, so we take the second pass if possible (To use instanced infos)
-    Analysis_Pass* pass = nullptr;
-    assert(active_passes.size > 0, "");
-    if (active_passes.size == 1) {
-        pass = active_passes[0];
-    }
-    else {
-        pass = active_passes[1];
-    }
+	// Add additional passes to active-passes array
+	auto node_passes_opt = hashtable_find_element(&compiler.analysis_data->ast_to_pass_mapping, node);
+	int active_pass_count_before = active_passes.size;
+	if (node_passes_opt != nullptr) {
+		auto new_passes = node_passes_opt->passes;
+		for (int i = 0; i < new_passes.size; i++) {
+			dynamic_array_push_back(&active_passes, new_passes[i]);
+		}
+	}
 
-    switch (node->type)
-    {
-    case AST::Node_Type::MODULE: {
-        auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(node), Info_Query::TRY_READ);
-        if (info == 0) { break; }
-        Symbol_Table_Range table_range;
-        table_range.range = token_range_to_text_range(node->bounding_range, code);
-        table_range.symbol_table = info->symbol_table;
-        table_range.tree_depth = tree_depth;
-        dynamic_array_push_back(&code->symbol_table_ranges, table_range);
-        break;
-    }
-    case AST::Node_Type::CODE_BLOCK: 
-    {
-        auto block_node = AST::downcast<AST::Code_Block>(node);
-        if (block_node->block_id.available) {
-            Block_ID_Range id_range;
-            id_range.range = token_range_to_text_range(node->bounding_range, code);
-            id_range.block_id = block_node->block_id.value;
-            dynamic_array_push_back(&code->block_id_range, id_range);
-        }
+	switch (node->type)
+	{
+	case AST::Node_Type::MODULE:
+	{
+		for (int i = 0; i < active_passes.size; i++)
+		{
+			auto pass = active_passes[i];
+			auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(node), Info_Query::TRY_READ);
+			if (info == 0) { break; }
+			Symbol_Table_Range table_range;
+			table_range.range = token_range_to_text_range(node->bounding_range, code);
+			table_range.symbol_table = info->symbol_table;
+			table_range.tree_depth = tree_depth;
+			table_range.pass = pass;
+			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+		}
+		break;
+	}
+	case AST::Node_Type::CODE_BLOCK:
+	{
+		auto block_node = AST::downcast<AST::Code_Block>(node);
+		if (block_node->block_id.available) {
+			Block_ID_Range id_range;
+			id_range.range = token_range_to_text_range(node->bounding_range, code);
+			id_range.block_id = block_node->block_id.value;
+			dynamic_array_push_back(&code->block_id_range, id_range);
+		}
 
-        auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ);
-        if (block == 0) { break; }
-        Symbol_Table_Range table_range;
-        table_range.range = token_range_to_text_range(node->bounding_range, code);
-        table_range.symbol_table = block->symbol_table;
-        table_range.tree_depth = tree_depth;
-        dynamic_array_push_back(&code->symbol_table_ranges, table_range);
-        break;
-    }
-    case AST::Node_Type::EXPRESSION: 
+		for (int i = 0; i < active_passes.size; i++)
+		{
+			auto pass = active_passes[i];
+			auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ);
+			if (block == 0) { break; }
+			Symbol_Table_Range table_range;
+			table_range.range = token_range_to_text_range(node->bounding_range, code);
+			table_range.symbol_table = block->symbol_table;
+			table_range.tree_depth = tree_depth;
+			table_range.pass = pass;
+			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+		}
+		break;
+	}
+	case AST::Node_Type::EXPRESSION:
 	{
 		auto expr = downcast<AST::Expression>(node);
-		Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
-
-		if (expr->type == AST::Expression_Type::FUNCTION) {
-			if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
-				Symbol_Table_Range table_range;
-				table_range.range = token_range_to_text_range(node->bounding_range, code);
-				table_range.symbol_table = table;
-				table_range.tree_depth = tree_depth;
-				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
-			}
+		if (expr->type == AST::Expression_Type::AUTO_ENUM) {
+			add_markup(token_range_last_token(node->range, code), code, tree_depth, Syntax_Color::ENUM_MEMBER);
 		}
+		if (active_passes.size == 0) break;
 
-
-		if (info == nullptr) break;
-
-		// Special Case: Member-Accesses should always generate an Expression_Info, so we can still have code-completion even with errors
-		if (!info->is_valid && expr->type != AST::Expression_Type::MEMBER_ACCESS) {
-			break;
-		}
-
-		Code_Analysis_Item_Option option;
-		option.expression.expr = expr;
-		option.expression.info = info;
-		option.expression.is_member_access = false;
-
-		if (expr->type == AST::Expression_Type::AUTO_ENUM)
+		int analysis_item_index = add_code_analysis_item(node->range, code, tree_depth);
+		for (int i = 0; i < active_passes.size; i++)
 		{
-			auto type = datatype_get_non_const_type(info->cast_info.initial_type);
-			if (type->type == Datatype_Type::ENUM) {
-				Code_Analysis_Item_Option markup_option;
-				markup_option.markup_color = Syntax_Color::ENUM_MEMBER;
-				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, markup_option, token_range_last_token(node->range, code), code, tree_depth);
+			auto pass = active_passes[i];
 
+			if (expr->type == AST::Expression_Type::FUNCTION) {
+				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
+					Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->function->options.normal.parameter_table;
+					Symbol_Table_Range table_range;
+					table_range.range = token_range_to_text_range(node->bounding_range, code);
+					table_range.symbol_table = table;
+					table_range.tree_depth = tree_depth;
+					table_range.pass = pass;
+					dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+				}
+			}
+
+			Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ);
+			if (info == nullptr) continue;
+			// Special Case: Member-Accesses should always generate an Expression_Info, so we can still have code-completion even with errors
+			if (!info->is_valid && expr->type != AST::Expression_Type::MEMBER_ACCESS) {
+				continue;
+			}
+
+			Semantic_Info_Option option;
+			option.expression.expr = expr;
+			option.expression.info = info;
+			option.expression.is_member_access = false;
+
+			if (expr->type == AST::Expression_Type::AUTO_ENUM)
+			{
+				auto type = datatype_get_non_const_type(info->cast_info.initial_type);
+				if (type->type == Datatype_Type::ENUM) {
+					option.expression.is_member_access = true;
+					option.expression.member_access_info.value_type = type;
+					option.expression.member_access_info.has_definition = false;
+					option.expression.member_access_info.member_definition_unit = nullptr;
+					Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
+					if (enum_type->definition_node != nullptr)
+					{
+						option.expression.member_access_info.has_definition = true;
+						option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(enum_type->definition_node);
+						option.expression.member_access_info.definition_index = token_index_to_text_index(
+							enum_type->definition_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
+						);
+					}
+				}
+			}
+			else if (expr->type == AST::Expression_Type::MEMBER_ACCESS)
+			{
 				option.expression.is_member_access = true;
-				option.expression.member_access_info.value_type = type;
 				option.expression.member_access_info.has_definition = false;
-				option.expression.member_access_info.member_definition_unit = nullptr;
-				Datatype_Enum* enum_type = downcast<Datatype_Enum>(type);
-				if (enum_type->definition_node != nullptr)
-				{
-					option.expression.member_access_info.has_definition = true;
-					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(enum_type->definition_node);
-					option.expression.member_access_info.definition_index = token_index_to_text_index(
-						enum_type->definition_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
-					);
-				}
-			}
-		}
-		else if (expr->type == AST::Expression_Type::MEMBER_ACCESS) 
-		{
-			option.expression.is_member_access = true;
-			option.expression.member_access_info.has_definition = false;
-			option.expression.member_access_info.value_type = nullptr;
+				option.expression.member_access_info.value_type = nullptr;
 
-			auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
-			if (value_info != nullptr && value_info->is_valid) {
-				option.expression.member_access_info.value_type = value_info->cast_info.result_type;
-				if (value_info->result_type == Expression_Result_Type::TYPE) {
-					option.expression.member_access_info.value_type = value_info->options.type;
+				auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
+				if (value_info != nullptr && value_info->is_valid) {
+					option.expression.member_access_info.value_type = value_info->cast_info.result_type;
+					if (value_info->result_type == Expression_Result_Type::TYPE) {
+						option.expression.member_access_info.value_type = value_info->options.type;
+					}
 				}
-			}
-			// Note: Info->is_valid does not really mean a lot anymore
-			// if (!info->is_valid) break;
+				// Note: Info->is_valid does not really mean a lot anymore
+				// if (!info->is_valid) break;
 
-			auto& access_info = info->specifics.member_access;
-			AST::Node* goto_node = nullptr;
-			switch (access_info.type)
-			{
-			case Member_Access_Type::OPTIONAL_PTR_ACCESS: 
-			case Member_Access_Type::STRUCT_SUBTYPE: 
-			case Member_Access_Type::STRUCT_UP_OR_DOWNCAST:
-			case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: 
-				break;
-			case Member_Access_Type::STRUCT_MEMBER_ACCESS:
-			{
-				if (access_info.options.member.definition_node == nullptr) break;
-				goto_node = access_info.options.member.definition_node;
-				break;
-			}
-			case Member_Access_Type::ENUM_MEMBER_ACCESS: {
-				Datatype* type = option.expression.member_access_info.value_type;
-				if (type == nullptr) break;
-				type = datatype_get_non_const_type(type);
-				if (type->type != Datatype_Type::ENUM) break;
-				auto enum_type = downcast<Datatype_Enum>(type);
-				goto_node = enum_type->definition_node;
-				break;
-			}
-			case Member_Access_Type::DOT_CALL_AS_MEMBER: 
-			case Member_Access_Type::DOT_CALL: 
-			{
-				ModTree_Function* fn = access_info.options.dot_call_function;
-				if (fn == nullptr) break;
-				switch (fn->function_type)
+				auto& access_info = info->specifics.member_access;
+				AST::Node* goto_node = nullptr;
+				switch (access_info.type)
 				{
-				case ModTree_Function_Type::NORMAL: {
-					goto_node = upcast(fn->options.normal.progress->header_workload->function_node);
+				case Member_Access_Type::OPTIONAL_PTR_ACCESS:
+				case Member_Access_Type::STRUCT_SUBTYPE:
+				case Member_Access_Type::STRUCT_UP_OR_DOWNCAST:
+				case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
+					break;
+				case Member_Access_Type::STRUCT_MEMBER_ACCESS:
+				{
+					if (access_info.options.member.definition_node == nullptr) break;
+					goto_node = access_info.options.member.definition_node;
 					break;
 				}
-				case ModTree_Function_Type::BAKE: {
-					// This does not happen in goto definition on member access
+				case Member_Access_Type::ENUM_MEMBER_ACCESS: {
+					Datatype* type = option.expression.member_access_info.value_type;
+					if (type == nullptr) break;
+					type = datatype_get_non_const_type(type);
+					if (type->type != Datatype_Type::ENUM) break;
+					auto enum_type = downcast<Datatype_Enum>(type);
+					goto_node = enum_type->definition_node;
 					break;
 				}
-				case ModTree_Function_Type::EXTERN: {
-					if (fn->options.extern_definition->symbol != nullptr) {
-						goto_node = fn->options.extern_definition->symbol->definition_node;
+				case Member_Access_Type::DOT_CALL_AS_MEMBER:
+				case Member_Access_Type::DOT_CALL:
+				{
+					ModTree_Function* fn = access_info.options.dot_call_function;
+					if (fn == nullptr) break;
+					switch (fn->function_type)
+					{
+					case ModTree_Function_Type::NORMAL: {
+						goto_node = upcast(fn->options.normal.progress->header_workload->function_node);
+						break;
+					}
+					case ModTree_Function_Type::BAKE: {
+						// This does not happen in goto definition on member access
+						break;
+					}
+					case ModTree_Function_Type::EXTERN: {
+						if (fn->options.extern_definition->symbol != nullptr) {
+							goto_node = fn->options.extern_definition->symbol->definition_node;
+						}
+						break;
+					}
+					default: panic("");
 					}
 					break;
 				}
 				default: panic("");
 				}
-				break;
-			}
-			default: panic("");
+
+				if (goto_node != nullptr)
+				{
+					option.expression.member_access_info.has_definition = true;
+					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(goto_node);
+					option.expression.member_access_info.definition_index = token_index_to_text_index(
+						goto_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
+					);
+				}
 			}
 
-			if (goto_node != nullptr)
-			{
-				option.expression.member_access_info.has_definition = true;
-				option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(goto_node);
-				option.expression.member_access_info.definition_index = token_index_to_text_index(
-					goto_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
-				);
-			}
+			// Expression info
+			add_semantic_info(analysis_item_index, Semantic_Info_Type::EXPRESSION_INFO, option, pass);
 		}
 
-		// Expression info
-		add_code_analysis_item(Code_Analysis_Item_Type::EXPRESSION_INFO, option, node->range, code, tree_depth);
 		break;
 	}
 	case AST::Node_Type::STRUCT_MEMBER: {
 		auto member = downcast<AST::Structure_Member_Node>(node);
-		Code_Analysis_Item_Option option;
-		option.markup_color = member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE;
-		add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
+		add_markup(token_range_first_token(node->range, code), code, tree_depth, member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE);
 		break;
 	}
 	case AST::Node_Type::ENUM_MEMBER: {
-		Code_Analysis_Item_Option option;
-		option.markup_color = Syntax_Color::ENUM_MEMBER;
-		add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, token_range_first_token(node->range, code), code, tree_depth);
+		add_markup(token_range_first_token(node->range, code), code, tree_depth, Syntax_Color::ENUM_MEMBER);
 		break;
 	}
 	case AST::Node_Type::ARGUMENTS:
 	{
+		if (active_passes.size == 0) break;
 		auto arguments = downcast<AST::Arguments>(node);
-		Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
 
-		if (info != nullptr) {
-			Code_Analysis_Item_Option option;
-			option.call_info.matching_info = info;
-			option.call_info.arguments = arguments;
-			add_code_analysis_item(Code_Analysis_Item_Type::CALL_INFORMATION, option, node->range, code, tree_depth);
+		int analysis_item_index = add_code_analysis_item(node->range, code, tree_depth);
+		for (int i = 0; i < active_passes.size; i++)
+		{
+			auto pass = active_passes[i];
+			Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
+			if (info != nullptr) {
+				Semantic_Info_Option option;
+				option.call_info.matching_info = info;
+				option.call_info.arguments_node = arguments;
+				add_semantic_info(analysis_item_index, Semantic_Info_Type::CALL_INFORMATION, option, pass);
+			}
 		}
 		break;
 	}
 	case AST::Node_Type::ARGUMENT:
 	{
 		auto arguments = downcast<AST::Arguments>(node->parent);
-		Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
-		if (info == nullptr) break;
 
 		int arg_index = -1;
 		for (int i = 0; i < arguments->arguments.size; i++) {
@@ -284,12 +325,11 @@ void find_editor_infos_recursive(
 			}
 		}
 
-		if (info != nullptr) {
-			Code_Analysis_Item_Option option;
-			option.argument_info.argument_index = arg_index;
-			option.argument_info.matching_info = info;
-			add_code_analysis_item(Code_Analysis_Item_Type::ARGUMENT, option, node->range, code, tree_depth);
-		}
+		Semantic_Info_Option option;
+		option.argument_info.arguments_node = arguments;
+		option.argument_info.argument_index = arg_index;
+		int analysis_item_index = add_code_analysis_item(node->range, code, tree_depth);
+		add_semantic_info(analysis_item_index, Semantic_Info_Type::ARGUMENT, option, nullptr);
 		break;
 	}
 	case AST::Node_Type::CONTEXT_CHANGE:
@@ -297,40 +337,12 @@ void find_editor_infos_recursive(
 		auto line = source_code_get_line(code, node->range.start.line);
 		if (node->range.start.token + 1 < line->tokens.size) {
 			if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
-				// Add symbol lookup info
-				Code_Analysis_Item_Option option;
-				option.markup_color = Syntax_Color::VARIABLE;
 				Token_Range range = token_range_make(node->range.start, node->range.start);
 				range.start.token += 1;
 				range.end.token += 2;
-				add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
+				add_markup(range, code, tree_depth, Syntax_Color::VARIABLE);
 			}
 		}
-		break;
-	}
-	case AST::Node_Type::IMPORT:
-	{
-		auto& tokens = source_code_get_line(code, node->range.start.line)->tokens;
-		auto import_node = AST::downcast<AST::Import>(node);
-		if (import_node->alias_name == nullptr) break;
-
-		int token_index = node->range.end.token - 1;
-		if (token_index < 0 || token_index >= tokens.size) break;
-		if (tokens[token_index].type != Token_Type::IDENTIFIER) break;
-
-		auto info = pass_get_node_info(pass, import_node->path, Info_Query::TRY_READ);
-		if (info == nullptr) break;
-		if (info->symbol == nullptr) break;
-
-		// Add symbol lookup info
-		Code_Analysis_Item_Option option;
-		option.symbol_info.is_definition = true; // Kinda true for alias
-		option.symbol_info.pass = pass;
-		option.symbol_info.symbol = info->symbol;
-		Token_Range range = token_range_make(node->range.start, node->range.start);
-		range.start.token = token_index;
-		range.end.token = token_index + 1;
-		add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
 		break;
 	}
 	case AST::Node_Type::DEFINITION_SYMBOL:
@@ -339,61 +351,65 @@ void find_editor_infos_recursive(
 	{
 		bool is_definition = false;
 		Token_Range range = token_range_first_token(node->range, code);
-		Symbol* symbol = nullptr;
-		AST::Symbol_Lookup* lookup = nullptr;
-		switch (node->type)
-		{
-		case AST::Node_Type::DEFINITION_SYMBOL: {
-			is_definition = true;
-			auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(node), Info_Query::TRY_READ);
-			symbol = info == 0 ? 0 : info->symbol;
-			break;
-		}
-		case AST::Node_Type::SYMBOL_LOOKUP: {
-			lookup = AST::downcast<AST::Symbol_Lookup>(node);
-			auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ);
-			symbol = info == nullptr ? 0 : info->symbol;
-			break;
-		}
-		case AST::Node_Type::PARAMETER:
-		{
+		if (node->type == AST::Node_Type::PARAMETER) {
 			auto param = downcast<AST::Parameter>(node);
-			Token_Index start_token = node->range.start;
-			if (param->is_comptime) {
-				start_token.token += 1;
-			}
-			if (param->is_mutable) {
-				start_token.token += 1;
-			}
-			auto& tokens = source_code_get_line(code, start_token.line)->tokens;
-			range.start.line = start_token.line;
-			range.end.line = start_token.line;
-			range.start.token = math_minimum(start_token.token, tokens.size);
-			range.end.token = math_minimum(start_token.token + 1, tokens.size);
+			int offset = 0;
+			if (param->is_comptime) offset += 1;
+			if (param->is_mutable) offset += 1;
+			
+			auto& tokens = source_code_get_line(code, range.start.line)->tokens;
+			range.start.token = math_minimum(range.start.token + offset, tokens.size);
+			range.end.token = math_minimum(range.start.token + offset + 1, tokens.size);
 			is_definition = true;
 
-			auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ);
-			symbol = info == 0 ? 0 : info->symbol;
-
-			break;
-		}
-		default: panic("");
+			add_markup(range, code, tree_depth, Syntax_Color::VALUE_DEFINITION);
 		}
 
-		if (symbol != nullptr) {
-			// Add symbol lookup info
-			Code_Analysis_Item_Option option;
-			option.symbol_info.symbol = symbol;
-			option.symbol_info.is_definition = is_definition;
-			option.symbol_info.pass = pass;
-			add_code_analysis_item(Code_Analysis_Item_Type::SYMBOL_LOOKUP, option, range, code, tree_depth);
-		}
-		else if (node->type == AST::Node_Type::PARAMETER) {
-			Code_Analysis_Item_Option option;
-			option.markup_color = Syntax_Color::VALUE_DEFINITION;
-			add_code_analysis_item(Code_Analysis_Item_Type::MARKUP, option, range, code, tree_depth);
-		}
+		int analysis_item_index = add_code_analysis_item(range, code, tree_depth);
 
+		for (int i = 0; i < active_passes.size; i++)
+		{
+			auto pass = active_passes[i];
+
+			Symbol* symbol = nullptr;
+			AST::Symbol_Lookup* lookup = nullptr;
+			switch (node->type)
+			{
+			case AST::Node_Type::DEFINITION_SYMBOL: {
+				is_definition = true;
+				auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(node), Info_Query::TRY_READ);
+				symbol = info == 0 ? 0 : info->symbol;
+				break;
+			}
+			case AST::Node_Type::SYMBOL_LOOKUP: {
+				lookup = AST::downcast<AST::Symbol_Lookup>(node);
+				auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ);
+				symbol = info == nullptr ? 0 : info->symbol;
+				break;
+			}
+			case AST::Node_Type::PARAMETER:
+			{
+				auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ);
+				symbol = info == nullptr ? 0 : info->symbol;
+				break;
+			}
+			default: panic("");
+			}
+
+			if (symbol != nullptr) {
+				// Add symbol lookup info
+				Semantic_Info_Option option;
+				option.symbol_info.symbol = symbol;
+				option.symbol_info.is_definition = is_definition;
+				option.symbol_info.pass = pass;
+				add_semantic_info(analysis_item_index, Semantic_Info_Type::SYMBOL_LOOKUP, option, pass);
+			}
+			else if (node->type == AST::Node_Type::PARAMETER) {
+				Semantic_Info_Option option;
+				option.markup_color = Syntax_Color::VALUE_DEFINITION;
+				add_semantic_info(analysis_item_index, Semantic_Info_Type::MARKUP, option, pass);
+			}
+		}
 		break;
 	}
 	}
@@ -407,10 +423,25 @@ void find_editor_infos_recursive(
 		index += 1;
 		child = AST::base_get_child(node, index);
 	}
+
+	dynamic_array_rollback_to_size(&active_passes, active_pass_count_before);
 }
+
+struct Semantic_Info_Comparator
+{
+	bool operator()(const Semantic_Info& a, const Semantic_Info& b)
+	{
+		if (a.analysis_item_index == b.analysis_item_index) {
+			return a.pass < b.pass;
+		}
+		return a.analysis_item_index < b.analysis_item_index;
+	}
+};
 
 void compiler_analysis_update_source_code_information()
 {
+	auto analysis_data = compiler.analysis_data;
+	analysis_data->next_analysis_item_index = 0;
 	auto& errors = compiler.analysis_data->compiler_errors;
 	dynamic_array_reset(&errors);
 
@@ -451,9 +482,10 @@ void compiler_analysis_update_source_code_information()
 			error_info.text_index = range.start;
 			dynamic_array_push_back(&errors, error_info);
 
-			Code_Analysis_Item_Option option;
+			int analysis_item_index = add_code_analysis_item(error.range, unit->code, 0);
+			Semantic_Info_Option option;
 			option.error_index = errors.size - 1;
-			add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, error.range, unit->code, 0);
+			add_semantic_info(analysis_item_index, Semantic_Info_Type::ERROR_ITEM, option, nullptr);
 		}
 	}
 
@@ -479,9 +511,60 @@ void compiler_analysis_update_source_code_information()
 
 		// Add visible ranges
 		for (int j = 0; j < ranges.size; j++) {
-			Code_Analysis_Item_Option option;
+			int analysis_item_index = add_code_analysis_item(ranges[j], unit->code, 0);
+			Semantic_Info_Option option;
 			option.error_index = errors.size - 1;
-			add_code_analysis_item(Code_Analysis_Item_Type::ERROR_ITEM, option, ranges[j], unit->code, 0);
+			add_semantic_info(analysis_item_index, Semantic_Info_Type::ERROR_ITEM, option, nullptr);
+		}
+	}
+
+	// Set mapping infos between Analysis-Items and Semantic_Infos
+	{
+		// Sort semantic-infos, so that same analysis-items are next to each other
+		auto& semantic_infos = compiler.analysis_data->semantic_infos;
+		const int analysis_item_count = compiler.analysis_data->next_analysis_item_index;
+		dynamic_array_sort(&compiler.analysis_data->semantic_infos, Semantic_Info_Comparator());
+
+		// Find start and length of all semantic infos
+		Array<int> item_info_start_indices = array_create<int>(analysis_item_count);
+		Array<int> item_info_count = array_create<int>(analysis_item_count);
+		SCOPE_EXIT(array_destroy(&item_info_start_indices));
+		SCOPE_EXIT(array_destroy(&item_info_count));
+		for (int i = 0; i < analysis_item_count; i++) {
+			item_info_start_indices[i] = -1;
+			item_info_count[i] = 0;
+		}
+
+		int last_index = -1;
+		for (int i = 0; i < semantic_infos.size; i++) {
+			auto& info = semantic_infos[i];
+			if (info.analysis_item_index != last_index) {
+				item_info_start_indices[info.analysis_item_index] = i;
+				assert(item_info_count[info.analysis_item_index] == 0, "After sorting this should be the case");
+			}
+			last_index = info.analysis_item_index;
+			item_info_count[info.analysis_item_index] += 1;
+		}
+
+		// Update analysis-item infos in source-code
+		for (int i = 0; i < compiler.compilation_units.size; i++)
+		{
+			auto unit = compiler.compilation_units[i];
+			for (int j = 0; j < unit->code->line_count; j++) 
+			{
+				auto& analysis_items = source_code_get_line(unit->code, j)->item_infos;
+				for (int k = 0; k < analysis_items.size; k++) 
+				{
+					auto& item = analysis_items[k];
+					item.semantic_info_mapping_start_index = item_info_start_indices[item.item_index];
+					item.semantic_info_mapping_count = item_info_count[item.item_index];
+					// Remove item if mapping count is null (Not sure if this is wanted behavior)
+					if (item.semantic_info_mapping_count == 0) {
+						dynamic_array_swap_remove(&analysis_items, k);
+						k -= 1;
+					}
+				}
+			}
 		}
 	}
 }
@@ -526,6 +609,9 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
 	result->allocated_nodes = dynamic_array_create<AST::Node*>();
 
+	result->semantic_infos = dynamic_array_create<Semantic_Info>();
+	result->next_analysis_item_index = 0;
+
 	return result;
 }
 
@@ -538,6 +624,8 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 
 	modtree_program_destroy(data->program);
 	dynamic_array_destroy(&data->function_slots);
+
+	dynamic_array_destroy(&data->semantic_infos);
 
 	for (int i = 0; i < data->allocated_nodes.size; i++) {
 		AST::Node* node = data->allocated_nodes[i];

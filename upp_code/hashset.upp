@@ -58,7 +58,7 @@ Hashable :: module
 		hash_fn: (value: T) -> Upp~u64
 		equals_fn: (a: T, b: T) -> bool
 	
-	hashable_make_primitive :: ($T: Upp~Type_Handle) -> Hashable(T)
+	make_primitive :: ($T: Upp~Type_Handle) -> Hashable(T)
 		equals_primitive :: (a: $T, b: T) -> bool
 			return a == b
 		
@@ -67,7 +67,7 @@ Hashable :: module
 			#instanciate equals_primitive(T = T)
 		}
 	
-	hashable_make_pointer :: ($T: Upp~Type_Handle) -> Hashable(*T)
+	make_pointer :: ($T: Upp~Type_Handle) -> Hashable(*T)
 		equals_pointer :: (a: $T, b: T) -> bool
 			return a *== b
 		
@@ -109,7 +109,7 @@ Hashset :: module
 			next :=* entry.next
 			while next?
 				next_ptr :=* next.value.next
-				set.allocator.>free(next)
+				set.allocator.>free(next.value)
 				next =* next_ptr
 		if set.entries.size > 0
 			set.allocator.>free(set.entries)
@@ -117,8 +117,8 @@ Hashset :: module
 	// Returns if element was already inside hashtable or not
 	insert :: (set: *Hashset(Hashable($T)), element: T, overwrite: bool = false) -> bool
 		hash := set.H.hash_fn(element)
-		slot_index := hash % set.entries.size
-		reserve(set, cast{u64} set.size + 1)
+		slot_index := cast hash % set.entries.size
+		reserve(set, set.size + 1)
 		
 		entry :=* set.entries[slot_index]
 		if !entry.valid
@@ -126,11 +126,11 @@ Hashset :: module
 			entry.hash = hash
 			entry.value =~ element
 			entry.next =* null
-			set.size += cast{u64} 1
+			set.size += 1
 			return false
 		
 		// Otherwise check if entry contains the same element
-		while true loop:
+		while true
 			assert(entry.valid)
 			if entry.hash == hash
 				if set.H.equals_fn(element, entry.value)
@@ -141,26 +141,26 @@ Hashset :: module
 			if entry.next?
 				entry =* entry.next.value
 			else
-				break loop
+				break
 		
 		// Set entry.next to new entry
 		new_entry :=* new Entry(T)
 		new_entry = .{element, hash, null, true}
 		entry.next =* new_entry
-		set.size += cast{u64} 1
+		set.size += 1
 		
 		return false
 	
 	find :: (set: Hashset(Hashable($T)), value: T) -> ?*T
 		hash: u64 = set.H.hash_fn(value)
 		
-		slot_index := hash % set.entries.size
+		slot_index := cast hash % set.entries.size
 		entry :=* set.entries[slot_index]
 		if !entry.valid
 			return null
 		
 		// Otherwise check if entry contains the same element
-		while true loop:
+		while true
 			assert(entry.valid)
 			if entry.hash == hash
 				if set.H.equals_fn(value, entry.value)
@@ -169,7 +169,7 @@ Hashset :: module
 			if entry.next?
 				entry =* entry.next.value
 			else
-				break loop
+				break
 		
 		return null
 	
@@ -177,7 +177,7 @@ Hashset :: module
 	remove :: (set: Hashset(Hashable($T)), value: T) -> bool
 		hash: u64 = set.H.hash_fn(value)
 		
-		slot_index := hash % set.entries.size
+		slot_index := cast hash % set.entries.size
 		entry :=* set.entries[slot_index]
 		if !entry.valid
 			return false
@@ -192,7 +192,7 @@ Hashset :: module
 		
 		// Check if entry list contains entry
 		next :=* entry.next
-		while next?loop:
+		while next?
 			next_ptr :=* next.value
 			assert(next_ptr.valid)
 			if next_ptr.hash == hash && set.H.equals_fn(value, next_ptr.value)
@@ -248,7 +248,7 @@ Hashset :: module
 		Iter :: struct (H: Hashable($T))
 			set: *Hashset(H)
 			entry: ?*Entry(T)
-			entry_index: u64
+			entry_index: usize
 		
 		create :: (set: *Hashset($H)) -> Iter(H)
 			result: Iter(H) = .{set, null, 0}
@@ -256,7 +256,7 @@ Hashset :: module
 				if e.valid
 					result.entry =* e
 					result.entry_index = i
-					break e
+					break
 			
 			return result
 		
@@ -291,26 +291,26 @@ Hashset :: module
 		)
 	
 	test :: ()
-		INT_HASHABLE :: #bake Hash_Functions~hashable_make_primitive(int)
+		INT_HASHABLE :: #bake Hashable~make_primitive(int)
 		
 		context import Operators
 		
-		set: Hashset(INT_HASHABLE) = create()
+		set: Hashset(INT_HASHABLE) = create(Upp~global_allocator)
 		defer
-			set.destroy()
+			set.>destroy()
 		
 		assert(set.size == 0)
-		set.reserve(10)
+		set.>reserve(10)
 		assert(set.entries.size >= 10)
 		
 		b := false
-		b = set.insert(15)
+		b = set.>insert(15)
 		assert(!b)
-		b = set.insert(15)
+		b = set.>insert(15)
 		assert(b)
 		
-		set.insert(8)
-		set.insert(2)
+		set.>insert(8)
+		set.>insert(2)
 		Upp~print_string("hello, i'm still here!\n")
 		assert(set.size == 3)
 		sum := 0
@@ -325,16 +325,16 @@ Hashset :: module
 			if e.valid
 				diff_count += 1
 		
-		b = set.find(15)?
+		b = set.>find(15)?
 		assert(b)
 		
-		b = set.remove(15)
+		b = set.>remove(15)
 		assert(b)
 		
-		b = set.find(15)?
+		b = set.>find(15)?
 		assert(!b)
 		
-		b = set.remove(15)
+		b = set.>remove(15)
 		assert(!b)
 	
 

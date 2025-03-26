@@ -305,6 +305,13 @@ struct Watch_Value
 	bool show_multiline;
 };
 
+struct Pass_Filter
+{
+	String required_substring;
+	bool is_active;
+	bool connected_to_next;
+};
+
 struct Syntax_Editor
 {
     // Editing
@@ -393,6 +400,12 @@ struct Syntax_Editor
     Debugger* debugger;
     Dynamic_Array<Watch_Value> watch_values;
     int selected_stack_frame;
+
+	// Pass-Filters
+	bool prefer_poly_passes;
+	bool pass_filter_ui_open;
+	Dynamic_Array<Pass_Filter> poly_pass_filters;
+	Hashtable<Analysis_Pass*, bool> filtered_passes;
 };
 
 
@@ -2360,6 +2373,11 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 
 	syntax_editor.watch_values = dynamic_array_create<Watch_Value>();
 	syntax_editor.selected_stack_frame = 0;
+
+	syntax_editor.pass_filter_ui_open = false;
+	syntax_editor.poly_pass_filters = dynamic_array_create<Pass_Filter>();
+	syntax_editor.filtered_passes = hashtable_create_pointer_empty<Analysis_Pass*, bool>(1);
+	syntax_editor.prefer_poly_passes = true;
 }
 
 void syntax_editor_destroy()
@@ -2379,6 +2397,7 @@ void syntax_editor_destroy()
 	compiler_destroy();
 	dynamic_array_destroy(&syntax_editor.error_indices_sorted);
 
+
 	dynamic_array_destroy(&editor.last_insert_commands);
 	string_destroy(&editor.last_recorded_code_completion);
 
@@ -2390,6 +2409,12 @@ void syntax_editor_destroy()
 		string_destroy(&editor.watch_values[i].value_as_text);
 	}
 	dynamic_array_destroy(&editor.watch_values);
+
+	for (int i = 0; i < editor.poly_pass_filters.size; i++) {
+		string_destroy(&editor.poly_pass_filters[i].required_substring);
+	}
+	dynamic_array_destroy(&editor.poly_pass_filters);
+	hashtable_destroy(&editor.filtered_passes);
 }
 
 void syntax_editor_save_text_file()
@@ -2864,6 +2889,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		compiler.analysis_data = nullptr;
 		sort_error_indices();
 		dynamic_array_reset(&editor.suggestions);
+		hashtable_reset(&editor.filtered_passes);
 		editor.compile_count += 1;
 	}
 
@@ -3309,14 +3335,6 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 
 
 // Code Queries
-struct Position_Info
-{
-	Code_Analysis_Item_Expression* expression_info;
-	Code_Analysis_Item_Symbol_Info* symbol_info;
-	Code_Analysis_Item_Call_Info* call_info;
-	int call_argument_index;
-};
-
 Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time)
 {
 	auto& tab = syntax_editor.tabs[tab_index];
@@ -3404,6 +3422,167 @@ Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int 
 	return text_index;
 }
 
+void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string)
+{
+	if (pass == nullptr) return;
+	if (pass->origin_workload == nullptr) return;
+
+	Workload_Base* base_workload = pass->origin_workload;
+	if (pass->instance_workload != nullptr) {
+		base_workload = pass->instance_workload;
+	}
+	Poly_Header* poly_header = analysis_workload_get_poly_header(base_workload);
+	if (poly_header == nullptr) {
+		return;
+	}
+
+	// Generate pass-string
+	auto poly_values = base_workload->polymorphic_values;
+	for (int i = 0; i < poly_values.size; i++)
+	{
+		auto poly_value = poly_values[i];
+
+		String* name = poly_header_get_value_name(poly_header, i);
+		if (name == nullptr) {
+			panic("Should not happen");
+			continue;
+		}
+		string_append_string(string, name);
+		string_append(string, "=");
+
+		if (poly_value.type != Poly_Value_Type::SET) {
+			string_append(string, "Not Set\n");
+			continue;
+		}
+
+		// Otherwise append name and value
+		auto format = datatype_value_format_single_line();
+		format.show_datatype = true;
+		format.datatype_format = datatype_format_make_default();
+		format.datatype_format.append_struct_poly_parameter_values = true;
+		datatype_append_value_to_string(
+			poly_value.options.value.type, &syntax_editor.analysis_data->type_system, poly_value.options.value.memory,
+			string, format, 0, Memory_Source(nullptr), Memory_Source(nullptr)
+		);
+
+		if (i != poly_values.size - 1) {
+			string_append(string, "\n");
+		}
+	}
+}
+
+bool analysis_pass_passes_filters(Analysis_Pass* pass)
+{
+	// Check if pass already ran through filter
+	bool* is_preferred_opt = hashtable_find_element(&syntax_editor.filtered_passes, pass);
+	if (is_preferred_opt != nullptr) {
+		return *is_preferred_opt;
+	}
+
+	// Check if valid/polymorphic
+	if (pass == nullptr) {
+		if (!syntax_editor.prefer_poly_passes) {
+			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
+			return true;
+		}
+		return false;
+	}
+	if (pass->origin_workload == nullptr) {
+		if (!syntax_editor.prefer_poly_passes) {
+			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
+			return true;
+		}
+		return false;
+	}
+
+	Workload_Base* base_workload = pass->origin_workload;
+	if (pass->instance_workload != nullptr) {
+		base_workload = pass->instance_workload;
+	}
+	Poly_Header* poly_header = analysis_workload_get_poly_header(base_workload);
+	if (poly_header == nullptr) {
+		if (!syntax_editor.prefer_poly_passes) {
+			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
+			return true;
+		}
+		return false;
+	}
+	else if (!syntax_editor.prefer_poly_passes) {
+		// Here we have a poly pass and don't prefer polymorphic passes, so we can skip filtering
+		hashtable_insert_element(&syntax_editor.filtered_passes, pass, false);
+		return false;
+	}
+
+	// Generate pass-string and check filters
+	String pass_string = string_create(32);
+	SCOPE_EXIT(string_destroy(&pass_string));
+	analysis_pass_append_polymorphic_infos(pass, &pass_string);
+
+	auto& filters = syntax_editor.poly_pass_filters;
+	bool passed_filters = false;
+	if (filters.size == 0) {
+		passed_filters = true;
+	}
+	for (int i = 0; i < filters.size; i++)
+	{
+		// Connected filters should be AND-ed together
+		bool passes_filter = true;
+		bool at_least_one_active_filter = false;
+		while (i < filters.size) 
+		{
+			Pass_Filter* filter = &filters[i];
+			if (filter->is_active && filter->required_substring.size > 0) {
+				at_least_one_active_filter = true;
+				bool pass = string_contains_substring(pass_string, 0, filter->required_substring) != -1;
+				if (!pass) {
+					passes_filter = false;
+				}
+			}
+			if (!filter->connected_to_next) {
+				break;
+			}
+			i += 1;
+		}
+
+		if (passes_filter && at_least_one_active_filter) {
+			passed_filters = true;
+		}
+	}
+
+	// Cache filter result
+	hashtable_insert_element(&syntax_editor.filtered_passes, pass, passed_filters);
+	return passed_filters;
+}
+
+// This function uses the Pass-Filter to find a pass that is preferred
+Semantic_Info* code_analysis_item_get_selected_semantic_info(Code_Analysis_Item& item)
+{
+	assert(item.semantic_info_mapping_count != 0, "Should not happen with current implementation");
+	if (item.semantic_info_mapping_count == 1) {
+		return &syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index];
+	}
+
+	// Pick the first pass that passes filters
+	for (int i = 0; i < item.semantic_info_mapping_count; i++) {
+		auto& semantic_info = syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index + i];
+		auto pass = semantic_info.pass;
+		if (analysis_pass_passes_filters(pass)) {
+			return &semantic_info;
+		}
+	}
+
+	// If no preferred pass was found, just return the first one (Maybe we should notify the user if this happens)
+	return &syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index];
+}
+
+struct Position_Info
+{
+	Semantic_Info_Expression* expression_info;
+	Semantic_Info_Symbol* symbol_info;
+	Semantic_Info_Call* call_info;
+	int call_argument_index;
+};
+
 Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int>* errors_to_fill)
 {
 	Position_Info result;
@@ -3416,53 +3595,61 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 	auto& tab = editor.tabs[editor.open_tab_index];
 
 	auto line = source_code_get_line(tab.code, index.line);
-	auto& infos = line->item_infos;
+	auto& analysis_items = line->item_infos;
 	int previous_expr_depth = -1;
 	int previous_call_depth = -1;
-	for (int i = 0; i < infos.size; i++)
+	for (int i = 0; i < analysis_items.size; i++)
 	{
-		auto& info = infos[i];
+		auto& item = analysis_items[i];
 
-		bool on_info = false;
-		if (info.start_char == info.end_char && index.character == info.start_char) {
-			on_info = true;
+		bool on_item = false;
+		if (item.start_char == item.end_char && index.character == item.start_char) {
+			on_item = true;
 		}
 		else {
-			on_info = index.character >= info.start_char && index.character < info.end_char;
+			on_item = index.character >= item.start_char && index.character < item.end_char;
 		}
-		if (!on_info) continue;
+		if (!on_item) continue;
+		if (item.semantic_info_mapping_count == 0) continue; // Shouldn't happen currently, but still check
 
-		switch (info.type)
+		// Now we need to select the analysis pass we want to use
+		int semantic_info_index = item.semantic_info_mapping_start_index;
+		// TODO: Change selection based on some input or whatever
+
+		auto semantic_info_ptr = code_analysis_item_get_selected_semantic_info(item);
+		Semantic_Info& semantic_info = *semantic_info_ptr;
+		switch (semantic_info.type)
 		{
-		case Code_Analysis_Item_Type::CALL_INFORMATION:
+		case Semantic_Info_Type::CALL_INFORMATION:
 		{
-			if (info.tree_depth > previous_call_depth)
+			if (item.tree_depth > previous_call_depth)
 			{
-				result.call_info = &info.options.call_info;
-				previous_call_depth = info.tree_depth;
+				result.call_info = &semantic_info.options.call_info;
+				previous_call_depth = item.tree_depth;
 
 				// Find argument index by counting commas
-				if (index.character == info.start_char) {
+				if (index.character == item.start_char) {
 					result.call_argument_index = 0;
 				}
-				else if (index.character == info.end_char - 1) {
-					result.call_argument_index = info.options.call_info.arguments->arguments.size - 1; // Note: -1 is also fine here
+				else if (index.character == item.end_char - 1) {
+					result.call_argument_index = semantic_info.options.call_info.arguments_node->arguments.size - 1; // Note: -1 is also fine here
 				}
 				else
 				{
 					// Figure out closest argument
 					int closest_index = -1;
 					int min_dist = 1000000;
-					for (int j = 0; j < infos.size; j++) {
-						auto other_info = infos[j];
-						if (other_info.type != Code_Analysis_Item_Type::ARGUMENT) continue;
+					for (int j = 0; j < analysis_items.size; j++) {
+						const auto& other_item = analysis_items[j];
+						const auto& other_info = editor.analysis_data->semantic_infos[other_item.semantic_info_mapping_start_index];
+						if (other_info.type != Semantic_Info_Type::ARGUMENT) continue;
 						auto arg_info = other_info.options.argument_info;
-						if (arg_info.matching_info != info.options.call_info.matching_info) continue;
+						if (arg_info.arguments_node != semantic_info.options.call_info.arguments_node) continue;
 						int distance = math_minimum(
-							math_absolute(index.character - other_info.start_char),
-							math_absolute(index.character - (other_info.end_char - 1))
+							math_absolute(index.character - other_item.start_char),
+							math_absolute(index.character - (other_item.end_char - 1))
 						);
-						if (index.character >= other_info.start_char && index.character < other_info.end_char) {
+						if (index.character >= other_item.start_char && index.character < other_item.end_char) {
 							distance = 0;
 						}
 
@@ -3476,25 +3663,25 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 			}
 			break;
 		}
-		case Code_Analysis_Item_Type::SYMBOL_LOOKUP: {
-			result.symbol_info = &infos[i].options.symbol_info;
+		case Semantic_Info_Type::SYMBOL_LOOKUP: {
+			result.symbol_info = &semantic_info.options.symbol_info;
 			break;
 		}
-		case Code_Analysis_Item_Type::ERROR_ITEM: {
+		case Semantic_Info_Type::ERROR_ITEM: {
 			if (errors_to_fill != nullptr) {
-				dynamic_array_push_back(errors_to_fill, info.options.error_index);
+				dynamic_array_push_back(errors_to_fill, semantic_info.options.error_index);
 			}
 			break;
 		}
-		case Code_Analysis_Item_Type::EXPRESSION_INFO: {
-			if (info.tree_depth > previous_expr_depth) {
-				result.expression_info = &infos[i].options.expression;
-				previous_expr_depth = info.tree_depth;
+		case Semantic_Info_Type::EXPRESSION_INFO: {
+			if (item.tree_depth > previous_expr_depth) {
+				result.expression_info = &semantic_info.options.expression;
+				previous_expr_depth = item.tree_depth;
 			}
 			break;
 		}
-		case Code_Analysis_Item_Type::ARGUMENT:
-		case Code_Analysis_Item_Type::MARKUP: {
+		case Semantic_Info_Type::ARGUMENT:
+		case Semantic_Info_Type::MARKUP: {
 			break;
 		}
 		default: panic("");
@@ -3758,7 +3945,7 @@ void code_completion_find_suggestions()
 		if (test_char(line->text, word_start, '#')) {
 			is_hashtag = true;
 		}
-		if ((test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) || 
+		if ((test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) ||
 			(test_char(line->text, cursor.character - 2, '.') && test_char(line->text, cursor.character - 1, '>'))) {
 			is_dot_call_access = true;
 		}
@@ -3789,12 +3976,12 @@ void code_completion_find_suggestions()
 		fuzzy_search_add_item(*ids.hashtag_get_overload_poly, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload_poly));
 	}
-	else if (is_dot_call_access) 
+	else if (is_dot_call_access)
 	{
 		Datatype* type = nullptr;
 
 		auto expr_info = position_info.expression_info;
-		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr) 
+		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr)
 		{
 			// Note: For member-accesses, we need the type of the value, not the member-access expression
 			type = expr_info->member_access_info.value_type;
@@ -6394,11 +6581,15 @@ void syntax_editor_update(bool& animations_running)
 	auto& mode = syntax_editor.mode;
 	animations_running = false;
 
+	UI_Input_Info input_info = ui_system_start_frame(input);
+	String tmp_str = string_create();
+	SCOPE_EXIT(string_destroy(&tmp_str));
+
 	SCOPE_EXIT(
 		for (int i = 0; i < editor.tabs.size; i++) {
 			source_code_sanity_check(editor.tabs[i].code);
 		}
-			);
+	);
 
 	// Update particles
 	{
@@ -6438,6 +6629,7 @@ void syntax_editor_update(bool& animations_running)
 
 	// Check shortcuts pressed
 	static bool show_debugger_ui = false;
+	bool handle_key_messages_in_editor = true;
 	if (input->key_pressed[(int)Key_Code::O] &&
 		input->key_down[(int)Key_Code::CTRL] &&
 		input->key_down[(int)Key_Code::SHIFT])
@@ -6460,14 +6652,153 @@ void syntax_editor_update(bool& animations_running)
 	else if (input->key_pressed[(int)Key_Code::B] && input->key_down[(int)Key_Code::CTRL])
 	{
 		show_debugger_ui = !show_debugger_ui;
+		handle_key_messages_in_editor = false;
 	}
 	else if (input->key_pressed[(int)Key_Code::SPACE] && input->key_down[(int)Key_Code::CTRL]) {
 		editor.show_semantic_infos = !editor.show_semantic_infos;
+		handle_key_messages_in_editor = false;
+	}
+	else if (input->key_pressed[(int)Key_Code::T] && input->key_down[(int)Key_Code::CTRL])
+	{
+		editor.pass_filter_ui_open = !editor.pass_filter_ui_open;
+	}
+
+	// Pass-Filter UI
+	if (editor.pass_filter_ui_open)
+	{
+		handle_key_messages_in_editor = false;
+		if (input->key_pressed[(int)Key_Code::ESCAPE] || (input->key_pressed[(int)Key_Code::L] && input->key_down[(int)Key_Code::CTRL])) {
+			editor.pass_filter_ui_open = false;
+		}
+	}
+	if (editor.pass_filter_ui_open)
+	{
+		bool filters_updated = false;
+
+		auto window = ui_system_add_window(window_style_make_floating("Pass-Filters"));
+		ui_system_push_active_container(window.container, false);
+		SCOPE_EXIT(ui_system_pop_active_container());
+
+		ui_system_push_next_component_label("Prefer polymorphic passes:");
+		bool new_prefer = ui_system_push_checkbox(editor.prefer_poly_passes);
+		if (new_prefer != editor.prefer_poly_passes) {
+			editor.prefer_poly_passes = new_prefer;
+			filters_updated = true;
+		}
+		ui_system_push_label("Filters:", false);
+
+		auto& filters = editor.poly_pass_filters;
+		for (int i = 0; i < filters.size; i++)
+		{
+			Pass_Filter& filter = filters[i];
+			ui_system_push_active_container(ui_system_push_line_container(), false);
+			SCOPE_EXIT(ui_system_pop_active_container());
+
+			bool new_is_active = ui_system_push_checkbox(filter.is_active);
+			if (new_is_active != filter.is_active) {
+				filter.is_active = new_is_active;
+				filters_updated = true;
+			}
+
+			bool new_connected = ui_system_push_checkbox(filter.connected_to_next);
+			if (new_connected != filter.connected_to_next) {
+				filter.connected_to_next = new_connected;
+				filters_updated = true;
+			}
+
+			auto update = ui_system_push_text_input(filter.required_substring);
+			if (update.text_was_changed) {
+				string_reset(&filter.required_substring);
+				string_append_string(&filter.required_substring, &update.new_text);
+				filters_updated = true;
+			}
+
+			bool remove = ui_system_push_icon_button(ui_icon_make(Icon_Type::X_MARK, Icon_Rotation::NONE, vec3(1, 0, 0)), true);
+			if (remove) {
+				string_destroy(&filter.required_substring);
+				filters_updated = true;
+				dynamic_array_remove_ordered(&filters, i);
+				i -= 1;
+				continue;
+			}
+		}
+
+		auto input = ui_system_push_button("Add Filter");
+		if (input.was_pressed)
+		{
+			Pass_Filter filter;
+			filter.connected_to_next = false;
+			filter.is_active = true;
+			filter.required_substring = string_create("");
+			dynamic_array_push_back(&editor.poly_pass_filters, filter);
+			filters_updated = true;
+		}
+
+		static bool section_line_passes_open = true;
+		auto section_info = ui_system_push_subsection(section_line_passes_open, "Line-Passes", true);
+		section_line_passes_open = section_info.enabled;
+		if (section_info.enabled)
+		{
+			ui_system_push_active_container(section_info.container, false);
+			SCOPE_EXIT(ui_system_pop_active_container());
+
+			// Show all passes on current line
+			Dynamic_Array<Analysis_Pass*> passes = dynamic_array_create<Analysis_Pass*>();
+			SCOPE_EXIT(dynamic_array_destroy(&passes));
+			auto line = source_code_get_line(editor.tabs[editor.open_tab_index].code, editor.tabs[editor.open_tab_index].cursor.line);
+			for (int i = 0; i < line->item_infos.size; i++) {
+				auto& item = line->item_infos[i];
+				for (int j = 0; j < item.semantic_info_mapping_count; j++) {
+					auto& semantic_info = editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index + j];
+					dynamic_array_push_back(&passes, semantic_info.pass);
+				}
+			}
+			// Remove duplicates
+			for (int i = 0; i < passes.size; i++) {
+				auto pass = passes[i];
+				for (int j = i + 1; j < passes.size; j++) {
+					if (passes[j] == pass) {
+						dynamic_array_swap_remove(&passes, j);
+						j -= 1;
+					}
+				}
+			}
+
+			for (int i = 0; i < passes.size; i++)
+			{
+				auto pass = passes[i];
+				bool passes_filter = analysis_pass_passes_filters(pass);
+
+				string_reset(&tmp_str);
+				string_append_formated(&tmp_str, "pass: %p %s", pass, passes_filter ? "PASSES" : "FILTERED");
+				auto header_container = ui_system_push_indented_container(0, passes_filter, vec3(Syntax_Color::BG_HIGHLIGHT));
+				ui_system_push_active_container(header_container, true);
+				ui_system_push_label(tmp_str, false);
+				string_reset(&tmp_str);
+
+				analysis_pass_append_polymorphic_infos(pass, &tmp_str);
+
+				auto container = ui_system_push_indented_container(2, false, vec3(0.0f));
+				ui_system_push_active_container(container, false);
+
+				Array<String> lines = string_split(tmp_str, '\n');
+				SCOPE_EXIT(string_split_destroy(lines));
+				for (int i = 0; i < lines.size; i++) {
+					auto line = lines[i];
+					if (line.size == 0) continue;
+					ui_system_push_label(line, false);
+				}
+				ui_system_pop_active_container();
+			}
+		}
+
+		if (filters_updated) {
+			hashtable_reset(&editor.filtered_passes);
+		}
 	}
 
 	// Debugger-UI
 	const bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
-	bool handle_key_messages_in_editor = true;
 	bool update_watch_values = false;
 	bool action_continue = false;
 	bool action_stop = false;
@@ -6476,16 +6807,12 @@ void syntax_editor_update(bool& animations_running)
 	bool action_step_out_of = false;
 	bool action_print_line_info = false;
 	bool action_open_debugger_command_line = false;
-	UI_Input_Info input_info = ui_system_start_frame(input);
 	if (input_info.has_keyboard_input) {
 		handle_key_messages_in_editor = false;
 	}
 
 	if (show_debugger_ui)
 	{
-		String tmp_str = string_create();
-		SCOPE_EXIT(string_destroy(&tmp_str));
-
 		Window_Handle handle = ui_system_add_window(window_style_make_anchored("Debugger_Info"));
 		ui_system_push_active_container(handle.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
@@ -7515,16 +7842,18 @@ void syntax_editor_render()
 					continue;
 				}
 
-				auto& infos = line->item_infos;
-				for (int i = 0; i < infos.size; i++)
+				auto& analysis_items = line->item_infos;
+				for (int i = 0; i < analysis_items.size; i++)
 				{
-					const auto& info = infos[i];
+					auto& analysis_item = analysis_items[i];
 					vec3 color = vec3(1, 0, 0);
 					Rich_Text::Mark_Type mark_type = Rich_Text::Mark_Type::TEXT_COLOR;
-					int start = info.start_char;
+					int start = analysis_item.start_char;
+					Semantic_Info* semantic_info_ptr = code_analysis_item_get_selected_semantic_info(analysis_item);
+					Semantic_Info& info = *semantic_info_ptr;
 					switch (info.type)
 					{
-					case Code_Analysis_Item_Type::EXPRESSION_INFO:
+					case Semantic_Info_Type::EXPRESSION_INFO:
 					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'
@@ -7545,7 +7874,7 @@ void syntax_editor_render()
 						}
 						break;
 					}
-					case Code_Analysis_Item_Type::SYMBOL_LOOKUP:
+					case Semantic_Info_Type::SYMBOL_LOOKUP:
 					{
 						auto symbol = info.options.symbol_info.symbol;
 						color = symbol_to_color(symbol, info.options.symbol_info.is_definition);
@@ -7553,27 +7882,27 @@ void syntax_editor_render()
 						if (symbol == highlight_symbol && !(highlight_only_definition && !info.options.symbol_info.is_definition)) {
 							Rich_Text::mark_line(
 								text, Rich_Text::Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT,
-								line->visible_index - cam_start_visible, info.start_char, info.end_char
+								line->visible_index - cam_start_visible, analysis_item.start_char, analysis_item.end_char
 							);
 						}
 						break;
 					}
-					case Code_Analysis_Item_Type::MARKUP: color = info.options.markup_color; break;
-					case Code_Analysis_Item_Type::ERROR_ITEM:
+					case Semantic_Info_Type::MARKUP: color = info.options.markup_color; break;
+					case Semantic_Info_Type::ERROR_ITEM:
 					{
 						// Special handling, as errors may appear at the end of the line
-						int end_char = info.end_char;
-						if (info.start_char == info.end_char) {
+						int end_char = analysis_item.end_char;
+						if (analysis_item.start_char == analysis_item.end_char) {
 							end_char += 1;
 						}
 						color = vec3(1.0f, 0.0f, 0.0f);
 						mark_type = Rich_Text::Mark_Type::UNDERLINE;
-						Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, info.start_char, end_char);
+						Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, analysis_item.start_char, end_char);
 						continue;
 					}
 					default: continue;
 					}
-					Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, start, info.end_char);
+					Rich_Text::mark_line(text, mark_type, color, line->visible_index - cam_start_visible, start, analysis_item.end_char);
 				}
 
 				if (line_index >= cam_end) break;

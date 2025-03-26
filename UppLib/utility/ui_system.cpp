@@ -3544,6 +3544,15 @@ Container_Handle ui_system_push_line_container() {
 	return ui_system_add_container(container_layout_make_horizontal(false));
 }
 
+Container_Handle ui_system_push_indented_container(int indent_count, bool draw_background, vec3 bg_color) 
+{
+	auto layout = container_layout_make_default();
+	layout.options.normal.indentation = ui_system.char_size.x * indent_count;
+	layout.draw_background = draw_background;
+	layout.background_color = vec4(bg_color, 1.0f);
+	return ui_system_add_container(layout);
+}
+
 void ui_system_push_test_windows()
 {
 	static bool test_initialized = false;
