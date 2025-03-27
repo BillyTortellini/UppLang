@@ -182,8 +182,10 @@ struct Workload_Base
     //        * Re-analysing the header during poly-instanciation of functions
     //        * Accessing polymorphic-symbols inside child-workloads (Anonymous functions/anonymous structs, bake)
     Array<Poly_Value> polymorphic_values; // May be null, in which case we shouldn't be able to access polymorphics at all
+    Array<Poly_Value> header_analysis_poly_values; // Is only set during header analysis, to allow access to inherited poly-values and not-yet analysed values
     int polymorphic_instanciation_depth; 
     bool is_polymorphic_base; // Polymorphic base workloads and children cannot create poly instances
+    bool allow_struct_instance_templates;
 
     // Dependencies
     List<Workload_Base*> dependencies;
@@ -310,6 +312,12 @@ struct Inferred_Parameter
 
 struct Poly_Instance;
 
+struct Parameter_Symbol_Lookup
+{
+	int defined_in_parameter_index;
+	String* id;
+};
+
 struct Poly_Header
 {
     String* name; // Either struct or function name
@@ -322,6 +330,8 @@ struct Poly_Header
     // Order in which arguments need to be evaluated in for instanciation, -1 for return value
     Dynamic_Array<int> parameter_analysis_order; 
     Dynamic_Array<Inferred_Parameter> inferred_parameters;
+    Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups;
+
     Dynamic_Array<Poly_Instance> instances;
     Array<Poly_Value> base_analysis_values;
 
@@ -330,6 +340,7 @@ struct Poly_Header
     AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
     Symbol_Table* symbol_table;
+    bool found_templated_parameter_type; // e.g. foo :: (a: Node), where Node :: struct(T: Type_Handle)
 };
 
 struct Poly_Instance
@@ -374,7 +385,6 @@ struct Workload_Structure_Polymorphic
 
 
 // ANALYSIS_PROGRESS
-
 struct Polymorphic_Function_Base
 {
     Poly_Header base;

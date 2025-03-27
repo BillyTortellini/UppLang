@@ -52,7 +52,7 @@ void analysis_workload_add_dependency_internal(
     Workload_Base* dependency,
     Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
 Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependency_Failure_Info failure_info = dependency_failure_info_make_none());
-void polymorphic_header_destroy(Poly_Header* info);
+void poly_header_destroy(Poly_Header* info);
 Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base* wait_for_workload);
 bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg = nullptr);
 bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods, const char** out_error_msg = nullptr);
@@ -597,8 +597,9 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
     workload->errors_due_to_unknown_count = 0;
     workload->error_checkpoint_count = 0;
 
-    workload->polymorphic_values.data = nullptr;
-    workload->polymorphic_values.size = 0;
+	workload->polymorphic_values = array_create_static<Poly_Value>(nullptr, 0);
+	workload->header_analysis_poly_values = array_create_static<Poly_Value>(nullptr, 0);
+	workload->allow_struct_instance_templates = false;
     workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
     workload->current_function = 0;
     workload->current_expression = 0;
@@ -1299,442 +1300,447 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
     default:panic("");
     }
 
-    auto& poly_access = semantic_analyser.current_workload->polymorphic_values;
-    auto result_type = expression_info_get_type(info, true);
-    auto result_type_size = type_wait_for_size_info_to_finish(result_type);
-    switch (expr->type)
-    {
-    case AST::Expression_Type::ARRAY_TYPE:
-    case AST::Expression_Type::AUTO_ENUM:
-    case AST::Expression_Type::BAKE_BLOCK:
-    case AST::Expression_Type::BAKE_EXPR:
-    case AST::Expression_Type::ENUM_TYPE:
-    case AST::Expression_Type::FUNCTION:
-    case AST::Expression_Type::LITERAL_READ:
-    case AST::Expression_Type::STRUCTURE_TYPE:
-    case AST::Expression_Type::SLICE_TYPE:
-    case AST::Expression_Type::CONST_TYPE:
-    case AST::Expression_Type::MODULE:
-        panic("Should be handled above!");
-    case AST::Expression_Type::ERROR_EXPR: {
-        return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
-    }
-    case AST::Expression_Type::TEMPLATE_PARAMETER: {
-        return comptime_result_make_unavailable(result_type, "In base analysis the value of the polymorphic symbol is not available!");
-    }
-    case AST::Expression_Type::PATH_LOOKUP:
-    {
-        auto symbol = get_info(expr->options.path_lookup)->symbol;
-        if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) {
-            assert(poly_access.data != 0,
-                "In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
-            return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
-        }
-        else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
-            return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-type");
-        }
-        return comptime_result_make_not_comptime("Encountered non-comptime symbol");
-    }
-    case AST::Expression_Type::BINARY_OPERATION:
-    {
-        if (info->specifics.overload.function != 0) {
-            return comptime_result_make_not_comptime("Overloaded operators cannot be calculated at comptime");
-        }
+	auto result_type = expression_info_get_type(info, true);
+	auto result_type_size = type_wait_for_size_info_to_finish(result_type);
+	switch (expr->type)
+	{
+	case AST::Expression_Type::ARRAY_TYPE:
+	case AST::Expression_Type::AUTO_ENUM:
+	case AST::Expression_Type::BAKE_BLOCK:
+	case AST::Expression_Type::BAKE_EXPR:
+	case AST::Expression_Type::ENUM_TYPE:
+	case AST::Expression_Type::FUNCTION:
+	case AST::Expression_Type::LITERAL_READ:
+	case AST::Expression_Type::STRUCTURE_TYPE:
+	case AST::Expression_Type::SLICE_TYPE:
+	case AST::Expression_Type::CONST_TYPE:
+	case AST::Expression_Type::MODULE:
+		panic("Should be handled above!");
+	case AST::Expression_Type::ERROR_EXPR: {
+		return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
+	}
+	case AST::Expression_Type::TEMPLATE_PARAMETER: {
+		return comptime_result_make_unavailable(result_type, "In base analysis the value of the polymorphic symbol is not available!");
+	}
+	case AST::Expression_Type::PATH_LOOKUP:
+	{
+		auto symbol = get_info(expr->options.path_lookup)->symbol;
+		if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) 
+		{
+			auto workload = semantic_analyser.current_workload;
+			Array<Poly_Value> poly_values = workload->polymorphic_values;
+			if (symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
+				poly_values = workload->header_analysis_poly_values;
+			}
+			assert(poly_values.data != 0,
+				"In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
+			return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
+		}
+		else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+			return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-type");
+		}
+		return comptime_result_make_not_comptime("Encountered non-comptime symbol");
+	}
+	case AST::Expression_Type::BINARY_OPERATION:
+	{
+		if (info->specifics.overload.function != 0) {
+			return comptime_result_make_not_comptime("Overloaded operators cannot be calculated at comptime");
+		}
 
-        Comptime_Result left_val = expression_calculate_comptime_value_internal(expr->options.binop.left);
-        Comptime_Result right_val = expression_calculate_comptime_value_internal(expr->options.binop.right);
-        if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE)
-        {
-            if (left_val.type == Comptime_Result_Type::NOT_COMPTIME) {
-                return left_val;
-            }
-            else if (right_val.type == Comptime_Result_Type::NOT_COMPTIME) {
-                return right_val;
-            }
-            else if (left_val.type == Comptime_Result_Type::UNAVAILABLE) {
-                return comptime_result_make_unavailable(result_type, left_val.message);
-            }
-            else {
-                return comptime_result_make_unavailable(result_type, right_val.message);
-            }
-        }
+		Comptime_Result left_val = expression_calculate_comptime_value_internal(expr->options.binop.left);
+		Comptime_Result right_val = expression_calculate_comptime_value_internal(expr->options.binop.right);
+		if (left_val.type != Comptime_Result_Type::AVAILABLE || right_val.type != Comptime_Result_Type::AVAILABLE)
+		{
+			if (left_val.type == Comptime_Result_Type::NOT_COMPTIME) {
+				return left_val;
+			}
+			else if (right_val.type == Comptime_Result_Type::NOT_COMPTIME) {
+				return right_val;
+			}
+			else if (left_val.type == Comptime_Result_Type::UNAVAILABLE) {
+				return comptime_result_make_unavailable(result_type, left_val.message);
+			}
+			else {
+				return comptime_result_make_unavailable(result_type, right_val.message);
+			}
+		}
 
-        Instruction_Type instr_type;
-        switch (expr->options.binop.type)
-        {
-        case AST::Binop::ADDITION: instr_type = Instruction_Type::BINARY_OP_ADDITION; break;
-        case AST::Binop::SUBTRACTION: instr_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
-        case AST::Binop::DIVISION: instr_type = Instruction_Type::BINARY_OP_DIVISION; break;
-        case AST::Binop::MULTIPLICATION: instr_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
-        case AST::Binop::MODULO: instr_type = Instruction_Type::BINARY_OP_MODULO; break;
-        case AST::Binop::AND: instr_type = Instruction_Type::BINARY_OP_AND; break;
-        case AST::Binop::OR: instr_type = Instruction_Type::BINARY_OP_OR; break;
-        case AST::Binop::EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
-        case AST::Binop::NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
-        case AST::Binop::LESS: instr_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
-        case AST::Binop::LESS_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
-        case AST::Binop::GREATER: instr_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
-        case AST::Binop::GREATER_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
-        case AST::Binop::POINTER_EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
-        case AST::Binop::POINTER_NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
-        case AST::Binop::INVALID: return comptime_result_make_unavailable(result_type, "Analysis error encountered");
-        default: panic("");
-        }
+		Instruction_Type instr_type;
+		switch (expr->options.binop.type)
+		{
+		case AST::Binop::ADDITION: instr_type = Instruction_Type::BINARY_OP_ADDITION; break;
+		case AST::Binop::SUBTRACTION: instr_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
+		case AST::Binop::DIVISION: instr_type = Instruction_Type::BINARY_OP_DIVISION; break;
+		case AST::Binop::MULTIPLICATION: instr_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
+		case AST::Binop::MODULO: instr_type = Instruction_Type::BINARY_OP_MODULO; break;
+		case AST::Binop::AND: instr_type = Instruction_Type::BINARY_OP_AND; break;
+		case AST::Binop::OR: instr_type = Instruction_Type::BINARY_OP_OR; break;
+		case AST::Binop::EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
+		case AST::Binop::NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
+		case AST::Binop::LESS: instr_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
+		case AST::Binop::LESS_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
+		case AST::Binop::GREATER: instr_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
+		case AST::Binop::GREATER_OR_EQUAL: instr_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
+		case AST::Binop::POINTER_EQUAL: instr_type = Instruction_Type::BINARY_OP_EQUAL; break;
+		case AST::Binop::POINTER_NOT_EQUAL: instr_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
+		case AST::Binop::INVALID: return comptime_result_make_unavailable(result_type, "Analysis error encountered");
+		default: panic("");
+		}
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-        if (bytecode_execute_binary_instr(instr_type, type_base_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
-            return comptime_result_make_available(result_buffer, result_type);
-        }
-        else {
-            return comptime_result_make_not_comptime("Bytecode instruction execution failed, e.g. division by zero or others");
-        }
-        break;
-    }
-    case AST::Expression_Type::UNARY_OPERATION:
-    {
-        Instruction_Type instr_type;
-        switch (expr->options.unop.type)
-        {
-        case AST::Unop::NOT:
-        case AST::Unop::NEGATE: {
-            if (info->specifics.overload.function != 0) {
-                return comptime_result_make_not_comptime("Operator overloads are not comptime");
-            }
-            instr_type = expr->options.unop.type == AST::Unop::NEGATE ?
-                Instruction_Type::UNARY_OP_NEGATE : Instruction_Type::UNARY_OP_NOT;
-            break;
-        }
-        case AST::Unop::POINTER: {
-            Comptime_Result expr_result = expression_calculate_comptime_value_internal(expr->options.unop.expr);
-            // Special case: This could be a pointer type, and not a address_of operation, so we need to check for this case
-            if (expr_result.type == Comptime_Result_Type::UNAVAILABLE) {
-                return expr_result;
-            }
-            return comptime_result_make_not_comptime("Address of not supported for comptime values");
-        }
-        case AST::Unop::DEREFERENCE:
-            return comptime_result_make_not_comptime("Dereferencing not supported for comptime values");
-        default: panic("");
-        }
+		void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+		if (bytecode_execute_binary_instr(instr_type, type_base_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
+			return comptime_result_make_available(result_buffer, result_type);
+		}
+		else {
+			return comptime_result_make_not_comptime("Bytecode instruction execution failed, e.g. division by zero or others");
+		}
+		break;
+	}
+	case AST::Expression_Type::UNARY_OPERATION:
+	{
+		Instruction_Type instr_type;
+		switch (expr->options.unop.type)
+		{
+		case AST::Unop::NOT:
+		case AST::Unop::NEGATE: {
+			if (info->specifics.overload.function != 0) {
+				return comptime_result_make_not_comptime("Operator overloads are not comptime");
+			}
+			instr_type = expr->options.unop.type == AST::Unop::NEGATE ?
+				Instruction_Type::UNARY_OP_NEGATE : Instruction_Type::UNARY_OP_NOT;
+			break;
+		}
+		case AST::Unop::POINTER: {
+			Comptime_Result expr_result = expression_calculate_comptime_value_internal(expr->options.unop.expr);
+			// Special case: This could be a pointer type, and not a address_of operation, so we need to check for this case
+			if (expr_result.type == Comptime_Result_Type::UNAVAILABLE) {
+				return expr_result;
+			}
+			return comptime_result_make_not_comptime("Address of not supported for comptime values");
+		}
+		case AST::Unop::DEREFERENCE:
+			return comptime_result_make_not_comptime("Dereferencing not supported for comptime values");
+		default: panic("");
+		}
 
-        Comptime_Result value = expression_calculate_comptime_value_internal(expr->options.unop.expr);
-        if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return value;
-        }
-        else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type, value.message);
-        }
+		Comptime_Result value = expression_calculate_comptime_value_internal(expr->options.unop.expr);
+		if (value.type == Comptime_Result_Type::NOT_COMPTIME) {
+			return value;
+		}
+		else if (value.type == Comptime_Result_Type::UNAVAILABLE) {
+			return comptime_result_make_unavailable(result_type, value.message);
+		}
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-        bytecode_execute_unary_instr(instr_type, type_base_to_bytecode_type(value.data_type), result_buffer, value.data);
-        return comptime_result_make_available(result_buffer, result_type);
-    }
-    case AST::Expression_Type::CAST: {
-        return expression_calculate_comptime_value_internal(expr->options.cast.operand);
-    }
-    case AST::Expression_Type::ARRAY_ACCESS:
-    {
-        if (info->specifics.overload.function != 0) {
-            return comptime_result_make_not_comptime("Overloaded operators are not comptime");
-        }
+		void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+		bytecode_execute_unary_instr(instr_type, type_base_to_bytecode_type(value.data_type), result_buffer, value.data);
+		return comptime_result_make_available(result_buffer, result_type);
+	}
+	case AST::Expression_Type::CAST: {
+		return expression_calculate_comptime_value_internal(expr->options.cast.operand);
+	}
+	case AST::Expression_Type::ARRAY_ACCESS:
+	{
+		if (info->specifics.overload.function != 0) {
+			return comptime_result_make_not_comptime("Overloaded operators are not comptime");
+		}
 
-        Comptime_Result value_array = expression_calculate_comptime_value_internal(expr->options.array_access.array_expr);
-        Comptime_Result value_index = expression_calculate_comptime_value_internal(expr->options.array_access.index_expr);
-        if (value_array.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return value_array;
-        }
-        else if (value_index.type == Comptime_Result_Type::NOT_COMPTIME) {
-            return value_index;
-        }
-        else if (value_array.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type, value_array.message);
-        }
-        else if (value_index.type == Comptime_Result_Type::UNAVAILABLE) {
-            return comptime_result_make_unavailable(result_type, value_index.message);
-        }
-        assert(types_are_equal(value_index.data_type, upcast(types.i32_type)), "Must be i32 currently");
+		Comptime_Result value_array = expression_calculate_comptime_value_internal(expr->options.array_access.array_expr);
+		Comptime_Result value_index = expression_calculate_comptime_value_internal(expr->options.array_access.index_expr);
+		if (value_array.type == Comptime_Result_Type::NOT_COMPTIME) {
+			return value_array;
+		}
+		else if (value_index.type == Comptime_Result_Type::NOT_COMPTIME) {
+			return value_index;
+		}
+		else if (value_array.type == Comptime_Result_Type::UNAVAILABLE) {
+			return comptime_result_make_unavailable(result_type, value_array.message);
+		}
+		else if (value_index.type == Comptime_Result_Type::UNAVAILABLE) {
+			return comptime_result_make_unavailable(result_type, value_index.message);
+		}
+		assert(types_are_equal(value_index.data_type, upcast(types.i32_type)), "Must be i32 currently");
 
-        byte* base_ptr = 0;
-        int array_size = 0;
-        if (value_array.data_type->type == Datatype_Type::ARRAY) {
-            base_ptr = (byte*)value_array.data;
-            array_size = downcast<Datatype_Array>(value_array.data_type)->element_count;
-        }
-        else if (value_array.data_type->type == Datatype_Type::SLICE) {
-            Upp_Slice_Base* slice = (Upp_Slice_Base*)value_array.data;
-            base_ptr = (byte*)slice->data;
-            array_size = slice->size;
-        }
-        else {
-            panic("");
-        }
+		byte* base_ptr = 0;
+		int array_size = 0;
+		if (value_array.data_type->type == Datatype_Type::ARRAY) {
+			base_ptr = (byte*)value_array.data;
+			array_size = downcast<Datatype_Array>(value_array.data_type)->element_count;
+		}
+		else if (value_array.data_type->type == Datatype_Type::SLICE) {
+			Upp_Slice_Base* slice = (Upp_Slice_Base*)value_array.data;
+			base_ptr = (byte*)slice->data;
+			array_size = slice->size;
+		}
+		else {
+			panic("");
+		}
 
-        int index = *(int*)value_index.data;
-        int element_offset = index * result_type_size->size;
-        if (index >= array_size || index < 0) {
-            return comptime_result_make_not_comptime("Array out of bounds access");
-        }
-        if (!memory_is_readable(base_ptr, result_type_size->size)) {
-            return comptime_result_make_not_comptime("Slice/Array access to invalid memory");
-        }
-        return comptime_result_make_available(&base_ptr[element_offset], result_type);
-    }
-    case AST::Expression_Type::MEMBER_ACCESS: 
-    {
-        auto& access_info = info->specifics.member_access;
-        switch (access_info.type)
-        {
-        case Member_Access_Type::STRUCT_MEMBER_ACCESS: 
-        {
-            Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
-            if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
-                return value_struct;
-            }
-            else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
-                return comptime_result_make_unavailable(result_type, value_struct.message);
-            }
+		int index = *(int*)value_index.data;
+		int element_offset = index * result_type_size->size;
+		if (index >= array_size || index < 0) {
+			return comptime_result_make_not_comptime("Array out of bounds access");
+		}
+		if (!memory_is_readable(base_ptr, result_type_size->size)) {
+			return comptime_result_make_not_comptime("Slice/Array access to invalid memory");
+		}
+		return comptime_result_make_available(&base_ptr[element_offset], result_type);
+	}
+	case AST::Expression_Type::MEMBER_ACCESS:
+	{
+		auto& access_info = info->specifics.member_access;
+		switch (access_info.type)
+		{
+		case Member_Access_Type::STRUCT_MEMBER_ACCESS:
+		{
+			Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
+			if (value_struct.type == Comptime_Result_Type::NOT_COMPTIME) {
+				return value_struct;
+			}
+			else if (value_struct.type == Comptime_Result_Type::UNAVAILABLE) {
+				return comptime_result_make_unavailable(result_type, value_struct.message);
+			}
 
-            assert(access_info.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
-            byte* raw_data = (byte*)value_struct.data;
-            return comptime_result_make_available(&raw_data[access_info.options.member.offset], result_type);
-        }
-        case Member_Access_Type::DOT_CALL:
-        case Member_Access_Type::DOT_CALL_AS_MEMBER: {
-            return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
-        }
-        case Member_Access_Type::OPTIONAL_PTR_ACCESS: 
-        {
-            Datatype* opt_type = expression_info_get_type(get_info(expr->options.optional_check_value), false);
-            if (access_info.options.optional_deref_count > 0) {
-                return comptime_result_make_unavailable(result_type, "Cannot dereference pointer to get retrieve optional");
-            }
-            Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.optional_check_value);
-            if (result.type != Comptime_Result_Type::AVAILABLE) {
-                return result;
-            }
+			assert(access_info.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
+			byte* raw_data = (byte*)value_struct.data;
+			return comptime_result_make_available(&raw_data[access_info.options.member.offset], result_type);
+		}
+		case Member_Access_Type::DOT_CALL:
+		case Member_Access_Type::DOT_CALL_AS_MEMBER: {
+			return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
+		}
+		case Member_Access_Type::OPTIONAL_PTR_ACCESS:
+		{
+			Datatype* opt_type = expression_info_get_type(get_info(expr->options.optional_check_value), false);
+			if (access_info.options.optional_deref_count > 0) {
+				return comptime_result_make_unavailable(result_type, "Cannot dereference pointer to get retrieve optional");
+			}
+			Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.optional_check_value);
+			if (result.type != Comptime_Result_Type::AVAILABLE) {
+				return result;
+			}
 
-            void* ptr = *(void**)result.data;
-            bool* result_bool = (bool*) stack_allocator_allocate_size(&analyser.comptime_value_allocator, 1, 1);
-            *result_bool = ptr != nullptr;
-            return comptime_result_make_available(result_bool, result_type);
-        }
-        case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
-            assert(access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "In instance this should already be constant");
-            return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
-        }
-        case Member_Access_Type::STRUCT_SUBTYPE: {
-            panic("Should be handled by type_type!");
-            return comptime_result_make_unavailable(result_type, "Invalid code-path!");
-        }
-        case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: {
-            Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
-            if (value_struct.type != Comptime_Result_Type::AVAILABLE) {
-                return value_struct;
-            }
-            return comptime_result_make_available(value_struct.data, result_type);
-        }
-        case Member_Access_Type::ENUM_MEMBER_ACCESS: {
-            panic("Should be handled by type_type!");
-            return comptime_result_make_unavailable(result_type, "Invalid code-path, should be handled by constant-path");
-        }
-        default: panic("");
-        }
+			void* ptr = *(void**)result.data;
+			bool* result_bool = (bool*)stack_allocator_allocate_size(&analyser.comptime_value_allocator, 1, 1);
+			*result_bool = ptr != nullptr;
+			return comptime_result_make_available(result_bool, result_type);
+		}
+		case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
+			assert(access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "In instance this should already be constant");
+			return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
+		}
+		case Member_Access_Type::STRUCT_SUBTYPE: {
+			panic("Should be handled by type_type!");
+			return comptime_result_make_unavailable(result_type, "Invalid code-path!");
+		}
+		case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: {
+			Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr);
+			if (value_struct.type != Comptime_Result_Type::AVAILABLE) {
+				return value_struct;
+			}
+			return comptime_result_make_available(value_struct.data, result_type);
+		}
+		case Member_Access_Type::ENUM_MEMBER_ACCESS: {
+			panic("Should be handled by type_type!");
+			return comptime_result_make_unavailable(result_type, "Invalid code-path, should be handled by constant-path");
+		}
+		default: panic("");
+		}
 
-        panic("error");
-        return comptime_result_make_unavailable(result_type, "error");
-    }
-    case AST::Expression_Type::FUNCTION_CALL: {
-        return comptime_result_make_not_comptime("Function calls require #bake to be used as comtime values");
-    }
-    case AST::Expression_Type::INSTANCIATE: {
-        return comptime_result_make_not_comptime("Instanciate must be successful to use as comptime value");
-    }
-    case AST::Expression_Type::GET_OVERLOAD: {
-        return comptime_result_make_not_comptime("#get_overload was not successfull, so we don't have a comptime function here");
-    }
-    case AST::Expression_Type::NEW_EXPR: {
-        // New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
-        return comptime_result_make_not_comptime("New cannot be used in comptime values");
-    }
-    case AST::Expression_Type::ARRAY_INITIALIZER:
-    {
-        result_type = datatype_get_non_const_type(result_type);
-        if (expr->options.array_initializer.values.size == 0) {
-            assert(result_type->type == Datatype_Type::SLICE, "");
-            if (datatype_is_unknown(downcast<Datatype_Slice>(result_type)->element_type)) {
-                return comptime_result_make_unavailable(types.unknown_type, "Array type is unknown");
-            }
-            void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-            Upp_Slice_Base* slice = (Upp_Slice_Base*) result_buffer;
-            slice->size = 0;
-            slice->data = nullptr;
-            return comptime_result_make_available(result_buffer, result_type);
-        }
+		panic("error");
+		return comptime_result_make_unavailable(result_type, "error");
+	}
+	case AST::Expression_Type::FUNCTION_CALL: {
+		return comptime_result_make_not_comptime("Function calls require #bake to be used as comtime values");
+	}
+	case AST::Expression_Type::INSTANCIATE: {
+		return comptime_result_make_not_comptime("Instanciate must be successful to use as comptime value");
+	}
+	case AST::Expression_Type::GET_OVERLOAD: {
+		return comptime_result_make_not_comptime("#get_overload was not successfull, so we don't have a comptime function here");
+	}
+	case AST::Expression_Type::NEW_EXPR: {
+		// New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
+		return comptime_result_make_not_comptime("New cannot be used in comptime values");
+	}
+	case AST::Expression_Type::ARRAY_INITIALIZER:
+	{
+		result_type = datatype_get_non_const_type(result_type);
+		if (expr->options.array_initializer.values.size == 0) {
+			assert(result_type->type == Datatype_Type::SLICE, "");
+			if (datatype_is_unknown(downcast<Datatype_Slice>(result_type)->element_type)) {
+				return comptime_result_make_unavailable(types.unknown_type, "Array type is unknown");
+			}
+			void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+			Upp_Slice_Base* slice = (Upp_Slice_Base*)result_buffer;
+			slice->size = 0;
+			slice->data = nullptr;
+			return comptime_result_make_available(result_buffer, result_type);
+		}
 
-        assert(result_type->type == Datatype_Type::ARRAY, "");
-        auto array_type = downcast<Datatype_Array>(result_type);
-        Datatype* element_type = array_type->element_type;
-        if (datatype_is_unknown(element_type)) {
-            return comptime_result_make_unavailable(element_type, "Array type is unknown");
-        }
-        assert(element_type->memory_info.available, "");
-        if (!array_type->count_known) {
-            return comptime_result_make_unavailable(result_type, "Array count is unknown");
-        }
+		assert(result_type->type == Datatype_Type::ARRAY, "");
+		auto array_type = downcast<Datatype_Array>(result_type);
+		Datatype* element_type = array_type->element_type;
+		if (datatype_is_unknown(element_type)) {
+			return comptime_result_make_unavailable(element_type, "Array type is unknown");
+		}
+		assert(element_type->memory_info.available, "");
+		if (!array_type->count_known) {
+			return comptime_result_make_unavailable(result_type, "Array count is unknown");
+		}
 
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-        auto array_values = expr->options.array_initializer.values;
-        assert(array_values.size == array_type->element_count, "");
+		void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+		auto array_values = expr->options.array_initializer.values;
+		assert(array_values.size == array_type->element_count, "");
 
-        bool values_unavailable = false;
-        const char* first_unavailable_msg = nullptr;
-        for (int i = 0; i < array_values.size; i++)
-        {
-            auto value_result = expression_calculate_comptime_value_internal(array_values[i]);
-            if (value_result.type != Comptime_Result_Type::AVAILABLE) {
-                if (value_result.type == Comptime_Result_Type::NOT_COMPTIME) {
-                    return value_result;
-                }
-                values_unavailable = true;
-                if (!values_unavailable) {
-                    first_unavailable_msg = value_result.message;
-                }
-                continue;
-            }
+		bool values_unavailable = false;
+		const char* first_unavailable_msg = nullptr;
+		for (int i = 0; i < array_values.size; i++)
+		{
+			auto value_result = expression_calculate_comptime_value_internal(array_values[i]);
+			if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+				if (value_result.type == Comptime_Result_Type::NOT_COMPTIME) {
+					return value_result;
+				}
+				values_unavailable = true;
+				if (!values_unavailable) {
+					first_unavailable_msg = value_result.message;
+				}
+				continue;
+			}
 
-            // Copy result into the array buffer
-            {
-                byte* raw = (byte*)result_buffer;
-                int element_offset = element_type->memory_info.value.size * i;
-                memory_copy(&raw[element_offset], value_result.data, element_type->memory_info.value.size);
-            }
-        }
+			// Copy result into the array buffer
+			{
+				byte* raw = (byte*)result_buffer;
+				int element_offset = element_type->memory_info.value.size * i;
+				memory_copy(&raw[element_offset], value_result.data, element_type->memory_info.value.size);
+			}
+		}
 
-        if (values_unavailable) {
-            return comptime_result_make_unavailable(result_type, first_unavailable_msg);
-        }
+		if (values_unavailable) {
+			return comptime_result_make_unavailable(result_type, first_unavailable_msg);
+		}
 
-        return comptime_result_make_available(result_buffer, result_type);
-    }
-    case AST::Expression_Type::STRUCT_INITIALIZER:
-    {
-        auto matching_info = get_info(expr->options.struct_initializer.arguments);
-        if (matching_info->call_type == Call_Type::SLICE_INITIALIZER) {
-            return comptime_result_make_unavailable(result_type, "Comptime slice initializer not implemented yet :P ");
-        }
+		return comptime_result_make_available(result_buffer, result_type);
+	}
+	case AST::Expression_Type::STRUCT_INITIALIZER:
+	{
+		auto matching_info = get_info(expr->options.struct_initializer.arguments);
+		if (matching_info->call_type == Call_Type::SLICE_INITIALIZER) {
+			return comptime_result_make_unavailable(result_type, "Comptime slice initializer not implemented yet :P ");
+		}
 
-        auto& init_info = matching_info->options.struct_init;
-        void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
-        memory_set_bytes(result_buffer, result_type_size->size, 0);
+		auto& init_info = matching_info->options.struct_init;
+		void* result_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, result_type_size->size, result_type_size->alignment);
+		memory_set_bytes(result_buffer, result_type_size->size, 0);
 
-        // First, set all tags to correct values
-        Datatype_Struct* structure = downcast<Datatype_Struct>(info->cast_info.initial_type->base_type);
-        if (structure->struct_type == AST::Structure_Type::STRUCT)
-        {
-            Struct_Content* content = &structure->content;
-            Subtype_Index* subtype = info->cast_info.initial_type->mods.subtype_index;
-            for (int i = 0; i < subtype->indices.size; i++) {
-                int tag_value = subtype->indices[i].index + 1;
-                assert(content->subtypes.size > 0, "");
-                
-                int* tag_pointer = (int*)(((byte*)result_buffer) + content->tag_member.offset);
-                *tag_pointer = tag_value;
-                content = content->subtypes[tag_value - 1];
-            }
-        }
+		// First, set all tags to correct values
+		Datatype_Struct* structure = downcast<Datatype_Struct>(info->cast_info.initial_type->base_type);
+		if (structure->struct_type == AST::Structure_Type::STRUCT)
+		{
+			Struct_Content* content = &structure->content;
+			Subtype_Index* subtype = info->cast_info.initial_type->mods.subtype_index;
+			for (int i = 0; i < subtype->indices.size; i++) {
+				int tag_value = subtype->indices[i].index + 1;
+				assert(content->subtypes.size > 0, "");
 
-        Comptime_Result result = calculate_struct_initializer_comptime_recursive(result_type, result_buffer, expr->options.struct_initializer.arguments);
-        if (result.type != Comptime_Result_Type::AVAILABLE) {
-            return result;
-        }
-        return comptime_result_make_available(result_buffer, result_type);
-    }
-    default: panic("");
-    }
+				int* tag_pointer = (int*)(((byte*)result_buffer) + content->tag_member.offset);
+				*tag_pointer = tag_value;
+				content = content->subtypes[tag_value - 1];
+			}
+		}
 
-    panic("");
-    return comptime_result_make_not_comptime("Invalid code path");
+		Comptime_Result result = calculate_struct_initializer_comptime_recursive(result_type, result_buffer, expr->options.struct_initializer.arguments);
+		if (result.type != Comptime_Result_Type::AVAILABLE) {
+			return result;
+		}
+		return comptime_result_make_available(result_buffer, result_type);
+	}
+	default: panic("");
+	}
+
+	panic("");
+	return comptime_result_make_not_comptime("Invalid code path");
 }
 
 Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* expr)
 {
-    auto result_no_context = expression_calculate_comptime_value_without_context_cast(expr);
-    if (result_no_context.type != Comptime_Result_Type::AVAILABLE) {
-        return result_no_context;
-    }
+	auto result_no_context = expression_calculate_comptime_value_without_context_cast(expr);
+	if (result_no_context.type != Comptime_Result_Type::AVAILABLE) {
+		return result_no_context;
+	}
 
-    auto info = get_info(expr);
-    if (info->cast_info.deref_count != 0) {
-        // Cannot handle pointers for comptime currently
-        return comptime_result_make_not_comptime("Pointer handling not supported by comptime values");
-    }
+	auto info = get_info(expr);
+	if (info->cast_info.deref_count != 0) {
+		// Cannot handle pointers for comptime currently
+		return comptime_result_make_not_comptime("Pointer handling not supported by comptime values");
+	}
 
-    return comptime_result_apply_cast(result_no_context, info->cast_info.cast_type, info->cast_info.result_type);
+	return comptime_result_apply_cast(result_no_context, info->cast_info.cast_type, info->cast_info.result_type);
 }
 
 Optional<Upp_Constant> expression_calculate_comptime_value(AST::Expression* expr, const char* error_message_on_failure, bool* was_not_available = 0)
 {
-    if (was_not_available != 0) {
-        *was_not_available = false;
-    }
+	if (was_not_available != 0) {
+		*was_not_available = false;
+	}
 
-    Comptime_Result comptime_result = expression_calculate_comptime_value_internal(expr);
-    if (comptime_result.type != Comptime_Result_Type::AVAILABLE) {
-        if (comptime_result.type == Comptime_Result_Type::NOT_COMPTIME) {
-            log_semantic_error(error_message_on_failure, expr);
-            log_error_info_comptime_msg(comptime_result.message);
-        }
-        else {
-            if (was_not_available != 0) {
-                *was_not_available = true;
-            }
-            semantic_analyser_set_error_flag(true);
-        }
-        return optional_make_failure<Upp_Constant>();
-    }
+	Comptime_Result comptime_result = expression_calculate_comptime_value_internal(expr);
+	if (comptime_result.type != Comptime_Result_Type::AVAILABLE) {
+		if (comptime_result.type == Comptime_Result_Type::NOT_COMPTIME) {
+			log_semantic_error(error_message_on_failure, expr);
+			log_error_info_comptime_msg(comptime_result.message);
+		}
+		else {
+			if (was_not_available != 0) {
+				*was_not_available = true;
+			}
+			semantic_analyser_set_error_flag(true);
+		}
+		return optional_make_failure<Upp_Constant>();
+	}
 
-    assert(!type_size_is_unfinished(comptime_result.data_type), "");
-    auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->memory_info.value.size);
-    Constant_Pool_Result result = constant_pool_add_constant(comptime_result.data_type, bytes);
-    if (!result.success) {
-        log_semantic_error(error_message_on_failure, expr);
-        log_error_info_constant_status(result.options.error_message);
-        return optional_make_failure<Upp_Constant>();
-    }
+	assert(!type_size_is_unfinished(comptime_result.data_type), "");
+	auto bytes = array_create_static<byte>((byte*)comptime_result.data, comptime_result.data_type->memory_info.value.size);
+	Constant_Pool_Result result = constant_pool_add_constant(comptime_result.data_type, bytes);
+	if (!result.success) {
+		log_semantic_error(error_message_on_failure, expr);
+		log_error_info_constant_status(result.options.error_message);
+		return optional_make_failure<Upp_Constant>();
+	}
 
-    return optional_make_success(result.options.constant);
+	return optional_make_success(result.options.constant);
 }
 
 bool expression_has_memory_address(AST::Expression* expr) {
-    return !get_info(expr)->cast_info.result_value_is_temporary;
+	return !get_info(expr)->cast_info.result_value_is_temporary;
 }
 
 
 
 // Context
 Expression_Context expression_context_make_unknown(bool unknown_due_to_error = false) {
-    Expression_Context context;
-    context.type = Expression_Context_Type::UNKNOWN;
-    context.unknown_due_to_error = unknown_due_to_error;
-    return context;
+	Expression_Context context;
+	context.type = Expression_Context_Type::UNKNOWN;
+	context.unknown_due_to_error = unknown_due_to_error;
+	return context;
 }
 
 Expression_Context expression_context_make_auto_dereference() {
-    Expression_Context context;
-    context.type = Expression_Context_Type::AUTO_DEREFERENCE;
-    context.unknown_due_to_error = false;
-    return context;
+	Expression_Context context;
+	context.type = Expression_Context_Type::AUTO_DEREFERENCE;
+	context.unknown_due_to_error = false;
+	return context;
 }
 
 Expression_Context expression_context_make_specific_type(Datatype* signature, Cast_Mode cast_mode = Cast_Mode::IMPLICIT) {
-    if (datatype_is_unknown(signature)) {
-        return expression_context_make_unknown(true);
-    }
-    Expression_Context context;
-    context.type = Expression_Context_Type::SPECIFIC_TYPE_EXPECTED;
-    context.expected_type.type = signature;
-    context.expected_type.cast_mode = cast_mode;
-    return context;
+	if (datatype_is_unknown(signature)) {
+		return expression_context_make_unknown(true);
+	}
+	Expression_Context context;
+	context.type = Expression_Context_Type::SPECIFIC_TYPE_EXPECTED;
+	context.expected_type.type = signature;
+	context.expected_type.cast_mode = cast_mode;
+	return context;
 }
 
 
@@ -1742,152 +1748,152 @@ Expression_Context expression_context_make_specific_type(Datatype* signature, Ca
 // Result
 void expression_info_set_value(Expression_Info* info, Datatype* result_type, bool is_temporary)
 {
-    info->result_type = Expression_Result_Type::VALUE;
-    info->is_valid = true;
-    info->cast_info.initial_type = result_type;
-    info->cast_info.result_type = result_type;
-    info->cast_info.initial_value_is_temporary = is_temporary;
-    info->cast_info.result_value_is_temporary = is_temporary;
+	info->result_type = Expression_Result_Type::VALUE;
+	info->is_valid = true;
+	info->cast_info.initial_type = result_type;
+	info->cast_info.result_type = result_type;
+	info->cast_info.initial_value_is_temporary = is_temporary;
+	info->cast_info.result_value_is_temporary = is_temporary;
 }
 
 void expression_info_set_dot_call(Expression_Info* info, AST::Expression* first_argument, Dynamic_Array<Dot_Call_Info>* overloads)
 {
-    info->result_type = Expression_Result_Type::DOT_CALL;
-    info->is_valid = true;
-    info->specifics.member_access.type = Member_Access_Type::DOT_CALL;
-    info->specifics.member_access.options.dot_call_function = nullptr; // Will be set later (On call/overload resolution)
-    info->options.dot_call.first_argument = first_argument;
-    info->options.dot_call.overloads = overloads;
+	info->result_type = Expression_Result_Type::DOT_CALL;
+	info->is_valid = true;
+	info->specifics.member_access.type = Member_Access_Type::DOT_CALL;
+	info->specifics.member_access.options.dot_call_function = nullptr; // Will be set later (On call/overload resolution)
+	info->options.dot_call.first_argument = first_argument;
+	info->options.dot_call.overloads = overloads;
 
-    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-    info->cast_info.initial_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-    info->cast_info.initial_value_is_temporary = false;
-    info->cast_info.result_value_is_temporary = false;
+	info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+	info->cast_info.initial_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+	info->cast_info.initial_value_is_temporary = false;
+	info->cast_info.result_value_is_temporary = false;
 }
 
 void expression_info_set_error(Expression_Info* info, Datatype* result_type)
 {
-    info->result_type = Expression_Result_Type::VALUE;
-    info->cast_info.result_type = result_type;
-    info->cast_info.initial_type = result_type;
-    info->is_valid = false;
-    info->cast_info.initial_value_is_temporary = false;
-    info->cast_info.result_value_is_temporary = false;
-    semantic_analyser_set_error_flag(true);
+	info->result_type = Expression_Result_Type::VALUE;
+	info->cast_info.result_type = result_type;
+	info->cast_info.initial_type = result_type;
+	info->is_valid = false;
+	info->cast_info.initial_value_is_temporary = false;
+	info->cast_info.result_value_is_temporary = false;
+	semantic_analyser_set_error_flag(true);
 }
 
 void expression_info_set_function(Expression_Info* info, ModTree_Function* function)
 {
-    info->result_type = Expression_Result_Type::FUNCTION;
-    info->is_valid = true;
-    info->options.function = function;
-    info->cast_info.result_type = upcast(function->signature);
-    info->cast_info.initial_type = upcast(function->signature);
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::FUNCTION;
+	info->is_valid = true;
+	info->options.function = function;
+	info->cast_info.result_type = upcast(function->signature);
+	info->cast_info.initial_type = upcast(function->signature);
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 }
 
 void expression_info_set_hardcoded(Expression_Info* info, Hardcoded_Type hardcoded)
 {
-    info->result_type = Expression_Result_Type::HARDCODED_FUNCTION;
-    info->is_valid = true;
-    info->options.hardcoded = hardcoded;
-    info->cast_info.result_type = upcast(hardcoded_type_to_signature(hardcoded, compiler.analysis_data));
-    info->cast_info.initial_type = info->cast_info.result_type;
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::HARDCODED_FUNCTION;
+	info->is_valid = true;
+	info->options.hardcoded = hardcoded;
+	info->cast_info.result_type = upcast(hardcoded_type_to_signature(hardcoded, compiler.analysis_data));
+	info->cast_info.initial_type = info->cast_info.result_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 }
 
 void expression_info_set_type(Expression_Info* info, Datatype* type)
 {
-    info->result_type = Expression_Result_Type::TYPE;
-    info->is_valid = true;
-    info->options.type = type;
-    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.type_handle;
-    info->cast_info.initial_type = info->cast_info.result_type;
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::TYPE;
+	info->is_valid = true;
+	info->options.type = type;
+	info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.type_handle;
+	info->cast_info.initial_type = info->cast_info.result_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 
-    if (type->type == Datatype_Type::STRUCT) {
-        auto s = downcast<Datatype_Struct>(type);
-        if (s->workload != 0) {
-            if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-                info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
-                info->options.polymorphic_struct = s->workload->polymorphic.base;
-            }
-        }
-    }
+	if (type->type == Datatype_Type::STRUCT) {
+		auto s = downcast<Datatype_Struct>(type);
+		if (s->workload != 0) {
+			if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+				info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
+				info->options.polymorphic_struct = s->workload->polymorphic.base;
+			}
+		}
+	}
 }
 
 void expression_info_set_no_value(Expression_Info* info) {
-    info->result_type = Expression_Result_Type::NOTHING;
-    info->is_valid = true;
-    info->options.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-    info->cast_info.initial_type = info->cast_info.result_type;
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::NOTHING;
+	info->is_valid = true;
+	info->options.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+	info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
+	info->cast_info.initial_type = info->cast_info.result_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 }
 
 void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function_Base* poly_base, ModTree_Function* instance = 0) {
-    info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
-    info->is_valid = true;
-    info->options.polymorphic_function.base = poly_base;
-    info->options.polymorphic_function.instance_fn = instance;
-    info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type; // Not sure if this is correct for function pointers, but should be fine
-    info->cast_info.initial_type = info->cast_info.result_type;
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
+	info->is_valid = true;
+	info->options.polymorphic_function.base = poly_base;
+	info->options.polymorphic_function.instance_fn = instance;
+	info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type; // Not sure if this is correct for function pointers, but should be fine
+	info->cast_info.initial_type = info->cast_info.result_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 }
 
 void expression_info_set_constant(Expression_Info* info, Upp_Constant constant) {
-    info->result_type = Expression_Result_Type::CONSTANT;
-    info->is_valid = true;
-    info->options.constant = constant;
-    info->cast_info.result_type = constant.type;
-    info->cast_info.initial_type = info->cast_info.result_type;
-    info->cast_info.initial_value_is_temporary = true;
-    info->cast_info.result_value_is_temporary = true;
+	info->result_type = Expression_Result_Type::CONSTANT;
+	info->is_valid = true;
+	info->options.constant = constant;
+	info->cast_info.result_type = constant.type;
+	info->cast_info.initial_type = info->cast_info.result_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
 }
 
 void expression_info_set_constant(Expression_Info* info, Datatype* signature, Array<byte> bytes, AST::Node* error_report_node)
 {
-    auto& analyser = semantic_analyser;
-    auto result = constant_pool_add_constant(signature, bytes);
-    if (!result.success)
-    {
-        assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
-        log_semantic_error("Value cannot be converted to constant value (Not serializable)", error_report_node);
-        log_error_info_constant_status(result.options.error_message);
-        expression_info_set_error(info, signature);
-        return;
-    }
-    expression_info_set_constant(info, result.options.constant);
+	auto& analyser = semantic_analyser;
+	auto result = constant_pool_add_constant(signature, bytes);
+	if (!result.success)
+	{
+		assert(error_report_node != 0, "Error"); // Error report node may only be null if we know that adding the constant cannot fail.
+		log_semantic_error("Value cannot be converted to constant value (Not serializable)", error_report_node);
+		log_error_info_constant_status(result.options.error_message);
+		expression_info_set_error(info, signature);
+		return;
+	}
+	expression_info_set_constant(info, result.options.constant);
 }
 
 void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_type, i32 value) {
-    expression_info_set_constant(info, enum_type, array_create_static((byte*)&value, sizeof(i32)), 0);
+	expression_info_set_constant(info, enum_type, array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
 void expression_info_set_constant_i32(Expression_Info* info, i32 value) {
-    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
+	expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.i32_type), array_create_static((byte*)&value, sizeof(i32)), 0);
 }
 
 void expression_info_set_constant_usize(Expression_Info* info, u64 value) {
-    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.usize), array_create_static((byte*)&value, sizeof(u64)), 0);
+	expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.usize), array_create_static((byte*)&value, sizeof(u64)), 0);
 }
 
 void expression_info_set_constant_u32(Expression_Info* info, u32 value) {
-    expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.u32_type), array_create_static((byte*)&value, sizeof(u32)), 0);
+	expression_info_set_constant(info, upcast(compiler.analysis_data->type_system.predefined_types.u32_type), array_create_static((byte*)&value, sizeof(u32)), 0);
 }
 
 // Returns result type of a value
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied)
 {
-    if (before_context_is_applied) {
-        return info->cast_info.initial_type;
-    }
-    return info->cast_info.result_type;
+	if (before_context_is_applied) {
+		return info->cast_info.initial_type;
+	}
+	return info->cast_info.result_type;
 }
 
 
@@ -1897,270 +1903,270 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 // This will set the read + the non-resolved symbol paths to error
 void path_lookup_set_info_to_error_symbol(AST::Path_Lookup* path, Workload_Base* workload)
 {
-    auto error_symbol = semantic_analyser.error_symbol;
-    // Set unset path nodes to error
-    for (int i = 0; i < path->parts.size; i++) {
-        auto part = path->parts[i];
-        auto info = pass_get_node_info(workload->current_pass, part, Info_Query::TRY_READ);
-        if (info == 0) {
-            info = pass_get_node_info(workload->current_pass, part, Info_Query::CREATE);
-            info->symbol = error_symbol;
-        }
-    }
+	auto error_symbol = semantic_analyser.error_symbol;
+	// Set unset path nodes to error
+	for (int i = 0; i < path->parts.size; i++) {
+		auto part = path->parts[i];
+		auto info = pass_get_node_info(workload->current_pass, part, Info_Query::TRY_READ);
+		if (info == 0) {
+			info = pass_get_node_info(workload->current_pass, part, Info_Query::CREATE);
+			info->symbol = error_symbol;
+		}
+	}
 
-    // Set last symbol read of path to error
-    pass_get_node_info(workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
+	// Set last symbol read of path to error
+	pass_get_node_info(workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
 
-    // Set whole path result to error
-    pass_get_node_info(workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
+	// Set whole path result to error
+	pass_get_node_info(workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = error_symbol;
 }
 
 void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol) {
 
-    // Set last symbol_read to symbol
-    pass_get_node_info(semantic_analyser.current_workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = symbol;
-    // Set whole read to symbol
-    pass_get_node_info(semantic_analyser.current_workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = symbol;
-    // If symbol is not error, add reference to symbol
-    if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-        dynamic_array_push_back(&symbol->references, path->last);
-    }
+	// Set last symbol_read to symbol
+	pass_get_node_info(semantic_analyser.current_workload->current_pass, path->last, Info_Query::CREATE_IF_NULL)->symbol = symbol;
+	// Set whole read to symbol
+	pass_get_node_info(semantic_analyser.current_workload->current_pass, path, Info_Query::CREATE_IF_NULL)->symbol = symbol;
+	// If symbol is not error, add reference to symbol
+	if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+		dynamic_array_push_back(&symbol->references, path->last);
+	}
 }
 
 // Queries symbol table for the id, and waits for all found symbol workloads to finish before continuing
 void symbol_lookup_resolve(
-    AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>& results)
+	AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>& results)
 {
-    // Find all symbols with this id
-    symbol_table_query_id(symbol_table, lookup->name, search_parents, access_level, &results, &semantic_analyser.symbol_lookup_visited);
+	// Find all symbols with this id
+	symbol_table_query_id(symbol_table, lookup->name, search_parents, access_level, &results, &semantic_analyser.symbol_lookup_visited);
 
-    // Wait for alias symbols to finish their resolution
-    for (int i = 0; i < results.size; i++)
-    {
-        Symbol* symbol = results[i];
-        if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL) 
-        {
-            auto current = semantic_analyser.current_workload;
+	// Wait for alias symbols to finish their resolution
+	for (int i = 0; i < results.size; i++)
+	{
+		Symbol* symbol = results[i];
+		if (symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL)
+		{
+			auto current = semantic_analyser.current_workload;
 
-            // Handle special case where we are inside the alias-workload we want to resolve
-            // E.g. import Test~Test (Importing struct Test from module Test)
-            // In this case we don't report ourselves as a possible alias
-            if (current == upcast(symbol->options.alias_workload)) {
-                dynamic_array_swap_remove(&results, i);
-                i -= 1;
-                continue;
-            }
+			// Handle special case where we are inside the alias-workload we want to resolve
+			// E.g. import Test~Test (Importing struct Test from module Test)
+			// In this case we don't report ourselves as a possible alias
+			if (current == upcast(symbol->options.alias_workload)) {
+				dynamic_array_swap_remove(&results, i);
+				i -= 1;
+				continue;
+			}
 
-            bool dependency_failed = false;
-            analysis_workload_add_dependency_internal(
-                semantic_analyser.current_workload, upcast(symbol->options.alias_workload), dependency_failure_info_make(&dependency_failed, lookup));
-            workload_executer_wait_for_dependency_resolution();
-            if (!dependency_failed) {
-                // Replace symbol in results array with alias value
-                assert(symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Alias symbols should never change i think");
-                results[i] = symbol->options.alias_workload->alias_for_symbol;
-                assert(results[i]->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
-            }
-        }
-    }
+			bool dependency_failed = false;
+			analysis_workload_add_dependency_internal(
+				semantic_analyser.current_workload, upcast(symbol->options.alias_workload), dependency_failure_info_make(&dependency_failed, lookup));
+			workload_executer_wait_for_dependency_resolution();
+			if (!dependency_failed) {
+				// Replace symbol in results array with alias value
+				assert(symbol->type == Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Alias symbols should never change i think");
+				results[i] = symbol->options.alias_workload->alias_for_symbol;
+				assert(results[i]->type != Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, "Chained aliases should never happen here!");
+			}
+		}
+	}
 
-    // Remove duplicate symbols (May happen because of aliases in different scopes)
-    for (int i = 0; i < results.size; i++) {
-        Symbol* symbol = results[i];
-        for (int j = i + 1; j < results.size; j++) {
-            Symbol* other = results[j];
-            if (other == symbol) {
-                dynamic_array_swap_remove(&results, j);
-                j -= 1; // Since we removed one element
-            }
-        }
-    }
+	// Remove duplicate symbols (May happen because of aliases in different scopes)
+	for (int i = 0; i < results.size; i++) {
+		Symbol* symbol = results[i];
+		for (int j = i + 1; j < results.size; j++) {
+			Symbol* other = results[j];
+			if (other == symbol) {
+				dynamic_array_swap_remove(&results, j);
+				j -= 1; // Since we removed one element
+			}
+		}
+	}
 }
 
 // Logs an error if overloaded symbols was found
 Symbol* symbol_lookup_resolve_to_single_symbol(
-    AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false)
+	AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, bool search_parents, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false)
 {
-    auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
-    auto error = semantic_analyser.error_symbol;
+	auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::CREATE_IF_NULL);
+	auto error = semantic_analyser.error_symbol;
 
-    // Find all overloads
-    auto results = dynamic_array_create<Symbol*>();
-    SCOPE_EXIT(dynamic_array_destroy(&results));
-    symbol_lookup_resolve(lookup, symbol_table, search_parents, access_level, results);
+	// Find all overloads
+	auto results = dynamic_array_create<Symbol*>();
+	SCOPE_EXIT(dynamic_array_destroy(&results));
+	symbol_lookup_resolve(lookup, symbol_table, search_parents, access_level, results);
 
-    // Handle result array
-    if (results.size == 0) {
-        log_semantic_error("Could not resolve Symbol (No definition found)", upcast(lookup));
-        info->symbol = error;
-    }
-    else if (results.size == 1) {
-        info->symbol = results[0];
-        dynamic_array_push_back(&info->symbol->references, lookup);
-    }
-    else // size > 1
-    { 
-        if (prefer_module_symbols_on_overload)
-        {
-            Symbol* found_symbol = 0;
-            bool multiple_modules_found = false;
-            for (int i = 0; i < results.size; i++) {
-                auto symbol = results[i];
-                if (symbol->type == Symbol_Type::MODULE) {
-                    if (found_symbol == 0) {
-                        found_symbol = symbol;
-                    }
-                    else {
-                        multiple_modules_found = true;
-                    }
-                }
-            }
+	// Handle result array
+	if (results.size == 0) {
+		log_semantic_error("Could not resolve Symbol (No definition found)", upcast(lookup));
+		info->symbol = error;
+	}
+	else if (results.size == 1) {
+		info->symbol = results[0];
+		dynamic_array_push_back(&info->symbol->references, lookup);
+	}
+	else // size > 1
+	{
+		if (prefer_module_symbols_on_overload)
+		{
+			Symbol* found_symbol = 0;
+			bool multiple_modules_found = false;
+			for (int i = 0; i < results.size; i++) {
+				auto symbol = results[i];
+				if (symbol->type == Symbol_Type::MODULE) {
+					if (found_symbol == 0) {
+						found_symbol = symbol;
+					}
+					else {
+						multiple_modules_found = true;
+					}
+				}
+			}
 
-            if (found_symbol != 0 && !multiple_modules_found) {
-                info->symbol = found_symbol;
-                dynamic_array_push_back(&info->symbol->references, lookup);
-                return info->symbol;
-            }
-        }
-        else
-        {
-            // If there is only one non-module symbol, take that one
-            Symbol* non_module_symbol = 0;
-            bool multiple_non_module_symbols_found = false;
-            for (int i = 0; i < results.size; i++) {
-                auto symbol = results[i];
-                if (symbol->type != Symbol_Type::MODULE) {
-                    if (non_module_symbol == 0) {
-                        non_module_symbol = symbol;
-                    }
-                    else {
-                        multiple_non_module_symbols_found = true;
-                    }
-                }
-            }
-            if (non_module_symbol != 0 && !multiple_non_module_symbols_found) {
-                info->symbol = non_module_symbol;
-                dynamic_array_push_back(&info->symbol->references, lookup);
-                return info->symbol;
-            }
-        }
+			if (found_symbol != 0 && !multiple_modules_found) {
+				info->symbol = found_symbol;
+				dynamic_array_push_back(&info->symbol->references, lookup);
+				return info->symbol;
+			}
+		}
+		else
+		{
+			// If there is only one non-module symbol, take that one
+			Symbol* non_module_symbol = 0;
+			bool multiple_non_module_symbols_found = false;
+			for (int i = 0; i < results.size; i++) {
+				auto symbol = results[i];
+				if (symbol->type != Symbol_Type::MODULE) {
+					if (non_module_symbol == 0) {
+						non_module_symbol = symbol;
+					}
+					else {
+						multiple_non_module_symbols_found = true;
+					}
+				}
+			}
+			if (non_module_symbol != 0 && !multiple_non_module_symbols_found) {
+				info->symbol = non_module_symbol;
+				dynamic_array_push_back(&info->symbol->references, lookup);
+				return info->symbol;
+			}
+		}
 
-        log_semantic_error("Multiple results found for this symbol, cannot decided", upcast(lookup));
-        for (int i = 0; i < results.size; i++) {
-            log_error_info_symbol(results[i]);
-        }
-        info->symbol = error;
-    }
+		log_semantic_error("Multiple results found for this symbol, cannot decided", upcast(lookup));
+		for (int i = 0; i < results.size; i++) {
+			log_error_info_symbol(results[i]);
+		}
+		info->symbol = error;
+	}
 
-    return info->symbol;
+	return info->symbol;
 }
 
 // Returns 0 if the path could not be resolved
 Symbol_Table* path_lookup_resolve_only_path_parts(AST::Path_Lookup* path)
 {
-    auto& analyser = semantic_analyser;
-    auto table = semantic_analyser.current_workload->current_symbol_table;
-    auto workload = semantic_analyser.current_workload;
-    auto error = semantic_analyser.error_symbol;
+	auto& analyser = semantic_analyser;
+	auto table = semantic_analyser.current_workload->current_symbol_table;
+	auto workload = semantic_analyser.current_workload;
+	auto error = semantic_analyser.error_symbol;
 
-    // Resolve path
-    for (int i = 0; i < path->parts.size - 1; i++)
-    {
-        auto part = path->parts[i];
+	// Resolve path
+	for (int i = 0; i < path->parts.size - 1; i++)
+	{
+		auto part = path->parts[i];
 
-        // Find symbol of path part
-        Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, Symbol_Access_Level::GLOBAL, true);
-        if (symbol == error) {
-            path_lookup_set_info_to_error_symbol(path, workload);
-            return 0;
-        }
+		// Find symbol of path part
+		Symbol* symbol = symbol_lookup_resolve_to_single_symbol(part, table, i == 0, Symbol_Access_Level::GLOBAL, true);
+		if (symbol == error) {
+			path_lookup_set_info_to_error_symbol(path, workload);
+			return 0;
+		}
 
-        // Check if we can continue
-        if (symbol->type == Symbol_Type::MODULE)
-        {
-            auto current = workload->type;
+		// Check if we can continue
+		if (symbol->type == Symbol_Type::MODULE)
+		{
+			auto current = workload->type;
 
-            if (symbol->options.module.progress != 0)
-            {
-                bool dependency_failure = false;
-                auto failure_info = dependency_failure_info_make(&dependency_failure, part);
-                if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
-                    analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->module_analysis), failure_info);
-                }
-                else {
-                    analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->event_symbol_table_ready), failure_info);
-                }
-                workload_executer_wait_for_dependency_resolution();
-                if (dependency_failure) {
-                    path_lookup_set_info_to_error_symbol(path, workload);
-                    return 0;
-                }
-            }
-            table = symbol->options.module.symbol_table;
-        }
-        else
-        {
-            // Report error and exit
-            if (symbol->type == Symbol_Type::DEFINITION_UNFINISHED) {
-                // FUTURE: It may be possible that symbol resolution needs to create dependencies itself, which would happen here!
-                log_semantic_error("Expected module, not a definition (global/comptime)", upcast(part));
-            }
-            else {
-                log_semantic_error("Expected Module as intermediate path nodes", upcast(part));
-                log_error_info_symbol(symbol);
-            }
-            path_lookup_set_info_to_error_symbol(path, semantic_analyser.current_workload);
-            return 0;
-        }
-    }
+			if (symbol->options.module.progress != 0)
+			{
+				bool dependency_failure = false;
+				auto failure_info = dependency_failure_info_make(&dependency_failure, part);
+				if (current == Analysis_Workload_Type::IMPORT_RESOLVE) {
+					analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->module_analysis), failure_info);
+				}
+				else {
+					analysis_workload_add_dependency_internal(workload, upcast(symbol->options.module.progress->event_symbol_table_ready), failure_info);
+				}
+				workload_executer_wait_for_dependency_resolution();
+				if (dependency_failure) {
+					path_lookup_set_info_to_error_symbol(path, workload);
+					return 0;
+				}
+			}
+			table = symbol->options.module.symbol_table;
+		}
+		else
+		{
+			// Report error and exit
+			if (symbol->type == Symbol_Type::DEFINITION_UNFINISHED) {
+				// FUTURE: It may be possible that symbol resolution needs to create dependencies itself, which would happen here!
+				log_semantic_error("Expected module, not a definition (global/comptime)", upcast(part));
+			}
+			else {
+				log_semantic_error("Expected Module as intermediate path nodes", upcast(part));
+				log_error_info_symbol(symbol);
+			}
+			path_lookup_set_info_to_error_symbol(path, semantic_analyser.current_workload);
+			return 0;
+		}
+	}
 
-    return table;
+	return table;
 }
 
 // Note: After resolving overloaded symbols, the caller should 1. Set the symbol_info for the symbol_read, and 2. add a reference to the symbol
 //       Returns true if the path was resolved, otherwise false if there was an error while resolving the path...
 bool path_lookup_resolve(AST::Path_Lookup* path, Dynamic_Array<Symbol*>& symbols)
 {
-    auto& analyser = semantic_analyser;
-    auto error = semantic_analyser.error_symbol;
+	auto& analyser = semantic_analyser;
+	auto error = semantic_analyser.error_symbol;
 
-    // Resolve path
-    auto symbol_table = path_lookup_resolve_only_path_parts(path);
-    if (symbol_table == 0) {
-        return false;
-    }
+	// Resolve path
+	auto symbol_table = path_lookup_resolve_only_path_parts(path);
+	if (symbol_table == 0) {
+		return false;
+	}
 
-    Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
-    if (path->parts.size != 1) { // When a path is specified always use the least strong access level
-        access_level = Symbol_Access_Level::GLOBAL;
-    }
+	Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
+	if (path->parts.size != 1) { // When a path is specified always use the least strong access level
+		access_level = Symbol_Access_Level::GLOBAL;
+	}
 
-    // Resolve symbol
-    symbol_lookup_resolve(path->last, symbol_table, path->parts.size == 1, access_level, symbols);
-    get_info(path, true)->symbol = error;
-    return true;
+	// Resolve symbol
+	symbol_lookup_resolve(path->last, symbol_table, path->parts.size == 1, access_level, symbols);
+	get_info(path, true)->symbol = error;
+	return true;
 }
 
 Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, bool prefer_module_symbols_on_overload)
 {
-    auto& analyser = semantic_analyser;
-    auto error = semantic_analyser.error_symbol;
+	auto& analyser = semantic_analyser;
+	auto error = semantic_analyser.error_symbol;
 
-    // Resolve path
-    auto symbol_table = path_lookup_resolve_only_path_parts(path);
-    if (symbol_table == 0) {
-        return error;
-    }
+	// Resolve path
+	auto symbol_table = path_lookup_resolve_only_path_parts(path);
+	if (symbol_table == 0) {
+		return error;
+	}
 
-    Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
-    if (path->parts.size != 1) { // When a path is specified always use the least strong access level
-        access_level = Symbol_Access_Level::GLOBAL;
-    }
+	Symbol_Access_Level access_level = analyser.current_workload->symbol_access_level;
+	if (path->parts.size != 1) { // When a path is specified always use the least strong access level
+		access_level = Symbol_Access_Level::GLOBAL;
+	}
 
-    // Resolve symbol
-    Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, access_level, prefer_module_symbols_on_overload);
-    path_lookup_set_result_symbol(path, symbol);
-    return symbol;
+	// Resolve symbol
+	Symbol* symbol = symbol_lookup_resolve_to_single_symbol(path->last, symbol_table, path->parts.size == 1, access_level, prefer_module_symbols_on_overload);
+	path_lookup_set_result_symbol(path, symbol);
+	return symbol;
 }
 
 
@@ -2168,854 +2174,854 @@ Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, bool prefer
 
 //DEPENDENCY GRAPH/WORKLOAD EXECUTION
 Workload_Pair workload_pair_create(Workload_Base* workload, Workload_Base* depends_on) {
-    Workload_Pair result;
-    result.depends_on = depends_on;
-    result.workload = workload;
-    return result;
+	Workload_Pair result;
+	result.depends_on = depends_on;
+	result.workload = workload;
+	return result;
 }
 
 u64 workload_pair_hash(Workload_Pair* pair) {
-    return hash_memory(array_create_static_as_bytes(pair, 1));
+	return hash_memory(array_create_static_as_bytes(pair, 1));
 }
 
 bool workload_pair_equals(Workload_Pair* p1, Workload_Pair* p2) {
-    return p1->depends_on == p2->depends_on && p1->workload == p2->workload;
+	return p1->depends_on == p2->depends_on && p1->workload == p2->workload;
 }
 
 Workload_Executer* workload_executer_initialize()
 {
-    workload_executer.runnable_workloads = dynamic_array_create<Workload_Base*>();
-    workload_executer.finished_workloads = dynamic_array_create<Workload_Base*>();
-    workload_executer.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
+	workload_executer.runnable_workloads = dynamic_array_create<Workload_Base*>();
+	workload_executer.finished_workloads = dynamic_array_create<Workload_Base*>();
+	workload_executer.workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
 
-    workload_executer.progress_was_made = false;
-    return &workload_executer;
+	workload_executer.progress_was_made = false;
+	return &workload_executer;
 }
 
 void workload_executer_destroy()
 {
-    auto& executer = workload_executer;
-    dynamic_array_destroy(&executer.runnable_workloads);
-    dynamic_array_destroy(&executer.finished_workloads);
+	auto& executer = workload_executer;
+	dynamic_array_destroy(&executer.runnable_workloads);
+	dynamic_array_destroy(&executer.finished_workloads);
 
-    {
-        auto iter = hashtable_iterator_create(&executer.workload_dependencies);
-        while (hashtable_iterator_has_next(&iter)) {
-            SCOPE_EXIT(hashtable_iterator_next(&iter));
-            auto& dep_info = iter.value;
-            dynamic_array_destroy(&dep_info->fail_indicators);
-        }
-        hashtable_destroy(&executer.workload_dependencies);
-    }
+	{
+		auto iter = hashtable_iterator_create(&executer.workload_dependencies);
+		while (hashtable_iterator_has_next(&iter)) {
+			SCOPE_EXIT(hashtable_iterator_next(&iter));
+			auto& dep_info = iter.value;
+			dynamic_array_destroy(&dep_info->fail_indicators);
+		}
+		hashtable_destroy(&executer.workload_dependencies);
+	}
 }
 
 void analysis_workload_destroy(Workload_Base* workload)
 {
-    switch (workload->type)
-    {
-    case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-        auto poly = downcast<Workload_Structure_Polymorphic>(workload);
-        polymorphic_header_destroy(&poly->info);
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: {
-        auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
-        dynamic_array_destroy(&cluster->functions);
-        break;
-    }
-    default: break;
-    }
+	switch (workload->type)
+	{
+	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
+		auto poly = downcast<Workload_Structure_Polymorphic>(workload);
+		poly_header_destroy(&poly->info);
+		break;
+	}
+	case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: {
+		auto cluster = downcast<Workload_Function_Cluster_Compile>(workload);
+		dynamic_array_destroy(&cluster->functions);
+		break;
+	}
+	default: break;
+	}
 
-    list_destroy(&workload->dependencies);
-    list_destroy(&workload->dependents);
-    dynamic_array_destroy(&workload->reachable_clusters);
-    dynamic_array_destroy(&workload->block_stack);
+	list_destroy(&workload->dependencies);
+	list_destroy(&workload->dependents);
+	dynamic_array_destroy(&workload->reachable_clusters);
+	dynamic_array_destroy(&workload->block_stack);
 
-    delete workload;
+	delete workload;
 }
 
 // When dependencies generate cycles, the cycle must be broken, and this is done via the boolean parameter given here.
 // If this parameter is not null, this indicates that this dependency can be broken, and the caller of this function must handle this case correctly
 void analysis_workload_add_dependency_internal(Workload_Base* workload, Workload_Base* dependency, Dependency_Failure_Info failure_info)
 {
-    auto& executer = workload_executer;
-    bool can_be_broken = failure_info.fail_indicator != 0;
-    if (can_be_broken) {
-        *failure_info.fail_indicator = !dependency->is_finished;
-    }
-    if (dependency->is_finished) {
-        return;
-    }
+	auto& executer = workload_executer;
+	bool can_be_broken = failure_info.fail_indicator != 0;
+	if (can_be_broken) {
+		*failure_info.fail_indicator = !dependency->is_finished;
+	}
+	if (dependency->is_finished) {
+		return;
+	}
 
-    Workload_Pair pair = workload_pair_create(workload, dependency);
-    Dependency_Information* infos = hashtable_find_element(&executer.workload_dependencies, pair);
-    if (infos == 0) {
-        Dependency_Information info;
-        info.dependency_node = list_add_at_end(&workload->dependencies, dependency);
-        info.dependent_node = list_add_at_end(&dependency->dependents, workload);
-        info.fail_indicators = dynamic_array_create<Dependency_Failure_Info>(1);
-        info.can_be_broken = can_be_broken;
-        if (can_be_broken) {
-            dynamic_array_push_back(&info.fail_indicators, failure_info);
-        }
-        bool inserted = hashtable_insert_element(&executer.workload_dependencies, pair, info);
-        assert(inserted, "");
-    }
-    else {
-        if (can_be_broken) {
-            dynamic_array_push_back(&infos->fail_indicators, failure_info);
-        }
-        else {
-            infos->can_be_broken = false;
-        }
-    }
+	Workload_Pair pair = workload_pair_create(workload, dependency);
+	Dependency_Information* infos = hashtable_find_element(&executer.workload_dependencies, pair);
+	if (infos == 0) {
+		Dependency_Information info;
+		info.dependency_node = list_add_at_end(&workload->dependencies, dependency);
+		info.dependent_node = list_add_at_end(&dependency->dependents, workload);
+		info.fail_indicators = dynamic_array_create<Dependency_Failure_Info>(1);
+		info.can_be_broken = can_be_broken;
+		if (can_be_broken) {
+			dynamic_array_push_back(&info.fail_indicators, failure_info);
+		}
+		bool inserted = hashtable_insert_element(&executer.workload_dependencies, pair, info);
+		assert(inserted, "");
+	}
+	else {
+		if (can_be_broken) {
+			dynamic_array_push_back(&infos->fail_indicators, failure_info);
+		}
+		else {
+			infos->can_be_broken = false;
+		}
+	}
 }
 
 void workload_executer_move_dependency(Workload_Base* move_from, Workload_Base* move_to, Workload_Base* dependency)
 {
-    auto graph = &workload_executer;
-    assert(move_from != move_to, "");
+	auto graph = &workload_executer;
+	assert(move_from != move_to, "");
 
-    // Remove old dependency
-    Workload_Pair original_pair = workload_pair_create(move_from, dependency);
-    Dependency_Information info = *hashtable_find_element(&graph->workload_dependencies, original_pair);
-    hashtable_remove_element(&graph->workload_dependencies, original_pair);
-    list_remove_node(&move_from->dependencies, info.dependency_node);
-    list_remove_node(&dependency->dependents, info.dependent_node);
+	// Remove old dependency
+	Workload_Pair original_pair = workload_pair_create(move_from, dependency);
+	Dependency_Information info = *hashtable_find_element(&graph->workload_dependencies, original_pair);
+	hashtable_remove_element(&graph->workload_dependencies, original_pair);
+	list_remove_node(&move_from->dependencies, info.dependency_node);
+	list_remove_node(&dependency->dependents, info.dependent_node);
 
-    // Add new dependency, reusing old information in the process
-    Workload_Pair new_pair = workload_pair_create(move_to, dependency);
-    Dependency_Information* new_infos = hashtable_find_element(&graph->workload_dependencies, new_pair);
-    if (new_infos == 0) {
-        Dependency_Information new_info;
-        new_info.dependency_node = list_add_at_end(&move_to->dependencies, dependency);
-        new_info.dependent_node = list_add_at_end(&dependency->dependents, move_to);
-        new_info.fail_indicators = info.fail_indicators; // Note: Takes ownership
-        new_info.can_be_broken = info.can_be_broken;
-        hashtable_insert_element(&graph->workload_dependencies, new_pair, new_info);
-    }
-    else {
-        dynamic_array_append_other(&new_infos->fail_indicators, &info.fail_indicators);
-        if (new_infos->can_be_broken) {
-            new_infos->can_be_broken = info.can_be_broken;
-        }
-        dynamic_array_destroy(&info.fail_indicators);
-    }
+	// Add new dependency, reusing old information in the process
+	Workload_Pair new_pair = workload_pair_create(move_to, dependency);
+	Dependency_Information* new_infos = hashtable_find_element(&graph->workload_dependencies, new_pair);
+	if (new_infos == 0) {
+		Dependency_Information new_info;
+		new_info.dependency_node = list_add_at_end(&move_to->dependencies, dependency);
+		new_info.dependent_node = list_add_at_end(&dependency->dependents, move_to);
+		new_info.fail_indicators = info.fail_indicators; // Note: Takes ownership
+		new_info.can_be_broken = info.can_be_broken;
+		hashtable_insert_element(&graph->workload_dependencies, new_pair, new_info);
+	}
+	else {
+		dynamic_array_append_other(&new_infos->fail_indicators, &info.fail_indicators);
+		if (new_infos->can_be_broken) {
+			new_infos->can_be_broken = info.can_be_broken;
+		}
+		dynamic_array_destroy(&info.fail_indicators);
+	}
 }
 
 void workload_executer_remove_dependency(Workload_Base* workload, Workload_Base* depends_on, bool allow_add_to_runnables, bool dependency_succeeded)
 {
-    auto graph = &workload_executer;
-    Workload_Pair pair = workload_pair_create(workload, depends_on);
-    Dependency_Information* info = hashtable_find_element(&graph->workload_dependencies, pair);
-    assert(info != 0, "");
-    list_remove_node(&workload->dependencies, info->dependency_node);
-    list_remove_node(&depends_on->dependents, info->dependent_node);
+	auto graph = &workload_executer;
+	Workload_Pair pair = workload_pair_create(workload, depends_on);
+	Dependency_Information* info = hashtable_find_element(&graph->workload_dependencies, pair);
+	assert(info != 0, "");
+	list_remove_node(&workload->dependencies, info->dependency_node);
+	list_remove_node(&depends_on->dependents, info->dependent_node);
 
-    // Signal all fail indicators to have passed
-    for (int i = 0; i < info->fail_indicators.size; i++) {
-        *(info->fail_indicators[i].fail_indicator) = !dependency_succeeded;
-    }
-    dynamic_array_destroy(&info->fail_indicators);
+	// Signal all fail indicators to have passed
+	for (int i = 0; i < info->fail_indicators.size; i++) {
+		*(info->fail_indicators[i].fail_indicator) = !dependency_succeeded;
+	}
+	dynamic_array_destroy(&info->fail_indicators);
 
-    bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
-    if (allow_add_to_runnables && workload->dependencies.count == 0) {
-        dynamic_array_push_back(&graph->runnable_workloads, workload);
-    }
+	bool worked = hashtable_remove_element(&graph->workload_dependencies, pair);
+	if (allow_add_to_runnables && workload->dependencies.count == 0) {
+		dynamic_array_push_back(&graph->runnable_workloads, workload);
+	}
 }
 
 Workload_Base* analysis_workload_find_associated_cluster(Workload_Base* workload)
 {
-    assert(workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
-    if (workload->cluster == 0) {
-        return workload;
-    }
-    workload->cluster = analysis_workload_find_associated_cluster(workload->cluster);
-    return workload->cluster;
+	assert(workload->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
+	if (workload->cluster == 0) {
+		return workload;
+	}
+	workload->cluster = analysis_workload_find_associated_cluster(workload->cluster);
+	return workload->cluster;
 }
 
 bool cluster_workload_check_for_cyclic_dependency(
-    Workload_Base* workload, Workload_Base* start_workload,
-    Hashtable<Workload_Base*, bool>* visited, Dynamic_Array<Workload_Base*>* workloads_to_merge)
+	Workload_Base* workload, Workload_Base* start_workload,
+	Hashtable<Workload_Base*, bool>* visited, Dynamic_Array<Workload_Base*>* workloads_to_merge)
 {
-    // Check if we already visited
-    {
-        bool* contains_loop = hashtable_find_element(visited, workload);
-        if (contains_loop != 0) {
-            return *contains_loop;
-        }
-    }
-    hashtable_insert_element(visited, workload, false); // The boolean value nodes later if we actually find a loop
-    bool loop_found = false;
-    for (int i = 0; i < workload->reachable_clusters.size; i++)
-    {
-        Workload_Base* reachable = analysis_workload_find_associated_cluster(workload->reachable_clusters[i]);
-        if (reachable == start_workload) {
-            loop_found = true;
-        }
-        else {
-            bool transitiv_reachable = cluster_workload_check_for_cyclic_dependency(reachable, start_workload, visited, workloads_to_merge);
-            if (transitiv_reachable) loop_found = true;
-        }
-    }
-    if (loop_found) {
-        bool* current_value = hashtable_find_element(visited, workload);
-        *current_value = true;
-        dynamic_array_push_back(workloads_to_merge, workload);
-    }
-    return loop_found;
+	// Check if we already visited
+	{
+		bool* contains_loop = hashtable_find_element(visited, workload);
+		if (contains_loop != 0) {
+			return *contains_loop;
+		}
+	}
+	hashtable_insert_element(visited, workload, false); // The boolean value nodes later if we actually find a loop
+	bool loop_found = false;
+	for (int i = 0; i < workload->reachable_clusters.size; i++)
+	{
+		Workload_Base* reachable = analysis_workload_find_associated_cluster(workload->reachable_clusters[i]);
+		if (reachable == start_workload) {
+			loop_found = true;
+		}
+		else {
+			bool transitiv_reachable = cluster_workload_check_for_cyclic_dependency(reachable, start_workload, visited, workloads_to_merge);
+			if (transitiv_reachable) loop_found = true;
+		}
+	}
+	if (loop_found) {
+		bool* current_value = hashtable_find_element(visited, workload);
+		*current_value = true;
+		dynamic_array_push_back(workloads_to_merge, workload);
+	}
+	return loop_found;
 }
 
 void analysis_workload_add_cluster_dependency(Workload_Base* add_to_workload, Workload_Base* dependency, Dependency_Failure_Info failure_info = dependency_failure_info_make_none())
 {
-    auto graph = &workload_executer;
-    assert(add_to_workload->type == dependency->type && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
-    Workload_Base* merge_into = analysis_workload_find_associated_cluster(add_to_workload);
-    Workload_Base* merge_from = analysis_workload_find_associated_cluster(dependency);
-    if (merge_into == merge_from || merge_from->is_finished) {
-        return;
-    }
+	auto graph = &workload_executer;
+	assert(add_to_workload->type == dependency->type && dependency->type == Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE, "");
+	Workload_Base* merge_into = analysis_workload_find_associated_cluster(add_to_workload);
+	Workload_Base* merge_from = analysis_workload_find_associated_cluster(dependency);
+	if (merge_into == merge_from || merge_from->is_finished) {
+		return;
+	}
 
-    // Check if clusters form loops after new dependency
-    Hashtable<Workload_Base*, bool> visited = hashtable_create_pointer_empty<Workload_Base*, bool>(1);
-    SCOPE_EXIT(hashtable_destroy(&visited));
-    Dynamic_Array<Workload_Base*> workloads_to_merge = dynamic_array_create<Workload_Base*>(1);
-    SCOPE_EXIT(dynamic_array_destroy(&workloads_to_merge));
-    bool loop_found = cluster_workload_check_for_cyclic_dependency(merge_from, merge_into, &visited, &workloads_to_merge);
-    if (!loop_found) {
-        dynamic_array_push_back(&merge_into->reachable_clusters, merge_from);
-        analysis_workload_add_dependency_internal(merge_into, merge_from, failure_info);
-        return;
-    }
+	// Check if clusters form loops after new dependency
+	Hashtable<Workload_Base*, bool> visited = hashtable_create_pointer_empty<Workload_Base*, bool>(1);
+	SCOPE_EXIT(hashtable_destroy(&visited));
+	Dynamic_Array<Workload_Base*> workloads_to_merge = dynamic_array_create<Workload_Base*>(1);
+	SCOPE_EXIT(dynamic_array_destroy(&workloads_to_merge));
+	bool loop_found = cluster_workload_check_for_cyclic_dependency(merge_from, merge_into, &visited, &workloads_to_merge);
+	if (!loop_found) {
+		dynamic_array_push_back(&merge_into->reachable_clusters, merge_from);
+		analysis_workload_add_dependency_internal(merge_into, merge_from, failure_info);
+		return;
+	}
 
-    // Merge all workloads into merge_into workload
-    for (int i = 0; i < workloads_to_merge.size; i++)
-    {
-        Workload_Base* merge_cluster = workloads_to_merge[i];
-        assert(merge_cluster != merge_into, "");
-        // Remove all dependent connections from the merge
-        auto node = merge_cluster->dependencies.head;
-        while (node != 0)
-        {
-            Workload_Base* merge_dependency = node->value;
-            // Check if we need the dependency
-            bool keep_dependency = true;
-            if (merge_dependency == merge_into || merge_dependency == merge_from) {
-                keep_dependency = false;
-            }
-            else
-            {
-                bool* contains_loop = hashtable_find_element(&visited, merge_dependency);
-                if (contains_loop != 0) {
-                    keep_dependency = !*contains_loop;
-                }
-            }
+	// Merge all workloads into merge_into workload
+	for (int i = 0; i < workloads_to_merge.size; i++)
+	{
+		Workload_Base* merge_cluster = workloads_to_merge[i];
+		assert(merge_cluster != merge_into, "");
+		// Remove all dependent connections from the merge
+		auto node = merge_cluster->dependencies.head;
+		while (node != 0)
+		{
+			Workload_Base* merge_dependency = node->value;
+			// Check if we need the dependency
+			bool keep_dependency = true;
+			if (merge_dependency == merge_into || merge_dependency == merge_from) {
+				keep_dependency = false;
+			}
+			else
+			{
+				bool* contains_loop = hashtable_find_element(&visited, merge_dependency);
+				if (contains_loop != 0) {
+					keep_dependency = !*contains_loop;
+				}
+			}
 
-            auto next = node->next;
-            if (keep_dependency) {
-                workload_executer_move_dependency(merge_cluster, merge_into, merge_dependency);
-            }
-            else {
-                workload_executer_remove_dependency(merge_cluster, merge_dependency, false, true);
-            }
-            node = next;
-        }
-        list_reset(&merge_cluster->dependencies);
+			auto next = node->next;
+			if (keep_dependency) {
+				workload_executer_move_dependency(merge_cluster, merge_into, merge_dependency);
+			}
+			else {
+				workload_executer_remove_dependency(merge_cluster, merge_dependency, false, true);
+			}
+			node = next;
+		}
+		list_reset(&merge_cluster->dependencies);
 
-        // Merge all analysis item values
-        {
-            auto& functions_into = downcast<Workload_Function_Cluster_Compile>(merge_into)->functions;
-            auto& functions_from = downcast<Workload_Function_Cluster_Compile>(merge_cluster)->functions;
-            dynamic_array_append_other(&functions_into, &functions_from);
-            dynamic_array_reset(&functions_from);
-        }
+		// Merge all analysis item values
+		{
+			auto& functions_into = downcast<Workload_Function_Cluster_Compile>(merge_into)->functions;
+			auto& functions_from = downcast<Workload_Function_Cluster_Compile>(merge_cluster)->functions;
+			dynamic_array_append_other(&functions_into, &functions_from);
+			dynamic_array_reset(&functions_from);
+		}
 
-        // Add reachables to merged
-        dynamic_array_append_other(&merge_into->reachable_clusters, &merge_cluster->reachable_clusters);
-        dynamic_array_reset(&merge_cluster->reachable_clusters);
-        analysis_workload_add_dependency_internal(merge_cluster, merge_into);
-        merge_cluster->cluster = merge_into;
-    }
+		// Add reachables to merged
+		dynamic_array_append_other(&merge_into->reachable_clusters, &merge_cluster->reachable_clusters);
+		dynamic_array_reset(&merge_cluster->reachable_clusters);
+		analysis_workload_add_dependency_internal(merge_cluster, merge_into);
+		merge_cluster->cluster = merge_into;
+	}
 
-    // Prune reachables
-    for (int i = 0; i < merge_into->reachable_clusters.size; i++)
-    {
-        Workload_Base* reachable = analysis_workload_find_associated_cluster(merge_into->reachable_clusters[i]);
-        if (reachable == merge_into) {
-            // Remove self references
-            dynamic_array_swap_remove(&merge_into->reachable_clusters, i);
-            i = i - 1;
-        }
-        else
-        {
-            // Remove doubles
-            for (int j = i + 1; j < merge_into->reachable_clusters.size; j++) {
-                if (merge_into->reachable_clusters[j] == reachable) {
-                    dynamic_array_swap_remove(&merge_into->reachable_clusters, j);
-                }
-            }
-        }
-    }
+	// Prune reachables
+	for (int i = 0; i < merge_into->reachable_clusters.size; i++)
+	{
+		Workload_Base* reachable = analysis_workload_find_associated_cluster(merge_into->reachable_clusters[i]);
+		if (reachable == merge_into) {
+			// Remove self references
+			dynamic_array_swap_remove(&merge_into->reachable_clusters, i);
+			i = i - 1;
+		}
+		else
+		{
+			// Remove doubles
+			for (int j = i + 1; j < merge_into->reachable_clusters.size; j++) {
+				if (merge_into->reachable_clusters[j] == reachable) {
+					dynamic_array_swap_remove(&merge_into->reachable_clusters, j);
+				}
+			}
+		}
+	}
 }
 
 bool analysis_workload_find_cycle(
-    Workload_Base* current_workload, int current_depth, Workload_Base* start_workload, int desired_cycle_size,
-    Dynamic_Array<Workload_Base*>* loop_nodes, Hashtable<Workload_Base*, int>* valid_workloads)
+	Workload_Base* current_workload, int current_depth, Workload_Base* start_workload, int desired_cycle_size,
+	Dynamic_Array<Workload_Base*>* loop_nodes, Hashtable<Workload_Base*, int>* valid_workloads)
 {
-    if (hashtable_find_element(valid_workloads, current_workload) == 0) {
-        return false;
-    }
-    if (current_workload->is_finished) return false;
-    if (current_depth > desired_cycle_size) return false;
-    if (current_workload == start_workload) {
-        assert(current_depth == desired_cycle_size, "");
-        dynamic_array_push_back(loop_nodes, current_workload);
-        return true;
-    }
+	if (hashtable_find_element(valid_workloads, current_workload) == 0) {
+		return false;
+	}
+	if (current_workload->is_finished) return false;
+	if (current_depth > desired_cycle_size) return false;
+	if (current_workload == start_workload) {
+		assert(current_depth == desired_cycle_size, "");
+		dynamic_array_push_back(loop_nodes, current_workload);
+		return true;
+	}
 
-    List_Node<Workload_Base*>* node = current_workload->dependencies.head;
-    while (node != 0)
-    {
-        SCOPE_EXIT(node = node->next);
-        Workload_Base* dependency = node->value;
-        if (analysis_workload_find_cycle(dependency, current_depth + 1, start_workload, desired_cycle_size, loop_nodes, valid_workloads)) {
-            dynamic_array_push_back(loop_nodes, current_workload);
-            return true;
-        }
-    }
-    return false;
+	List_Node<Workload_Base*>* node = current_workload->dependencies.head;
+	while (node != 0)
+	{
+		SCOPE_EXIT(node = node->next);
+		Workload_Base* dependency = node->value;
+		if (analysis_workload_find_cycle(dependency, current_depth + 1, start_workload, desired_cycle_size, loop_nodes, valid_workloads)) {
+			dynamic_array_push_back(loop_nodes, current_workload);
+			return true;
+		}
+	}
+	return false;
 }
 
 void workload_executer_resolve()
 {
-    /*
-    Resolve is a double loop:
-    loop
-        loop run runnable workloads while they exist
+	/*
+	Resolve is a double loop:
+	loop
+		loop run runnable workloads while they exist
 
-        if no runnable workloads exist and not finished
-            Check for circular dependencies
-                if they exist, resolve them (E.g. set symbols to error, set member type to error, ...)
-                else illegal_code_path
-    */
+		if no runnable workloads exist and not finished
+			Check for circular dependencies
+				if they exist, resolve them (E.g. set symbols to error, set member type to error, ...)
+				else illegal_code_path
+	*/
 
-    double start_time = timer_current_time_in_seconds();
-    double time_in_executer = 0;
-    double time_in_loop_resolve = 0;
-    double time_per_workload_type[100];
-    memory_set_bytes(&time_per_workload_type[0], sizeof(double) * 100, 0);
-    double last_timestamp = timer_current_time_in_seconds();
+	double start_time = timer_current_time_in_seconds();
+	double time_in_executer = 0;
+	double time_in_loop_resolve = 0;
+	double time_per_workload_type[100];
+	memory_set_bytes(&time_per_workload_type[0], sizeof(double) * 100, 0);
+	double last_timestamp = timer_current_time_in_seconds();
 
-    auto& executer = workload_executer;
-    auto& all_workloads = compiler.analysis_data->all_workloads;
+	auto& executer = workload_executer;
+	auto& all_workloads = compiler.analysis_data->all_workloads;
 
-    int round_no = 0;
-    while (true)
-    {
-        SCOPE_EXIT(round_no += 1);
-        executer.progress_was_made = false;
-        // Print workloads and dependencies
-        if (PRINT_DEPENDENCIES)
-        {
-            String tmp = string_create_empty(256);
-            SCOPE_EXIT(string_destroy(&tmp));
-            string_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
-            for (int i = 0; i < executer.runnable_workloads.size; i++)
-            {
-                auto workload = executer.runnable_workloads[i];
-                if (i == 0) {
-                    string_append_formated(&tmp, "Runnable workloads:\n");
-                }
-                if (workload->dependencies.count > 0) continue;
-                if (workload->is_finished) continue;
-                string_append_formated(&tmp, "  ");
-                analysis_workload_append_to_string(workload, &tmp);
-                string_append_formated(&tmp, "\n");
+	int round_no = 0;
+	while (true)
+	{
+		SCOPE_EXIT(round_no += 1);
+		executer.progress_was_made = false;
+		// Print workloads and dependencies
+		if (PRINT_DEPENDENCIES)
+		{
+			String tmp = string_create_empty(256);
+			SCOPE_EXIT(string_destroy(&tmp));
+			string_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
+			for (int i = 0; i < executer.runnable_workloads.size; i++)
+			{
+				auto workload = executer.runnable_workloads[i];
+				if (i == 0) {
+					string_append_formated(&tmp, "Runnable workloads:\n");
+				}
+				if (workload->dependencies.count > 0) continue;
+				if (workload->is_finished) continue;
+				string_append_formated(&tmp, "  ");
+				analysis_workload_append_to_string(workload, &tmp);
+				string_append_formated(&tmp, "\n");
 
-                // Append dependents
-                List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
-                while (dependent_node != 0) {
-                    SCOPE_EXIT(dependent_node = dependent_node->next);
-                    Workload_Base* dependent = dependent_node->value;
-                    string_append_formated(&tmp, "    ");
-                    analysis_workload_append_to_string(dependent, &tmp);
-                    string_append_formated(&tmp, "\n");
-                }
-            }
+				// Append dependents
+				List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
+				while (dependent_node != 0) {
+					SCOPE_EXIT(dependent_node = dependent_node->next);
+					Workload_Base* dependent = dependent_node->value;
+					string_append_formated(&tmp, "    ");
+					analysis_workload_append_to_string(dependent, &tmp);
+					string_append_formated(&tmp, "\n");
+				}
+			}
 
-            for (int i = 0; i < all_workloads.size; i++)
-            {
-                if (i == 0) {
-                    string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
-                }
-                Workload_Base* workload = all_workloads[i];
-                if (workload->is_finished || workload->dependencies.count == 0) continue;
-                string_append_formated(&tmp, "  ");
-                analysis_workload_append_to_string(workload, &tmp);
-                string_append_formated(&tmp, "\n");
-                // Print dependencies
-                {
-                    List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
-                    if (dependency_node != 0) {
-                        string_append_formated(&tmp, "    Depends On:\n");
-                    }
-                    while (dependency_node != 0) {
-                        SCOPE_EXIT(dependency_node = dependency_node->next);
-                        Workload_Base* dependency = dependency_node->value;
-                        string_append_formated(&tmp, "      ");
-                        analysis_workload_append_to_string(dependency, &tmp);
-                        string_append_formated(&tmp, "\n");
-                    }
-                }
-                // Dependents
-                {
-                    List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
-                    if (dependent_node != 0) {
-                        string_append_formated(&tmp, "    Dependents:\n");
-                    }
-                    while (dependent_node != 0) {
-                        SCOPE_EXIT(dependent_node = dependent_node->next);
-                        Workload_Base* dependent = dependent_node->value;
-                        string_append_formated(&tmp, "      ");
-                        analysis_workload_append_to_string(dependent, &tmp);
-                        string_append_formated(&tmp, "\n");
-                    }
-                }
+			for (int i = 0; i < all_workloads.size; i++)
+			{
+				if (i == 0) {
+					string_append_formated(&tmp, "\nWorkloads with dependencies:\n");
+				}
+				Workload_Base* workload = all_workloads[i];
+				if (workload->is_finished || workload->dependencies.count == 0) continue;
+				string_append_formated(&tmp, "  ");
+				analysis_workload_append_to_string(workload, &tmp);
+				string_append_formated(&tmp, "\n");
+				// Print dependencies
+				{
+					List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
+					if (dependency_node != 0) {
+						string_append_formated(&tmp, "    Depends On:\n");
+					}
+					while (dependency_node != 0) {
+						SCOPE_EXIT(dependency_node = dependency_node->next);
+						Workload_Base* dependency = dependency_node->value;
+						string_append_formated(&tmp, "      ");
+						analysis_workload_append_to_string(dependency, &tmp);
+						string_append_formated(&tmp, "\n");
+					}
+				}
+				// Dependents
+				{
+					List_Node<Workload_Base*>* dependent_node = workload->dependents.head;
+					if (dependent_node != 0) {
+						string_append_formated(&tmp, "    Dependents:\n");
+					}
+					while (dependent_node != 0) {
+						SCOPE_EXIT(dependent_node = dependent_node->next);
+						Workload_Base* dependent = dependent_node->value;
+						string_append_formated(&tmp, "      ");
+						analysis_workload_append_to_string(dependent, &tmp);
+						string_append_formated(&tmp, "\n");
+					}
+				}
 
-            }
+			}
 
-            logg("%s", tmp.characters);
-        }
+			logg("%s", tmp.characters);
+		}
 
-        // Execute runnable workloads
-        for (int i = 0; i < executer.runnable_workloads.size; i++)
-        {
-            Workload_Base* workload = executer.runnable_workloads[i];
-            if (workload->dependencies.count > 0) {
-                continue; // Skip runnable workload
-            }
-            if (workload->is_finished) {
-                continue;
-            }
-            executer.progress_was_made = true;
+		// Execute runnable workloads
+		for (int i = 0; i < executer.runnable_workloads.size; i++)
+		{
+			Workload_Base* workload = executer.runnable_workloads[i];
+			if (workload->dependencies.count > 0) {
+				continue; // Skip runnable workload
+			}
+			if (workload->is_finished) {
+				continue;
+			}
+			executer.progress_was_made = true;
 
-            if (PRINT_DEPENDENCIES) {
-                String tmp = string_create_empty(128);
-                analysis_workload_append_to_string(workload, &tmp);
-                logg("Executing workload: %s\n", tmp.characters);
-                string_destroy(&tmp);
-            }
+			if (PRINT_DEPENDENCIES) {
+				String tmp = string_create_empty(128);
+				analysis_workload_append_to_string(workload, &tmp);
+				logg("Executing workload: %s\n", tmp.characters);
+				string_destroy(&tmp);
+			}
 
-            // TIMING
-            double now = timer_current_time_in_seconds();
-            time_in_executer += now - last_timestamp;
-            last_timestamp = now;
+			// TIMING
+			double now = timer_current_time_in_seconds();
+			time_in_executer += now - last_timestamp;
+			last_timestamp = now;
 
-            bool finished = workload_executer_switch_to_workload(workload);
+			bool finished = workload_executer_switch_to_workload(workload);
 
-            // TIMING
-            now = timer_current_time_in_seconds();
-            time_per_workload_type[(int)workload->type] += now - last_timestamp;
-            last_timestamp = now;
+			// TIMING
+			now = timer_current_time_in_seconds();
+			time_per_workload_type[(int)workload->type] += now - last_timestamp;
+			last_timestamp = now;
 
-            // Note: After a workload executes, it may have added new dependencies to itself
-            if (workload->dependencies.count == 0)
-            {
-                assert(finished, "When on dependencies remain, the fiber should have exited normally!\n");
-                workload->is_finished = true;
-                List_Node<Workload_Base*>* node = workload->dependents.head;
-                // Loop over all dependents and remove this workload from that list
-                while (node != 0) {
-                    Workload_Base* dependent = node->value;
-                    node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
-                    workload_executer_remove_dependency(dependent, workload, true, true);
-                }
-                assert(workload->dependents.count == 0, "Remove dependency should already have cleared the list!");
-            }
-            else {
-                assert(!finished, "If there are dependencies, the fiber must still be running!");
-            }
-        }
-        dynamic_array_reset(&executer.runnable_workloads);
-        if (executer.progress_was_made) {
-            if (PRINT_DEPENDENCIES) {
-                logg("Progress was made!");
-            }
-            continue;
-        }
+			// Note: After a workload executes, it may have added new dependencies to itself
+			if (workload->dependencies.count == 0)
+			{
+				assert(finished, "When on dependencies remain, the fiber should have exited normally!\n");
+				workload->is_finished = true;
+				List_Node<Workload_Base*>* node = workload->dependents.head;
+				// Loop over all dependents and remove this workload from that list
+				while (node != 0) {
+					Workload_Base* dependent = node->value;
+					node = node->next; // INFO: This is required before remove_dependency, since remove will remove nodes from the list
+					workload_executer_remove_dependency(dependent, workload, true, true);
+				}
+				assert(workload->dependents.count == 0, "Remove dependency should already have cleared the list!");
+			}
+			else {
+				assert(!finished, "If there are dependencies, the fiber must still be running!");
+			}
+		}
+		dynamic_array_reset(&executer.runnable_workloads);
+		if (executer.progress_was_made) {
+			if (PRINT_DEPENDENCIES) {
+				logg("Progress was made!");
+			}
+			continue;
+		}
 
-        // Check if all workloads finished
-        {
-            bool all_finished = true;
-            for (int i = 0; i < all_workloads.size; i++) {
-                if (!all_workloads[i]->is_finished) {
-                    all_finished = false;
-                    break;
-                }
-            }
-            if (all_finished) {
-                break;
-            }
-        }
+		// Check if all workloads finished
+		{
+			bool all_finished = true;
+			for (int i = 0; i < all_workloads.size; i++) {
+				if (!all_workloads[i]->is_finished) {
+					all_finished = false;
+					break;
+				}
+			}
+			if (all_finished) {
+				break;
+			}
+		}
 
-        /*
-            Circular Dependency Detection:
-             1. Do breadth first search to find smallest possible loop/if loop exists
-             2. If a loop was found, do a depth first search to reconstruct the loop (Could probably be done better)
-             3. Resolve the loop (Log Error, set some of the dependencies to error)
-        */
-        // TIMING
-        double now = timer_current_time_in_seconds();
-        time_in_executer += now - last_timestamp;
-        last_timestamp = now;
+		/*
+			Circular Dependency Detection:
+			 1. Do breadth first search to find smallest possible loop/if loop exists
+			 2. If a loop was found, do a depth first search to reconstruct the loop (Could probably be done better)
+			 3. Resolve the loop (Log Error, set some of the dependencies to error)
+		*/
+		// TIMING
+		double now = timer_current_time_in_seconds();
+		time_in_executer += now - last_timestamp;
+		last_timestamp = now;
 
-        {
-            // Initialization
-            Hashtable<Workload_Base*, int> workload_to_layer = hashtable_create_pointer_empty<Workload_Base*, int>(4);
-            SCOPE_EXIT(hashtable_destroy(&workload_to_layer));
-            Hashset<Workload_Base*> unvisited = hashset_create_pointer_empty<Workload_Base*>(4);
-            SCOPE_EXIT(hashset_destroy(&unvisited));
-            for (int i = 0; i < all_workloads.size; i++) {
-                Workload_Base* workload = all_workloads[i];
-                if (!workload->is_finished) {
-                    hashset_insert_element(&unvisited, workload);
-                }
-            }
+		{
+			// Initialization
+			Hashtable<Workload_Base*, int> workload_to_layer = hashtable_create_pointer_empty<Workload_Base*, int>(4);
+			SCOPE_EXIT(hashtable_destroy(&workload_to_layer));
+			Hashset<Workload_Base*> unvisited = hashset_create_pointer_empty<Workload_Base*>(4);
+			SCOPE_EXIT(hashset_destroy(&unvisited));
+			for (int i = 0; i < all_workloads.size; i++) {
+				Workload_Base* workload = all_workloads[i];
+				if (!workload->is_finished) {
+					hashset_insert_element(&unvisited, workload);
+				}
+			}
 
-            bool loop_found = false;
-            int loop_node_count = -1;
-            Workload_Base* loop_node = 0;
-            Workload_Base* loop_node_2 = 0;
+			bool loop_found = false;
+			int loop_node_count = -1;
+			Workload_Base* loop_node = 0;
+			Workload_Base* loop_node_2 = 0;
 
-            // Breadth first search
-            Dynamic_Array<int> layer_start_indices = dynamic_array_create<int>(4);
-            SCOPE_EXIT(dynamic_array_destroy(&layer_start_indices));
-            Dynamic_Array<Workload_Base*> layers = dynamic_array_create<Workload_Base*>(4);
-            SCOPE_EXIT(dynamic_array_destroy(&layers));
+			// Breadth first search
+			Dynamic_Array<int> layer_start_indices = dynamic_array_create<int>(4);
+			SCOPE_EXIT(dynamic_array_destroy(&layer_start_indices));
+			Dynamic_Array<Workload_Base*> layers = dynamic_array_create<Workload_Base*>(4);
+			SCOPE_EXIT(dynamic_array_destroy(&layers));
 
-            // Note: Since we are dealing with possibly unconnected graphs (Not all workloads are connected) this is a double loop
-            while (!loop_found)
-            {
-                // Remove all nodes that are already confirmed to have no cycles (E.g nodes from last loop run)
-                for (int i = 0; i < layers.size; i++) {
-                    hashset_remove_element(&unvisited, layers[i]);
-                }
-                if (unvisited.element_count == 0) break;
-                dynamic_array_reset(&layer_start_indices);
-                dynamic_array_reset(&layers);
-                hashtable_reset(&workload_to_layer);
+			// Note: Since we are dealing with possibly unconnected graphs (Not all workloads are connected) this is a double loop
+			while (!loop_found)
+			{
+				// Remove all nodes that are already confirmed to have no cycles (E.g nodes from last loop run)
+				for (int i = 0; i < layers.size; i++) {
+					hashset_remove_element(&unvisited, layers[i]);
+				}
+				if (unvisited.element_count == 0) break;
+				dynamic_array_reset(&layer_start_indices);
+				dynamic_array_reset(&layers);
+				hashtable_reset(&workload_to_layer);
 
-                Workload_Base* start = *hashset_iterator_create(&unvisited).value;
-                dynamic_array_push_back(&layer_start_indices, layers.size);
-                dynamic_array_push_back(&layers, start);
-                dynamic_array_push_back(&layer_start_indices, layers.size);
+				Workload_Base* start = *hashset_iterator_create(&unvisited).value;
+				dynamic_array_push_back(&layer_start_indices, layers.size);
+				dynamic_array_push_back(&layers, start);
+				dynamic_array_push_back(&layer_start_indices, layers.size);
 
-                int current_layer = 0;
-                while (true && !loop_found)
-                {
-                    SCOPE_EXIT(current_layer++);
-                    int layer_start = layer_start_indices[current_layer];
-                    int layer_end = layer_start_indices[current_layer + 1];
-                    if (layer_start == layer_end) break;
-                    for (int i = layer_start; i < layer_end && !loop_found; i++)
-                    {
-                        Workload_Base* scan_for_loops = layers[i];
-                        assert(!scan_for_loops->is_finished, "");
-                        List_Node<Workload_Base*>* node = scan_for_loops->dependencies.head;
-                        while (node != 0 && !loop_found)
-                        {
-                            SCOPE_EXIT(node = node->next;);
-                            Workload_Base* dependency = node->value;
-                            if (!hashset_contains(&unvisited, dependency)) {
-                                // Node is clear because we checked it on a previous cycle
-                                continue;
-                            }
-                            int* found_layer = hashtable_find_element(&workload_to_layer, dependency);
-                            if (found_layer == nullptr) {
-                                hashtable_insert_element(&workload_to_layer, dependency, current_layer + 1);
-                                dynamic_array_push_back(&layers, dependency);
-                            }
-                            else
-                            {
-                                int dependency_layer = *found_layer;
-                                if (dependency_layer > current_layer) {
-                                    // This means the workload is already queued for the next layer
-                                }
-                                else if (dependency_layer == current_layer) {
-                                    // Here we need to check for self loops and loops with the breadth-first depth
-                                    if (dependency == scan_for_loops) { // Self dependency
-                                        loop_found = true;
-                                        loop_node_count = 1;
-                                    }
-                                    else if (hashtable_find_element(&executer.workload_dependencies, workload_pair_create(dependency, scan_for_loops)) != 0) {
-                                        loop_found = true;
-                                        loop_node_count = 2;
-                                    }
-                                }
-                                else {
-                                    // Definitly found a loop
-                                    loop_found = true;
-                                    loop_node_count = current_layer - dependency_layer + 1;
-                                }
+				int current_layer = 0;
+				while (true && !loop_found)
+				{
+					SCOPE_EXIT(current_layer++);
+					int layer_start = layer_start_indices[current_layer];
+					int layer_end = layer_start_indices[current_layer + 1];
+					if (layer_start == layer_end) break;
+					for (int i = layer_start; i < layer_end && !loop_found; i++)
+					{
+						Workload_Base* scan_for_loops = layers[i];
+						assert(!scan_for_loops->is_finished, "");
+						List_Node<Workload_Base*>* node = scan_for_loops->dependencies.head;
+						while (node != 0 && !loop_found)
+						{
+							SCOPE_EXIT(node = node->next;);
+							Workload_Base* dependency = node->value;
+							if (!hashset_contains(&unvisited, dependency)) {
+								// Node is clear because we checked it on a previous cycle
+								continue;
+							}
+							int* found_layer = hashtable_find_element(&workload_to_layer, dependency);
+							if (found_layer == nullptr) {
+								hashtable_insert_element(&workload_to_layer, dependency, current_layer + 1);
+								dynamic_array_push_back(&layers, dependency);
+							}
+							else
+							{
+								int dependency_layer = *found_layer;
+								if (dependency_layer > current_layer) {
+									// This means the workload is already queued for the next layer
+								}
+								else if (dependency_layer == current_layer) {
+									// Here we need to check for self loops and loops with the breadth-first depth
+									if (dependency == scan_for_loops) { // Self dependency
+										loop_found = true;
+										loop_node_count = 1;
+									}
+									else if (hashtable_find_element(&executer.workload_dependencies, workload_pair_create(dependency, scan_for_loops)) != 0) {
+										loop_found = true;
+										loop_node_count = 2;
+									}
+								}
+								else {
+									// Definitly found a loop
+									loop_found = true;
+									loop_node_count = current_layer - dependency_layer + 1;
+								}
 
-                                // Recheck and set loop nodes
-                                if (loop_found) {
-                                    loop_node = scan_for_loops;
-                                    loop_node_2 = dependency;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    dynamic_array_push_back(&layer_start_indices, layers.size);
-                }
-            }
+								// Recheck and set loop nodes
+								if (loop_found) {
+									loop_node = scan_for_loops;
+									loop_node_2 = dependency;
+									break;
+								}
+							}
+						}
+					}
+					dynamic_array_push_back(&layer_start_indices, layers.size);
+				}
+			}
 
-            // Handle the loop
-            if (loop_found)
-            {
-                // Reconstruct Loop
-                Dynamic_Array<Workload_Base*> workload_cycle = dynamic_array_create<Workload_Base*>(1);
-                SCOPE_EXIT(dynamic_array_destroy(&workload_cycle));
-                if (loop_node_count != 1) {
-                    // Depth first search
-                    bool found_loop_again = analysis_workload_find_cycle(loop_node_2, 1, loop_node, loop_node_count, &workload_cycle, &workload_to_layer);
-                    assert(found_loop_again, "");
-                    dynamic_array_reverse_order(&workload_cycle);
-                }
-                else {
-                    dynamic_array_push_back(&workload_cycle, loop_node);
-                }
+			// Handle the loop
+			if (loop_found)
+			{
+				// Reconstruct Loop
+				Dynamic_Array<Workload_Base*> workload_cycle = dynamic_array_create<Workload_Base*>(1);
+				SCOPE_EXIT(dynamic_array_destroy(&workload_cycle));
+				if (loop_node_count != 1) {
+					// Depth first search
+					bool found_loop_again = analysis_workload_find_cycle(loop_node_2, 1, loop_node, loop_node_count, &workload_cycle, &workload_to_layer);
+					assert(found_loop_again, "");
+					dynamic_array_reverse_order(&workload_cycle);
+				}
+				else {
+					dynamic_array_push_back(&workload_cycle, loop_node);
+				}
 
-                // Resolve and report error
-                bool breakable_dependency_found = false;
-                for (int i = 0; i < workload_cycle.size; i++)
-                {
-                    Workload_Base* workload = workload_cycle[i];
-                    Workload_Base* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
-                    Workload_Pair pair = workload_pair_create(workload, depends_on);
-                    Dependency_Information infos = *hashtable_find_element(&executer.workload_dependencies, pair);
-                    if (infos.can_be_broken) {
-                        breakable_dependency_found = true;
-                        for (int j = 0; j < infos.fail_indicators.size; j++) {
-                            log_semantic_error("Cyclic dependencies detected", upcast(infos.fail_indicators[j].error_report_node));
-                            for (int k = 0; k < workload_cycle.size; k++) {
-                                Workload_Base* workload = workload_cycle[k];
-                                log_error_info_cycle_workload(workload);
-                            }
-                        }
-                        workload_executer_remove_dependency(workload, depends_on, true, false);
-                    }
-                }
-                assert(breakable_dependency_found, "");
-                executer.progress_was_made = true;
-                if (PRINT_DEPENDENCIES) {
-                    logg("Resolved cyclic dependency loop!");
-                }
-            }
-        }
+				// Resolve and report error
+				bool breakable_dependency_found = false;
+				for (int i = 0; i < workload_cycle.size; i++)
+				{
+					Workload_Base* workload = workload_cycle[i];
+					Workload_Base* depends_on = i + 1 == workload_cycle.size ? workload_cycle[0] : workload_cycle[i + 1];
+					Workload_Pair pair = workload_pair_create(workload, depends_on);
+					Dependency_Information infos = *hashtable_find_element(&executer.workload_dependencies, pair);
+					if (infos.can_be_broken) {
+						breakable_dependency_found = true;
+						for (int j = 0; j < infos.fail_indicators.size; j++) {
+							log_semantic_error("Cyclic dependencies detected", upcast(infos.fail_indicators[j].error_report_node));
+							for (int k = 0; k < workload_cycle.size; k++) {
+								Workload_Base* workload = workload_cycle[k];
+								log_error_info_cycle_workload(workload);
+							}
+						}
+						workload_executer_remove_dependency(workload, depends_on, true, false);
+					}
+				}
+				assert(breakable_dependency_found, "");
+				executer.progress_was_made = true;
+				if (PRINT_DEPENDENCIES) {
+					logg("Resolved cyclic dependency loop!");
+				}
+			}
+		}
 
-        if (executer.progress_was_made) {
-            if (PRINT_DEPENDENCIES) {
-                logg("Progress was made!");
-            }
+		if (executer.progress_was_made) {
+			if (PRINT_DEPENDENCIES) {
+				logg("Progress was made!");
+			}
 
-            // TIMING
-            double now = timer_current_time_in_seconds();
-            time_in_loop_resolve += now - last_timestamp;
-            last_timestamp = now;
+			// TIMING
+			double now = timer_current_time_in_seconds();
+			time_in_loop_resolve += now - last_timestamp;
+			last_timestamp = now;
 
-            continue;
-        }
+			continue;
+		}
 
-        panic("Loops must have been resolved by now, so some progress needs to be have made..\n");
-    }
+		panic("Loops must have been resolved by now, so some progress needs to be have made..\n");
+	}
 
 
-    if (PRINT_TIMING)
-    {
-        double end_time = timer_current_time_in_seconds();
-        //logg("Time in Bake Analysis    %3.4f")
-        logg("Time in executer         %3.4fms\n", time_in_executer * 1000);
-        logg("Time in loop-resolve     %3.4fms\n", time_in_loop_resolve * 1000);
-        for (int i = 0; i < 10; i++) {
-            Analysis_Workload_Type type = (Analysis_Workload_Type)i;
-            const char* str = "";
-            switch (type) {
-            case Analysis_Workload_Type::BAKE_ANALYSIS: str = "Bake Analysis   "; break;
-            case Analysis_Workload_Type::BAKE_EXECUTION: str = "Bake Execute    "; break;
-            case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
-            case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
-            case Analysis_Workload_Type::IMPORT_RESOLVE: str = "Import Resolve   "; break;
-            case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: str = "Operator Context Change   "; break;
-            case Analysis_Workload_Type::EVENT: str = "Event           "; break;
+	if (PRINT_TIMING)
+	{
+		double end_time = timer_current_time_in_seconds();
+		//logg("Time in Bake Analysis    %3.4f")
+		logg("Time in executer         %3.4fms\n", time_in_executer * 1000);
+		logg("Time in loop-resolve     %3.4fms\n", time_in_loop_resolve * 1000);
+		for (int i = 0; i < 10; i++) {
+			Analysis_Workload_Type type = (Analysis_Workload_Type)i;
+			const char* str = "";
+			switch (type) {
+			case Analysis_Workload_Type::BAKE_ANALYSIS: str = "Bake Analysis   "; break;
+			case Analysis_Workload_Type::BAKE_EXECUTION: str = "Bake Execute    "; break;
+			case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
+			case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
+			case Analysis_Workload_Type::IMPORT_RESOLVE: str = "Import Resolve   "; break;
+			case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: str = "Operator Context Change   "; break;
+			case Analysis_Workload_Type::EVENT: str = "Event           "; break;
 
-            case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
-            case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
-            case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str = "Cluster Compile "; break;
+			case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
+			case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
+			case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: str = "Cluster Compile "; break;
 
-            case Analysis_Workload_Type::STRUCT_BODY: str = "Struct Body Analysis "; break;
-            case Analysis_Workload_Type::STRUCT_POLYMORPHIC: str = "Struct Polymorphic Header "; break;
-            default: panic("hey");
-            }
-            logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
-        }
-        logg("SUUM:                    %3.4fms\n\n", (end_time - start_time) * 1000);
-    }
+			case Analysis_Workload_Type::STRUCT_BODY: str = "Struct Body Analysis "; break;
+			case Analysis_Workload_Type::STRUCT_POLYMORPHIC: str = "Struct Polymorphic Header "; break;
+			default: panic("hey");
+			}
+			logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
+		}
+		logg("SUUM:                    %3.4fms\n\n", (end_time - start_time) * 1000);
+	}
 
 }
 
 void workload_add_to_runnable_queue_if_possible(Workload_Base* workload)
 {
-    auto graph = &workload_executer;
-    if (!workload->is_finished && workload->dependencies.count == 0) {
-        dynamic_array_push_back(&graph->runnable_workloads, workload);
-        graph->progress_was_made = true;
-    }
+	auto graph = &workload_executer;
+	if (!workload->is_finished && workload->dependencies.count == 0) {
+		dynamic_array_push_back(&graph->runnable_workloads, workload);
+		graph->progress_was_made = true;
+	}
 }
 
 bool workload_executer_switch_to_workload(Workload_Base* workload)
 {
-    if (!workload->was_started) {
-        workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
-        workload->was_started = true;
-    }
-    semantic_analyser.current_workload = workload;
-    bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
-    if (PRINT_DEPENDENCIES) {
-        auto tmp = string_create_empty(1);
-        analysis_workload_append_to_string(workload, &tmp);
-        if (workload->dependencies.count == 0) {
-            SCOPE_EXIT(string_destroy(&tmp));
-            logg("FINISHED: %s\n", tmp.characters);
-        }
-        else
-        {
-            // Print dependencies
-            List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
-            if (dependency_node != 0) {
-                string_append_formated(&tmp, "    Depends On:\n");
-            }
-            while (dependency_node != 0) {
-                SCOPE_EXIT(dependency_node = dependency_node->next);
-                Workload_Base* dependency = dependency_node->value;
-                string_append_formated(&tmp, "      ");
-                analysis_workload_append_to_string(dependency, &tmp);
-                string_append_formated(&tmp, "\n");
-            }
-            logg("WAITING: %s\n", tmp.characters);
-        }
-    }
-    semantic_analyser.current_workload = 0;
-    return result;
+	if (!workload->was_started) {
+		workload->fiber_handle = fiber_pool_get_handle(compiler.fiber_pool, analysis_workload_entry, workload);
+		workload->was_started = true;
+	}
+	semantic_analyser.current_workload = workload;
+	bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
+	if (PRINT_DEPENDENCIES) {
+		auto tmp = string_create_empty(1);
+		analysis_workload_append_to_string(workload, &tmp);
+		if (workload->dependencies.count == 0) {
+			SCOPE_EXIT(string_destroy(&tmp));
+			logg("FINISHED: %s\n", tmp.characters);
+		}
+		else
+		{
+			// Print dependencies
+			List_Node<Workload_Base*>* dependency_node = workload->dependencies.head;
+			if (dependency_node != 0) {
+				string_append_formated(&tmp, "    Depends On:\n");
+			}
+			while (dependency_node != 0) {
+				SCOPE_EXIT(dependency_node = dependency_node->next);
+				Workload_Base* dependency = dependency_node->value;
+				string_append_formated(&tmp, "      ");
+				analysis_workload_append_to_string(dependency, &tmp);
+				string_append_formated(&tmp, "\n");
+			}
+			logg("WAITING: %s\n", tmp.characters);
+		}
+	}
+	semantic_analyser.current_workload = 0;
+	return result;
 }
 
 void workload_executer_wait_for_dependency_resolution()
 {
-    Workload_Base* workload = semantic_analyser.current_workload;
-    if (workload->dependencies.count != 0) {
-        fiber_pool_switch_to_main_fiber(compiler.fiber_pool);
-    }
+	Workload_Base* workload = semantic_analyser.current_workload;
+	if (workload->dependencies.count != 0) {
+		fiber_pool_switch_to_main_fiber(compiler.fiber_pool);
+	}
 }
 
 void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 {
-    switch (workload->type)
-    {
-    case Analysis_Workload_Type::MODULE_ANALYSIS: {
-        auto module = downcast<Workload_Module_Analysis>(workload);
-        string_append(string, "Module analysis ");
-        string_append(string, module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
-        break;
-    }
-    case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
-        auto change = downcast<Workload_Operator_Context_Change>(workload);
-        string_append(string, "Operator Context Change Type: ");
-        AST::context_change_type_append_to_string(change->context_type_to_analyse, string);
-        break;
-    }
-    case Analysis_Workload_Type::IMPORT_RESOLVE: {
-        auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
-        string_append_formated(string, "Import ");
-        if (import_node->type == AST::Import_Type::FILE) {
-            string_append_formated(string, "\"%s\"", import_node->file_name->characters);
-        }
-        else {
-            AST::path_lookup_append_to_string(import_node->path, string);
-            if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
-                string_append_formated(string, "~*");
-            }
-            else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
-                string_append_formated(string, "~**");
-            }
-        }
-        break;
-    }
-    case Analysis_Workload_Type::DEFINITION: {
-        auto def = downcast<Workload_Definition>(workload);
-        string_append_formated(string, "Definition %s", def->symbol->id->characters);
-        if (def->is_extern_import) {
-            string_append_formated(string, " extern_import");
-        }
-        else {
-            if (def->options.normal.is_comptime) {
-                string_append_formated(string, " comptime");
-            }
-        }
-        break;
-    }
-    case Analysis_Workload_Type::EVENT: {
-        string_append_formated(string, "Event %s", downcast<Workload_Event>(workload)->description);
-        break;
-    }
-    case Analysis_Workload_Type::BAKE_ANALYSIS: {
-        string_append_formated(string, "Bake-Analysis");
-        break;
-    }
-    case Analysis_Workload_Type::BAKE_EXECUTION: {
-        string_append_formated(string, "Bake-Execution");
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_BODY: {
-        Symbol* symbol = 0;
-        auto function = downcast<Workload_Function_Body>(workload)->progress->function;
-        string_append_formated(string, "Body \"%s\"", function->name->characters);
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
-    {
-        string_append_formated(string, "Cluster-Compile [");
-        auto cluster = downcast<Workload_Function_Cluster_Compile>(analysis_workload_find_associated_cluster(workload));
-        for (int i = 0; i < cluster->functions.size; i++) {
-            auto function = cluster->functions[i];
-            string_append_formated(string, "%s, ", function->name->characters);
-        }
-        string_append_formated(string, "]");
-        break;
-    }
-    case Analysis_Workload_Type::FUNCTION_HEADER: {
-        auto function = downcast<Workload_Function_Header>(workload)->progress->function;
-        string_append_formated(string, "Header \"%s\"", function->name->characters);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_BODY: {
-        auto struct_id = downcast<Workload_Structure_Body>(workload)->struct_type->content.name->characters;
-        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
-        break;
-    }
-    case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-        auto struct_id = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->content.name->characters;
-        string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
-        break;
-    }
-    default: panic("");
-    }
+	switch (workload->type)
+	{
+	case Analysis_Workload_Type::MODULE_ANALYSIS: {
+		auto module = downcast<Workload_Module_Analysis>(workload);
+		string_append(string, "Module analysis ");
+		string_append(string, module->progress->symbol == 0 ? "ROOT" : module->progress->symbol->id->characters);
+		break;
+	}
+	case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
+		auto change = downcast<Workload_Operator_Context_Change>(workload);
+		string_append(string, "Operator Context Change Type: ");
+		AST::context_change_type_append_to_string(change->context_type_to_analyse, string);
+		break;
+	}
+	case Analysis_Workload_Type::IMPORT_RESOLVE: {
+		auto import_node = downcast<Workload_Import_Resolve>(workload)->import_node;
+		string_append_formated(string, "Import ");
+		if (import_node->type == AST::Import_Type::FILE) {
+			string_append_formated(string, "\"%s\"", import_node->file_name->characters);
+		}
+		else {
+			AST::path_lookup_append_to_string(import_node->path, string);
+			if (import_node->type == AST::Import_Type::MODULE_SYMBOLS) {
+				string_append_formated(string, "~*");
+			}
+			else if (import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
+				string_append_formated(string, "~**");
+			}
+		}
+		break;
+	}
+	case Analysis_Workload_Type::DEFINITION: {
+		auto def = downcast<Workload_Definition>(workload);
+		string_append_formated(string, "Definition %s", def->symbol->id->characters);
+		if (def->is_extern_import) {
+			string_append_formated(string, " extern_import");
+		}
+		else {
+			if (def->options.normal.is_comptime) {
+				string_append_formated(string, " comptime");
+			}
+		}
+		break;
+	}
+	case Analysis_Workload_Type::EVENT: {
+		string_append_formated(string, "Event %s", downcast<Workload_Event>(workload)->description);
+		break;
+	}
+	case Analysis_Workload_Type::BAKE_ANALYSIS: {
+		string_append_formated(string, "Bake-Analysis");
+		break;
+	}
+	case Analysis_Workload_Type::BAKE_EXECUTION: {
+		string_append_formated(string, "Bake-Execution");
+		break;
+	}
+	case Analysis_Workload_Type::FUNCTION_BODY: {
+		Symbol* symbol = 0;
+		auto function = downcast<Workload_Function_Body>(workload)->progress->function;
+		string_append_formated(string, "Body \"%s\"", function->name->characters);
+		break;
+	}
+	case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
+	{
+		string_append_formated(string, "Cluster-Compile [");
+		auto cluster = downcast<Workload_Function_Cluster_Compile>(analysis_workload_find_associated_cluster(workload));
+		for (int i = 0; i < cluster->functions.size; i++) {
+			auto function = cluster->functions[i];
+			string_append_formated(string, "%s, ", function->name->characters);
+		}
+		string_append_formated(string, "]");
+		break;
+	}
+	case Analysis_Workload_Type::FUNCTION_HEADER: {
+		auto function = downcast<Workload_Function_Header>(workload)->progress->function;
+		string_append_formated(string, "Header \"%s\"", function->name->characters);
+		break;
+	}
+	case Analysis_Workload_Type::STRUCT_BODY: {
+		auto struct_id = downcast<Workload_Structure_Body>(workload)->struct_type->content.name->characters;
+		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		break;
+	}
+	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
+		auto struct_id = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->content.name->characters;
+		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
+		break;
+	}
+	default: panic("");
+	}
 }
 
 Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload)
 {
-    while (workload != nullptr)
-    {
+	while (workload != nullptr)
+	{
 		Function_Progress* function_progress = nullptr;
 		switch (workload->type)
 		{
@@ -3023,9 +3029,9 @@ Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload)
 		case Analysis_Workload_Type::MODULE_ANALYSIS:
 		case Analysis_Workload_Type::DEFINITION:
 		case Analysis_Workload_Type::EVENT:
-		case Analysis_Workload_Type::IMPORT_RESOLVE: 
-		case Analysis_Workload_Type::BAKE_ANALYSIS: 
-		case Analysis_Workload_Type::BAKE_EXECUTION: 
+		case Analysis_Workload_Type::IMPORT_RESOLVE:
+		case Analysis_Workload_Type::BAKE_ANALYSIS:
+		case Analysis_Workload_Type::BAKE_EXECUTION:
 		case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
 			break;
 		case Analysis_Workload_Type::FUNCTION_BODY: {
@@ -3587,19 +3593,21 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
 
 
 // POLYMORPHIC HEADER PARSING
-struct Parameter_Symbol_Lookup
-{
-	int defined_in_parameter_index;
-	String* id;
-};
-
 bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* expression)
 {
-	if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
+	if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) 
+	{
 		Datatype_Template** template_param_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, expression);
 		if (template_param_opt == nullptr) return false;
 		Datatype_Template* template_param = *template_param_opt;
-		auto& value = semantic_analyser.current_workload->polymorphic_values[template_param->value_access_index];
+
+		auto workload = semantic_analyser.current_workload;
+		Array<Poly_Value> poly_values = workload->polymorphic_values;
+		if (template_param->symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
+			poly_values = workload->header_analysis_poly_values;
+		}
+
+		auto& value = poly_values[template_param->value_access_index];
 		if (value.type == Poly_Value_Type::SET) {
 			return false;
 		}
@@ -3713,13 +3721,17 @@ void expression_search_for_implicit_parameters_and_symbol_lookups(
 	}
 }
 
-void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parameter* parameter_node)
+void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parameter* parameter_node, bool allow_struct_instance_template)
 {
 	auto workload = semantic_analyser.current_workload;
 
 	// Analyse type
 	parameter.name = parameter_node->name;
+	if (allow_struct_instance_template) {
+		workload->allow_struct_instance_templates = true;
+	}
 	parameter.type = semantic_analyser_analyse_expression_type(parameter_node->type);
+	workload->allow_struct_instance_templates = false;
 	if (!parameter_node->is_comptime && !parameter_node->is_mutable) {
 		parameter.type = type_system_make_constant(parameter.type);
 	}
@@ -3752,114 +3764,97 @@ struct Parameter_Dependency
 	int dependency_count;
 };
 
-// Returns not-available if no polymorphic-parameters were found
-Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
+// Defines all necessary symbols in symbol-table, and looks for polymorphism
+Poly_Header poly_header_create_and_analyse_params(
 	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, Function_Progress* progress = 0, AST::Expression* return_type = 0)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
-
-	// Define parameter symbols and search for symbol-lookups and implicit parameters
-	Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
-	Dynamic_Array<Inferred_Parameter> inferred_parameters = dynamic_array_create<Inferred_Parameter>();
-	bool delete_inferred_parameters = true;
-	SCOPE_EXIT(dynamic_array_destroy(&symbol_lookups));
-	SCOPE_EXIT(if (delete_inferred_parameters) { dynamic_array_destroy(&inferred_parameters); });
-
-	int comptime_parameter_count = 0;
-	for (int i = 0; i < parameter_nodes.size; i++)
-	{
-		auto parameter_node = parameter_nodes[i];
-
-		bool is_comptime = parameter_node->is_comptime || progress == 0;
-		Symbol* symbol = symbol_table_define_symbol(
-			symbol_table, parameter_node->name, (is_comptime ? Symbol_Type::POLYMORPHIC_VALUE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
-			(is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL)
-		);
-
-		// Store symbol infos
-		get_info(parameter_node, true)->symbol = symbol;
-
-		if (is_comptime) {
-			symbol->options.polymorphic_value.access_index = comptime_parameter_count;
-			symbol->options.polymorphic_value.defined_in_parameter_index = i;
-			comptime_parameter_count += 1;
-		}
-		else {
-			symbol->options.parameter.function = progress;
-			symbol->options.parameter.index_in_polymorphic_signature = i;
-			symbol->options.parameter.index_in_non_polymorphic_signature = i - comptime_parameter_count;
-		}
-		expression_search_for_implicit_parameters_and_symbol_lookups(i, parameter_node->type, inferred_parameters, symbol_lookups);
-	}
-
-	// Check for return type
 	bool has_return_type = return_type != 0;
-	if (has_return_type) {
-		expression_search_for_implicit_parameters_and_symbol_lookups(parameter_nodes.size, return_type, inferred_parameters, symbol_lookups);
-	}
 
-	// Exit if we are non-polymorphic
-	if (comptime_parameter_count == 0 && inferred_parameters.size == 0) {
-		return optional_make_failure<Poly_Header>();
-	}
+	// Poly_Header structure is always generated, but it is destroy if it turns out we don't have a polymorphic function
 	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
-	delete_inferred_parameters = false;
-
-
-
-	// Otherwise create polymorphic base info
 	Poly_Header header;
 	header.name = name;
 	header.return_type_index = has_return_type ? parameter_nodes.size : -1;
 	header.return_type_node = return_type;
 	header.parameter_nodes = parameter_nodes;
 	header.symbol_table = symbol_table;
-	header.poly_value_count = comptime_parameter_count + inferred_parameters.size;
+	header.poly_value_count = 0;
 	header.is_function = progress != 0;
-	header.parameters = array_create<Poly_Parameter>(parameter_nodes.size + (has_return_type ? 1 : 0));
 	header.instances = dynamic_array_create<Poly_Instance>();
+	header.inferred_parameters = dynamic_array_create<Inferred_Parameter>();
+	header.base_analysis_values = array_create_static<Poly_Value>(nullptr, 0);
+	header.parameters = array_create<Poly_Parameter>(parameter_nodes.size + (has_return_type ? 1 : 0));
 	header.parameter_analysis_order = dynamic_array_create<int>(header.parameters.size);
+	header.symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
+	header.found_templated_parameter_type = false;
+
+	// Define parameter symbols and search for symbol-lookups and implicit parameters
+	int comptime_parameter_count = 0;
+	for (int i = 0; i < parameter_nodes.size; i++)
+	{
+		auto parameter_node = parameter_nodes[i];
+		auto& poly_param = header.parameters[i];
+
+		// Define symbol
+		bool is_comptime = parameter_node->is_comptime || progress == 0; // In poly-struct all parameters are comptime
+		Symbol* symbol = symbol_table_define_symbol(
+			symbol_table, parameter_node->name, (is_comptime ? Symbol_Type::POLYMORPHIC_VALUE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
+			Symbol_Access_Level::POLYMORPHIC // Set all parameter symbol-access initallly to polymorphic, so that that all params can access all others
+		);
+		get_info(parameter_node, true)->symbol = symbol;
+
+		// Set symbol/parameter infos
+		poly_param.is_comptime = is_comptime;
+		poly_param.infos = function_parameter_make_empty();
+		poly_param.contains_inferred_parameter = false;
+		poly_param.has_self_dependency = false;
+		poly_param.depends_on_other_parameters = false;
+		if (is_comptime)
+		{
+			poly_param.options.value_access_index = comptime_parameter_count;
+			symbol->options.polymorphic_value.access_index = comptime_parameter_count;
+			symbol->options.polymorphic_value.defined_in_parameter_index = i;
+			symbol->options.polymorphic_value.header_workload = semantic_analyser.current_workload;
+			comptime_parameter_count += 1;
+		}
+		else {
+			symbol->options.parameter.function = progress;
+			symbol->options.parameter.index_in_polymorphic_signature = i;
+			symbol->options.parameter.index_in_non_polymorphic_signature = i - comptime_parameter_count;
+			poly_param.options.index_in_non_polymorphic_signature = i - comptime_parameter_count;
+		}
+
+		// Find implicit parameters/lookups
+		expression_search_for_implicit_parameters_and_symbol_lookups(i, parameter_node->type, header.inferred_parameters, header.symbol_lookups);
+	}
+
+	// Check for return type
+	if (has_return_type)
+	{
+		auto& return_param = header.parameters[header.return_type_index];
+		return_param.is_comptime = false;
+		return_param.options.index_in_non_polymorphic_signature = -1;
+		return_param.infos = function_parameter_make_empty();
+		return_param.contains_inferred_parameter = false;
+		return_param.has_self_dependency = false;
+		return_param.depends_on_other_parameters = false;
+
+		expression_search_for_implicit_parameters_and_symbol_lookups(parameter_nodes.size, return_type, header.inferred_parameters, header.symbol_lookups);
+	}
+
+	// Store poly-value count and init Poly_Values
+	header.poly_value_count = comptime_parameter_count + header.inferred_parameters.size;
 	header.base_analysis_values = array_create<Poly_Value>(header.poly_value_count);
-	header.inferred_parameters = inferred_parameters;
 	for (int i = 0; i < header.base_analysis_values.size; i++) {
 		header.base_analysis_values[i] = poly_value_make_unset(types.unknown_type);
 	}
 
-	// Init poly-parameter infos
-	int next_value_access_index = 0;
-	for (int i = 0; i < parameter_nodes.size; i++)
+	// Initialize Inferred-Parameters (Create symbols + Types, set poly-values for header analysis)
+	int next_value_access_index = comptime_parameter_count;
+	for (int i = 0; i < header.inferred_parameters.size; i++)
 	{
-		auto& parameter = header.parameters[i];
-		auto node = parameter_nodes[i];
-		parameter.is_comptime = node->is_comptime || !header.is_function; // In poly-struct all parameters are comptime
-		if (parameter.is_comptime) {
-			parameter.options.value_access_index = next_value_access_index;
-			next_value_access_index += 1;
-		}
-		else {
-			parameter.options.index_in_non_polymorphic_signature = i - next_value_access_index;
-		}
-		parameter.infos = function_parameter_make_empty();
-		parameter.contains_inferred_parameter = false;
-		parameter.has_self_dependency = false;
-		parameter.depends_on_other_parameters = false;
-	}
-	// Init return value
-	if (header.return_type_index != -1)
-	{
-		auto& parameter = header.parameters[header.return_type_index];
-		parameter.is_comptime = false;
-		parameter.options.index_in_non_polymorphic_signature = -1;
-		parameter.infos = function_parameter_make_empty();
-		parameter.contains_inferred_parameter = false;
-		parameter.has_self_dependency = false;
-		parameter.depends_on_other_parameters = false;
-	}
-
-	// Create symbols + types for inferred Parameters
-	for (int i = 0; i < inferred_parameters.size; i++)
-	{
-		auto& inferred = inferred_parameters[i];
+		auto& inferred = header.inferred_parameters[i];
 		header.parameters[inferred.defined_in_parameter_index].contains_inferred_parameter = true;
 
 		// Create symbol
@@ -3868,36 +3863,41 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
 			Symbol_Type::POLYMORPHIC_VALUE, AST::upcast(inferred.expression), Symbol_Access_Level::POLYMORPHIC
 		);
 
-		// Create type
+		// Create type and set symbol data
 		auto template_type = type_system_make_template_type(symbol, next_value_access_index, inferred.defined_in_parameter_index);
 		inferred.template_parameter = template_type;
 		symbol->options.polymorphic_value.access_index = template_type->value_access_index;
 		symbol->options.polymorphic_value.defined_in_parameter_index = inferred.defined_in_parameter_index;
+		symbol->options.polymorphic_value.header_workload = semantic_analyser.current_workload;
 		hashtable_insert_element(&semantic_analyser.valid_template_parameters, inferred.expression, template_type);
 		next_value_access_index += 1;
+
+		// Note: These are set here, so we get template types in header-analysis, e.g. for overload resolution
+		header.base_analysis_values[template_type->value_access_index] = poly_value_make_template_type(upcast(template_type));
 	}
 
 	// Generate parameter analysis order
-	Array<Parameter_Dependency> dependencies = array_create<Parameter_Dependency>(header.parameters.size);
-	for (int i = 0; i < dependencies.size; i++) {
-		dependencies[i].dependency_count = 0;
-		dependencies[i].dependees = dynamic_array_create<int>();
-		dependencies[i].depends_on = dynamic_array_create<int>();
-	}
-	SCOPE_EXIT(
-		for (int i = 0; i < dependencies.size; i++) {
-			dynamic_array_destroy(&dependencies[i].dependees);
-			dynamic_array_destroy(&dependencies[i].depends_on);
-		}
-	array_destroy(&dependencies);
-		);
 	{
+		Array<Parameter_Dependency> dependencies = array_create<Parameter_Dependency>(header.parameters.size);
+		for (int i = 0; i < dependencies.size; i++) {
+			dependencies[i].dependency_count = 0;
+			dependencies[i].dependees = dynamic_array_create<int>();
+			dependencies[i].depends_on = dynamic_array_create<int>();
+		}
+		SCOPE_EXIT(
+			for (int i = 0; i < dependencies.size; i++) {
+				dynamic_array_destroy(&dependencies[i].dependees);
+				dynamic_array_destroy(&dependencies[i].depends_on);
+			}
+		array_destroy(&dependencies);
+			);
+
 		// Add dependencies between parameters based on found symbol-lookups
 		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
 		SCOPE_EXIT(dynamic_array_destroy(&symbols));
-		for (int i = 0; i < symbol_lookups.size; i++)
+		for (int i = 0; i < header.symbol_lookups.size; i++)
 		{
-			auto& lookup = symbol_lookups[i];
+			auto& lookup = header.symbol_lookups[i];
 			dynamic_array_reset(&symbols);
 			symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::POLYMORPHIC, &symbols, &semantic_analyser.symbol_lookup_visited);
 			if (symbols.size == 0) {
@@ -3906,22 +3906,34 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
 			else if (symbols.size == 1)
 			{
 				auto symbol = symbols[0];
-				assert(symbol->type == Symbol_Type::POLYMORPHIC_VALUE, "Other symbols shouldn't be accessible");
 
-				int defined_in_param = symbol->options.polymorphic_value.defined_in_parameter_index;
-				int access_index = symbol->options.polymorphic_value.access_index;
+				// Find access info
+				bool is_inferred_access = false;
+				int defined_in_param_index = 0;
+				if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) {
+					defined_in_param_index = symbol->options.polymorphic_value.defined_in_parameter_index;
+					int access_index = symbol->options.polymorphic_value.access_index;
+					is_inferred_access = access_index >= comptime_parameter_count;
+				}
+				else if (symbol->type == Symbol_Type::PARAMETER) {
+					defined_in_param_index = symbol->options.parameter.index_in_polymorphic_signature;
+					is_inferred_access = false;
+				}
+				else {
+					panic("Symbol lookup is only in parameter table, so we shouln't have other values!");
+				}
 
-				// Check self-dependencies
-				if (defined_in_param == lookup.defined_in_parameter_index) {
+				// Check for self-dependencies
+				if (defined_in_param_index == lookup.defined_in_parameter_index) {
 					header.parameters[lookup.defined_in_parameter_index].has_self_dependency = true;
 					// Skip self dependency if it's an inferred parameter
-					if (access_index >= comptime_parameter_count) {
+					if (is_inferred_access) {
 						continue;
 					}
 				}
 
-				dynamic_array_push_back(&dependencies[lookup.defined_in_parameter_index].depends_on, defined_in_param);
-				dynamic_array_push_back(&dependencies[defined_in_param].dependees, lookup.defined_in_parameter_index);
+				dynamic_array_push_back(&dependencies[lookup.defined_in_parameter_index].depends_on, defined_in_param_index);
+				dynamic_array_push_back(&dependencies[defined_in_param_index].dependees, lookup.defined_in_parameter_index);
 				dependencies[lookup.defined_in_parameter_index].dependency_count += 1;
 				header.parameters[lookup.defined_in_parameter_index].depends_on_other_parameters = true;
 			}
@@ -3962,17 +3974,63 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
 			runnable_end = header.parameter_analysis_order.size;
 			runnable_count = runnable_end - runnable_start;
 		}
+
+		// Handle cyclic dependencies
+		if (header.parameter_analysis_order.size != header.parameters.size)
+		{
+			// Note: all parameters which aren't contained in analysis_order indices are contained in loop
+			assert(header.parameter_analysis_order.size < header.parameters.size, "Must be smaller");
+
+			// Create mask which parameters contain loops
+			Array<bool> contains_loop = array_create<bool>(header.parameters.size);
+			SCOPE_EXIT(array_destroy(&contains_loop));
+			for (int i = 0; i < header.parameters.size; i++) {
+				contains_loop[i] = true;
+			}
+			for (int i = 0; i < header.parameter_analysis_order.size; i++) {
+				contains_loop[header.parameter_analysis_order[i]] = false;
+			}
+
+			// Log errors for parameters with circular dependencies:
+			// Note: these expressions aren't analysed, because they have dependencies
+			for (int i = 0; i < header.parameters.size; i++)
+			{
+				auto& param = header.parameters[i];
+				if (!contains_loop[i]) {
+					continue;
+				}
+
+				AST::Node* error_report_node = 0;
+				if (i == header.return_type_index) {
+					error_report_node = upcast(return_type);
+				}
+				else {
+					error_report_node = upcast(parameter_nodes[i]);
+				}
+
+
+				log_semantic_error("Parameter contains circular dependency, to:", error_report_node, Parser::Section::FIRST_TOKEN);
+				for (int j = 0; j < dependencies[i].depends_on.size; j++) {
+					int other_index = dependencies[i].depends_on[j];
+					if (!contains_loop[other_index]) {
+						continue;
+					}
+					if (other_index == header.return_type_index) {
+						log_error_info_comptime_msg("Return type");
+					}
+					else {
+						auto other_param = parameter_nodes[other_index];
+						log_error_info_id(other_param->name);
+					}
+				}
+			}
+		}
 	}
 
-	// Analyse parameters/return types without dependencies
+	// Analyse parameters/return types without dependencies on other parameters
 	semantic_analyser.current_workload->current_symbol_table = symbol_table;
-	semantic_analyser.current_workload->polymorphic_values = header.base_analysis_values;
 	semantic_analyser.current_workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-	for (int i = 0; i < header.inferred_parameters.size; i++) {
-		// During header analysis we want the inferred parameters to work
-		const auto& inferred = header.inferred_parameters[i];
-		header.base_analysis_values[inferred.template_parameter->value_access_index] = poly_value_make_template_type(upcast(inferred.template_parameter));
-	}
+	semantic_analyser.current_workload->header_analysis_poly_values = header.base_analysis_values;
 	for (int i = 0; i < header.parameter_analysis_order.size; i++)
 	{
 		int param_index = header.parameter_analysis_order[i];
@@ -3988,7 +4046,6 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
 			}
 		}
 
-		// Don't analyse parameter with dependencies
 		if (param.depends_on_other_parameters) {
 			continue;
 		}
@@ -3997,100 +4054,65 @@ Optional<Poly_Header> define_parameter_symbols_and_check_for_polymorphism(
 		AST::Node* node = nullptr;
 		if (param_index == header.return_type_index) {
 			node = upcast(header.return_type_node);
+			semantic_analyser.current_workload->allow_struct_instance_templates = true;
 			param.infos.type = semantic_analyser_analyse_expression_type(header.return_type_node);
+			semantic_analyser.current_workload->allow_struct_instance_templates = false;
+			if (param.infos.type->contains_template) {
+				param.contains_inferred_parameter = true;
+			}
 		}
 		else {
 			node = upcast(parameter_nodes[param_index]);
-			analyse_parameter_type_and_value(param.infos, parameter_nodes[param_index]);
+			analyse_parameter_type_and_value(param.infos, parameter_nodes[param_index], true);
+			if (param.infos.type->contains_template) {
+				param.contains_inferred_parameter = true;
+			}
 			if (param.is_comptime && !param.contains_inferred_parameter) {
 				header.base_analysis_values[param.options.value_access_index] = poly_value_make_unset(param.infos.type);
 			}
 		}
 
-		// Log error if param does not contain template
-		if (param.contains_inferred_parameter) {
-			if (!param.infos.type->contains_template) {
-				if (!datatype_is_unknown(param.infos.type)) {
-					log_semantic_error("Parameter contains inferred parameter, but type does not contain template", node);
-				}
-				else {
-					semantic_analyser_set_error_flag(true);
-				}
-			}
-		}
-		else {
-			assert(!param.infos.type->contains_template, "Should not happen without inferred param");
+		if (param.infos.type->contains_template) {
+			header.found_templated_parameter_type = true;
 		}
 	}
+
+	// Set Inferred parameters to unknown-type, as body-workload shouldn't use templated types (As they should only be used for type-matching in header)
 	for (int i = 0; i < header.inferred_parameters.size; i++) {
-		// During base-body analysis we want accesses to inferred parameters to be unknown
-		const auto& inferred = header.inferred_parameters[i];
-		header.base_analysis_values[inferred.template_parameter->value_access_index] = poly_value_make_unset(types.unknown_type);
+		header.base_analysis_values[header.inferred_parameters[i].template_parameter->value_access_index] = poly_value_make_unset(types.unknown_type);
 	}
+	semantic_analyser.current_workload->header_analysis_poly_values = array_create_static<Poly_Value>(nullptr, 0);
 
-	// Handle cyclic dependencies
-	if (header.parameter_analysis_order.size != header.parameters.size)
-	{
-		assert(header.parameter_analysis_order.size < header.parameters.size, "Must be smaller");
-
-		// Create mask which parameters contain loops
-		Array<bool> contains_loop = array_create<bool>(header.parameters.size);
-		SCOPE_EXIT(array_destroy(&contains_loop));
-		for (int i = 0; i < header.parameters.size; i++) {
-			contains_loop[i] = true;
-		}
-		for (int i = 0; i < header.parameter_analysis_order.size; i++) {
-			contains_loop[header.parameter_analysis_order[i]] = false;
-		}
-
-		// Analyse parameters containing loops (Not analysed before)
-		for (int i = 0; i < header.parameters.size; i++)
-		{
-			auto& param = header.parameters[i];
-			if (!contains_loop[i]) {
-				continue;
-			}
-
-			AST::Node* error_report_node = 0;
-			if (i == header.return_type_index) {
-				error_report_node = upcast(return_type);
-			}
-			else {
-				error_report_node = upcast(parameter_nodes[i]);
-			}
-
-			log_semantic_error("Parameter contains circular dependency, to:", error_report_node, Parser::Section::FIRST_TOKEN);
-			for (int j = 0; j < dependencies[i].depends_on.size; j++) {
-				int other_index = dependencies[i].depends_on[j];
-				if (!contains_loop[other_index]) {
-					continue;
-				}
-				if (other_index == header.return_type_index) {
-					log_error_info_comptime_msg("Return type");
-				}
-				else {
-					auto other_param = parameter_nodes[other_index];
-					log_error_info_id(other_param->name);
-				}
-			}
-		}
-	}
-
-	return optional_make_success(header);
+	return header;
 }
 
-void polymorphic_header_destroy(Poly_Header* info)
+void poly_header_destroy(Poly_Header* info)
 {
 	array_destroy(&info->parameters);
+	dynamic_array_destroy(&info->parameter_analysis_order);
+	dynamic_array_destroy(&info->inferred_parameters);
+	dynamic_array_destroy(&info->symbol_lookups);
+	array_destroy(&info->base_analysis_values);
 	for (int i = 0; i < info->instances.size; i++) {
 		auto& instance = info->instances[i];
 		array_destroy(&instance.instance_values);
 	}
 	dynamic_array_destroy(&info->instances);
-	dynamic_array_destroy(&info->inferred_parameters);
-	dynamic_array_destroy(&info->parameter_analysis_order);
-	array_destroy(&info->base_analysis_values);
 }
+
+// Return null if it's not working
+Datatype* poly_struct_check_if_instance_template_allowed(Workload_Structure_Polymorphic* poly_struct)
+{
+	// Note: This is a new feature, and should only happen if we have something like
+	//		add :: (x: Node), where Node is a poly-struct
+	if (!semantic_analyser.current_workload->allow_struct_instance_templates) return nullptr;
+	Array<Poly_Value> values = array_create<Poly_Value>(poly_struct->info.poly_value_count);
+	for (int i = 0; i < values.size; i++) {
+		values[i] = poly_value_make_unset(compiler.analysis_data->type_system.predefined_types.unknown_type);
+	}
+	return upcast(type_system_make_struct_instance_template(poly_struct, values));
+}
+
 
 
 
@@ -4193,6 +4215,9 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
 				// this currently happens for inferred parameters in struct instances, e.g.:
 				//      Foo :: struct(F: Filter($T))
 				//      check_filter :: (a: Foo($F)) --> Creates struct instance template where $T is not set
+				// Other ways this may happen is with
+				//      Node :: struct (T: Type_Handle)
+				//      foo :: (a: Node) --> Here polymorphism is kinda implicit, which is a new feature
 				continue;
 			}
 			else if (template_to_match.type == Poly_Value_Type::TEMPLATED_TYPE)
@@ -4666,6 +4691,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 				RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
 				RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
 				RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
+				RESTORE_ON_SCOPE_EXIT(workload->allow_struct_instance_templates, true);
 				return_type = semantic_analyser_analyse_expression_type(poly_header->return_type_node);
 			}
 
@@ -4735,9 +4761,10 @@ Instanciation_Result instanciate_polymorphic_callable(
 			RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
 			RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
 			RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
+			RESTORE_ON_SCOPE_EXIT(workload->allow_struct_instance_templates, true);
 			parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
 
-			if (datatype_is_unknown(parameter_type)) {
+			if (datatype_is_unknown(parameter_type) && !parameter_type->contains_template) {
 				success = false;
 				continue;
 			}
@@ -5040,7 +5067,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 	// Define Symbols if there are any
 	// NOTE: Symbol_Access_Level::GLOBAL may be wrong when importing a local variable, but I'm not even sure this works
 	auto workload = semantic_analyser.current_workload;
-	if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) 
+	if (import_node->type == AST::Import_Type::SINGLE_SYMBOL)
 	{
 		auto name = import_node->path->last->name;
 		if (import_node->alias_name.available != 0) {
@@ -5054,7 +5081,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 			get_info(import_node->alias_name.value, true)->symbol = import_workload->symbol;
 		}
 	}
-	else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name.available) 
+	else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name.available)
 	{
 		import_workload->symbol = symbol_table_define_symbol(
 			workload->current_symbol_table, import_node->alias_name.value->name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
@@ -5574,12 +5601,13 @@ void analysis_workload_entry(void* userdata)
 		auto& parameter_nodes = signature_node.parameters;
 		assert(function->function_type == ModTree_Function_Type::NORMAL, "");
 
-		Optional<Poly_Header> polymorphic_info_opt = define_parameter_symbols_and_check_for_polymorphism(
+		Poly_Header poly_header_info = poly_header_create_and_analyse_params(
 			signature_node.parameters, workload->current_symbol_table, function->name, progress,
 			(signature_node.return_value.available ? signature_node.return_value.value : nullptr)
 		);
 
-		if (polymorphic_info_opt.available)
+		bool is_polymorphic = poly_header_info.poly_value_count > 0 || poly_header_info.found_templated_parameter_type;
+		if (is_polymorphic)
 		{
 			// Switch progress type to polymorphic base
 			progress->header_workload->base.is_polymorphic_base = true;
@@ -5587,7 +5615,7 @@ void analysis_workload_entry(void* userdata)
 			progress->compile_workload->base.is_polymorphic_base = true;
 
 			progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
-			progress->polymorphic.function_base.base = polymorphic_info_opt.value;
+			progress->polymorphic.function_base.base = poly_header_info;
 			auto& base = progress->polymorphic.function_base.base;
 
 			// Set polymorphic access infos for child workloads
@@ -5636,17 +5664,18 @@ void analysis_workload_entry(void* userdata)
 			Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>(parameter_nodes.size);
 			for (int i = 0; i < parameter_nodes.size; i++) {
 				auto node = parameter_nodes[i];
+				auto poly_param = poly_header_info.parameters[i];
 				assert(!node->is_comptime, "");
-				Function_Parameter parameter;
-				analyse_parameter_type_and_value(parameter, node);
-				dynamic_array_push_back(&parameters, parameter);
+				dynamic_array_push_back(&parameters, poly_param.infos);
 			}
 
 			Datatype* return_type = 0;
 			if (signature_node.return_value.available) {
-				return_type = semantic_analyser_analyse_expression_type(signature_node.return_value.value);
+				return_type = poly_header_info.parameters[poly_header_info.return_type_index].infos.type;
 			}
 			function->signature = type_system_make_function(parameters, return_type);
+
+			poly_header_destroy(&poly_header_info);
 		}
 
 		break;
@@ -5706,17 +5735,15 @@ void analysis_workload_entry(void* userdata)
 		// Create new symbol-table, define symbols and analyse parameters
 		Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, Symbol_Access_Level::GLOBAL);
 		workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-		auto poly_info_opt = define_parameter_symbols_and_check_for_polymorphism(
+		auto poly_header_info = poly_header_create_and_analyse_params(
 			struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->content.name, 0, 0
 		);
-		assert(poly_info_opt.available, "Must be polymorphic");
-		auto& info = poly_info_opt.value;
-		workload_poly->info = info;
+		workload_poly->info = poly_header_info;
 
 		// Store/Set correct symbol table for base-analysis and instance analysis
 		workload_poly->base.current_symbol_table = parameter_table;
 		workload_poly->body_workload->base.current_symbol_table = parameter_table;
-		workload_poly->body_workload->base.polymorphic_values = info.base_analysis_values;
+		workload_poly->body_workload->base.polymorphic_values = poly_header_info.base_analysis_values;
 		workload_poly->body_workload->base.symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
 		break;
 	}
@@ -6131,7 +6158,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 	}
 	case Symbol_Type::PARAMETER:
 	case Symbol_Type::POLYMORPHIC_VALUE: {
-		// If i can access this symbol this means the header-analysis must have finished by now
+		// If i can access this symbol this means the header-analysis must have finished, or we are inside parameter analysis
 		break;
 	}
 	default: break;
@@ -6195,9 +6222,13 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 		expression_info_set_value(&result, progress->function->signature->parameters[param.index_in_non_polymorphic_signature].type, false);
 		return result;
 	}
-	case Symbol_Type::POLYMORPHIC_VALUE: {
+	case Symbol_Type::POLYMORPHIC_VALUE:
+	{
 		int access_index = symbol->options.polymorphic_value.access_index;
-		auto poly_values = workload->polymorphic_values;
+		Array<Poly_Value> poly_values = workload->polymorphic_values;
+		if (symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
+			poly_values = workload->header_analysis_poly_values;
+		}
 		assert(poly_values.data != 0, "Why can we access non-polymorphic parameter here");
 
 		auto& value = poly_values[access_index];
@@ -7747,8 +7778,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		assert(!poly_type->is_reference, "We can never be the reference if we are at the symbol, e.g. $T is not a symbol-read like T");
 
 		// If value is already set, return the value
-		auto& poly_values = analyser.current_workload->polymorphic_values;
-		assert(poly_values.data != nullptr, "I don't think this should happen");
+		auto workload = semantic_analyser.current_workload;
+		Array<Poly_Value> poly_values = workload->polymorphic_values;
+		if (poly_type->symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
+			poly_values = workload->header_analysis_poly_values;
+		}
+		assert(poly_values.data != nullptr, "Why can we access non-polymorphic parameter here");
 
 		auto& value = poly_values[poly_type->value_access_index];
 		switch (value.type)
@@ -8135,7 +8170,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				continue;
 			}
 			Function_Parameter parameter = function_parameter_make_empty();
-			analyse_parameter_type_and_value(parameter, param_node);
+			analyse_parameter_type_and_value(parameter, param_node, false);
 			dynamic_array_push_back(&parameters, parameter);
 		}
 		Datatype* return_type = 0;
@@ -9307,6 +9342,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				EXIT_ERROR(types.unknown_type);
 			}
 			case Expression_Result_Type::POLYMORPHIC_STRUCT: {
+				Datatype* instance_type = poly_struct_check_if_instance_template_allowed(operand_result->options.polymorphic_struct);
+				if (instance_type != nullptr) {
+					EXIT_TYPE(upcast(type_system_make_pointer(instance_type)));
+				}
 				log_semantic_error("Cannot get pointer to a polymorphic struct (Must be instanciated)", expr);
 				EXIT_ERROR(types.unknown_type);
 			}
@@ -10134,7 +10173,13 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 		log_error_info_expression_result_type(result->result_type);
 		return types.unknown_type;
 	}
-	case Expression_Result_Type::POLYMORPHIC_STRUCT: {
+	case Expression_Result_Type::POLYMORPHIC_STRUCT:
+	{
+		Datatype* instance_type = poly_struct_check_if_instance_template_allowed(result->options.polymorphic_struct);
+		if (instance_type != nullptr) {
+			return instance_type;
+		}
+
 		log_semantic_error("Expected a specific type, given polymorphic struct", expression);
 		log_error_info_expression_result_type(result->result_type);
 		return types.unknown_type;
@@ -12668,7 +12713,7 @@ void semantic_analyser_finish()
 
 void function_progress_destroy(Function_Progress* progress) {
 	if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-		polymorphic_header_destroy(&progress->polymorphic.function_base.base);
+		poly_header_destroy(&progress->polymorphic.function_base.base);
 	}
 	delete progress;
 }

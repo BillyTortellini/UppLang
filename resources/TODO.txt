@@ -1,15 +1,29 @@
 
 
+ get_overload cannot differentiate this? Differentiate based on argument names must be enough?
+
 CURRENT: 
 --------
+
  * Update Struct-Instance-Template for things
  * Check how hard it would be to have polymorphic types implicitly, e.g.
     add :: (array: Dynamic_Array, value: array.T)
+    --> Maybe not even that hard, the array.T access seems to suck the most currently...
+
+Poly-Update DONE:
+ * Matching with empty struct instance template
+ * Polymorphic-header needs to check if a parameter is polymorphic
+
+
+IN QUEUE:
+---------
  * UI-Update
+ * Debugger Stepping fixes
 
 DONE:
 -----
 27.03
+ - Almost finished implementing new implicit Polymorphism
  - Fixed testcases at polymorphic instanciation limit
  - Fixed coloring of invalid expression-info member accesses (Initialized to sensible values)
  - Initial Syntax-Coloring based on tokens and simple rules (identifier.identifer is a member access, and so on)

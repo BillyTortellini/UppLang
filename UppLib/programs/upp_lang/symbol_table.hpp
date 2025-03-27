@@ -21,6 +21,7 @@ struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
 struct Datatype_Template;
+struct Workload_Base;
 
 struct Function_Progress;
 struct Polymorphic_Function_Base;
@@ -213,6 +214,7 @@ struct Symbol
             int index_in_non_polymorphic_signature;
         } parameter;
         struct {
+            Workload_Base* header_workload; // Workload where symbol was defined
             int defined_in_parameter_index;
             int access_index;
         } polymorphic_value;
