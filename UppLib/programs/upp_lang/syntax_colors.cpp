@@ -60,12 +60,12 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::DEFINITION_UNFINISHED: return Syntax_Color::TEXT; 
-    case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL: return Syntax_Color::TEXT; 
+    case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL: return Syntax_Color::VARIABLE; 
     case Symbol_Type::ERROR_SYMBOL: return Syntax_Color::TEXT; 
     case Symbol_Type::VARIABLE_UNDEFINED: return Syntax_Color::VARIABLE; 
     case Symbol_Type::GLOBAL: return Syntax_Color::VARIABLE; 
     case Symbol_Type::PARAMETER: return Syntax_Color::VARIABLE; 
-    case Symbol_Type::POLYMORPHIC_VALUE: return Syntax_Color::TYPE; 
+    case Symbol_Type::POLYMORPHIC_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::POLYMORPHIC_FUNCTION: return Syntax_Color::FUNCTION; 
     default: panic("");
     }
@@ -74,6 +74,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
 
 vec3 symbol_to_color(Symbol* symbol, bool is_definition)
 {
+    int i = 0;
     switch (symbol->type)
     {
     case Symbol_Type::TYPE: {

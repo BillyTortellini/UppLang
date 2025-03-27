@@ -105,7 +105,7 @@ Hashset :: module
 	destroy :: (set: *Hashset($H))
 		for entry in set.entries
 			if !entry.valid
-				continue entry
+				continue
 			next :=* entry.next
 			while next?
 				next_ptr :=* next.value.next
@@ -220,10 +220,10 @@ Hashset :: module
 		Upp~panic()
 		return size
 	
-	reserve :: (set: *Hashset($H), expected_element_count: usize)
+	reserve :: (set: *Hashset($H), capacity: usize)
 		RESIZE_FACTOR :: 0.6
-		new_size := next_prime_table_size(expected_element_count)
-		while cast expected_element_count / cast{float} new_size > RESIZE_FACTOR
+		new_size := next_prime_table_size(capacity)
+		while cast capacity / cast{float} new_size > RESIZE_FACTOR
 			new_size = next_prime_table_size(new_size + 1)
 		
 		if set.entries.size >= cast new_size
@@ -238,7 +238,7 @@ Hashset :: module
 		set.size = 0 // Will be set by insert calls
 		for entry in old_entries
 			if !entry.valid
-				continue entry
+				continue
 			insert(set, entry.value)
 		
 		if old_entries.size > 0
@@ -290,7 +290,7 @@ Hashset :: module
 			Iterator~create, Iterator~has_next, Iterator~next, Iterator~get_value
 		)
 	
-	test :: ()
+	/// test :: ()
 		INT_HASHABLE :: #bake Hashable~make_primitive(int)
 		
 		context import Operators

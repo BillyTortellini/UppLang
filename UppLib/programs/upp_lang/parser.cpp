@@ -995,7 +995,7 @@ namespace Parser
             }
 
             auto result = allocate_base<Import>(parent, Node_Type::IMPORT);
-            result->alias_name = 0;
+            result->alias_name = optional_make_failure<Definition_Symbol*>();
             result->file_name = 0;
             result->path = 0;
             advance_token();
@@ -1024,9 +1024,8 @@ namespace Parser
             }
 
             if (test_keyword(Keyword::AS) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
-                result->alias_name = get_token(1)->options.identifier;
                 advance_token();
-                advance_token();
+                result->alias_name = optional_make_success(parse_definition_symbol(upcast(result)));
             }
             PARSE_SUCCESS(result);
         }

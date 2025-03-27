@@ -3204,7 +3204,9 @@ void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matc
 			if (param_info.param_type != 0 && !param_info.param_type->contains_template) {
 				context = expression_context_make_specific_type(param_info.param_type);
 			}
-			semantic_analyser_analyse_expression_value(param_info.expression, context);
+			param_info.argument_type = semantic_analyser_analyse_expression_value(param_info.expression, context);
+			param_info.argument_is_temporary_value = get_info(param_info.expression)->cast_info.result_value_is_temporary;
+			param_info.state = Parameter_State::ANALYSED;
 		}
 	}
 
@@ -4391,7 +4393,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 	Parameter_Matching_Info* param_matching_info, Expression_Context call_context,
 	AST::Node* error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
 {
-	// Get poly-base
+	// Get poly-base from param-matching info
 	Poly_Header* poly_header = nullptr;
 	if (param_matching_info->call_type == Call_Type::POLYMORPHIC_FUNCTION) {
 		poly_header = &param_matching_info->options.poly_function->base;
@@ -4428,6 +4430,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 			}
 		}
 
+		// Note: Only check if header contains errors, we still instanciate even if body has errors
 		bool base_contains_errors = false;
 		{
 			Workload_Base* header_workload = nullptr;
@@ -4577,49 +4580,11 @@ Instanciation_Result instanciate_polymorphic_callable(
 		}
 	}
 
-
-	// Check if normal instanciation is allowed/base analysis contained errors
-	{
-		auto workload = semantic_analyser.current_workload;
-
-		// Instanciations inside polymorphic base is disallowed (So it's possible to wait for child-workloads)
-		if (workload->is_polymorphic_base) {
-			semantic_analyser_set_error_flag(true);
-			return instanciation_result_make_error();
-		}
-		bool base_contains_errors = false;
-		{
-			Workload_Base* base_instance_workload = nullptr;
-			if (poly_header->is_function) {
-				Function_Progress* base_progress = polymorphic_header_to_function_progress(poly_header);
-				base_instance_workload = upcast(base_progress->body_workload);
-			}
-			else {
-				Workload_Structure_Polymorphic* poly_struct = polymorphic_header_to_struct_workload(poly_header);
-				base_instance_workload = upcast(poly_struct->body_workload);
-			}
-
-			// Check if header has errors
-			// Wait for base instance to finish
-			bool has_failed = false;
-			analysis_workload_add_dependency_internal(workload, upcast(base_instance_workload), dependency_failure_info_make(&has_failed));
-			workload_executer_wait_for_dependency_resolution();
-			if (has_failed) {
-				base_contains_errors = true;
-			}
-			else {
-				assert(base_instance_workload->is_finished, "Should be finished after wait");
-				if (base_instance_workload->real_error_count > 0) {
-					base_contains_errors = true;
-				}
-			}
-		}
-
-		if (base_contains_errors) {
-			semantic_analyser_set_error_flag(true);
-			parameter_matching_analyse_in_unknown_context(param_matching_info);
-			return instanciation_result_make_error();
-		}
+	// Instanciations inside polymorphic base is disallowed (Except for Struct-Instance-Templates)
+	// Not sure what this was supposted to mean: (So it's possible to wait for child-workloads)
+	if (semantic_analyser.current_workload->is_polymorphic_base) {
+		semantic_analyser_set_error_flag(true);
+		return instanciation_result_make_error();
 	}
 
 	// Normal instanciation
@@ -5045,20 +5010,22 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 {
 	// Check for Syntax-Errors
 	if (import_node->type != AST::Import_Type::FILE) {
-		if (import_node->path->parts.size == 1 && import_node->alias_name == 0 && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+		if (import_node->path->parts.size == 1 && !import_node->alias_name.available && import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
 			log_semantic_error("Cannot import single symbol, it's already accessible!", upcast(import_node->path));
 			return 0;
 		}
-		if (import_node->path->last->name == import_node->alias_name) {
-			log_semantic_error("Using as ... in import requires the name to be different than the original symbol name", upcast(import_node->path));
-			return 0;
+		if (import_node->alias_name.available) {
+			if (import_node->path->last->name == import_node->alias_name.value->name) {
+				log_semantic_error("Using as ... in import requires the name to be different than the original symbol name", upcast(import_node->path));
+				return 0;
+			}
 		}
 		if (import_node->path->last->name == 0) {
 			// NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
 			//       Also i think this is kinda ugly because it's such a special case, but we'll see
 			return 0;
 		}
-		if (import_node->alias_name != 0 && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
+		if (import_node->alias_name.available && (import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE)) {
 			log_semantic_error("Cannot alias * or ** imports", upcast(import_node->path));
 			return 0;
 		}
@@ -5073,21 +5040,27 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 	// Define Symbols if there are any
 	// NOTE: Symbol_Access_Level::GLOBAL may be wrong when importing a local variable, but I'm not even sure this works
 	auto workload = semantic_analyser.current_workload;
-	if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) {
+	if (import_node->type == AST::Import_Type::SINGLE_SYMBOL) 
+	{
 		auto name = import_node->path->last->name;
-		if (import_node->alias_name != 0) {
-			name = import_node->alias_name;
+		if (import_node->alias_name.available != 0) {
+			name = import_node->alias_name.value->name;
 		}
 		import_workload->symbol = symbol_table_define_symbol(
 			workload->current_symbol_table, name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
 		);
 		import_workload->symbol->options.alias_workload = import_workload;
+		if (import_node->alias_name.available != 0) {
+			get_info(import_node->alias_name.value, true)->symbol = import_workload->symbol;
+		}
 	}
-	else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name != 0) {
+	else if (import_node->type == AST::Import_Type::FILE && import_node->alias_name.available) 
+	{
 		import_workload->symbol = symbol_table_define_symbol(
-			workload->current_symbol_table, import_node->alias_name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
+			workload->current_symbol_table, import_node->alias_name.value->name, Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL, upcast(import_node), Symbol_Access_Level::GLOBAL
 		);
 		import_workload->symbol->options.alias_workload = import_workload;
+		get_info(import_node->alias_name.value, true)->symbol = import_workload->symbol;
 	}
 	return import_workload;
 }
@@ -5283,7 +5256,7 @@ void analysis_workload_entry(void* userdata)
 			analysis_workload_add_dependency_internal(workload, upcast(module_progress->module_analysis));
 			workload_executer_wait_for_dependency_resolution();
 
-			if (node->alias_name == 0) {
+			if (!node->alias_name.available) {
 				// Install into current symbol_table
 				symbol_table_add_include_table(
 					import_workload->base.current_symbol_table, module_progress->module_analysis->symbol_table, false, Symbol_Access_Level::GLOBAL, upcast(node)
@@ -5685,20 +5658,6 @@ void analysis_workload_entry(void* userdata)
 		auto function = body_workload->progress->function;
 		workload->current_function = function;
 
-		// Check if we are polymorphic_function instance and base instance failed
-		if (body_workload->progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
-		{
-			Function_Progress* base_progress = polymorphic_function_base_to_function_progress(body_workload->progress->polymorphic.instance_poly_base);
-			assert(base_progress->body_workload->base.is_finished, "There must be a wait before this to guarantee this");
-
-			// If base function contains errors, we don't need to analyse the body
-			if (base_progress->function->contains_errors) {
-				function->contains_errors = true;
-				function->is_runnable = false;
-				break;
-			}
-		}
-
 		// Analyse body
 		Control_Flow flow = semantic_analyser_analyse_block(code_block);
 		if (flow != Control_Flow::RETURNS && function->signature->return_type.available) {
@@ -5767,20 +5726,6 @@ void analysis_workload_entry(void* userdata)
 
 		auto& struct_node = workload_structure->struct_node->options.structure;
 		Datatype_Struct* struct_signature = workload_structure->struct_type;
-
-		// Check if we are a instance analysis
-		if (workload_structure->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-			auto& base_struct = workload_structure->polymorphic.instance.parent;
-			assert(base_struct->base.is_finished, "At this point the base has to be finished");
-			assert(base_struct->body_workload->base.is_finished, "Body base must be also finished");
-
-			// If an error occured in the polymorphic base, set all struct members to error-type
-			if (base_struct->base.real_error_count != 0 || base_struct->body_workload->base.real_error_count != 0) {
-				// Note: All members/subtypes are already added, but as error type...
-				type_system_finish_struct(struct_signature);
-				break;
-			}
-		}
 
 		// Analyse all members
 		analyse_structure_member_nodes_recursive(&struct_signature->content, struct_node.members);
@@ -7463,6 +7408,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				break;
 			}
 			case Instanciation_Result_Type::ERROR: {
+				parameter_matching_analyse_in_unknown_context(matching_info);
 				EXIT_ERROR(types.unknown_type);
 			}
 			case Instanciation_Result_Type::STRUCTURE: {
@@ -8533,6 +8479,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		bool array_is_const = array_type->mods.is_constant;
 		array_type = array_type->base_type; // Remove const modifier
 		if (datatype_is_unknown(array_type)) {
+			semantic_analyser_analyse_expression_value(access_node.index_expr, expression_context_make_unknown(true));
 			EXIT_ERROR(types.unknown_type);
 		}
 
@@ -8631,8 +8578,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::MEMBER_ACCESS:
 	{
 		auto& member_node = expr->options.member_access;
-		// Note: For suggestions in editor we set this to struct_up_or_downcast, so we have some initialized data
-		info->specifics.member_access.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
+		// Note: We assume that this is a normal member access for initializiation
+		// This has some special impliciations in editor, as analysis-items are generated for member-accesses,
+		// and expression_info.valid is ignored there
+		info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
+		info->specifics.member_access.options.member = struct_member_make(types.unknown_type, member_node.name, nullptr, 0, nullptr);
 
 		// Returns true if info was set (Some dot calls were found)
 		auto analyse_as_dot_call = [&](Datatype* datatype, bool as_member_access, Expression_Info* out_info) -> bool
@@ -11914,11 +11864,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
 		// Analyse expression
 		Datatype* expr_type = semantic_analyser_analyse_expression_value(for_loop.expression, expression_context_make_unknown());
-		if (datatype_is_unknown(expr_type)) {
-			EXIT(Control_Flow::SEQUENTIAL);
-		}
-		bool is_constant = expr_type->mods.is_constant;
-		Datatype* iterable_type = expr_type->base_type;
 
 		// Create loop variable symbol
 		Symbol* symbol = symbol_table_define_symbol(
@@ -11929,229 +11874,235 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 		loop_info.loop_variable_symbol = symbol;
 		symbol->options.variable_type = types.unknown_type; // Should be updated by further code
 
-		// Find loop-variable type
-		Type_Mods expected_mods = type_mods_make(true, 0, 0, 0);
-		if (iterable_type->type == Datatype_Type::SLICE || iterable_type->type == Datatype_Type::ARRAY)
+		if (!datatype_is_unknown(expr_type))
 		{
-			Datatype* element_type = nullptr;
-			if (iterable_type->type == Datatype_Type::ARRAY) {
-				element_type = downcast<Datatype_Array>(iterable_type)->element_type;
-				if (is_constant) {
-					element_type = type_system_make_constant(element_type);
-				}
-			}
-			else if (iterable_type->type == Datatype_Type::SLICE) {
-				element_type = downcast<Datatype_Slice>(iterable_type)->element_type;
-			}
-			else {
-				log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
-				EXIT(Control_Flow::SEQUENTIAL);
-			}
+			bool is_constant = expr_type->mods.is_constant;
+			Datatype* iterable_type = expr_type->base_type;
 
-			symbol->options.variable_type = upcast(type_system_make_pointer(element_type));
-		}
-		else
-		{
-			// Check for custom iterator
-			auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-
-			Custom_Operator_Key key;
-			key.type = AST::Context_Change_Type::ITERATOR;
-			key.options.iterator.datatype = iterable_type;
-			Custom_Operator* op = operator_context_query_custom_operator(operator_context, key);
-
-			// Check for polymorphic overload
-			if (op == nullptr && expr_type->type == Datatype_Type::STRUCT) {
-				auto struct_type = downcast<Datatype_Struct>(expr_type);
-				if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					key.options.iterator.datatype = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-					op = operator_context_query_custom_operator(operator_context, key);
-				}
-			}
-
-			if (op != nullptr)
+			// Find loop-variable type
+			Type_Mods expected_mods = type_mods_make(true, 0, 0, 0);
+			if (iterable_type->type == Datatype_Type::SLICE || iterable_type->type == Datatype_Type::ARRAY)
 			{
-				expected_mods = op->iterator.iterable_mods;
-				loop_info.is_custom_op = true;
-
-				bool success = true;
-				if (op->iterator.is_polymorphic)
-				{
-					// Now I have to instanciate 4 different functions here + check pointer levels I guezz
-					auto& poly_bases = op->iterator.options.polymorphic;
-
-					Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_FUNCTION, 1);
-					SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
-
-					// Prepare instanciation data
-					parameter_matching_info_add_param(&matching_info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
-					auto expr_info = get_info(for_loop.expression);
-					auto& param_info = matching_info.matched_parameters[0];
-					param_info.state = Parameter_State::ANALYSED;
-					param_info.is_set = true;
-					param_info.expression = for_loop.expression;
-					param_info.argument_type = expr_info->cast_info.result_type;
-					param_info.argument_is_temporary_value = expr_info->cast_info.result_value_is_temporary;
-
-					// create function
-					Datatype* iterator_type = types.unknown_type;
-					{
-						matching_info.options.poly_function = poly_bases.fn_create;
-						Poly_Header* poly_base = &matching_info.options.poly_function->base;
-						Instanciation_Result result = instanciate_polymorphic_callable(
-							&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-						);
-						if (result.type == Instanciation_Result_Type::FUNCTION) {
-							loop_info.custom_op.fn_create = result.options.function;
-							assert(result.options.function->signature->return_type.available, "");
-							iterator_type = result.options.function->signature->return_type.value;
-						}
-						else {
-							log_semantic_error("Could not instanciate create function of custom iterator", upcast(statement));
-							success = false;
-						}
-
-						// Update expression type, as instanciation may change it
-						expr_type = get_info(for_loop.expression)->cast_info.result_type;
+				Datatype* element_type = nullptr;
+				if (iterable_type->type == Datatype_Type::ARRAY) {
+					element_type = downcast<Datatype_Array>(iterable_type)->element_type;
+					if (is_constant) {
+						element_type = type_system_make_constant(element_type);
 					}
-
-					// has_next function
-					if (success)
-					{
-						// Set parameter to iterator
-						param_info.expression = nullptr;
-						param_info.argument_type = iterator_type;
-						param_info.argument_is_temporary_value = false;
-
-						// Instanciate
-						matching_info.options.poly_function = poly_bases.has_next;
-						Poly_Header* poly_base = &matching_info.options.poly_function->base;
-						Instanciation_Result result = instanciate_polymorphic_callable(
-							&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-						);
-						if (result.type == Instanciation_Result_Type::FUNCTION) {
-							loop_info.custom_op.fn_has_next = result.options.function;
-						}
-						else {
-							log_semantic_error("Could not instanciate has_next function of custom iterator", upcast(statement));
-							success = false;
-						}
-					}
-
-					// next function
-					if (success)
-					{
-						// Re-set parameter to iterator
-						param_info.expression = nullptr;
-						param_info.argument_type = iterator_type;
-						param_info.argument_is_temporary_value = false;
-
-						// Instanciate
-						matching_info.options.poly_function = poly_bases.next;
-						Poly_Header* poly_base = &matching_info.options.poly_function->base;
-						Instanciation_Result result = instanciate_polymorphic_callable(
-							&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-						);
-						if (result.type == Instanciation_Result_Type::FUNCTION) {
-							loop_info.custom_op.fn_next = result.options.function;
-						}
-						else {
-							success = false;
-							log_semantic_error("Could not instanciate next function of custom iterator", upcast(statement));
-						}
-					}
-
-					// get_value
-					if (success)
-					{
-						// Re-set parameter to iterator
-						param_info.expression = nullptr;
-						param_info.argument_type = iterator_type;
-						param_info.argument_is_temporary_value = false;
-
-						// Instanciate
-						matching_info.options.poly_function = poly_bases.get_value;
-						Poly_Header* poly_base = &matching_info.options.poly_function->base;
-						Instanciation_Result result = instanciate_polymorphic_callable(
-							&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-						);
-						if (result.type == Instanciation_Result_Type::FUNCTION) {
-							loop_info.custom_op.fn_get_value = result.options.function;
-						}
-						else {
-							success = false;
-							log_semantic_error("Could not instanciate get_value of custom iterator", upcast(statement));
-						}
-					}
-
-					// Note: Not quite sure if we need to re-check parameters mods and return types, but I guess it cannot hurt...
-					if (success)
-					{
-						// Check create function
-						if (datatype_is_unknown(iterator_type)) {
-							success = false;
-						}
-
-						ModTree_Function* functions[3] = { loop_info.custom_op.fn_get_value, loop_info.custom_op.fn_has_next, loop_info.custom_op.fn_next };
-						for (int i = 0; i < 3; i++)
-						{
-							ModTree_Function* function = functions[i];
-							if (function->signature->parameters.size != 1) {
-								log_semantic_error("Instanciated function did not have exactly 1 parameter", upcast(for_loop.expression));
-								success = false;
-								continue;
-							}
-
-							Datatype* param_type = function->signature->parameters[0].type;
-							if (!types_are_equal(param_type->base_type, iterator_type->base_type)) {
-								log_semantic_error("Instanciated function parameter type did not match iterator type", upcast(for_loop.expression));
-								success = false;
-								continue;
-							}
-
-							if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, false)) {
-								log_semantic_error("Instanciated function parameter mods were not compatible with iterator_type mods", upcast(for_loop.expression));
-								success = false;
-								continue;
-							}
-						}
-
-						if (!loop_info.custom_op.fn_get_value->signature->return_type.available) {
-							log_semantic_error("Get value function instanciation did not return a value", upcast(for_loop.expression));
-							success = false;
-						}
-					}
+				}
+				else if (iterable_type->type == Datatype_Type::SLICE) {
+					element_type = downcast<Datatype_Slice>(iterable_type)->element_type;
 				}
 				else {
-					loop_info.custom_op.fn_create = op->iterator.options.normal.create;
-					loop_info.custom_op.fn_has_next = op->iterator.options.normal.has_next;
-					loop_info.custom_op.fn_next = op->iterator.options.normal.next;
-					loop_info.custom_op.fn_get_value = op->iterator.options.normal.get_value;
+					log_semantic_error("Currently only arrays and slices are supported for foreach loop", for_loop.expression);
+					EXIT(Control_Flow::SEQUENTIAL);
 				}
 
-				if (success) {
-					auto& op = loop_info.custom_op;
-					semantic_analyser_register_function_call(op.fn_create);
-					semantic_analyser_register_function_call(op.fn_get_value);
-					semantic_analyser_register_function_call(op.fn_next);
-					semantic_analyser_register_function_call(op.fn_has_next);
-					symbol->options.variable_type = op.fn_get_value->signature->return_type.value;
-
-					int it_ptr_lvl = op.fn_create->signature->return_type.value->mods.pointer_level;
-					loop_info.custom_op.has_next_pointer_diff = it_ptr_lvl - op.fn_has_next->signature->parameters[0].type->mods.pointer_level;
-					loop_info.custom_op.next_pointer_diff = it_ptr_lvl - op.fn_next->signature->parameters[0].type->mods.pointer_level;
-					loop_info.custom_op.get_value_pointer_diff = it_ptr_lvl - op.fn_get_value->signature->parameters[0].type->mods.pointer_level;
-				}
+				symbol->options.variable_type = upcast(type_system_make_pointer(element_type));
 			}
 			else
 			{
-				log_semantic_error("Cannot loop over given datatype", for_loop.expression);
-				log_error_info_given_type(expr_type);
-			}
-		}
+				// Check for custom iterator
+				auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
 
-		if (!try_updating_expression_type_mods(for_loop.expression, expected_mods)) {
-			log_semantic_error("Pointer level invalid for this iterable type", for_loop.expression);
+				Custom_Operator_Key key;
+				key.type = AST::Context_Change_Type::ITERATOR;
+				key.options.iterator.datatype = iterable_type;
+				Custom_Operator* op = operator_context_query_custom_operator(operator_context, key);
+
+				// Check for polymorphic overload
+				if (op == nullptr && expr_type->type == Datatype_Type::STRUCT) {
+					auto struct_type = downcast<Datatype_Struct>(expr_type);
+					if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+						key.options.iterator.datatype = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
+						op = operator_context_query_custom_operator(operator_context, key);
+					}
+				}
+
+				if (op != nullptr)
+				{
+					expected_mods = op->iterator.iterable_mods;
+					loop_info.is_custom_op = true;
+
+					bool success = true;
+					if (op->iterator.is_polymorphic)
+					{
+						// Now I have to instanciate 4 different functions here + check pointer levels I guezz
+						auto& poly_bases = op->iterator.options.polymorphic;
+
+						Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_FUNCTION, 1);
+						SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
+
+						// Prepare instanciation data
+						parameter_matching_info_add_param(&matching_info, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
+						auto expr_info = get_info(for_loop.expression);
+						auto& param_info = matching_info.matched_parameters[0];
+						param_info.state = Parameter_State::ANALYSED;
+						param_info.is_set = true;
+						param_info.expression = for_loop.expression;
+						param_info.argument_type = expr_info->cast_info.result_type;
+						param_info.argument_is_temporary_value = expr_info->cast_info.result_value_is_temporary;
+
+						// create function
+						Datatype* iterator_type = types.unknown_type;
+						{
+							matching_info.options.poly_function = poly_bases.fn_create;
+							Poly_Header* poly_base = &matching_info.options.poly_function->base;
+							Instanciation_Result result = instanciate_polymorphic_callable(
+								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+							);
+							if (result.type == Instanciation_Result_Type::FUNCTION) {
+								loop_info.custom_op.fn_create = result.options.function;
+								assert(result.options.function->signature->return_type.available, "");
+								iterator_type = result.options.function->signature->return_type.value;
+							}
+							else {
+								log_semantic_error("Could not instanciate create function of custom iterator", upcast(statement));
+								success = false;
+							}
+
+							// Update expression type, as instanciation may change it
+							expr_type = get_info(for_loop.expression)->cast_info.result_type;
+						}
+
+						// has_next function
+						if (success)
+						{
+							// Set parameter to iterator
+							param_info.expression = nullptr;
+							param_info.argument_type = iterator_type;
+							param_info.argument_is_temporary_value = false;
+
+							// Instanciate
+							matching_info.options.poly_function = poly_bases.has_next;
+							Poly_Header* poly_base = &matching_info.options.poly_function->base;
+							Instanciation_Result result = instanciate_polymorphic_callable(
+								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+							);
+							if (result.type == Instanciation_Result_Type::FUNCTION) {
+								loop_info.custom_op.fn_has_next = result.options.function;
+							}
+							else {
+								log_semantic_error("Could not instanciate has_next function of custom iterator", upcast(statement));
+								success = false;
+							}
+						}
+
+						// next function
+						if (success)
+						{
+							// Re-set parameter to iterator
+							param_info.expression = nullptr;
+							param_info.argument_type = iterator_type;
+							param_info.argument_is_temporary_value = false;
+
+							// Instanciate
+							matching_info.options.poly_function = poly_bases.next;
+							Poly_Header* poly_base = &matching_info.options.poly_function->base;
+							Instanciation_Result result = instanciate_polymorphic_callable(
+								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+							);
+							if (result.type == Instanciation_Result_Type::FUNCTION) {
+								loop_info.custom_op.fn_next = result.options.function;
+							}
+							else {
+								success = false;
+								log_semantic_error("Could not instanciate next function of custom iterator", upcast(statement));
+							}
+						}
+
+						// get_value
+						if (success)
+						{
+							// Re-set parameter to iterator
+							param_info.expression = nullptr;
+							param_info.argument_type = iterator_type;
+							param_info.argument_is_temporary_value = false;
+
+							// Instanciate
+							matching_info.options.poly_function = poly_bases.get_value;
+							Poly_Header* poly_base = &matching_info.options.poly_function->base;
+							Instanciation_Result result = instanciate_polymorphic_callable(
+								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+							);
+							if (result.type == Instanciation_Result_Type::FUNCTION) {
+								loop_info.custom_op.fn_get_value = result.options.function;
+							}
+							else {
+								success = false;
+								log_semantic_error("Could not instanciate get_value of custom iterator", upcast(statement));
+							}
+						}
+
+						// Note: Not quite sure if we need to re-check parameters mods and return types, but I guess it cannot hurt...
+						if (success)
+						{
+							// Check create function
+							if (datatype_is_unknown(iterator_type)) {
+								success = false;
+							}
+
+							ModTree_Function* functions[3] = { loop_info.custom_op.fn_get_value, loop_info.custom_op.fn_has_next, loop_info.custom_op.fn_next };
+							for (int i = 0; i < 3; i++)
+							{
+								ModTree_Function* function = functions[i];
+								if (function->signature->parameters.size != 1) {
+									log_semantic_error("Instanciated function did not have exactly 1 parameter", upcast(for_loop.expression));
+									success = false;
+									continue;
+								}
+
+								Datatype* param_type = function->signature->parameters[0].type;
+								if (!types_are_equal(param_type->base_type, iterator_type->base_type)) {
+									log_semantic_error("Instanciated function parameter type did not match iterator type", upcast(for_loop.expression));
+									success = false;
+									continue;
+								}
+
+								if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, false)) {
+									log_semantic_error("Instanciated function parameter mods were not compatible with iterator_type mods", upcast(for_loop.expression));
+									success = false;
+									continue;
+								}
+							}
+
+							if (!loop_info.custom_op.fn_get_value->signature->return_type.available) {
+								log_semantic_error("Get value function instanciation did not return a value", upcast(for_loop.expression));
+								success = false;
+							}
+						}
+					}
+					else {
+						loop_info.custom_op.fn_create = op->iterator.options.normal.create;
+						loop_info.custom_op.fn_has_next = op->iterator.options.normal.has_next;
+						loop_info.custom_op.fn_next = op->iterator.options.normal.next;
+						loop_info.custom_op.fn_get_value = op->iterator.options.normal.get_value;
+					}
+
+					if (success) {
+						auto& op = loop_info.custom_op;
+						semantic_analyser_register_function_call(op.fn_create);
+						semantic_analyser_register_function_call(op.fn_get_value);
+						semantic_analyser_register_function_call(op.fn_next);
+						semantic_analyser_register_function_call(op.fn_has_next);
+						symbol->options.variable_type = op.fn_get_value->signature->return_type.value;
+
+						int it_ptr_lvl = op.fn_create->signature->return_type.value->mods.pointer_level;
+						loop_info.custom_op.has_next_pointer_diff = it_ptr_lvl - op.fn_has_next->signature->parameters[0].type->mods.pointer_level;
+						loop_info.custom_op.next_pointer_diff = it_ptr_lvl - op.fn_next->signature->parameters[0].type->mods.pointer_level;
+						loop_info.custom_op.get_value_pointer_diff = it_ptr_lvl - op.fn_get_value->signature->parameters[0].type->mods.pointer_level;
+					}
+				}
+				else
+				{
+					log_semantic_error("Cannot loop over given datatype", for_loop.expression);
+					log_error_info_given_type(expr_type);
+				}
+			}
+
+			if (!try_updating_expression_type_mods(for_loop.expression, expected_mods)) {
+				log_semantic_error("Pointer level invalid for this iterable type", for_loop.expression);
+			}
 		}
 
 		// Create index variable if available
@@ -12165,7 +12116,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			);
 			get_info(for_loop.index_variable_definition.value, true)->symbol = index_symbol;
 			loop_info.index_variable_symbol = index_symbol;
-			index_symbol->options.variable_type = upcast(types.u64_type);
+			index_symbol->options.variable_type = upcast(types.usize);
 		}
 		RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, symbol_table);
 

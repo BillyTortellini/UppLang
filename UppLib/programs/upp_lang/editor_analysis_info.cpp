@@ -315,8 +315,14 @@ void find_editor_infos_recursive(
 	}
 	case AST::Node_Type::ARGUMENT:
 	{
-		auto arguments = downcast<AST::Arguments>(node->parent);
+		// Add named argument highlighting
+		auto arg = downcast<AST::Argument>(node);
+		if (arg->name.available) {
+			add_markup(token_range_first_token(node->range, code), code, tree_depth, Syntax_Color::VARIABLE);
+		}
 
+		// Find argument index
+		auto arguments = downcast<AST::Arguments>(node->parent);
 		int arg_index = -1;
 		for (int i = 0; i < arguments->arguments.size; i++) {
 			if (upcast(arguments->arguments[i]) == node) {

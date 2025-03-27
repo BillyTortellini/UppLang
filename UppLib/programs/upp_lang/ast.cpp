@@ -236,6 +236,7 @@ Node* base_get_child(Node* node, int child_index)
 		if (import->type != Import_Type::FILE) {
 			FILL(import->path);
 		}
+		FILL_OPTIONAL(import->alias_name);
 		break;
 	}
 	case Node_Type::EXTERN_IMPORT: {
@@ -589,6 +590,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		if (import->type != Import_Type::FILE) {
 			FILL(import->path);
 		}
+		FILL_OPTIONAL(import->alias_name);
 		break;
 	}
 	case Node_Type::EXTERN_IMPORT: {
@@ -1020,9 +1022,6 @@ void base_append_to_string(Node* base, String* str)
 		}
 		else if (import->type == Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
 			string_append_formated(str, "~** ");
-		}
-		if (import->alias_name != 0) {
-			string_append_formated(str, "as %s ", import->alias_name->characters);
 		}
 		break;
 	}

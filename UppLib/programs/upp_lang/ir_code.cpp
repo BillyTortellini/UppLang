@@ -9,7 +9,7 @@
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
 IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR_Data_Access* destination = 0);
 void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* ir_block);
-IR_Data_Access* ir_data_access_create_constant_u64(u64 value);
+IR_Data_Access* ir_data_access_create_constant_usize(u64 value);
 
 
 
@@ -730,7 +730,7 @@ IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* arra
         }
         else {
             auto arr = downcast<Datatype_Array>(array_type);
-            size_access = ir_data_access_create_constant_u64(arr->element_count);
+            size_access = ir_data_access_create_constant_usize(arr->element_count);
         }
 
         auto& gen = ir_generator;
@@ -797,9 +797,9 @@ IR_Data_Access* ir_data_access_create_constant_i32(i32 value) {
     );
 }
 
-IR_Data_Access* ir_data_access_create_constant_u64(u64 value) {
+IR_Data_Access* ir_data_access_create_constant_usize(u64 value) {
     return ir_data_access_create_constant(
-        upcast(compiler.analysis_data->type_system.predefined_types.u64_type),
+        upcast(compiler.analysis_data->type_system.predefined_types.usize),
         array_create_static_as_bytes(&value, 1)
     );
 }
@@ -1379,7 +1379,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             {
                 auto init_expr = array_init.values[i];
 
-                IR_Data_Access* element_access = ir_data_access_create_array_or_slice_access(array_access, ir_data_access_create_constant_u64(i), false);
+                IR_Data_Access* element_access = ir_data_access_create_array_or_slice_access(array_access, ir_data_access_create_constant_usize(i), false);
 
                 IR_Instruction move_instr;
                 move_instr.type = IR_Instruction_Type::MOVE;
@@ -1494,7 +1494,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             IR_Data_Access* result_access = ir_data_access_create_address_of(source);
             return move_access_to_destination(
                 ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(
-                    source, ir_data_access_create_constant_u64(0), false
+                    source, ir_data_access_create_constant_usize(0), false
                 ))
             );
         }
@@ -1551,7 +1551,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             mult_instr.options.binary_op.type = IR_Binop::MULTIPLICATION;
             mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(upcast(types.u64_type));
             mult_instr.options.binary_op.operand_left = slice_size_access;
-            mult_instr.options.binary_op.operand_right = ir_data_access_create_constant_u64(mem.size);
+            mult_instr.options.binary_op.operand_right = ir_data_access_create_constant_usize(mem.size);
             add_instruction(mult_instr);
 
             u32 alignment_u32 = (u32)mem.alignment;
@@ -1567,7 +1567,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             IR_Data_Access* destination = make_destination_access_on_demand(result_type);
             u32 alignment_u32 = (u32)mem.alignment;
             allocate_from_global_allocator(
-                ir_data_access_create_constant_u64(mem.size),
+                ir_data_access_create_constant_usize(mem.size),
                 ir_data_access_create_constant(upcast(types.u32_type), array_create_static_as_bytes(&alignment_u32, 1)),
                 destination
             );
@@ -1743,7 +1743,7 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
             instr.type = IR_Instruction_Type::MOVE;
             instr.options.move.destination = ir_data_access_create_member(slice_access, slice_type->size_member);
             assert(array_type->count_known, "");
-            instr.options.move.source = ir_data_access_create_constant_u64(array_type->element_count);
+            instr.options.move.source = ir_data_access_create_constant_usize(array_type->element_count);
             add_instruction(instr);
         }
         // Set data
@@ -1751,7 +1751,7 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::MOVE;
             instr.options.move.source = ir_data_access_create_address_of(
-                ir_data_access_create_array_or_slice_access(source, ir_data_access_create_constant_u64(0), false)
+                ir_data_access_create_array_or_slice_access(source, ir_data_access_create_constant_usize(0), false)
             );
             instr.options.move.destination = ir_data_access_create_member(slice_access, slice_type->data_member);
             add_instruction(instr);
@@ -1948,7 +1948,7 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         increment.options.binary_op.type = IR_Binop::ADDITION;
         increment.options.binary_op.destination = foreach.index_access;
         increment.options.binary_op.operand_left = foreach.index_access;
-        increment.options.binary_op.operand_right = ir_data_access_create_constant_u64(1);
+        increment.options.binary_op.operand_right = ir_data_access_create_constant_usize(1);
         add_instruction(increment);
 
         // Update pointer
@@ -2243,13 +2243,13 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         auto& types = compiler.analysis_data->type_system.predefined_types;
 
         // Create and initialize index data-access (Always available)
-        IR_Data_Access* index_access = ir_data_access_create_intermediate(upcast(types.u64_type));
+        IR_Data_Access* index_access = ir_data_access_create_intermediate(upcast(types.usize));
         {
             // Initialize
             IR_Instruction initialize;
             initialize.type = IR_Instruction_Type::MOVE;
             initialize.options.move.destination = index_access;
-            initialize.options.move.source = ir_data_access_create_constant_u64(0);
+            initialize.options.move.source = ir_data_access_create_constant_usize(0);
             add_instruction(initialize);
 
             if (foreach_loop.index_variable_definition.available) {
@@ -2349,7 +2349,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     if (iterable_type->type == Datatype_Type::ARRAY) {
                         auto array_type = downcast<Datatype_Array>(iterable_type);
                         assert(array_type->count_known, "");
-                        array_size_access = ir_data_access_create_constant_u64(array_type->element_count);
+                        array_size_access = ir_data_access_create_constant_usize(array_type->element_count);
                     }
                     else if (iterable_type->type == Datatype_Type::SLICE) {
                         auto slice_type = downcast<Datatype_Slice>(iterable_type);
@@ -2619,14 +2619,14 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             multiply_instr.options.binary_op.destination = size_access;
             multiply_instr.options.binary_op.operand_left = size_access;
             u64 element_size_u64 = slice->element_type->memory_info.value.size;
-            multiply_instr.options.binary_op.operand_right = ir_data_access_create_constant_u64(element_size_u64);
+            multiply_instr.options.binary_op.operand_right = ir_data_access_create_constant_usize(element_size_u64);
             add_instruction(multiply_instr);
         }
         else
         {
             assert(delete_type->type == Datatype_Type::POINTER, "Can only delete slices or pointers");
             u64 element_size_u64 = downcast<Datatype_Pointer>(delete_type)->element_type->memory_info.value.size;
-            size_access = ir_data_access_create_constant_u64(element_size_u64);
+            size_access = ir_data_access_create_constant_usize(element_size_u64);
             pointer_to_delete_access = delete_access;
         }
 

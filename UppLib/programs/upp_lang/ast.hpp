@@ -18,6 +18,7 @@ namespace AST
     struct Extern_Import;
     struct Path_Lookup;
     struct Arguments;
+    struct Definition_Symbol;
 
     enum class Binop
     {
@@ -99,7 +100,7 @@ namespace AST
     {
         Node base;
         Import_Type type;
-        String* alias_name; // May be null if no alias is given
+        Optional<Definition_Symbol*> alias_name;
         // Depending on import type one of those is set, the other will be 0
         Path_Lookup* path;
         String* file_name;

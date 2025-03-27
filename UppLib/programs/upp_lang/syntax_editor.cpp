@@ -3543,8 +3543,11 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 			}
 			i += 1;
 		}
+		if (!at_least_one_active_filter) {
+			passes_filter = true;
+		}
 
-		if (passes_filter && at_least_one_active_filter) {
+		if (passes_filter) {
 			passed_filters = true;
 		}
 	}
@@ -3699,17 +3702,34 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 
 	index = code_query_text_index_at_last_synchronize(index, editor.open_tab_index, false);
 
+	// We keep a set of closest ranges, so we can filter based on Pass afterwards
+	Dynamic_Array<Symbol_Table_Range> closest_ranges = dynamic_array_create<Symbol_Table_Range>();
+	SCOPE_EXIT(dynamic_array_destroy(&closest_ranges));
+
 	auto& table_ranges = tab.code->symbol_table_ranges;
-	Symbol_Table* closest_table = tab.code->root_table;
 	int deepest_level = -1;
 	for (int i = 0; i < table_ranges.size; i++) {
-		auto table_range = table_ranges[i];
-		if (text_range_contains(table_range.range, index) && table_range.tree_depth > deepest_level) {
-			closest_table = table_range.symbol_table;
-			deepest_level = table_range.tree_depth;
+		auto& table_range = table_ranges[i];
+		if (!text_range_contains(table_range.range, index)) continue;
+		if (table_range.tree_depth < deepest_level) continue;
+		if (table_range.tree_depth > deepest_level) {
+			dynamic_array_reset(&closest_ranges);
+		}
+		dynamic_array_push_back(&closest_ranges, table_range);
+		deepest_level = table_range.tree_depth;
+	}
+	if (closest_ranges.size == 0) return tab.code->root_table;
+
+	// Filter based on pass
+	for (int i = 0; i < closest_ranges.size; i++) {
+		auto& table_range = closest_ranges[i];
+		if (analysis_pass_passes_filters(table_range.pass)) {
+			return table_range.symbol_table;
 		}
 	}
-	return closest_table;
+
+	// Otherwise return first table
+	return closest_ranges[0].symbol_table;
 }
 
 
@@ -7346,6 +7366,110 @@ struct Line_Symbol {
 	int line_index;
 };
 
+vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, int index)
+{
+	auto& token = tokens[index];
+
+	// Find default color based on token-type
+	vec3 color = Syntax_Color::TEXT;
+	switch (token.type)
+	{
+	case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
+	case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
+	case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
+	case Token_Type::IDENTIFIER: color = Syntax_Color::VARIABLE; break;
+	case Token_Type::LITERAL: {
+		switch (token.options.literal_value.type)
+		{
+		case Literal_Type::BOOLEAN: color = vec3(0.5f, 0.5f, 1.0f); break;
+		case Literal_Type::STRING: color = Syntax_Color::STRING; break;
+		case Literal_Type::INTEGER:
+		case Literal_Type::FLOAT_VAL:
+		case Literal_Type::NULL_VAL:
+			color = Syntax_Color::LITERAL_NUMBER; break;
+		default: panic("");
+		}
+		break;
+	}
+	default: break;
+	}
+
+	auto& test_op = [&](int offset, Operator op) -> bool {
+		int i = index + offset;
+		if (i < 0 || i >= tokens.size) return false;
+		auto t = tokens[i];
+		if (t.type != Token_Type::OPERATOR) return false;
+		return t.options.op == op;
+	};
+	auto& test_keyword = [&](int offset, Keyword keyword) -> bool {
+		int i = index + offset;
+		if (i < 0 || i >= tokens.size) return false;
+		auto t = tokens[i];
+		if (t.type != Token_Type::KEYWORD) return false;
+		return t.options.keyword == keyword;
+	};
+	auto& test_parenthesis = [&](int offset, Parenthesis parenthesis) -> bool {
+		int i = index + offset;
+		if (i < 0 || i >= tokens.size) return false;
+		auto t = tokens[i];
+		if (t.type != Token_Type::PARENTHESIS) return false;
+		return t.options.parenthesis.is_open == parenthesis.is_open && t.options.parenthesis.type == parenthesis.type;
+	};
+	auto& test_identifier = [&](int offset) -> bool {
+		int i = index + offset;
+		if (i < 0 || i >= tokens.size) return false;
+		auto t = tokens[i];
+		return t.type == Token_Type::IDENTIFIER;
+	};
+
+	// Only do special highlighting on identifiers
+	if (!test_identifier(0)) return color;
+
+	// Test prev-tokens
+	if (test_op(-1, Operator::DOT)) {
+		return Syntax_Color::MEMBER;
+	}
+	else if (test_op(-1, Operator::DOT_CALL)) {
+		return Syntax_Color::FUNCTION;
+	}
+	else if (test_op(-1, Operator::DOLLAR)) {
+		return Syntax_Color::VALUE_DEFINITION;
+	}
+
+	// Test next token
+	if (test_op(1, Operator::TILDE) || test_op(1, Operator::TILDE_STAR) || test_op(1, Operator::TILDE_STAR_STAR)) {
+		return Syntax_Color::MODULE;
+	}
+	else if (test_op(1, Operator::DEFINE_INFER) || test_op(1, Operator::DEFINE_INFER_POINTER) || 
+		test_op(1, Operator::DEFINE_INFER_RAW) || test_op(1, Operator::COLON)) 
+	{
+		return Syntax_Color::VALUE_DEFINITION;
+	}
+
+	// Check for known comptime definitions, e.g. struct, module, enum, function
+	if (test_op(1, Operator::DEFINE_COMPTIME))
+	{
+		if (test_keyword(2, Keyword::STRUCT) || test_keyword(2, Keyword::ENUM) || test_keyword(2, Keyword::UNION)) {
+			return Syntax_Color::VALUE_DEFINITION;
+		}
+		if (test_keyword(2, Keyword::MODULE)) {
+			return Syntax_Color::MODULE;
+		}
+
+		// Test for functions
+		if (!test_parenthesis(2, char_to_parenthesis('('))) return Syntax_Color::VALUE_DEFINITION;
+		// Now we have identifier :: (
+		if (!test_parenthesis(3, char_to_parenthesis(')'))) return Syntax_Color::FUNCTION;
+		if (test_op(3, Operator::DOLLAR) || test_keyword(3, Keyword::MUTABLE)) return Syntax_Color::FUNCTION;
+		if (test_identifier(3) && test_op(4, Operator::COLON)) return Syntax_Color::FUNCTION;
+
+		// Otherwise we don't assume it's a function, but a normal value
+		return Syntax_Color::VALUE_DEFINITION;
+	}
+
+	return color;
+}
+
 void syntax_editor_render()
 {
 	auto& editor = syntax_editor;
@@ -7736,30 +7860,7 @@ void syntax_editor_render()
 			for (int j = 0; j < line->tokens.size; j++)
 			{
 				auto& token = line->tokens[j];
-
-				vec3 color = Syntax_Color::TEXT;
-				switch (token.type)
-				{
-				case Token_Type::COMMENT: color = Syntax_Color::COMMENT; break;
-				case Token_Type::INVALID: color = vec3(1.0f, 0.8f, 0.8f); break;
-				case Token_Type::KEYWORD: color = Syntax_Color::KEYWORD; break;
-				case Token_Type::IDENTIFIER: color = Syntax_Color::TEXT; break;
-				case Token_Type::LITERAL: {
-					switch (token.options.literal_value.type)
-					{
-					case Literal_Type::BOOLEAN: color = vec3(0.5f, 0.5f, 1.0f); break;
-					case Literal_Type::STRING: color = Syntax_Color::STRING; break;
-					case Literal_Type::INTEGER:
-					case Literal_Type::FLOAT_VAL:
-					case Literal_Type::NULL_VAL:
-						color = Syntax_Color::LITERAL_NUMBER; break;
-					default: panic("");
-					}
-					break;
-				}
-				default: continue;
-				}
-
+				vec3 color = token_get_syntax_color_based_on_surrounding(line->tokens, j);
 				Rich_Text::mark_line(
 					text, Rich_Text::Mark_Type::TEXT_COLOR, color, line->visible_index - cam_start_visible, token.start_index, token.end_index
 				);

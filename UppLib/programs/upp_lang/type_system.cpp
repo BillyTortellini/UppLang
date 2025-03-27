@@ -706,10 +706,12 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
     {
         auto instance_template = downcast<Datatype_Struct_Instance_Template>(signature);
         auto structure = instance_template->struct_base->body_workload->struct_type;
-        Rich_Text::append_formated(text, "Struct instance template");
+		Rich_Text::set_text_color(text, Syntax_Color::TYPE);
         Rich_Text::append(text, *structure->content.name);
+		Rich_Text::set_text_color(text);
         if (format.append_struct_poly_parameter_values) 
 		{
+			Rich_Text::append(text, "(");
 			auto& instance_values = instance_template->instance_values;
 			for (int i = 0; i < instance_values.size; i++)
 			{
@@ -740,7 +742,7 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 					Rich_Text::append_formated(text, ", ");
 				}
 			}
-
+			Rich_Text::append(text, ")");
 		}
 		else {
 			Rich_Text::append(text, "(..)");
