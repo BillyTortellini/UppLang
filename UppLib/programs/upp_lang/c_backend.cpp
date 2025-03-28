@@ -2300,6 +2300,10 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 string_append_formated(gen.text, "!");
                 break;
             }
+            case IR_Unop::BITWISE_NOT: {
+                string_append_formated(gen.text, "~");
+                break;
+            }
             default: panic("Hey");
             }
             string_append_formated(gen.text, "(");
@@ -2326,7 +2330,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             case IR_Binop::OR:                  binary_str = "||"; break;
             case IR_Binop::BITWISE_AND:         binary_str = "&"; break;
             case IR_Binop::BITWISE_OR:          binary_str = "|"; break;
-            case IR_Binop::BITWISE_XOR:         binary_str = "~"; break;
+            case IR_Binop::BITWISE_XOR:         binary_str = "^"; break;
             case IR_Binop::BITWISE_SHIFT_LEFT:  binary_str = "<<"; break;
             case IR_Binop::BITWISE_SHIFT_RIGHT: binary_str = ">>"; break;
             case IR_Binop::EQUAL:               binary_str = "=="; break;

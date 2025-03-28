@@ -138,10 +138,12 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 
 void symbol_table_query_id_recursive(
-	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
+	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, 
+	Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
 )
 {
-	// Check if already visited
+	// Check if already visited 
+	// (Note: Actually we need to check if we have visited with given access-level, but I guess it does not make problem currently)
 	if (hashset_contains(already_visited, table)) {
 		return;
 	}
@@ -195,7 +197,8 @@ void symbol_table_query_id_recursive(
 }
 
 void symbol_table_query_id(
-	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited)
+	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, 
+	Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited)
 {
 	hashset_reset(already_visited);
 	return symbol_table_query_id_recursive(table, id, search_includes, access_level, results, already_visited);

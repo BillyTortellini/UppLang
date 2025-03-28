@@ -33,7 +33,9 @@ struct Bake_Progress;
 struct Module_Progress;
 struct Datatype_Template;
 struct Poly_Value;
+struct Poly_Header;
 struct Compiler_Analysis_Data;
+struct Parameter_Matching_Info;
 
 namespace Parser
 {
@@ -160,7 +162,6 @@ struct Workload_Base
     bool is_finished;
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
-    Workload_Base* parent_workload;
 
     // Information required to be consistent during workload switches
     // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
@@ -178,11 +179,15 @@ struct Workload_Base
     int errors_due_to_unknown_count;
     int error_checkpoint_count; // If error_checkpoint_count > 0, then errors aren't logged...
 
-    // Note: All workloads need information when accessing polymorphic values. The main two use-cases are:
-    //        * Re-analysing the header during poly-instanciation of functions
-    //        * Accessing polymorphic-symbols inside child-workloads (Anonymous functions/anonymous structs, bake)
-    Array<Poly_Value> polymorphic_values; // May be null, in which case we shouldn't be able to access polymorphics at all
-    Array<Poly_Value> header_analysis_poly_values; // Is only set during header analysis, to allow access to inherited poly-values and not-yet analysed values
+    // Polymorphic value access is rather complicated, here are some points to consider:
+    //  * Multiple sets of polymorphic values can be active at once (Poly-Function defined in Poly-Function)
+    //  * Child-Workloads inherit the polymorphic-values of their parents, so we need to store a parent-child relation
+    //  * Polymorphic-Instances define their own poly-values
+    Workload_Base* poly_parent_workload; // Note: This is a logical parent workload, e.g. function_body -> function_header -> module_analysis
+    Array<Poly_Value> poly_values;
+    Poly_Header* poly_value_origin;
+    Parameter_Matching_Info* instanciate_matching_info; // Only set during instanciate, to access other parameters
+    Hashtable<AST::Expression*, Datatype_Template*>* active_valid_template_expressions;
     int polymorphic_instanciation_depth; 
     bool is_polymorphic_base; // Polymorphic base workloads and children cannot create poly instances
     bool allow_struct_instance_templates;
@@ -238,6 +243,8 @@ struct Workload_Function_Header
     Workload_Base base;
     Function_Progress* progress;
     AST::Expression* function_node;
+    // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
+    Poly_Header* poly_header_infos;
 };
 
 struct Workload_Function_Body
@@ -320,9 +327,6 @@ struct Parameter_Symbol_Lookup
 
 struct Poly_Header
 {
-    String* name; // Either struct or function name
-    bool is_function;
-
     // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
     Array<Poly_Parameter> parameters;
     int poly_value_count; // Number of comptime + inferred parameters
@@ -331,16 +335,26 @@ struct Poly_Header
     Dynamic_Array<int> parameter_analysis_order; 
     Dynamic_Array<Inferred_Parameter> inferred_parameters;
     Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups;
+    Hashtable<AST::Expression*, Datatype_Template*> valid_template_expressions;
 
     Dynamic_Array<Poly_Instance> instances;
     Array<Poly_Value> base_analysis_values;
 
     // For convenience
+    Workload_Base* poly_value_definition_workload;
     int return_type_index; // -1 if no return-type exists
     AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
     Symbol_Table* symbol_table;
     bool found_templated_parameter_type; // e.g. foo :: (a: Node), where Node :: struct(T: Type_Handle)
+
+    // Origin infos
+    String* name; // Either struct or function name
+    bool is_function;
+    union {
+        Workload_Structure_Polymorphic* struct_workload;
+        Function_Progress* function_progress;
+    } origin;
 };
 
 struct Poly_Instance
@@ -378,18 +392,14 @@ struct Workload_Structure_Polymorphic
 {
     Workload_Base base;
     Workload_Structure_Body* body_workload;
-
-    Poly_Header info;
+    Poly_Header* poly_header;
 };
 
 
 
 // ANALYSIS_PROGRESS
-struct Polymorphic_Function_Base
-{
-    Poly_Header base;
-};
 
+// Note: This type is only used so we can have pointers to a polymorphic-function
 struct Function_Progress
 {
     ModTree_Function* function;
@@ -399,10 +409,7 @@ struct Function_Progress
     Workload_Function_Cluster_Compile* compile_workload;
 
     Polymorphic_Analysis_Type type;
-    union {
-        Polymorphic_Function_Base function_base;
-        Polymorphic_Function_Base* instance_poly_base;
-    } polymorphic;
+    Poly_Function poly_function; // If instance, this points to base progress, otherwise it points to itself
 };
 
 struct Bake_Progress
@@ -519,7 +526,7 @@ struct Expression_Info
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
         struct {
-            Polymorphic_Function_Base* base;
+            Poly_Function poly_function;
             ModTree_Function* instance_fn;
         } polymorphic_function;
         struct {
@@ -619,9 +626,9 @@ struct Parameter_Matching_Info
         Datatype_Function* pointer_call;
         Hardcoded_Type hardcoded;
         ModTree_Function* dot_call_function;
-        Polymorphic_Function_Base* poly_function;
-        Polymorphic_Function_Base* instanciate;
-        Polymorphic_Function_Base* poly_dotcall;
+        Poly_Function poly_function;
+        Poly_Function instanciate;
+        Poly_Function poly_dotcall;
         Workload_Structure_Polymorphic* poly_struct;
         struct {
             bool valid; // E.g. if the name exists
@@ -870,7 +877,6 @@ struct Semantic_Analyser
     ModTree_Global* system_allocator; // Datatype: Allocator
     Symbol_Table* root_symbol_table;
 
-    Hashtable<AST::Expression*, Datatype_Template*> valid_template_parameters;
     Hashset<Symbol_Table*> symbol_lookup_visited;
     Stack_Allocator comptime_value_allocator;
 };
@@ -891,5 +897,9 @@ void parameter_matching_info_destroy(Parameter_Matching_Info* info);
 void function_progress_destroy(Function_Progress* progress);
 void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
-Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload); // Returns null if none found
+
+// Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload); // Returns null if none found
 String* poly_header_get_value_name(Poly_Header* header, int value_access_index);
+
+// If search_start_workload == nullptr, we start from semantic_analyser.current_workload
+Array<Poly_Value> poly_values_find_active_set(Poly_Header* poly_value_origin, Workload_Base* search_start_workload = nullptr);

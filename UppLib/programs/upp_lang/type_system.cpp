@@ -763,7 +763,7 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 				Rich_Text::append_formated(text, "(");
 				SCOPE_EXIT(Rich_Text::append_formated(text, ")"));
 				auto& instance = struct_type->workload->polymorphic.instance;
-				auto instance_values = instance.parent->info.instances[instance.instance_index].instance_values;
+				auto instance_values = instance.parent->poly_header->instances[instance.instance_index].instance_values;
 				for (int i = 0; i < instance_values.size; i++)
 				{
 					auto& poly_value = instance_values[i];
@@ -1238,6 +1238,7 @@ Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_acce
 	Datatype_Template* result = new Datatype_Template;
 	result->base = datatype_make_simple_base(Datatype_Type::TEMPLATE_TYPE, 1, 1);
 	result->base.contains_template = true;
+	assert(symbol->type == Symbol_Type::POLYMORPHIC_VALUE, "");
 
 	result->symbol = symbol;
 	result->is_reference = false;

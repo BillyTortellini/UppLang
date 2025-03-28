@@ -403,6 +403,7 @@ struct Syntax_Editor
 
 	// Pass-Filters
 	bool prefer_poly_passes;
+	bool prefer_base_pass;
 	bool pass_filter_ui_open;
 	Dynamic_Array<Pass_Filter> poly_pass_filters;
 	Hashtable<Analysis_Pass*, bool> filtered_passes;
@@ -2378,6 +2379,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.poly_pass_filters = dynamic_array_create<Pass_Filter>();
 	syntax_editor.filtered_passes = hashtable_create_pointer_empty<Analysis_Pass*, bool>(1);
 	syntax_editor.prefer_poly_passes = true;
+	syntax_editor.prefer_base_pass = false;
 }
 
 void syntax_editor_destroy()
@@ -3422,53 +3424,75 @@ Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int 
 	return text_index;
 }
 
-void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string)
+void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string, bool& out_is_poly, bool& out_is_base)
 {
+	out_is_poly = false;
+	out_is_base = false;
+
 	if (pass == nullptr) return;
 	if (pass->origin_workload == nullptr) return;
 
-	Workload_Base* base_workload = pass->origin_workload;
-	if (pass->instance_workload != nullptr) {
-		base_workload = pass->instance_workload;
-	}
-	Poly_Header* poly_header = analysis_workload_get_poly_header(base_workload);
-	if (poly_header == nullptr) {
-		return;
-	}
-
 	// Generate pass-string
-	auto poly_values = base_workload->polymorphic_values;
-	for (int i = 0; i < poly_values.size; i++)
+	Workload_Base* workload = pass->origin_workload;
+	if (pass->is_header_reanalysis && pass->instance_workload != nullptr) {
+		workload = pass->instance_workload;
+		out_is_poly = true;
+	}
+
+	int polymorphic_depth = 0;
+	int set_poly_value_count = 0;
+	while (workload != nullptr)
 	{
-		auto poly_value = poly_values[i];
+		SCOPE_EXIT(workload = workload->poly_parent_workload);
 
-		String* name = poly_header_get_value_name(poly_header, i);
-		if (name == nullptr) {
-			panic("Should not happen");
-			continue;
+		Array<Poly_Value> poly_values = workload->poly_values;
+		if (poly_values.size > 0) {
+			polymorphic_depth += 1;
+			if (polymorphic_depth > 1) {
+				string_append(string, "\n");
+			}
 		}
-		string_append_string(string, name);
-		string_append(string, "=");
+		for (int i = 0; i < poly_values.size; i++)
+		{
+			auto poly_value = poly_values[i];
 
-		if (poly_value.type != Poly_Value_Type::SET) {
-			string_append(string, "Not Set\n");
-			continue;
-		}
+			String* name = poly_header_get_value_name(workload->poly_value_origin, i);
+			if (name == nullptr) {
+				panic("Should not happen");
+				continue;
+			}
+			for (int i = 0; i < polymorphic_depth - 1; i++) {
+				string_append(string, "  ");
+			}
+			string_append_string(string, name);
+			string_append(string, "=");
 
-		// Otherwise append name and value
-		auto format = datatype_value_format_single_line();
-		format.show_datatype = true;
-		format.datatype_format = datatype_format_make_default();
-		format.datatype_format.append_struct_poly_parameter_values = true;
-		datatype_append_value_to_string(
-			poly_value.options.value.type, &syntax_editor.analysis_data->type_system, poly_value.options.value.memory,
-			string, format, 0, Memory_Source(nullptr), Memory_Source(nullptr)
-		);
+			if (poly_value.type != Poly_Value_Type::SET) {
+				string_append(string, "Not Set\n");
+				continue;
+			}
+			set_poly_value_count += 1;
 
-		if (i != poly_values.size - 1) {
-			string_append(string, "\n");
+			// Otherwise append name and value
+			auto format = datatype_value_format_single_line();
+			format.show_datatype = true;
+			format.datatype_format = datatype_format_make_default();
+			format.datatype_format.append_struct_poly_parameter_values = true;
+			datatype_append_value_to_string(
+				poly_value.options.value.type, &syntax_editor.analysis_data->type_system, poly_value.options.value.memory,
+				string, format, 0, Memory_Source(nullptr), Memory_Source(nullptr)
+			);
+
+			if (i != poly_values.size - 1) {
+				string_append(string, "\n");
+			}
 		}
 	}
+
+	if (polymorphic_depth > 0) {
+		out_is_poly = true;
+	}
+	out_is_base = set_poly_value_count == 0;
 }
 
 bool analysis_pass_passes_filters(Analysis_Pass* pass)
@@ -3495,29 +3519,27 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 		return false;
 	}
 
-	Workload_Base* base_workload = pass->origin_workload;
-	if (pass->instance_workload != nullptr) {
-		base_workload = pass->instance_workload;
+	// Generate pass-string (Contains Template-Values as text)
+	String pass_string = string_create(32);
+	SCOPE_EXIT(string_destroy(&pass_string));
+	bool is_poly, is_base;
+	analysis_pass_append_polymorphic_infos(pass, &pass_string, is_poly, is_base);
+
+	// I'm currently assuming that if we don't have templated values, then it's non-polymorphic
+	if (!is_poly) {
+		hashtable_insert_element(&syntax_editor.filtered_passes, pass, !syntax_editor.prefer_poly_passes);
+		return !syntax_editor.prefer_poly_passes;
 	}
-	Poly_Header* poly_header = analysis_workload_get_poly_header(base_workload);
-	if (poly_header == nullptr) {
-		if (!syntax_editor.prefer_poly_passes) {
-			hashtable_insert_element(&syntax_editor.filtered_passes, pass, true);
-			return true;
-		}
-		return false;
+	if (syntax_editor.prefer_base_pass) {
+		hashtable_insert_element(&syntax_editor.filtered_passes, pass, is_base);
+		return is_base;
 	}
-	else if (!syntax_editor.prefer_poly_passes) {
-		// Here we have a poly pass and don't prefer polymorphic passes, so we can skip filtering
+	else if (is_base) {
 		hashtable_insert_element(&syntax_editor.filtered_passes, pass, false);
 		return false;
 	}
 
-	// Generate pass-string and check filters
-	String pass_string = string_create(32);
-	SCOPE_EXIT(string_destroy(&pass_string));
-	analysis_pass_append_polymorphic_infos(pass, &pass_string);
-
+	// Check filters
 	auto& filters = syntax_editor.poly_pass_filters;
 	bool passed_filters = false;
 	if (filters.size == 0) {
@@ -3528,7 +3550,7 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 		// Connected filters should be AND-ed together
 		bool passes_filter = true;
 		bool at_least_one_active_filter = false;
-		while (i < filters.size) 
+		while (i < filters.size)
 		{
 			Pass_Filter* filter = &filters[i];
 			if (filter->is_active && filter->required_substring.size > 0) {
@@ -6609,7 +6631,7 @@ void syntax_editor_update(bool& animations_running)
 		for (int i = 0; i < editor.tabs.size; i++) {
 			source_code_sanity_check(editor.tabs[i].code);
 		}
-	);
+			);
 
 	// Update particles
 	{
@@ -6705,8 +6727,14 @@ void syntax_editor_update(bool& animations_running)
 			editor.prefer_poly_passes = new_prefer;
 			filters_updated = true;
 		}
-		ui_system_push_label("Filters:", false);
+		ui_system_push_next_component_label("Prefer base-pass:");
+		bool prefer_base = ui_system_push_checkbox(editor.prefer_base_pass);
+		if (prefer_base != editor.prefer_base_pass) {
+			editor.prefer_base_pass = prefer_base;
+			filters_updated = true;
+		}
 
+		ui_system_push_label("Filters:", false);
 		auto& filters = editor.poly_pass_filters;
 		for (int i = 0; i < filters.size; i++)
 		{
@@ -6790,13 +6818,30 @@ void syntax_editor_update(bool& animations_running)
 				bool passes_filter = analysis_pass_passes_filters(pass);
 
 				string_reset(&tmp_str);
-				string_append_formated(&tmp_str, "pass: %p %s", pass, passes_filter ? "PASSES" : "FILTERED");
+				bool is_poly, is_base;
+				analysis_pass_append_polymorphic_infos(pass, &tmp_str, is_poly, is_base);
+
+				String tmp_header = string_create();
+				SCOPE_EXIT(string_destroy(&tmp_header));
+				string_append_formated(&tmp_header, "pass: %p ", pass);
+				if (is_base) {
+					string_append(&tmp_header, "Base ");
+				}
+				else if (is_poly) {
+					string_append(&tmp_header, "Instance ");
+				}
+				else {
+					string_append(&tmp_header, "Normal ");
+				}
+				string_append(&tmp_header, passes_filter ? "PASSES" : "FILTERED");
+
 				auto header_container = ui_system_push_indented_container(0, passes_filter, vec3(Syntax_Color::BG_HIGHLIGHT));
 				ui_system_push_active_container(header_container, true);
-				ui_system_push_label(tmp_str, false);
-				string_reset(&tmp_str);
+				ui_system_push_label(tmp_header, false);
 
-				analysis_pass_append_polymorphic_infos(pass, &tmp_str);
+				if (!is_poly || is_base) {
+					continue;
+				}
 
 				auto container = ui_system_push_indented_container(2, false, vec3(0.0f));
 				ui_system_push_active_container(container, false);
@@ -7309,10 +7354,14 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		after_text = "Parameter";
 		if (pass == nullptr) {
 			type = symbol->options.parameter.function->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
-			break;
 		}
-		auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
-		type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+		else if (pass->is_header_reanalysis && pass->instance_workload != nullptr) {
+			auto progress = analysis_workload_try_get_function_progress(pass->instance_workload);
+			type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+		}
+		else {
+			type = syntax_editor.analysis_data->type_system.predefined_types.unknown_type;
+		}
 		break;
 	}
 	case Symbol_Type::POLYMORPHIC_VALUE:
@@ -7320,16 +7369,17 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		after_text = "Polymorphic Symbol";
 		if (pass == nullptr) break;
 
-		auto poly_values = pass->origin_workload->polymorphic_values;
+		Workload_Base* lookup_workload = pass->origin_workload;
 		if (pass->is_header_reanalysis) {
 			if (pass->instance_workload == nullptr) {
 				break;
 			}
-			poly_values = pass->instance_workload->polymorphic_values;
+			lookup_workload = pass->instance_workload;
 		}
+		auto poly_values = poly_values_find_active_set(symbol->options.polymorphic_value.poly_value_origin, lookup_workload);
 		assert(poly_values.data != nullptr, "");
 
-		const auto& value = poly_values[symbol->options.polymorphic_value.access_index];
+		const auto& value = poly_values[symbol->options.polymorphic_value.value_access_index];
 		switch (value.type)
 		{
 		case Poly_Value_Type::SET: type = value.options.value.type; break;
@@ -7400,27 +7450,27 @@ vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, in
 		auto t = tokens[i];
 		if (t.type != Token_Type::OPERATOR) return false;
 		return t.options.op == op;
-	};
+		};
 	auto& test_keyword = [&](int offset, Keyword keyword) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
 		auto t = tokens[i];
 		if (t.type != Token_Type::KEYWORD) return false;
 		return t.options.keyword == keyword;
-	};
+		};
 	auto& test_parenthesis = [&](int offset, Parenthesis parenthesis) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
 		auto t = tokens[i];
 		if (t.type != Token_Type::PARENTHESIS) return false;
 		return t.options.parenthesis.is_open == parenthesis.is_open && t.options.parenthesis.type == parenthesis.type;
-	};
+		};
 	auto& test_identifier = [&](int offset) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
 		auto t = tokens[i];
 		return t.type == Token_Type::IDENTIFIER;
-	};
+		};
 
 	// Only do special highlighting on identifiers
 	if (!test_identifier(0)) return color;
@@ -7440,8 +7490,8 @@ vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, in
 	if (test_op(1, Operator::TILDE) || test_op(1, Operator::TILDE_STAR) || test_op(1, Operator::TILDE_STAR_STAR)) {
 		return Syntax_Color::MODULE;
 	}
-	else if (test_op(1, Operator::DEFINE_INFER) || test_op(1, Operator::DEFINE_INFER_POINTER) || 
-		test_op(1, Operator::DEFINE_INFER_RAW) || test_op(1, Operator::COLON)) 
+	else if (test_op(1, Operator::DEFINE_INFER) || test_op(1, Operator::DEFINE_INFER_POINTER) ||
+		test_op(1, Operator::DEFINE_INFER_RAW) || test_op(1, Operator::COLON))
 	{
 		return Syntax_Color::VALUE_DEFINITION;
 	}

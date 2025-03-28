@@ -24,8 +24,9 @@ struct Datatype_Template;
 struct Workload_Base;
 
 struct Function_Progress;
-struct Polymorphic_Function_Base;
+struct Poly_Function;
 struct Function_Parameter;
+struct Poly_Header;
 
 namespace AST
 {
@@ -95,7 +96,7 @@ struct Dot_Call_Info
     bool is_polymorphic;
     union {
         ModTree_Function* function;
-        Polymorphic_Function_Base* poly_base;
+        Poly_Function poly_function;
     } options;
 };
 
@@ -116,7 +117,7 @@ union Custom_Operator
         Type_Mods mods;
         union {
             ModTree_Function* function;
-            Polymorphic_Function_Base* poly_base;
+            Poly_Function poly_function;
         } options;
     } array_access;
     struct {
@@ -125,7 +126,7 @@ union Custom_Operator
         bool is_polymorphic;
         union {
             ModTree_Function* function;
-            Polymorphic_Function_Base* poly_base;
+            Poly_Function poly_function;
         } options;
     } custom_cast;
     Dynamic_Array<Dot_Call_Info>* dot_calls;
@@ -140,10 +141,10 @@ union Custom_Operator
                 ModTree_Function* get_value;
             } normal;
             struct {
-                Polymorphic_Function_Base* fn_create;
-                Polymorphic_Function_Base* has_next;
-                Polymorphic_Function_Base* next;
-                Polymorphic_Function_Base* get_value;
+                Poly_Function fn_create;
+                Poly_Function has_next;
+                Poly_Function next;
+                Poly_Function get_value;
             } polymorphic;
         } options;
     } iterator;
@@ -167,7 +168,8 @@ enum class Symbol_Access_Level
 {
     GLOBAL = 0,      // Can be accessed everywhere (comptime definitions, functions, structs)
     POLYMORPHIC = 1, // Access level for polymorphic parameters (anonymous structs/lambdas/bake)
-    INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
+    PARAMETERS = 2,  // Allows access to parameters (Used in poly-function header analysis, if parameters reference each other)
+    INTERNAL = 3     // Access level for variables/parameters of functions, which only have meaningful values during execution
 };
 
 enum class Symbol_Type
@@ -198,7 +200,7 @@ struct Symbol
     {
         Datatype* variable_type;
         ModTree_Function* function;
-        Polymorphic_Function_Base* polymorphic_function;
+        Poly_Function poly_function;
         Workload_Definition* definition_workload;
         Workload_Import_Resolve* alias_workload;
         Hardcoded_Type hardcoded;
@@ -214,9 +216,9 @@ struct Symbol
             int index_in_non_polymorphic_signature;
         } parameter;
         struct {
-            Workload_Base* header_workload; // Workload where symbol was defined
+            Poly_Header* poly_value_origin; // Where the poly-values came from
             int defined_in_parameter_index;
-            int access_index;
+            int value_access_index;
         } polymorphic_value;
         Upp_Constant constant;
     } options;

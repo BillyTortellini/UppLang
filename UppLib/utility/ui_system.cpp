@@ -1246,7 +1246,7 @@ void ui_system_initialize()
 				float pixel_width = 1.0f / pixel_size;
 				float r = pixel_width * 2; // Radius doesn't really mean much for triangle sdf
 				float max = 1.0f - (r + pixel_width); // Keep outline 1 pixel width away from border (For anti-aliasing)
-				float scale = 0.3;
+				float scale = 0.3f;
 				vec2 a = vec2(-max) * scale;
 				vec2 b = vec2(max, 0.0f) * scale;
 				vec2 c = vec2(-max, max) * scale;
@@ -1551,6 +1551,7 @@ Window_Handle ui_system_add_window(Window_Style style)
 	container.parent_container.container_index = -1;
 	container.layout = container_layout_make_default();
 	container.layout.options.normal.scroll_bar_enabled = true;
+	container.layout.options.normal.allow_line_combination = false;
 	container.layout.padding = 2;
 
 	return window_handle;
@@ -1796,18 +1797,24 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 			int line_start_index = child_index;
 			bool last_can_combine = true;
 			int remaining_boxes = box_count;
-			while (child_index < container.elements.size)
+			if (container.layout.options.normal.allow_line_combination)
 			{
-				auto& child = container.elements[child_index];
-				int required_boxes = (child.min_width_for_line_merge + PAD_WIDGETS_ON_LINE) / BOX_WIDTH;
-				if (required_boxes * BOX_WIDTH < child.min_width_for_line_merge + PAD_WIDGETS_ON_LINE) {
-					required_boxes += 1;
+				while (child_index < container.elements.size)
+				{
+					auto& child = container.elements[child_index];
+					int required_boxes = (child.min_width_for_line_merge + PAD_WIDGETS_ON_LINE) / BOX_WIDTH;
+					if (required_boxes * BOX_WIDTH < child.min_width_for_line_merge + PAD_WIDGETS_ON_LINE) {
+						required_boxes += 1;
+					}
+					bool add_widget_to_line = required_boxes <= remaining_boxes && child.can_combine_in_lines && last_can_combine;
+					if (!add_widget_to_line) {
+						break;
+					}
+					remaining_boxes -= required_boxes;
+					child_index += 1;
 				}
-				bool add_widget_to_line = required_boxes <= remaining_boxes && child.can_combine_in_lines && last_can_combine;
-				if (!add_widget_to_line) {
-					break;
-				}
-				remaining_boxes -= required_boxes;
+			}
+			else {
 				child_index += 1;
 			}
 

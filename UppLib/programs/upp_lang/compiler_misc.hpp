@@ -166,6 +166,15 @@ enum class Member_Access_Type
 };
 
 
+struct Poly_Header;
+struct Function_Progress;
+struct Poly_Function
+{
+    Poly_Header* poly_header;
+    Function_Progress* base_progress;
+};
+
+
 // Code Source
 struct Source_Code;
 namespace AST {

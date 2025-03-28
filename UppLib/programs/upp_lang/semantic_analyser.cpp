@@ -193,27 +193,6 @@ Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* wo
     return 0;
 }
 
-Function_Progress* polymorphic_function_base_to_function_progress(Polymorphic_Function_Base* base) {
-    Function_Progress* base_progress = (Function_Progress*) (((byte*)base) - offsetof(Function_Progress, polymorphic.function_base));
-    assert(base_progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE && base_progress->header_workload->progress == base_progress, "Testing offset magic");
-    return base_progress;
-}
-
-Function_Progress* polymorphic_header_to_function_progress(Poly_Header* poly_header) {
-    assert(poly_header->is_function, "");
-    return polymorphic_function_base_to_function_progress((Polymorphic_Function_Base*)poly_header);
-}
-
-Workload_Structure_Polymorphic* polymorphic_header_to_struct_workload(Poly_Header* poly_header) {
-    assert(!poly_header->is_function, "");
-    Workload_Structure_Polymorphic* workload = (Workload_Structure_Polymorphic*) (((byte*)poly_header) - offsetof(Workload_Structure_Polymorphic, info));
-    assert(workload->base.type == Analysis_Workload_Type::STRUCT_POLYMORPHIC, "");
-    return workload;
-}
-
-
-
-
 
 
 // Analysis-Pass
@@ -578,7 +557,6 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
     // Create new workload
     T* result = new T;
     Workload_Base* workload = &result->base;
-    workload->parent_workload = semantic_analyser.current_workload;
     workload->type = Helpers::get_workload_type(result);
     workload->is_finished = false;
     workload->was_started = false;
@@ -597,14 +575,18 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
     workload->errors_due_to_unknown_count = 0;
     workload->error_checkpoint_count = 0;
 
-	workload->polymorphic_values = array_create_static<Poly_Value>(nullptr, 0);
-	workload->header_analysis_poly_values = array_create_static<Poly_Value>(nullptr, 0);
+    workload->poly_parent_workload = semantic_analyser.current_workload;
+	workload->poly_values = array_create_static<Poly_Value>(nullptr, 0);
+	workload->poly_value_origin = nullptr;
 	workload->allow_struct_instance_templates = false;
+    workload->is_polymorphic_base = false;
+	workload->active_valid_template_expressions = nullptr;
+	workload->instanciate_matching_info = nullptr;
+
     workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
     workload->current_function = 0;
     workload->current_expression = 0;
     workload->statement_reachable = true;
-    workload->is_polymorphic_base = false;
 
     if (semantic_analyser.current_workload != 0) {
         workload->polymorphic_instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth;
@@ -677,7 +659,9 @@ Function_Progress* function_progress_create_with_modtree_function(
         header_workload->base.symbol_access_level = Symbol_Access_Level::INTERNAL;
     }
     else {
-        progress->header_workload = base_progress->header_workload; // Note: Not sure if this is ever necessary, but we link to base progress header
+		// Note: Not sure if this is ever necessary, but we link to base progress header
+		// But! We don't set this as parent-workload, as instances should not access header values
+        progress->header_workload = base_progress->header_workload;
     }
 
     progress->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(upcast(function_node->options.function.body));
@@ -700,6 +684,7 @@ Function_Progress* function_progress_create_with_modtree_function(
     }
     else {
         // Note: We run the body workload only after the base-analysis completely succeeded
+		// Actually, this could currently be removed, but we'll keep it in for now
         analysis_workload_add_dependency_internal(upcast(progress->body_workload), upcast(base_progress->body_workload));
     }
     analysis_workload_add_dependency_internal(upcast(progress->compile_workload), upcast(progress->body_workload));
@@ -791,11 +776,13 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
     if (struct_info.parameters.size != 0) {
         auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node), body_workload->base.current_pass);
         poly_workload->base.is_polymorphic_base = true;
-        body_workload->base.is_polymorphic_base = true;
         poly_workload->base.symbol_access_level = access_level;
         poly_workload->body_workload = body_workload;
+
+        body_workload->base.is_polymorphic_base = true;
         body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
         body_workload->polymorphic.base = poly_workload;
+
         // Polymorphic base info get's initilaized in header workload
         analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_workload));
     }
@@ -1327,11 +1314,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		auto symbol = get_info(expr->options.path_lookup)->symbol;
 		if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) 
 		{
-			auto workload = semantic_analyser.current_workload;
-			Array<Poly_Value> poly_values = workload->polymorphic_values;
-			if (symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
-				poly_values = workload->header_analysis_poly_values;
-			}
+			Array<Poly_Value> poly_values = poly_values_find_active_set(symbol->options.polymorphic_value.poly_value_origin);
 			assert(poly_values.data != 0,
 				"In normal analysis we shouldn't be able to access this and in instance this would be already set to constant");
 			return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
@@ -1835,10 +1818,10 @@ void expression_info_set_no_value(Expression_Info* info) {
 	info->cast_info.result_value_is_temporary = true;
 }
 
-void expression_info_set_polymorphic_function(Expression_Info* info, Polymorphic_Function_Base* poly_base, ModTree_Function* instance = 0) {
+void expression_info_set_polymorphic_function(Expression_Info* info, Poly_Function poly_function, ModTree_Function* instance = 0) {
 	info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
 	info->is_valid = true;
-	info->options.polymorphic_function.base = poly_base;
+	info->options.polymorphic_function.poly_function = poly_function;
 	info->options.polymorphic_function.instance_fn = instance;
 	info->cast_info.result_type = compiler.analysis_data->type_system.predefined_types.unknown_type; // Not sure if this is correct for function pointers, but should be fine
 	info->cast_info.initial_type = info->cast_info.result_type;
@@ -2219,9 +2202,14 @@ void analysis_workload_destroy(Workload_Base* workload)
 {
 	switch (workload->type)
 	{
+	case Analysis_Workload_Type::FUNCTION_HEADER: {
+		auto function_header = downcast<Workload_Function_Header>(workload);
+		poly_header_destroy(function_header->poly_header_infos);
+		break;
+	}
 	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
 		auto poly = downcast<Workload_Structure_Polymorphic>(workload);
-		poly_header_destroy(&poly->info);
+		poly_header_destroy(poly->poly_header);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE: {
@@ -3018,62 +3006,7 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 	}
 }
 
-Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload)
-{
-	while (workload != nullptr)
-	{
-		Function_Progress* function_progress = nullptr;
-		switch (workload->type)
-		{
-		case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE:
-		case Analysis_Workload_Type::MODULE_ANALYSIS:
-		case Analysis_Workload_Type::DEFINITION:
-		case Analysis_Workload_Type::EVENT:
-		case Analysis_Workload_Type::IMPORT_RESOLVE:
-		case Analysis_Workload_Type::BAKE_ANALYSIS:
-		case Analysis_Workload_Type::BAKE_EXECUTION:
-		case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
-			break;
-		case Analysis_Workload_Type::FUNCTION_BODY: {
-			function_progress = downcast<Workload_Function_Body>(workload)->progress;
-			break;
-		}
-		case Analysis_Workload_Type::FUNCTION_HEADER: {
-			function_progress = downcast<Workload_Function_Header>(workload)->progress;
-			break;
-		}
-		case Analysis_Workload_Type::STRUCT_BODY: {
-			auto struct_workload = downcast<Workload_Structure_Body>(workload);
-			switch (struct_workload->polymorphic_type)
-			{
-			case Polymorphic_Analysis_Type::NON_POLYMORPHIC: return nullptr;
-			case Polymorphic_Analysis_Type::POLYMORPHIC_BASE: return &struct_workload->polymorphic.base->info;
-			case Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE: return &struct_workload->polymorphic.instance.parent->info;
-			default: panic("");
-			}
-			return nullptr;
-		}
-		case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-			return &downcast<Workload_Structure_Polymorphic>(workload)->info;
-		}
-		default: panic("");
-		}
 
-		if (function_progress != nullptr) {
-			switch (function_progress->type)
-			{
-			case Polymorphic_Analysis_Type::NON_POLYMORPHIC: return nullptr;
-			case Polymorphic_Analysis_Type::POLYMORPHIC_BASE: return &function_progress->polymorphic.function_base.base;
-			case Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE: return &function_progress->polymorphic.instance_poly_base->base;
-			default: panic("");
-			}
-		}
-
-		if (workload == workload->parent_workload) return nullptr;
-		workload = workload->parent_workload;
-	}
-	return nullptr;
-}
 
 Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module) {
 	auto progress = module_progress_create(module, 0, semantic_analyser.root_symbol_table);
@@ -3247,7 +3180,7 @@ struct Overload_Candidate
 };
 
 void overload_candidate_finish(
-	Overload_Candidate& candidate, AST::Expression* expression, Poly_Header* poly_base_info, Datatype_Function* function_type, bool is_dot_call)
+	Overload_Candidate& candidate, AST::Expression* expression, Poly_Header* poly_header, Datatype_Function* function_type, bool is_dot_call)
 {
 	if (function_type != 0)
 	{
@@ -3266,16 +3199,16 @@ void overload_candidate_finish(
 		}
 	}
 
-	if (poly_base_info != 0)
+	if (poly_header != 0)
 	{
-		int last = poly_base_info->parameters.size;
-		if (poly_base_info->return_type_index != -1) {
+		int last = poly_header->parameters.size;
+		if (poly_header->return_type_index != -1) {
 			last -= 1;
 		}
 		// Add normal parameters
 		for (int i = 0; i < last; i++)
 		{
-			auto& param = poly_base_info->parameters[i];
+			auto& param = poly_header->parameters[i];
 			bool required = true;
 			Datatype* datatype = nullptr;
 			// Note: We only set datatype to nullptr if we have dependencies, otherwise we set it to the templated type
@@ -3287,11 +3220,11 @@ void overload_candidate_finish(
 		}
 
 		// Add implicit parameters
-		for (int i = 0; i < poly_base_info->inferred_parameters.size; i++)
+		for (int i = 0; i < poly_header->inferred_parameters.size; i++)
 		{
-			auto& impl_info = poly_base_info->inferred_parameters[i];
+			auto& impl_info = poly_header->inferred_parameters[i];
 			// Note: This was removed when we added polymorphic overload resolution
-			//if (impl_info.defined_in_parameter_index != poly_base_info->return_type_index) {
+			//if (impl_info.defined_in_parameter_index != poly_header->return_type_index) {
 			//    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].param_type = nullptr;
 			//    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].required = true;
 			//}
@@ -3299,10 +3232,10 @@ void overload_candidate_finish(
 		}
 
 		// Add return type if available?
-		if (poly_base_info->return_type_index != -1)
+		if (poly_header->return_type_index != -1)
 		{
 			candidate.matching_info.has_return_value = true;
-			auto param = poly_base_info->parameters[poly_base_info->return_type_index];
+			auto param = poly_header->parameters[poly_header->return_type_index];
 			if (!param.depends_on_other_parameters && !param.contains_inferred_parameter) {
 				candidate.matching_info.return_type = param.infos.type;
 			}
@@ -3343,9 +3276,11 @@ Overload_Candidate overload_candidate_create_from_dot_call_info(Dot_Call_Info do
 
 	candidate.matching_info = parameter_matching_info_create_empty();
 	if (dot_call.is_polymorphic) {
-		candidate.matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_DOT_CALL, dot_call.options.poly_base->base.parameters.size);
-		candidate.matching_info.options.poly_dotcall = dot_call.options.poly_base;
-		overload_candidate_finish(candidate, expr, &dot_call.options.poly_base->base, nullptr, true);
+		candidate.matching_info = parameter_matching_info_create_empty(
+			Call_Type::POLYMORPHIC_DOT_CALL, dot_call.options.poly_function.poly_header->parameters.size
+		);
+		candidate.matching_info.options.poly_dotcall = dot_call.options.poly_function;
+		overload_candidate_finish(candidate, expr, dot_call.options.poly_function.poly_header, nullptr, true);
 	}
 	else {
 		candidate.matching_info.call_type = Call_Type::DOT_CALL;
@@ -3364,7 +3299,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 	candidate.matching_info = parameter_matching_info_create_empty();
 	candidate.dot_call_function = nullptr;
 
-	Poly_Header* poly_base_info = nullptr;
+	Poly_Header* poly_header = nullptr;
 	Datatype_Function* function_type = nullptr;
 
 	// Figure out call type
@@ -3377,13 +3312,13 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 	case Expression_Result_Type::POLYMORPHIC_STRUCT: {
 		candidate.matching_info.call_type = Call_Type::POLYMORPHIC_STRUCT;
 		candidate.matching_info.options.poly_struct = info.options.polymorphic_struct;
-		poly_base_info = &info.options.polymorphic_struct->info;
+		poly_header = info.options.polymorphic_struct->poly_header;
 		break;
 	}
 	case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
 		candidate.matching_info.call_type = Call_Type::POLYMORPHIC_FUNCTION;
-		candidate.matching_info.options.poly_function = info.options.polymorphic_function.base;
-		poly_base_info = &info.options.polymorphic_function.base->base;
+		candidate.matching_info.options.poly_function = info.options.polymorphic_function.poly_function;
+		poly_header = info.options.polymorphic_function.poly_function.poly_header;
 		break;
 	}
 	case Expression_Result_Type::FUNCTION: {
@@ -3447,7 +3382,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 	default: panic("");
 	}
 
-	overload_candidate_finish(candidate, expr, poly_base_info, function_type, false);
+	overload_candidate_finish(candidate, expr, poly_header, function_type, false);
 	return optional_make_success(candidate);
 }
 
@@ -3597,16 +3532,14 @@ bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* exp
 {
 	if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) 
 	{
-		Datatype_Template** template_param_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, expression);
+		auto workload = semantic_analyser.current_workload;
+		if (workload == nullptr) return nullptr;
+		if (workload->active_valid_template_expressions == nullptr) return nullptr;
+		Datatype_Template** template_param_opt = hashtable_find_element(workload->active_valid_template_expressions, expression);
 		if (template_param_opt == nullptr) return false;
 		Datatype_Template* template_param = *template_param_opt;
 
-		auto workload = semantic_analyser.current_workload;
-		Array<Poly_Value> poly_values = workload->polymorphic_values;
-		if (template_param->symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
-			poly_values = workload->header_analysis_poly_values;
-		}
-
+		Array<Poly_Value> poly_values = poly_values_find_active_set(template_param->symbol->options.polymorphic_value.poly_value_origin);
 		auto& value = poly_values[template_param->value_access_index];
 		if (value.type == Poly_Value_Type::SET) {
 			return false;
@@ -3748,6 +3681,7 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
 
 	// Update symbol access level for default value
 	RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
+	RESTORE_ON_SCOPE_EXIT(workload->active_valid_template_expressions, nullptr);
 
 	// Analyse default value
 	auto default_value_type = semantic_analyser_analyse_expression_value(
@@ -3765,18 +3699,20 @@ struct Parameter_Dependency
 };
 
 // Defines all necessary symbols in symbol-table, and looks for polymorphism
-Poly_Header poly_header_create_and_analyse_params(
-	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, Function_Progress* progress = 0, AST::Expression* return_type = 0)
+Poly_Header* poly_header_create_and_analyse_params(
+	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, 
+	Function_Progress* progress = 0, Workload_Structure_Polymorphic* poly_struct = 0, AST::Expression* return_type = 0)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 	bool has_return_type = return_type != 0;
 
 	// Poly_Header structure is always generated, but it is destroy if it turns out we don't have a polymorphic function
-	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
-	Poly_Header header;
+	Poly_Header* result_header = new Poly_Header;
+	Poly_Header& header = *result_header;
 	header.name = name;
 	header.return_type_index = has_return_type ? parameter_nodes.size : -1;
 	header.return_type_node = return_type;
+	header.poly_value_definition_workload = semantic_analyser.current_workload;
 	header.parameter_nodes = parameter_nodes;
 	header.symbol_table = symbol_table;
 	header.poly_value_count = 0;
@@ -3787,7 +3723,23 @@ Poly_Header poly_header_create_and_analyse_params(
 	header.parameters = array_create<Poly_Parameter>(parameter_nodes.size + (has_return_type ? 1 : 0));
 	header.parameter_analysis_order = dynamic_array_create<int>(header.parameters.size);
 	header.symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
+	header.valid_template_expressions = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template*>(0);
 	header.found_templated_parameter_type = false;
+
+	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
+	assert(poly_struct != nullptr || progress != nullptr, "Should be either poly-struct or poly-function");
+	if (poly_struct != nullptr) {
+		header.origin.struct_workload = poly_struct;
+		header.is_function = false;
+	}
+	else if (progress != nullptr) {
+		header.origin.function_progress = progress;
+		header.origin.function_progress->header_workload->poly_header_infos = result_header;
+		header.is_function = true;
+	}
+	else {
+		panic("Poly-Header must be either from function or from struct");
+	}
 
 	// Define parameter symbols and search for symbol-lookups and implicit parameters
 	int comptime_parameter_count = 0;
@@ -3800,7 +3752,7 @@ Poly_Header poly_header_create_and_analyse_params(
 		bool is_comptime = parameter_node->is_comptime || progress == 0; // In poly-struct all parameters are comptime
 		Symbol* symbol = symbol_table_define_symbol(
 			symbol_table, parameter_node->name, (is_comptime ? Symbol_Type::POLYMORPHIC_VALUE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
-			Symbol_Access_Level::POLYMORPHIC // Set all parameter symbol-access initallly to polymorphic, so that that all params can access all others
+			(is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::PARAMETERS)
 		);
 		get_info(parameter_node, true)->symbol = symbol;
 
@@ -3813,12 +3765,13 @@ Poly_Header poly_header_create_and_analyse_params(
 		if (is_comptime)
 		{
 			poly_param.options.value_access_index = comptime_parameter_count;
-			symbol->options.polymorphic_value.access_index = comptime_parameter_count;
+			symbol->options.polymorphic_value.value_access_index = comptime_parameter_count;
 			symbol->options.polymorphic_value.defined_in_parameter_index = i;
-			symbol->options.polymorphic_value.header_workload = semantic_analyser.current_workload;
+			symbol->options.polymorphic_value.poly_value_origin = result_header;
 			comptime_parameter_count += 1;
 		}
 		else {
+			assert(progress != nullptr, "");
 			symbol->options.parameter.function = progress;
 			symbol->options.parameter.index_in_polymorphic_signature = i;
 			symbol->options.parameter.index_in_non_polymorphic_signature = i - comptime_parameter_count;
@@ -3862,14 +3815,14 @@ Poly_Header poly_header_create_and_analyse_params(
 			symbol_table, inferred.id,
 			Symbol_Type::POLYMORPHIC_VALUE, AST::upcast(inferred.expression), Symbol_Access_Level::POLYMORPHIC
 		);
+		symbol->options.polymorphic_value.value_access_index = next_value_access_index;
+		symbol->options.polymorphic_value.defined_in_parameter_index = inferred.defined_in_parameter_index;
+		symbol->options.polymorphic_value.poly_value_origin = result_header;
 
 		// Create type and set symbol data
 		auto template_type = type_system_make_template_type(symbol, next_value_access_index, inferred.defined_in_parameter_index);
 		inferred.template_parameter = template_type;
-		symbol->options.polymorphic_value.access_index = template_type->value_access_index;
-		symbol->options.polymorphic_value.defined_in_parameter_index = inferred.defined_in_parameter_index;
-		symbol->options.polymorphic_value.header_workload = semantic_analyser.current_workload;
-		hashtable_insert_element(&semantic_analyser.valid_template_parameters, inferred.expression, template_type);
+		hashtable_insert_element(&header.valid_template_expressions, inferred.expression, template_type);
 		next_value_access_index += 1;
 
 		// Note: These are set here, so we get template types in header-analysis, e.g. for overload resolution
@@ -3899,7 +3852,7 @@ Poly_Header poly_header_create_and_analyse_params(
 		{
 			auto& lookup = header.symbol_lookups[i];
 			dynamic_array_reset(&symbols);
-			symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::POLYMORPHIC, &symbols, &semantic_analyser.symbol_lookup_visited);
+			symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::PARAMETERS, &symbols, &semantic_analyser.symbol_lookup_visited);
 			if (symbols.size == 0) {
 				continue; // Symbol lookups in header may also go outside of the parameter-table
 			}
@@ -3912,8 +3865,8 @@ Poly_Header poly_header_create_and_analyse_params(
 				int defined_in_param_index = 0;
 				if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) {
 					defined_in_param_index = symbol->options.polymorphic_value.defined_in_parameter_index;
-					int access_index = symbol->options.polymorphic_value.access_index;
-					is_inferred_access = access_index >= comptime_parameter_count;
+					int value_access_index = symbol->options.polymorphic_value.value_access_index;
+					is_inferred_access = value_access_index >= comptime_parameter_count;
 				}
 				else if (symbol->type == Symbol_Type::PARAMETER) {
 					defined_in_param_index = symbol->options.parameter.index_in_polymorphic_signature;
@@ -4028,9 +3981,11 @@ Poly_Header poly_header_create_and_analyse_params(
 	}
 
 	// Analyse parameters/return types without dependencies on other parameters
+	assert(semantic_analyser.current_workload->poly_values.data == nullptr, "Function-Header/Poly-Struct-Header should not have values set");
 	semantic_analyser.current_workload->current_symbol_table = symbol_table;
-	semantic_analyser.current_workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-	semantic_analyser.current_workload->header_analysis_poly_values = header.base_analysis_values;
+	semantic_analyser.current_workload->symbol_access_level = Symbol_Access_Level::PARAMETERS;
+	semantic_analyser.current_workload->poly_values = header.base_analysis_values;
+	semantic_analyser.current_workload->poly_value_origin = result_header;
 	for (int i = 0; i < header.parameter_analysis_order.size; i++)
 	{
 		int param_index = header.parameter_analysis_order[i];
@@ -4055,7 +4010,9 @@ Poly_Header poly_header_create_and_analyse_params(
 		if (param_index == header.return_type_index) {
 			node = upcast(header.return_type_node);
 			semantic_analyser.current_workload->allow_struct_instance_templates = true;
+			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 			param.infos.type = semantic_analyser_analyse_expression_type(header.return_type_node);
+			semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
 			semantic_analyser.current_workload->allow_struct_instance_templates = false;
 			if (param.infos.type->contains_template) {
 				param.contains_inferred_parameter = true;
@@ -4063,7 +4020,9 @@ Poly_Header poly_header_create_and_analyse_params(
 		}
 		else {
 			node = upcast(parameter_nodes[param_index]);
+			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 			analyse_parameter_type_and_value(param.infos, parameter_nodes[param_index], true);
+			semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
 			if (param.infos.type->contains_template) {
 				param.contains_inferred_parameter = true;
 			}
@@ -4081,23 +4040,72 @@ Poly_Header poly_header_create_and_analyse_params(
 	for (int i = 0; i < header.inferred_parameters.size; i++) {
 		header.base_analysis_values[header.inferred_parameters[i].template_parameter->value_access_index] = poly_value_make_unset(types.unknown_type);
 	}
-	semantic_analyser.current_workload->header_analysis_poly_values = array_create_static<Poly_Value>(nullptr, 0);
 
-	return header;
+	// Reset poly-values, so caller of this function can decide if we keep the poly-values or not
+	semantic_analyser.current_workload->poly_values = array_create_static<Poly_Value>(nullptr, 0);
+	semantic_analyser.current_workload->poly_value_origin = nullptr;
+
+	return result_header;
 }
 
-void poly_header_destroy(Poly_Header* info)
+void poly_header_destroy(Poly_Header* header)
 {
-	array_destroy(&info->parameters);
-	dynamic_array_destroy(&info->parameter_analysis_order);
-	dynamic_array_destroy(&info->inferred_parameters);
-	dynamic_array_destroy(&info->symbol_lookups);
-	array_destroy(&info->base_analysis_values);
-	for (int i = 0; i < info->instances.size; i++) {
-		auto& instance = info->instances[i];
+	array_destroy(&header->parameters);
+	dynamic_array_destroy(&header->parameter_analysis_order);
+	dynamic_array_destroy(&header->inferred_parameters);
+	dynamic_array_destroy(&header->symbol_lookups);
+	array_destroy(&header->base_analysis_values);
+	for (int i = 0; i < header->instances.size; i++) {
+		auto& instance = header->instances[i];
 		array_destroy(&instance.instance_values);
 	}
-	dynamic_array_destroy(&info->instances);
+	dynamic_array_destroy(&header->instances);
+	hashtable_destroy(&header->valid_template_expressions);
+	delete header;
+}
+
+Array<Poly_Value> poly_values_find_active_set(Poly_Header* poly_value_origin, Workload_Base* search_start_workload)
+{
+	auto workload = search_start_workload;
+	if (workload == nullptr) {
+		workload = semantic_analyser.current_workload;
+	}
+	int counter = 0;
+	while (workload != nullptr)
+	{
+		if (workload->poly_value_origin == poly_value_origin) {
+			return workload->poly_values;
+		}
+
+		workload = workload->poly_parent_workload;
+		assert(workload == nullptr || workload != workload->poly_parent_workload, "Should be terminated with nullptr");
+		counter += 1;
+		assert(counter < 1000, "I don't think we should hit this limit, this seems like an endless loop");
+	}
+
+	return array_create_static<Poly_Value>(nullptr, 0);
+}
+
+// Returns nullptr if invalid index
+String* poly_header_get_value_name(Poly_Header* header, int value_access_index)
+{
+	if (value_access_index < 0 || value_access_index >= header->poly_value_count) {
+		return nullptr;
+	}
+
+	// Check if inferred parameters
+	if (value_access_index >= header->poly_value_count - header->inferred_parameters.size) {
+		return header->inferred_parameters[value_access_index - (header->poly_value_count - header->inferred_parameters.size)].id;
+	}
+
+	// Otherwise search for comptime parameters
+	for (int j = 0; j < header->parameters.size; j++) {
+		auto param = header->parameters[j];
+		if (param.is_comptime && param.options.value_access_index == value_access_index) {
+			return param.infos.name;
+		}
+	}
+	return nullptr;
 }
 
 // Return null if it's not working
@@ -4106,7 +4114,7 @@ Datatype* poly_struct_check_if_instance_template_allowed(Workload_Structure_Poly
 	// Note: This is a new feature, and should only happen if we have something like
 	//		add :: (x: Node), where Node is a poly-struct
 	if (!semantic_analyser.current_workload->allow_struct_instance_templates) return nullptr;
-	Array<Poly_Value> values = array_create<Poly_Value>(poly_struct->info.poly_value_count);
+	Array<Poly_Value> values = array_create<Poly_Value>(poly_struct->poly_header->poly_value_count);
 	for (int i = 0; i < values.size; i++) {
 		values[i] = poly_value_make_unset(compiler.analysis_data->type_system.predefined_types.unknown_type);
 	}
@@ -4131,7 +4139,7 @@ struct Matching_Info
 	Dynamic_Array<Matching_Constraint> constraints;
 };
 
-bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info)
+bool match_templated_type_internal(Datatype * polymorphic_type, Datatype * match_against, Matching_Info * info)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 
@@ -4193,11 +4201,11 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
 		if (struct_instance.parent != struct_template->struct_base) {
 			return false;
 		}
-		auto& instance_values = struct_instance.parent->info.instances[struct_instance.instance_index].instance_values;
+		auto& instance_values = struct_instance.parent->poly_header->instances[struct_instance.instance_index].instance_values;
 
 		// Match polymorphic values to arguments
 		assert(struct_template->instance_values.size == instance_values.size, "");
-		for (int i = 0; i < struct_instance.parent->info.parameter_nodes.size; i++) // Don't match implicit parameters, they should resolve by themselves
+		for (int i = 0; i < struct_instance.parent->poly_header->parameter_nodes.size; i++) // Don't match implicit parameters, they should resolve by themselves
 		{
 			auto& template_to_match = struct_template->instance_values[i];
 			assert(instance_values[i].type == Poly_Value_Type::SET, "Instances must only have values");
@@ -4368,7 +4376,7 @@ bool match_templated_type_internal(Datatype* polymorphic_type, Datatype* match_a
 	return true;
 }
 
-bool match_templated_type(Datatype* polymorphic_type, Datatype* match_against, Matching_Info* info)
+bool match_templated_type(Datatype * polymorphic_type, Datatype * match_against, Matching_Info * info)
 {
 	hashset_reset(&info->already_visited);
 	dynamic_array_reset(&info->constraints);
@@ -4415,22 +4423,22 @@ Instanciation_Result instanciation_result_make_error() {
 }
 
 Instanciation_Result instanciate_polymorphic_callable(
-	Parameter_Matching_Info* param_matching_info, Expression_Context call_context,
-	AST::Node* error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
+	Parameter_Matching_Info * param_matching_info, Expression_Context call_context,
+	AST::Node * error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
 {
 	// Get poly-base from param-matching info
 	Poly_Header* poly_header = nullptr;
 	if (param_matching_info->call_type == Call_Type::POLYMORPHIC_FUNCTION) {
-		poly_header = &param_matching_info->options.poly_function->base;
+		poly_header = param_matching_info->options.poly_function.poly_header;
 	}
 	else if (param_matching_info->call_type == Call_Type::POLYMORPHIC_DOT_CALL) {
-		poly_header = &param_matching_info->options.poly_dotcall->base;
+		poly_header = param_matching_info->options.poly_dotcall.poly_header;
 	}
 	else if (param_matching_info->call_type == Call_Type::POLYMORPHIC_STRUCT) {
-		poly_header = &param_matching_info->options.poly_struct->info;
+		poly_header = param_matching_info->options.poly_struct->poly_header;
 	}
 	else if (param_matching_info->call_type == Call_Type::INSTANCIATE) {
-		poly_header = &param_matching_info->options.instanciate->base;
+		poly_header = param_matching_info->options.instanciate.poly_header;
 	}
 	else {
 		panic("");
@@ -4460,11 +4468,11 @@ Instanciation_Result instanciate_polymorphic_callable(
 		{
 			Workload_Base* header_workload = nullptr;
 			if (poly_header->is_function) {
-				Function_Progress* base_progress = polymorphic_header_to_function_progress(poly_header);
+				Function_Progress* base_progress = poly_header->origin.function_progress;
 				header_workload = upcast(base_progress->header_workload);
 			}
 			else {
-				Workload_Structure_Polymorphic* poly_struct = polymorphic_header_to_struct_workload(poly_header);
+				Workload_Structure_Polymorphic* poly_struct = poly_header->origin.struct_workload;
 				header_workload = upcast(poly_struct);
 			}
 
@@ -4594,7 +4602,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 				return instanciation_result_make_error();
 			}
 
-			auto poly_struct = polymorphic_header_to_struct_workload(poly_header);
+			auto poly_struct = poly_header->origin.struct_workload;
 			auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
 			instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
 
@@ -4688,10 +4696,13 @@ Instanciation_Result instanciate_polymorphic_callable(
 				dynamic_array_push_back(&reevaluation_passes, pass);
 				pass->is_header_reanalysis = true;
 				RESTORE_ON_SCOPE_EXIT(workload->current_pass, pass);
-				RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
+				RESTORE_ON_SCOPE_EXIT(workload->poly_values, instance_values);
+				RESTORE_ON_SCOPE_EXIT(workload->poly_value_origin, poly_header);
 				RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
-				RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
+				RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::PARAMETERS);
 				RESTORE_ON_SCOPE_EXIT(workload->allow_struct_instance_templates, true);
+				RESTORE_ON_SCOPE_EXIT(workload->active_valid_template_expressions, &poly_header->valid_template_expressions);
+				RESTORE_ON_SCOPE_EXIT(workload->instanciate_matching_info, param_matching_info);
 				return_type = semantic_analyser_analyse_expression_type(poly_header->return_type_node);
 			}
 
@@ -4758,10 +4769,13 @@ Instanciation_Result instanciate_polymorphic_callable(
 			dynamic_array_push_back(&reevaluation_passes, pass);
 			pass->is_header_reanalysis = true;
 			RESTORE_ON_SCOPE_EXIT(workload->current_pass, pass);
-			RESTORE_ON_SCOPE_EXIT(workload->polymorphic_values, instance_values);
+			RESTORE_ON_SCOPE_EXIT(workload->poly_values, instance_values);
+			RESTORE_ON_SCOPE_EXIT(workload->poly_value_origin, poly_header);
 			RESTORE_ON_SCOPE_EXIT(workload->current_symbol_table, poly_header->symbol_table);
-			RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
+			RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::PARAMETERS);
 			RESTORE_ON_SCOPE_EXIT(workload->allow_struct_instance_templates, true);
+			RESTORE_ON_SCOPE_EXIT(workload->active_valid_template_expressions, &poly_header->valid_template_expressions);
+			RESTORE_ON_SCOPE_EXIT(workload->instanciate_matching_info, param_matching_info);
 			parameter_type = semantic_analyser_analyse_expression_type(parameter_node->type);
 
 			if (datatype_is_unknown(parameter_type) && !parameter_type->contains_template) {
@@ -4966,44 +4980,45 @@ Instanciation_Result instanciate_polymorphic_callable(
 				instance_function_type = type_system_make_function(parameters, return_type);
 			}
 
-			auto poly_progress = polymorphic_header_to_function_progress(poly_header);
+			auto base_function_progress = poly_header->origin.function_progress;
 
 			// Create new instance progress
 			auto instance_progress = function_progress_create_with_modtree_function(
-				0, poly_progress->header_workload->function_node, instance_function_type, poly_progress);
+				0, base_function_progress->header_workload->function_node, instance_function_type, base_function_progress);
 			instance_progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-			instance_progress->polymorphic.instance_poly_base = &poly_progress->polymorphic.function_base;
+			instance_progress->poly_function = base_function_progress->poly_function;
 
 			// Update body workload to use instance values
 			instance_progress->body_workload->base.polymorphic_instanciation_depth += 1;
-			instance_progress->body_workload->base.polymorphic_values = instance_values;
 			instance_progress->body_workload->base.current_symbol_table = poly_header->symbol_table;
+			instance_progress->body_workload->base.poly_values = instance_values;
+			instance_progress->body_workload->base.poly_value_origin = poly_header;
 
 			instance.options.function_instance = instance_progress;
 		}
 		else
 		{
-			auto poly_struct = polymorphic_header_to_struct_workload(poly_header);
+			auto base_struct_workload = poly_header->origin.struct_workload;
 
 			// Create new struct instance
-			auto body_workload = workload_structure_create(poly_struct->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
-			body_workload->struct_type->content.name = poly_struct->body_workload->struct_type->content.name;
+			auto body_workload = workload_structure_create(base_struct_workload->body_workload->struct_node, 0, true, Symbol_Access_Level::POLYMORPHIC);
+			body_workload->struct_type->content.name = base_struct_workload->body_workload->struct_type->content.name;
 			body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
 			body_workload->polymorphic.instance.instance_index = instance_index;
-			body_workload->polymorphic.instance.parent = poly_struct;
+			body_workload->polymorphic.instance.parent = base_struct_workload;
 
 			body_workload->base.polymorphic_instanciation_depth += 1;
-			body_workload->base.polymorphic_values = instance_values;;
 			body_workload->base.current_symbol_table = poly_header->symbol_table;
+			body_workload->base.poly_values = instance_values;
+			body_workload->base.poly_value_origin = poly_header;
 
-			analysis_workload_add_dependency_internal(upcast(body_workload), upcast(poly_struct->body_workload));
+			analysis_workload_add_dependency_internal(upcast(body_workload), upcast(base_struct_workload->body_workload));
 
 			instance.options.struct_instance = body_workload;
 		}
 
 		dynamic_array_push_back(&poly_header->instances, instance);
-		instance_values.data = 0;
-		instance_values.size = 0;
+		instance_values = array_create_static<Poly_Value>(nullptr, 0); // Ownership was passed to instance, so we shouldn't delete this
 	}
 
 	if (poly_header->is_function)
@@ -5033,7 +5048,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 
 
 // WORKLOAD ENTRY
-Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
+Workload_Import_Resolve* create_import_workload(AST::Import * import_node)
 {
 	// Check for Syntax-Errors
 	if (import_node->type != AST::Import_Type::FILE) {
@@ -5092,7 +5107,7 @@ Workload_Import_Resolve* create_import_workload(AST::Import* import_node)
 	return import_workload;
 }
 
-void analyse_structure_member_nodes_recursive(Struct_Content* content, Dynamic_Array<AST::Structure_Member_Node*> member_nodes)
+void analyse_structure_member_nodes_recursive(Struct_Content * content, Dynamic_Array<AST::Structure_Member_Node*> member_nodes)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 
@@ -5601,12 +5616,13 @@ void analysis_workload_entry(void* userdata)
 		auto& parameter_nodes = signature_node.parameters;
 		assert(function->function_type == ModTree_Function_Type::NORMAL, "");
 
-		Poly_Header poly_header_info = poly_header_create_and_analyse_params(
-			signature_node.parameters, workload->current_symbol_table, function->name, progress,
+		Poly_Header* poly_header_info = poly_header_create_and_analyse_params(
+			signature_node.parameters, workload->current_symbol_table, function->name, progress, nullptr,
 			(signature_node.return_value.available ? signature_node.return_value.value : nullptr)
 		);
+		header_workload->poly_header_infos = poly_header_info;
 
-		bool is_polymorphic = poly_header_info.poly_value_count > 0 || poly_header_info.found_templated_parameter_type;
+		bool is_polymorphic = poly_header_info->poly_value_count > 0 || poly_header_info->found_templated_parameter_type;
 		if (is_polymorphic)
 		{
 			// Switch progress type to polymorphic base
@@ -5615,27 +5631,30 @@ void analysis_workload_entry(void* userdata)
 			progress->compile_workload->base.is_polymorphic_base = true;
 
 			progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
-			progress->polymorphic.function_base.base = poly_header_info;
-			auto& base = progress->polymorphic.function_base.base;
+			progress->poly_function.base_progress = progress;
+			progress->poly_function.poly_header = poly_header_info;
+
+			// Set poly-values for base-analysis
+			header_workload->base.poly_values = poly_header_info->base_analysis_values;
+			header_workload->base.poly_value_origin = poly_header_info;
+			progress->body_workload->base.poly_parent_workload = upcast(progress->header_workload); // So body workload can access poly-values
 
 			// Set polymorphic access infos for child workloads
 			header_workload->base.symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-			header_workload->base.polymorphic_values = base.base_analysis_values;
-			progress->body_workload->base.polymorphic_values = base.base_analysis_values;
 			progress->body_workload->base.symbol_access_level = Symbol_Access_Level::INTERNAL;
 
 			// Update function + symbol
 			function->is_runnable = false; // Polymorphic base cannot be runnable
 			if (function->options.normal.symbol != 0) {
 				function->options.normal.symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
-				function->options.normal.symbol->options.polymorphic_function = &progress->polymorphic.function_base;
+				function->options.normal.symbol->options.poly_function = progress->poly_function;
 			}
 
 			// Create function signature
 			{
 				Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>(parameter_nodes.size);
 				for (int i = 0; i < parameter_nodes.size; i++) {
-					auto& param = base.parameters[i];
+					auto& param = poly_header_info->parameters[i];
 					if (param.is_comptime) {
 						continue;
 					}
@@ -5646,13 +5665,14 @@ void analysis_workload_entry(void* userdata)
 					dynamic_array_push_back(&parameters, info);
 				}
 				Datatype* return_type = 0;
-				if (base.return_type_index != -1) {
-					const auto& ret_param = base.parameters[base.return_type_index];
+				if (poly_header_info->return_type_index != -1) 
+				{
+					const auto& ret_param = poly_header_info->parameters[poly_header_info->return_type_index];
 					if (ret_param.contains_inferred_parameter || ret_param.depends_on_other_parameters) {
 						return_type = types.unknown_type;
 					}
 					else {
-						return_type = base.parameters[base.return_type_index].infos.type;
+						return_type = poly_header_info->parameters[poly_header_info->return_type_index].infos.type;
 					}
 				}
 				function->signature = type_system_make_function(parameters, return_type);
@@ -5664,18 +5684,16 @@ void analysis_workload_entry(void* userdata)
 			Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>(parameter_nodes.size);
 			for (int i = 0; i < parameter_nodes.size; i++) {
 				auto node = parameter_nodes[i];
-				auto poly_param = poly_header_info.parameters[i];
+				auto poly_param = poly_header_info->parameters[i];
 				assert(!node->is_comptime, "");
 				dynamic_array_push_back(&parameters, poly_param.infos);
 			}
 
 			Datatype* return_type = 0;
 			if (signature_node.return_value.available) {
-				return_type = poly_header_info.parameters[poly_header_info.return_type_index].infos.type;
+				return_type = poly_header_info->parameters[poly_header_info->return_type_index].infos.type;
 			}
 			function->signature = type_system_make_function(parameters, return_type);
-
-			poly_header_destroy(&poly_header_info);
 		}
 
 		break;
@@ -5736,14 +5754,18 @@ void analysis_workload_entry(void* userdata)
 		Symbol_Table* parameter_table = symbol_table_create_with_parent(analyser.current_workload->current_symbol_table, Symbol_Access_Level::GLOBAL);
 		workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
 		auto poly_header_info = poly_header_create_and_analyse_params(
-			struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->content.name, 0, 0
+			struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->content.name, 0, workload_poly, 0
 		);
-		workload_poly->info = poly_header_info;
+		workload_poly->poly_header = poly_header_info;
+
+		// Set poly-values for base-analysis
+		workload_poly->base.poly_values = poly_header_info->base_analysis_values;
+		workload_poly->base.poly_value_origin = poly_header_info;
+		workload_poly->body_workload->base.poly_parent_workload = upcast(workload_poly); // So body workload can access poly-values
 
 		// Store/Set correct symbol table for base-analysis and instance analysis
 		workload_poly->base.current_symbol_table = parameter_table;
 		workload_poly->body_workload->base.current_symbol_table = parameter_table;
-		workload_poly->body_workload->base.polymorphic_values = poly_header_info.base_analysis_values;
 		workload_poly->body_workload->base.symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
 		break;
 	}
@@ -5880,7 +5902,7 @@ void analysis_workload_entry(void* userdata)
 
 
 // EXPRESSIONS UPDATES
-void semantic_analyser_register_function_call(ModTree_Function* call_to)
+void semantic_analyser_register_function_call(ModTree_Function * call_to)
 {
 	auto& analyser = semantic_analyser;
 	auto& type_system = compiler.analysis_data->type_system;
@@ -5933,7 +5955,7 @@ Expression_Info expression_info_make_empty(Expression_Context context)
 	return info;
 }
 
-Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_temporary_value)
+Expression_Cast_Info cast_info_make_empty(Datatype * initial_type, bool is_temporary_value)
 {
 	Expression_Cast_Info cast_info;
 	cast_info.cast_type = Cast_Type::NO_CAST;
@@ -5946,7 +5968,7 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
 	return cast_info;
 }
 
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg)
+bool try_updating_type_mods(Expression_Cast_Info & cast_info, Type_Mods expected_mods, const char** out_error_msg)
 {
 	const char* dummy;
 	if (out_error_msg == 0) {
@@ -6066,18 +6088,18 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
 	return true;
 };
 
-bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods, const char** out_error_msg) {
+bool try_updating_expression_type_mods(AST::Expression * expr, Type_Mods expected_mods, const char** out_error_msg) {
 	auto info = get_info(expr);
 	return try_updating_type_mods(info->cast_info, expected_mods, out_error_msg);
 };
 
-bool datatype_check_if_auto_casts_to_other_mods(Datatype* datatype, Type_Mods expected_mods, bool is_temporary, const char** out_error_msg = nullptr)
+bool datatype_check_if_auto_casts_to_other_mods(Datatype * datatype, Type_Mods expected_mods, bool is_temporary, const char** out_error_msg = nullptr)
 {
 	Expression_Cast_Info cast_info = cast_info_make_empty(datatype, is_temporary);
 	return try_updating_type_mods(cast_info, expected_mods, out_error_msg);
 };
 
-Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node)
+Expression_Info analyse_symbol_as_expression(Symbol * symbol, Expression_Context context, AST::Symbol_Lookup * error_report_node)
 {
 	auto& executer = semantic_analyser.workload_executer;
 	auto workload = semantic_analyser.current_workload;
@@ -6106,7 +6128,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 	}
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
 	{
-		auto progress = polymorphic_function_base_to_function_progress(symbol->options.polymorphic_function);
+		auto progress = symbol->options.poly_function.base_progress;
 		analysis_workload_add_dependency_internal(workload, upcast(progress->header_workload), failure_info);
 		break;
 	}
@@ -6217,6 +6239,22 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 		auto& param = symbol->options.parameter;
 		auto workload = semantic_analyser.current_workload;
 
+		// Special handling if we access parameter from other parameter (Poly-Header)
+		auto poly_header = param.function->header_workload->poly_header_infos;
+		assert(poly_header != nullptr, "Even non-polymorphic functions should have parameters");
+		if (workload->instanciate_matching_info != nullptr)
+		{
+			auto& param_info = workload->instanciate_matching_info->matched_parameters[param.index_in_polymorphic_signature];
+			if (!param_info.is_set || param_info.param_type == nullptr) {
+				expression_info_set_error(&result, types.unknown_type);
+			}
+			else {
+				expression_info_set_value(&result, param_info.param_type, false);
+			}
+			return result;
+		}
+
+		// Otherwise we should be in body workload
 		auto progress = analysis_workload_try_get_function_progress(workload);
 		assert(progress != 0, "We should be in function-body workload since normal parameters have internal symbol access");
 		expression_info_set_value(&result, progress->function->signature->parameters[param.index_in_non_polymorphic_signature].type, false);
@@ -6224,14 +6262,11 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 	}
 	case Symbol_Type::POLYMORPHIC_VALUE:
 	{
-		int access_index = symbol->options.polymorphic_value.access_index;
-		Array<Poly_Value> poly_values = workload->polymorphic_values;
-		if (symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
-			poly_values = workload->header_analysis_poly_values;
-		}
-		assert(poly_values.data != 0, "Why can we access non-polymorphic parameter here");
+		int value_access_index = symbol->options.polymorphic_value.value_access_index;
+		Array<Poly_Value> poly_values = poly_values_find_active_set(symbol->options.polymorphic_value.poly_value_origin);
+		assert(poly_values.data != 0, "We shouldn't be able to access poly-value here");
 
-		auto& value = poly_values[access_index];
+		auto& value = poly_values[value_access_index];
 		switch (value.type)
 		{
 		case Poly_Value_Type::SET: {
@@ -6262,7 +6297,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 		return result;
 	}
 	case Symbol_Type::POLYMORPHIC_FUNCTION: {
-		expression_info_set_polymorphic_function(&result, symbol->options.polymorphic_function);
+		expression_info_set_polymorphic_function(&result, symbol->options.poly_function);
 		return result;
 	}
 	default: panic("HEY");
@@ -6283,7 +6318,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
     semantic_analyser.current_workload->current_expression = new_info; \
     SCOPE_EXIT(semantic_analyser.current_workload->current_expression = _backup_info);
 
-bool expression_is_auto_expression(AST::Expression* expression)
+bool expression_is_auto_expression(AST::Expression * expression)
 {
 	auto type = expression->type;
 	return type == AST::Expression_Type::AUTO_ENUM ||
@@ -6296,7 +6331,7 @@ bool expression_is_auto_expression(AST::Expression* expression)
 				expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
 
-bool expression_is_auto_expression_with_preferred_type(AST::Expression* expression)
+bool expression_is_auto_expression_with_preferred_type(AST::Expression * expression)
 {
 	auto type = expression->type;
 	return (type == AST::Expression_Type::LITERAL_READ &&
@@ -6304,7 +6339,7 @@ bool expression_is_auto_expression_with_preferred_type(AST::Expression* expressi
 			expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
 
-void analyse_member_initializers_in_unknown_context_recursive(AST::Arguments* args)
+void analyse_member_initializers_in_unknown_context_recursive(AST::Arguments * args)
 {
 	auto matching_info = get_info(args, true);
 	*matching_info = parameter_matching_info_create_empty(Call_Type::STRUCT_INITIALIZER, 0);
@@ -6320,7 +6355,7 @@ void analyse_member_initializers_in_unknown_context_recursive(AST::Arguments* ar
 // Allowed direction determines if initializers are allowed to contain subtype and base-type initializers (value=0), 
 // or only subtype (value=1) or base_type(value=-1)
 void analyse_member_initializer_recursive(
-	AST::Arguments* arguments, Datatype_Struct* structure, Struct_Content* content, int allowed_direction, Subtype_Index** final_subtype_index)
+	AST::Arguments * arguments, Datatype_Struct * structure, Struct_Content * content, int allowed_direction, Subtype_Index * *final_subtype_index)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 
@@ -6458,7 +6493,7 @@ void analyse_member_initializer_recursive(
 	}
 }
 
-void analyse_index_accept_all_ints_as_u64(AST::Expression* expr)
+void analyse_index_accept_all_ints_as_u64(AST::Expression * expr)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 	if (expr->type == AST::Expression_Type::LITERAL_READ && expr->options.literal_read.type == Literal_Type::INTEGER) {
@@ -6503,7 +6538,7 @@ struct Polymorphic_Overload_Resolve
 	int match_priority; // Array/Slice/Struct-Instances have priority over 'normal' Pointer/Templates ($T and *$T)
 };
 
-void polymorphic_overload_resolve_match_recursive(Datatype* polymorphic_type, Datatype* match_against, Polymorphic_Overload_Resolve& resolve)
+void polymorphic_overload_resolve_match_recursive(Datatype * polymorphic_type, Datatype * match_against, Polymorphic_Overload_Resolve & resolve)
 {
 	if (!polymorphic_type->contains_template) {
 		if (!types_are_equal(polymorphic_type, match_against)) {
@@ -6665,7 +6700,7 @@ void polymorphic_overload_resolve_match_recursive(Datatype* polymorphic_type, Da
 	return;
 }
 
-Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression * expr, Expression_Context context)
 {
 	auto& analyser = semantic_analyser;
 	auto type_system = &compiler.analysis_data->type_system;
@@ -7520,13 +7555,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		// Generate matching info for further parameters
-		Poly_Header* poly_base = &expression_info->options.polymorphic_function.base->base;
+		Poly_Header* poly_header = expression_info->options.polymorphic_function.poly_function.poly_header;
 		auto matching_info = get_info(instanciate_call.arguments, true);
 		*matching_info = parameter_matching_info_create_empty(Call_Type::INSTANCIATE, argument_nodes.size);
-		matching_info->options.poly_function = expression_info->options.polymorphic_function.base;
-		for (int i = 0; i < poly_base->parameter_nodes.size; i++) // Note: parameter_nodes.size, because parameters may include return type
+		matching_info->options.poly_function = expression_info->options.polymorphic_function.poly_function;
+		for (int i = 0; i < poly_header->parameter_nodes.size; i++) // Note: parameter_nodes.size, because parameters may include return type
 		{
-			auto& poly_parameter = poly_base->parameters[i];
+			auto& poly_parameter = poly_header->parameters[i];
 
 			Datatype* datatype = nullptr;
 			if (!poly_parameter.depends_on_other_parameters && !poly_parameter.contains_inferred_parameter) {
@@ -7549,8 +7584,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		// Add all implicit parameters
-		for (int i = 0; i < poly_base->inferred_parameters.size; i++) {
-			auto& inferred = poly_base->inferred_parameters[i];
+		for (int i = 0; i < poly_header->inferred_parameters.size; i++) {
+			auto& inferred = poly_header->inferred_parameters[i];
 			parameter_matching_info_add_param(matching_info, inferred.id, true, true, nullptr);
 		}
 
@@ -7664,8 +7699,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					break;
 				}
 
-				auto& params = info.options.polymorphic_function.base->base.parameters;
-				auto& inferred = info.options.polymorphic_function.base->base.inferred_parameters;
+				auto& params = info.options.polymorphic_function.poly_function.poly_header->parameters;
+				auto& inferred = info.options.polymorphic_function.poly_function.poly_header->inferred_parameters;
 				int param_match_count = 0;
 				for (int j = 0; j < args.size && !remove_symbol; j++)
 				{
@@ -7769,21 +7804,24 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::TEMPLATE_PARAMETER:
 	{
-		auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, expr);
-		if (polymorphic_type_opt == 0) {
+		auto workload = semantic_analyser.current_workload;
+		Datatype_Template** template_opt = nullptr;
+		if (workload != nullptr) {
+			if (workload->active_valid_template_expressions != nullptr) {
+				template_opt = hashtable_find_element(workload->active_valid_template_expressions, expr);
+			}
+		}
+		if (template_opt == 0) {
 			log_semantic_error("Implicit polymorphic parameter only valid in function header!", expr);
 			EXIT_ERROR(types.unknown_type);
 		}
-		auto poly_type = *polymorphic_type_opt;
+
+		auto poly_type = *template_opt;
 		assert(!poly_type->is_reference, "We can never be the reference if we are at the symbol, e.g. $T is not a symbol-read like T");
 
-		// If value is already set, return the value
-		auto workload = semantic_analyser.current_workload;
-		Array<Poly_Value> poly_values = workload->polymorphic_values;
-		if (poly_type->symbol->options.polymorphic_value.header_workload == workload && workload->header_analysis_poly_values.size != 0) {
-			poly_values = workload->header_analysis_poly_values;
-		}
-		assert(poly_values.data != nullptr, "Why can we access non-polymorphic parameter here");
+		// If value is already set, return the value (Should happen in header-re-analysis)
+		Array<Poly_Value> poly_values = poly_values_find_active_set(poly_type->symbol->options.polymorphic_value.poly_value_origin);
+		assert(poly_values.data != nullptr, "We should have values here, as this must be re-analysis or first time header analysis");
 
 		auto& value = poly_values[poly_type->value_access_index];
 		switch (value.type)
@@ -8113,8 +8151,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::FUNCTION: {
 		// Create new function progress and wait for header analyis to finish
 		auto progress = function_progress_create_with_modtree_function(0, expr, 0, nullptr, Symbol_Access_Level::POLYMORPHIC);
-		progress->header_workload->base.polymorphic_values = analyser.current_workload->polymorphic_values;
-		progress->body_workload->base.polymorphic_values = analyser.current_workload->polymorphic_values;
 		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload));
 		workload_executer_wait_for_dependency_resolution();
 
@@ -8124,7 +8160,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::STRUCTURE_TYPE: {
 		auto workload = workload_structure_create(expr, 0, false, Symbol_Access_Level::POLYMORPHIC);
-		workload->base.polymorphic_values = analyser.current_workload->polymorphic_values;
 		EXIT_TYPE(upcast(workload->struct_type));
 	}
 	case AST::Expression_Type::BAKE_BLOCK:
@@ -8135,7 +8170,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			expected_type = context.expected_type.type;
 		}
 		auto progress = bake_progress_create(expr, expected_type);
-		progress->analysis_workload->base.polymorphic_values = analyser.current_workload->polymorphic_values;
 		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->execute_workload));
 		workload_executer_wait_for_dependency_resolution();
 
@@ -8203,12 +8237,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 		else if (array_node.size_expr->type == AST::Expression_Type::TEMPLATE_PARAMETER)
 		{
-			auto polymorphic_type_opt = hashtable_find_element(&semantic_analyser.valid_template_parameters, array_node.size_expr);
-			if (polymorphic_type_opt == 0) {
+			auto workload = semantic_analyser.current_workload;
+			Datatype_Template** template_opt = nullptr;
+			if (workload != nullptr) {
+				if (workload->active_valid_template_expressions != nullptr) {
+					template_opt = hashtable_find_element(workload->active_valid_template_expressions, expr);
+				}
+			}
+
+			if (template_opt == 0) {
 				log_semantic_error("Implicit polymorphic parameter only valid in function header!", expr);
 			}
 			else {
-				auto poly_type = *polymorphic_type_opt;
+				auto poly_type = *template_opt;
 				assert(!poly_type->is_reference, "We can never be the reference if we are at the symbol, e.g. $T is not a symbol-read like T");
 				polymorphic_count = poly_type;
 			}
@@ -8584,7 +8625,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 					Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_FUNCTION, 1);
 					SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
-					matching_info.options.poly_function = array_access.options.poly_base;
+					matching_info.options.poly_function = array_access.options.poly_function;
 					parameter_matching_info_add_analysed_param(&matching_info, access_node.array_expr);
 					parameter_matching_info_add_unanalysed_param(&matching_info, access_node.index_expr);
 					Instanciation_Result result = instanciate_polymorphic_callable(&matching_info, context, upcast(expr), Parser::Section::ENCLOSURE);
@@ -8676,7 +8717,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 							continue;
 						}
 						if (a.is_polymorphic) {
-							if (a.options.poly_base != b.options.poly_base) {
+							if (a.options.poly_function.poly_header != b.options.poly_function.poly_header ||
+								a.options.poly_function.base_progress != b.options.poly_function.base_progress) {
 								continue;
 							}
 						}
@@ -8715,7 +8757,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					{
 						Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_DOT_CALL, 1);
 						SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
-						matching_info.options.poly_dotcall = dotcall.options.poly_base;
+						matching_info.options.poly_dotcall = dotcall.options.poly_function;
 						parameter_matching_info_add_analysed_param(&matching_info, member_node.expr);
 
 						// Instanciate
@@ -8775,13 +8817,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 
 			auto struct_workload = struct_type->workload;
-			Poly_Header* polymorphic = 0;
+			Poly_Header* poly_header = 0;
 			if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
 				// Accessing values of base-struct not possible
 				return optional_make_failure<Upp_Constant>(); // Not polymorphic
 			}
 			else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-				polymorphic = &struct_workload->polymorphic.instance.parent->info;
+				poly_header = struct_workload->polymorphic.instance.parent->poly_header;
 			}
 			else {
 				return optional_make_failure<Upp_Constant>(); // Not polymorphic
@@ -8789,16 +8831,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			// Try to find structure parameter with this base_name
 			int value_access_index = -1;
-			for (int i = 0; i < polymorphic->parameters.size; i++) {
-				auto& parameter = polymorphic->parameters[i];
+			for (int i = 0; i < poly_header->parameters.size; i++) {
+				auto& parameter = poly_header->parameters[i];
 				if (parameter.infos.name == member_node.name) {
 					value_access_index = parameter.options.value_access_index;
 					break;
 				}
 			}
 			// Search implicit parameters
-			for (int i = 0; i < polymorphic->inferred_parameters.size && value_access_index == -1; i++) {
-				auto& implicit = polymorphic->inferred_parameters[i];
+			for (int i = 0; i < poly_header->inferred_parameters.size && value_access_index == -1; i++) {
+				auto& implicit = poly_header->inferred_parameters[i];
 				if (implicit.id == member_node.name) {
 					value_access_index = implicit.template_parameter->value_access_index;
 					break;
@@ -8810,7 +8852,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				info->specifics.member_access.options.poly_access.index = value_access_index;
 				info->specifics.member_access.options.poly_access.struct_workload = struct_workload;
 
-				auto& value = struct_workload->base.polymorphic_values[value_access_index];
+				auto& value = struct_workload->base.poly_values[value_access_index];
 				assert(value.type == Poly_Value_Type::SET, "Struct instance value must be set");
 				return optional_make_success(value.options.value);
 			}
@@ -9650,7 +9692,7 @@ bool cast_possible_in_mode(Cast_Mode mode, Cast_Mode allowed_mode)
 	return false;
 };
 
-Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_value, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
+Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_value, Datatype * source_type, Datatype * destination_type, Cast_Mode cast_mode)
 {
 	auto& analyser = semantic_analyser;
 	auto& type_system = compiler.analysis_data->type_system;
@@ -9999,7 +10041,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 			{
 				Parameter_Matching_Info matching_info = parameter_matching_info_create_empty(Call_Type::POLYMORPHIC_FUNCTION, 1);
 				SCOPE_EXIT(parameter_matching_info_destroy(&matching_info));
-				matching_info.options.poly_function = custom_cast.options.poly_base;
+				matching_info.options.poly_function = custom_cast.options.poly_function;
 				parameter_matching_info_add_known_type(&matching_info, source_type, is_temporary_value);
 
 				Error_Checkpoint error_checkpoint = error_checkpoint_start();
@@ -10032,7 +10074,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 	return result;
 }
 
-void expression_context_apply(Expression_Info* info, Expression_Context context, AST::Expression* expression, Parser::Section error_section)
+void expression_context_apply(Expression_Info * info, Expression_Context context, AST::Expression * expression, Parser::Section error_section)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10097,7 +10139,7 @@ void expression_context_apply(Expression_Info* info, Expression_Context context,
 	return;
 }
 
-Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expression, Expression_Context context)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto result = semantic_analyser_analyse_expression_internal(expression, context);
@@ -10109,7 +10151,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
 	return result;
 }
 
-Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression * expression)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10198,7 +10240,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 	return types.unknown_type;
 }
 
-Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context, bool no_value_expected)
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression * expression, Expression_Context context, bool no_value_expected)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10271,7 +10313,7 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression
 
 // OPERATOR CONTEXT
 void operator_context_query_dot_calls_recursive(
-	Operator_Context* context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>& out_results, Hashset<Operator_Context*>& visited)
+	Operator_Context * context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>&out_results, Hashset<Operator_Context*>&visited)
 {
 	if (hashset_contains(&visited, context)) {
 		return;
@@ -10306,7 +10348,7 @@ void operator_context_query_dot_calls_recursive(
 	}
 }
 
-Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context* context, Custom_Operator_Key key, Hashset<Operator_Context*>& visited)
+Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context * context, Custom_Operator_Key key, Hashset<Operator_Context*>&visited)
 {
 	if (hashset_contains(&visited, context)) {
 		return nullptr;
@@ -10340,7 +10382,7 @@ Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Conte
 	return nullptr;
 }
 
-Custom_Operator* operator_context_query_custom_operator(Operator_Context* context, Custom_Operator_Key key)
+Custom_Operator* operator_context_query_custom_operator(Operator_Context * context, Custom_Operator_Key key)
 {
 	Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
 	SCOPE_EXIT(hashset_destroy(&visited));
@@ -10348,7 +10390,7 @@ Custom_Operator* operator_context_query_custom_operator(Operator_Context* contex
 }
 
 
-Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Cast_Option option)
+Cast_Mode operator_context_get_cast_mode_option(Operator_Context * context, Cast_Option option)
 {
 	Custom_Operator_Key key;
 	key.type = AST::Context_Change_Type::CAST_OPTION;
@@ -10366,7 +10408,7 @@ Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Cast_
 	return Cast_Mode::INFERRED;
 }
 
-u64 custom_operator_key_hash(Custom_Operator_Key* key)
+u64 custom_operator_key_hash(Custom_Operator_Key * key)
 {
 	int type_as_int = (int)key->type;
 	u64 hash = hash_i32(&type_as_int);
@@ -10427,7 +10469,7 @@ u64 custom_operator_key_hash(Custom_Operator_Key* key)
 	return hash;
 }
 
-bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) {
+bool custom_operator_key_equals(Custom_Operator_Key * a, Custom_Operator_Key * b) {
 	if (a->type != b->type) {
 		return false;
 	}
@@ -10470,7 +10512,7 @@ bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) 
 }
 
 Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
-	Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base* wait_for_workload
+	Symbol_Table * symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base * wait_for_workload
 )
 {
 	// Create new operator context
@@ -10511,7 +10553,7 @@ Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
 	return context;
 }
 
-void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context)
+void analyse_operator_context_change(AST::Context_Change * change_node, Operator_Context * context)
 {
 	auto& ids = compiler.identifier_pool.predefined_ids;
 	auto& types = compiler.analysis_data->type_system.predefined_types;
@@ -10954,17 +10996,17 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 			else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
 			{
-				Poly_Header* poly_base = &fn_info->options.polymorphic_function.base->base;
+				Poly_Header* poly_header = fn_info->options.polymorphic_function.poly_function.poly_header;
 				op.custom_cast.is_polymorphic = true;
-				op.custom_cast.options.poly_base = fn_info->options.polymorphic_function.base;
-				key.options.custom_cast.from_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.custom_cast.mods, false);
-				poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 1, false);
+				op.custom_cast.options.poly_function = fn_info->options.polymorphic_function.poly_function;
+				key.options.custom_cast.from_type = poly_function_check_first_argument(poly_header, upcast(expr), &op.custom_cast.mods, false);
+				poly_function_check_argument_count_and_comptime(poly_header, upcast(expr), 1, false);
 
 				// Check return type
-				if (poly_base->return_type_index != -1)
+				if (poly_header->return_type_index != -1)
 				{
 					// If the return type is a normal type, just use it as key, otherwise 
-					auto& return_param = poly_base->parameters[poly_base->return_type_index];
+					auto& return_param = poly_header->parameters[poly_header->return_type_index];
 					if (return_param.depends_on_other_parameters || return_param.contains_inferred_parameter) {
 						key.options.custom_cast.to_type = nullptr;
 					}
@@ -11027,11 +11069,11 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 			else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
 			{
-				Poly_Header* poly_base = &fn_info->options.polymorphic_function.base->base;
+				Poly_Header* poly_header = fn_info->options.polymorphic_function.poly_function.poly_header;
 				op.array_access.is_polymorphic = true;
-				op.array_access.options.poly_base = fn_info->options.polymorphic_function.base;
-				key.options.array_access.array_type = poly_function_check_first_argument(poly_base, upcast(expr), &op.array_access.mods, false);
-				poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), 2, false);
+				op.array_access.options.poly_function = fn_info->options.polymorphic_function.poly_function;
+				key.options.array_access.array_type = poly_function_check_first_argument(poly_header, upcast(expr), &op.array_access.mods, false);
+				poly_function_check_argument_count_and_comptime(poly_header, upcast(expr), 2, false);
 			}
 			else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
 				success = false;
@@ -11121,13 +11163,13 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 			else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
 			{
-				Poly_Header* poly_base = &fn_info->options.polymorphic_function.base->base;
+				Poly_Header* poly_header = fn_info->options.polymorphic_function.poly_function.poly_header;
 				dot_call.is_polymorphic = true;
-				dot_call.options.poly_base = fn_info->options.polymorphic_function.base;
-				key.options.dot_call.datatype = poly_function_check_first_argument(poly_base, upcast(expr), &dot_call.mods, true);
-				key.options.dot_call.id = fn_info->options.polymorphic_function.base->base.name;
-				int required_parameter_count = as_member_access ? 1 : poly_base->parameter_nodes.size;
-				poly_function_check_argument_count_and_comptime(poly_base, upcast(expr), required_parameter_count, true);
+				dot_call.options.poly_function = fn_info->options.polymorphic_function.poly_function;
+				key.options.dot_call.datatype = poly_function_check_first_argument(poly_header, upcast(expr), &dot_call.mods, true);
+				key.options.dot_call.id = poly_header->name;
+				int required_parameter_count = as_member_access ? 1 : poly_header->parameter_nodes.size;
+				poly_function_check_argument_count_and_comptime(poly_header, upcast(expr), required_parameter_count, true);
 			}
 			else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
 				success = false;
@@ -11232,15 +11274,15 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 			else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
 			{
-				Poly_Header* poly_base = &fn_info->options.polymorphic_function.base->base;
+				Poly_Header* poly_header = fn_info->options.polymorphic_function.poly_function.poly_header;
 				iter.is_polymorphic = true;
-				iter.options.polymorphic.fn_create = fn_info->options.polymorphic_function.base;
+				iter.options.polymorphic.fn_create = fn_info->options.polymorphic_function.poly_function;
 
-				poly_function_check_argument_count_and_comptime(poly_base, upcast(function_node), 1, false);
-				key.options.iterator.datatype = poly_function_check_first_argument(poly_base, upcast(function_node), &op.iterator.iterable_mods, false);
+				poly_function_check_argument_count_and_comptime(poly_header, upcast(function_node), 1, false);
+				key.options.iterator.datatype = poly_function_check_first_argument(poly_header, upcast(function_node), &op.iterator.iterable_mods, false);
 
 				// Function must have return type
-				if (poly_base->return_type_index == -1) {
+				if (poly_header->return_type_index == -1) {
 					log_semantic_error("iterator_create function must return a value (iterator)", upcast(function_node));
 					success = false;
 				}
@@ -11264,7 +11306,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				parameter_set_analysed(function_param);
 
 				ModTree_Function** function_pointer_to_set = nullptr;
-				Polymorphic_Function_Base** poly_pointer_to_set = nullptr;
+				Poly_Function* poly_pointer_to_set = nullptr;
 				bool should_have_return_type = false;
 				bool return_should_be_boolean = false;
 				if (function_index == 1) {
@@ -11310,7 +11352,10 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 						else if (!(types_are_equal(arg_type->base_type, iterator_type->base_type) &&
 							datatype_check_if_auto_casts_to_other_mods(arg_type, iterator_type->mods, false)))
 						{
-							log_semantic_error("Function parameter type must be compatible with iterator type (Create function return type)", upcast(fn_expr));
+							log_semantic_error(
+								"Function parameter type must be compatible with iterator type (Create function return type)", 
+								upcast(fn_expr)
+							);
 							log_error_info_given_type(arg_type);
 							log_error_info_expected_type(iterator_type);
 							success = false;
@@ -11344,9 +11389,9 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				}
 				else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
 				{
-					Poly_Header* poly_base = &fn_info->options.polymorphic_function.base->base;
+					Poly_Header* poly_header = fn_info->options.polymorphic_function.poly_function.poly_header;
 					if (iter.is_polymorphic) {
-						*poly_pointer_to_set = fn_info->options.polymorphic_function.base;
+						*poly_pointer_to_set = fn_info->options.polymorphic_function.poly_function;
 					}
 					else {
 						log_semantic_error("Expected normal (non-polymorphic) function for has_next function", upcast(fn_expr));
@@ -11355,9 +11400,9 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 					}
 
 					// Check parameters
-					poly_function_check_argument_count_and_comptime(poly_base, upcast(fn_expr), 1, false);
+					poly_function_check_argument_count_and_comptime(poly_header, upcast(fn_expr), 1, false);
 					Type_Mods unused;
-					Datatype* arg_type = poly_function_check_first_argument(poly_base, upcast(fn_expr), &unused, false);
+					Datatype* arg_type = poly_function_check_first_argument(poly_header, upcast(fn_expr), &unused, false);
 					if (!success) return;
 
 					// Note: We don't know the iterator type from the make function, as this is currently not provided by the
@@ -11367,9 +11412,9 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 					}
 
 					// Check return type
-					if (poly_base->return_type_index != -1)
+					if (poly_header->return_type_index != -1)
 					{
-						Datatype* return_type = poly_base->parameters[poly_base->return_type_index].infos.type;
+						Datatype* return_type = poly_header->parameters[poly_header->return_type_index].infos.type;
 						if (!should_have_return_type) {
 							log_semantic_error("Function should not have a return value", upcast(fn_expr));
 							success = false;
@@ -11417,7 +11462,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 
 
 // STATEMENTS
-bool code_block_is_loop(AST::Code_Block* block)
+bool code_block_is_loop(AST::Code_Block * block)
 {
 	if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
 		auto parent = (AST::Statement*)block->base.parent;
@@ -11429,7 +11474,7 @@ bool code_block_is_loop(AST::Code_Block* block)
 	return false;
 }
 
-bool code_block_is_defer(AST::Code_Block* block)
+bool code_block_is_defer(AST::Code_Block * block)
 {
 	if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
 		auto parent = (AST::Statement*)block->base.parent;
@@ -11454,7 +11499,7 @@ bool inside_defer()
 	return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -11992,7 +12037,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 						Datatype* iterator_type = types.unknown_type;
 						{
 							matching_info.options.poly_function = poly_bases.fn_create;
-							Poly_Header* poly_base = &matching_info.options.poly_function->base;
 							Instanciation_Result result = instanciate_polymorphic_callable(
 								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
 							);
@@ -12020,7 +12064,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
 							// Instanciate
 							matching_info.options.poly_function = poly_bases.has_next;
-							Poly_Header* poly_base = &matching_info.options.poly_function->base;
 							Instanciation_Result result = instanciate_polymorphic_callable(
 								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
 							);
@@ -12043,7 +12086,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
 							// Instanciate
 							matching_info.options.poly_function = poly_bases.next;
-							Poly_Header* poly_base = &matching_info.options.poly_function->base;
 							Instanciation_Result result = instanciate_polymorphic_callable(
 								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
 							);
@@ -12066,7 +12108,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
 							// Instanciate
 							matching_info.options.poly_function = poly_bases.get_value;
-							Poly_Header* poly_base = &matching_info.options.poly_function->base;
 							Instanciation_Result result = instanciate_polymorphic_callable(
 								&matching_info, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
 							);
@@ -12560,7 +12601,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymorphic_symbol_access)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block * block, bool polymorphic_symbol_access)
 {
 	auto block_info = get_info(block, true);
 	block_info->control_flow_locked = false;
@@ -12614,7 +12655,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymo
 		if (add_import_to_base_table) {
 			auto progress = fn->options.normal.progress;
 			assert(progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE, "");
-			Function_Progress* base_progress = polymorphic_header_to_function_progress(&progress->polymorphic.instance_poly_base->base);
+			Function_Progress* base_progress = progress->poly_function.base_progress;
 			assert(base_progress->body_workload->base.is_finished, "Must be finished by now");
 			auto base_pass = base_progress->body_workload->base.current_pass;
 			auto base_block_info = pass_get_node_info(base_pass, block, Info_Query::READ_NOT_NULL);
@@ -12712,9 +12753,7 @@ void semantic_analyser_finish()
 }
 
 void function_progress_destroy(Function_Progress* progress) {
-	if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-		poly_header_destroy(&progress->polymorphic.function_base.base);
-	}
+	// Note: Polymorphic_Header is owned/managed/free by Function_Header_Workload
 	delete progress;
 }
 
@@ -12733,7 +12772,6 @@ void semantic_analyser_reset()
 		semantic_analyser.system_allocator = nullptr;
 		semantic_analyser.root_symbol_table = nullptr;
 
-		hashtable_reset(&semantic_analyser.valid_template_parameters);
 		stack_allocator_reset(&semantic_analyser.comptime_value_allocator);
 		hashset_reset(&semantic_analyser.symbol_lookup_visited);
 
@@ -12882,14 +12920,12 @@ Semantic_Analyser* semantic_analyser_initialize()
 	semantic_analyser.comptime_value_allocator = stack_allocator_create_empty(2048);
 	semantic_analyser.workload_executer = workload_executer_initialize();
 	semantic_analyser.symbol_lookup_visited = hashset_create_pointer_empty<Symbol_Table*>(1);
-	semantic_analyser.valid_template_parameters = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template*>(1);
 	return &semantic_analyser;
 }
 
 void semantic_analyser_destroy()
 {
 	hashset_destroy(&semantic_analyser.symbol_lookup_visited);
-	hashtable_destroy(&semantic_analyser.valid_template_parameters);
 	stack_allocator_destroy(&semantic_analyser.comptime_value_allocator);
 	workload_executer_destroy();
 }
@@ -12898,7 +12934,7 @@ void semantic_analyser_destroy()
 
 // ERRORS
 void error_information_append_to_rich_text(
-	const Error_Information& info, Compiler_Analysis_Data* analysis_data, Rich_Text::Rich_Text* text, Datatype_Format format
+	const Error_Information & info, Compiler_Analysis_Data * analysis_data, Rich_Text::Rich_Text * text, Datatype_Format format
 )
 {
 	auto type_system = &analysis_data->type_system;
@@ -12999,8 +13035,8 @@ void error_information_append_to_rich_text(
 }
 
 void error_information_append_to_string(
-	const Error_Information& info, Compiler_Analysis_Data* analysis_data,
-	String* string, Datatype_Format format
+	const Error_Information & info, Compiler_Analysis_Data * analysis_data,
+	String * string, Datatype_Format format
 )
 {
 	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
@@ -13010,7 +13046,7 @@ void error_information_append_to_string(
 	Rich_Text::append_to_string(&text, string, 2);
 }
 
-void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation)
+void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data * analysis_data, String * string, int indentation)
 {
 	auto& errors = analysis_data->semantic_errors;
 	for (int i = 0; i < errors.size; i++)
@@ -13032,28 +13068,6 @@ void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* 
 			string_append(string, "\t");
 		}
 	}
-}
-
-// Returns nullptr if invalid index
-String* poly_header_get_value_name(Poly_Header* header, int value_access_index)
-{
-	if (value_access_index < 0 || value_access_index >= header->poly_value_count) {
-		return nullptr;
-	}
-
-	// Check if inferred parameters
-	if (value_access_index >= header->poly_value_count - header->inferred_parameters.size) {
-		return header->inferred_parameters[value_access_index - (header->poly_value_count - header->inferred_parameters.size)].id;
-	}
-
-	// Otherwise search for comptime parameters
-	for (int j = 0; j < header->parameters.size; j++) {
-		auto param = header->parameters[j];
-		if (param.is_comptime && param.options.value_access_index == value_access_index) {
-			return param.infos.name;
-		}
-	}
-	return nullptr;
 }
 
 

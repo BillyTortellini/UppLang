@@ -1,6 +1,56 @@
 
 Done:
 -----
+
+28.03:
+ * Rewordd Polymorphism/Poly-Value access, much cleaner now except implicit polymorphism/parameter access
+ * Pass-Filter added prefer_base/prefer_poly
+ * Hashset seems to be working
+ * Fixed all testcases
+ * Fix semantic analyser
+ * Store poly-header in Poly-Value-Symbol / Template type
+ * Always store poly-header infos in function-progress/struct-header analysis
+ * Create new Symbol-Access-Level for parameters, and only use it during parameter-analysis
+ * Valid Template-Type hashtable was moved inside workload, and is used in header-reanalysis
+ * Poly-Value lookup uses definition workload (E.g. poly-value set)
+ * Remove poly-value setting in child-workloads
+ * Check workload-structure create calls
+
+27.03:
+ - Almost finished implementing new implicit Polymorphism
+ - Fixed testcases at polymorphic instanciation limit
+ - Fixed coloring of invalid expression-info member accesses (Initialized to sensible values)
+ - Initial Syntax-Coloring based on tokens and simple rules (identifier.identifer is a member access, and so on)
+ - import as usees definition symbol node
+ - Fixed named argument highlighting
+ - Fixed arguments not analysing in instanciation error
+ - Fixed for-loop not analysing in unknown context
+ - For-Loop variable should be usize by default, not u64
+ - Filter symbol-table ranges with passes
+ - Run Instance-Analysis even if base-analysis fails
+
+26.03:
+ * Added Pass-Filters in Editor
+
+25.03:
+ * continue and break now work without ids
+ * Re-Add Bytes as struct in Upp-Language
+ * Debugger shows polymorphic functions as "lambda-function?"
+ * Add wait for input after running C-Program
+ * Fixed Arena/Dynamic_Array bugs
+
+24.03:
+ * Fixed implicit cast bug
+ * for loop variable definitions aren't highlighted
+ * assert double definition bug
+ * Arena Implementation
+ * Fixed testcases
+ * Added dot-call code completion only on dot-calls
+ * Fixed member code-completion (expression-info is_valid problems...)
+ * Dot-Call Syntax update
+
+
+
 21.03:
  * Added Synchronization for compilation units-array (Not the nicest solution, but hey...)
  * Member-Access and Array-Access for Watch-values
@@ -32,6 +82,8 @@ Done:
 
 17.03:
  * Editor Analysis-Info rework
+
+
 
 14.03:
  * Fixed memory-leaks
@@ -69,6 +121,8 @@ Done:
  * Auto-formating respects strings and end-of line comments
  * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
 
+
+
 07.03:
  * Fixed synchronization bug
  * Added identifier-pool lock
@@ -103,6 +157,8 @@ Done:
  * Visual Line Selection errors when folds are enabled
  * Updated imports so we can have import Arena~Arena
  * Off by one error in syntax highlighting
+
+
 
 28.02.2025
  * Fixed error-hover information

@@ -1,19 +1,24 @@
 
+TODO: 
+ * Write testcases
 
- get_overload cannot differentiate this? Differentiate based on argument names must be enough?
+DONE:
+ * Pass-Filter added prefer_base/prefer_poly
+ * Hashset seems to be working
+ * Fixed all testcases
+ * Fix semantic analyser
+ * Store poly-header in Poly-Value-Symbol / Template type
+ * Always store poly-header infos in function-progress/struct-header analysis
+ * Create new Symbol-Access-Level for parameters, and only use it during parameter-analysis
+ * Valid Template-Type hashtable was moved inside workload, and is used in header-reanalysis
+ * Poly-Value lookup uses definition workload (E.g. poly-value set)
+ * Remove poly-value setting in child-workloads
+ * Check workload-structure create calls
+
+
 
 CURRENT: 
 --------
-
- * Update Struct-Instance-Template for things
- * Check how hard it would be to have polymorphic types implicitly, e.g.
-    add :: (array: Dynamic_Array, value: array.T)
-    --> Maybe not even that hard, the array.T access seems to suck the most currently...
-
-Poly-Update DONE:
- * Matching with empty struct instance template
- * Polymorphic-header needs to check if a parameter is polymorphic
-
 
 IN QUEUE:
 ---------

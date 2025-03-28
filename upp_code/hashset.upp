@@ -268,7 +268,7 @@ Hashset :: module
 				iter.entry =* iter.entry.value.next
 				return
 			
-			for i := iter.entry_index + 1; i < iter.set.entries.size; i += cast{u64} 1
+			for i := iter.entry_index + 1; i < iter.set.entries.size; i += 1
 				if iter.set.entries[i].valid
 					iter.entry_index = i
 					iter.entry =* iter.set.entries[i]
@@ -290,7 +290,7 @@ Hashset :: module
 			Iterator~create, Iterator~has_next, Iterator~next, Iterator~get_value
 		)
 	
-	/// test :: ()
+	test :: ()
 		INT_HASHABLE :: #bake Hashable~make_primitive(int)
 		
 		context import Operators

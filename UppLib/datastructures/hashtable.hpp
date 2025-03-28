@@ -91,13 +91,20 @@ Hashtable<K, V> hashtable_create_empty(int capacity, u64(*hash_function)(K*), bo
 {
     Hashtable<K, V> result;
     result.element_count = 0;
-    result.entries = array_create<Hashtable_Entry<K, V>>(primes_find_next_suitable_for_set_size(capacity));
-    for (int i = 0; i < result.entries.size; i++) {
-        result.entries[i].valid = false;
-        result.entries[i].next = 0;
-    }
     result.hash_function = hash_function;
     result.equals_function = equals_function;
+
+    if (capacity == 0) {
+        result.entries = array_create_static<Hashtable_Entry<K, V>>(nullptr, 0);
+    }
+    else {
+        result.entries = array_create<Hashtable_Entry<K, V>>(capacity);
+        for (int i = 0; i < result.entries.size; i++) {
+            auto& entry = result.entries[i];
+            entry.next = nullptr;
+            entry.valid = false;
+        }
+    }
     return result;
 }
 
