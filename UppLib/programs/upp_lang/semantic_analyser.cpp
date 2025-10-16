@@ -1302,6 +1302,40 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	case AST::Expression_Type::CONST_TYPE:
 	case AST::Expression_Type::MODULE:
 		panic("Should be handled above!");
+	case AST::Expression_Type::OPTIONAL_ACCESS:
+	{
+		Datatype* opt_type = expression_info_get_type(get_info(expr->options.optional_access.expr), false);
+		Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.optional_access.expr);
+		if (result.type != Comptime_Result_Type::AVAILABLE) {
+			return result;
+		}
+
+		if (expr->options.optional_access.is_value_access) {
+			// Optional value is always at offset 0, so we can just return same pointer
+			return comptime_result_make_available(result.data, result_type);
+		}
+		else 
+		{
+			assert(
+				types_are_equal(result_type->base_type, upcast(compiler.analysis_data->type_system.predefined_types.bool_type)),
+				"Should always be the case");
+
+			if (info->specifics.is_optional_pointer) {
+				// Check if pointer is null
+				void* data = *(void**)result.data;
+				void* bool_buffer = stack_allocator_allocate_size(&analyser.comptime_value_allocator, 1, 1);
+				*(bool*)bool_buffer = data != nullptr;
+				return comptime_result_make_available(bool_buffer, result_type);
+			}
+			else 
+			{
+				// Member access of optional value
+				Datatype_Optional* optional_type = downcast<Datatype_Optional>(opt_type);
+				return comptime_result_make_available(
+					((byte*)result.data) + optional_type->is_available_member.offset, result_type);
+			}
+		}
+	}
 	case AST::Expression_Type::ERROR_EXPR: {
 		return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
 	}
@@ -1489,22 +1523,6 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		case Member_Access_Type::DOT_CALL:
 		case Member_Access_Type::DOT_CALL_AS_MEMBER: {
 			return comptime_result_make_unavailable(result_type, "Dot call member is not comptime available");
-		}
-		case Member_Access_Type::OPTIONAL_PTR_ACCESS:
-		{
-			Datatype* opt_type = expression_info_get_type(get_info(expr->options.optional_check_value), false);
-			if (access_info.options.optional_deref_count > 0) {
-				return comptime_result_make_unavailable(result_type, "Cannot dereference pointer to get retrieve optional");
-			}
-			Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.optional_check_value);
-			if (result.type != Comptime_Result_Type::AVAILABLE) {
-				return result;
-			}
-
-			void* ptr = *(void**)result.data;
-			bool* result_bool = (bool*)stack_allocator_allocate_size(&analyser.comptime_value_allocator, 1, 1);
-			*result_bool = ptr != nullptr;
-			return comptime_result_make_available(result_bool, result_type);
 		}
 		case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
 			assert(access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "In instance this should already be constant");
@@ -8356,27 +8374,34 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 		auto child_type = semantic_analyser_analyse_expression_type(expr->options.optional_child_type);
 		EXIT_TYPE(upcast(type_system_make_pointer(child_type, true)));
 	}
-	case AST::Expression_Type::OPTIONAL_CHECK:
+	case AST::Expression_Type::OPTIONAL_ACCESS:
 	{
-		auto value_type = semantic_analyser_analyse_expression_value(expr->options.optional_check_value, expression_context_make_unknown());
-		info->specifics.is_optional_pointer_check = false;
+		auto optional_type = semantic_analyser_analyse_expression_value(expr->options.optional_access.expr, expression_context_make_unknown());
 
-		// Optional pointer check
-		if (value_type->mods.pointer_level > 0 && value_type->mods.optional_flags != 0)
+		Datatype* value_access_type = optional_type;
+		Type_Mods expected_mods = type_mods_make(0, 0, 0, 0, 0);
+
+		// Check if it's an optional pointer
+		info->specifics.is_optional_pointer = optional_type->mods.pointer_level > 0 && optional_type->mods.optional_flags != 0;
+		if (info->specifics.is_optional_pointer)
 		{
 			// Dereference to first optional pointer type
-			Datatype* result_type = value_type;
 			bool found = false;
+			bool result_is_const = false;
 			while (true)
 			{
-				if (result_type->type == Datatype_Type::CONSTANT) {
-					result_type = downcast<Datatype_Constant>(result_type)->element_type;
+				if (value_access_type->type == Datatype_Type::CONSTANT) {
+					value_access_type = downcast<Datatype_Constant>(value_access_type)->element_type;
+					result_is_const = true;
+					continue;
 				}
-				else if (result_type->type == Datatype_Type::POINTER) {
-					auto ptr = downcast<Datatype_Pointer>(result_type);
+				result_is_const = false;
+
+				if (value_access_type->type == Datatype_Type::POINTER) {
+					auto ptr = downcast<Datatype_Pointer>(value_access_type);
 					found = true;
 					if (ptr->is_optional) break;
-					result_type = ptr->element_type;
+					value_access_type = ptr->element_type;
 				}
 				else {
 					break;
@@ -8385,40 +8410,61 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 			assert(found, "Must be true when optional_flags are set");
 
 			// Update type mods
-			bool success = try_updating_expression_type_mods(expr->options.optional_check_value, result_type->mods);
-			assert(success, "Dereferencing constant pointers until we get optional should work");
-
-			info->specifics.is_optional_pointer_check = true;
-			EXIT_VALUE(upcast(types.bool_type), true);
+			expected_mods = value_access_type->mods;
+			value_access_type = upcast(type_system_make_pointer(downcast<Datatype_Pointer>(value_access_type)->element_type, false));
+			if (result_is_const) {
+				value_access_type = type_system_make_constant(value_access_type);
+			}
 		}
-		else if (value_type->base_type->type == Datatype_Type::OPTIONAL_TYPE)
+		else if (optional_type->base_type->type == Datatype_Type::OPTIONAL_TYPE)
 		{
-			// Dereference to final level
-			bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
-			assert(success, "Dereferencing pointers to value should always work without optional flags");
-			info->specifics.is_optional_pointer_check = false;
-			EXIT_VALUE(upcast(types.bool_type), false);
+			value_access_type = downcast<Datatype_Optional>(optional_type->base_type)->value_member.type;
+			if (optional_type->base_type->mods.is_constant) {
+				value_access_type = type_system_make_constant(value_access_type);
+			}
+			expected_mods = type_mods_make(optional_type->base_type->mods.is_constant, 0, 0, 0, nullptr);
 		}
-		else if (value_type->base_type->type == Datatype_Type::FUNCTION)
+		else if (optional_type->base_type->type == Datatype_Type::FUNCTION)
 		{
-			// Dereference to final level
-			bool success = try_updating_expression_type_mods(expr->options.optional_check_value, type_mods_make(true, 0, 0, 0, value_type->mods.subtype_index));
-			assert(success, "Dereferencing pointers to value should always work without optional flags");
-
-			auto ptr_type = downcast<Datatype_Function>(value_type->base_type);
-			if (!ptr_type->is_optional) {
+			info->specifics.is_optional_pointer = true;
+			auto function_type = downcast<Datatype_Function>(optional_type->base_type);
+			if (!function_type->is_optional) {
 				log_semantic_error("Function-pointer must be optional for optional-check (null-check) to work", expr);
 			}
-
-			info->specifics.is_optional_pointer_check = true;
-			EXIT_VALUE(upcast(types.bool_type), true);
+			value_access_type = upcast(function_type->non_optional_type);
+			if (optional_type->base_type->mods.is_constant) {
+				value_access_type = type_system_make_constant(value_access_type);
+			}
+			expected_mods = type_mods_make(optional_type->base_type->mods.is_constant, 0, 0, 0, nullptr);
+		}
+		else
+		{
+			// Log error and exit
+			if (!datatype_is_unknown(optional_type)) {
+				log_semantic_error("Optional-Check is only valid on optional pointers/values", expr, Parser::Section::END_TOKEN);
+				log_error_info_given_type(optional_type);
+			}
+			if (expr->options.optional_access.is_value_access) {
+				EXIT_ERROR(upcast(types.unknown_type));
+			}
+			else {
+				EXIT_ERROR(upcast(types.bool_type));
+			}
 		}
 
-		if (!datatype_is_unknown(value_type)) {
-			log_semantic_error("Optional-Check is only valid on optional pointers/values", expr, Parser::Section::END_TOKEN);
-			log_error_info_given_type(value_type);
+		// Dereference to final level
+		bool success = try_updating_expression_type_mods(expr->options.optional_access.expr, expected_mods);
+		assert(success, "Should work");
+		bool value_is_temporary = get_info(expr->options.optional_access.expr)->cast_info.result_value_is_temporary;
+
+		if (expr->options.optional_access.is_value_access) {
+			// Return value member
+			EXIT_VALUE(value_access_type, value_is_temporary || info->specifics.is_optional_pointer);
 		}
-		EXIT_ERROR(upcast(types.bool_type));
+		else {
+			// Return is_available member
+			EXIT_VALUE(upcast(types.bool_type), value_is_temporary || info->specifics.is_optional_pointer);
+		}
 	}
 	case AST::Expression_Type::NEW_EXPR:
 	{
@@ -9019,70 +9065,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 			auto& access_info = info->specifics.member_access;
 			auto datatype = access_expr_info->cast_info.result_type;
 
-			// Handle optional .value access
-			if (member_node.name == ids.value)
-			{
-				if (datatype->mods.pointer_level > 0 && datatype->mods.optional_flags != 0)
-				{
-					Datatype* first_opt_ptr = datatype;
-					int deref_count = 0;
-					while (first_opt_ptr != nullptr)
-					{
-						if (first_opt_ptr->type == Datatype_Type::POINTER) {
-							auto ptr = downcast<Datatype_Pointer>(first_opt_ptr);
-							if (ptr->is_optional) {
-								break;
-							}
-							else {
-								first_opt_ptr = ptr->element_type;
-								deref_count += 1;
-								continue;
-							}
-						}
-						else if (first_opt_ptr->type == Datatype_Type::CONSTANT) {
-							first_opt_ptr = downcast<Datatype_Constant>(first_opt_ptr)->element_type;
-							continue;
-						}
-						else {
-							panic("");
-						}
-					}
-
-					info->specifics.member_access.type = Member_Access_Type::OPTIONAL_PTR_ACCESS;
-					info->specifics.member_access.options.optional_deref_count = deref_count;
-					bool is_temporary = false;
-					if (deref_count == 0) {
-						is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
-					}
-					EXIT_VALUE(upcast(type_system_make_pointer(downcast<Datatype_Pointer>(first_opt_ptr)->element_type, false)), is_temporary);
-				}
-
-				// Optional function/byte pointers
-				bool is_optional;
-				bool is_pointer = datatype_is_pointer(datatype_get_non_const_type(datatype), &is_optional);
-				if (is_optional && is_pointer)
-				{
-					bool is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
-					info->specifics.member_access.type = Member_Access_Type::OPTIONAL_PTR_ACCESS;
-					info->specifics.member_access.options.optional_deref_count = 0;
-
-					bool is_const = datatype->mods.is_constant;
-					datatype = datatype_get_non_const_type(datatype);
-					Datatype* result_type = 0;
-					if (datatype->type == Datatype_Type::FUNCTION) {
-						result_type = upcast(downcast<Datatype_Function>(datatype)->non_optional_type);
-					}
-					else {
-						panic("");
-					}
-
-					if (is_const) {
-						result_type = type_system_make_constant(result_type);
-					}
-					EXIT_VALUE(result_type, is_temporary);
-				}
-			}
-
 			// Preprocess Type (Auto-dereference, remove const, early exit)
 			bool is_const = false;
 			{
@@ -9217,31 +9199,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 					info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
 					info->specifics.member_access.options.member = member;
 					EXIT_VALUE(member.type, result_is_temporary);
-				}
-			}
-			else if (datatype->type == Datatype_Type::OPTIONAL_TYPE)
-			{
-				type_wait_for_size_info_to_finish(datatype);
-				auto opt = downcast<Datatype_Optional>(datatype);
-				if (member_node.name == ids.value)
-				{
-					info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
-					info->specifics.member_access.options.member = opt->value_member;
-					Datatype* result_type = opt->value_member.type;
-					if (is_const) {
-						result_type = type_system_make_constant(result_type);
-					}
-					EXIT_VALUE(result_type, result_is_temporary)
-				}
-				else if (member_node.name == ids.is_available)
-				{
-					info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
-					info->specifics.member_access.options.member = opt->is_available_member;
-					Datatype* result_type = opt->is_available_member.type;
-					if (is_const) {
-						result_type = type_system_make_constant(result_type);
-					}
-					EXIT_VALUE(result_type, result_is_temporary)
 				}
 			}
 
@@ -9750,7 +9707,7 @@ bool cast_possible_in_mode(Cast_Mode mode, Cast_Mode allowed_mode)
 	return false;
 };
 
-Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_value, Datatype * source_type, Datatype * destination_type, Cast_Mode cast_mode)
+Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_value, Datatype* source_type, Datatype* destination_type, Cast_Mode cast_mode)
 {
 	auto& analyser = semantic_analyser;
 	auto& type_system = compiler.analysis_data->type_system;
@@ -10132,7 +10089,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 	return result;
 }
 
-void expression_context_apply(Expression_Info * info, Expression_Context context, AST::Expression * expression, Parser::Section error_section)
+void expression_context_apply(Expression_Info* info, Expression_Context context, AST::Expression* expression, Parser::Section error_section)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10197,7 +10154,7 @@ void expression_context_apply(Expression_Info * info, Expression_Context context
 	return;
 }
 
-Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expression, Expression_Context context)
+Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto result = semantic_analyser_analyse_expression_internal(expression, context);
@@ -10209,7 +10166,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression * expr
 	return result;
 }
 
-Datatype* semantic_analyser_analyse_expression_type(AST::Expression * expression)
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10298,7 +10255,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression * expression
 	return types.unknown_type;
 }
 
-Datatype* semantic_analyser_analyse_expression_value(AST::Expression * expression, Expression_Context context, bool no_value_expected)
+Datatype* semantic_analyser_analyse_expression_value(AST::Expression* expression, Expression_Context context, bool no_value_expected)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -10371,7 +10328,7 @@ Datatype* semantic_analyser_analyse_expression_value(AST::Expression * expressio
 
 // OPERATOR CONTEXT
 void operator_context_query_dot_calls_recursive(
-	Operator_Context * context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>&out_results, Hashset<Operator_Context*>&visited)
+	Operator_Context* context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>& out_results, Hashset<Operator_Context*>& visited)
 {
 	if (hashset_contains(&visited, context)) {
 		return;
@@ -10406,7 +10363,7 @@ void operator_context_query_dot_calls_recursive(
 	}
 }
 
-Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context * context, Custom_Operator_Key key, Hashset<Operator_Context*>&visited)
+Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context* context, Custom_Operator_Key key, Hashset<Operator_Context*>& visited)
 {
 	if (hashset_contains(&visited, context)) {
 		return nullptr;
@@ -10440,7 +10397,7 @@ Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Conte
 	return nullptr;
 }
 
-Custom_Operator* operator_context_query_custom_operator(Operator_Context * context, Custom_Operator_Key key)
+Custom_Operator* operator_context_query_custom_operator(Operator_Context* context, Custom_Operator_Key key)
 {
 	Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
 	SCOPE_EXIT(hashset_destroy(&visited));
@@ -10448,7 +10405,7 @@ Custom_Operator* operator_context_query_custom_operator(Operator_Context * conte
 }
 
 
-Cast_Mode operator_context_get_cast_mode_option(Operator_Context * context, Cast_Option option)
+Cast_Mode operator_context_get_cast_mode_option(Operator_Context* context, Cast_Option option)
 {
 	Custom_Operator_Key key;
 	key.type = AST::Context_Change_Type::CAST_OPTION;
@@ -10466,7 +10423,7 @@ Cast_Mode operator_context_get_cast_mode_option(Operator_Context * context, Cast
 	return Cast_Mode::INFERRED;
 }
 
-u64 custom_operator_key_hash(Custom_Operator_Key * key)
+u64 custom_operator_key_hash(Custom_Operator_Key* key)
 {
 	int type_as_int = (int)key->type;
 	u64 hash = hash_i32(&type_as_int);
@@ -10527,7 +10484,7 @@ u64 custom_operator_key_hash(Custom_Operator_Key * key)
 	return hash;
 }
 
-bool custom_operator_key_equals(Custom_Operator_Key * a, Custom_Operator_Key * b) {
+bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) {
 	if (a->type != b->type) {
 		return false;
 	}
@@ -10570,7 +10527,7 @@ bool custom_operator_key_equals(Custom_Operator_Key * a, Custom_Operator_Key * b
 }
 
 Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
-	Symbol_Table * symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base * wait_for_workload
+	Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, Workload_Base* wait_for_workload
 )
 {
 	// Create new operator context
@@ -10611,7 +10568,7 @@ Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
 	return context;
 }
 
-void analyse_operator_context_change(AST::Context_Change * change_node, Operator_Context * context)
+void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context)
 {
 	auto& ids = compiler.identifier_pool.predefined_ids;
 	auto& types = compiler.analysis_data->type_system.predefined_types;
@@ -11411,7 +11368,7 @@ void analyse_operator_context_change(AST::Context_Change * change_node, Operator
 							datatype_check_if_auto_casts_to_other_mods(arg_type, iterator_type->mods, false)))
 						{
 							log_semantic_error(
-								"Function parameter type must be compatible with iterator type (Create function return type)", 
+								"Function parameter type must be compatible with iterator type (Create function return type)",
 								upcast(fn_expr)
 							);
 							log_error_info_given_type(arg_type);
@@ -11520,7 +11477,7 @@ void analyse_operator_context_change(AST::Context_Change * change_node, Operator
 
 
 // STATEMENTS
-bool code_block_is_loop(AST::Code_Block * block)
+bool code_block_is_loop(AST::Code_Block* block)
 {
 	if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
 		auto parent = (AST::Statement*)block->base.parent;
@@ -11532,7 +11489,7 @@ bool code_block_is_loop(AST::Code_Block * block)
 	return false;
 }
 
-bool code_block_is_defer(AST::Code_Block * block)
+bool code_block_is_defer(AST::Code_Block* block)
 {
 	if (block != 0 && block->base.parent->type == AST::Node_Type::STATEMENT) {
 		auto parent = (AST::Statement*)block->base.parent;
@@ -11557,7 +11514,7 @@ bool inside_defer()
 	return false;
 }
 
-Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
+Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	auto& types = type_system.predefined_types;
@@ -12992,7 +12949,7 @@ void semantic_analyser_destroy()
 
 // ERRORS
 void error_information_append_to_rich_text(
-	const Error_Information & info, Compiler_Analysis_Data * analysis_data, Rich_Text::Rich_Text * text, Datatype_Format format
+	const Error_Information& info, Compiler_Analysis_Data* analysis_data, Rich_Text::Rich_Text* text, Datatype_Format format
 )
 {
 	auto type_system = &analysis_data->type_system;
@@ -13093,8 +13050,8 @@ void error_information_append_to_rich_text(
 }
 
 void error_information_append_to_string(
-	const Error_Information & info, Compiler_Analysis_Data * analysis_data,
-	String * string, Datatype_Format format
+	const Error_Information& info, Compiler_Analysis_Data* analysis_data,
+	String* string, Datatype_Format format
 )
 {
 	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
@@ -13104,7 +13061,7 @@ void error_information_append_to_string(
 	Rich_Text::append_to_string(&text, string, 2);
 }
 
-void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data * analysis_data, String * string, int indentation)
+void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation)
 {
 	auto& errors = analysis_data->semantic_errors;
 	for (int i = 0; i < errors.size; i++)

@@ -1746,6 +1746,7 @@ namespace Text_Editing
 		case Operator::UNINITIALIZED:
 		case Operator::QUESTION_MARK:
 		case Operator::OPTIONAL_POINTER:
+		case Operator::OPTIONAL_VALUE_ACCESS:
 		case Operator::DOT_CALL:
 		case Operator::DOLLAR: {
 			out_space_after = false;
@@ -8017,7 +8018,6 @@ void syntax_editor_render()
 						case Member_Access_Type::DOT_CALL:
 						case Member_Access_Type::DOT_CALL_AS_MEMBER: color = Syntax_Color::FUNCTION; break;
 						case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
-						case Member_Access_Type::OPTIONAL_PTR_ACCESS:
 						case Member_Access_Type::STRUCT_MEMBER_ACCESS: color = Syntax_Color::MEMBER; break;
 						case Member_Access_Type::STRUCT_SUBTYPE:
 						case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: color = Syntax_Color::SUBTYPE; break;

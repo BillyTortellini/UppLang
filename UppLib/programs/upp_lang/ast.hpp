@@ -295,7 +295,7 @@ namespace AST
         BAKE,
         INSTANCIATE,
         GET_OVERLOAD,
-        OPTIONAL_CHECK, // x?
+        OPTIONAL_ACCESS, // either value or is_available access, e.g. opt_val! or opt_val?
 
         // Memory Reads
         PATH_LOOKUP,
@@ -327,9 +327,12 @@ namespace AST
         union
         {
             String* polymorphic_symbol_id;
-            Expression* optional_child_type;
-            Expression* optional_pointer_child_type;
-            Expression* optional_check_value;
+            Expression* optional_child_type; // ?int
+            Expression* optional_pointer_child_type; // ?*int
+            struct {
+                Expression* expr;
+                bool is_value_access; // Either value access "opt!" or available access "opt?"
+            } optional_access;
             struct {
                 Expression* left;
                 Expression* right;

@@ -1,36 +1,35 @@
-
-    X:: struct
-        a: int, b: int +
-        c: int, 
-        d: int
-    cast{int}, but otherwise... Node.{} also no spaces..., but if { x = 15; other = 15; } spaces...
-    
-
 Features before writing Base-Library:
 
 Small stuff:
- * Optionals with ! and ? access...
-    I don't like .value for optional pointers, as it seems like a member access
-    Check if ! could cause problems with unary negate, also formating
  * Check list item parsing again, e.g. , ; and other things, I think x := 15; should cause errors?
     Maybe simple binop continuation if either prev-line is continuation or next line is indentedgg
+    Or generally some tokenz like +, =
+    Also check parenthesis handling for things like
+        call(
+            a,b,c)
+        other stuff
  * Disable auto pointer casting if * or & are used in expression --> seems reasonable
- * Type_Handle -> rename to Type in language...
+ * Built-in function 
+    Upp~return_type() --> returns return type of current function
+    Upp~get_tag(value) --> returns tag member of structure, remove .tag access + completion
+        tag(x) = .Fuck
+        if tag(x) == .IPv4
+            
 
 Polymorphism upgrades:
- * Poly struct parameters without types --> types..., e.g. 
+ * Poly struct parameters without types are assumed to be types, e.g. 
         Node :: struct($K, $V) 
         foo :: (x: T, $V)
     struct parameters require $ sign --> Probably better to keep things uniform
  * Struct instance templates with ignored values, e.g.
     A :: struct($X: int, $Y: int, $Z: int)
-    foo :: (x: A(X = $X, _))
+    foo :: (x: A(X = $X, _)), remove implicit polymorphism and add this instead...
  * Parameter default values update, expression evaluation and context default values
     By default evaluates in current context, Symbol-Lookups with 'Foo~bar~baz
     use caller's current symbol table, which can be somewhat more complicated...
- result: Upp~return_type() --> Built-in function
-         Upp~line_number() --> built-in function
-         Upp~unique_number() --> Returns number unique in build --> later for UI
+
+Others:
+    Project structure.... Multiple files, imports, versions......
 
 Base-Library:
  * Arena allocator based on bin allocator based on virtual arena allocator,

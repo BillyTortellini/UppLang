@@ -1474,17 +1474,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             return source;
         }
-        else if (info->specifics.member_access.type == Member_Access_Type::OPTIONAL_PTR_ACCESS) {
-            auto deref_count = info->specifics.member_access.options.optional_deref_count;
-            if (deref_count == 0) {
-                return ir_generator_generate_expression(mem_access.expr, destination);
-            }
-            IR_Data_Access* deref = ir_generator_generate_expression(mem_access.expr, destination);
-            for (int i = 0; i < deref_count; i++) {
-                deref = ir_data_access_create_dereference(deref);
-            }
-            return move_access_to_destination(deref);
-        }
 
         // Handle special case of array.data, which basically becomes an address of, but has the type of element pointer
         auto source = ir_generator_generate_expression(mem_access.expr);
@@ -1580,29 +1569,41 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case AST::Expression_Type::CAST: {
         return ir_generator_generate_expression(expression->options.cast.operand, destination);
     }
-    case AST::Expression_Type::OPTIONAL_CHECK:
+    case AST::Expression_Type::OPTIONAL_ACCESS:
     {
-        auto check_access = ir_generator_generate_expression(expression->options.optional_check_value);
-        auto type = datatype_get_non_const_type(check_access->datatype);
-
-        if (info->specifics.is_optional_pointer_check) {
-            destination = make_destination_access_on_demand(upcast(types.bool_type));
-            assert(datatype_is_pointer(type), "");
-            IR_Instruction check_instr;
-            check_instr.type = IR_Instruction_Type::BINARY_OP;
-            check_instr.options.binary_op.destination = destination;
-            check_instr.options.binary_op.operand_left = check_access;
-            void* null_val = nullptr;
-            check_instr.options.binary_op.operand_right = ir_data_access_create_constant(check_access->datatype, array_create_static_as_bytes(&null_val, 1));
-            check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-            add_instruction(check_instr);
-            return destination;
+        auto data_access = ir_generator_generate_expression(expression->options.optional_access.expr);
+        if (info->specifics.is_optional_pointer) 
+        {
+            if (expression->options.optional_access.is_value_access)
+            {
+                // TODO: Add null pointer check...
+                return move_access_to_destination(data_access); // Not sure what happens with constant/optional here...
+            }
+            else 
+            {
+                destination = make_destination_access_on_demand(upcast(types.bool_type));
+                assert(datatype_is_pointer(data_access->datatype), "");
+                IR_Instruction check_instr;
+                check_instr.type = IR_Instruction_Type::BINARY_OP;
+                check_instr.options.binary_op.destination = destination;
+                check_instr.options.binary_op.operand_left = data_access;
+                void* null_val = nullptr;
+                check_instr.options.binary_op.operand_right = ir_data_access_create_constant(data_access->datatype, array_create_static_as_bytes(&null_val, 1));
+                check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
+                add_instruction(check_instr);
+                return destination;
+            }
         }
 
+        // Otherwise return data or value member
+        auto type = data_access->datatype->base_type;
         assert(type->type == Datatype_Type::OPTIONAL_TYPE, "");
-        auto opt = downcast<Datatype_Optional>(type);
-        auto access = ir_data_access_create_member(check_access, opt->is_available_member);
-        return move_access_to_destination(access);
+        auto optional_type = downcast<Datatype_Optional>(type);
+        if (expression->options.optional_access.is_value_access) {
+            // Check if optional is available, otherwise trigger assert
+            return move_access_to_destination(ir_data_access_create_member(data_access, optional_type->value_member));
+        }
+        return move_access_to_destination(ir_data_access_create_member(data_access, optional_type->is_available_member));
     }
     case AST::Expression_Type::OPTIONAL_POINTER:
     case AST::Expression_Type::OPTIONAL_TYPE:

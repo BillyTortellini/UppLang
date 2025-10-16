@@ -2,7 +2,8 @@
 Done:
 -----
 16.10:
- * Auto-lambda, .=>
+ * Optional value/available access with ? and .!
+ * Auto-lambda .=>
  * Defer with statement, e.g. defer asdf->destroy()
     Analyse statement, defer cannot return
 

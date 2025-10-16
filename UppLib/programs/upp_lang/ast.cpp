@@ -286,8 +286,8 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(unop.expr);
 			break;
 		}
-		case Expression_Type::OPTIONAL_CHECK: {
-			FILL(expr->options.optional_check_value);
+		case Expression_Type::OPTIONAL_ACCESS: {
+			FILL(expr->options.optional_access.expr);
 			break;
 		}
 		case Expression_Type::OPTIONAL_TYPE: {
@@ -686,8 +686,8 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(unop.expr);
 			break;
 		}
-		case Expression_Type::OPTIONAL_CHECK: {
-			FILL(expr->options.optional_check_value);
+		case Expression_Type::OPTIONAL_ACCESS: {
+			FILL(expr->options.optional_access.expr);
 			break;
 		}
 		case Expression_Type::OPTIONAL_TYPE: {
@@ -969,7 +969,8 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 		break;
 	}
 	case Expression_Type::UNARY_OPERATION: string_append_formated(str, "Unop"); break;
-	case Expression_Type::OPTIONAL_CHECK: string_append_formated(str, "Optional Check"); break;
+	case Expression_Type::OPTIONAL_ACCESS: string_append_formated(
+		str, expr->options.optional_access.is_value_access ? "Optional_Available_Check " : "Optional_Value_Access"); break;
 	case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "Optional Type"); break;
 	case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "Optional Pointer"); break;
 	case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "Template Parameter \"%s\"", expr->options.polymorphic_symbol_id->characters); break;
@@ -1138,7 +1139,7 @@ void base_append_to_string(Node* base, String* str)
 		{
 		case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
 		case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
-		case Expression_Type::OPTIONAL_CHECK: string_append_formated(str, "OPTIONAL_CHECK"); break;
+		case Expression_Type::OPTIONAL_ACCESS: string_append_formated(str, "OPTIONAL_ACCESS"); break;
 		case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "OPTIONAL_TYPE"); break;
 		case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "OPTIONAL_POINTER"); break;
 		case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "TEMPLATE_PARAMETER %s", expr->options.polymorphic_symbol_id->characters); break;

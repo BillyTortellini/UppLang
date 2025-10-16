@@ -553,10 +553,9 @@ struct Expression_Info
                 } poly_access;
                 Struct_Member member;
                 ModTree_Function* dot_call_function;
-                int optional_deref_count;
             } options;
         } member_access;
-        bool is_optional_pointer_check;
+        bool is_optional_pointer;
         struct {
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;

@@ -2448,11 +2448,12 @@ namespace Parser
             if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }
-        else if (test_operator(Operator::QUESTION_MARK)) 
+        else if (test_operator(Operator::QUESTION_MARK) || test_operator(Operator::OPTIONAL_VALUE_ACCESS)) 
         {
+            result->type = Expression_Type::OPTIONAL_ACCESS;
+            result->options.optional_access.expr = child;
+            result->options.optional_access.is_value_access = test_operator(Operator::OPTIONAL_VALUE_ACCESS);
             advance_token();
-            result->type = Expression_Type::OPTIONAL_CHECK;
-            result->options.optional_check_value = child;
             PARSE_SUCCESS(result);
         }
         else if (test_parenthesis_offset('(', 0)) // Function call
