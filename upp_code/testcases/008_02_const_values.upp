@@ -1,7 +1,7 @@
 
 // Parameters are by default constant
 // but with the mut (mutable) keyword this can be ommited
-test :: (a: int, mut b: int) -> int
+test :: (a: int, mut b: int) => int
 	// a = 15 // error
 	return a + b
 
@@ -10,7 +10,7 @@ main :: ()
 	c: const int = 15
 	
 	// The value of const variables cannot change after first initialization
-	// x = 15 --> error
+	// x = 15 -=> error
 	
 	// Read accesses still work like with normal values
 	z := c * 3

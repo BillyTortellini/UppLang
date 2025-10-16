@@ -6,19 +6,19 @@ main :: ()
 	context set_cast_option(.INTEGER_SIZE_UPCAST, .EXPLICIT)
 	
 	// There are 4 different cast modes
-	// NONE -> Disallowes this kind of cast
+	// NONE => Disallowes this kind of cast
 	
-	// EXPLICIT -> requires the cast keyword + destination type
+	// EXPLICIT => requires the cast keyword + destination type
 	// This is the default for all cast types
 	num_0: int = 15
 	num_1: i64 = cast {i64} num_0
 	
-	// INFERRED -> If the destination type can be infered from context,
+	// INFERRED => If the destination type can be infered from context,
 	//             then only using the cast keyword is enough
 	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED, .IMPLICIT)
 	num_2: u32 = cast num_0
 	
-	// IMPLICIT -> If the destination type can be infered, no keyword is required for the cast
+	// IMPLICIT => If the destination type can be infered, no keyword is required for the cast
 	context set_cast_option(.INT_TO_FLOAT, .IMPLICIT)
 	float_0: float = num_0
 

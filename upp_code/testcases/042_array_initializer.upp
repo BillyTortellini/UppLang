@@ -7,7 +7,7 @@ Player :: struct
 	age: int
 	alive: bool
 
-add_ints :: (ints: []int) -> int
+add_ints :: (ints: []int) => int
 	i: usize = 0
 	sum := 0
 	while i < ints.size

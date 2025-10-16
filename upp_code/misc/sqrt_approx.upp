@@ -1,11 +1,11 @@
 #import"printing.upp"
 
-absolute::(x:float)->float
+absolute::(x:float)=>float
 	if x<0.0
 		return-x
 	return x
 
-sqrt_approx::(x:float,error_delta:float)->float
+sqrt_approx::(x:float,error_delta:float)=>float
 	min:float=0.0
 	max:=x
 	while true

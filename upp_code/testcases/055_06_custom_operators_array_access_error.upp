@@ -2,7 +2,7 @@
 Node::struct
 	a:int
 
-test::(a:Node)->int
+test::(a:Node)=>int
 	return 5
 
 main::()

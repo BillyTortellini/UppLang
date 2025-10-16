@@ -83,7 +83,7 @@ any_adder :: (val: Any)
 		ip :=* cast_pointer {*u32} val.data
 		ip = ip + 2
 
-string_compare :: (str1: c_string, str2: c_string) -> bool
+string_compare :: (str1: c_string, str2: c_string) => bool
 	if str1.bytes.size != str2.bytes.size
 		return false
 	i := 0
@@ -93,7 +93,7 @@ string_compare :: (str1: c_string, str2: c_string) -> bool
 		i = i + 1
 	return true
 
-mini_calc :: (ops: []Any) -> struct {success: bool; value: int}
+mini_calc :: (ops: []Any) => struct {success: bool; value: int}
 	context set_cast_option(.FROM_ANY, .IMPLICIT)
 	
 	i := 0

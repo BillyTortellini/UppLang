@@ -135,7 +135,7 @@ void find_editor_infos_recursive(
 		{
 			auto pass = active_passes[i];
 			auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ);
-			if (block == 0) { break; }
+			if (block == 0) { continue; }
 			Symbol_Table_Range table_range;
 			table_range.range = token_range_to_text_range(node->bounding_range, code);
 			table_range.symbol_table = block->symbol_table;

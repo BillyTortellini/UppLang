@@ -169,7 +169,7 @@ void lexer_initialize()
         lexer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
         lexer.operator_strings[(int)Operator::QUESTION_MARK] = string_create_static("?");
         lexer.operator_strings[(int)Operator::OPTIONAL_POINTER] = string_create_static("?*");
-        lexer.operator_strings[(int)Operator::DOT_CALL] = string_create_static(".>");
+        lexer.operator_strings[(int)Operator::DOT_CALL] = string_create_static("->");
         lexer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
         lexer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
         lexer.operator_strings[(int)Operator::COLON] = string_create_static(":");
@@ -190,7 +190,8 @@ void lexer_initialize()
         lexer.operator_strings[(int)Operator::DEFINE_INFER_RAW] = string_create_static(":=~");
         lexer.operator_strings[(int)Operator::AND] = string_create_static("&&");
         lexer.operator_strings[(int)Operator::OR] = string_create_static("||");
-        lexer.operator_strings[(int)Operator::ARROW] = string_create_static("->");
+        lexer.operator_strings[(int)Operator::ARROW] = string_create_static("=>");
+        lexer.operator_strings[(int)Operator::INFER_ARROW] = string_create_static(".=>");
         lexer.operator_strings[(int)Operator::DOLLAR] = string_create_static("$");
         lexer.operator_strings[(int)Operator::ASSIGN] = string_create_static("=");
         lexer.operator_strings[(int)Operator::ASSIGN_RAW] = string_create_static("=~");

@@ -27,8 +27,8 @@ main :: ()
 	holder: Holder(Player, 16)
 	holder.size = 0
 	
-	holder.>push_back(frank)
-	holder.>push_back(pete)
-	holder.>push_back(clara)
+	holder->push_back(frank)
+	holder->push_back(pete)
+	holder->push_back(clara)
 	
 	assert(holder.values[1].age == 12)

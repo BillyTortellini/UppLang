@@ -1766,10 +1766,13 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id, AST::Nod
 	subtype->members = dynamic_array_create<Struct_Member>();
 	subtype->subtypes = dynamic_array_create<Struct_Content*>();
 	subtype->name = id;
-	subtype->tag_member.id = compiler.identifier_pool.predefined_ids.tag;
-	subtype->tag_member.offset = -1;
-	subtype->tag_member.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-	subtype->tag_member.content = subtype;
+	subtype->tag_member = struct_member_make(
+		compiler.analysis_data->type_system.predefined_types.unknown_type, 
+		compiler.identifier_pool.predefined_ids.tag,
+		subtype,
+		-1,
+		definition_node
+	);
 	subtype->max_alignment = 0;
 	subtype->structure = content->structure;
 	subtype->index = subtype_index_make_subtype(content->index, id, content->subtypes.size);
@@ -2200,6 +2203,10 @@ void type_system_add_predefined_types(Type_System* system)
 		types->unknown_type = new Datatype;
 		*types->unknown_type = datatype_make_simple_base(Datatype_Type::UNKNOWN_TYPE, 1, 1);
 		type_system_register_type(types->unknown_type);
+	}
+
+	{
+		types->empty_function = type_system_make_function({}, nullptr);
 	}
 
 	{

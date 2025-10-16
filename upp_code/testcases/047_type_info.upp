@@ -44,7 +44,7 @@ main :: ()
 		Macros.There will also be the possiblility to report errors inside
 		bake,which will prevent the names from being invalid
 
-member_offset :: (type: Type_Handle, name: c_string) -> int
+member_offset :: (type: Type_Handle, name: c_string) => int
 	
 	info := type_info(type)
 	if info.tag != .Struct
@@ -60,7 +60,7 @@ member_offset :: (type: Type_Handle, name: c_string) -> int
 		i = i + 1
 	return offset
 
-string_compare :: (str1: c_string, str2: c_string) -> bool
+string_compare :: (str1: c_string, str2: c_string) => bool
 	if str1.bytes.size != str2.bytes.size
 		return false
 	i: usize = 0

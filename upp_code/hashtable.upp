@@ -19,7 +19,7 @@ Hashtable :: module
 		next: ?*Entry(K, V)
 		valid: bool
 	
-	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) -> Hashtable($H, $V)
+	create :: (capacity: int = 0, allocator: *Allocator = Upp~global_allocator) => Hashtable($H, $V)
 		result: Hashtable(H, V) = .{_, allocator = allocator, size = 0}
 		if capacity == 0
 			result.entries = .[]
@@ -43,7 +43,7 @@ Hashtable :: module
 			delete set.entries
 	
 	// Returns if element was already inside hashtable or not
-	insert :: (set: *Hashtable(Hashable($T), $V), key: T, value: V, overwrite: bool = false) -> bool
+	insert :: (set: *Hashtable(Hashable($T), $V), key: T, value: V, overwrite: bool = false) => bool
 		hash := set.H.hash_fn(key)
 		slot_index := hash % set.entries.size
 		reserve(set, cast {u64} set.size + 1)
@@ -85,7 +85,7 @@ Hashtable :: module
 		key: *K
 		value: *V
 	
-	find :: (set: Hashtable(Hashable($K), $V), key: K) -> ?Key_Value_Pointer(K, V)
+	find :: (set: Hashtable(Hashable($K), $V), key: K) => ?Key_Value_Pointer(K, V)
 		hash: u64 = set.H.hash_fn(key)
 		
 		slot_index := hash % set.entries.size
@@ -108,7 +108,7 @@ Hashtable :: module
 		return null
 	
 	// Returns true if element was found
-	remove :: (set: Hashtable(Hashable($K), $V), key: K) -> bool
+	remove :: (set: Hashtable(Hashable($K), $V), key: K) => bool
 		hash: u64 = set.H.hash_fn(key)
 		
 		slot_index := hash % set.entries.size
@@ -170,7 +170,7 @@ Hashtable :: module
 			entry: ?*Entry(K, V)
 			entry_index: u64
 		
-		create :: (set: *Hashtable($H, $V)) -> Iter(H, V)
+		create :: (set: *Hashtable($H, $V)) => Iter(H, V)
 			result: Iter(H, V) = .{set, null, 0}
 			for e, i in set.entries
 				if e.valid
@@ -180,7 +180,7 @@ Hashtable :: module
 			
 			return result
 		
-		has_next :: (iter: Iter($H, $V)) -> bool
+		has_next :: (iter: Iter($H, $V)) => bool
 			return iter.entry?
 		
 		next :: (iter: *Iter($H, $V))
@@ -196,7 +196,7 @@ Hashtable :: module
 			
 			iter.entry =* null
 		
-		get_value :: (iter: Iter($H, $V)) -> Key_Value_Pointer(H.T, V)
+		get_value :: (iter: Iter($H, $V)) => Key_Value_Pointer(H.T, V)
 			return .{iter.entry.value.key, iter.entry.value.value}
 	
 	Operators :: module

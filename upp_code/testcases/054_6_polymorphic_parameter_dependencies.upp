@@ -1,7 +1,7 @@
 
 import Upp~Type_Handle
 
-foo :: (a: [C]T, $C: int, $T: Type_Handle) -> int
+foo :: (a: [C]T, $C: int, $T: Type_Handle) => int
 	sum := 0
 	i := 0
 	while i < C

@@ -7,10 +7,10 @@ empty_fn :: ()
 function_with_params :: (a: int)
 	x := 2 * a
 
-function_with_return :: () -> int
+function_with_return :: () => int
 	return 15 * 2
 
-mul_add :: (base: int, fac1: int, fac2: int, ignore_fac2: bool) -> int
+mul_add :: (base: int, fac1: int, fac2: int, ignore_fac2: bool) => int
 	if !ignore_fac2
 		return base + (fac1 * fac2)
 	else

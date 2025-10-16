@@ -2,7 +2,7 @@
 import Upp~Type_Handle
 import Upp~type_of
 
-adder :: (a: int, b: int) -> int
+adder :: (a: int, b: int) => int
 	return a + b
 
 main :: ()
@@ -52,7 +52,7 @@ main :: ()
 	assert(z_type[2] == false)
 	
 	// This can be used like a typedef in C/C++
-	add_fn_type :: (v: int, b: int) -> int
+	add_fn_type :: (v: int, b: int) => int
 	add_fn: add_fn_type
 	add_fn = adder
 	sum := add_fn(2, 3)

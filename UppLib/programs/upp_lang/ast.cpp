@@ -342,12 +342,14 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(init.arguments);
 			break;
 		}
-		case Expression_Type::BAKE_BLOCK: {
-			FILL(expr->options.bake_block);
-			break;
-		}
-		case Expression_Type::BAKE_EXPR: {
-			FILL(expr->options.bake_expr);
+		case Expression_Type::BAKE: {
+			auto& body = expr->options.bake_body;
+			if (body.is_expression) {
+				FILL(body.expr);
+			}
+			else {
+				FILL(body.block)
+			}
 			break;
 		}
 		case Expression_Type::INSTANCIATE: {
@@ -384,10 +386,17 @@ Node* base_get_child(Node* node, int child_index)
 		case Expression_Type::AUTO_ENUM: {
 			break;
 		}
-		case Expression_Type::FUNCTION: {
+		case Expression_Type::FUNCTION: 
+		{
 			auto& func = expr->options.function;
-			FILL(func.signature);
-			FILL(func.body);
+			FILL_OPTIONAL(func.signature);
+			auto& body = expr->options.function.body;
+			if (body.is_expression) {
+				FILL(body.expr);
+			}
+			else {
+				FILL(body.block)
+			}
 			break;
 		}
 		case Expression_Type::ERROR_EXPR: {
@@ -733,12 +742,14 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(init.arguments);
 			break;
 		}
-		case Expression_Type::BAKE_BLOCK: {
-			FILL(expr->options.bake_block);
-			break;
-		}
-		case Expression_Type::BAKE_EXPR: {
-			FILL(expr->options.bake_expr);
+		case Expression_Type::BAKE: {
+			auto& body = expr->options.bake_body;
+			if (body.is_expression) {
+				FILL(body.expr);
+			}
+			else {
+				FILL(body.block)
+			}
 			break;
 		}
 		case Expression_Type::INSTANCIATE: {
@@ -775,10 +786,17 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		case Expression_Type::AUTO_ENUM: {
 			break;
 		}
-		case Expression_Type::FUNCTION: {
+		case Expression_Type::FUNCTION: 
+		{
 			auto& func = expr->options.function;
-			FILL(func.signature);
-			FILL(func.body);
+			FILL_OPTIONAL(func.signature);
+			auto& body = expr->options.function.body;
+			if (body.is_expression) {
+				FILL(body.expr);
+			}
+			else {
+				FILL(body.block)
+			}
 			break;
 		}
 		case Expression_Type::ERROR_EXPR: {
@@ -958,8 +976,7 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 	case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
 	case Expression_Type::NEW_EXPR: string_append_formated(str, "New expr"); break;
 	case Expression_Type::CAST: string_append_formated(str, "Cast"); break;
-	case Expression_Type::BAKE_BLOCK: string_append_formated(str, "Bake Block"); break;
-	case Expression_Type::BAKE_EXPR: string_append_formated(str, "Bake Expr"); break;
+	case Expression_Type::BAKE: string_append_formated(str, "Bake Expr"); break;
 	case Expression_Type::INSTANCIATE: string_append_formated(str, "#instanciate"); break;
 	case Expression_Type::GET_OVERLOAD: string_append_formated(str, "#get_overload"); break;
 	case Expression_Type::PATH_LOOKUP: string_append_formated(str, "Lookup "); break;
@@ -1128,8 +1145,7 @@ void base_append_to_string(Node* base, String* str)
 		case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
 		case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
 		case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
-		case Expression_Type::BAKE_BLOCK: string_append_formated(str, "BAKE_BLOCK"); break;
-		case Expression_Type::BAKE_EXPR: string_append_formated(str, "BAKE_EXPR"); break;
+		case Expression_Type::BAKE: string_append_formated(str, "BAKE"); break;
 		case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
 		case Expression_Type::GET_OVERLOAD: string_append_formated(str, "GET_OVERLOAD"); break;
 		case Expression_Type::PATH_LOOKUP: string_append_formated(str, "EXPR_LOOKUP "); break;
@@ -1152,7 +1168,13 @@ void base_append_to_string(Node* base, String* str)
 			break;
 		}
 		case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
-		case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
+		case Expression_Type::FUNCTION:  {
+			string_append_formated(str, "FUNCTION");
+			if (!expr->options.function.signature.available) {
+				string_append_formated(str, "_INFERED");
+			}
+			break;
+		}
 		case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;
 		case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "STRUCTURE_TYPE"); break;
 		case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
@@ -1355,6 +1377,11 @@ namespace Helpers
 	bool type_correct(Extern_Import* base) {
 		return base->base.type == Node_Type::EXTERN_IMPORT;
 	}
+}
+
+AST::Node* upcast(Body_Node node) {
+	if (node.is_expression) return upcast(node.expr);
+	return upcast(node.block);
 }
 
 Node* find_smallest_enclosing_node(Node* start_node, Token_Index index)

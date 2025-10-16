@@ -2,13 +2,13 @@
 import Upp~usize
 import Upp~Any
 
-add_numbers :: (values: []int) -> int
+add_numbers :: (values: []int) => int
 	sum := 0
 	for v in values
 		sum += v
 	return sum
 
-primitive_type_value :: (value: Any) -> int
+primitive_type_value :: (value: Any) => int
 	if value.type == int
 		return 0
 	else if value.type == float

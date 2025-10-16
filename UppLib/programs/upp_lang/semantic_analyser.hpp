@@ -244,6 +244,7 @@ struct Workload_Function_Header
     Function_Progress* progress;
     AST::Expression* function_node;
     // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
+    //      But it may be null for infered functions...
     Poly_Header* poly_header_infos;
 };
 
@@ -251,7 +252,7 @@ struct Workload_Function_Body
 {
     Workload_Base base;
     Function_Progress* progress;
-    AST::Code_Block* body_node;
+    AST::Body_Node body_node;
 };
 
 struct Workload_Function_Cluster_Compile

@@ -1,5 +1,5 @@
 
-foo::()->int
+foo::()=>int
 	return 5
 
 main::()

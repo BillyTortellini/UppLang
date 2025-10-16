@@ -1,14 +1,14 @@
 
-test :: (ptr: ?*int) -> int
+test :: (ptr: ?*int) => int
 	if ptr?
 		return ptr.value + 1
 	else
 		return -1
 
-negate :: (x: int) -> int
+negate :: (x: int) => int
 	return -x
 
-apply :: (value: int, fn: ?(x: int) -> int) -> int
+apply :: (value: int, fn: ?(x: int) => int) => int
 	if fn?
 		return fn.value(value)
 	return -1
@@ -43,7 +43,7 @@ main :: ()
 	
 	// As function-ptrs and byte-pointer are also pointer-types
 	// they can also be used as optionals
-	fn_ptr: ?(x: int) -> int
+	fn_ptr: ?(x: int) => int
 	fn_ptr = negate
 	assert(apply(10, fn_ptr) == -10)
 	fn_ptr = null

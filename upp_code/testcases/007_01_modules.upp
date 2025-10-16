@@ -8,7 +8,7 @@ B::module
 	
 	// Stacked modules
 	Maker::module
-		make::()->Node
+		make::()=>Node
 			result:Node
 			result.value=false
 			return result

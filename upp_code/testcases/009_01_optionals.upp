@@ -3,7 +3,7 @@
 Node :: struct
 	a: int
 
-test :: (opt: ?int) -> int
+test :: (opt: ?int) => int
 	if opt?
 		return opt.value + 1
 	else

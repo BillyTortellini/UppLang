@@ -38,7 +38,7 @@ Address :: struct
 		name: c_string
 
 // The tag member is automatically added to a struct if it contains subtypes
-address_version_if :: (addr: Address) -> int
+address_version_if :: (addr: Address) => int
 	if addr.tag == .IPv4
 		return 4
 	else if addr.tag == .IPv5
@@ -48,7 +48,7 @@ address_version_if :: (addr: Address) -> int
 	return 0
 
 // Logically we can switch over the tag, but we can also switch over the union, which does the same
-address_version_switch :: (addr: Address) -> int
+address_version_switch :: (addr: Address) => int
 	switch addr
 		.IPv4
 			return 4

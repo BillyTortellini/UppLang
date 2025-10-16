@@ -1,22 +1,22 @@
 
 // Imports work the same way in code_blocks
-A::module
-	x:int=100
-	y:bool=false
+A :: module
+	x: int = 100
+	y: bool = false
 
-B::module
+B :: module
 	import A~*
 
-main::()
+main :: ()
 		import A~x
 		import A~y
-		assert(x==100)
+		assert(x == 100)
 		assert(!y)
 	
 		import A~*
-		assert(x==100)
+		assert(x == 100)
 		assert(!y)
 	
 		import B~**
-		assert(x==100)
+		assert(x == 100)
 		assert(!y)

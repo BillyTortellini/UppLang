@@ -1724,6 +1724,7 @@ namespace Text_Editing
 		case Operator::AND:
 		case Operator::OR:
 		case Operator::ARROW:
+		case Operator::INFER_ARROW:
 		case Operator::ASSIGN_RAW:
 		case Operator::ASSIGN_POINTER:
 		case Operator::ASSIGN_ADD:
@@ -1758,7 +1759,7 @@ namespace Text_Editing
 			out_space_before = true;
 			if (token_index - 1 >= 0) {
 				auto& prev = tokens[token_index - 1];
-				if (prev.type == Token_Type::OPERATOR && (prev.options.op == Operator::COLON)) {
+				if (prev.type == Token_Type::OPERATOR && (prev.options.op == Operator::COLON || prev.options.op == Operator::DOT)) {
 					out_space_before = false;
 					out_ignore_lex_changes = true;
 				}
@@ -3987,8 +3988,8 @@ void code_completion_find_suggestions()
 		if (test_char(line->text, word_start, '#')) {
 			is_hashtag = true;
 		}
-		if ((test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) ||
-			(test_char(line->text, cursor.character - 2, '.') && test_char(line->text, cursor.character - 1, '>'))) {
+		if ((test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) ||
+			(test_char(line->text, cursor.character - 2, '-') && test_char(line->text, cursor.character - 1, '>'))) {
 			is_dot_call_access = true;
 		}
 		if (test_char(line->text, word_start - 1, '.') || test_char(line->text, cursor.character - 1, '.')) {

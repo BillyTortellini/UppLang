@@ -3,7 +3,7 @@ import Upp~c_string
 import Upp~i64
 import Upp~type_info
 
-string_equals :: (a: c_string, b: c_string) -> bool
+string_equals :: (a: c_string, b: c_string) => bool
 	if a.bytes.size != b.bytes.size
 		return false
 	
@@ -15,7 +15,7 @@ string_equals :: (a: c_string, b: c_string) -> bool
 	
 	return true
 
-offset_off :: (a: $T, $name: c_string) -> int
+offset_off :: (a: $T, $name: c_string) => int
 	offset := #bake
 		info := type_info(T)
 		if info.tag == .Struct

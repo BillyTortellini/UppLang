@@ -5,7 +5,7 @@ Player :: struct
 	level: int
 	alive: bool
 
-init_fn :: () -> int
+init_fn :: () => int
 	return 15 + 20 * 2
 
 ///

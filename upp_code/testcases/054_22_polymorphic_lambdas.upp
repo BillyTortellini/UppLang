@@ -1,6 +1,6 @@
 
-foo::(a:$T)->T
-	bar:=(value:T)->T
+foo::(a:$T)=>T
+	bar:=(value:T)=>T
 		return value*2+2*3
 	return bar(a)
 	

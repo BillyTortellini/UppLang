@@ -21,10 +21,10 @@ Node :: struct
 			condition: bool
 			value: int
 
-node_test :: (a: * const Node) -> int
+node_test :: (a: * const Node) => int
 	return 0
 
-stat_test :: (a: Node.Statement) -> int
+stat_test :: (a: Node.Statement) => int
 	if a.tag == .For
 		loop :=* a.For
 		if loop.condition
@@ -34,7 +34,7 @@ stat_test :: (a: Node.Statement) -> int
 		ass :=* a.Assignment
 		return ass.left + ass.right
 
-assign_test :: (a: Node.Statement.Assignment) -> int
+assign_test :: (a: Node.Statement.Assignment) => int
 	return a.left + a.right
 
 main :: ()

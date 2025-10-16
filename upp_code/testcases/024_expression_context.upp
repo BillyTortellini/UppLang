@@ -21,13 +21,13 @@ Sum :: struct
 	b: int
 
 // Member accesses on pointers automatically dereference
-calc_sum1 :: (sum: Sum) -> int
+calc_sum1 :: (sum: Sum) => int
 	return sum.a + sum.b
-calc_sum2 :: (sum: *Sum) -> int
+calc_sum2 :: (sum: *Sum) => int
 	return sum.a + sum.b
-calc_sum3 :: (sum: **Sum) -> int
+calc_sum3 :: (sum: **Sum) => int
 	return sum.a + sum.b
-calc_sum4 :: (sum: ***Sum) -> int
+calc_sum4 :: (sum: ***Sum) => int
 	return sum.a + sum.b
 
 mult_and_change_sum :: (sum: *Sum)

@@ -41,7 +41,8 @@ enum class Operator
     DEFINE_INFER_RAW, // :=~
     AND,
     OR,
-    ARROW,
+    ARROW,       // =>, note: different to DOT_CALL ->
+    INFER_ARROW, // .=>
     DOLLAR,
     ASSIGN,
     ASSIGN_POINTER, // =*

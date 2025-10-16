@@ -5,7 +5,7 @@ import Upp~type_info
 print_any :: (any: Any)
 	info := type_info(any.type)
 	if any.type == String
-		print_string( cast {*String} any.data)
+		print_string(cast{*String} any.data)
 		return
 	
 	switch info.options
@@ -15,23 +15,23 @@ print_any :: (any: Any)
 				case.integer
 					val: i32 = 0
 					if info.size == 1
-						val = cast {*i8} any.data
+						val = cast{*i8} any.data
 					else if info.size == 2
-						val = cast {*i16} any.data
+						val = cast{*i16} any.data
 					else if info.size == 4
-						val = cast {*i32} any.data
+						val = cast{*i32} any.data
 					else if info.size == 8
-						val = cast &( cast {*i64} any.data)
+						val = cast &(cast{*i64} any.data)
 					print_i32(val)
 				case.floating_point
 					val: float = 0.0
 					if info.size == 4
-						val = cast {*float} any.data
+						val = cast{*float} any.data
 					else
-						val = cast &( cast {*f64} any.data)
+						val = cast &(cast{*f64} any.data)
 					print_f32(val)
 				case.boolean
-					print_bool( cast {*bool} any.data)
+					print_bool(cast{*bool} any.data)
 		case.structure
 			structure := info.options.structure
 			if structure.name.size != 0

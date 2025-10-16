@@ -7,16 +7,16 @@ import Upp~Type_Handle as Type
 Vector :: struct (T: Type, C: int)
 	values: [C]T
 
-component_wise_binop :: (a: Vector($T, $C), b: Vector(T, C), $binop: (a: T, b: T) -> T) -> Vector(T, C)
+component_wise_binop :: (a: Vector($T, $C), b: Vector(T, C), $binop: (a: T, b: T) => T) => Vector(T, C)
 	result: Vector(T, C)
 	for i := 0; i < C; i += 1
 		result.values[i] = binop(a.values[i], b.values[i])
 	return result
 
-add :: (a: int, b: int) -> int
+add :: (a: int, b: int) => int
 	return a + b
 
-diff :: (a: int, b: int) -> int
+diff :: (a: int, b: int) => int
 	return a - b
 
 main :: ()

@@ -1,16 +1,16 @@
-add :: (a: int, b: int) -> int
+add :: (a: int, b: int) => int
 	return a + b
 
-sub :: (a: int, b: int) -> int
+sub :: (a: int, b: int) => int
 	return a - b
 
-get_fn :: (do_add: bool) -> ((a: int, b: int) -> int) 
+get_fn :: (do_add: bool) => ((a: int, b: int) => int) 
 	if do_add 
 		return add
 	return sub
 	
 main :: ()
-	fn: (a: int, b: int) -> int
+	fn: (a: int, b: int) => int
 	fn = add
 	assert(fn(5, 5) == 10)
 	fn = sub

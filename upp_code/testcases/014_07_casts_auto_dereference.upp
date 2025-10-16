@@ -1,7 +1,7 @@
 
 import Upp~c_string
 
-double :: (n: int) -> int
+double :: (n: int) => int
 	return n * 2
 
 Player :: struct

@@ -1,10 +1,10 @@
 
 import Upp~type_of
 
-double :: (a: $T) -> T
+double :: (a: $T) => T
 	return a* cast {T} 2
 
-double_2 :: (a: T) -> $T
+double_2 :: (a: T) => $T
 	return a* cast {T} 2
 
 main :: ()

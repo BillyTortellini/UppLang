@@ -1606,8 +1606,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
     case AST::Expression_Type::OPTIONAL_POINTER:
     case AST::Expression_Type::OPTIONAL_TYPE:
-    case AST::Expression_Type::BAKE_BLOCK:
-    case AST::Expression_Type::BAKE_EXPR:
+    case AST::Expression_Type::BAKE:
     case AST::Expression_Type::ENUM_TYPE:
     case AST::Expression_Type::ERROR_EXPR:
     case AST::Expression_Type::FUNCTION:
@@ -2694,7 +2693,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         auto& slot = compiler.analysis_data->function_slots[ir_generator.queued_function_slot_indices[i]];
         ModTree_Function* mod_func = slot.modtree_function;
         IR_Function* ir_func = slot.ir_function;
-        if (mod_func == 0) {
+        if (mod_func == 0) { // This means this is a predefined ir-function
             if (gen_bytecode) {
                 bytecode_generator_compile_function(compiler.bytecode_generator, ir_func);
             }
@@ -2703,32 +2702,33 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
 
 
         // Generate function code
+        AST::Body_Node body;
         if (mod_func->function_type == ModTree_Function_Type::NORMAL)
         {
-            ir_generator.current_pass = mod_func->options.normal.progress->body_workload->base.current_pass;
-            ir_generator_generate_block(ir_func->code, mod_func->options.normal.progress->body_workload->body_node);
+            auto body_workload = mod_func->options.normal.progress->body_workload;
+            ir_generator.current_pass = body_workload->base.current_pass;
+            body = body_workload->body_node;
         }
         else if (mod_func->function_type == ModTree_Function_Type::BAKE)
         {
             ir_generator.current_pass = mod_func->options.bake->analysis_workload->base.current_pass;
-            auto bake_node = mod_func->options.bake->analysis_workload->bake_node;
-            if (bake_node->type == AST::Expression_Type::BAKE_EXPR) 
-            {
-                IR_Instruction return_instr;
-                return_instr.type = IR_Instruction_Type::RETURN;
-                return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-                return_instr.options.return_instr.options.return_value = ir_generator_generate_expression_in_block(ir_func->code, bake_node->options.bake_expr);
-                add_instruction(return_instr, ir_func->code);
-            }
-            else if (bake_node->type == AST::Expression_Type::BAKE_BLOCK) {
-                ir_generator_generate_block(ir_func->code, bake_node->options.bake_block);
-            }
-            else {
-                panic("Shoudn't happen!");
-            }
+            body = mod_func->options.bake->analysis_workload->bake_node->options.bake_body;
         }
         else {
             panic("Extern functions should have been filtered out by here");
+        }
+
+        if (body.is_expression)
+        {
+            IR_Instruction return_instr;
+            return_instr.type = IR_Instruction_Type::RETURN;
+            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+            return_instr.options.return_instr.options.return_value = 
+                ir_generator_generate_expression_in_block(ir_func->code, body.expr);
+            add_instruction(return_instr, ir_func->code);
+        }
+        else {
+            ir_generator_generate_block(ir_func->code, body.block);
         }
 
         // Add empty return

@@ -1,11 +1,11 @@
 
-add :: (a: int, b: int) -> int
+add :: (a: int, b: int) => int
 	return a + b
 
-add :: (a: float, b: float) -> float
+add :: (a: float, b: float) => float
 	return a + b
 
-add :: (a: $T, b: T) -> T
+add :: (a: $T, b: T) => T
 	return a + b
 
 Node :: struct
@@ -18,7 +18,7 @@ add :: (node: *Node, b: bool)
 	if b
 		node.value *= 2
 
-add :: (node: *Node, a: int, b: int) -> int
+add :: (node: *Node, a: int, b: int) => int
 	node.value = node.value * a + b
 	return node.value
 

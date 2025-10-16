@@ -1,8 +1,8 @@
 #pragma once
 
-#include <../../datastructures/string.hpp>
-#include <../../datastructures/array.hpp>
-#include <../../math/umath.hpp>
+#include "../datastructures/string.hpp"
+#include "../datastructures/array.hpp"
+#include "../math/umath.hpp"
 
 struct Input;
 struct Window;

@@ -6,14 +6,14 @@ Player :: struct
 	age: int
 	alive: bool
 
-player_make :: (name: c_string, age: int, alive: bool) -> Player
+player_make :: (name: c_string, age: int, alive: bool) => Player
 	p: Player
 	p.name = name
 	p.age = age
 	p.alive = alive
 	return p
 
-player_combine :: (p1: Player, p2: Player) -> Player
+player_combine :: (p1: Player, p2: Player) => Player
 	p: Player
 	p.name = p1.name
 	p.age = p1.age + p2.age

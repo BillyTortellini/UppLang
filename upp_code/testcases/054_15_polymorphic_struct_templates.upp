@@ -1,18 +1,18 @@
 
 import Upp~Type_Handle
 
-Foo :: struct (T: Type_Handle, C: int, unop: (a: T) -> T)
+Foo :: struct (T: Type_Handle, C: int, unop: (a: T) => T)
 	data: [C]T
 
-bar :: (foo: Foo($T, $C, $unop), b: T) -> T
+bar :: (foo: Foo($T, $C, $unop), b: T) => T
 	x: Foo(T, C, unop)
 	x.data[1] = b
 	return unop(x.data[1])
 
-negate :: (a: int) -> int
+negate :: (a: int) => int
 	return -a
 
-fnegate :: (a: float) -> float
+fnegate :: (a: float) => float
 	return -a
 
 main :: ()

@@ -5,7 +5,7 @@ Hashing :: module
 	import Upp~Bytes
 	import "allocators.upp" as Allocators
 	
-	hash_memory :: (bytes: Bytes) -> u64
+	hash_memory :: (bytes: Bytes) => u64
 		import Upp~bitwise_xor as xor
 		import Upp~bitwise_shift_right as rshift
 		import Upp~bitwise_shift_left as lshift
@@ -15,7 +15,7 @@ Hashing :: module
 		SEED :: cast{u64} 271
 		
 		// Function to mix up bytes/spread bits evenly
-		mix :: (mut h: u64) -> u64
+		mix :: (mut h: u64) => u64
 			h = xor(h, rshift(h, 23))
 			h *= MIX_CONSTANT
 			h = xor(h, rshift(h, 47))
@@ -47,19 +47,16 @@ Hashing :: module
 		
 		return h
 	
-	hash_primitive :: (value: $T) -> u64
-		slice: Bytes
-		slice.data = cast_pointer *value
-		slice.size = Upp~size_of(T)
-		return hash_memory(slice)
+	hash_primitive :: (value: $T) => u64
+		return hash_memory(.{cast_pointer *value, Upp~size_of(T)})
 
 Hashable :: module
 	Hashable :: struct (T: Upp~Type_Handle)
-		hash_fn: (value: T) -> Upp~u64
-		equals_fn: (a: T, b: T) -> bool
+		hash_fn: (value: T) => Upp~u64
+		equals_fn: (a: T, b: T) => bool
 	
-	make_primitive :: ($T: Upp~Type_Handle) -> Hashable(T)
-		equals_primitive :: (a: $T, b: T) -> bool
+	make_primitive :: ($T: Upp~Type_Handle) => Hashable(T)
+		equals_primitive :: (a: $T, b: T) => bool
 			return a == b
 		
 		return .{
@@ -67,8 +64,8 @@ Hashable :: module
 			#instanciate equals_primitive(T = T)
 		}
 	
-	make_pointer :: ($T: Upp~Type_Handle) -> Hashable(*T)
-		equals_pointer :: (a: $T, b: T) -> bool
+	make_pointer :: ($T: Upp~Type_Handle) => Hashable(*T)
+		equals_pointer :: (a: $T, b: T) => bool
 			return a *== b
 		
 		return .{
@@ -97,7 +94,7 @@ Hashset :: module
 		allocator: *Allocator
 		size: usize
 	
-	create :: (allocator: *Allocator, capacity: usize = 0) -> Hashset($H)
+	create :: (allocator: *Allocator, capacity: usize = 0) => Hashset($H)
 		result: Hashset(H) = .{.[], allocator, 0}
 		reserve(result, capacity)
 		return result
@@ -109,13 +106,13 @@ Hashset :: module
 			next :=* entry.next
 			while next?
 				next_ptr :=* next.value.next
-				set.allocator.>free(next.value)
+				set.allocator->free(next.value)
 				next =* next_ptr
 		if set.entries.size > 0
-			set.allocator.>free(set.entries)
+			set.allocator->free(set.entries)
 	
 	// Returns if element was already inside hashtable or not
-	insert :: (set: *Hashset(Hashable($T)), element: T, overwrite: bool = false) -> bool
+	insert :: (set: *Hashset(Hashable($T)), element: T, overwrite: bool = false) => bool
 		hash := set.H.hash_fn(element)
 		slot_index := cast hash % set.entries.size
 		reserve(set, set.size + 1)
@@ -151,7 +148,7 @@ Hashset :: module
 		
 		return false
 	
-	find :: (set: Hashset(Hashable($T)), value: T) -> ?*T
+	find :: (set: Hashset(Hashable($T)), value: T) => ?*T
 		hash: u64 = set.H.hash_fn(value)
 		
 		slot_index := cast hash % set.entries.size
@@ -174,7 +171,7 @@ Hashset :: module
 		return null
 	
 	// Returns true if element was found
-	remove :: (set: Hashset(Hashable($T)), value: T) -> bool
+	remove :: (set: Hashset(Hashable($T)), value: T) => bool
 		hash: u64 = set.H.hash_fn(value)
 		
 		slot_index := cast hash % set.entries.size
@@ -205,7 +202,7 @@ Hashset :: module
 		
 		return false
 	
-	next_prime_table_size :: (size: usize) -> usize
+	next_prime_table_size :: (size: usize) => usize
 		HASH_PRIMES :: usize.[
 			1, 3, 5, 11, 23, 47, 97, 197, 397, 797
 			1597, 3203, 6421, 12853, 25717, 51437, 102877
@@ -230,7 +227,7 @@ Hashset :: module
 			return
 		
 		old_entries := set.entries
-		set.entries = set.allocator.>allocate(new_size)
+		set.entries = set.allocator->allocate(new_size)
 		for entry in set.entries
 			entry.valid = false
 			entry.next =* null
@@ -242,7 +239,7 @@ Hashset :: module
 			insert(set, entry.value)
 		
 		if old_entries.size > 0
-			set.allocator.>free(old_entries)
+			set.allocator->free(old_entries)
 	
 	Iterator :: module
 		Iter :: struct (H: Hashable($T))
@@ -250,7 +247,7 @@ Hashset :: module
 			entry: ?*Entry(T)
 			entry_index: usize
 		
-		create :: (set: *Hashset($H)) -> Iter(H)
+		create :: (set: *Hashset($H)) => Iter(H)
 			result: Iter(H) = .{set, null, 0}
 			for e, i in set.entries
 				if e.valid
@@ -260,7 +257,7 @@ Hashset :: module
 			
 			return result
 		
-		has_next :: (iter: Iter($H)) -> bool
+		has_next :: (iter: Iter($H)) => bool
 			return iter.entry?
 		
 		next :: (iter: *Iter($H))
@@ -276,7 +273,7 @@ Hashset :: module
 			
 			iter.entry =* null
 		
-		get_value :: (iter: Iter($H)) -> *H.T
+		get_value :: (iter: Iter($H)) => *H.T
 			return iter.entry.value.value
 	
 	Operators :: module
@@ -297,20 +294,20 @@ Hashset :: module
 		
 		set: Hashset(INT_HASHABLE) = create(Upp~global_allocator)
 		defer
-			set.>destroy()
+			set->destroy()
 		
 		assert(set.size == 0)
-		set.>reserve(10)
+		set->reserve(10)
 		assert(set.entries.size >= 10)
 		
 		b := false
-		b = set.>insert(15)
+		b = set->insert(15)
 		assert(!b)
-		b = set.>insert(15)
+		b = set->insert(15)
 		assert(b)
 		
-		set.>insert(8)
-		set.>insert(2)
+		set->insert(8)
+		set->insert(2)
 		Upp~print_string("hello, i'm still here!\n")
 		assert(set.size == 3)
 		sum := 0
@@ -325,16 +322,16 @@ Hashset :: module
 			if e.valid
 				diff_count += 1
 		
-		b = set.>find(15)?
+		b = set->find(15)?
 		assert(b)
 		
-		b = set.>remove(15)
+		b = set->remove(15)
 		assert(b)
 		
-		b = set.>find(15)?
+		b = set->find(15)?
 		assert(!b)
 		
-		b = set.>remove(15)
+		b = set->remove(15)
 		assert(!b)
 	
 

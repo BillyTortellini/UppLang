@@ -5,7 +5,7 @@ test::()
 other::()
 	print_string("Other")
 
-bubble_sort::(array:[]$T,less_fn:(a:T,b:T)->bool)
+bubble_sort::(array:[]$T,less_fn:(a:T,b:T)=>bool)
 	i:=0
 	while i<array.size
 		j:=i+1
@@ -28,7 +28,7 @@ Player::struct
 
 main::()
 	players:[]Player=Player.[.{"Frank",15},.{"Pete",12},.{"Dude",10},.{"Some",-5}]
-	player_age_compare::(a:Player,b:Player)->bool
+	player_age_compare::(a:Player,b:Player)=>bool
 		return a.age<b.age
 	
 	bubble_sort(players,player_age_compare)

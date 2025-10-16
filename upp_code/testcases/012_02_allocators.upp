@@ -33,7 +33,7 @@ main :: ()
 		stack_index: int
 		alloc_count: int
 	
-	custom_alloc :: (allocator_base: *Allocator, size: usize, alignment: u32) -> address
+	custom_alloc :: (allocator_base: *Allocator, size: usize, alignment: u32) => address
 		alloc :=* cast_pointer {*Stack_Allocator} allocator_base
 		if alloc.stack_index + cast size >= STACK_SIZE
 			return cast_pointer null
@@ -47,7 +47,7 @@ main :: ()
 		alloc :=* cast_pointer {*Stack_Allocator} data
 		alloc.alloc_count -= 1
 	
-	custom_realloc :: (allocator: *Allocator, ptr: address, prev: usize, next: usize) -> bool
+	custom_realloc :: (allocator: *Allocator, ptr: address, prev: usize, next: usize) => bool
 		return false
 	
 	stack_alloc := Stack_Allocator.{

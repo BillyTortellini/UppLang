@@ -127,6 +127,7 @@ namespace Parser
     }
 
     bool test_parenthesis(char c);
+
     bool on_follow_block() {
         auto& pos = parser.state.pos;
         auto code = parser.code;
@@ -478,8 +479,8 @@ namespace Parser
 
                     auto& code_block = statement->options.block;
                     code_block = allocate_base<Code_Block>(AST::upcast(statement), Node_Type::CODE_BLOCK);
-                    code_block->statements = dynamic_array_create<Statement*>(1);
-                    code_block->context_changes = dynamic_array_create<Context_Change*>(1);
+                    code_block->statements = dynamic_array_create<Statement*>();
+                    code_block->context_changes = dynamic_array_create<Context_Change*>();
                     code_block->block_id = optional_make_failure<String*>();
 
                     int block_start_line = pos.line;
@@ -1692,6 +1693,55 @@ namespace Parser
                 {
                     advance_token();
                     result->type = Statement_Type::DEFER;
+
+                    // Check if single statement parsing is allowed
+                    bool parse_single_statement = false;
+                    int remaining_tokens = remaining_line_tokens();
+                    if (remaining_tokens != 0)
+                    {
+                        parse_single_statement = true;
+
+                        // Check if defer is followed by a block identifier + block, in which case we just parse a block
+                        if (!(test_token(Token_Type::IDENTIFIER) && 
+                            test_operator_offset(Operator::COLON, 1) &&
+                            remaining_tokens == 2))
+                        {
+                            auto& pos = parser.state.pos;
+                            auto& code = parser.unit->code;
+                            bool has_follow_block = false;
+                            if (pos.line + 1 >= code->line_count) {
+                                Source_Line* next_line = source_code_get_line(code, pos.line + 1);
+                                if (next_line->indentation > parser.state.line->indentation) {
+                                    has_follow_block = true;
+                                }
+                            }
+                            if (has_follow_block) {
+								parse_single_statement = false;
+                            }
+                        }
+                    }
+
+                    if (parse_single_statement)
+                    {
+                        AST::Statement* statement = parse_statement(upcast(result));
+                        if (statement != nullptr)
+                        {
+                            Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
+                            code_block->statements = dynamic_array_create<Statement*>(1);
+                            code_block->context_changes = dynamic_array_create<Context_Change*>();
+                            code_block->block_id = optional_make_failure<String*>();
+
+                            dynamic_array_push_back(&code_block->statements, statement);
+                            statement->base.parent = upcast(code_block);
+                            code_block->base.range = statement->base.range;
+                            code_block->base.bounding_range = statement->base.bounding_range;
+
+                            // Generate new code block, set parent/child correctly, set ranges correctly
+                            result->options.defer_block = code_block;
+                            PARSE_SUCCESS(result);
+                        }
+                    }
+
                     result->options.defer_block = parse_code_block(&result->base, 0);
                     PARSE_SUCCESS(result);
                 }
@@ -1713,6 +1763,7 @@ namespace Parser
 
                     if ((int)assignment_type == -1) {
                         auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+                        log_error_range_offset("Expected assignment after expression", 0);
                         error_expr->type = Expression_Type::ERROR_EXPR;
                         node_finalize_range(upcast(error_expr));
                         result->options.defer_restore.assignment_type = Assignment_Type::RAW;
@@ -2017,14 +2068,16 @@ namespace Parser
 
         if (test_keyword_offset(Keyword::BAKE, 0))
         {
+            result->type = Expression_Type::BAKE;
             advance_token();
             if (on_follow_block()) {
-                result->type = Expression_Type::BAKE_BLOCK;
-                result->options.bake_block = parse_code_block(&result->base, 0);
-                PARSE_SUCCESS(result);
+                result->options.bake_body.is_expression = false;
+                result->options.bake_body.block = parse_code_block(&result->base, 0);
             }
-            result->type = Expression_Type::BAKE_EXPR;
-            result->options.bake_expr = parse_single_expression_or_error(&result->base);
+            else {
+                result->options.bake_body.is_expression = true;
+                result->options.bake_body.expr = parse_single_expression_or_error(&result->base);
+            }
             PARSE_SUCCESS(result);
         }
 
@@ -2194,7 +2247,6 @@ namespace Parser
                 upcast(result), wrapper_parse_parameter, add_parameter, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, false
             );
 
-
             // Parse Return value
             if (test_operator(Operator::ARROW)) {
                 advance_token();
@@ -2213,9 +2265,28 @@ namespace Parser
             result->base.range.start = signature_expr->base.range.start;
             result->type = Expression_Type::FUNCTION;
             auto& function = result->options.function;
-            function.body = parse_code_block(&result->base, 0);
-            function.signature = signature_expr;
+            function.signature = optional_make_success(signature_expr);
+            function.body.is_expression = false;
+            function.body.block = parse_code_block(&result->base, 0);
             signature_expr->base.parent = (Node*)result;
+            PARSE_SUCCESS(result);
+        }
+
+        // Parse infered function things
+        if (test_operator(Operator::INFER_ARROW))
+        {
+            result->type = Expression_Type::FUNCTION;
+            result->options.function.signature = optional_make_failure<AST::Expression*>();
+            advance_token();
+
+            // .=> needs to be followed by either a new block or { for blocks
+            if (on_follow_block()) {
+                result->options.function.body.is_expression = false;
+                result->options.function.body.block = parse_code_block(&result->base, 0);
+                PARSE_SUCCESS(result);
+            }
+            result->options.function.body.is_expression = true;
+            result->options.function.body.expr = parse_expression_or_error_expr(upcast(result));
             PARSE_SUCCESS(result);
         }
 
@@ -2223,7 +2294,7 @@ namespace Parser
         {
             parser_rollback(checkpoint); // This is pretty stupid, but needed to reset result
             advance_token();
-            result = parse_expression_or_error_expr(parent);
+            result = parse_expression_or_error_expr(parent); // I guess we parse this like a function call without a expression...
             if (!finish_parenthesis<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }

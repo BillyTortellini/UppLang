@@ -4,16 +4,16 @@ Range :: struct
 	index: int
 
 Range :: module
-	make :: (max_value: int) -> Range
+	make :: (max_value: int) => Range
 		return .{max_value, 0}
 	
-	has_next :: (range: Range) -> bool
+	has_next :: (range: Range) => bool
 		return range.index < range.max_value
 	
 	next :: (range: *Range)
 		range.index += 1
 	
-	get_value :: (range: Range) -> int
+	get_value :: (range: Range) => int
 		return range.index
 	
 	Context :: module

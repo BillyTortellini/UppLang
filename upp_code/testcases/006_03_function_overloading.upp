@@ -1,19 +1,19 @@
 
-test :: (a: int) -> int
+test :: (a: int) => int
 	return a + 2
 
-test :: (a: bool) -> int
+test :: (a: bool) => int
 	if a
 		return 1
 	return -1
 
-test :: (a: [2]int) -> int
+test :: (a: [2]int) => int
 	return a[0] + a[1]
 
-test_return :: () -> int
+test_return :: () => int
 	return 1
 
-test_return :: () -> bool
+test_return :: () => bool
 	return true
 
 main :: ()

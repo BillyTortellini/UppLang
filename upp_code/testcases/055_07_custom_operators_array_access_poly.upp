@@ -17,7 +17,7 @@ push_back :: (holder: *Holder($T), value: T)
 	holder.values[holder.size] = value
 	holder.size += 1
 
-at :: (holder: *Holder($T), index: int) -> *T
+at :: (holder: *Holder($T), index: int) => *T
 	return holder.values[index]
 
 main :: ()

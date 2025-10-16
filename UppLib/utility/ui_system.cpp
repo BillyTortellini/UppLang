@@ -1,11 +1,11 @@
 #include "ui_system.hpp"
 
-#include "../../utility/line_edit.hpp"
-#include "../../rendering/texture.hpp"
-#include "../../rendering/rendering_core.hpp"
-#include "../../datastructures/hashtable.hpp"
-#include "../../datastructures/dynamic_array.hpp"
-#include "../../win32/window.hpp"
+#include "../utility/line_edit.hpp"
+#include "../rendering/texture.hpp"
+#include "../rendering/rendering_core.hpp"
+#include "../datastructures/hashtable.hpp"
+#include "../datastructures/dynamic_array.hpp"
+#include "../win32/window.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H

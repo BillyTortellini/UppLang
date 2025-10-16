@@ -1,17 +1,17 @@
 
-sub :: (a: int, b: int) -> int
+sub :: (a: int, b: int) => int
 	return a - b
 
-add_default :: (a: int, b: int = 1) -> int
+add_default :: (a: int, b: int = 1) => int
 	return a + b
 
 g_counter: int
 
-get_tick :: () -> int
+get_tick :: () => int
 	g_counter += 1
 	return g_counter
 
-add_with_tick :: (a: int, b: int = get_tick()) -> int
+add_with_tick :: (a: int, b: int = get_tick()) => int
 	return a + b
 
 main :: ()

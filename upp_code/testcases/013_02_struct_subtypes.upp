@@ -14,7 +14,7 @@ Result :: struct
 		error_code: int
 		fatal_error: bool
 
-test_result :: (res: Result) -> int
+test_result :: (res: Result) => int
 	if res.tag == .Success
 		return res.Success.result + 1
 	

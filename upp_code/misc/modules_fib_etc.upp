@@ -1,15 +1,15 @@
-fib::(n:int)->int
+fib::(n:int)=>int
 	if n<2
 		return 1
 	return fib(n-1)+fib(n-2)
 
-factorial::(n:int)->int
+factorial::(n:int)=>int
 	if n<1
 		return 1
 	return factorial(n-1)*factorial(n-2)
 
 Helpers::module
-	adder::(a:int,b:int)->int
+	adder::(a:int,b:int)=>int
 		return a+b
 	
 	print_factorial::(n:int)
@@ -17,17 +17,17 @@ Helpers::module
 		print_i32(res)
 
 Math::module
-	maximum::(a:int,b:int)->int
+	maximum::(a:int,b:int)=>int
 		if a>b
 			return a
 		return b
 	
-	minimum::(a:int,b:int)->int
+	minimum::(a:int,b:int)=>int
 		if a<b
 			return a
 		return b
 	
-	clamp::(x:int,min:int,max:int)->int
+	clamp::(x:int,min:int,max:int)=>int
 		if min>=max
 			return min
 		if x<min

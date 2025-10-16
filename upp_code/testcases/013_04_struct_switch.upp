@@ -12,16 +12,16 @@ Address :: struct
 		zip_code: int
 		street: c_string
 
-test :: (a: Address) -> int
+test :: (a: Address) => int
 	switch a
-		.House -> house
+		.House => house
 			return house.zip_code * 2
-		.IPv4 -> v4
+		.IPv4 => v4
 			sum := 0
 			for i in v4.bytes
 				sum = sum + cast i
 			return sum
-		.IPv6 -> v6
+		.IPv6 => v6
 			if v6.is_local
 				return 10
 			return 1

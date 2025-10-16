@@ -6,7 +6,7 @@ Node :: struct ($T: Type_Handle)
 	value: T
 	next: ?*Node(T)
 
-make_node :: () -> Node($T)
+make_node :: () => Node($T)
 	result: Node(T)
 	result.next =* null
 	return result

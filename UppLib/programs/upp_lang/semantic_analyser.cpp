@@ -654,6 +654,7 @@ Function_Progress* function_progress_create_with_modtree_function(
         auto header_workload = progress->header_workload;
         header_workload->progress = progress;
         header_workload->function_node = function_node;
+		header_workload->poly_header_infos = nullptr;
         header_workload->base.current_symbol_table = parameter_table;
         header_workload->base.current_function = progress->function;
         header_workload->base.symbol_access_level = Symbol_Access_Level::INTERNAL;
@@ -665,7 +666,7 @@ Function_Progress* function_progress_create_with_modtree_function(
     }
 
     progress->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(upcast(function_node->options.function.body));
-    progress->body_workload->body_node = function_node->options.function.body;
+	progress->body_workload->body_node = function_node->options.function.body;
     progress->body_workload->progress = progress;
     progress->body_workload->base.current_symbol_table = parameter_table; // Sets correct symbol table for code
     progress->body_workload->base.current_function = progress->function;
@@ -748,6 +749,7 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
     // Create body workload
     auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(upcast(struct_node));
+    body_workload->struct_node = struct_node;
     body_workload->struct_type = type_system_make_struct_empty(struct_info.type, (symbol == 0 ? ids.anon_struct : symbol->id), body_workload);
     add_struct_members_empty_recursive(
         &body_workload->struct_type->content, struct_info.members, !is_polymorphic_instance, nullptr, struct_info.parameters
@@ -755,7 +757,6 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
     if (struct_info.type == AST::Structure_Type::UNION && body_workload->struct_type->content.subtypes.size > 0 && !is_polymorphic_instance) {
         log_semantic_error("Union must not contain subtypes", upcast(struct_node), Parser::Section::KEYWORD);
     }
-    body_workload->struct_node = struct_node;
     body_workload->polymorphic_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
     body_workload->base.symbol_access_level = access_level;
 
@@ -792,8 +793,7 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
 
 Bake_Progress* bake_progress_create(AST::Expression* bake_expr, Datatype* expected_type)
 {
-    assert(bake_expr->type == AST::Expression_Type::BAKE_EXPR ||
-        bake_expr->type == AST::Expression_Type::BAKE_BLOCK, "Must be bake!");
+    assert(bake_expr->type == AST::Expression_Type::BAKE, "Must be bake!");
     auto& ids = compiler.identifier_pool.predefined_ids;
 
     auto progress = analysis_progress_allocate_internal<Bake_Progress>();
@@ -1293,8 +1293,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	{
 	case AST::Expression_Type::ARRAY_TYPE:
 	case AST::Expression_Type::AUTO_ENUM:
-	case AST::Expression_Type::BAKE_BLOCK:
-	case AST::Expression_Type::BAKE_EXPR:
+	case AST::Expression_Type::BAKE:
 	case AST::Expression_Type::ENUM_TYPE:
 	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::LITERAL_READ:
@@ -2204,7 +2203,9 @@ void analysis_workload_destroy(Workload_Base* workload)
 	{
 	case Analysis_Workload_Type::FUNCTION_HEADER: {
 		auto function_header = downcast<Workload_Function_Header>(workload);
-		poly_header_destroy(function_header->poly_header_infos);
+		if (function_header->poly_header_infos != nullptr) {
+			poly_header_destroy(function_header->poly_header_infos);
+		}
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
@@ -3550,8 +3551,7 @@ bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* exp
 	// Check if we should stop the recursion
 	switch (expression->type)
 	{
-	case AST::Expression_Type::BAKE_BLOCK:
-	case AST::Expression_Type::BAKE_EXPR:
+	case AST::Expression_Type::BAKE:
 	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::MODULE:
 		return false;
@@ -3621,8 +3621,7 @@ void expression_search_for_implicit_parameters_and_symbol_lookups(
 	// Check if we should stop the recursion
 	switch (expression->type)
 	{
-	case AST::Expression_Type::BAKE_BLOCK:
-	case AST::Expression_Type::BAKE_EXPR:
+	case AST::Expression_Type::BAKE:
 	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::MODULE:
 		return;
@@ -5610,9 +5609,37 @@ void analysis_workload_entry(void* userdata)
 	case Analysis_Workload_Type::FUNCTION_HEADER:
 	{
 		auto header_workload = downcast<Workload_Function_Header>(workload);
+
+		// Handle infered function headers
+		auto& function_node = header_workload->function_node->options.function;
+		if (!function_node.signature.available) 
+		{
+			Datatype_Function* function_type = header_workload->progress->function->signature;
+			header_workload->poly_header_infos = nullptr;
+			workload->current_function = header_workload->progress->function;
+
+			// Define all parameters in symbol table
+			auto symbol_table = workload->current_symbol_table;
+			for (int i = 0; i < function_type->parameters.size; i++)
+			{
+				auto& param = function_type->parameters[i];
+				Symbol* symbol = symbol_table_define_symbol(
+					symbol_table, param.name, Symbol_Type::PARAMETER, upcast(header_workload->function_node), Symbol_Access_Level::PARAMETERS
+				);
+				symbol->options.parameter.function = header_workload->progress;
+				symbol->options.parameter.index_in_non_polymorphic_signature = i;
+				symbol->options.parameter.index_in_polymorphic_signature = i;
+			}
+
+			// TODO: This could be done when encountering lambdas, and functions could just not have
+			// a header progress... For infered functions the header workload does not do anything,
+			//		it could be better to just not have a header workload at all...
+			break;
+		}
+
 		auto progress = header_workload->progress;
 		ModTree_Function* function = header_workload->progress->function;
-		auto& signature_node = header_workload->function_node->options.function.signature->options.function_signature;
+		auto& signature_node = header_workload->function_node->options.function.signature.value->options.function_signature;
 		auto& parameter_nodes = signature_node.parameters;
 		assert(function->function_type == ModTree_Function_Type::NORMAL, "");
 
@@ -5701,15 +5728,26 @@ void analysis_workload_entry(void* userdata)
 	case Analysis_Workload_Type::FUNCTION_BODY:
 	{
 		auto body_workload = downcast<Workload_Function_Body>(workload);
-		auto code_block = body_workload->body_node;
 		auto function = body_workload->progress->function;
 		workload->current_function = function;
 
-		// Analyse body
-		Control_Flow flow = semantic_analyser_analyse_block(code_block);
-		if (flow != Control_Flow::RETURNS && function->signature->return_type.available) {
-			log_semantic_error("Function is missing a return statement", upcast(code_block), Parser::Section::END_TOKEN);
+		if (body_workload->body_node.is_expression)
+		{
+			Expression_Context context = expression_context_make_unknown();
+			if (function->signature->return_type.available) {
+				context = expression_context_make_specific_type(function->signature->return_type.value);
+			}
+			semantic_analyser_analyse_expression_any(body_workload->body_node.expr, context);
 		}
+		else 
+		{
+			auto code_block = body_workload->body_node.block;
+			Control_Flow flow = semantic_analyser_analyse_block(code_block);
+			if (flow != Control_Flow::RETURNS && function->signature->return_type.available) {
+				log_semantic_error("Function is missing a return statement", upcast(code_block), Parser::Section::END_TOKEN);
+			}
+		}
+
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_CLUSTER_COMPILE:
@@ -5785,12 +5823,23 @@ void analysis_workload_entry(void* userdata)
 	{
 		auto bake = downcast<Workload_Bake_Analysis>(workload);
 		auto function = bake->progress->bake_function;
-		auto node = bake->bake_node;
+		auto bake_body = bake->bake_node->options.bake_body;
 		workload->current_function = function;
 
-		if (node->type == AST::Expression_Type::BAKE_BLOCK)
+		if (bake_body.is_expression)
 		{
-			auto& code_block = node->options.bake_block;
+			auto& bake_expr = bake_body.expr;
+			workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
+			auto expression_context = expression_context_make_unknown();
+			if (bake->progress->result_type != 0) {
+				expression_context = expression_context_make_specific_type(bake->progress->result_type);
+			}
+			auto result_type = semantic_analyser_analyse_expression_value(bake_expr, expression_context);
+			function->signature = type_system_make_function({}, result_type);
+		}
+		else
+		{
+			auto code_block = bake_body.block;
 			auto flow = semantic_analyser_analyse_block(code_block, true);
 			if (flow != Control_Flow::RETURNS) {
 				log_semantic_error("Missing return statement", AST::upcast(code_block), Parser::Section::END_TOKEN);
@@ -5801,20 +5850,6 @@ void analysis_workload_entry(void* userdata)
 				bake->progress->bake_function->contains_errors = true;
 			}
 			function->signature = type_system_make_function({}, bake->progress->result_type);
-		}
-		else if (node->type == AST::Expression_Type::BAKE_EXPR)
-		{
-			auto& bake_expr = node->options.bake_expr;
-			workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-			auto expression_context = expression_context_make_unknown();
-			if (bake->progress->result_type != 0) {
-				expression_context = expression_context_make_specific_type(bake->progress->result_type);
-			}
-			auto result_type = semantic_analyser_analyse_expression_value(bake_expr, expression_context);
-			function->signature = type_system_make_function({}, result_type);
-		}
-		else {
-			panic("");
 		}
 		break;
 	}
@@ -6241,17 +6276,19 @@ Expression_Info analyse_symbol_as_expression(Symbol * symbol, Expression_Context
 
 		// Special handling if we access parameter from other parameter (Poly-Header)
 		auto poly_header = param.function->header_workload->poly_header_infos;
-		assert(poly_header != nullptr, "Even non-polymorphic functions should have parameters");
-		if (workload->instanciate_matching_info != nullptr)
+		if (poly_header != nullptr)
 		{
-			auto& param_info = workload->instanciate_matching_info->matched_parameters[param.index_in_polymorphic_signature];
-			if (!param_info.is_set || param_info.param_type == nullptr) {
-				expression_info_set_error(&result, types.unknown_type);
+			if (workload->instanciate_matching_info != nullptr)
+			{
+				auto& param_info = workload->instanciate_matching_info->matched_parameters[param.index_in_polymorphic_signature];
+				if (!param_info.is_set || param_info.param_type == nullptr) {
+					expression_info_set_error(&result, types.unknown_type);
+				}
+				else {
+					expression_info_set_value(&result, param_info.param_type, false);
+				}
+				return result;
 			}
-			else {
-				expression_info_set_value(&result, param_info.param_type, false);
-			}
-			return result;
 		}
 
 		// Otherwise we should be in body workload
@@ -8148,9 +8185,31 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 		log_semantic_error("Module not valid in this context", AST::upcast(expr));
 		EXIT_ERROR(types.unknown_type);
 	}
-	case AST::Expression_Type::FUNCTION: {
-		// Create new function progress and wait for header analyis to finish
-		auto progress = function_progress_create_with_modtree_function(0, expr, 0, nullptr, Symbol_Access_Level::POLYMORPHIC);
+	case AST::Expression_Type::FUNCTION: 
+	{
+		// Create new function progress
+		auto progress = function_progress_create_with_modtree_function(
+			0, expr, 0, nullptr, Symbol_Access_Level::POLYMORPHIC);
+
+		// Handle infered function types
+		auto function = expr->options.function;
+		if (!function.signature.available)
+		{
+			progress->function->signature = type_system->predefined_types.empty_function;
+			bool log_error = true;
+			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+			{
+				if (datatype_get_non_const_type(context.expected_type.type)->type == Datatype_Type::FUNCTION) {
+					progress->function->signature = downcast<Datatype_Function>(datatype_get_non_const_type(context.expected_type.type));
+					log_error = false;
+				}
+			}
+			if (log_error) {
+				log_semantic_error("Inferred function type requires context, which is not available", expr, Parser::Section::FIRST_TOKEN);
+			}
+		}
+
+		// Wait for header analysis to finish
 		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(progress->header_workload));
 		workload_executer_wait_for_dependency_resolution();
 
@@ -8162,8 +8221,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 		auto workload = workload_structure_create(expr, 0, false, Symbol_Access_Level::POLYMORPHIC);
 		EXIT_TYPE(upcast(workload->struct_type));
 	}
-	case AST::Expression_Type::BAKE_BLOCK:
-	case AST::Expression_Type::BAKE_EXPR: {
+	case AST::Expression_Type::BAKE: {
 		// Create bake progress and wait for it to finish
 		Datatype* expected_type = 0;
 		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
@@ -12601,7 +12659,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement * statement)
 #undef EXIT
 }
 
-Control_Flow semantic_analyser_analyse_block(AST::Code_Block * block, bool polymorphic_symbol_access)
+Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, bool polymorphic_symbol_access)
 {
 	auto block_info = get_info(block, true);
 	block_info->control_flow_locked = false;

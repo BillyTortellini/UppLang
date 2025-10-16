@@ -1,5 +1,5 @@
 
-single_arg::(a:int)->int
+single_arg::(a:int)=>int
 	return-a
 
 main::()

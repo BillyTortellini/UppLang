@@ -1,22 +1,22 @@
 
 import"printing.upp"
 
-double::(value:T,$T:Type_Handle)->T
+double::(value:T,$T:Type_Handle)=>T
 	return value+value
 
-adder::(a:T,$T:Type_Handle,b:T)->T
+adder::(a:T,$T:Type_Handle,b:T)=>T
 	return a+b
 
 //
 	Vector::struct(D:int,T:Type)
 		elements:[D]T
 	
-	binop::(a:Vector($D,$T),b:Vector(D,T),op:(x:T,y:T)->T)->Vecotr(D,T)
+	binop::(a:Vector($D,$T),b:Vector(D,T),op:(x:T,y:T)=>T)=>Vecotr(D,T)
 		result:Vector($D,$T)
 		for i:=0;i<D;i+=1
 			result[i]=binop(a[i],b[i])
 	
-	general_addition::(a:T,b:T)->T
+	general_addition::(a:T,b:T)=>T
 		return a+b
 
 print_static_array::($T:Type_Handle,array:[SIZE]T,$SIZE:int)

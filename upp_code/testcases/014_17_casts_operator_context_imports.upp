@@ -10,7 +10,7 @@ Integer_Auto_Casts :: module
 	context set_cast_option(.INTEGER_UNSIGNED_TO_SIGNED, .IMPLICIT)
 	context set_cast_option(.INTEGER_SIGNED_TO_UNSIGNED, .IMPLICIT)
 
-is_even :: (n: int) -> bool
+is_even :: (n: int) => bool
 	return n % 2 == 0
 
 Integer_Is_Even :: module

@@ -1,19 +1,58 @@
 
-TODO: 
- * Write testcases
+    X:: struct
+        a: int, b: int +
+        c: int, 
+        d: int
+    cast{int}, but otherwise... Node.{} also no spaces..., but if { x = 15; other = 15; } spaces...
+    
 
-DONE:
- * Pass-Filter added prefer_base/prefer_poly
- * Hashset seems to be working
- * Fixed all testcases
- * Fix semantic analyser
- * Store poly-header in Poly-Value-Symbol / Template type
- * Always store poly-header infos in function-progress/struct-header analysis
- * Create new Symbol-Access-Level for parameters, and only use it during parameter-analysis
- * Valid Template-Type hashtable was moved inside workload, and is used in header-reanalysis
- * Poly-Value lookup uses definition workload (E.g. poly-value set)
- * Remove poly-value setting in child-workloads
- * Check workload-structure create calls
+Features before writing Base-Library:
+
+Small stuff:
+ * Optionals with ! and ? access...
+    I don't like .value for optional pointers, as it seems like a member access
+    Check if ! could cause problems with unary negate, also formating
+ * Check list item parsing again, e.g. , ; and other things, I think x := 15; should cause errors?
+    Maybe simple binop continuation if either prev-line is continuation or next line is indentedgg
+ * Disable auto pointer casting if * or & are used in expression --> seems reasonable
+ * Type_Handle -> rename to Type in language...
+
+Polymorphism upgrades:
+ * Poly struct parameters without types --> types..., e.g. 
+        Node :: struct($K, $V) 
+        foo :: (x: T, $V)
+    struct parameters require $ sign --> Probably better to keep things uniform
+ * Struct instance templates with ignored values, e.g.
+    A :: struct($X: int, $Y: int, $Z: int)
+    foo :: (x: A(X = $X, _))
+ * Parameter default values update, expression evaluation and context default values
+    By default evaluates in current context, Symbol-Lookups with 'Foo~bar~baz
+    use caller's current symbol table, which can be somewhat more complicated...
+ result: Upp~return_type() --> Built-in function
+         Upp~line_number() --> built-in function
+         Upp~unique_number() --> Returns number unique in build --> later for UI
+
+Base-Library:
+ * Arena allocator based on bin allocator based on virtual arena allocator,
+    global scratch_allocator (per_thread)
+ * Rewrite Dynamic_Array with arena
+ * Hashtable/set without lists + arena
+ * Free_List and normal Lists, maybe doubly linked list
+
+ * Write testcases --> 
+    I think I added implicit polymorphism, how I wanted to...
+    But I didn't add testcases for this, so I'm not even sure it works correctly.
+    Also not sure if I want it this way, as this could cause problems because it's not very visible...
+    I don't remember what I did last, LOL
+
+    Also list item parsing stuff...
+
+So I guess we have the special primitives:
+    usize
+    isize
+    address (cast_pointer)
+    Bytes
+
 
 
 
@@ -27,38 +66,6 @@ IN QUEUE:
 
 DONE:
 -----
-27.03
- - Almost finished implementing new implicit Polymorphism
- - Fixed testcases at polymorphic instanciation limit
- - Fixed coloring of invalid expression-info member accesses (Initialized to sensible values)
- - Initial Syntax-Coloring based on tokens and simple rules (identifier.identifer is a member access, and so on)
- - import as usees definition symbol node
- - Fixed named argument highlighting
- - Fixed arguments not analysing in instanciation error
- - Fixed for-loop not analysing in unknown context
- - For-Loop variable should be usize by default, not u64
- - Filter symbol-table ranges with passes
- - Run Instance-Analysis even if base-analysis fails
-
-26.03
- * Added Pass-Filters in Editor
-
-25.03
- * continue and break now work without ids
- * Re-Add Bytes as struct in Upp-Language
- * Debugger shows polymorphic functions as "lambda-function?"
- * Add wait for input after running C-Program
- * Fixed Arena/Dynamic_Array bugs
-
-24.03
- * Fixed implicit cast bug
- * for loop variable definitions aren't highlighted
- * assert double definition bug
- * Arena Implementation
- * Fixed testcases
- * Added dot-call code completion only on dot-calls
- * Fixed member code-completion (expression-info is_valid problems...)
- * Dot-Call Syntax update
 
 
 Upgrades:
@@ -459,6 +466,7 @@ else if SOMETHING == 100 ||
    SOMETHING == 200 ||
    SOMETHING == 300 ||
    SOMETHING == 400
+
     
 Some principles:
     * When a Parenthesis is openend, it should also be closed (For vim motions and just for sanity in other editors)

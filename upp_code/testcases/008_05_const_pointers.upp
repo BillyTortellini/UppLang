@@ -3,7 +3,7 @@
 inc :: (a: *int)
 	a += 1
 
-return_inc :: (a: * const int) -> int
+return_inc :: (a: * const int) => int
 	return a + 1
 
 main :: ()

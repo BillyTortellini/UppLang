@@ -7,10 +7,10 @@ Test :: module
 	Node :: struct
 		
 	
-	allocate :: (node: *Node, size: u64) -> Bytes
+	allocate :: (node: *Node, size: u64) => Bytes
 		return .{null, 0}
 	
-	allocate :: (node: *Node, $T: Upp~Type_Handle) -> *T
+	allocate :: (node: *Node, $T: Upp~Type_Handle) => *T
 		return new T
 	
 	free :: (node: *Node, value: *$T)

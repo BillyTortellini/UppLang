@@ -1,9 +1,21 @@
 
 Done:
 -----
+16.10:
+ * Auto-lambda, .=>
+ * Defer with statement, e.g. defer asdf->destroy()
+    Analyse statement, defer cannot return
+
+15.10:
+ * Change Function Syntax to =>, and use -> for dot calls
+ * Defer_restore causes crashes fixed, missing error logging in parser
+
+14.10:
+ * Fixed bug with definition-node not being set in editor_analysis_info
+ * Fix Code-completion for Dot-Calls
 
 28.03:
- * Rewordd Polymorphism/Poly-Value access, much cleaner now except implicit polymorphism/parameter access
+ * Reworked Polymorphism/Poly-Value access, much cleaner now except implicit polymorphism/parameter access
  * Pass-Filter added prefer_base/prefer_poly
  * Hashset seems to be working
  * Fixed all testcases

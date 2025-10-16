@@ -18,13 +18,13 @@ Allocator_Helpers :: module
 	context add_dot_call(allocate_bytes, false, "allocate")
 	context add_dot_call(free_bytes, false, "free")
 	
-	allocate_poly :: (allocator: *Allocator) -> *$T
+	allocate_poly :: (allocator: *Allocator) => *$T
 		return cast_pointer{*T} allocator.allocate_fn(allocator, size_of(T), align_of(T))
 	
 	free_poly :: (allocator: *Allocator, data: *$T)
 		allocator.free_fn(allocator, cast_pointer{address} data, size_of(T))
 	
-	allocate_array :: (allocator: *Allocator, count: usize) -> []$T
+	allocate_array :: (allocator: *Allocator, count: usize)=>[]$T
 		result: []T
 		result.size = count
 		if result.size == 0
@@ -37,7 +37,7 @@ Allocator_Helpers :: module
 	free_array :: (allocator: *Allocator, array: []$T)
 		allocator.free_fn(allocator, cast_pointer{address} array.data.value, size_of(T) * array.size)
 	
-	allocate_bytes :: (allocator: *Allocator, count: usize, alignment: u32) -> Bytes
+	allocate_bytes :: (allocator: *Allocator, count: usize, alignment: u32) => Bytes
 		result: Bytes
 		result.data = cast_pointer allocator.allocate_fn(allocator, count, alignment)
 		result.size = count
@@ -47,28 +47,27 @@ Allocator_Helpers :: module
 		allocator.free_fn(allocator, bytes.data, bytes.size)
 
 Math :: module
-	max :: (a: usize, b: usize) -> usize
+	max :: (a: usize, b: usize) => usize
 		if a > b
 			return a
 		return b
 	
-	min :: (a: usize, b: usize) -> usize
+	min :: (a: usize, b: usize) => usize
 		if a < b
 			return a
 		return b
 	
-	round_next_multiple :: (x: usize, multiple: usize) -> usize
+	round_next_multiple :: (x: usize, multiple: usize) => usize
 		mod := x % multiple
 		if mod == 0
 			return x
 		return x + (multiple - mod)
 
 Memory :: module
-	address_in_range :: (pointer: address, range: Bytes) -> bool
+	address_in_range :: (pointer: address, range: Bytes) => bool
 		return pointer >= range.data && pointer < range.data + range.size
 
 Arena :: module
-	
 	context import Allocator_Helpers
 	import Upp~size_of
 	import Upp~align_of
@@ -91,19 +90,19 @@ Arena :: module
 		context add_cast(Arena~get_allocator, .INFERRED)
 		context add_cast(Arena~get_allocator_const, .INFERRED)
 		
-		allocate_poly :: (arena: *Arena) -> *$T
+		allocate_poly :: (arena: *Arena) => *$T
 			return Allocator_Helpers~allocate_poly(arena.allocator)
 		
 		free_poly :: (arena: *Arena, pointer: *$T)
 			Allocator_Helpers~free_poly(arena.allocator, pointer)
 		
-		allocate_array :: (arena: *Arena, count: usize) -> []$T
+		allocate_array :: (arena: *Arena, count: usize) => []$T
 			return Allocator_Helpers~allocate_array(arena.allocator, count)
 		
 		free_array :: (arena: *Arena, array: []$T)
 			Allocator_Helpers~free_array(arena.allocator, array)
 		
-		allocate_bytes :: (arena: *Arena, size: usize, alignment: u32) -> Bytes
+		allocate_bytes :: (arena: *Arena, size: usize, alignment: u32) => Bytes
 			return Allocator_Helpers~allocate_bytes(arena.allocator, size, alignment)
 		
 		free_bytes :: (arena: *Arena, bytes: Bytes)
@@ -116,7 +115,7 @@ Arena :: module
 		buffer: Bytes
 		next: address
 	
-	create :: (allocator: *Allocator, capacity: usize = 0) -> Arena
+	create :: (allocator: *Allocator, capacity: usize = 0) => Arena
 		result := Arena.{
 			.{cast_pointer allocate, cast_pointer free, cast_pointer resize_allocation}
 			allocator, .{null, 0}, null
@@ -128,7 +127,7 @@ Arena :: module
 		buffer := arena.buffer
 		while buffer.data != null
 			next_buffer := cast_pointer{*Bytes} buffer.data
-			arena.parent_allocator.>free(buffer)
+			arena.parent_allocator->free(buffer)
 			buffer = next_buffer
 		arena.buffer = .{null, 0}
 	
@@ -153,13 +152,13 @@ Arena :: module
 		
 		// Allocate new buffer
 		next_size += size_of(Bytes) // Additional space for previous allocation storage
-		next_buffer := arena.parent_allocator.>allocate(next_size, 1)
+		next_buffer := arena.parent_allocator->allocate(next_size, 1)
 		cast_pointer{*Bytes} next_buffer.data = arena.buffer // Store reference to old buffer (This is null if first allocation)
 		
 		arena.buffer = next_buffer
 		arena.next = arena.buffer.data + size_of(Bytes)
 	
-	allocate :: (arena: *Arena, size: usize, alignment: u32) -> address
+	allocate :: (arena: *Arena, size: usize, alignment: u32) => address
 		resize_for_next_allocation(arena, size + cast alignment) // Add alignment to make sure we have enough space
 		aligned_address: address = cast Math~round_next_multiple(cast{usize} arena.next, cast alignment)
 		arena.next = aligned_address + size
@@ -173,7 +172,7 @@ Arena :: module
 		if pointer + size == arena.next
 			arena.next -= size
 	
-	resize_allocation :: (arena: *Arena, pointer: address, prev_size: usize, new_size: usize) -> bool
+	resize_allocation :: (arena: *Arena, pointer: address, prev_size: usize, new_size: usize) => bool
 		if !Memory~address_in_range(pointer, arena.buffer)
 			return false
 		
@@ -196,17 +195,17 @@ Arena :: module
 		
 		return false
 	
-	get_allocator :: (arena: *Arena) -> *Allocator
+	get_allocator :: (arena: *Arena) => *Allocator
 		return arena.allocator
 	
-	get_allocator_const :: (arena: *Arena) -> const *Allocator
+	get_allocator_const :: (arena: *Arena) => const *Allocator
 		return arena.allocator
 	
 	Checkpoint :: struct
 		arena: *Arena
 		next: address
 	
-	make_checkpoint :: (arena: *Arena) -> Checkpoint
+	make_checkpoint :: (arena: *Arena) => Checkpoint
 		return .{arena, arena.next}
 	
 	checkpoint_rewind :: (checkpoint: *Checkpoint)
@@ -224,32 +223,32 @@ Arena :: module
 		
 		arena := Arena~create(global_allocator, 64)
 		
-		i: *int =* arena.>allocate(T = int)
+		i: *int =* arena->allocate(T = int)
 		i = 15
 		
 		print_string("First alloc ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		j :=* arena.allocator.>allocate(T = int)
+		j :=* arena.allocator->allocate(T = int)
 		j = i * 2
 		
 		print_string("Second alloc ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		arena.>free(j)
+		arena->free(j)
 		
 		print_string("First free ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		arena.>free(i)
+		arena->free(i)
 		print_string("Second free ")
 		print_i32(cast (arena.next - arena.buffer.data))
 		print_line()
 		
-		values := arena.>allocate(32, T = int)
+		values := arena->allocate(32, T = int)
 		for v, i in values
 			v = cast i
 		
@@ -260,7 +259,7 @@ Arena :: module
 		Upp~print_i32(sum)
 		Upp~print_line()
 		
-		arena.>destroy()
+		arena->destroy()
 		
 		Upp~print_string("Finished")
 	
@@ -284,6 +283,5 @@ Arena :: module
 		Upp~print_string(" buffers")
 		
 		
-	
 
 

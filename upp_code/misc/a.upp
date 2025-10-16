@@ -2,5 +2,5 @@
 hello::()
 	print_string("Hello world!")
 
-adder::(a:int,b:int)->int
+adder::(a:int,b:int)=>int
 	return a+b

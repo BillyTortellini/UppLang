@@ -1,8 +1,8 @@
 
-negate::(a:int)->int
+negate::(a:int)=>int
 	return-a
 
-foo::(a:$T,$fn:(a:T)->T)->T
+foo::(a:$T,$fn:(a:T)=>T)=>T
 	return fn(a)
 	
 main::()

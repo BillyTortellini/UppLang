@@ -1,6 +1,6 @@
 
 
-int_to_bool::(a:int)->bool
+int_to_bool::(a:int)=>bool
 	return a%2==0
 
 main::()

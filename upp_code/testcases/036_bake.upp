@@ -1,4 +1,4 @@
-fib :: (n: int) -> int
+fib :: (n: int) => int
 	if n < 2
 		return 1
 	return fib(n - 1) + fib(n - 2)
@@ -18,7 +18,7 @@ main :: ()
 		 - Template arguments
 		 - Comptime Definitions
 
-doubler :: (val: int) -> int
+doubler :: (val: int) => int
 	return val * 2
 
 

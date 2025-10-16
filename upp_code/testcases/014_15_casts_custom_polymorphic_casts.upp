@@ -6,7 +6,7 @@ Optional::struct($T:Type_Handle)
 	value:T
 	available:bool
 
-is_available::(opt:Optional($T))->bool
+is_available::(opt:Optional($T))=>bool
 	return opt.available
 
 main::()

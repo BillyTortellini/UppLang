@@ -3,9 +3,9 @@ import Upp~Type_Handle
 import Upp~i64
 
 Filter :: struct ($T: Type_Handle)
-	check: (a: T) -> bool
+	check: (a: T) => bool
 
-is_even :: (a: int) -> bool
+is_even :: (a: int) => bool
 	return a % 2 == 0
 
 INT_FILTER :: Filter(int).{check = is_even}
@@ -14,7 +14,7 @@ Foo :: struct (F: Filter($T))
 	padding: i64
 	value: T
 
-check_filter :: (a: Foo($F)) -> bool
+check_filter :: (a: Foo($F)) => bool
 	x: F.T = a.value
 	y: a.T = a.value * 2
 	return F.check(a.value)

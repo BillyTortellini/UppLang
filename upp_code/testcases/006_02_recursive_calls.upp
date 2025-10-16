@@ -1,17 +1,17 @@
 
 // Recursive functions
-fib :: (n: int) -> int
+fib :: (n: int) => int
 	if (n <= 1)
 		return 1
 	return fib(n - 1) + fib(n - 2)
 
 // Double recursive functions
-rec0 :: (n: int) -> bool
+rec0 :: (n: int) => bool
 	if n <= 0
 		return true
 	return rec1(n - 1)
 
-rec1 :: (n: int) -> bool
+rec1 :: (n: int) => bool
 	if n <= 0
 		return true
 	return rec0(n - 1)

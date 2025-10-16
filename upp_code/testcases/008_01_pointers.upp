@@ -33,14 +33,14 @@ main :: ()
 		ip = 15
 		
 		This also applies to inferred definitions
-		i  := x     --> i is an int
-		ip :=* 15   --> ip is a pointer to int
+		i  := x     -=> i is an int
+		ip :=* 15   -=> ip is a pointer to int
 		
 		And in some cases you just want to have the C-Style behavior,
 		where the type of the left-side just dictates what type is copied,
 		and for this, there exist raw-assignments =~
-		a :=~ i --> a is an int
-		a :=~ *i --> a is a pointer
+		a :=~ i -=> a is an int
+		a :=~ *i -=> a is a pointer
 	
 	a: int = 15
 	ap :=* a

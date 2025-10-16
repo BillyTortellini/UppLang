@@ -1,5 +1,5 @@
 
-is_even :: (a: int) -> bool
+is_even :: (a: int) => bool
 	return a % 2 == 0
 
 context add_cast(is_even, .INFERRED)
@@ -27,15 +27,15 @@ import Upp~*
 import Upp~Type_Handle as Type
 
 Comparable :: struct (T: Type)
-	equals: (a: T, b: T) -> bool
+	equals: (a: T, b: T) => bool
 
-int_equals :: (a: int, b: int) -> bool
+int_equals :: (a: int, b: int) => bool
 	return a == b
 
 Holder :: struct (C: Comparable($T))
 	value: T
 
-holder_compare :: (h: *Holder(Comparable($T)), value: T) -> bool
+holder_compare :: (h: *Holder(Comparable($T)), value: T) => bool
 	return h.C.equals(h.value, value)
 
 main :: ()

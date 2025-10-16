@@ -1,8 +1,8 @@
 
-test :: (a: int) -> int
+test :: (a: int) => int
 	return a + 2
 
-test :: (a: int) -> int
+test :: (a: int) => int
 	return -a
 
 main :: ()

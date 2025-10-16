@@ -3,7 +3,7 @@ Color::enum
 	GREEN
 	BLUE
 
-ret_col::()->Color
+ret_col::()=>Color
 	return Color.RED
 
 main::()

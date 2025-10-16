@@ -3,15 +3,15 @@ vec2::struct
 	x:int
 	y:int
 
-add::(a:vec2,b:vec2)->vec2
+add::(a:vec2,b:vec2)=>vec2
 	return.{a.x+b.x,a.y+b.y}
 
-add_ptr::(a:*vec2,b:*vec2)->*vec2
+add_ptr::(a:*vec2,b:*vec2)=>*vec2
 	a.x+=b.x
 	a.y+=b.y
 	return a
 
-add_weird::(a:*int,b:bool)->vec2
+add_weird::(a:*int,b:bool)=>vec2
 	val:=&a
 	if b
 		val+=1

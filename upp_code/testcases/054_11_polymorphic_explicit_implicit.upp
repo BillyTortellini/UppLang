@@ -1,7 +1,7 @@
 
 import Upp~type_of
 
-foo :: (a: T) -> $T
+foo :: (a: T) => $T
 	return a* cast {T} 2
 	
 main :: ()

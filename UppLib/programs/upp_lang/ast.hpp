@@ -272,6 +272,15 @@ namespace AST
         } options;
     };
 
+    struct Body_Node
+    {
+        bool is_expression;
+        union {
+            Expression* expr;
+            Code_Block* block;
+        };
+    };
+
     enum class Expression_Type
     {
         // Value Generation
@@ -283,8 +292,7 @@ namespace AST
         ARRAY_INITIALIZER,
         STRUCT_INITIALIZER,
         AUTO_ENUM,
-        BAKE_EXPR,
-        BAKE_BLOCK,
+        BAKE,
         INSTANCIATE,
         GET_OVERLOAD,
         OPTIONAL_CHECK, // x?
@@ -331,8 +339,7 @@ namespace AST
                 Unop type;
                 Expression* expr;
             } unop;
-            Expression* bake_expr;
-            Code_Block* bake_block;
+            Body_Node bake_body; 
             struct {
                 Expression* expr;
                 Arguments* arguments;
@@ -360,8 +367,8 @@ namespace AST
             } member_access;
             Module* module;
             struct {
-                Expression* signature;
-                Code_Block* body;
+                Optional<Expression*> signature; // If not given, then signature is inferred
+                Body_Node body;
             } function;
             struct {
                 Dynamic_Array<Parameter*> parameters;
@@ -533,7 +540,7 @@ namespace AST
     AST::Node* upcast(T* node) {
         return &node->base;
     }
-
+    AST::Node* upcast(Body_Node node);
     Node* find_smallest_enclosing_node(Node* start_node, Token_Index index);
 }
 

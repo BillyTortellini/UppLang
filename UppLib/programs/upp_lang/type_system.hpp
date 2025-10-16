@@ -532,6 +532,8 @@ struct Predefined_Types
     Datatype_Struct* internal_member_info_type;
     Datatype_Struct* empty_struct_type; // Required for now 
 
+    Datatype_Function* empty_function;  // () 
+
     Datatype_Enum* cast_mode;
     Datatype_Enum* cast_option;
     Datatype_Enum* primitive_type_enum;

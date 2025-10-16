@@ -1,5 +1,5 @@
 
 
-test_a :: () -> int
+test_a :: () => int
 	return 15 * 3 + 1
 

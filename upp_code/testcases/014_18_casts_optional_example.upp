@@ -8,22 +8,22 @@ Optional :: struct (T: Type_Handle)
 	value:T
 	available:bool
 
-optional_make_success::(value:$T)->Optional(T)
+optional_make_success::(value:$T)=>Optional(T)
 	return.{value=value,available=true}
 
-optional_make_failure::()->Optional($T)
+optional_make_failure::()=>Optional($T)
 	result:Optional(T)
 	result.available=false
 	return result
 
-invalid_cast_fn::(value:Optional($T),something:int)->T
+invalid_cast_fn::(value:Optional($T),something:int)=>T
 	return value.value
 
-optional_unwrap::(optional:Optional($T))->T
+optional_unwrap::(optional:Optional($T))=>T
 	assert(optional.available)
 	return optional.value
 
-optional_is_available::(optional:Optional($T))->bool
+optional_is_available::(optional:Optional($T))=>bool
 	return optional.available
 
 print_optional_int::(optional:Optional(int))

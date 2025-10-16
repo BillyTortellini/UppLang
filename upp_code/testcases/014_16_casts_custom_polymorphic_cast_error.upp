@@ -1,6 +1,6 @@
 
 
-foo::(a:$T,x:int)->bool
+foo::(a:$T,x:int)=>bool
 	return false
 
 

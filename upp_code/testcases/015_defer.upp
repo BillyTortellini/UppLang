@@ -40,7 +40,7 @@ main :: ()
 	assert(tst() == 15)
 
 // Defer before return
-tst :: () -> int
+tst :: () => int
 	x := 15
 	defer
 		x = 5

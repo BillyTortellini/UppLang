@@ -1,6 +1,6 @@
 import"other.upp"
 
-recursive_2::(n:int)->int
+recursive_2::(n:int)=>int
 	if n<1
 		return 0
 	return recursive_1(n-1)*2
