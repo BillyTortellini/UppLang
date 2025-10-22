@@ -2490,6 +2490,8 @@ void type_system_add_predefined_types(Type_System* system)
 			{ make_param(upcast(types->type_handle), "type_handle") },
 			upcast(type_system_make_pointer(upcast(types->type_information_type)))
 		);
+		types->hardcode_struct_tag_fn = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, nullptr);
+		types->hardcode_return_type_fn = type_system_make_function({}, types->type_handle);
 
 		types->type_memory_copy = type_system_make_function({
 				make_param(upcast(types->address), "destination"),

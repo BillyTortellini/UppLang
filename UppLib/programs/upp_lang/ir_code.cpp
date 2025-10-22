@@ -1141,6 +1141,16 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 add_instruction(exit_instr);
                 return ir_data_access_create_nothing();
             }
+            case Hardcoded_Type::STRUCT_TAG: 
+            {
+                auto matching = get_info(call.arguments);
+                auto struct_type = get_info(matching->matched_parameters[0].expression)->cast_info.result_type;
+                auto struct_access = ir_generator_generate_expression(matching->matched_parameters[0].expression);
+                Struct_Content* content = type_mods_get_subtype(
+                    downcast<Datatype_Struct>(struct_type->base_type), struct_type->mods);
+                return move_access_to_destination(ir_data_access_create_member(struct_access, content->tag_member));
+            }
+            case Hardcoded_Type::RETURN_TYPE: 
             case Hardcoded_Type::TYPE_OF: {
                 panic("Should be handled in semantic analyser");
                 break;

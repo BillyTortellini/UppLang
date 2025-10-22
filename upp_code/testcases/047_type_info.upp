@@ -47,7 +47,7 @@ main :: ()
 member_offset :: (type: Type_Handle, name: c_string) => int
 	
 	info := type_info(type)
-	if info.tag != .Struct
+	if Upp~struct_tag(info) != .Struct
 		return -1
 	
 	members := info.Struct.content.members

@@ -163,6 +163,15 @@ struct Workload_Base
     bool was_started;
     Fiber_Pool_Handle fiber_handle;
 
+    // Dependencies
+    List<Workload_Base*> dependencies;
+    List<Workload_Base*> dependents;
+
+    // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
+    //       like recursive functions or structs containing pointers to themselves
+    Workload_Base* cluster;
+    Dynamic_Array<Workload_Base*> reachable_clusters;
+
     // Information required to be consistent during workload switches
     // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
     //       Also note that some of these may not be set depending on the workload type
@@ -187,19 +196,9 @@ struct Workload_Base
     Array<Poly_Value> poly_values;
     Poly_Header* poly_value_origin;
     Parameter_Matching_Info* instanciate_matching_info; // Only set during instanciate, to access other parameters
-    Hashtable<AST::Expression*, Datatype_Template*>* active_valid_template_expressions;
+    Hashtable<AST::Expression*, Datatype_Template*>* active_valid_template_expressions; // Non-owning, will point to Poly_Header member if active
     int polymorphic_instanciation_depth; 
-    bool is_polymorphic_base; // Polymorphic base workloads and children cannot create poly instances
     bool allow_struct_instance_templates;
-
-    // Dependencies
-    List<Workload_Base*> dependencies;
-    List<Workload_Base*> dependents;
-
-    // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
-    //       like recursive functions or structs containing pointers to themselves
-    Workload_Base* cluster;
-    Dynamic_Array<Workload_Base*> reachable_clusters;
 };
 
 struct Workload_Event
@@ -234,7 +233,7 @@ struct Workload_Import_Resolve
 {
     Workload_Base base;
     AST::Import* import_node;
-    Symbol* symbol; // May be 0 if its an import
+    Symbol* symbol; // May be 0 if its a file import
     Symbol* alias_for_symbol; // May be 0 if its an import
 };
 
@@ -328,15 +327,15 @@ struct Parameter_Symbol_Lookup
 
 struct Poly_Header
 {
-    // Parameters: List of parameters with comptime parameters + if return type exisits, it's the last value here
+    // Parameters: List of parameters with comptime parameters + if return type exists, it's the last value here
     Array<Poly_Parameter> parameters;
     int poly_value_count; // Number of comptime + inferred parameters
 
     // Order in which arguments need to be evaluated in for instanciation, -1 for return value
     Dynamic_Array<int> parameter_analysis_order; 
     Dynamic_Array<Inferred_Parameter> inferred_parameters;
-    Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups;
-    Hashtable<AST::Expression*, Datatype_Template*> valid_template_expressions;
+    Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups; // Note: These could be deleted after parameter order is established
+    Hashtable<AST::Expression*, Datatype_Template*> valid_template_expressions; // Works with Workload_Base active_valid_template_expressions
 
     Dynamic_Array<Poly_Instance> instances;
     Array<Poly_Value> base_analysis_values;
@@ -583,10 +582,10 @@ struct Parameter_Match
 
     // Argument-Info (Can be used to instanciate)
     Parameter_State state;
-    AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the correspoding argument
+    AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the corresponding argument
     Datatype* argument_type; // Type of analysed expression
     bool argument_is_temporary_value; // Required when expression == 0, to check if type_mods are compatible
-    int argument_index; // -1 if argument is not set
+    int argument_index; // -1 if argument is not set or if argument is dot-call first value
 
     // Matching info
     bool is_set;
@@ -766,7 +765,7 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 struct Analysis_Pass 
 {
     Workload_Base* origin_workload;
-    bool is_header_reanalysis;
+    bool is_header_reanalysis; // Used by syntax editor
     Workload_Base* instance_workload; // e.g. for reanalysed headers, this is set..., otherwise 0
 };
 
@@ -870,7 +869,7 @@ struct Semantic_Analyser
 {
     // Result
     Workload_Base* current_workload;
-    Module_Progress* root_module;
+    Module_Progress* root_module; // Used for finding the main function
     Symbol* error_symbol;
     Workload_Executer* workload_executer;
     ModTree_Global* global_allocator; // Datatype: Allocator

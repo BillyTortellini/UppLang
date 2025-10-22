@@ -4,6 +4,7 @@ import Upp~print_bool
 import Upp~print_line
 import Upp~print_i32
 import Upp~c_string
+import Upp~struct_tag
 
 // Subtypes can form a hierarchy
 Node :: struct
@@ -25,7 +26,7 @@ node_test :: (a: * const Node) => int
 	return 0
 
 stat_test :: (a: Node.Statement) => int
-	if a.tag == .For
+	if struct_tag(a) == .For
 		loop :=* a.For
 		if loop.condition
 			return loop.value
@@ -39,13 +40,14 @@ assign_test :: (a: Node.Statement.Assignment) => int
 
 main :: ()
 	node: Node
-	node.tag = .Statement
-	node.Statement.tag = .Assignment
+	struct_tag(node) = .Statement
+	struct_tag(node.Statement) = .Assignment
 	node.Statement.Assignment.right = 5
 	node.Statement.Assignment.left = 4
 	
 	stat :=* node.Statement
 	assign :=* stat.Assignment
+	
 	
 	node_test(node)
 	node_test(stat)

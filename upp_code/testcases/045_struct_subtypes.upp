@@ -2,6 +2,7 @@
 import Upp~c_string
 import Upp~u8
 import Upp~u32
+import Upp~struct_tag as tag
 
 ///
 	The problem with C unions is that their usage is quite limited,
@@ -39,11 +40,11 @@ Address :: struct
 
 // The tag member is automatically added to a struct if it contains subtypes
 address_version_if :: (addr: Address) => int
-	if addr.tag == .IPv4
+	if tag(addr) == .IPv4
 		return 4
-	else if addr.tag == .IPv5
+	else if tag(addr) == .IPv5
 		return 5
-	else if addr.tag == .IPv6
+	else if tag(addr) == .IPv6
 		return 6
 	return 0
 
@@ -60,16 +61,16 @@ address_version_switch :: (addr: Address) => int
 main :: ()
 	// The tag is now just an enum member, and can be accessed like other members
 		addr_v4: Address
-		addr_v4.tag = .IPv4
+		tag(addr_v4) = .IPv4
 		value: u8 = cast {u8} cast {u32} 0
 		addr_v4.IPv4.bytes = .[value, value, value, value]
 		
 		addr_v5: Address
-		addr_v5.tag = .IPv5
+		tag(addr_v5) = .IPv5
 		addr_v5.IPv5.normalized = false
 		
 		addr_v6: Address
-		addr_v6.tag = .IPv6
+		tag(addr_v6) = .IPv6
 		addr_v6.IPv6.name = "COFFEF"
 		
 			assert(address_version_if(addr_v4) == 4)
@@ -83,9 +84,9 @@ main :: ()
 		addr_v6: Address = .{.IPv6 = {"COFFEF"}}
 		
 		// Union initializer automatically set the correct tag
-		assert(addr_v4.tag == .IPv4)
-		assert(addr_v5.tag == .IPv5)
-		assert(addr_v6.tag == .IPv6)
+		assert(tag(addr_v4) == .IPv4)
+		assert(tag(addr_v5) == .IPv5)
+		assert(tag(addr_v6) == .IPv6)
 		
 		assert(address_version_switch(addr_v4) == 4)
 		assert(address_version_switch(addr_v5) == 5)

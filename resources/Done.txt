@@ -1,6 +1,12 @@
 
 Done:
 -----
+17.10:
+ * More built-in functions
+    Upp~return_type() --> returns comptime return type of current function, if not in function error
+    Upp~struct_tag(value) --> returns tag member of structure, remove .tag access + completion
+ * Changed Optional syntax to '
+
 16.10:
  * Optional value/available access with ? and .!
  * Auto-lambda .=>

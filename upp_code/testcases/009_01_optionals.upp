@@ -5,7 +5,7 @@ Node :: struct
 
 test :: (opt: ?int) => int
 	if opt?
-		return opt.value + 1
+		return opt' + 1
 	else
 		return -1
 
@@ -14,8 +14,9 @@ main :: ()
 	opt: ?int
 	
 	// Optionals of non-pointer types have 2 members, available and value
-	opt.is_available = true
-	opt.value = 1
+	// They can be accessed with the ? and ' operators
+	opt? = true
+	opt' = 1
 	assert(test(opt) == 2)
 	
 	// Values can be cast to optionals (Which sets available to true)
@@ -23,7 +24,7 @@ main :: ()
 	assert(test(opt) == 13)
 	
 	// To make an optional not available, you can either set the member manually
-	opt.is_available = false
+	opt? = false
 	assert(test(opt) == -1)
 	
 	// Or use null

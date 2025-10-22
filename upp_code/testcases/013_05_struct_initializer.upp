@@ -18,8 +18,8 @@ Node :: struct
 
 main :: ()
 	n: Node = Node.{"Frank", .Expression = {false, .Binop = {2, 3}}}
-	assert(n.tag == .Expression)
-	assert(n.Expression.tag == .Binop)
+	assert(Upp~struct_tag(n) == .Expression)
+	assert(Upp~struct_tag(n.Expression) == .Binop)
 	assert(!n.Expression.is_normalized)
 
 

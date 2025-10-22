@@ -169,12 +169,12 @@ void lexer_initialize()
         lexer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
         lexer.operator_strings[(int)Operator::QUESTION_MARK] = string_create_static("?");
         lexer.operator_strings[(int)Operator::OPTIONAL_POINTER] = string_create_static("?*");
-        lexer.operator_strings[(int)Operator::OPTIONAL_VALUE_ACCESS] = string_create_static(".!");
         lexer.operator_strings[(int)Operator::DOT_CALL] = string_create_static("->");
         lexer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
         lexer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
         lexer.operator_strings[(int)Operator::COLON] = string_create_static(":");
         lexer.operator_strings[(int)Operator::SEMI_COLON] = string_create_static(";");
+        lexer.operator_strings[(int)Operator::APOSTROPHE] = string_create_static("'");
         lexer.operator_strings[(int)Operator::NOT] = string_create_static("!");
         lexer.operator_strings[(int)Operator::AMPERSAND] = string_create_static("&");
         lexer.operator_strings[(int)Operator::LESS_THAN] = string_create_static("<");

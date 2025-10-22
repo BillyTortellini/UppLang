@@ -196,7 +196,7 @@ namespace AST
     struct Subtype_Initializer
     {
         Node base;
-        Optional<String*> name;
+        Optional<String*> name; // If not available, supertype initializer
         Arguments* arguments;
     };
 
@@ -272,6 +272,7 @@ namespace AST
         } options;
     };
 
+    // For convenience, Note: This is not an allocated node, it is not a child of Node
     struct Body_Node
     {
         bool is_expression;
@@ -366,7 +367,7 @@ namespace AST
             struct {
                 String* name;
                 Expression* expr;
-                bool is_dot_call_access; // ".>" instead of only "."
+                bool is_dot_call_access; // "->" instead of only "."
             } member_access;
             Module* module;
             struct {
@@ -410,7 +411,7 @@ namespace AST
     {
         Node base;
         Optional<Expression*> value; // Default-Case if value not available
-        Optional<Definition_Symbol*> variable_definition; // case .IPv4 -> v4
+        Optional<Definition_Symbol*> variable_definition; // case .IPv4 => v4
         Code_Block* block;
     };
 

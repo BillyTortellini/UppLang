@@ -58,6 +58,8 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
 	case Hardcoded_Type::SIZE_OF: string_append_formated(string, "SIZE_OF"); break;
 	case Hardcoded_Type::ALIGN_OF: string_append_formated(string, "ALIGN_OF"); break;
 	case Hardcoded_Type::PANIC_FN: string_append_formated(string, "PANIC"); break;
+	case Hardcoded_Type::RETURN_TYPE: string_append_formated(string, "RETURN_TYPE"); break;
+	case Hardcoded_Type::STRUCT_TAG: string_append_formated(string, "STRUCT_TAG"); break;
 
 	case Hardcoded_Type::MEMORY_COPY: string_append_formated(string, "MEMORY_COPY"); break;
 	case Hardcoded_Type::MEMORY_COMPARE: string_append_formated(string, "MEMORY_COMPARE"); break;

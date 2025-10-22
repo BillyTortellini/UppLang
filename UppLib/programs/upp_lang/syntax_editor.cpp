@@ -1738,15 +1738,15 @@ namespace Text_Editing
 			break;
 		}
 
-							 // No spaces before or after
+	 // No spaces before or after
 		case Operator::DOT:
 		case Operator::TILDE:
 		case Operator::NOT:
 		case Operator::AMPERSAND:
+		case Operator::APOSTROPHE:
 		case Operator::UNINITIALIZED:
 		case Operator::QUESTION_MARK:
 		case Operator::OPTIONAL_POINTER:
-		case Operator::OPTIONAL_VALUE_ACCESS:
 		case Operator::DOT_CALL:
 		case Operator::DOLLAR: {
 			out_space_after = false;
@@ -1754,7 +1754,7 @@ namespace Text_Editing
 			break;
 		}
 
-							 // Special case for : = and : : 
+		 // Special case for : = and : : 
 		case Operator::ASSIGN: {
 			out_space_after = true;
 			out_space_before = true;
@@ -4104,10 +4104,10 @@ void code_completion_find_suggestions()
 					fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
 				}
-				if (content->subtypes.size > 0) {
-					fuzzy_search_add_item(*ids.tag, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, content->tag_member.type, ids.tag));
-				}
+				// if (content->subtypes.size > 0) {
+				// 	fuzzy_search_add_item(*ids.tag, unranked_suggestions.size);
+				// 	dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, content->tag_member.type, ids.tag));
+				// }
 				for (int i = 0; i < content->subtypes.size; i++) {
 					auto sub = content->subtypes[i];
 					fuzzy_search_add_item(*sub->name, unranked_suggestions.size);

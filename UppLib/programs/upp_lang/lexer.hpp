@@ -22,9 +22,9 @@ enum class Operator
     TILDE_STAR_STAR, // ~**  Transitive import all
     COLON,           // :
     SEMI_COLON,      // ;
+    APOSTROPHE,      // '
     QUESTION_MARK,   // ?
     OPTIONAL_POINTER,   // ?*
-    OPTIONAL_VALUE_ACCESS, // .!
     DOT_CALL,        // .>
     NOT,            // !
     AMPERSAND,
@@ -146,7 +146,7 @@ struct Token
     int end_index;
     union {
         Operator op;
-        String* identifier;
+        String* identifier; // In string pool
         Literal_Value literal_value;
         Keyword keyword;
         Parenthesis parenthesis;

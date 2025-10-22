@@ -4,7 +4,7 @@ import Upp~type_info
 
 print_any :: (any: Any)
 	info := type_info(any.type)
-	if any.type == String
+	if any.type == Upp~c_string
 		print_string(cast{*String} any.data)
 		return
 	

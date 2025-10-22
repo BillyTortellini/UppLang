@@ -1,42 +1,187 @@
-Features before writing Base-Library:
+
+VIM Plugin-research:
+--------------------
+sneak, seek: 2-character search, same thing, but one is more advanced with highlighting and backwards
+smalls: Better search selection, no labels
+clever-f: Repeat f/t by pressing it again
+jumpmotion --> same as easymotion but lightweight
+quickscope: f/t smarter highlighting if multiple characters
+mini-jump: fFtT update (multiple lines, repeatable)
+mini-jump2d: refines labels by iteratively inputing things, annoying because you don't know when it stops
+sj: search-and-jump: Similar to pounce, but requires :key to go to label
+flit: leap interface for f/t with clever-f
+
+pounce:
+    fuzzy search with confirm character highlight
+    how does fuzzy search work in this case?
+flash:
+    Does multiple things at once:
+        search:
+        single search mode, like search but with character
+        clever-f support
+        remote mode things, like yrwhatAiw --> remote starts flash
+easymotion: 
+    Prefix + any-motion shows labels(One character labels) + provides sneak/seek motion
+    May be bad because it offers many different motions, making the input longer + having to think about which motion to use
+leap:       
+    2 character search, after search labels appear for other jumps
+    Not sure I like the shortcut of not having to type the label...
+    Kinda complicated in the sense that you may or may not have to press multiple keys...
+hop:
+    similar to easymotion, but you can configure it yourself.
+    Has lots of different things, so not focusing on a single motion
+lightspeed: 
+    Previous version of leap
+    Mix between one and two character motions
+    Previews all possible versions
+    
+
+
+What I do now:
+ - Arena Allocator + DynArray
+ - Update Source_Code with new structure
+
+Vocabulary:
+    Problems: 
+        Analysis_Items per line, so multi-line Nodes shouldn't have duplicate infos.
+        Also multiple passes per Nodes
+    Analysis_Info: Per AST::Node* information, like Expression_Info or Statement_Info, Code_Block_Info
+    Semantic_Info: Info from compiler to Syntax-Editor, stored as one dynamic array
+    Code_Analysis_Item: Per-Line info of things in the line, 
+
+
+
+Notes and Improvements (Reading through all code again and thinking about the design problems:)
+-----------------------------------------------------------------------------------------------
+
+Symbol Alias handling:
+    import X as B
+    B :: X // Kinda the same thing, no?
+Import order restrictions for ~** suck
+    Instead of having a complicated system for import resolution,
+    maybe just disallow ~** during import resolution
+Auto-Pointer handling
+    Disable auto-pointers when * or & are used
+    Inferred definitions and assignments should be thought over
+Datatypes/Type-System:
+    Removing the sub-types/type-mods things would be nice
+Struct/Datatype-Size dependencies are still weird I think, not quite schure why
+    I actually think this is better now than it ever was
+Operator-Context:
+    Importing should not copy all the things over, instead use structure like Symbol-Tables,
+    and have default values if something is not found
+Global-Handling in Bakes?
+AST/Parsing
+    Switch syntax with 2 indentations, case variable definition
+    Named blocks syntax should be on line before?
+    Parser using Token-Index instead of Text-Index, why?
+    Parser to Analysis-Info mapping is currently hashtable-based
+    Editor-Analysis Info is kinda complicated, which is yet another mapping
+Features:
+    Do I need optional values?
+    new/delete operator
+Source_Code / Code-History:
+    Sparse Array_List should be used for Line-Bundles
+    Comment and Indent handling should probably be different
+Parser:
+    Each node is allocated individually
+    We should know which nodes belong to analysis-passes,
+        Expression_Info
+    Node finalize range is kinda annoying, ngl
+    Comment-Handling is somewhat annoying, also maybe do something like a "virtual" token-list
+        with new_line and block_start/block_end
+        So ... (Token continuation/line continuation) can be implemented...
+    Incremental Parsing would also be poggers
+Syntax-Editor:
+    Holy sheet there's a lot of stuff there...
+    But I think I'm fine with most of the things...
+Semantic_Analyser:
+    Upp_Function which combines Function_Progress, all workloads and other stuff
+    Operator Context
+        Custom syntax for operators, not the weird function thing for everything...
+        Workload dependencies could be more granular, e.g. only search for operators when necessary + by name if known.
+            e.g. dot-calls/as_member_access
+
+        Imports could do the same thing as symbol-table, and have default values if nothing is found.
+    Module_Analysis:
+        Import-Resolve + events seems overkill, maybe we can have a simpler Symbol-Rule for imports that
+            makes this easier
+IR-Generator:
+    IR-Data Access with destination is confusing for me
+
+
+
+TODO:
+ Understand polymorphism
+    Header-Analysis
+    Value-Access
+    Instanciation
+    Struct-Templates
+
+
+Difference between Struct_Poly_Template and Polymorphic_Struct expression info, one is value, and the other is type.
+We should only create struct_poly_template in instanciation....
+So what I want is:
+    foo :: (a: Test($X, $Y, _))
+    foo :: () -> Test(_)
+
+1. polymorphic struct symbol lookup without function-call should be invalidated
+    --> This means I remove that weird function thingy...
+
+
+
+
+TODO:
+ * Polymorphism upgrades:
+    - Poly struct parameters without types are assumed to be types, e.g. 
+           Node :: struct($K, $V) 
+           foo :: (x: T, $V)
+    - Struct instance templates with ignored values, e.g.
+       A :: struct($X: int, $Y: int, $Z: int)
+       foo :: (x: A(Z = $Z, _)), remove implicit polymorphism and add this instead...
+            e.g. we don't need all parameters for implicit polymorphism...
+
+ * Context default parameters
+    - Add default values to context, which are used when calling functions
+    - Default value evaluation order?
+        By default evaluates in current context, Symbol-Lookups with 'Foo~bar~baz
+        use caller's current symbol table, which can be somewhat more complicated...
+ * Access to normal math functions/built-ins
+      sin, cos, tan, exp, sqrt, others?
+      Things like floor, ceil...
+      Upp~Math~Trigonomety
+      Upp~Math~xor(a, b)
+ * String handling, primitive datatypes address and usize/isize, character literal
+    c_char? c_string?
+ * Write Base-Library
+    - Arena allocator 
+        based on bin allocator based on virtual arena allocator, (Also for learning...)
+        2 global scratch_allocator, get scratch (See ryan fleury thingy...) (per_thread)
+    - Dynamic_Array
+    - Hashtable/set
+    - Free_List for normal allocations + list implementation
+    - Doubly-Linked list?
+    - String formating (simple)
+    - String_Builder
+    - String_List
+ * Vector math (Generic)
+      vec2, vec3, vec4, mat2, mat3, mat4 (Constructors?)
+ * Game-Window and OpenGL functions
+
+
 
 Small stuff:
- * Check list item parsing again, e.g. , ; and other things, I think x := 15; should cause errors?
-    Maybe simple binop continuation if either prev-line is continuation or next line is indentedgg
-    Or generally some tokenz like +, =
-    Also check parenthesis handling for things like
-        call(
-            a,b,c)
-        other stuff
- * Disable auto pointer casting if * or & are used in expression --> seems reasonable
- * Built-in function 
-    Upp~return_type() --> returns return type of current function
-    Upp~get_tag(value) --> returns tag member of structure, remove .tag access + completion
-        tag(x) = .Fuck
-        if tag(x) == .IPv4
             
 
-Polymorphism upgrades:
- * Poly struct parameters without types are assumed to be types, e.g. 
-        Node :: struct($K, $V) 
-        foo :: (x: T, $V)
-    struct parameters require $ sign --> Probably better to keep things uniform
- * Struct instance templates with ignored values, e.g.
-    A :: struct($X: int, $Y: int, $Z: int)
-    foo :: (x: A(X = $X, _)), remove implicit polymorphism and add this instead...
- * Parameter default values update, expression evaluation and context default values
-    By default evaluates in current context, Symbol-Lookups with 'Foo~bar~baz
-    use caller's current symbol table, which can be somewhat more complicated...
+Testcases:
+    * Parser with lists/without lists and general syntax things
+    * Optional with operator
+    * Implicit polymorphism
 
 Others:
     Project structure.... Multiple files, imports, versions......
 
 Base-Library:
- * Arena allocator based on bin allocator based on virtual arena allocator,
-    global scratch_allocator (per_thread)
- * Rewrite Dynamic_Array with arena
- * Hashtable/set without lists + arena
- * Free_List and normal Lists, maybe doubly linked list
 
  * Write testcases --> 
     I think I added implicit polymorphism, how I wanted to...
@@ -91,10 +236,8 @@ Upgrades:
     - Mouse-Hover for variables
     - Breakpoint Groups
  * Language:
-    - function syntax update
+    - function syntax update --> what do I mean by this?
     - Macros?
-    - Optional Value access with some syntax?
-        maybe change to x.? and x.! for value and available access?
 
 
 

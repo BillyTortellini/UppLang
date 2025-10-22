@@ -1,7 +1,7 @@
 
 test :: (ptr: ?*int) => int
 	if ptr?
-		return ptr.value + 1
+		return ptr' + 1
 	else
 		return -1
 
@@ -10,7 +10,7 @@ negate :: (x: int) => int
 
 apply :: (value: int, fn: ?(x: int) => int) => int
 	if fn?
-		return fn.value(value)
+		return fn'(value)
 	return -1
 
 main :: ()
@@ -25,10 +25,10 @@ main :: ()
 	// we don't need a cast, unlike optional values
 	ip: ?*int =* x
 	
-	// Unlike normal pointers, optional pointers require a .value access
+	// Unlike normal pointers, optional pointers require a "'" 
 	// to access the pointed-to value
 	//  ip = 1 // error
-	ip.value = 5
+	ip' = 5
 	assert(x == 5)
 	assert(test(ip) == 6)
 	

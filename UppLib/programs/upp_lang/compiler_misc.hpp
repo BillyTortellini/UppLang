@@ -103,6 +103,8 @@ enum class Hardcoded_Type
     SIZE_OF,
     ALIGN_OF,
     PANIC_FN,
+    RETURN_TYPE,
+    STRUCT_TAG,
 
     MEMORY_COPY,
     MEMORY_ZERO,

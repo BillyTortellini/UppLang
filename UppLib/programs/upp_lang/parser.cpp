@@ -277,6 +277,9 @@ namespace Parser
     }
 
     // Searches next eligible token, e.g. tokens that aren't in some other list, like () or {} or something
+    //      1. Searches for all tokens not in a list
+    //      2. Skips follow blocks if any are present
+    //      3. Does not handle starting inside parenthesis, if this is the case we just go out of parenthesis...
     typedef bool(*token_predicate_fn)(Token* token, void* userdata);
     Optional<Token_Index> search_token(Source_Code* code, Token_Index start, token_predicate_fn predicate, void* user_data)
     {
@@ -370,6 +373,7 @@ namespace Parser
     };
 
     // Parses seperated items until end of line or a stop-token is found
+    // Note: If parse_fn parses over a line, this function can also parse multiple lines...
     void parse_list_single_line(
         Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, 
         is_list_stop_token_fn stop_fn, void* stop_userdata, Operator seperator)
@@ -407,7 +411,7 @@ namespace Parser
                 }
             }
             
-            // Otherwise try to find next comma or stop
+            // Otherwise try to find next seperator or stop
             Stopper stopper;
             stopper.found_stop = false;
             stopper.stop_fn = stop_fn;
@@ -426,7 +430,7 @@ namespace Parser
             };
             auto recovery_point_opt = search_token(parser.code, parser.state.pos, search_fn, &stopper);
 
-            // Check if we reached stop, found comma or none of both
+            // Check if we reached stop, found seperator or none of both
             if (!recovery_point_opt.available) {
                 return;
             }
@@ -449,7 +453,8 @@ namespace Parser
     // Expects to be on the starting line of this block
     // Ends on the next line after the block
     void parse_block_of_items(
-        Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, Operator seperator, int block_indent, bool anonymous_blocks_allowed)
+        Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, 
+        Operator seperator, int block_indent, bool anonymous_blocks_allowed)
     {
         auto& pos = parser.state.pos;
         auto& code = parser.code;
@@ -510,13 +515,13 @@ namespace Parser
                         pos.line += 1;
                     }
                     if (pos.line >= code->line_count) {
-                        parser.state.line = 0;
+                        parser.state.line = 0; // What does this do?
                         return;
                     }
                     continue;
                 }
             }
-            else
+            else // line->indentation == block_indent
             {
                 // Otherwise parse line item if line isn't a comment or empty
                 if (line->tokens.size != 0)
@@ -560,6 +565,7 @@ namespace Parser
         auto& pos = parser.state.pos;
         auto& code = parser.code;
 
+        // Check list type, which could be with/without parenthesis and if multi lines are allowed...
         bool multi_line_valid = false;
         bool expecting_closing_parenthesis_after_block = false;
         int block_indentation = parser.state.line->indentation + 1;
@@ -2448,11 +2454,11 @@ namespace Parser
             if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }
-        else if (test_operator(Operator::QUESTION_MARK) || test_operator(Operator::OPTIONAL_VALUE_ACCESS)) 
+        else if (test_operator(Operator::QUESTION_MARK) || test_operator(Operator::APOSTROPHE)) 
         {
             result->type = Expression_Type::OPTIONAL_ACCESS;
             result->options.optional_access.expr = child;
-            result->options.optional_access.is_value_access = test_operator(Operator::OPTIONAL_VALUE_ACCESS);
+            result->options.optional_access.is_value_access = test_operator(Operator::APOSTROPHE);
             advance_token();
             PARSE_SUCCESS(result);
         }
@@ -2467,6 +2473,7 @@ namespace Parser
         CHECKPOINT_EXIT;
     }
 
+    // Does not parse binop-chains, 
     Expression* parse_single_expression(Node* parent)
     {
         // DOCU: This function parses: Pre-Ops + Node + Post-Op

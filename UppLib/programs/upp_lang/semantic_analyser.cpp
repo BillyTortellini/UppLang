@@ -121,6 +121,8 @@ Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type, Compiler_Ana
     case Hardcoded_Type::SIZE_OF: return an.type_size_of;
     case Hardcoded_Type::ALIGN_OF: return an.type_align_of;
     case Hardcoded_Type::PANIC_FN: return an.type_panic;
+    case Hardcoded_Type::RETURN_TYPE: return an.hardcode_return_type_fn;
+    case Hardcoded_Type::STRUCT_TAG: return an.hardcode_struct_tag_fn;
 
     case Hardcoded_Type::SYSTEM_ALLOC: return an.hardcoded_system_alloc;
     case Hardcoded_Type::SYSTEM_FREE: return an.hardcoded_system_free;
@@ -579,7 +581,6 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
 	workload->poly_values = array_create_static<Poly_Value>(nullptr, 0);
 	workload->poly_value_origin = nullptr;
 	workload->allow_struct_instance_templates = false;
-    workload->is_polymorphic_base = false;
 	workload->active_valid_template_expressions = nullptr;
 	workload->instanciate_matching_info = nullptr;
 
@@ -590,7 +591,6 @@ T* workload_executer_allocate_workload(AST::Node* mapping_node, Analysis_Pass* p
 
     if (semantic_analyser.current_workload != 0) {
         workload->polymorphic_instanciation_depth = semantic_analyser.current_workload->polymorphic_instanciation_depth;
-        workload->is_polymorphic_base = semantic_analyser.current_workload->is_polymorphic_base;
     }
     else {
         workload->polymorphic_instanciation_depth = 0;
@@ -776,11 +776,9 @@ Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node,
     // Check for polymorphism
     if (struct_info.parameters.size != 0) {
         auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(upcast(struct_node), body_workload->base.current_pass);
-        poly_workload->base.is_polymorphic_base = true;
         poly_workload->base.symbol_access_level = access_level;
         poly_workload->body_workload = body_workload;
 
-        body_workload->base.is_polymorphic_base = true;
         body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
         body_workload->polymorphic.base = poly_workload;
 
@@ -3079,13 +3077,13 @@ void parameter_matching_info_add_param(Parameter_Matching_Info* info, String* na
 	match.required = required;
 	match.requires_named_addressing = requires_named_addressing;
 	match.param_type = param_type;
+	match.must_not_be_set = false;
 
 	match.is_set = false;
 	match.argument_index = -1;
 	match.expression = nullptr;
 	match.argument_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
 	match.argument_is_temporary_value = false;
-	match.must_not_be_set = false;
 
 	match.state = Parameter_State::NOT_ANALYSED;
 	match.reanalyse_param_type_flag = false;
@@ -3137,7 +3135,7 @@ Datatype* analyse_parameter_if_not_already_done(Parameter_Match* info, Expressio
 	return info->argument_type;
 }
 
-void analyse_arguments_in_unknown_context(AST::Arguments* arguments)
+void analyse_arguments_in_unknown_context(AST::Arguments* arguments, bool analyse_subtype_initializers = true)
 {
 	semantic_analyser_set_error_flag(true);
 	for (int i = 0; i < arguments->arguments.size; i++) {
@@ -3147,12 +3145,15 @@ void analyse_arguments_in_unknown_context(AST::Arguments* arguments)
 			semantic_analyser_analyse_expression_value(expr, expression_context_make_unknown(true));
 		}
 	}
-	for (int i = 0; i < arguments->subtype_initializers.size; i++) {
-		analyse_arguments_in_unknown_context(arguments->subtype_initializers[i]->arguments);
+
+	if (analyse_subtype_initializers) {
+		for (int i = 0; i < arguments->subtype_initializers.size; i++) {
+			analyse_arguments_in_unknown_context(arguments->subtype_initializers[i]->arguments);
+		}
 	}
 }
 
-void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matching_info)
+void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matching_info, bool analyse_subtype_initializers = true)
 {
 	semantic_analyser_set_error_flag(true);
 	for (int i = 0; i < matching_info->matched_parameters.size; i++) {
@@ -3170,7 +3171,7 @@ void parameter_matching_analyse_in_unknown_context(Parameter_Matching_Info* matc
 
 	// Analyse arguments that weren't matched to parameters...
 	if (matching_info->arguments != 0) {
-		analyse_arguments_in_unknown_context(matching_info->arguments);
+		analyse_arguments_in_unknown_context(matching_info->arguments, analyse_subtype_initializers);
 	}
 }
 
@@ -3389,6 +3390,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 	{
 		candidate.matching_info.call_type = Call_Type::HARDCODED;
 		candidate.matching_info.options.hardcoded = info.options.hardcoded;
+		// TODO: Overloads don't work correctly for some of these, maybe fix at some point...
 		function_type = hardcoded_type_to_signature(info.options.hardcoded, compiler.analysis_data);
 		break;
 	}
@@ -4023,9 +4025,7 @@ Poly_Header* poly_header_create_and_analyse_params(
 		}
 
 		// Otherwise we can analyse the value
-		AST::Node* node = nullptr;
 		if (param_index == header.return_type_index) {
-			node = upcast(header.return_type_node);
 			semantic_analyser.current_workload->allow_struct_instance_templates = true;
 			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 			param.infos.type = semantic_analyser_analyse_expression_type(header.return_type_node);
@@ -4036,7 +4036,6 @@ Poly_Header* poly_header_create_and_analyse_params(
 			}
 		}
 		else {
-			node = upcast(parameter_nodes[param_index]);
 			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 			analyse_parameter_type_and_value(param.infos, parameter_nodes[param_index], true);
 			semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
@@ -4465,7 +4464,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 	auto& parameter_nodes = poly_header->parameter_nodes;
 	const int return_type_index = poly_header->return_type_index;
 
-	// Check for errors (Instanciation limit + base is error-free)
+	// Check for errors (Instanciation limit or header has errors)
 	{
 		auto workload = semantic_analyser.current_workload;
 
@@ -4628,13 +4627,6 @@ Instanciation_Result instanciate_polymorphic_callable(
 			result.options.instance_template = result_template_type;
 			return result;
 		}
-	}
-
-	// Instanciations inside polymorphic base is disallowed (Except for Struct-Instance-Templates)
-	// Not sure what this was supposted to mean: (So it's possible to wait for child-workloads)
-	if (semantic_analyser.current_workload->is_polymorphic_base) {
-		semantic_analyser_set_error_flag(true);
-		return instanciation_result_make_error();
 	}
 
 	// Normal instanciation
@@ -5671,10 +5663,6 @@ void analysis_workload_entry(void* userdata)
 		if (is_polymorphic)
 		{
 			// Switch progress type to polymorphic base
-			progress->header_workload->base.is_polymorphic_base = true;
-			progress->body_workload->base.is_polymorphic_base = true;
-			progress->compile_workload->base.is_polymorphic_base = true;
-
 			progress->type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
 			progress->poly_function.base_progress = progress;
 			progress->poly_function.poly_header = poly_header_info;
@@ -6439,7 +6427,7 @@ void analyse_member_initializer_recursive(
 		}
 	}
 	else {
-		parameter_matching_analyse_in_unknown_context(matching_info);
+		parameter_matching_analyse_in_unknown_context(matching_info, false);
 	}
 
 	// Go through subtype-initializers and call function recursively
@@ -7421,6 +7409,77 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 				}
 				return info;
 			}
+			case Hardcoded_Type::RETURN_TYPE: 
+			{
+				if (semantic_analyser.current_workload->type != Analysis_Workload_Type::FUNCTION_BODY) {
+					log_semantic_error("return_type() function needs to be called inside function_body", expr, Parser::Section::FIRST_TOKEN);
+					EXIT_ERROR(types.unknown_type);
+				}
+				Datatype_Function* function = downcast<Workload_Function_Body>(semantic_analyser.current_workload)->progress->function->signature;
+				if (!function->return_type.available) {
+					log_semantic_error("return_type() function needs to have a return type", expr, Parser::Section::FIRST_TOKEN);
+					EXIT_ERROR(types.unknown_type);
+				}
+				EXIT_TYPE(upcast(function->return_type.value));
+			}
+			case Hardcoded_Type::STRUCT_TAG: 
+			{
+				assert(matching_info->matched_parameters.size == 1, "");
+				auto param = &matching_info->matched_parameters[0];
+				auto param_expr = param->expression;
+				assert(param_expr != 0, "");
+				Datatype* datatype = analyse_parameter_if_not_already_done(param, expression_context_make_unknown());
+				auto param_info = get_info(param_expr);
+
+				// Preprocess Type (Auto-dereference, remove const, early exit)
+				bool is_const = false;
+				{
+					if (datatype->mods.pointer_level > 0)
+					{
+						const char* error_msg = "";
+						if (!try_updating_expression_type_mods(
+							expr, type_mods_make(datatype->mods.is_constant, 0, 0, 0, datatype->mods.subtype_index), &error_msg))
+						{
+							log_semantic_error(error_msg, expr, Parser::Section::WHOLE_NO_CHILDREN);
+						}
+						datatype = param_info->cast_info.result_type;
+					}
+
+					// Remove const from type
+					is_const = datatype->type == Datatype_Type::CONSTANT;
+					datatype = datatype_get_non_const_type(datatype);
+
+					// Early exit
+					if (datatype_is_unknown(datatype)) {
+						semantic_analyser_set_error_flag(true);
+						EXIT_ERROR(types.unknown_type);
+					}
+				}
+
+				// Check if type is a struct
+				if (datatype->base_type->type != Datatype_Type::STRUCT)
+				{
+					log_semantic_error("struct_tag() function expects a structure as parameter", expr, Parser::Section::ENCLOSURE);
+					log_error_info_given_type(datatype);
+					EXIT_ERROR(types.unknown_type);
+				}
+				Datatype_Struct* structure = downcast<Datatype_Struct>(datatype->base_type);
+				Struct_Content* content = type_mods_get_subtype(structure, datatype->mods);
+
+				// Check tag access
+				if (content->subtypes.size == 0)
+				{
+					log_semantic_error("struct_tag() function expects a structure as parameter", expr, Parser::Section::ENCLOSURE);
+					log_error_info_given_type(datatype);
+					EXIT_ERROR(types.unknown_type);
+				}
+
+				Datatype* result_type = content->tag_member.type;
+				if (is_const) {
+					result_type = type_system_make_constant(result_type);
+				}
+				EXIT_VALUE(result_type, param_info->cast_info.result_value_is_temporary);
+			}
 			case Hardcoded_Type::BITWISE_NOT:
 			{
 				info->specifics.bitwise_primitive_type = types.i32_type;
@@ -7486,6 +7545,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 			}
 			}
 
+			// Otherwise just pass this on
 			info->specifics.function_call_signature = hardcoded_type_to_signature(matching_info->options.hardcoded, compiler.analysis_data);
 			break;
 		}
@@ -9104,17 +9164,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 
 				type_wait_for_size_info_to_finish(datatype->base_type);
 				Struct_Content* content = type_mods_get_subtype(structure, datatype->mods);
-
-				// Check tag access
-				if (content->subtypes.size > 0 && member_node.name == ids.tag)
-				{
-					access_info.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
-					access_info.options.member = content->tag_member;
-					if (is_const) {
-						access_info.options.member.type = type_system_make_constant(access_info.options.member.type);
-					}
-					EXIT_VALUE(access_info.options.member.type, result_is_temporary);
-				}
 
 				// Check member access
 				for (int i = 0; i < content->members.size; i++)
@@ -12890,6 +12939,8 @@ void semantic_analyser_reset()
 		define_hardcoded_symbol("panic", Hardcoded_Type::PANIC_FN);
 		define_hardcoded_symbol("size_of", Hardcoded_Type::SIZE_OF);
 		define_hardcoded_symbol("align_of", Hardcoded_Type::ALIGN_OF);
+		define_hardcoded_symbol("return_type", Hardcoded_Type::RETURN_TYPE);
+		define_hardcoded_symbol("struct_tag", Hardcoded_Type::STRUCT_TAG);
 
 		define_hardcoded_symbol("bitwise_not", Hardcoded_Type::BITWISE_NOT);
 		define_hardcoded_symbol("bitwise_and", Hardcoded_Type::BITWISE_AND);

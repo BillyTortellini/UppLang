@@ -3,6 +3,7 @@ import Upp~print_string
 import Upp~print_bool
 import Upp~print_line
 import Upp~print_i32
+import Upp~struct_tag
 
 // Structs can have subtypes, which automatically
 // transform the structs into tagged-unions
@@ -14,8 +15,9 @@ Result :: struct
 		error_code: int
 		fatal_error: bool
 
+// Accessing the tag is done with the Upp
 test_result :: (res: Result) => int
-	if res.tag == .Success
+	if struct_tag(res) == .Success
 		return res.Success.result + 1
 	
 	value := res.Failure.error_code
@@ -24,22 +26,24 @@ test_result :: (res: Result) => int
 	return value
 
 main :: ()
+	import Upp~struct_tag as tag
+	
 	result: Result
 	// To initialize a struct with subtypes, the tag member needs to be set
-	result.tag = .Success
+	tag(result) = .Success
 	result.Success.result = 10
 	assert(test_result(result) == 11)
 	
-	result.tag = .Failure
+	tag(result) = .Failure
 	result.Failure.error_code = 3
 	result.Failure.fatal_error = true
 	assert(test_result(result) == 6)
 	
 	// What differentiates Upp-Subtypes from Variant types of other languages,
 	// is the fact that subtypes are their own types
-	// This in combination with struct-inititalizers makes them more suited for
+	// This in combination with struct-initializers makes them more suited for
 	// a lot of tasks
-	succ := Result.Success.{10, . = {2}}
+	succ := Result.Success.{10, .= {index = 2}}
 	assert(test_result(succ) == 11)
 	assert(test_result(.{3, .Failure = {3, false}}) == 3)
 	

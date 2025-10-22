@@ -125,9 +125,9 @@ struct Datatype
     // For some types (e.g. structs, arrays, etc), the memory info isn't always available after the type has been created
     Optional<Datatype_Memory_Info> memory_info;
     Workload_Structure_Body* memory_info_workload;
-    bool contains_template;
 
     // Some cached values so we don't have to always walk the type tree
+    bool contains_template;
     Datatype* base_type;
     Type_Mods mods; // These are the modifiers which when applied to the base_type gets us this type
 };
@@ -556,6 +556,8 @@ struct Predefined_Types
     Datatype_Function* type_size_of;
     Datatype_Function* type_align_of;
     Datatype_Function* type_panic;
+    Datatype_Function* hardcode_struct_tag_fn;
+    Datatype_Function* hardcode_return_type_fn;
 
     Datatype_Function* type_print_bool;
     Datatype_Function* type_print_i32;
@@ -567,6 +569,7 @@ struct Predefined_Types
     Datatype_Function* type_read_bool;
     Datatype_Function* type_random_i32;
 
+    // Note: These are used for function overload resolution, so this is kinda wrong...
     Datatype_Function* type_bitwise_unop;
     Datatype_Function* type_bitwise_binop;
 
