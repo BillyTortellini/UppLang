@@ -1,5 +1,12 @@
 
+import Upp~Type_Handle
 
-test_a :: () => int
-	return 15 * 3 + 1
+Foo :: struct (T: Type_Handle)
+	data: T
 
+bar :: (x: Foo($T))
+	
+
+main :: ()
+	x: Foo(int)
+	bar(x)

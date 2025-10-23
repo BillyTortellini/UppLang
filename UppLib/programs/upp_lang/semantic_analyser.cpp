@@ -3200,7 +3200,8 @@ struct Overload_Candidate
 };
 
 void overload_candidate_finish(
-	Overload_Candidate& candidate, AST::Expression* expression, Poly_Header* poly_header, Datatype_Function* function_type, bool is_dot_call)
+	Overload_Candidate& candidate, AST::Expression* expression, Poly_Header* poly_header, 
+	Datatype_Function* function_type, bool is_dot_call, bool uninitialized_token_given)
 {
 	if (function_type != 0)
 	{
@@ -3231,10 +3232,13 @@ void overload_candidate_finish(
 			auto& param = poly_header->parameters[i];
 			bool required = true;
 			Datatype* datatype = nullptr;
-			// Note: We only set datatype to nullptr if we have dependencies, otherwise we set it to the templated type
-			if (!param.depends_on_other_parameters) {
+			// Note: We only set datatype to nullptr if we have dependencies, otherwise we set it to the given type
+			if (param.depends_on.size == 0) {
 				datatype = param.infos.type;
 				required = !param.infos.default_value_exists;
+			}
+			if (!poly_header->is_function && uninitialized_token_given) {
+				required = false; // No values are required for struct-instance-template e.g. Node(a, b, _)
 			}
 			parameter_matching_info_add_param(&candidate.matching_info, param.infos.name, required, false, datatype);
 		}
@@ -3243,11 +3247,6 @@ void overload_candidate_finish(
 		for (int i = 0; i < poly_header->inferred_parameters.size; i++)
 		{
 			auto& impl_info = poly_header->inferred_parameters[i];
-			// Note: This was removed when we added polymorphic overload resolution
-			//if (impl_info.defined_in_parameter_index != poly_header->return_type_index) {
-			//    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].param_type = nullptr;
-			//    candidate.matching_info.matched_parameters[impl_info.defined_in_parameter_index].required = true;
-			//}
 			parameter_matching_info_add_param(&candidate.matching_info, impl_info.id, false, true, nullptr);
 		}
 
@@ -3256,7 +3255,7 @@ void overload_candidate_finish(
 		{
 			candidate.matching_info.has_return_value = true;
 			auto param = poly_header->parameters[poly_header->return_type_index];
-			if (!param.depends_on_other_parameters && !param.contains_inferred_parameter) {
+			if (param.depends_on.size == 0 && param.inferred_parameter_indices.size == 0) {
 				candidate.matching_info.return_type = param.infos.type;
 			}
 			else {
@@ -3300,17 +3299,18 @@ Overload_Candidate overload_candidate_create_from_dot_call_info(Dot_Call_Info do
 			Call_Type::POLYMORPHIC_DOT_CALL, dot_call.options.poly_function.poly_header->parameters.size
 		);
 		candidate.matching_info.options.poly_dotcall = dot_call.options.poly_function;
-		overload_candidate_finish(candidate, expr, dot_call.options.poly_function.poly_header, nullptr, true);
+		overload_candidate_finish(candidate, expr, dot_call.options.poly_function.poly_header, nullptr, true, false);
 	}
 	else {
 		candidate.matching_info.call_type = Call_Type::DOT_CALL;
 		candidate.matching_info.options.dot_call_function = dot_call.options.function;
-		overload_candidate_finish(candidate, expr, nullptr, dot_call.options.function->signature, true);
+		overload_candidate_finish(candidate, expr, nullptr, dot_call.options.function->signature, true, false);
 	}
 	return candidate;
 }
 
-Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(Expression_Info& info, AST::Expression* expr, Symbol* origin_symbol = 0)
+Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
+	Expression_Info& info, AST::Expression* expr, Symbol* origin_symbol, bool uninitialized_token_given)
 {
 	Overload_Candidate candidate;
 	candidate.symbol = origin_symbol;
@@ -3403,7 +3403,7 @@ Optional<Overload_Candidate> overload_candidate_try_create_from_expression_info(
 	default: panic("");
 	}
 
-	overload_candidate_finish(candidate, expr, poly_header, function_type, false);
+	overload_candidate_finish(candidate, expr, poly_header, function_type, false, uninitialized_token_given);
 	return optional_make_success(candidate);
 }
 
@@ -3416,17 +3416,17 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
 	bool is_struct_initializer = matching_info->call_type == Call_Type::STRUCT_INITIALIZER;
 	if (!is_struct_initializer)
 	{
-		bool error_occured = false;
 		for (int i = 0; i < args->subtype_initializers.size; i++) {
 			auto sub_init = args->subtype_initializers[i];
 			log_semantic_error("Subtype_initializer only valid on struct-initializers", upcast(sub_init), Parser::Section::FIRST_TOKEN);
 			analyse_arguments_in_unknown_context(sub_init->arguments);
-			error_occured = true;
 		}
+	}
+	if (!is_struct_initializer && matching_info->call_type != Call_Type::POLYMORPHIC_STRUCT)
+	{
 		for (int i = 0; i < args->uninitialized_tokens.size; i++) {
 			auto token_expr = args->uninitialized_tokens[i];
 			log_semantic_error("Uninitialized-token only valid for struct-initializers", upcast(token_expr), Parser::Section::FIRST_TOKEN);
-			error_occured = true;
 		}
 	}
 
@@ -3549,7 +3549,13 @@ bool arguments_match_to_parameters(AST::Arguments* args, Parameter_Matching_Info
 
 
 // POLYMORPHIC HEADER PARSING
-bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* expression)
+struct Parameter_Symbol_Lookup
+{
+	int parameter_index;
+	String* lookup_id;
+};
+
+bool expression_search_for_unset_implicit_parameters(AST::Expression* expression)
 {
 	if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) 
 	{
@@ -3583,27 +3589,27 @@ bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* exp
 	while (child_node != 0)
 	{
 		if (child_node->type == AST::Node_Type::EXPRESSION) {
-			if (check_if_expression_contains_unset_inferred_parameters(downcast<AST::Expression>(child_node))) {
+			if (expression_search_for_unset_implicit_parameters(downcast<AST::Expression>(child_node))) {
 				return true;
 			}
 		}
 		else if (child_node->type == AST::Node_Type::ARGUMENTS) {
 			auto args = downcast<AST::Arguments>(child_node);
 			for (int i = 0; i < args->arguments.size; i++) {
-				if (check_if_expression_contains_unset_inferred_parameters(args->arguments[i]->value)) {
+				if (expression_search_for_unset_implicit_parameters(args->arguments[i]->value)) {
 					return true;
 				}
 			}
 		}
 		else if (child_node->type == AST::Node_Type::ARGUMENT) {
 			auto argument_node = downcast<AST::Argument>(child_node);
-			if (check_if_expression_contains_unset_inferred_parameters(argument_node->value)) {
+			if (expression_search_for_unset_implicit_parameters(argument_node->value)) {
 				return true;
 			}
 		}
 		else if (child_node->type == AST::Node_Type::PARAMETER) {
 			auto parameter_node = downcast<AST::Parameter>(child_node);
-			if (check_if_expression_contains_unset_inferred_parameters(parameter_node->type)) {
+			if (expression_search_for_unset_implicit_parameters(parameter_node->type)) {
 				return true;
 			}
 		}
@@ -3614,25 +3620,105 @@ bool check_if_expression_contains_unset_inferred_parameters(AST::Expression* exp
 	return false;
 }
 
-void expression_search_for_implicit_parameters_and_symbol_lookups(
-	int defined_in_parameter_index, AST::Expression* expression,
-	Dynamic_Array<Inferred_Parameter>& parameter_locations,
-	Dynamic_Array<Parameter_Symbol_Lookup>& symbol_lookups)
+void expression_search_for_implicit_parameters(
+	int parameter_index, AST::Expression* expression,
+	Dynamic_Array<Inferred_Parameter>& inferred_parameters, 
+	Inferred_Parameter_Context context)
 {
-	if (expression->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
+	switch (expression->type)
+	{
+	case AST::Expression_Type::TEMPLATE_PARAMETER: 
+	{
 		Inferred_Parameter location;
-		location.defined_in_parameter_index = defined_in_parameter_index;
+		location.defined_in_parameter_index = parameter_index;
 		location.expression = expression;
 		location.id = expression->options.polymorphic_symbol_id;
-		dynamic_array_push_back(&parameter_locations, location);
+		location.context = context;
+		dynamic_array_push_back(&inferred_parameters, location);
 		return;
 	}
+	case AST::Expression_Type::ARRAY_TYPE: {
+		auto& array = expression->options.array_type;
+		expression_search_for_implicit_parameters(parameter_index, array.type_expr, inferred_parameters, context);
+		if (array.size_expr->type == AST::Expression_Type::TEMPLATE_PARAMETER) {
+			expression_search_for_implicit_parameters(
+				parameter_index, array.size_expr,
+				inferred_parameters, Inferred_Parameter_Context::ARRAY_SIZE);
+		}
+		break;
+	}
+	case AST::Expression_Type::OPTIONAL_TYPE: {
+		expression_search_for_implicit_parameters(
+			parameter_index, expression->options.optional_child_type, 
+			inferred_parameters, Inferred_Parameter_Context::TYPE);
+		break;
+	}
+	case AST::Expression_Type::OPTIONAL_POINTER: {
+		expression_search_for_implicit_parameters(
+			parameter_index, expression->options.optional_pointer_child_type, 
+			inferred_parameters, Inferred_Parameter_Context::TYPE);
+		break;
+	}
+	case AST::Expression_Type::SLICE_TYPE: {
+		expression_search_for_implicit_parameters(
+			parameter_index, expression->options.slice_type, 
+			inferred_parameters, Inferred_Parameter_Context::TYPE);
+		break;
+	}
+	case AST::Expression_Type::CONST_TYPE: {
+		expression_search_for_implicit_parameters(
+			parameter_index, expression->options.const_type, 
+			inferred_parameters, Inferred_Parameter_Context::TYPE);
+		break;
+	}
+	case AST::Expression_Type::UNARY_OPERATION: {
+		if (expression->options.unop.type == AST::Unop::POINTER) {
+			expression_search_for_implicit_parameters(
+				parameter_index, expression->options.unop.expr, 
+				inferred_parameters, Inferred_Parameter_Context::TYPE);
+		}
+		break;
+	}
+	case AST::Expression_Type::FUNCTION_SIGNATURE: {
+		auto signature = expression->options.function_signature;
+		for (int i = 0; i < signature.parameters.size; i++) {
+			auto param = signature.parameters[i];
+			expression_search_for_implicit_parameters(
+				parameter_index, param->type, 
+				inferred_parameters, Inferred_Parameter_Context::TYPE);
+		}
+		if (signature.return_value.available) {
+			expression_search_for_implicit_parameters(
+				parameter_index, signature.return_value.value, 
+				inferred_parameters, Inferred_Parameter_Context::TYPE);
+		}
+		break;
+	}
+	case AST::Expression_Type::FUNCTION_CALL: 
+	{
+		auto arguments = expression->options.call.arguments;
+		for (int i = 0; i < arguments->arguments.size; i++) {
+			auto arg = arguments->arguments[i];
+			expression_search_for_implicit_parameters(
+				parameter_index, arg->value, 
+				inferred_parameters, Inferred_Parameter_Context::ARGUMENT);
+		}
+		break;
+	}
+	}
+	return;
+}
+
+void expression_search_for_symbol_lookups(
+	int defined_in_parameter_index, AST::Expression* expression,
+	Dynamic_Array<Parameter_Symbol_Lookup>& symbol_lookups)
+{
 	if (expression->type == AST::Expression_Type::PATH_LOOKUP) {
 		auto path = expression->options.path_lookup;
 		if (path->parts.size == 1) { // Skip path lookups, as we are only interested in parameter names usually
 			Parameter_Symbol_Lookup lookup;
-			lookup.defined_in_parameter_index = defined_in_parameter_index;
-			lookup.id = path->last->name;
+			lookup.parameter_index = defined_in_parameter_index;
+			lookup.lookup_id = path->last->name;
 			dynamic_array_push_back(&symbol_lookups, lookup);
 		}
 		return;
@@ -3652,21 +3738,21 @@ void expression_search_for_implicit_parameters_and_symbol_lookups(
 	auto child_node = AST::base_get_child(upcast(expression), child_index);
 	while (child_node != 0) {
 		if (child_node->type == AST::Node_Type::EXPRESSION) {
-			expression_search_for_implicit_parameters_and_symbol_lookups(defined_in_parameter_index, downcast<AST::Expression>(child_node), parameter_locations, symbol_lookups);
+			expression_search_for_symbol_lookups(defined_in_parameter_index, downcast<AST::Expression>(child_node), symbol_lookups);
 		}
 		else if (child_node->type == AST::Node_Type::ARGUMENTS) {
 			auto args = downcast<AST::Arguments>(child_node);
 			for (int i = 0; i < args->arguments.size; i++) {
-				expression_search_for_implicit_parameters_and_symbol_lookups(defined_in_parameter_index, args->arguments[i]->value, parameter_locations, symbol_lookups);
+				expression_search_for_symbol_lookups(defined_in_parameter_index, args->arguments[i]->value, symbol_lookups);
 			}
 		}
 		else if (child_node->type == AST::Node_Type::ARGUMENT) {
 			auto argument_node = downcast<AST::Argument>(child_node);
-			expression_search_for_implicit_parameters_and_symbol_lookups(defined_in_parameter_index, argument_node->value, parameter_locations, symbol_lookups);
+			expression_search_for_symbol_lookups(defined_in_parameter_index, argument_node->value, symbol_lookups);
 		}
 		else if (child_node->type == AST::Node_Type::PARAMETER) {
 			auto parameter_node = downcast<AST::Parameter>(child_node);
-			expression_search_for_implicit_parameters_and_symbol_lookups(defined_in_parameter_index, parameter_node->type, parameter_locations, symbol_lookups);
+			expression_search_for_symbol_lookups(defined_in_parameter_index, parameter_node->type, symbol_lookups);
 		}
 		child_index += 1;
 		child_node = AST::base_get_child(upcast(expression), child_index);
@@ -3710,13 +3796,6 @@ void analyse_parameter_type_and_value(Function_Parameter& parameter, AST::Parame
 	}
 }
 
-struct Parameter_Dependency
-{
-	Dynamic_Array<int> depends_on;
-	Dynamic_Array<int> dependees;
-	int dependency_count;
-};
-
 // Defines all necessary symbols in symbol-table, and looks for polymorphism
 Poly_Header* poly_header_create_and_analyse_params(
 	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, 
@@ -3736,14 +3815,14 @@ Poly_Header* poly_header_create_and_analyse_params(
 	header.symbol_table = symbol_table;
 	header.poly_value_count = 0;
 	header.is_function = progress != 0;
+	header.found_templated_parameter_type = false;
+
 	header.instances = dynamic_array_create<Poly_Instance>();
 	header.inferred_parameters = dynamic_array_create<Inferred_Parameter>();
 	header.base_analysis_values = array_create_static<Poly_Value>(nullptr, 0);
 	header.parameters = array_create<Poly_Parameter>(parameter_nodes.size + (has_return_type ? 1 : 0));
 	header.parameter_analysis_order = dynamic_array_create<int>(header.parameters.size);
-	header.symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
 	header.valid_template_expressions = hashtable_create_pointer_empty<AST::Expression*, Datatype_Template*>(0);
-	header.found_templated_parameter_type = false;
 
 	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
 	assert(poly_struct != nullptr || progress != nullptr, "Should be either poly-struct or poly-function");
@@ -3762,6 +3841,8 @@ Poly_Header* poly_header_create_and_analyse_params(
 
 	// Define parameter symbols and search for symbol-lookups and implicit parameters
 	int comptime_parameter_count = 0;
+    Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
+	SCOPE_EXIT(dynamic_array_destroy(&symbol_lookups));
 	for (int i = 0; i < parameter_nodes.size; i++)
 	{
 		auto parameter_node = parameter_nodes[i];
@@ -3775,12 +3856,15 @@ Poly_Header* poly_header_create_and_analyse_params(
 		);
 		get_info(parameter_node, true)->symbol = symbol;
 
-		// Set symbol/parameter infos
-		poly_param.is_comptime = is_comptime;
+		// Init poly-parameters
 		poly_param.infos = function_parameter_make_empty();
-		poly_param.contains_inferred_parameter = false;
+		poly_param.inferred_parameter_indices = dynamic_array_create<int>();
+		poly_param.dependees = dynamic_array_create<int>();
+		poly_param.depends_on = dynamic_array_create<int>();
 		poly_param.has_self_dependency = false;
-		poly_param.depends_on_other_parameters = false;
+
+		// Set symbol/param infos
+		poly_param.is_comptime = is_comptime;
 		if (is_comptime)
 		{
 			poly_param.options.value_access_index = comptime_parameter_count;
@@ -3798,7 +3882,8 @@ Poly_Header* poly_header_create_and_analyse_params(
 		}
 
 		// Find implicit parameters/lookups
-		expression_search_for_implicit_parameters_and_symbol_lookups(i, parameter_node->type, header.inferred_parameters, header.symbol_lookups);
+		expression_search_for_symbol_lookups(i, parameter_node->type, symbol_lookups);
+		expression_search_for_implicit_parameters(i, parameter_node->type, header.inferred_parameters, Inferred_Parameter_Context::TYPE);
 	}
 
 	// Check for return type
@@ -3808,11 +3893,13 @@ Poly_Header* poly_header_create_and_analyse_params(
 		return_param.is_comptime = false;
 		return_param.options.index_in_non_polymorphic_signature = -1;
 		return_param.infos = function_parameter_make_empty();
-		return_param.contains_inferred_parameter = false;
+		return_param.inferred_parameter_indices = dynamic_array_create<int>();
+		return_param.dependees = dynamic_array_create<int>();
+		return_param.depends_on = dynamic_array_create<int>();
 		return_param.has_self_dependency = false;
-		return_param.depends_on_other_parameters = false;
 
-		expression_search_for_implicit_parameters_and_symbol_lookups(parameter_nodes.size, return_type, header.inferred_parameters, header.symbol_lookups);
+		expression_search_for_symbol_lookups(parameter_nodes.size, return_type, symbol_lookups);
+		expression_search_for_implicit_parameters(parameter_nodes.size, return_type, header.inferred_parameters, Inferred_Parameter_Context::TYPE);
 	}
 
 	// Store poly-value count and init Poly_Values
@@ -3827,7 +3914,9 @@ Poly_Header* poly_header_create_and_analyse_params(
 	for (int i = 0; i < header.inferred_parameters.size; i++)
 	{
 		auto& inferred = header.inferred_parameters[i];
-		header.parameters[inferred.defined_in_parameter_index].contains_inferred_parameter = true;
+		dynamic_array_push_back(
+			&header.parameters[inferred.defined_in_parameter_index].inferred_parameter_indices, i
+		);
 
 		// Create symbol
 		Symbol* symbol = symbol_table_define_symbol(
@@ -3845,99 +3934,94 @@ Poly_Header* poly_header_create_and_analyse_params(
 		next_value_access_index += 1;
 
 		// Note: These are set here, so we get template types in header-analysis, e.g. for overload resolution
-		header.base_analysis_values[template_type->value_access_index] = poly_value_make_template_type(upcast(template_type));
+		//	e.g. template header then has type of (a: Node($T))
+		if (inferred.context == Inferred_Parameter_Context::TYPE) {
+			header.base_analysis_values[template_type->value_access_index] = poly_value_make_template_type(upcast(template_type));
+		}
 	}
 
 	// Generate parameter analysis order
 	{
-		Array<Parameter_Dependency> dependencies = array_create<Parameter_Dependency>(header.parameters.size);
-		for (int i = 0; i < dependencies.size; i++) {
-			dependencies[i].dependency_count = 0;
-			dependencies[i].dependees = dynamic_array_create<int>();
-			dependencies[i].depends_on = dynamic_array_create<int>();
-		}
-		SCOPE_EXIT(
-			for (int i = 0; i < dependencies.size; i++) {
-				dynamic_array_destroy(&dependencies[i].dependees);
-				dynamic_array_destroy(&dependencies[i].depends_on);
-			}
-		array_destroy(&dependencies);
-			);
+		auto& params = header.parameters;
+		auto& analysis_order = header.parameter_analysis_order;
 
-		// Add dependencies between parameters based on found symbol-lookups
+		Array<int> dependency_counts = array_create<int>(params.size);
+		SCOPE_EXIT(array_destroy(&dependency_counts));
+		memory_set_bytes(dependency_counts.data, sizeof(int) * dependency_counts.size, 0);
+
+		// Find dependencies between parameters using the found symbol-lookups
 		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
 		SCOPE_EXIT(dynamic_array_destroy(&symbols));
-		for (int i = 0; i < header.symbol_lookups.size; i++)
+		for (int i = 0; i < symbol_lookups.size; i++)
 		{
-			auto& lookup = header.symbol_lookups[i];
+			auto& lookup = symbol_lookups[i];
 			dynamic_array_reset(&symbols);
-			symbol_table_query_id(symbol_table, lookup.id, false, Symbol_Access_Level::PARAMETERS, &symbols, &semantic_analyser.symbol_lookup_visited);
+			symbol_table_query_id(
+				symbol_table, lookup.lookup_id, false, Symbol_Access_Level::PARAMETERS, &symbols, &semantic_analyser.symbol_lookup_visited
+			);
 			if (symbols.size == 0) {
-				continue; // Symbol lookups in header may also go outside of the parameter-table
+				continue;
 			}
-			else if (symbols.size == 1)
-			{
-				auto symbol = symbols[0];
+			// > 2 symbols in the parameter table shouldn't be possible (No overloading for parameters, see define symbol)
+			assert(symbols.size == 1, "");
 
-				// Find access info
-				bool is_inferred_access = false;
-				int defined_in_param_index = 0;
-				if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) {
-					defined_in_param_index = symbol->options.polymorphic_value.defined_in_parameter_index;
-					int value_access_index = symbol->options.polymorphic_value.value_access_index;
-					is_inferred_access = value_access_index >= comptime_parameter_count;
-				}
-				else if (symbol->type == Symbol_Type::PARAMETER) {
-					defined_in_param_index = symbol->options.parameter.index_in_polymorphic_signature;
-					is_inferred_access = false;
-				}
-				else {
-					panic("Symbol lookup is only in parameter table, so we shouln't have other values!");
-				}
-
-				// Check for self-dependencies
-				if (defined_in_param_index == lookup.defined_in_parameter_index) {
-					header.parameters[lookup.defined_in_parameter_index].has_self_dependency = true;
-					// Skip self dependency if it's an inferred parameter
-					if (is_inferred_access) {
-						continue;
-					}
-				}
-
-				dynamic_array_push_back(&dependencies[lookup.defined_in_parameter_index].depends_on, defined_in_param_index);
-				dynamic_array_push_back(&dependencies[defined_in_param_index].dependees, lookup.defined_in_parameter_index);
-				dependencies[lookup.defined_in_parameter_index].dependency_count += 1;
-				header.parameters[lookup.defined_in_parameter_index].depends_on_other_parameters = true;
+			// Find access info
+			auto symbol = symbols[0];
+			bool is_inferred_access = false;
+			int defined_in_param_index = 0;
+			if (symbol->type == Symbol_Type::POLYMORPHIC_VALUE) {
+				defined_in_param_index = symbol->options.polymorphic_value.defined_in_parameter_index;
+				int value_access_index = symbol->options.polymorphic_value.value_access_index;
+				is_inferred_access = value_access_index >= comptime_parameter_count;
+			}
+			else if (symbol->type == Symbol_Type::PARAMETER) {
+				defined_in_param_index = symbol->options.parameter.index_in_polymorphic_signature;
+				is_inferred_access = false;
 			}
 			else {
-				// > 2 symbols in the parameter table shouldn't be possible (No overloading for parameters, see define symbol)
-				panic("");
+				panic("Symbol lookup is only in parameter table, so we shouln't have other values!");
 			}
+
+			// Check for self-dependencies
+			if (defined_in_param_index == lookup.parameter_index) {
+				params[lookup.parameter_index].has_self_dependency = true;
+				// Skip self dependency if it's an inferred parameter 
+				// (Otherwise we need to generate error, which is done by having a dependency-loop)
+				if (is_inferred_access) {
+					continue;
+				}
+			}
+
+			dynamic_array_push_back(&params[lookup.parameter_index].depends_on, defined_in_param_index);
+			dynamic_array_push_back(&params[defined_in_param_index].dependees, lookup.parameter_index);
+			dependency_counts[lookup.parameter_index] += 1;
 		}
 
 		// Add all parameters without dependencies as runnable
-		for (int i = 0; i < dependencies.size; i++) {
-			auto& dep = dependencies[i];
-			if (dep.dependency_count == 0) {
-				dynamic_array_push_back(&header.parameter_analysis_order, i);
+		for (int i = 0; i < dependency_counts.size; i++) {
+			if (dependency_counts[i] == 0) {
+				dynamic_array_push_back(&analysis_order, i);
 			}
 		}
 
 		// Generate parameter order
 		int runnable_start = 0;
-		int runnable_end = header.parameter_analysis_order.size;
+		int runnable_end = analysis_order.size;
 		int runnable_count = runnable_end - runnable_start;
 		while (runnable_count != 0)
 		{
 			// Add parameters which can run after this workload
-			for (int i = runnable_start; i < runnable_end; i++) {
-				auto& run = dependencies[header.parameter_analysis_order[i]];
-				for (int j = 0; j < run.dependees.size; j++) {
-					auto& dependee = dependencies[run.dependees[j]];
-					dependee.dependency_count -= 1;
-					assert(dependee.dependency_count >= 0, "Cannot fall below 0");
-					if (dependee.dependency_count == 0) {
-						dynamic_array_push_back(&header.parameter_analysis_order, run.dependees[j]);
+			for (int i = runnable_start; i < runnable_end; i++) 
+			{
+				auto& run = params[analysis_order[i]];
+				for (int j = 0; j < run.dependees.size; j++) 
+				{
+					auto& dependee_index = run.dependees[j];
+					int& dependency_count = dependency_counts[dependee_index];
+					dependency_count -= 1;
+					assert(dependency_count >= 0, "Cannot fall below 0");
+					if (dependency_count == 0) {
+						dynamic_array_push_back(&analysis_order, dependee_index);
 					}
 				}
 			}
@@ -3950,8 +4034,8 @@ Poly_Header* poly_header_create_and_analyse_params(
 		// Handle cyclic dependencies
 		if (header.parameter_analysis_order.size != header.parameters.size)
 		{
-			// Note: all parameters which aren't contained in analysis_order indices are contained in loop
-			assert(header.parameter_analysis_order.size < header.parameters.size, "Must be smaller");
+			// Note: We handle this like all parameters which aren't contained in analysis_order indices are contained in loop
+			assert(header.parameter_analysis_order.size < header.parameters.size, "Must be smaller, otherwise all could run");
 
 			// Create mask which parameters contain loops
 			Array<bool> contains_loop = array_create<bool>(header.parameters.size);
@@ -3982,8 +4066,8 @@ Poly_Header* poly_header_create_and_analyse_params(
 
 
 				log_semantic_error("Parameter contains circular dependency, to:", error_report_node, Parser::Section::FIRST_TOKEN);
-				for (int j = 0; j < dependencies[i].depends_on.size; j++) {
-					int other_index = dependencies[i].depends_on[j];
+				for (int j = 0; j < param.depends_on.size; j++) {
+					int other_index = param.depends_on[j];
 					if (!contains_loop[other_index]) {
 						continue;
 					}
@@ -4000,7 +4084,12 @@ Poly_Header* poly_header_create_and_analyse_params(
 	}
 
 	// Analyse parameters/return types without dependencies on other parameters
-	assert(semantic_analyser.current_workload->poly_values.data == nullptr, "Function-Header/Poly-Struct-Header should not have values set");
+	//	This is done so that instanciate does not need to re-analyse all parameters everytime,
+	//	and overloading then already has some infos to work With
+	assert(
+		semantic_analyser.current_workload->poly_values.data == nullptr, 
+		"Function-Header/Poly-Struct-Header should not have values set, only bakes/lambdas/anonymous structs"
+	);
 	semantic_analyser.current_workload->current_symbol_table = symbol_table;
 	semantic_analyser.current_workload->symbol_access_level = Symbol_Access_Level::PARAMETERS;
 	semantic_analyser.current_workload->poly_values = header.base_analysis_values;
@@ -4011,41 +4100,38 @@ Poly_Header* poly_header_create_and_analyse_params(
 		auto& param = header.parameters[param_index];
 
 		// Check for default value errors
-		if (param_index != header.return_type_index) {
+		if (param_index != header.return_type_index) 
+		{
 			auto& node = parameter_nodes[param_index];
 			param.infos.name = node->name;
-			if (node->default_value.available && (param.is_comptime || param.depends_on_other_parameters || param.contains_inferred_parameter)) {
+			if (node->default_value.available && 
+				(param.is_comptime || param.depends_on.size != 0 || param.inferred_parameter_indices.size != 0)) 
+			{
 				semantic_analyser_analyse_expression_value(node->default_value.value, expression_context_make_unknown(true));
 				log_semantic_error("Polymorphic parameter/parameter with dependencies must not have a default value", node->default_value.value);
 			}
 		}
 
-		if (param.depends_on_other_parameters) {
+		if (param.depends_on.size != 0) { // Skip params with dependencies
 			continue;
 		}
 
-		// Otherwise we can analyse the value
+		// Otherwise we can analyse the param type
+		semantic_analyser.current_workload->allow_struct_instance_templates = true;
+		semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 		if (param_index == header.return_type_index) {
-			semantic_analyser.current_workload->allow_struct_instance_templates = true;
-			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
 			param.infos.type = semantic_analyser_analyse_expression_type(header.return_type_node);
-			semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
-			semantic_analyser.current_workload->allow_struct_instance_templates = false;
-			if (param.infos.type->contains_template) {
-				param.contains_inferred_parameter = true;
-			}
 		}
-		else {
-			semantic_analyser.current_workload->active_valid_template_expressions = &header.valid_template_expressions;
+		else 
+		{
 			analyse_parameter_type_and_value(param.infos, parameter_nodes[param_index], true);
-			semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
-			if (param.infos.type->contains_template) {
-				param.contains_inferred_parameter = true;
-			}
-			if (param.is_comptime && !param.contains_inferred_parameter) {
+			// Param could still contain templated type because of struct templates?
+			if (param.is_comptime && param.inferred_parameter_indices.size == 0 && !param.infos.type->contains_template) {
 				header.base_analysis_values[param.options.value_access_index] = poly_value_make_unset(param.infos.type);
 			}
 		}
+		semantic_analyser.current_workload->active_valid_template_expressions = nullptr;
+		semantic_analyser.current_workload->allow_struct_instance_templates = false;
 
 		if (param.infos.type->contains_template) {
 			header.found_templated_parameter_type = true;
@@ -4057,7 +4143,7 @@ Poly_Header* poly_header_create_and_analyse_params(
 		header.base_analysis_values[header.inferred_parameters[i].template_parameter->value_access_index] = poly_value_make_unset(types.unknown_type);
 	}
 
-	// Reset poly-values, so caller of this function can decide if we keep the poly-values or not
+	// Reset poly-values if caller does other work
 	semantic_analyser.current_workload->poly_values = array_create_static<Poly_Value>(nullptr, 0);
 	semantic_analyser.current_workload->poly_value_origin = nullptr;
 
@@ -4066,10 +4152,15 @@ Poly_Header* poly_header_create_and_analyse_params(
 
 void poly_header_destroy(Poly_Header* header)
 {
+	for (int i = 0; i < header->parameters.size; i++) {
+		auto& param = header->parameters[i];
+		dynamic_array_destroy(&param.dependees);
+		dynamic_array_destroy(&param.depends_on);
+		dynamic_array_destroy(&param.inferred_parameter_indices);
+	}
 	array_destroy(&header->parameters);
 	dynamic_array_destroy(&header->parameter_analysis_order);
 	dynamic_array_destroy(&header->inferred_parameters);
-	dynamic_array_destroy(&header->symbol_lookups);
 	array_destroy(&header->base_analysis_values);
 	for (int i = 0; i < header->instances.size; i++) {
 		auto& instance = header->instances[i];
@@ -4439,8 +4530,8 @@ Instanciation_Result instanciation_result_make_error() {
 }
 
 Instanciation_Result instanciate_polymorphic_callable(
-	Parameter_Matching_Info * param_matching_info, Expression_Context call_context,
-	AST::Node * error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
+	Parameter_Matching_Info* param_matching_info, Expression_Context call_context,
+	AST::Node* error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
 {
 	// Get poly-base from param-matching info
 	Poly_Header* poly_header = nullptr;
@@ -4529,6 +4620,32 @@ Instanciation_Result instanciate_polymorphic_callable(
 
 		Array<bool> param_contains_inferred = array_create<bool>(param_matching_info->matched_parameters.size);
 		SCOPE_EXIT(array_destroy(&param_contains_inferred));
+
+		// Check if we have a _ in the call
+		bool requires_all_parameters_set = true;
+		if (param_matching_info->arguments != 0 && param_matching_info->arguments->uninitialized_tokens.size > 0) 
+		{
+			requires_all_parameters_set = false;
+			create_struct_template = true;
+
+			// For _ to be valid, at least one required parameter must be missing
+			bool all_matched = true;
+			for (int i = 0; i < param_matching_info->matched_parameters.size; i++) {
+				auto param = param_matching_info->matched_parameters[i];
+				if (!param.is_set && !param.requires_named_addressing) {
+					all_matched = false;
+					break;
+				}
+			}
+			if (all_matched) {
+				auto uninitialized = param_matching_info->arguments->uninitialized_tokens;
+				for (int i = 0; i < uninitialized.size; i++) {
+					log_semantic_error("Using _ even though all parameter of struct are set", uninitialized[i], Parser::Section::FIRST_TOKEN);
+					// Note: everything else can still succeed, this is just a user info that _ is unnecessary here
+				}
+			}
+		}
+
 		// Search all arguments for implicit expressions, e.g. $T, if found, then we analyse as struct template
 		for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
 		{
@@ -4537,7 +4654,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 			if (param_info.expression == 0) {
 				continue;
 			}
-			bool contains_inferred = check_if_expression_contains_unset_inferred_parameters(param_info.expression);
+			bool contains_inferred = expression_search_for_unset_implicit_parameters(param_info.expression);
 			if (contains_inferred) {
 				create_struct_template = true;
 				param_contains_inferred[i] = true;
@@ -4556,23 +4673,27 @@ Instanciation_Result instanciate_polymorphic_callable(
 				auto& param_info = param_matching_info->matched_parameters[i];
 				const int value_index = i;
 
-				if (!param_info.is_set) {
-					// Inferred parameters are ignored for now (and the values are unset in instance)
+				if (!param_info.is_set && requires_all_parameters_set) {
+					// Inferred parameters never need to be set
 					if (param_info.requires_named_addressing) {
 						continue;
 					}
+
 					// Note: ignore default values for now in struct templates
 					log_semantic_error("For struct-instance-template all parameters need to be set", error_report_node, error_report_section);
 					success = false;
 					break;
 				}
 
-				// Figure out context
+				// Figure out context (Struct instance templates only support context for parameters without dependencies)
 				Expression_Context context = expression_context_make_unknown();
 				if (!param_info.requires_named_addressing && !param_contains_inferred[i]) {
 					auto& base_parameter = poly_header->parameters[i];
 					assert(base_parameter.is_comptime, "Must be the case for struct-parameter that isn't inferred");
-					if (!base_parameter.depends_on_other_parameters && !base_parameter.contains_inferred_parameter) {
+					if (base_parameter.depends_on.size == 0 && 
+						base_parameter.inferred_parameter_indices.size == 0 &&
+						!base_parameter.infos.type->contains_template) 
+					{
 						context = expression_context_make_specific_type(base_parameter.infos.type);
 					}
 				}
@@ -4645,7 +4766,10 @@ Instanciation_Result instanciate_polymorphic_callable(
 	if (return_type_index != -1)
 	{
 		auto& base_return = poly_header->parameters[return_type_index];
-		if (!base_return.depends_on_other_parameters && !base_return.contains_inferred_parameter) {
+		if (base_return.depends_on.size == 0 && 
+			base_return.inferred_parameter_indices.size == 0 &&
+			!base_return.infos.type->contains_template) 
+		{
 			final_return_type = base_return.infos.type;
 		}
 	}
@@ -4672,7 +4796,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 			instance_values[implicit.template_parameter->value_access_index] = poly_value_make_set(comptime_result.value);
 			matching_info.match_count += 1;
 
-			// Mark all references to this type for re-analysis
+			// Mark param to be re-analysed, as the value could be set to any type
 			if (implicit.defined_in_parameter_index == return_type_index) {
 				reanalyse_return_type = true;
 			}
@@ -4694,11 +4818,11 @@ Instanciation_Result instanciate_polymorphic_callable(
 		int parameter_index = poly_header->parameter_analysis_order[i];
 		auto& base_parameter = poly_header->parameters[parameter_index];
 
-		// Handle polymorphic return type
+		// Handle return value
 		if (parameter_index == return_type_index)
 		{
 			Datatype* return_type = base_parameter.infos.type;
-			if (base_parameter.depends_on_other_parameters || reanalyse_return_type)
+			if (base_parameter.depends_on.size > 0 || reanalyse_return_type)
 			{
 				auto workload = semantic_analyser.current_workload;
 				Analysis_Pass* pass = analysis_pass_allocate(workload, upcast(poly_header->return_type_node));
@@ -4753,13 +4877,20 @@ Instanciation_Result instanciate_polymorphic_callable(
 		auto& param_info = param_matching_info->matched_parameters[parameter_index];
 
 		// Skip if we can just use base-analysis result
-		if (!base_parameter.is_comptime && !base_parameter.depends_on_other_parameters && !base_parameter.contains_inferred_parameter) {
+		if (!base_parameter.is_comptime && 
+			base_parameter.depends_on.size == 0 && 
+			base_parameter.inferred_parameter_indices.size == 0 &&
+			!base_parameter.infos.type->contains_template) 
+		{
 			auto type = analyse_parameter_if_not_already_done(&param_info, expression_context_make_specific_type(base_parameter.infos.type));
+			assert(!type->contains_template, "The if above should prevent this");
 			if (datatype_is_unknown(type) && param_info.expression != nullptr) {
-				// Here we have a special case for #instanciate to work 
+				// Here we have a special case for #instanciate to work, as param_info.expression will be null 
 				// Non-comptime parameters are faked in argument-info (expression == 0), and the type is also always unknown
 				success = false;
 			}
+
+			param_info.param_type = type;
 			continue;
 		}
 
@@ -4767,9 +4898,9 @@ Instanciation_Result instanciate_polymorphic_callable(
 		param_info.ignore_during_code_generation = parameter_node->is_comptime;
 		assert(parameter_node->is_comptime == base_parameter.is_comptime || !poly_header->is_function, "");
 
-		// Get instance parameter-type (Reanalyse header type if necessary)
+		// Get parameter-type for this instance (Reanalyse header type if necessary)
 		Datatype* parameter_type = 0;
-		if (base_parameter.depends_on_other_parameters || param_info.reanalyse_param_type_flag)
+		if (base_parameter.depends_on.size > 0 || param_info.reanalyse_param_type_flag)
 		{
 			// Re-analyse base-header to get valid poly-argument type (Since this depends on other parameters)
 			//      e.g. foo :: ($T: Type_Handle, a: T)
@@ -4797,7 +4928,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 		}
 		else {
 			parameter_type = base_parameter.infos.type;
-			assert(!datatype_is_unknown(parameter_type), "");
+			assert(!datatype_is_unknown(parameter_type), "Otherwise the header-analysis should have error-flags");
 		}
 
 		// Analyse argument
@@ -4806,17 +4937,17 @@ Instanciation_Result instanciate_polymorphic_callable(
 			context = expression_context_make_specific_type(parameter_type);
 		}
 		auto argument_type = analyse_parameter_if_not_already_done(&param_info, context);
-		if (datatype_is_unknown(argument_type) && !param_info.expression == 0) { // On #instanciate or custom operations
+		if (datatype_is_unknown(argument_type) && !param_info.expression == 0) { // On #instanciate or custom operators
 			success = false;
 			continue;
 		}
 		else if (argument_type->contains_template) {
 			success = false;
-			panic("Not sure if this should happen, maybe in nested headers?");
+			panic("I don't think arguments should ever be polymorphic");
 			continue;
 		}
 
-		// Update type_mods 
+		// Update type_mods of argument
 		if (parameter_type->contains_template && success)
 		{
 			// Handle null expressions (Caused by #instanciate)
@@ -4853,30 +4984,23 @@ Instanciation_Result instanciate_polymorphic_callable(
 		// If this is a comptime argument, calculate comptime value
 		if (base_parameter.is_comptime && success)
 		{
-			if (param_info.expression == 0) {
-				// Note: If we wanted this feature, we need to add a comptime value to parameter match.
-				// This way the compiler could instanciate comptime parameters without requiring an Expression to exist
-				success = false;
-				continue;
+			assert(param_info.expression != 0, "In instanciate all comptime parameters are specified, so this should never happen");
+
+			// Try to calculate comptime value
+			bool was_unavailable = false;
+			auto comptime_result = expression_calculate_comptime_value(
+				param_info.expression, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
+			if (comptime_result.available) {
+				auto constant = comptime_result.value;
+				instance_values[base_parameter.options.value_access_index] = poly_value_make_set(constant);
 			}
-			else
-			{
-				// Try to calculate comptime value
-				bool was_unavailable = false;
-				auto comptime_result = expression_calculate_comptime_value(
-					param_info.expression, "Parameter is polymorphic, but argument cannot be evaluated at comptime", &was_unavailable);
-				if (comptime_result.available) {
-					auto constant = comptime_result.value;
-					instance_values[base_parameter.options.value_access_index] = poly_value_make_set(constant);
+			else {
+				success = false;
+				instance_values[base_parameter.options.value_access_index] = poly_value_make_unset(parameter_type);
+				if (!was_unavailable) {
+					log_error_on_failure = true;
 				}
-				else {
-					success = false;
-					instance_values[base_parameter.options.value_access_index] = poly_value_make_unset(parameter_type);
-					if (!was_unavailable) {
-						log_error_on_failure = true;
-					}
-					continue;
-				}
+				continue;
 			}
 		}
 
@@ -4964,18 +5088,11 @@ Instanciation_Result instanciate_polymorphic_callable(
 					auto& match_info = param_matching_info->matched_parameters[i];
 
 					Function_Parameter parameter = function_parameter_make_empty();
-					if (base_param.depends_on_other_parameters || base_param.contains_inferred_parameter)
-					{
-						// If parameter has dependencies we need to use the instanciated type
-						parameter.type = match_info.param_type;
-						parameter.default_value_exists = false;
-					}
-					else {
-						parameter.default_value_exists = base_param.infos.default_value_exists;
-						parameter.value_expr = base_param.infos.value_expr;
-						parameter.value_pass = base_param.infos.value_pass;
-						parameter.type = base_param.infos.type;
-					}
+					parameter.type = match_info.param_type;
+					// Default values only exist for types without dependencies
+					parameter.default_value_exists = base_param.infos.default_value_exists;
+					parameter.value_expr = base_param.infos.value_expr;
+					parameter.value_pass = base_param.infos.value_pass;
 					parameter.name = base_param.infos.name;
 					assert(!parameter.type->contains_template, "");
 					dynamic_array_push_back(&parameters, parameter);
@@ -5030,6 +5147,7 @@ Instanciation_Result instanciate_polymorphic_callable(
 		instance_values = array_create_static<Poly_Value>(nullptr, 0); // Ownership was passed to instance, so we shouldn't delete this
 	}
 
+	// Return correct type
 	if (poly_header->is_function)
 	{
 		Instanciation_Result result;
@@ -5684,32 +5802,30 @@ void analysis_workload_entry(void* userdata)
 			}
 
 			// Create function signature
-			{
-				Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>(parameter_nodes.size);
-				for (int i = 0; i < parameter_nodes.size; i++) {
-					auto& param = poly_header_info->parameters[i];
-					if (param.is_comptime) {
-						continue;
-					}
-					Function_Parameter info = param.infos;
-					if (param.contains_inferred_parameter || param.depends_on_other_parameters) {
-						info.type = types.unknown_type;
-					}
-					dynamic_array_push_back(&parameters, info);
+			Dynamic_Array<Function_Parameter> parameters = dynamic_array_create<Function_Parameter>(parameter_nodes.size);
+			for (int i = 0; i < parameter_nodes.size; i++) {
+				auto& param = poly_header_info->parameters[i];
+				if (param.is_comptime) {
+					continue;
 				}
-				Datatype* return_type = 0;
-				if (poly_header_info->return_type_index != -1) 
-				{
-					const auto& ret_param = poly_header_info->parameters[poly_header_info->return_type_index];
-					if (ret_param.contains_inferred_parameter || ret_param.depends_on_other_parameters) {
-						return_type = types.unknown_type;
-					}
-					else {
-						return_type = poly_header_info->parameters[poly_header_info->return_type_index].infos.type;
-					}
+				Function_Parameter info = param.infos;
+				if (param.inferred_parameter_indices.size > 0 || param.depends_on.size > 0) {
+					info.type = types.unknown_type;
 				}
-				function->signature = type_system_make_function(parameters, return_type);
+				dynamic_array_push_back(&parameters, info);
 			}
+			Datatype* return_type = 0;
+			if (poly_header_info->return_type_index != -1) 
+			{
+				const auto& ret_param = poly_header_info->parameters[poly_header_info->return_type_index];
+				if (ret_param.inferred_parameter_indices.size > 0 || ret_param.depends_on.size > 0) {
+					return_type = types.unknown_type;
+				}
+				else {
+					return_type = poly_header_info->parameters[poly_header_info->return_type_index].infos.type;
+				}
+			}
+			function->signature = type_system_make_function(parameters, return_type);
 		}
 		else // Handle normal functions
 		{
@@ -6806,7 +6922,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 						continue;
 					}
 					auto info = analyse_symbol_as_expression(symbol, expression_context_make_auto_dereference(), call.expr->options.path_lookup->last);
-					auto overload_opt = overload_candidate_try_create_from_expression_info(info, call.expr, symbol);
+					auto overload_opt = overload_candidate_try_create_from_expression_info(
+						info, call.expr, symbol, call.arguments->uninitialized_tokens.size > 0
+					);
 					if (overload_opt.available) {
 						dynamic_array_push_back(&candidates, overload_opt.value);
 					}
@@ -6842,7 +6960,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 				}
 				else
 				{
-					auto candidate_opt = overload_candidate_try_create_from_expression_info(*info, call.expr);
+					auto candidate_opt = overload_candidate_try_create_from_expression_info(*info, call.expr, nullptr, false);
 					if (!candidate_opt.available)
 					{
 						if (!datatype_is_unknown(info->cast_info.result_type)) {
@@ -7645,6 +7763,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 	}
 	case AST::Expression_Type::INSTANCIATE:
 	{
+		// Instanciate works by doing a normal instanciate_polymorphic_callable, 
+		//	but only comptime parameters and infered parameters are required, whereas the other must not be set
+
 		if (expr->options.instanciate_expr->type != AST::Expression_Type::FUNCTION_CALL)
 		{
 			if (expr->options.instanciate_expr->type == AST::Expression_Type::ERROR_EXPR) {
@@ -7679,12 +7800,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 			auto& poly_parameter = poly_header->parameters[i];
 
 			Datatype* datatype = nullptr;
-			if (!poly_parameter.depends_on_other_parameters && !poly_parameter.contains_inferred_parameter) {
+			if (poly_parameter.depends_on.size == 0 && poly_parameter.inferred_parameter_indices.size == 0) {
 				datatype = poly_parameter.infos.type;
 			}
 
 			if (poly_parameter.is_comptime) {
-				parameter_matching_info_add_param(matching_info, poly_parameter.infos.name, true, false, datatype);
+				parameter_matching_info_add_param(matching_info, poly_parameter.infos.name, true, true, datatype);
 			}
 			else
 			{
@@ -7726,6 +7847,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 	}
 	case AST::Expression_Type::GET_OVERLOAD:
 	{
+		// Get overload works by specifying the types of certain parameters.
+		//	The function where all specified params match is returned
+
 		auto& overload = expr->options.get_overload;
 
 		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
@@ -7829,7 +7953,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression *
 						if (param.infos.name != name) continue;
 						param_match_count += 1;
 						found = true;
-						if (param.depends_on_other_parameters || param.contains_inferred_parameter) {
+						if (param.depends_on.size > 0 || param.inferred_parameter_indices.size > 0) {
 							if (type != nullptr) {
 								// If we are searching for a specific type this cannot be in a polymorphic parameter
 								remove_symbol = true;
@@ -10720,7 +10844,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 
 			auto& param = poly_base->parameters[0];
-			if (param.depends_on_other_parameters) {
+			if (param.depends_on.size > 0) {
 				log_semantic_error("Poly function first argument must not have any dependencies", error_report_node);
 				success = false;
 				return types.unknown_type;
@@ -11071,7 +11195,10 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				{
 					// If the return type is a normal type, just use it as key, otherwise 
 					auto& return_param = poly_header->parameters[poly_header->return_type_index];
-					if (return_param.depends_on_other_parameters || return_param.contains_inferred_parameter) {
+					if (return_param.depends_on.size > 0 ||
+						return_param.inferred_parameter_indices.size > 0 ||
+						return_param.infos.type->contains_template) 
+					{
 						key.options.custom_cast.to_type = nullptr;
 					}
 					else {

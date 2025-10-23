@@ -193,12 +193,12 @@ struct Workload_Base
     //  * Child-Workloads inherit the polymorphic-values of their parents, so we need to store a parent-child relation
     //  * Polymorphic-Instances define their own poly-values
     Workload_Base* poly_parent_workload; // Note: This is a logical parent workload, e.g. function_body -> function_header -> module_analysis
-    Array<Poly_Value> poly_values;
+    Array<Poly_Value> poly_values; // Non-owning
     Poly_Header* poly_value_origin;
     Parameter_Matching_Info* instanciate_matching_info; // Only set during instanciate, to access other parameters
     Hashtable<AST::Expression*, Datatype_Template*>* active_valid_template_expressions; // Non-owning, will point to Poly_Header member if active
     int polymorphic_instanciation_depth; 
-    bool allow_struct_instance_templates;
+    bool allow_struct_instance_templates; // For implicit polymorphism, e.g. foo :: (a: Node), where node is polymorphic
 };
 
 struct Workload_Event
@@ -294,24 +294,39 @@ struct Workload_Bake_Execution
 
 
 // Polymorphism
+struct Parameter_Dependency
+{
+};
+
 struct Poly_Parameter
 {
     Function_Parameter infos;
 
     // Polymorphic infos
-    bool depends_on_other_parameters;
-    bool contains_inferred_parameter;
-    bool has_self_dependency;
     bool is_comptime;
     union {
         int value_access_index; // For comptime parameters
         int index_in_non_polymorphic_signature; // For normal parameters
     } options;
+
+    // Polymorphic dependency infos
+	Dynamic_Array<int> depends_on; // Indices to other poly_parameters
+	Dynamic_Array<int> dependees;
+    bool has_self_dependency; // Currently unused, but records if the parameter looks up one of it's inferred types itself
+    Dynamic_Array<int> inferred_parameter_indices; // Indices if the types contains infered parameters (In expressions)
+};
+
+enum class Inferred_Parameter_Context
+{
+    TYPE,
+    ARRAY_SIZE,   // If the parameter occurs as an array-type size value
+    ARGUMENT // If the parameter appears as a function-call value
 };
 
 struct Inferred_Parameter
 {
     int defined_in_parameter_index;
+    Inferred_Parameter_Context context;
     AST::Expression* expression;
     String* id;
     Datatype_Template* template_parameter;
@@ -319,22 +334,15 @@ struct Inferred_Parameter
 
 struct Poly_Instance;
 
-struct Parameter_Symbol_Lookup
-{
-	int defined_in_parameter_index;
-	String* id;
-};
-
 struct Poly_Header
 {
-    // Parameters: List of parameters with comptime parameters + if return type exists, it's the last value here
+    // Parameters: List of all parameters (comptime + normal) and if return type exists, it's the last value here
     Array<Poly_Parameter> parameters;
-    int poly_value_count; // Number of comptime + inferred parameters
+    int poly_value_count; // Number of comptime + inferred parameters, which is the size of the Poly_Value array
 
     // Order in which arguments need to be evaluated in for instanciation, -1 for return value
     Dynamic_Array<int> parameter_analysis_order; 
     Dynamic_Array<Inferred_Parameter> inferred_parameters;
-    Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups; // Note: These could be deleted after parameter order is established
     Hashtable<AST::Expression*, Datatype_Template*> valid_template_expressions; // Works with Workload_Base active_valid_template_expressions
 
     Dynamic_Array<Poly_Instance> instances;
@@ -349,7 +357,7 @@ struct Poly_Header
     bool found_templated_parameter_type; // e.g. foo :: (a: Node), where Node :: struct(T: Type_Handle)
 
     // Origin infos
-    String* name; // Either struct or function name
+    String* name; // Either struct or function name, for dot-calls auto id
     bool is_function;
     union {
         Workload_Structure_Polymorphic* struct_workload;

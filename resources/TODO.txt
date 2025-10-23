@@ -110,13 +110,35 @@ IR-Generator:
     IR-Data Access with destination is confusing for me
 
 
+How to implement the Node(X = $X, _) thingy:
+    On Call-Expression, when generating overloads, check if _ is given, if yes + polymorphic_struct, don't error
+
 
 TODO:
+ 1. Rewrite with the parameter dependencies --> DONE
+ 2. Run testcases --> DONE
+ 3. Rename parameter matching to parameter values
+
+
  Understand polymorphism
     Header-Analysis
-    Value-Access
     Instanciation
+    Value-Access (Parameter or Inferred_Value)
+    Poly-Value types
     Struct-Templates
+    Array-Thingies
+
+Questions: 
+    Why do Symbols have a poly-origin workload, but Template_Types don't? (Only have poly-value index)
+    workload->instanciate_matching_info --> What do you do/Why is this needed
+    Active_Valid_Template_Expressions Hashtable could just be a pointer to the poly_header..., e.g. active_poly_header_analysis
+    3849, does this work with Array-Size template expressions and struct-instance template expressions?
+    4831, #instanciate inside function-signature inside poly-header, test this
+        test :: (x: (a: $T, b: (#instanciate Node(T = T)).T)
+        I think this would cause the panic to be triggered, what is the solution here...
+    4838, why two ifs and the comptime-analysis in the middle?
+    8374: why the fuck does this work with accept all ints 
+        
 
 
 Difference between Struct_Poly_Template and Polymorphic_Struct expression info, one is value, and the other is type.
