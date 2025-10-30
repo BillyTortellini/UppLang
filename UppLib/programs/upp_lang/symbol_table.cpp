@@ -43,13 +43,13 @@ void symbol_table_add_include_table(
 {
     // Check for errors
     if (symbol_table == included_table) {
-        log_semantic_error("Trying to include symbol table to itself!", error_report_node);
+        log_semantic_error_outside("Trying to include symbol table to itself!", error_report_node, Parser::Section::FIRST_TOKEN);
         return;
     }
     for (int i = 0; i < symbol_table->included_tables.size; i++) {
         auto include = symbol_table->included_tables[i];
         if (include.table == included_table) {
-            log_semantic_error("Table is already included!", error_report_node);
+            log_semantic_error_outside("Table is already included!", error_report_node, Parser::Section::FIRST_TOKEN);
             return;
         }
     }
@@ -125,7 +125,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
 		if (!overload_valid) {
 			// Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
-			log_semantic_error("Symbol already defined in this scope", definition_node);
+			log_semantic_error_outside("Symbol already defined in this scope", definition_node, Parser::Section::WHOLE);
 			new_sym->id = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
 			return new_sym;
 		}
@@ -220,8 +220,8 @@ void symbol_type_append_to_string(Symbol_Type type, String* string)
 	case Symbol_Type::DEFINITION_UNFINISHED:
 		string_append_formated(string, "Definition Unfinished");
 		break;
-	case Symbol_Type::POLYMORPHIC_VALUE:
-		string_append_formated(string, "Polymorphic value");
+	case Symbol_Type::PATTERN_VARIABLE:
+		string_append_formated(string, "Pattern value");
 		break;
 	case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
 		string_append_formated(string, "Alias or imported symbol");

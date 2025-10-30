@@ -20,7 +20,7 @@ u64 hash_deduplication(Deduplication_Info* info) {
 Constant_Pool constant_pool_create()
 {
     Constant_Pool result;
-    result.constant_memory = stack_allocator_create_empty(2048);
+    result.constant_memory = Arena::create(2048);
     result.constants = dynamic_array_create<Upp_Constant>(2048);
     result.deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
     return result;
@@ -28,7 +28,7 @@ Constant_Pool constant_pool_create()
 
 void constant_pool_destroy(Constant_Pool* pool) 
 {
-    stack_allocator_destroy(&pool->constant_memory);
+    pool->constant_memory.destroy();
     dynamic_array_destroy(&pool->constants);
     hashtable_destroy(&pool->deduplication_table);
 }
@@ -121,14 +121,14 @@ void struct_memory_set_padding_to_zero_recursive(
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
     auto& types = compiler.analysis_data->type_system.predefined_types;
-    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
+    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of value_type?");
     auto& memory_info = signature->memory_info.value;
 
     signature = datatype_get_non_const_type(signature); // We don't care for constants here
     switch (signature->type)
     {
-    case Datatype_Type::TEMPLATE_TYPE:
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+    case Datatype_Type::PATTERN_VARIABLE:
+    case Datatype_Type::STRUCT_PATTERN:
     case Datatype_Type::UNKNOWN_TYPE: {
         panic("Shouldn't happen");
         return;
@@ -149,7 +149,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         panic("Shouldn't happen after previous call");
         return;
     }
-    case Datatype_Type::FUNCTION: {
+    case Datatype_Type::FUNCTION_POINTER: {
         // Check if function index is correct
         auto& slots = compiler.analysis_data->function_slots;
         i64 function_index = (*(i64*)memory) - 1;
@@ -223,10 +223,10 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         {
             Upp_Any any = *(Upp_Any*)memory;
             if (any.type.index >= (u32)compiler.analysis_data->type_system.types.size) {
-                result = constant_pool_result_make_error("Found any type with invalid type-handle index");
+                result = constant_pool_result_make_error("Found any value_type with invalid value_type-handle index");
                 return;
             }
-            result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
+            result = constant_pool_result_make_error("Value contains any-value_type, which is the same as a pointer");
             return;
         }
         else if (types_are_equal(signature, types.c_string))
@@ -274,7 +274,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
 {
     Constant_Pool& pool = compiler.analysis_data->constant_pool;
     signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
-    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
+    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of value_type?");
     auto& memory_info = signature->memory_info.value;
     assert(memory_info.size == bytes.size, "Array/data must fit into buffer!");
 
@@ -304,7 +304,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
     Upp_Constant constant;
     constant.constant_index = pool.constants.size;
     constant.type = signature;
-    constant.memory = (byte*)stack_allocator_allocate_size(&pool.constant_memory, bytes.size, memory_info.alignment);
+    constant.memory = (byte*)pool.constant_memory.allocate_raw(bytes.size, memory_info.alignment);
     memory_copy(constant.memory, bytes.data, bytes.size);
 
     // Add constant to table

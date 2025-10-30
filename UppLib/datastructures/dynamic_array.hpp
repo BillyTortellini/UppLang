@@ -220,6 +220,7 @@ T dynamic_array_last(Dynamic_Array<T>* array) {
 
 template<typename T>
 T dynamic_array_remove_last(Dynamic_Array<T>* array) {
+    assert(array->size > 0, "");
     T value = (*array)[array->size - 1];
     array->size -= 1;
     return value;

@@ -258,7 +258,7 @@ const char* opengl_utils_datatype_to_string(GLenum type) {
     case GL_SAMPLER_2D_SHADOW:
         return "GL_SAMPLER_2D_SHADOW";
     default:
-        return "Unrecognised type";
+        return "Unrecognised value_type";
     }
 }
 

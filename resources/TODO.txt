@@ -1,4 +1,272 @@
 
+
+TODO:
+ - Store if pattern-types are un-initialisable, 
+    e.g. Node(_) can never be used to instanciate Node even with all pattern_variables set.
+    In this case the type needs to come from the argument
+    bool contains_pattern;
+    bool contains_pattern_with_empty_parameters
+
+
+
+Polymorphic Rework:
+-------------------
+ X * Datatype-Expressions need to accept this/return this:
+    X Pointer
+    X Optional_Pointer
+    X Optional
+    X Slice_Type
+    X Const_Type
+    X Function_Signature
+    X Array_Type
+ X * Poly-Header analysis rewrite
+ * Instanciate rewrite
+
+
+So what I'm thinking:
+    Callable for all modtree-functions (funtion-pointers just point to callable)
+    for struct-content for struct-initializer
+    Poly-Function headers have initialize callables
+    I don't think I need callable-origin for anything, actually
+    Argument-Values struct for argument-values
+        contains origin...
+
+Idea: Compiler Analysis_Data with a Callable + Argument_Values as things
+    Datatype_Function is now Datatype_Function_Pointer, and has a callable on it's own...
+
+
+Done:
+ * Poly_Value access should return Polymorphic_Pattern
+    - Both Expression::Template_Type and Symbol_Lookup
+ * Add expression result type 
+ * Check all occurances of case Expression_Result_Type:
+
+TODO Future sub-tasks:
+ analyse_arguments_in_unknown_context, don't i always have at least some context e.g. call_info should be available
+ function-pointer equals...
+ poly_header_instanciate now return nullptr, make sure callers handle this correctly
+ I don't need to know all variables I define in poly_parameter, so only have boolean there
+ Think about anonymous structs/lambdas/bakes in header, what to do there?
+    --> Only instance-workloads and parent workload inherit the poly-values, so this isn't a problemo
+ Instanciating poly-header, matching info should contain return type and set it as either not-set or without expr.
+    --> Why? Because it makes everything easier...
+ Remove parameter reanalysis infos for syntex-editor, as this shouldn't be necessary anymore
+ Instead of Pattern_Variable_State::Unknown, just use unset and if base-analysis then we return unknown type, otherwise panic (if not base)
+ Create/Destroy poly header instances.....
+ Maybe all parameters in polymorphic-header could be pattern_variables
+    Pattern_Variable state with Variable_State::Parameter (Parameter index in non-poly + type)
+ Uniform handling of return-type, e.g. function signature could just store a list of types instead of with return-type/without
+ Check if struct pattern variable states are stored correctly (Ownership)
+ Instanciate needs to work differently if we have e.g. a: Node(_), as no parameters can be set...
+ Remove check_if_instance template allowed
+ Poly-Header cleanup
+ Rename to uniform names,
+    Symbol_Type Polymorphic_Value
+    Datatype_Template
+    Expression_Result_Type::Polymorphic_Pattern
+    Inferred_Parameter
+ Expression_Info_set_type does a weird thing with struct-templates, maybe remove?
+ Symbol-Access to parameters should be checked...
+ Symbol_Type::Pattern_Access also used for comptime-parameters?
+ Why can I lookup a parameter? Because we can have (a: Node(_), b: a.T)
+    Maybe this can be done better... 
+ The member access to poly-struct should be removed, e.g. a: Node(_), a.T, don't think it's worth the hassle?
+ Symbol_Access_Type::Parameter should probably not be needed anymore...
+ Base analysis could figure out the base-variable types by going through matching trees, otherwise use unknown...
+
+Idea notes:
+    Parameter_Matching_Info could probably have return type as last parameter, just like others...
+        Could simplify overloading code and instanciate code...
+    Syntax-Editor Debug-Values could use analyse-comptime value for values...
+        Would need some rewrite, as we would need to be able to parse + do semantic analysis on expression
+        Could be done with Semantic_Context instead of semantic analyser...
+        With bytecode even function calls (not accessing globals) would be possible for debugger evaluation...
+
+
+Poly_Value_Type is used for:
+ 1. Expression Template_Type, e.g. $T
+ 2. Symbol-Lookup for Template Symbols, e.g. T
+ 3. Comptime calculation, accessing the value
+
+
+
+
+	// STRUCT-Instance-Template (Custom code-path, may need to be improved in the future)
+	if (!poly_header->is_function)
+	{
+		bool create_struct_template = false;
+		auto workload = semantic_analyser.current_workload;
+
+		Array<bool> param_contains_inferred = array_create<bool>(param_matching_info->matched_parameters.size);
+		SCOPE_EXIT(array_destroy(&param_contains_inferred));
+
+		// Check if we have a _ in the call
+		bool requires_all_parameters_set = true;
+		if (param_matching_info->arguments != 0 && param_matching_info->arguments->uninitialized_tokens.size > 0) 
+		{
+			requires_all_parameters_set = false;
+			create_struct_template = true;
+
+			// For _ to be valid, at least one required parameter must be missing
+			bool all_matched = true;
+			for (int i = 0; i < param_matching_info->matched_parameters.size; i++) {
+				auto param = param_matching_info->matched_parameters[i];
+				if (!param.is_set && !param.requires_named_addressing) {
+					all_matched = false;
+					break;
+				}
+			}
+			if (all_matched) {
+				auto uninitialized = param_matching_info->arguments->uninitialized_tokens;
+				for (int i = 0; i < uninitialized.size; i++) {
+					log_semantic_error("Using _ even though all parameter of struct are set", uninitialized[i], Parser::Section::FIRST_TOKEN);
+					// Note: everything else can still succeed, this is just a user info that _ is unnecessary here
+				}
+			}
+		}
+
+		// Search all arguments for implicit expressions, e.g. $T, if found, then we analyse as struct template
+		for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
+		{
+			auto& param_info = param_matching_info->matched_parameters[i];
+			param_contains_inferred[i] = false;
+			if (param_info.expression == 0) {
+				continue;
+			}
+			bool contains_inferred = expression_search_for_unset_implicit_parameters(param_info.expression);
+			if (contains_inferred) {
+				create_struct_template = true;
+				param_contains_inferred[i] = true;
+			}
+		}
+
+		if (create_struct_template)
+		{
+			for (int i = 0; i < instance_values.size; i++) {
+				instance_values[i] = pattern_variable_state_make_unset(types.unknown_type);
+			}
+
+			// Currently, in struct_template every value is either comptime or a templated-type
+			for (int i = 0; i < param_matching_info->matched_parameters.size; i++)
+			{
+				auto& param_info = param_matching_info->matched_parameters[i];
+				const int value_index = i;
+
+				if (!param_info.is_set && requires_all_parameters_set) {
+					// Inferred parameters never need to be set
+					if (param_info.requires_named_addressing) {
+						continue;
+					}
+
+					// Note: ignore default values for now in struct templates
+					log_semantic_error("For struct-instance-template all parameters need to be set", error_report_node, error_report_section);
+					success = false;
+					break;
+				}
+
+				// Figure out context (Struct instance templates only support context for parameters without dependencies)
+				Expression_Context context = expression_context_make_unknown();
+				if (!param_info.requires_named_addressing && !param_contains_inferred[i]) {
+					auto& base_parameter = poly_header->parameters[i];
+					assert(base_parameter.is_comptime, "Must be the case for struct-parameter that isn't inferred");
+					if (base_parameter.depends_on.size == 0 && 
+						base_parameter.pattern_value_indices.size == 0 &&
+						!base_parameter.infos.type->contains_pattern) 
+					{
+						context = expression_context_make_specific_type(base_parameter.infos.type);
+					}
+				}
+
+				auto argument_type = analyse_parameter_if_not_already_done(&param_info, context);
+				if (argument_type->contains_pattern) {
+					instance_values[value_index] = pattern_variable_state_make_pattern(argument_type);
+				}
+				else if (datatype_is_unknown(argument_type)) {
+					semantic_analyser_set_error_flag(true);
+					success = false;
+					continue;
+				}
+
+				// Calculate constant value
+				auto constant_result = expression_calculate_comptime_value(param_info.expression, "Struct arguments must be comptime");
+				if (!constant_result.available) {
+					success = false;
+					continue;
+				}
+				auto& constant = constant_result.value;
+				if (types_are_equal(datatype_get_non_const_type(constant.type), types.type_handle))
+				{
+					Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(constant);
+					if (handle.index >= (u32)compiler.analysis_data->type_system.types.size) {
+						success = false;
+						log_semantic_error("Invalid constant type handle index", upcast(param_info.expression));
+						continue;
+					}
+
+					Datatype* constant_type = compiler.analysis_data->type_system.types[handle.index];
+					if (constant_type->contains_pattern) {
+						instance_values[value_index] = pattern_variable_state_make_pattern(constant_type);
+						continue;
+					}
+				}
+
+				instance_values[value_index] = pattern_variable_state_make_set(constant_result.value);
+			}
+
+			if (!success) {
+				parameter_matching_analyse_in_unknown_context(param_matching_info);
+				return instanciation_result_make_error();
+			}
+
+			auto poly_struct = poly_header->origin.struct_workload;
+			auto result_template_type = type_system_make_struct_instance_template(poly_struct, instance_values);
+			instance_values.data = 0; // Since we transfer ownership we should signal that we don't want to delete this
+
+			Instanciation_Result result;
+			result.type = Instanciation_Result_Type::PATTERN_STRUCT;
+			result.options.pattern_struct = result_template_type;
+			return result;
+		}
+	}
+
+
+
+
+		// // Add all parameters without dependencies as runnable
+		// for (int i = 0; i < dependency_counts.size; i++) {
+		// 	if (dependency_counts[i] == 0) {
+		// 		dynamic_array_push_back(&analysis_order, i);
+		// 	}
+		// }
+
+		// // Generate parameter order
+		// int runnable_start = 0;
+		// int runnable_end = analysis_order.size;
+		// int runnable_count = runnable_end - runnable_start;
+		// while (runnable_count != 0)
+		// {
+		// 	// Add parameters which can run after this workload
+		// 	for (int i = runnable_start; i < runnable_end; i++) 
+		// 	{
+		// 		auto& run = params[analysis_order[i]];
+		// 		for (int j = 0; j < run.dependees.size; j++) 
+		// 		{
+		// 			auto& dependee_index = run.dependees[j];
+		// 			int& dependency_count = dependency_counts[dependee_index];
+		// 			dependency_count -= 1;
+		// 			assert(dependency_count >= 0, "Cannot fall below 0");
+		// 			if (dependency_count == 0) {
+		// 				dynamic_array_push_back(&analysis_order, dependee_index);
+		// 			}
+		// 		}
+		// 	}
+
+		// 	runnable_start = runnable_end;
+		// 	runnable_end = header.parameter_analysis_order.size;
+		// 	runnable_count = runnable_end - runnable_start;
+		// }
+
+
 VIM Plugin-research:
 --------------------
 sneak, seek: 2-character search, same thing, but one is more advanced with highlighting and backwards
@@ -54,6 +322,26 @@ Vocabulary:
 Notes and Improvements (Reading through all code again and thinking about the design problems:)
 -----------------------------------------------------------------------------------------------
 
+Make use of Dot-Call -> syntax instead of .
+    Expression_Result_Type::Dot_Call not needed
+    Argument-Infos with dynamic array not needed
+Operator_Context:
+    Instead of cast-options, operator context could handle this...
+Get_Overload:
+    also some special id, e.g. __return_type could also be used to set return type?
+    #get_overload could also work with just parameter names, e.g.
+        #get_overload add(a, b, c)
+Const inferred definitions:
+    Adding const in front of a definition makes it const...
+        const x, y, z := 15
+    This is similar to having mut/mutable in parameter definitions
+        foo :: (mut a: int)
+    x: const int = 15
+    x: int = 15
+I don't really like the name polymorphic,
+    I kinda like parameterized generic more than polymorphic.
+    Generic_Struct
+    Generic_Function
 Symbol Alias handling:
     import X as B
     B :: X // Kinda the same thing, no?
@@ -108,16 +396,17 @@ Semantic_Analyser:
             makes this easier
 IR-Generator:
     IR-Data Access with destination is confusing for me
+Casts:
+    After casts other casts should not be valid...
+    Can we replace * and & operations with casts, as they aren't needed as much anymore?
+    Do we even need cast_pointer with the previous changes? Or is cast to address usually enough?
+Operator-Context:
+    If we add more parameters instead of getting everything out of the passed function,
+        like add_dot_call(name, type, function)
+        add_cast(from, to, function)
+        dependencies would be on the types, not on something else.
+        This could also use pattern-matching for polymorphism
 
-
-How to implement the Node(X = $X, _) thingy:
-    On Call-Expression, when generating overloads, check if _ is given, if yes + polymorphic_struct, don't error
-
-
-TODO:
- 1. Rewrite with the parameter dependencies --> DONE
- 2. Run testcases --> DONE
- 3. Rename parameter matching to parameter values
 
 
  Understand polymorphism
@@ -141,14 +430,6 @@ Questions:
         
 
 
-Difference between Struct_Poly_Template and Polymorphic_Struct expression info, one is value, and the other is type.
-We should only create struct_poly_template in instanciation....
-So what I want is:
-    foo :: (a: Test($X, $Y, _))
-    foo :: () -> Test(_)
-
-1. polymorphic struct symbol lookup without function-call should be invalidated
-    --> This means I remove that weird function thingy...
 
 
 

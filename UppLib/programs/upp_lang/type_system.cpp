@@ -3,20 +3,11 @@
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
 #include "editor_analysis_info.hpp"
+#include "../../utility/rich_text.hpp"
 
 #include "syntax_colors.hpp"
 
 using AST::Structure_Type;
-
-Function_Parameter function_parameter_make_empty() {
-    Function_Parameter result;
-    result.name = compiler.identifier_pool.predefined_ids.empty_string;
-    result.type = compiler.analysis_data->type_system.predefined_types.unknown_type;
-    result.default_value_exists = false;
-    result.value_expr = nullptr;
-    result.value_pass = nullptr;
-    return result;
-}
 
 void struct_content_destroy(Struct_Content* content)
 {
@@ -31,14 +22,7 @@ void struct_content_destroy(Struct_Content* content)
 void type_base_destroy(Datatype* base) 
 {
     // Constants types are duplicates of the non-constant versions, and only keep references to arrays/data
-    if (base->type == Datatype_Type::FUNCTION) {
-        auto fn = downcast<Datatype_Function>(base);
-        auto& params = fn->parameters;
-        if (params.data != 0 && params.capacity != 0) {
-            dynamic_array_destroy(&params);
-        }
-    }
-    else if (base->type == Datatype_Type::STRUCT) {
+    if (base->type == Datatype_Type::STRUCT) {
         auto st = downcast<Datatype_Struct>(base);
         struct_content_destroy(&st->content);
         dynamic_array_destroy(&st->types_waiting_for_size_finish);
@@ -46,10 +30,6 @@ void type_base_destroy(Datatype* base)
     else if (base->type == Datatype_Type::ENUM) {
         auto enum_type = downcast<Datatype_Enum>(base);
         dynamic_array_destroy(&enum_type->members);
-    }
-    else if (base->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
-        auto instance = downcast<Datatype_Struct_Instance_Template>(base);
-        array_destroy(&instance->instance_values);
     }
 }
 
@@ -146,7 +126,7 @@ void datatype_append_value_to_string(
 
     switch (type->type)
     {
-    case Datatype_Type::FUNCTION: {
+    case Datatype_Type::FUNCTION_POINTER: {
         void* ptr = nullptr;
         if (!local_memory.read_single_value(value_ptr, &ptr)) {
             string_append_formated(string, "MEMORY_NOT_READABLE");
@@ -164,9 +144,13 @@ void datatype_append_value_to_string(
         string_append(string, "UNKNOWN_TYPE");
         break;
     }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: {
+    case Datatype_Type::INVALID_TYPE: {
+        string_append(string, "INVALID_TYPE");
+        break;
+    }
+    case Datatype_Type::STRUCT_PATTERN: {
         // How do we ever print a value of this?
-        string_append(string, "STRUCT_INSTANCE_TEMPLATE?");
+        string_append(string, "STRUCT_PATTERN?");
         break;
     }
     case Datatype_Type::CONSTANT: {
@@ -174,8 +158,8 @@ void datatype_append_value_to_string(
         datatype_append_value_to_string(constant->element_type, type_system, value_ptr, string, format, indentation, local_memory, pointer_memory);
         break;
     }
-    case Datatype_Type::TEMPLATE_TYPE: {
-        string_append_formated(string, "TEMPLATE_TYPE?");
+    case Datatype_Type::PATTERN_VARIABLE: {
+        string_append_formated(string, "PATTERN_VARIABLE?");
         break;
     }
     case Datatype_Type::ARRAY:
@@ -582,14 +566,21 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 
     switch (signature->type)
     {
-    case Datatype_Type::TEMPLATE_TYPE: {
-        Datatype_Template* polymorphic = downcast<Datatype_Template>(signature);
-        assert(polymorphic->symbol != 0, "");
+    case Datatype_Type::PATTERN_VARIABLE: 
+	{
+        Datatype_Pattern_Variable* polymorphic = downcast<Datatype_Pattern_Variable>(signature);
+		if (polymorphic->variable == nullptr) {
+            Rich_Text::append_formated(text, "$?");
+			break;
+		}
+
+		auto symbol = polymorphic->variable->symbol;
+        assert(symbol != 0, "");
         if (!polymorphic->is_reference) {
             Rich_Text::append_formated(text, "$");
         }
         Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-        Rich_Text::append_formated(text, "%s", polymorphic->symbol->id->characters);
+        Rich_Text::append_formated(text, "%s", symbol->id->characters);
         break;
     }
     case Datatype_Type::CONSTANT: {
@@ -618,6 +609,9 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
     }
     case Datatype_Type::UNKNOWN_TYPE:
         Rich_Text::append_formated(text, "Unknown-Type");
+        break;
+    case Datatype_Type::INVALID_TYPE:
+        Rich_Text::append_formated(text, "Invalid-Type");
         break;
     case Datatype_Type::POINTER: {
         auto pointer_type = downcast<Datatype_Pointer>(signature);
@@ -702,25 +696,25 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         Rich_Text::append(text, subtype->subtype_name->characters);
         break;
     }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE: 
+    case Datatype_Type::STRUCT_PATTERN: 
     {
-        auto instance_template = downcast<Datatype_Struct_Instance_Template>(signature);
-        auto structure = instance_template->struct_base->body_workload->struct_type;
+        auto pattern_struct = downcast<Datatype_Struct_Pattern>(signature);
+		auto poly_header = pattern_struct->instance->header;
 		Rich_Text::set_text_color(text, Syntax_Color::TYPE);
-        Rich_Text::append(text, *structure->content.name);
+        Rich_Text::append(text, *poly_header->name);
 		Rich_Text::set_text_color(text);
         if (format.append_struct_poly_parameter_values) 
 		{
 			Rich_Text::append(text, "(");
-			auto& instance_values = instance_template->instance_values;
-			for (int i = 0; i < instance_values.size; i++)
+			auto variable_states = pattern_struct->instance->variable_states;
+			for (int i = 0; i < poly_header->pattern_variables.size; i++)
 			{
-				auto& poly_value = instance_values[i];
-				switch (poly_value.type)
+				auto& variable_state = variable_states[i];
+				switch (variable_state.type)
 				{
-				case Poly_Value_Type::SET: 
+				case Pattern_Variable_State_Type::SET: 
 				{
-					auto& constant = poly_value.options.value;
+					auto& constant = variable_state.options.value;
 					auto string = Rich_Text::start_line_manipulation(text);
 					datatype_append_value_to_string(
 						constant.type, type_system, constant.memory, string, datatype_value_format_single_line(),
@@ -728,17 +722,17 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 					Rich_Text::stop_line_manipulation(text);
 					break;
 				}
-				case Poly_Value_Type::UNSET: {
-					datatype_append_to_rich_text(poly_value.options.unset_type, type_system, text, format);
+				case Pattern_Variable_State_Type::UNSET: {
+					Rich_Text::append_formated(text, "_");
 					break;
 				}
-				case Poly_Value_Type::TEMPLATED_TYPE: {
-					datatype_append_to_rich_text(poly_value.options.template_type, type_system, text, format);
+				case Pattern_Variable_State_Type::PATTERN: {
+					datatype_append_to_rich_text(variable_state.options.pattern_type, type_system, text, format);
 					break;
 				}
 				default: panic("");
 				}
-				if (i != instance_values.size - 1) {
+				if (i != poly_header->pattern_variables.size - 1) {
 					Rich_Text::append_formated(text, ", ");
 				}
 			}
@@ -758,24 +752,29 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 
 		// Append polymorphic instance values
 		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-		if (struct_type->workload != 0 && format.append_struct_poly_parameter_values) {
-			if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+		if (struct_type->workload != 0 && format.append_struct_poly_parameter_values) 
+		{
+			if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) 
+			{
 				Rich_Text::append_formated(text, "(");
 				SCOPE_EXIT(Rich_Text::append_formated(text, ")"));
-				auto& instance = struct_type->workload->polymorphic.instance;
-				auto instance_values = instance.parent->poly_header->instances[instance.instance_index].instance_values;
-				for (int i = 0; i < instance_values.size; i++)
-				{
-					auto& poly_value = instance_values[i];
-					assert(poly_value.type == Poly_Value_Type::SET, "True for instances");
-					auto& constant = poly_value.options.value;
 
+				auto& instance = struct_type->workload->polymorphic.instance.poly_instance;
+				auto poly_header = instance->header;
+				auto variable_states = instance->variable_states;
+				for (int i = 0; i < poly_header->pattern_variables.size; i++)
+				{
+					auto& variable_state = variable_states[i];
+					assert(variable_state.type == Pattern_Variable_State_Type::SET, "True for instances");
+
+					auto& constant = variable_state.options.value;
 					auto string = Rich_Text::start_line_manipulation(text);
 					datatype_append_value_to_string(
 						constant.type, type_system, constant.memory, string, datatype_value_format_single_line(),
 						0, Memory_Source(nullptr), Memory_Source(nullptr));
 					Rich_Text::stop_line_manipulation(text);
-					if (i != instance_values.size - 1) {
+
+					if (i != poly_header->pattern_variables.size - 1) {
 						Rich_Text::append_formated(text, ", ");
 					}
 				}
@@ -783,48 +782,13 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 		}
 		break;
 	}
-	case Datatype_Type::FUNCTION:
+	case Datatype_Type::FUNCTION_POINTER:
 	{
-		auto function_type = downcast<Datatype_Function>(signature);
-		auto& parameters = function_type->parameters;
-		if (function_type->is_optional) {
+		auto function_pointer = downcast<Datatype_Function_Pointer>(signature);
+		if (function_pointer->is_optional) {
 			Rich_Text::append_character(text, '?');
 		}
-		Rich_Text::append_formated(text, "(");
-
-		int highlight_index = format.highlight_parameter_index;
-		format.highlight_parameter_index = 0;
-		for (int i = 0; i < function_type->parameters.size; i++)
-		{
-			auto& param = function_type->parameters[i];
-			auto param_type = param.type;
-			if (format.remove_const_from_function_params) {
-				param_type = datatype_get_non_const_type(param_type);
-			}
-			Rich_Text::set_text_color(text, Syntax_Color::VALUE_DEFINITION);
-			if (highlight_index == i) {
-				Rich_Text::set_bg(text, format.highlight_color);
-			}
-			Rich_Text::append_formated(text, "%s: ", param.name->characters);
-			datatype_append_to_rich_text(param_type, type_system, text, format);
-			Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-			if (highlight_index == i) {
-				Rich_Text::stop_bg(text);
-			}
-
-			if (param.default_value_exists) {
-				Rich_Text::append_formated(text, " = ...");
-			}
-			if (i != parameters.size - 1) {
-				Rich_Text::append_formated(text, ", ");
-			}
-		}
-		Rich_Text::append_formated(text, ")");
-		if (function_type->return_type.available) {
-			Rich_Text::append(text, " -> ");
-			datatype_append_to_rich_text(function_type->return_type.value, type_system, text, format);
-			Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-		}
+		call_signature_append_to_rich_text(function_pointer->signature, text, &format, type_system);
 		break;
 	}
 	default: panic("Fugg");
@@ -860,7 +824,7 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
 	case Type_Deduplication_Type::ARRAY: {
 		return a.options.array_type.element_type == b.options.array_type.element_type &&
 			a.options.array_type.element_count == b.options.array_type.element_count &&
-			a.options.array_type.polymorphic_count_variable == b.options.array_type.polymorphic_count_variable &&
+			a.options.array_type.count_variable_type == b.options.array_type.count_variable_type &&
 			a.options.array_type.size_known == b.options.array_type.size_known;
 	}
 	case Type_Deduplication_Type::CONSTANT: {
@@ -882,33 +846,12 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
 		return a.options.pointer.child_type == b.options.pointer.child_type &&
 			a.options.pointer.is_optional == b.options.pointer.is_optional;
 	}
-	case Type_Deduplication_Type::FUNCTION:
+	case Type_Deduplication_Type::FUNCTION_POINTER:
 	{
 		// Check return types
-		auto& fn_a = a.options.function;
-		auto& fn_b = b.options.function;
-		if (fn_a.return_type != fn_b.return_type) { // Note: In Type_Deduplication return type may be null
-			return false;
-		}
-
-		// Check parameters
-		if (fn_a.parameters.size != fn_b.parameters.size) {
-			return false;
-		}
-		for (int i = 0; i < fn_a.parameters.size; i++)
-		{
-			auto& p_a = fn_a.parameters[i];
-			auto& p_b = fn_b.parameters[i];
-			if (p_a.type != p_b.type || p_a.name != p_b.name || p_a.default_value_exists != p_b.default_value_exists) {
-				return false;
-			}
-			if (p_a.default_value_exists) {
-				if (p_a.value_expr != p_b.value_expr || p_a.value_pass != p_b.value_pass) {
-					return false;
-				}
-			}
-		}
-		return true;
+		auto& pa = a.options.function_pointer;
+		auto& pb = b.options.function_pointer;
+		return pa.is_optional == pb.is_optional && pa.signature == pb.signature;
 	}
 	default: panic("");
 	}
@@ -952,19 +895,14 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 		auto& infos = dedup->options.array_type;
 		hash = hash_combine(hash, hash_pointer(infos.element_type));
 		hash = hash_bool(hash, infos.size_known);
-		hash = hash_combine(hash, hash_pointer(infos.polymorphic_count_variable));
+		hash = hash_combine(hash, hash_pointer(infos.count_variable_type));
 		hash = hash_combine(hash, hash_i32(&infos.element_count));
 		break;
 	}
-	case Type_Deduplication_Type::FUNCTION: {
-		auto& infos = dedup->options.function;
-		hash = hash_combine(hash, hash_pointer(infos.return_type));
-		for (int i = 0; i < infos.parameters.size; i++) {
-			auto& param = infos.parameters[i];
-			hash = hash_combine(hash, hash_pointer(param.type));
-			hash = hash_combine(hash, hash_pointer(param.name));
-			hash = hash_bool(hash, param.default_value_exists);
-		}
+	case Type_Deduplication_Type::FUNCTION_POINTER: {
+		auto& pointer = dedup->options.function_pointer;
+		hash = hash_combine(hash, hash_pointer(pointer.signature));
+		hash = hash_bool(hash, pointer.is_optional);
 		break;
 	}
 	default: panic("");
@@ -999,7 +937,7 @@ void internal_type_info_destroy(Internal_Type_Information* info)
 		}
 		break;
 	}
-	case Datatype_Type::FUNCTION:
+	case Datatype_Type::FUNCTION_POINTER:
 		if (info->options.function.parameters.data != 0) {
 			delete[]info->options.function.parameters.data;
 			info->options.function.parameters.data = 0;
@@ -1208,7 +1146,8 @@ Datatype datatype_make_simple_base(Datatype_Type type, int size, int alignment) 
 	result.mods.pointer_level = 0;
 	result.mods.constant_flags = 0;
 	result.type = type;
-	result.contains_template = false;
+	result.contains_pattern = false;
+	result.contains_partial_pattern = false;
 	result.memory_info_workload = 0;
 	result.memory_info.available = true;
 	result.memory_info.value.size = size;
@@ -1233,24 +1172,21 @@ Datatype_Primitive* type_system_make_primitive(Primitive_Type type, Primitive_Cl
 	return result;
 }
 
-Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_access_index, int defined_in_parameter_index)
+Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variable* pattern_variable)
 {
-	Datatype_Template* result = new Datatype_Template;
-	result->base = datatype_make_simple_base(Datatype_Type::TEMPLATE_TYPE, 1, 1);
-	result->base.contains_template = true;
-	assert(symbol->type == Symbol_Type::POLYMORPHIC_VALUE, "");
+	Datatype_Pattern_Variable* result = new Datatype_Pattern_Variable;
+	result->base = datatype_make_simple_base(Datatype_Type::PATTERN_VARIABLE, 1, 1);
+	result->base.contains_pattern = true;
 
-	result->symbol = symbol;
+	result->variable = pattern_variable;
 	result->is_reference = false;
 	result->mirrored_type = 0;
-	result->defined_in_parameter_index = defined_in_parameter_index;
-	result->value_access_index = value_access_index;
 
 	auto internal_info = type_system_register_type(upcast(result));
 	internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
 
 	// Create mirror type exactly the same way as normal type, but set mirror flag
-	Datatype_Template* mirror_type = new Datatype_Template;
+	Datatype_Pattern_Variable* mirror_type = new Datatype_Pattern_Variable;
 	*mirror_type = *result;
 	mirror_type->mirrored_type = result;
 	mirror_type->is_reference = true;
@@ -1262,18 +1198,15 @@ Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_acce
 	return result;
 }
 
-Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(
-	Workload_Structure_Polymorphic* base, Array<Poly_Value> instance_values)
+Datatype_Struct_Pattern* type_system_make_struct_pattern(Poly_Instance* instance, bool is_partial_pattern)
 {
-	Datatype_Struct_Instance_Template* result = new Datatype_Struct_Instance_Template;
-	result->base = datatype_make_simple_base(Datatype_Type::STRUCT_INSTANCE_TEMPLATE, 1, 1);
-	result->base.contains_template = true;
-
-	result->instance_values = instance_values;
-	result->struct_base = base;
+	Datatype_Struct_Pattern* result = new Datatype_Struct_Pattern;
+	result->base = datatype_make_simple_base(Datatype_Type::STRUCT_PATTERN, 1, 1);
+	result->base.contains_pattern = true;
+	result->base.contains_partial_pattern = is_partial_pattern; // e.g. Node(_)
+	result->instance = instance;
 	auto internal_info = type_system_register_type(upcast(result));
 	internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
-
 	return result;
 }
 
@@ -1299,7 +1232,8 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
 	Datatype_Pointer* result = new Datatype_Pointer;
 	result->base = datatype_make_simple_base(Datatype_Type::POINTER, 8, 8);
 	result->base.memory_info.value.contains_reference = true;
-	result->base.contains_template = child_type->contains_template;
+	result->base.contains_pattern = child_type->contains_pattern;
+	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
 	result->element_type = child_type;
 	result->is_optional = is_optional;
 
@@ -1312,7 +1246,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
 	return result;
 }
 
-Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template* polymorphic_count_variable)
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 	assert(!(count_known && element_count <= 0), "Hey");
@@ -1328,7 +1262,7 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 	dedup.type = Type_Deduplication_Type::ARRAY;
 	dedup.options.array_type.element_count = element_count;
 	dedup.options.array_type.element_type = element_type;
-	dedup.options.array_type.polymorphic_count_variable = polymorphic_count_variable;
+	dedup.options.array_type.count_variable_type = count_variable_type;
 	dedup.options.array_type.size_known = count_known;
 
 	// Check if type was already created
@@ -1347,13 +1281,11 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 
 	Datatype_Array* result = new Datatype_Array;
 	result->base = datatype_make_simple_base(Datatype_Type::ARRAY, 1, 1);
-	result->base.contains_template = element_type->contains_template;
-	if (polymorphic_count_variable) {
-		result->base.contains_template = true;
-	}
+	result->base.contains_pattern = element_type->contains_pattern || count_variable_type != nullptr;
+	result->base.contains_partial_pattern = element_type->contains_partial_pattern;
 
 	result->element_type = element_type;
-	result->polymorphic_count_variable = polymorphic_count_variable;
+	result->count_variable_type = count_variable_type;
 	result->count_known = count_known;
 	if (!count_known)
 	{
@@ -1419,7 +1351,8 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
 	result->base = datatype_make_simple_base(Datatype_Type::SLICE, 16, 8);
 	result->base.memory_info.value.contains_reference = true;
 	result->base.memory_info.value.contains_padding_bytes = false;
-	result->base.contains_template = element_type->contains_template;
+	result->base.contains_pattern = element_type->contains_pattern;
+	result->base.contains_partial_pattern = element_type->contains_partial_pattern;
 
 	result->element_type = element_type;
 	result->data_member = struct_member_make(upcast(type_system_make_pointer(element_type, true)), ids.data, nullptr, 0, nullptr);
@@ -1453,7 +1386,8 @@ Datatype* type_system_make_constant(Datatype* datatype)
 	Datatype_Constant* result = new Datatype_Constant;
 	result->element_type = datatype;
 	result->base = datatype_make_simple_base(Datatype_Type::CONSTANT, 1, 1);
-	result->base.contains_template = datatype->contains_template;
+	result->base.contains_pattern = datatype->contains_pattern;
+	result->base.contains_partial_pattern = datatype->contains_partial_pattern;
 
 	if (datatype->memory_info.available) {
 		result->base.memory_info = datatype->memory_info;
@@ -1494,7 +1428,8 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
 	Datatype_Optional* result = new Datatype_Optional;
 	result->child_type = child_type;
 	result->base = datatype_make_simple_base(Datatype_Type::OPTIONAL_TYPE, 1, 1);
-	result->base.contains_template = child_type->contains_template;
+	result->base.contains_pattern = child_type->contains_pattern;
+	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
 
 	result->value_member = struct_member_make(child_type, ids.value, nullptr, 0, nullptr);
 	result->is_available_member = struct_member_make(upcast(type_system.predefined_types.bool_type), ids.is_available, nullptr, 0, nullptr);
@@ -1545,14 +1480,15 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
 		is_const = true;
 		base_type = downcast<Datatype_Constant>(base_type)->element_type;
 	}
-	assert(base_type->type == Datatype_Type::STRUCT || base_type->type == Datatype_Type::SUBTYPE, "Base type must be struct!");
+	assert(base_type->type == Datatype_Type::STRUCT || base_type->type == Datatype_Type::SUBTYPE, "Base value_type must be struct!");
 
 	Datatype_Subtype* result = new Datatype_Subtype;
 	result->base_type = base_type;
 	result->subtype_name = subtype_name;
 	result->subtype_index = subtype_index;
 	result->base = datatype_make_simple_base(Datatype_Type::SUBTYPE, 1, 1);
-	result->base.contains_template = base_type->contains_template;
+	result->base.contains_pattern = base_type->contains_pattern;
+	result->base.contains_partial_pattern = base_type->contains_partial_pattern;
 
 	if (base_type->memory_info.available)
 	{
@@ -1596,43 +1532,51 @@ Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods)
 	return base_type;
 }
 
-Datatype_Function* make_function_internal_no_dedup(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type, bool is_optional)
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional)
 {
-	Datatype_Function* result = new Datatype_Function;
-	result->base = datatype_make_simple_base(Datatype_Type::FUNCTION, 8, 8);
-	result->base.memory_info.value.contains_function_pointer = true;
-	result->parameters = parameters;
-	result->is_optional = is_optional;
-	result->non_optional_type = result;
-	if (return_type != nullptr) {
-		result->return_type = optional_make_success(return_type);
-	}
-	else {
-		result->return_type = optional_make_failure<Datatype*>();
-	}
-	for (int i = 0; i < parameters.size; i++) {
-		auto& param = parameters[i];
-		if (param.type->contains_template) {
-			result->base.contains_template = true;
+	auto& type_system = compiler.analysis_data->type_system;
+
+	Type_Deduplication dedup;
+	dedup.type = Type_Deduplication_Type::FUNCTION_POINTER;
+	dedup.options.function_pointer.signature = signature;
+	dedup.options.function_pointer.is_optional = is_optional;
+
+	// Check if type was already created
+	{
+		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
+		if (type_opt != nullptr) {
+			Datatype* type = *type_opt;
+			assert(type->type == Datatype_Type::FUNCTION_POINTER, "");
+			return downcast<Datatype_Function_Pointer>(type);
 		}
 	}
-	if (result->return_type.available && result->return_type.value->contains_template) {
-		result->base.contains_template = true;
+
+	auto& parameters = signature->parameters;
+
+	Datatype_Function_Pointer* result = new Datatype_Function_Pointer;
+	result->base = datatype_make_simple_base(Datatype_Type::FUNCTION_POINTER, 8, 8);
+	result->base.memory_info.value.contains_function_pointer = true;
+	result->signature = signature;
+	result->is_optional = is_optional;
+	for (int i = 0; i < parameters.size; i++) {
+		auto& param = parameters[i];
+		assert(param.comptime_variable_index == -1, "Function pointers should only have normal arguments");
+		if (param.datatype->contains_pattern) {
+			result->base.contains_pattern = true;
+		}
+		if (param.datatype->contains_partial_pattern) {
+			result->base.contains_partial_pattern = true;
+		}
 	}
 
 	auto& internal_info = type_system_register_type(upcast(result))->options.function;
 	{
-		internal_info.has_return_type = return_type != nullptr;
-		internal_info.return_type.index = -1;
-		if (internal_info.has_return_type) {
-			internal_info.return_type.index = return_type->type_handle.index;
-		}
-
 		internal_info.parameters.size = parameters.size;
+		internal_info.has_return_type = signature->return_type_index != -1;
 		if (parameters.size > 0) {
 			internal_info.parameters.data = new Upp_Type_Handle[parameters.size];
 			for (int i = 0; i < parameters.size; i++) {
-				internal_info.parameters.data[i] = parameters[i].type->type_handle;
+				internal_info.parameters.data[i] = parameters[i].datatype->type_handle;
 			}
 		}
 		else {
@@ -1640,74 +1584,6 @@ Datatype_Function* make_function_internal_no_dedup(Dynamic_Array<Function_Parame
 		}
 	}
 
-	return result;
-}
-
-Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type)
-{
-	auto& type_system = compiler.analysis_data->type_system;
-
-	Type_Deduplication dedup;
-	dedup.type = Type_Deduplication_Type::FUNCTION;
-	dedup.options.function.parameters = parameters;
-	dedup.options.function.return_type = return_type;
-
-	// Check if type was already created
-	{
-		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
-		if (type_opt != nullptr) {
-			Datatype* type = *type_opt;
-			assert(type->type == Datatype_Type::FUNCTION, "");
-			dynamic_array_destroy(&parameters);
-			return downcast<Datatype_Function>(type);
-		}
-	}
-
-	Datatype_Function* result = make_function_internal_no_dedup(parameters, return_type, false);
-	hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
-	return result;
-}
-
-Datatype_Function* type_system_make_function(std::initializer_list<Function_Parameter> parameter_types, Datatype* return_type)
-{
-	Dynamic_Array<Function_Parameter> params = dynamic_array_create<Function_Parameter>((int)parameter_types.size());
-	for (auto& param : parameter_types) {
-		dynamic_array_push_back(&params, param);
-	}
-	return type_system_make_function(params, return_type);
-}
-
-Datatype_Function* type_system_make_function_optional(Datatype_Function* function)
-{
-	auto& type_system = compiler.analysis_data->type_system;
-
-	if (function->is_optional) return function;
-
-	Type_Deduplication dedup;
-	dedup.type = Type_Deduplication_Type::OPTIONAL;
-	dedup.options.optional_child_type = upcast(function);
-
-	// Check if type was already created
-	{
-		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
-		if (type_opt != nullptr) {
-			Datatype* type = *type_opt;
-			assert(type->type == Datatype_Type::FUNCTION, "");
-			return downcast<Datatype_Function>(type);
-		}
-	}
-
-	Dynamic_Array<Function_Parameter> params = dynamic_array_create<Function_Parameter>(function->parameters.size);
-	for (int i = 0; i < function->parameters.size; i++) {
-		dynamic_array_push_back(&params, function->parameters[i]);
-	}
-	Datatype* return_type = 0;
-	if (function->return_type.available) {
-		return_type = function->return_type.value;
-	}
-
-	Datatype_Function* result = make_function_internal_no_dedup(params, return_type, true);
-	result->non_optional_type = function;
 	hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
 	return result;
 }
@@ -2165,6 +2041,7 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
 }
 
 
+
 template<typename T>
 void test_type_similarity(Datatype* signature) {
 	assert(signature->memory_info.value.size == sizeof(T) && signature->memory_info.value.alignment == alignof(T), "");
@@ -2203,10 +2080,14 @@ void type_system_add_predefined_types(Type_System* system)
 		types->unknown_type = new Datatype;
 		*types->unknown_type = datatype_make_simple_base(Datatype_Type::UNKNOWN_TYPE, 1, 1);
 		type_system_register_type(types->unknown_type);
+
+		types->invalid_type = new Datatype;
+		*types->invalid_type = datatype_make_simple_base(Datatype_Type::INVALID_TYPE, 1, 1);
+		type_system_register_type(types->invalid_type);
 	}
 
 	{
-		types->empty_function = type_system_make_function({}, nullptr);
+		types->empty_pattern_variable = upcast(type_system_make_pattern_variable_type(nullptr));
 	}
 
 	{
@@ -2234,6 +2115,7 @@ void type_system_add_predefined_types(Type_System* system)
 	}
 
 	using AST::Structure_Type;
+
 	auto make_id = [&](const char* name) -> String* { return identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name)); };
 	auto add_member_cstr = [&](Struct_Content* content, const char* member_name, Datatype* member_type) {
 		String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(member_name));
@@ -2250,13 +2132,6 @@ void type_system_add_predefined_types(Type_System* system)
 			add_member_cstr(&result->content, member_name, type);
 			type_system_finish_struct(result);
 			return result;
-		};
-	auto make_param = [&](Datatype* signature, const char* name, bool default_value_exists = false) -> Function_Parameter {
-		auto parameter = function_parameter_make_empty();
-		parameter.name = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name));
-		parameter.type = signature;
-		parameter.default_value_exists = default_value_exists;
-		return parameter;
 		};
 
 	// Empty structure
@@ -2287,7 +2162,7 @@ void type_system_add_predefined_types(Type_System* system)
 	{
 		types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
 		add_member_cstr(&types->any_type->content, "data", upcast(types->address));
-		add_member_cstr(&types->any_type->content, "type", types->type_handle);
+		add_member_cstr(&types->any_type->content, "value_type", types->type_handle);
 		type_system_finish_struct(types->any_type);
 		test_type_similarity<Upp_Any>(upcast(types->any_type));
 	}
@@ -2297,30 +2172,26 @@ void type_system_add_predefined_types(Type_System* system)
 		types->allocator = type_system_make_struct_empty(Structure_Type::STRUCT, ids.allocator, 0);
 		Datatype* allocator_pointer = upcast(type_system_make_pointer(upcast(types->allocator), false));
 
-		// Note: 
-		// The type_system_make_constant calls were added, as parameters in Upp are 
-		// without further declaration always constant, so I think this makes more sense
-		types->allocate_function = type_system_make_function({
-				make_param(type_system_make_constant(allocator_pointer),       "allocator"),
-				make_param(type_system_make_constant(upcast(types->usize)),    "size"),
-				make_param(type_system_make_constant(upcast(types->u32_type)), "alignment")
-			},
-			upcast(types->address)
-		);
-		types->free_function = type_system_make_function({
-				make_param(type_system_make_constant(allocator_pointer),      "allocator"),
-				make_param(type_system_make_constant(upcast(types->address)), "pointer"),
-				make_param(type_system_make_constant(upcast(types->usize)),   "size")
-			}
-		);
-		types->resize_function = type_system_make_function({
-				make_param(type_system_make_constant(allocator_pointer),      "allocator"),
-				make_param(type_system_make_constant(upcast(types->address)), "pointer"),
-				make_param(type_system_make_constant(upcast(types->usize)),   "previous_size"),
-				make_param(type_system_make_constant(upcast(types->usize)),   "new_size"),
-			},
-			upcast(types->bool_type)
-			);
+		Call_Signature* signature = call_signature_create_empty();
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("alignment"), upcast(types->u32_type), true, false, false);
+		call_signature_add_return_type(signature, upcast(types->address));
+		types->allocate_function = type_system_make_function_pointer(call_signature_register(signature), false);
+
+		signature = call_signature_create_empty();
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
+		types->free_function = type_system_make_function_pointer(call_signature_register(signature), false);
+
+		signature = call_signature_create_empty();
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("old_size"),  upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("new_size"),  upcast(types->usize), true, false, false);
+		call_signature_add_return_type(signature, upcast(types->bool_type));
+		types->resize_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
 		add_member_cstr(&types->allocator->content, "allocate_fn", upcast(types->allocate_function));
 		add_member_cstr(&types->allocator->content, "free_fn", upcast(types->free_function));
@@ -2328,25 +2199,12 @@ void type_system_add_predefined_types(Type_System* system)
 		type_system_finish_struct(types->allocator);
 	}
 
-	// Hardcoded system alloc/free
-	{
-		types->hardcoded_system_alloc = type_system_make_function({
-				make_param(type_system_make_constant(upcast(types->usize)), "size")
-			},
-			upcast(types->address)
-		);
-		types->hardcoded_system_free = type_system_make_function({
-				make_param(type_system_make_constant(upcast(types->address)), "pointer")
-			}
-		);
-	}
-
 	// Type Information
 	{
 		// Create type_info type
 		Datatype_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Type_Info"), 0);
 		types->type_information_type = type_info_type;
-		add_member_cstr(&type_info_type->content, "type", types->type_handle);
+		add_member_cstr(&type_info_type->content, "value_type", types->type_handle);
 		add_member_cstr(&type_info_type->content, "size", upcast(types->i32_type));
 		add_member_cstr(&type_info_type->content, "alignment", upcast(types->i32_type));
 
@@ -2410,7 +2268,7 @@ void type_system_add_predefined_types(Type_System* system)
 				add_enum_member(types->primitive_type_enum, "BOOL", 16);
 				type_system_finish_enum(types->primitive_type_enum);
 
-				add_member_cstr(subtype_primitive, "type", upcast(types->primitive_type_enum));
+				add_member_cstr(subtype_primitive, "value_type", upcast(types->primitive_type_enum));
 			}
 			// Array
 			{
@@ -2426,7 +2284,7 @@ void type_system_add_predefined_types(Type_System* system)
 				Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
 				{
 					add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
-					add_member_cstr(&struct_member_type->content, "type", types->type_handle);
+					add_member_cstr(&struct_member_type->content, "value_type", types->type_handle);
 					add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
 					type_system_finish_struct(struct_member_type);
 				}
@@ -2467,7 +2325,6 @@ void type_system_add_predefined_types(Type_System* system)
 			// Function
 			{
 				add_member_cstr(subtype_function, "parameter_types", upcast(type_system_make_slice(types->type_handle)));
-				add_member_cstr(subtype_function, "return_type", types->type_handle);
 				add_member_cstr(subtype_function, "has_return_type", upcast(types->bool_type));
 			}
 		}
@@ -2475,99 +2332,6 @@ void type_system_add_predefined_types(Type_System* system)
 		// Finish type-information
 		type_system_finish_struct(type_info_type);
 		test_type_similarity<Internal_Type_Information>(upcast(type_info_type));
-	}
-
-	// Hardcoded Functions
-	{
-		auto& ts = *system;
-
-		types->type_assert = type_system_make_function({ make_param(upcast(types->bool_type), "condition") });
-		types->type_type_of = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, upcast(types->type_handle));
-		types->type_size_of = type_system_make_function({ make_param(types->type_handle, "type") }, upcast(types->usize));
-		types->type_align_of = type_system_make_function({ make_param(types->type_handle, "type") }, upcast(types->u32_type));
-		types->type_panic = type_system_make_function({}, nullptr);
-		types->type_type_info = type_system_make_function(
-			{ make_param(upcast(types->type_handle), "type_handle") },
-			upcast(type_system_make_pointer(upcast(types->type_information_type)))
-		);
-		types->hardcode_struct_tag_fn = type_system_make_function({ make_param(upcast(types->empty_struct_type), "value") }, nullptr);
-		types->hardcode_return_type_fn = type_system_make_function({}, types->type_handle);
-
-		types->type_memory_copy = type_system_make_function({
-				make_param(upcast(types->address), "destination"),
-				make_param(upcast(types->address), "source"),
-				make_param(upcast(types->usize),   "size")
-			},
-			nullptr
-		);
-		types->type_memory_zero = type_system_make_function({
-				make_param(upcast(types->address), "destination"),
-				make_param(upcast(types->usize), "size")
-			},
-			nullptr
-		);
-		types->type_memory_compare = type_system_make_function({
-				make_param(upcast(types->address), "a"),
-				make_param(upcast(types->address), "b"),
-				make_param(upcast(types->usize), "size")
-			},
-			upcast(types->bool_type)
-		);
-
-		types->type_print_bool = type_system_make_function({ make_param(upcast(types->bool_type), "value") });
-		types->type_print_i32 = type_system_make_function({ make_param(upcast(types->i32_type), "value") });
-		types->type_print_f32 = type_system_make_function({ make_param(upcast(types->f32_type), "value") });
-		types->type_print_line = type_system_make_function({});
-		types->type_print_string = type_system_make_function({ make_param(upcast(types->c_string), "value") });
-		types->type_read_i32 = type_system_make_function({});
-		types->type_read_f32 = type_system_make_function({});
-		types->type_read_bool = type_system_make_function({});
-		types->type_random_i32 = type_system_make_function({}, upcast(types->i32_type));
-
-		types->type_bitwise_unop = type_system_make_function({ make_param(upcast(types->i32_type), "value") }, upcast(types->i32_type));
-		types->type_bitwise_binop = type_system_make_function(
-			{ make_param(upcast(types->i32_type), "a"), make_param(upcast(types->i32_type), "b") },
-			upcast(types->i32_type)
-		);
-
-		types->type_set_cast_option = type_system_make_function({
-				make_param(upcast(types->cast_option), "option"),
-				make_param(upcast(types->cast_mode), "cast_mode")
-			}
-		);
-		types->type_add_binop = type_system_make_function({
-				make_param(upcast(types->c_string), "binop"),
-				make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
-				make_param(upcast(types->bool_type), "commutative", true)
-			}
-		);
-		types->type_add_unop = type_system_make_function({
-				make_param(upcast(types->c_string), "unop"),
-				make_param(upcast(types->any_type), "function") // Type doesn't matter too much here...
-			}
-		);
-		types->type_add_array_access = type_system_make_function({
-				make_param(upcast(types->any_type), "function") // Type doesn't matter too much here...
-			}
-		);
-		types->type_add_dotcall = type_system_make_function({
-				make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
-				make_param(upcast(types->bool_type), "as_member_access", true),
-				make_param(upcast(types->c_string), "name", true)
-			}
-		);
-		types->type_add_iterator = type_system_make_function({
-				make_param(upcast(types->any_type), "create"),
-				make_param(upcast(types->any_type), "has_next"),
-				make_param(upcast(types->any_type), "next"),
-				make_param(upcast(types->any_type), "value"),
-			}
-			);
-		types->type_add_cast = type_system_make_function({
-				make_param(upcast(types->any_type), "function"), // Type doesn't matter too much here...
-				make_param(upcast(types->cast_mode), "cast_mode")
-			}
-		);
 	}
 }
 
@@ -2614,6 +2378,7 @@ bool types_are_equal(Datatype* a, Datatype* b) {
 }
 
 bool datatype_is_unknown(Datatype* a) {
+	assert(a->type != Datatype_Type::INVALID_TYPE, "");
 	return a->base_type->type == Datatype_Type::UNKNOWN_TYPE;
 }
 
@@ -2689,9 +2454,9 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
 		}
 		return true;
 	}
-	else if (datatype->type == Datatype_Type::FUNCTION) {
+	else if (datatype->type == Datatype_Type::FUNCTION_POINTER) {
 		if (out_is_optional != nullptr) {
-			*out_is_optional = downcast<Datatype_Function>(datatype)->is_optional;
+			*out_is_optional = downcast<Datatype_Function_Pointer>(datatype)->is_optional;
 		}
 		return true;
 	}
@@ -2713,3 +2478,4 @@ Upp_C_String upp_c_string_empty() {
 	result.bytes.size = 0;
 	return result;
 }
+

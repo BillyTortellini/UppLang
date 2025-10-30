@@ -25,8 +25,6 @@
 
 #include "syntax_editor.hpp"
 
-#include "../../datastructures/block_allocator.hpp"
-#include "../../datastructures/stack_allocator.hpp"
 #include "../../win32/windows_helper_functions.hpp"
 
 struct Dummy
@@ -70,58 +68,6 @@ void dummy_print(Dummy* d) {
 void test_things()
 {
     Random random = random_make_time_initalized();
-
-    // Block allocator
-    {
-        Block_Allocator<Dummy> block = block_allocator_create_empty<Dummy>(4);
-        SCOPE_EXIT(block_allocator_destroy(&block));
-        const int count = 200;
-        Dummy* dummies[count];
-
-        for (int loops = 0; loops < 100; loops++) 
-        {
-            for (int i = 0; i < count; i++) {
-                dummies[i] = block_allocator_allocate(&block);
-                *dummies[i] = dummy_make_random(&random);
-            }
-
-            // Deallocate all
-            for (int i = count - 1; i >= 0; i--) {
-                block_allocator_deallocate(&block, dummies[i]);
-            }
-        }
-        assert(block.used_block_count == 0, "HEY");
-    }
-
-    // Stack allocator
-    {
-        Stack_Allocator stack = stack_allocator_create_empty(32);
-        SCOPE_EXIT(stack_allocator_destroy(&stack));
-
-        const int count = 10;
-        Dummy* dummies[count];
-
-        for (int loops = 0; loops < 1; loops++) 
-        {
-            for (int i = 0; i < count; i++) {
-                Dummy* d = stack_allocator_allocate<Dummy>(&stack);
-                dummies[i] = d;
-                *d= dummy_make_random(&random);
-                d->valX = i;
-                d->valY = i * 2;
-                dummy_print(d);
-            }
-
-            logg("\nPrinting:\n");
-            for (int i = 0; i < count; i++) {
-                dummy_print(dummies[i]);
-            }
-
-            // Deallocate all
-            stack_allocator_reset(&stack);
-        }
-        assert(stack.stack_pointer == 0, "HEY");
-    }
 
     // Hashset tests
     {

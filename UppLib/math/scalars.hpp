@@ -72,3 +72,9 @@ double math_square_root(double x);
 // Helpers
 float math_radians_to_degree(float radians);
 float math_degree_to_radians(float degree);
+
+u8 integer_highest_set_bit_index(u32 value); // Returns 0 if value is 0
+u8 integer_highest_set_bit_index(u64 value); // Returns 0 if value is 0
+u32 integer_next_power_of_2(u32 value);
+u64 integer_next_power_of_2(u64 value);
+

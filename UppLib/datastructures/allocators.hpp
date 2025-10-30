@@ -1,197 +1,348 @@
 #pragma once
 
-#include "../utility/utils.hpp"
+#include "../utility/datatypes.hpp"
 #include "array.hpp"
-#include "../win32/thread.hpp"	
-
-#define INSERT_TEMPLATE_ALLOC_FUNCTIONS_ALIGN \
-template<typename T> \
-T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } \
-\
-template<typename T> \
-Array<T> allocate_array(int size) { \
-	return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); \
-} 
-
-#define INSERT_TEMPLATE_ALLOC_FUNCTIONS \
-template<typename T> \
-T* allocate() {	return (T*)allocate_raw(sizeof(T)); } \
-\
-template<typename T> \
-Array<T> allocate_array(int size) { \
-	return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); \
-} 
-
-#define INSERT_TEMPLATE_DEALLOC_FUNCTIONS \
-template<typename T> \
-void deallocate(T* data) { return deallocate_raw(data, sizeof(T)); } \
-\
-template<typename T> \
-Array<T> deallocate_array(Array<T> array) { \
-	deallocate_raw(array.data, sizeof(T) * array.size); \
-}
-
-#define INSERT_TEMPLATE_DEALLOC_FUNCTIONS_NO_SIZE \
-template<typename T> \
-void deallocate(T* data) { return deallocate_raw(data); } \
-\
-template<typename T> \
-Array<T> deallocate_array(Array<T> array) { \
-	deallocate_raw(array.data); \
-}
-
-
-struct Allocator* allocator;
-
-typedef void* (*allocate_fn)(Allocator* allocator, u64 size, u32 alignment);
-typedef void (*deallocate_fn)(Allocator* allocator, void* data, u64 size);
-typedef bool (*resize_fn)(Allocator* allocator, void* data, u64 old_size, u64 new_size);
-
-struct Allocator_VTable
-{
-	allocate_fn allocate;
-	deallocate_fn deallocate;
-	resize_fn resize;
-};
-
-struct Allocator
-{
-	Allocator_VTable* vtable = nullptr;
-
-	// I add these functions for convenience, so dot calls work with them
-	void* allocate_raw(u64 size, u32 alignment);
-	void deallocate_raw(void* data, u64 size);
-	bool resize(void* data, u64 old_size, u64 new_size);
-
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS_ALIGN;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS;
-};
-
-
-
-// Fixed size virtual arena, which commits more memory if necessary
-struct Virtual_Arena
-{
-	Allocator base;
-
-	void* buffer;
-	u64 capacity; // Maximum amount of memory that can be allocated 
-	u64 commit_size; // Size of memory that is commited
-	void* next;
-
-	static Virtual_Arena create(u64 capacity);
-	void destroy();
-
-	void* allocate_raw(u64 size, u32 alignment);
-	void deallocate_raw(void* data, u64 size);
-	bool resize(void* data, u64 old_size, u64 new_size);
-
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS_ALIGN;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS;
-};
-
-// Has free-lists up to a specific size of allocations
-struct Bin_Allocator
-{
-	Allocator base;
-	Allocator* parent_allocator;
-	Array<void*> bins; // Allocated in parent allocator
-	u64 max_allocation_size;
-
-	static Bin_Allocator create(Allocator* parent_allocator, u64 max_allocation_size);
-
-	void* allocate_raw(u64 size); // Size must be > 0, Note: alignment for bin-allocator is always correct, as it uses max-alignment or alloc-size
-	void deallocate_raw(void* data, u64 size);
-
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS;
-};
+#include "../utility/hash_functions.hpp"
+#include "../math/scalars.hpp"
 
 struct Arena_Checkpoint
 {
 	void* data;
 };
 
+struct Arena_Buffer
+{
+	// Note: every arena buffer starts with this struct, which forms a linked list
+	//		to previously allocated buffers
+	void* data;
+	usize capacity;
+};
+
 struct Arena
 {
-	Allocator base;
-	Allocator* parent_allocator;
-
-	void* buffer;
-	u64 capacity;
+	Arena_Buffer buffer;
 	void* next;
 
-	static Arena create(Allocator* parent_allocator, u64 capacity); // Capacity may be null
+	static Arena create(usize capacity = 0); 
 	void destroy();
 
-	void* allocate_raw(u64 size, u32 alignment);
-	void deallocate_raw(void* data, u64 size);
-	bool resize(void* memory, u64 old_size, u64 new_size);
+	void* allocate_raw(usize size, u32 alignment);
+	bool resize(void* memory, usize old_size, usize new_size);
+	void reset(bool keep_largest_buffer = false);
 
 	Arena_Checkpoint make_checkpoint();
 	void rewind_to_checkpoint(Arena_Checkpoint checkpoint);
 
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS;
+	template<typename T> 
+	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
+	
+	template<typename T> 
+	Array<T> allocate_array(int size) { 
+		if (size == 0) {
+			Array<T> result;
+			result.data = nullptr;
+			result.size = 0;
+			return result;
+		}
+		return array_create_static<T>((T*) allocate_raw(sizeof(T) * size, alignof(T)), size); 
+	} 
 };
 
+// Note: Alignment of free-list is always alignof(usize), so this could cause problems for sse types...
 struct Free_List
 {
-	Allocator base;
-	Allocator* parent_allocator;
-	void* next;
-	u64 allocation_size;
+	Arena* arena;
+	usize element_size;
+	void* next; // List of allocations
 
-	static Free_List create(Allocator* parent_allocator, u64 allocation_size);
-	void* allocate_raw(u64 size, u32 alignment);
+	static Free_List create(Arena* arena, usize element_size);
+	void* allocate_raw(usize size);
 	void deallocate_raw(void* data);
 
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS_NO_SIZE;
+	template<typename T> 
+	T* allocate() {	return (T*)allocate_raw(sizeof(T), alignof(T)); } 
+
+	template<typename T> 
+	void deallocate(T* data) { deallocate_raw((void*)data); }
 };
 
-struct System_Allocator
+template<typename T>
+struct DynArray
 {
-	Allocator base;
+	Arena* arena;
+	Array<T> buffer;
+	usize size;
 
-	static System_Allocator* get_instance(); // There is only one global system allocator, as more are unnecessary
+	static DynArray<T> create(Arena* arena, usize capacity = 0)
+	{
+		DynArray<T> result;
+		result.arena = arena;
+		result.buffer.data = nullptr;
+		result.buffer.size = 0;
+		result.size = 0;
+		result.reserve(capacity);
+		return result;
+	}
 
-	void* allocate_raw(u64 size, u32 alignment);
-	void deallocate_raw(void* data);
-	// Note: realloc exists, but it doesn't have the same sytnax as our resize...
+	void reserve(usize requested_size) 
+	{
+		if (buffer.size >= requested_size) return;
 
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS_NO_SIZE;
+		// Figure out new size
+		usize new_size = math_maximum(requested_size, 
+			(usize) math_maximum((buffer.size * 3) / 2 + 1, 128 / (int) sizeof(T))); // Min-buffer size in bytes is 128
+
+		// Check if resize possible
+		if (arena->resize(buffer.data, buffer.size * sizeof(T), new_size * sizeof(T))) {
+			buffer.size = (int) new_size;
+			return;
+		}
+
+		// Otherwise create new buffer and move data
+		Array<T> new_buffer = arena->allocate_array<T>((int) new_size);
+		if (buffer.data != nullptr) {
+			memory_copy(new_buffer.data, buffer.data, buffer.size * sizeof(T));
+		}
+		buffer = new_buffer;
+	}
+
+	void push_back(const T& value) {
+		reserve(size + 1);
+		buffer[size] = value;
+		size += 1;
+	}
+
+	void swap_remove(int index) {
+		assert(index >= 0 && index < size, "");
+		if (index != size - 1) {
+			buffer[index] = buffer[size - 1];
+		}
+		size -= 1;
+	}
+
+	void remove_ordered(int index) {
+		for (int i = index; i + 1 < size; i++) {
+			buffer.data[i] = buffer.data[i + 1];
+		}
+		size -= 1;
+	}
+
+	T& last() {
+		assert(size > 0, "");
+		return buffer[size - 1];
+	}
+
+	T& operator[](int index) {
+		assert(index < size && index >= 0, "");
+		return buffer.data[index];
+	}
 };
 
-struct Mutex_Allocator
+
+enum class DynSet_Entry_State
 {
-	Allocator base;
-	Allocator* parent_allocator;
-	Semaphore semaphore;
-
-	static Mutex_Allocator create(Allocator* parent_allocator);
-	void destroy(); // Only destroys the mutex, allocations stay the same
-
-	void* allocate_raw(u64 size, u32 alignment);
-	void deallocate_raw(void* data, u64 size);
-	bool resize(void* data, u64 old_size, u64 new_size);
-
-	INSERT_TEMPLATE_ALLOC_FUNCTIONS;
-	INSERT_TEMPLATE_DEALLOC_FUNCTIONS;
+	OCCUPIED,  // Value is valid
+	FREE,      // entry is free
+	FREE_AGAIN
 };
 
-#undef INSERT_TEMPLATE_ALLOC_FUNCTIONS
+template<typename T>
+struct DynSet_Entry
+{
+	T value;
+	u64 hash; // For faster comparison, so equal_fn does not need to be called every time
+	DynSet_Entry_State state;
+	int sonding_index; 
+};
 
-#define MAKE_UPCAST_FN(type, virtual_table) \
-inline Allocator* upcast(type value); \
-inline Allocator* upcast(type* value);
 
-MAKE_UPCAST_FN(Virtual_Arena, virtual_arena_vtable)
-MAKE_UPCAST_FN(Bin_Allocator, bin_allocator_vtable)
-MAKE_UPCAST_FN(Arena, arena_vtable)
-MAKE_UPCAST_FN(Free_List, free_list_vtable)
-MAKE_UPCAST_FN(System_Allocator, system_allocator_vtable)
-MAKE_UPCAST_FN(Mutex_Allocator, mutex_allocator_vtable)
+u64 find_next_suitable_prime_hashset_size(u64 value);
 
-#undef MAKE_UPCAST_FN
+const float DYNSET_MAX_LOAD_FACTOR = 0.7f;
+
+template<typename T>
+struct DynSet
+{
+	Arena* arena;
+    Array<DynSet_Entry<T>> entries;
+    usize element_count;
+    u64(*hash_function)(T*);
+    bool(*equals_function)(T*, T*);
+
+	static DynSet<T> create(Arena* arena, u64(*hash_fn)(T*), bool(*equals_fn)(T*, T*), usize expected_element_count = 0) 
+	{
+		DynSet<T> result;
+		result.arena = arena;
+		result.hash_function = hash_fn;
+		result.equals_function = equals_fn;
+		result.entries.data = nullptr;
+		result.entries.size = 0;
+		result.element_count = 0;
+		result.reserve(expected_element_count);
+		return result;
+	}
+
+	static DynSet<T> create_pointer(Arena* arena, usize expected_element_count = 0) 
+	{
+		return DynSet<T>::create(
+			arena, 
+			[](T* key) -> u64 { return hash_pointer(*key); },
+			[](T* a, T* b) -> bool { return (*a) == (*b); }, 
+			expected_element_count
+		);
+	}
+
+	void reset()
+	{
+		for (int i = 0; i < entries.size; i++) {
+			entries[i].state = DynSet_Entry_State::FREE;
+		}
+		element_count = 0;
+	}
+
+	void reserve(usize expected_element_count)
+	{
+		usize min_size = (usize)(expected_element_count * DYNSET_MAX_LOAD_FACTOR) + 1;
+		if (entries.size >= min_size) return;
+		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
+		usize new_size = find_next_suitable_prime_hashset_size(min_size);
+
+		Arena_Checkpoint checkpoint;
+		Array<DynSet_Entry<T>> old_entries;
+		if (arena->resize(entries.data, entries.size * sizeof(DynSet_Entry<T>), new_size * sizeof(DynSet_Entry<T>)))
+		{
+			// Resize is annoying, because we need a temporary copy of the old values need to copy over our old values
+			checkpoint = arena->make_checkpoint();
+			old_entries = arena->allocate_array<DynSet_Entry<T>>(entries.size);
+			memory_copy(entries.data, old_entries.data, entries.size * sizeof(DynSet_Entry<T>));
+		}
+		else
+		{
+			// Allocate new buffer
+			old_entries = entries;
+			entries = arena->allocate_array<DynSet_Entry<T>>((int)new_size);
+			checkpoint = arena->make_checkpoint();
+		}
+
+		// Reset current buffer/initialize new buffer
+		reset();
+
+		// Re-insert old entries into new entries
+		for (int i = 0; i < old_entries.size; i++) 
+		{
+			auto& old_entry = old_entries[i];
+			if (old_entry.state != DynSet_Entry_State::OCCUPIED) continue;
+			insert_internal(old_entry.value, old_entry.hash);
+		}
+	}
+
+	int hash_to_entry_index(u64 hash_value, int sonding_index)
+	{
+		u64 sonding_increment = hash_combine(hash_value, 0xFE57D3AC94BF1E27);
+		if (sonding_increment % entries.size == 0) { // Must not be null, otherwise we wouldn't reach all element entries
+			sonding_increment = 87178291199ull; // This is a large prime not on the list of hashtable-sizes
+		}
+		return (hash_value + sonding_index * hash_value) % entries.size;
+	}
+
+	bool insert_internal(T& value, u64 value_hash)
+	{
+		int sonding_index = 0;
+		while (true)
+		{
+			auto& entry = entries[hash_to_entry_index(value_hash, sonding_index)];
+
+			// Insert at entry if it isn't occupied
+			if (entry.state != DynSet_Entry_State::OCCUPIED) 
+			{
+				entry.state = DynSet_Entry_State::OCCUPIED;
+				entry.value = value;
+				entry.sonding_index = sonding_index;
+				entry.hash = value_hash;
+				element_count += 1;
+				return true;
+			}
+
+			// Check if element is already inserted (Set needs to be a set, no duplicate values)
+			if (entry.hash == value_hash && equals_function(&entry.value, &value)) {
+				return false;
+			}
+
+			// Check if the entry value can be moved (Improvement by Brent paper)
+			{
+				auto& other_entry = entries[hash_to_entry_index(entry.hash, entry.sonding_index + 1)];
+				if (other_entry.state != DynSet_Entry_State::OCCUPIED) 
+				{
+					// Move current entry to other_entry
+					other_entry = entry;
+					other_entry.sonding_index += 1;
+
+					// Store value in now freed current entry
+					entry.state = DynSet_Entry_State::OCCUPIED;
+					entry.value = value;
+					entry.sonding_index = sonding_index;
+					entry.hash = value_hash;
+					element_count += 1;
+					return true;
+				}
+			}
+
+			// Otherwise insert at next sonding index
+			sonding_index += 1;
+		}
+	}
+
+	// Returns true if value was inserted, false if it already exists?
+	bool insert(T& value)
+	{
+		reserve(element_count + 1);
+		u64 value_hash = hash_function(&value);
+		return insert_internal(value, value_hash);
+	}
+
+	bool contains(T& value)
+	{
+		int sonding_index = 0;
+		u64 value_hash = hash_function(&value);
+		while (true)
+		{
+			auto& entry = entries[hash_to_entry_index(value_hash, sonding_index)];
+
+			if (entry.state == DynSet_Entry_State::FREE) {
+				return false;
+			}
+			else if (entry.state == DynSet_Entry_State::OCCUPIED) {
+				if (entry.hash == value_hash && equals_function(&entry.value, &value)) {
+					return true;
+				}
+			}
+
+			// Otherwise search at next sonding-index
+			sonding_index += 1;
+		}
+	}
+
+	// Returns true if the operation succeeded, otherwise false
+	bool remove(T& value)
+	{
+		int sonding_index = 0;
+		u64 value_hash = hash_function(&value);
+		while (true)
+		{
+			auto& entry = entries[hash_to_entry_index(value_hash, sonding_index)];
+
+			if (entry.state == DynSet_Entry_State::FREE) {
+				return false;
+			}
+			else if (entry.state == DynSet_Entry_State::OCCUPIED) {
+				if (entry.hash == value_hash && equals_function(&entry.value, &value)) {
+					entry.state = DynSet_Entry_State::FREE_AGAIN;
+					return true;
+				}
+			}
+
+			// Otherwise search at next sonding-index
+			sonding_index += 1;
+		}
+	}
+};

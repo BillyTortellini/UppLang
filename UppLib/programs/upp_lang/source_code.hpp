@@ -9,7 +9,6 @@
 struct Module_Progress;
 struct Source_Code;
 struct Source_Line;
-struct Parameter_Matching_Info;
 struct Symbol;
 struct Symbol_Table;
 struct Compilation_Unit;
@@ -25,7 +24,7 @@ namespace AST
     struct Node;
     struct Module;
     struct Expression;
-    struct Arguments;
+    struct Call_Node;
 }
 
 

@@ -17,7 +17,7 @@ namespace AST
     struct Definition;
     struct Extern_Import;
     struct Path_Lookup;
-    struct Arguments;
+    struct Call_Node;
     struct Definition_Symbol;
 
     enum class Binop
@@ -65,7 +65,7 @@ namespace AST
         MODULE,
 
         // Helpers
-        ARGUMENTS,             // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
+        CALL_NODE,             // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
         ARGUMENT,              // Expression with optional base_name
         GET_OVERLOAD_ARGUMENT, // Either just id, or id = type_expr
         SUBTYPE_INITIALIZER,   // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
@@ -113,20 +113,6 @@ namespace AST
         Optional<Expression*> type_expr;
     };
 
-    enum class Context_Change_Type
-    {
-        BINARY_OPERATOR,
-        UNARY_OPERATOR,
-        ARRAY_ACCESS,
-        CAST,
-        DOT_CALL,
-        ITERATOR,
-        CAST_OPTION,
-        IMPORT,
-        INVALID, // Not a valid context change
-        MAX_ENUM_VALUE
-    };
-
     struct Argument;
     struct Context_Change
     {
@@ -135,7 +121,7 @@ namespace AST
         union 
         {
             Path_Lookup* import_path;
-            Arguments* arguments; 
+            Call_Node* call_node; 
         } options;
     };
 
@@ -197,10 +183,10 @@ namespace AST
     {
         Node base;
         Optional<String*> name; // If not available, supertype initializer
-        Arguments* arguments;
+        Call_Node* call_node;
     };
 
-    struct Arguments
+    struct Call_Node
     {
         Node base;
         Dynamic_Array<Argument*> arguments;
@@ -241,11 +227,12 @@ namespace AST
     struct Parameter
     {
         Node base;
-        bool is_comptime; // $ at the start
-        bool is_mutable; // mut at the start
-        String* name;
+        String* name; // name of parameter, or "!return_type" (See identifier pool)
         Expression* type;
         Optional<Expression*> default_value;
+        bool is_comptime;    // $ at the start
+        bool is_mutable;     // mut at the start, return-type is mutable
+        bool is_return_type;
     };
 
     struct Code_Block
@@ -308,7 +295,7 @@ namespace AST
         MODULE,
         FUNCTION,
         FUNCTION_SIGNATURE,
-        TEMPLATE_PARAMETER, // $T
+        PATTERN_VARIABLE, // $T
 
         STRUCTURE_TYPE, // Struct, union, c_union
         ENUM_TYPE,
@@ -327,7 +314,7 @@ namespace AST
         Expression_Type type;
         union
         {
-            String* polymorphic_symbol_id;
+            String* pattern_variable_name;
             Expression* optional_child_type; // ?int
             Expression* optional_pointer_child_type; // ?*int
             struct {
@@ -346,7 +333,7 @@ namespace AST
             Body_Node bake_body; 
             struct {
                 Expression* expr;
-                Arguments* arguments;
+                Call_Node* call_node;
             } call;
             struct {
                 Expression* type_expr;
@@ -374,13 +361,11 @@ namespace AST
                 Optional<Expression*> signature; // If not given, then signature is inferred
                 Body_Node body;
             } function;
-            struct {
-                Dynamic_Array<Parameter*> parameters;
-                Optional<Expression*> return_value;
-            } function_signature;
+            // If we have a return type, it's the last in this array, and the is_return_type bool is set
+            Dynamic_Array<Parameter*> signature_parameters;
             struct {
                 Optional<Expression*> type_expr;
-                Arguments* arguments;
+                Call_Node* call_node;
             } struct_initializer;
             struct {
                 Optional<Expression*> type_expr;
@@ -527,7 +512,7 @@ namespace AST
         bool type_correct(Code_Block* base);
         bool type_correct(Context_Change* base);
         bool type_correct(Structure_Member_Node* base);
-        bool type_correct(Arguments* base);
+        bool type_correct(Call_Node* base);
         bool type_correct(Subtype_Initializer* base);
         bool type_correct(Extern_Import* base);
     }

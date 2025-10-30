@@ -279,7 +279,7 @@ struct IR_Program;
 struct IR_Function
 {
     IR_Program* program;
-    Datatype_Function* function_type;
+    Call_Signature* signature;
     IR_Code_Block* code;
     int function_slot_index; // Note: not + 1 
 };

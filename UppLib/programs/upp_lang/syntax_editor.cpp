@@ -3447,18 +3447,18 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 	{
 		SCOPE_EXIT(workload = workload->poly_parent_workload);
 
-		Array<Poly_Value> poly_values = workload->poly_values;
-		if (poly_values.size > 0) {
+		Array<Pattern_Variable_State> active_pattern_values = workload->active_pattern_variable_states;
+		if (active_pattern_values.size > 0) {
 			polymorphic_depth += 1;
 			if (polymorphic_depth > 1) {
 				string_append(string, "\n");
 			}
 		}
-		for (int i = 0; i < poly_values.size; i++)
+		for (int i = 0; i < active_pattern_values.size; i++)
 		{
-			auto poly_value = poly_values[i];
+			auto poly_value = active_pattern_values[i];
 
-			String* name = poly_header_get_value_name(workload->poly_value_origin, i);
+			String* name = workload->active_pattern_variable_states_origin->pattern_variables[i].name;
 			if (name == nullptr) {
 				panic("Should not happen");
 				continue;
@@ -3469,7 +3469,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			string_append_string(string, name);
 			string_append(string, "=");
 
-			if (poly_value.type != Poly_Value_Type::SET) {
+			if (poly_value.type != Pattern_Variable_State_Type::SET) {
 				string_append(string, "Not Set\n");
 				continue;
 			}
@@ -3485,7 +3485,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 				string, format, 0, Memory_Source(nullptr), Memory_Source(nullptr)
 			);
 
-			if (i != poly_values.size - 1) {
+			if (i != active_pattern_values.size - 1) {
 				string_append(string, "\n");
 			}
 		}
@@ -3659,7 +3659,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 					result.call_argument_index = 0;
 				}
 				else if (index.character == item.end_char - 1) {
-					result.call_argument_index = semantic_info.options.call_info.arguments_node->arguments.size - 1; // Note: -1 is also fine here
+					result.call_argument_index = semantic_info.options.call_info.call_node->arguments.size - 1; // Note: -1 is also fine here
 				}
 				else
 				{
@@ -3671,7 +3671,7 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 						const auto& other_info = editor.analysis_data->semantic_infos[other_item.semantic_info_mapping_start_index];
 						if (other_info.type != Semantic_Info_Type::ARGUMENT) continue;
 						auto arg_info = other_info.options.argument_info;
-						if (arg_info.arguments_node != semantic_info.options.call_info.arguments_node) continue;
+						if (arg_info.call_node != semantic_info.options.call_info.call_node) continue;
 						int distance = math_minimum(
 							math_absolute(index.character - other_item.start_char),
 							math_absolute(index.character - (other_item.end_char - 1))
@@ -3773,7 +3773,7 @@ void code_completion_find_dotcalls_in_context_recursive(
 	while (hashtable_iterator_has_next(&iter)) {
 		Custom_Operator_Key* key = iter.key;
 		Custom_Operator* op = iter.value;
-		if (key->type == AST::Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
+		if (key->type == Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
 			String* id = key->options.dot_call.id;
 			auto& calls = *op->dot_calls;
 			bool found = false;
@@ -4086,15 +4086,15 @@ void code_completion_find_suggestions()
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.is_available));
 				break;
 			}
-			case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+			case Datatype_Type::STRUCT_PATTERN:
 			case Datatype_Type::STRUCT:
 			{
 				Datatype_Struct* structure = 0;
 				if (type->type == Datatype_Type::STRUCT) {
 					structure = downcast<Datatype_Struct>(type);
 				}
-				else if (type->type == Datatype_Type::STRUCT_INSTANCE_TEMPLATE) {
-					structure = downcast<Datatype_Struct_Instance_Template>(type)->struct_base->body_workload->struct_type;
+				else if (type->type == Datatype_Type::STRUCT_PATTERN) {
+					structure = downcast<Datatype_Struct_Pattern>(type)->instance->header->origin.struct_workload->body_workload->struct_type;
 				}
 
 				Struct_Content* content = type_mods_get_subtype(structure, original->mods);
@@ -4855,7 +4855,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 		break;
 	}
 	default:
-		panic("Invalid motion type");
+		panic("Invalid motion value_type");
 		result = text_range_make(pos, pos);
 		break;
 	}
@@ -7342,7 +7342,7 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		type = symbol->options.constant.type;
 		break;
 	case Symbol_Type::HARDCODED_FUNCTION:
-		type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded, syntax_editor.analysis_data));
+		// type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded, syntax_editor.analysis_data));
 		break;
 	case Symbol_Type::GLOBAL:
 		after_text = "Global";
@@ -7350,25 +7350,25 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		break;
 	case Symbol_Type::FUNCTION:
 		after_text = "Function";
-		type = upcast(symbol->options.function->signature);
+		// type = upcast(symbol->options.function->signature);
 		break;
 	case Symbol_Type::PARAMETER: {
 		after_text = "Parameter";
 		if (pass == nullptr) {
-			type = symbol->options.parameter.function->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+			type = symbol->options.parameter.function->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].datatype;
 		}
 		else if (pass->is_header_reanalysis && pass->instance_workload != nullptr) {
 			auto progress = analysis_workload_try_get_function_progress(pass->instance_workload);
-			type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].type;
+			type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].datatype;
 		}
 		else {
 			type = syntax_editor.analysis_data->type_system.predefined_types.unknown_type;
 		}
 		break;
 	}
-	case Symbol_Type::POLYMORPHIC_VALUE:
+	case Symbol_Type::PATTERN_VARIABLE:
 	{
-		after_text = "Polymorphic Symbol";
+		after_text = "Pattern Variable";
 		if (pass == nullptr) break;
 
 		Workload_Base* lookup_workload = pass->origin_workload;
@@ -7378,15 +7378,15 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 			}
 			lookup_workload = pass->instance_workload;
 		}
-		auto poly_values = poly_values_find_active_set(symbol->options.polymorphic_value.poly_value_origin, lookup_workload);
-		assert(poly_values.data != nullptr, "");
+		auto active_pattern_values = pattern_variables_find_active_states(symbol->options.pattern_variable->origin, lookup_workload);
+		assert(active_pattern_values.data != nullptr, "");
 
-		const auto& value = poly_values[symbol->options.polymorphic_value.value_access_index];
+		const auto& value = active_pattern_values[symbol->options.pattern_variable->value_access_index];
 		switch (value.type)
 		{
-		case Poly_Value_Type::SET: type = value.options.value.type; break;
-		case Poly_Value_Type::TEMPLATED_TYPE: type = value.options.template_type; break;
-		case Poly_Value_Type::UNSET: type = value.options.unset_type; break;
+		case Pattern_Variable_State_Type::SET: type = value.options.value.type; break;
+		case Pattern_Variable_State_Type::PATTERN: type = value.options.pattern_type; break;
+		case Pattern_Variable_State_Type::UNSET: type = nullptr; break;
 		default: panic("");
 		}
 		break;
@@ -8372,27 +8372,27 @@ void syntax_editor_render()
 			Rich_Text::Rich_Text* text = &call_info_text;
 			Rich_Text::add_line(text);
 
-			auto info = hover_info.call_info->matching_info;
+			auto call_info = hover_info.call_info->callable_call;
 			int arg_index = hover_info.call_argument_index;
 
 			String* name = nullptr;
 			vec3 color = Syntax_Color::TEXT;
-			bool is_dot_call = info->call_type == Call_Type::DOT_CALL || info->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
-			switch (info->call_type)
+			bool is_dot_call = call_info->callable.type == Callable_Type::DOT_CALL_NORMAL || 
+				call_info->callable.type ==  Callable_Type::DOT_CALL_POLYMORPHIC;
+			switch (call_info->callable.type)
 			{
-			case Call_Type::FUNCTION: name = info->options.function->name; color = Syntax_Color::FUNCTION; break;
-			case Call_Type::DOT_CALL: name = info->options.dot_call_function->name; color = Syntax_Color::FUNCTION; break;
-			case Call_Type::STRUCT_INITIALIZER:
-			case Call_Type::UNION_INITIALIZER: {
-				if (info->options.struct_init.valid) {
-					name = info->options.struct_init.structure->content.name; color = Syntax_Color::TYPE;
+			case Callable_Type::FUNCTION:           name = call_info->callable.options.function->name; color = Syntax_Color::FUNCTION; break;
+			case Callable_Type::DOT_CALL_NORMAL:    name = call_info->callable.options.function->name; color = Syntax_Color::FUNCTION; break;
+			case Callable_Type::STRUCT_INITIALIZER: {
+				if (call_info->argument_matching_success) {
+					name = call_info->callable.options.struct_content->name;
 					color = Syntax_Color::TYPE;
 					break;
 				}
 			}
 			}
 
-			bool is_struct_init = info->call_type == Call_Type::STRUCT_INITIALIZER;
+			bool is_struct_init = call_info->callable.type == Callable_Type::STRUCT_INITIALIZER;
 			if (name != nullptr) {
 				Rich_Text::set_text_color(text, color);
 				Rich_Text::append(text, *name);
@@ -8412,38 +8412,39 @@ void syntax_editor_render()
 			Rich_Text::set_text_color(text);
 			Rich_Text::append(text, is_struct_init ? "{" : "(");
 			bool first = true;
-			for (int i = is_dot_call ? 1 : 0; i < info->matched_parameters.size; i += 1)
+			for (int i = is_dot_call ? 1 : 0; i < call_info->parameter_values.size; i += 1)
 			{
-				const auto& param_info = info->matched_parameters[i];
+				const auto& param_info = call_info->callable.signature->parameters[i];
+				const auto& param_value = call_info->parameter_values[i];
 
 				if (is_dot_call && param_info.requires_named_addressing) {
 					continue;
 				}
-				if (info->call_type == Call_Type::INSTANCIATE && (!param_info.requires_named_addressing || !param_info.required)) {
-					continue;
-				}
+				// if ( info->origin_type == Call_Origin_Type::INSTANCIATE && (!param_info.requires_named_addressing || !param_info.required)) {
+				// 	continue;
+				// }
 
 				if (!first) {
 					Rich_Text::append(text, ", ");
 				}
 				first = false;
 
-				bool highlight = param_info.argument_index == arg_index && arg_index != -1;
+				bool highlight = param_value.argument_index == arg_index && arg_index != -1;
 				if (highlight) {
 					Rich_Text::set_bg(text, vec3(0.2f, 0.3f, 0.3f));
 					Rich_Text::set_underline(text, vec3(0.8f));
 				}
 
 				vec3 name_color = Syntax_Color::VALUE_DEFINITION;
-				if (!param_info.is_set && param_info.required) {
+				if (param_value.value_type == Parameter_Value_Type::NOT_SET && param_info.required) {
 					name_color = vec3(1.0f, 0.5f, 0.5f);
 				}
 
 				Rich_Text::set_text_color(text, name_color);
 				Rich_Text::append(text, *param_info.name);
-				if (param_info.param_type != nullptr) {
+				if (param_info.datatype != nullptr) {
 					Rich_Text::append(text, ": ");
-					datatype_append_to_rich_text(param_info.param_type, type_system, text);
+					datatype_append_to_rich_text(param_info.datatype, type_system, text);
 				}
 				Rich_Text::set_text_color(text, vec3(1.0f));
 

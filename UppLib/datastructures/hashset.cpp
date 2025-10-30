@@ -1,6 +1,6 @@
 #include "hashset.hpp"
 
-int valid_primes[] = {
+const int valid_primes[] = {
     3,
     5,
     11,

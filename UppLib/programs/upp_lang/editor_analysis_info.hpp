@@ -6,11 +6,26 @@
 #include "compiler_misc.hpp"
 #include "semantic_analyser.hpp"
 #include "symbol_table.hpp"
+#include "../../datastructures/allocators.hpp"
 
 namespace AST
 {
     struct Node;
+    struct Expression;
 };
+namespace Rich_Text
+{
+    struct Rich_Text;
+};
+
+struct Pattern_Variable;
+struct Datatype_Format;
+struct Type_System;
+struct Call_Signature;
+struct Modtree_Function;
+struct Datatype_Struct;
+struct Workload_Structure_Polymorphic;
+
 
 
 // Semantic_Info
@@ -43,12 +58,12 @@ struct Semantic_Info_Expression {
 };
 
 struct Semantic_Info_Call {
-    Parameter_Matching_Info* matching_info;
-    AST::Arguments* arguments_node;
+    Callable_Call* callable_call;
+    AST::Call_Node* call_node;
 };
 
 struct Semantic_Info_Argument {
-    AST::Arguments* arguments_node;
+    AST::Call_Node* call_node;
     int argument_index;
 };
 
@@ -71,7 +86,7 @@ struct Semantic_Info
     int analysis_item_index;
 };
 
-
+struct Call_Signature;
 
 struct Compiler_Analysis_Data
 {
@@ -88,14 +103,24 @@ struct Compiler_Analysis_Data
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
+    Hashtable<AST::Expression*, Pattern_Variable*> pattern_variable_expression_mapping;
     Module_Progress* root_module;
 
     // Workload executer
     Dynamic_Array<Workload_Base*> all_workloads;
 
+    // Semantic_Info
+    Dynamic_Array<Semantic_Info> semantic_infos;
+    int next_analysis_item_index;
+
+    // Call_Signatures and callables
+    Hashset<Call_Signature*> call_signatures; // Callables get duplicated
+    Callable hardcoded_function_callables[(int)Hardcoded_Type::MAX_ENUM_VALUE];
+    Callable context_change_type_callables[(int)Context_Change_Type::MAX_ENUM_VALUE];
+    Call_Signature* empty_call_signature;
+
     // Allocations
-    Stack_Allocator global_variable_memory_pool;
-    Stack_Allocator progress_allocator;
+    Arena arena;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
@@ -103,10 +128,6 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Operator_Context*> allocated_operator_contexts;
     Dynamic_Array<Dynamic_Array<Dot_Call_Info>*> allocated_dot_calls;
     Dynamic_Array<AST::Node*> allocated_nodes;
-
-    // Semantic_Info
-    Dynamic_Array<Semantic_Info> semantic_infos;
-    int next_analysis_item_index;
 };
 
 Compiler_Analysis_Data* compiler_analysis_data_create();
@@ -114,6 +135,21 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data);
 
 Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity = 0);
 void compiler_analysis_update_source_code_information();
+
+
+
+// Note: Call_Signatures get deduplicated (Because function-pointer-types get deduplicated, so we need to do this anyway)
+Call_Signature* call_signature_create_empty();
+void call_signature_destroy(Call_Signature* signature);
+// Note: Returned pointer is invalidated if another parameter is added
+Call_Parameter* call_signature_add_parameter(
+    Call_Signature* signature, String* name, Datatype* datatype, 
+    bool required, bool requires_named_addressing, bool must_not_be_set);
+Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype);
+Call_Signature* call_signature_register(Call_Signature* signature); // Takes ownership of signature, returns deduplicated signature
+void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system);
+void call_signature_append_to_string(String* string, Type_System* type_system, Call_Signature* signature, Datatype_Format format);
+
 
 
 

@@ -20,7 +20,7 @@ void syntax_renaming()
     printf("Directory to scan: ");
     string_reset(&input_line);
     fgets(input_line.characters, input_line.capacity - 1, stdin);
-    input_line.size = strlen(input_line.characters);
+    input_line.size = (int)strlen(input_line.characters);
     if (input_line.size > 0 && input_line.characters[input_line.size - 1] == '\n') {
         input_line.characters[input_line.size - 1] = '\0';
         input_line.size -= 1;

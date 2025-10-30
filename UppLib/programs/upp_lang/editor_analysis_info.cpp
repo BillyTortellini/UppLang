@@ -8,6 +8,15 @@
 #include "semantic_analyser.hpp"
 #include "syntax_colors.hpp"
 #include "../../win32/timing.hpp"
+#include "../../utility/rich_text.hpp"
+
+
+
+// Prototypes
+u64 hash_call_signature(Call_Signature** callable_p);
+bool equals_call_signature(Call_Signature** app, Call_Signature** bpp);
+
+
 
 Token_Range token_range_last_token(Token_Range range, Source_Code* code) 
 {
@@ -293,20 +302,20 @@ void find_editor_infos_recursive(
 		add_markup(token_range_first_token(node->range, code), code, tree_depth, Syntax_Color::ENUM_MEMBER);
 		break;
 	}
-	case AST::Node_Type::ARGUMENTS:
+	case AST::Node_Type::CALL_NODE:
 	{
 		if (active_passes.size == 0) break;
-		auto arguments = downcast<AST::Arguments>(node);
+		auto arguments = downcast<AST::Call_Node>(node);
 
 		int analysis_item_index = add_code_analysis_item(node->range, code, tree_depth);
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
-			Parameter_Matching_Info* info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
-			if (info != nullptr) {
+			Callable_Call* call = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
+			if (call != nullptr) {
 				Semantic_Info_Option option;
-				option.call_info.matching_info = info;
-				option.call_info.arguments_node = arguments;
+				option.call_info.callable_call = call;
+				option.call_info.call_node = arguments;
 				add_semantic_info(analysis_item_index, Semantic_Info_Type::CALL_INFORMATION, option, pass);
 			}
 		}
@@ -321,7 +330,7 @@ void find_editor_infos_recursive(
 		}
 
 		// Find argument index
-		auto arguments = downcast<AST::Arguments>(node->parent);
+		auto arguments = downcast<AST::Call_Node>(node->parent);
 		int arg_index = -1;
 		for (int i = 0; i < arguments->arguments.size; i++) {
 			if (upcast(arguments->arguments[i]) == node) {
@@ -331,7 +340,7 @@ void find_editor_infos_recursive(
 		}
 
 		Semantic_Info_Option option;
-		option.argument_info.arguments_node = arguments;
+		option.argument_info.call_node = arguments;
 		option.argument_info.argument_index = arg_index;
 		int analysis_item_index = add_code_analysis_item(node->range, code, tree_depth);
 		add_semantic_info(analysis_item_index, Semantic_Info_Type::ARGUMENT, option, nullptr);
@@ -598,14 +607,14 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 
 	result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
 	result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
+	result->pattern_variable_expression_mapping = hashtable_create_pointer_empty<AST::Expression*, Pattern_Variable*>(16);
 	result->root_module = nullptr;
 
 	// Workload executer
 	result->all_workloads = dynamic_array_create<Workload_Base*>();
 
 	// Allocations
-	result->global_variable_memory_pool = stack_allocator_create_empty(2048);
-	result->progress_allocator = stack_allocator_create_empty(2048);
+	result->arena = Arena::create(2048);
 	result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
 	result->allocated_symbols = dynamic_array_create<Symbol*>();
 	result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
@@ -613,6 +622,7 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
 	result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
 	result->allocated_nodes = dynamic_array_create<AST::Node*>();
+	result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 
 	result->semantic_infos = dynamic_array_create<Semantic_Info>();
 	result->next_analysis_item_index = 0;
@@ -648,9 +658,6 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 		while (hashtable_iterator_has_next(&iter)) {
 			Analysis_Info* info = *iter.value;
 			AST_Info_Key* key = iter.key;
-			if (info->is_parameter_matching) {
-				parameter_matching_info_destroy(&info->parameter_matching_info);
-			}
 			delete info;
 			hashtable_iterator_next(&iter);
 		}
@@ -671,6 +678,7 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 		}
 		dynamic_array_destroy(&data->allocated_passes);
 	}
+	hashtable_destroy(&data->pattern_variable_expression_mapping);
 
 	for (int i = 0; i < data->allocated_function_progresses.size; i++) {
 		function_progress_destroy(data->allocated_function_progresses[i]);
@@ -693,8 +701,7 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	}
 	dynamic_array_destroy(&data->allocated_dot_calls);
 
-	stack_allocator_destroy(&data->progress_allocator);
-	stack_allocator_destroy(&data->global_variable_memory_pool);
+	data->arena.destroy();
 
 
 	// Symbol tables + workloads
@@ -713,6 +720,11 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	}
 	dynamic_array_destroy(&data->all_workloads);
 
+	for (auto iter = data->call_signatures.make_iter(); iter.has_next(); iter.next()) {
+		call_signature_destroy(*iter.value);
+	}
+	hashset_destroy(&data->call_signatures);
+
 	delete data;
 }
 
@@ -724,4 +736,202 @@ Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler
 
 	dynamic_array_push_back(&data->allocated_dot_calls, result);
 	return result;
+}
+
+
+
+void call_signature_destroy(Call_Signature* signature)
+{
+	for (int j = 0; j < signature->parameters.size; j++) {
+		auto& param = signature->parameters[j];
+		dynamic_array_destroy(&param.dependencies);
+	}
+	dynamic_array_destroy(&signature->parameters);
+	delete signature;
+}
+
+u64 hash_call_signature(Call_Signature** callable_p)
+{
+	Call_Signature* signature = *callable_p;
+	u64 hash = hash_i32(&signature->return_type_index);
+	hash = hash_combine(hash, hash_i32(&signature->parameters.size));
+	for (int i = 0; i < signature->parameters.size; i++)
+	{
+		auto& param = signature->parameters[i];
+		hash = hash_combine(hash, hash_pointer(param.name));
+		hash = hash_bool(hash, param.required);
+		hash = hash_bool(hash, param.requires_named_addressing);
+		hash = hash_bool(hash, param.must_not_be_set);
+
+		hash = hash_combine(hash, hash_i32(&param.comptime_variable_index));
+		hash = hash_combine(hash, hash_i32(&param.dependencies.size));
+		for (int j = 0; j < param.dependencies.size; j++) {
+			hash = hash_combine(hash, hash_i32(&param.dependencies[j]));
+		}
+		hash = hash_bool(hash, param.contains_pattern_variable_definition);
+
+		hash = hash_bool(hash, param.default_value_exists);
+		hash = hash_combine(hash, hash_pointer(param.default_value_expr));
+		hash = hash_combine(hash, hash_pointer(param.default_value_pass));
+	}
+	return hash;
+}
+
+bool equals_call_signature(Call_Signature** app, Call_Signature** bpp)
+{
+	Call_Signature* a = *app;
+	Call_Signature* b = *bpp;
+
+	if (a->return_type_index != b->return_type_index) return false;
+	if (a->parameters.size != b->parameters.size) return false;
+	for (int i = 0; i < a->parameters.size; i++)
+	{
+		auto& pa = a->parameters[i];
+		auto& pb = b->parameters[i];
+
+		if (pa.name != pb.name || pa.required != pb.required ||
+			pa.requires_named_addressing != pb.requires_named_addressing ||
+			pa.must_not_be_set != pb.must_not_be_set) return false;
+
+		if (pa.comptime_variable_index != pb.comptime_variable_index ||
+			pa.dependencies.size != pb.dependencies.size || pa.contains_pattern_variable_definition != pb.contains_pattern_variable_definition)
+			return false;
+
+		for (int j = 0; j < pa.dependencies.size; j++) {
+			if (pa.dependencies[j] != pb.dependencies[j]) return false;
+		}
+
+		if (pa.default_value_exists != pb.default_value_exists ||
+			pa.default_value_expr != pb.default_value_expr ||
+			pa.default_value_pass != pb.default_value_pass)
+			return false;
+	}
+
+	return true;
+}
+
+Call_Signature* call_signature_create_empty()
+{
+	Call_Signature* result = new Call_Signature;
+	result->parameters = dynamic_array_create<Call_Parameter>();
+	result->return_type_index = -1;
+	result->is_registered = false;
+	return result;
+}
+
+Call_Parameter* call_signature_add_parameter(
+	Call_Signature* signature, String* name, Datatype* datatype,
+	bool required, bool requires_named_addressing, bool must_not_be_set)
+{
+	assert(!signature->is_registered, "");
+
+	Call_Parameter param;
+	param.name = name;
+	param.datatype = datatype;
+	param.required = required;
+	param.requires_named_addressing = requires_named_addressing;
+	param.must_not_be_set = must_not_be_set;
+
+	param.comptime_variable_index = -1;
+	param.partial_pattern_index = -1;
+	param.dependencies = dynamic_array_create<int>();
+	param.contains_pattern_variable_definition = false;
+
+	param.default_value_exists = false;
+	param.default_value_expr = nullptr;
+	param.default_value_pass = nullptr;
+
+	dynamic_array_push_back(&signature->parameters, param);
+	return &signature->parameters[signature->parameters.size - 1];
+}
+
+Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype)
+{
+	call_signature_add_parameter(signature, compiler.identifier_pool.predefined_ids.return_type_name, datatype, false, false, true);
+	assert(signature->return_type_index == -1, "");
+	signature->return_type_index = signature->parameters.size - 1;
+	return &signature->parameters[signature->parameters.size - 1];
+}
+
+Call_Signature* call_signature_register(Call_Signature* signature)
+{
+	assert(!signature->is_registered, "");
+
+	// Deduplicate
+	Call_Signature** dedup = hashset_find(&compiler.analysis_data->call_signatures, signature);
+	if (dedup != nullptr) {
+		call_signature_destroy(signature);
+		return *dedup;
+	}
+
+	signature->is_registered = true;
+	hashset_insert_element(&compiler.analysis_data->call_signatures, signature);
+	return signature;
+}
+
+void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system)
+{
+	auto& parameters = signature->parameters;
+	Rich_Text::append_formated(text, "(");
+
+	int highlight_index = format->highlight_parameter_index;
+	format->highlight_parameter_index = 0;
+	for (int i = 0; i < parameters.size; i++)
+	{
+		auto& param = parameters[i];
+
+		// Skip parameters that shouldn't be printed
+		if (signature->return_type_index == i) continue;
+		if (param.must_not_be_set) continue;
+
+		// Print param name + type with possible highlight
+		if (highlight_index == i) {
+			Rich_Text::set_bg(text, format->highlight_color);
+		}
+		if (param.comptime_variable_index != -1) {
+			Rich_Text::append_character(text, '$');
+		}
+		Rich_Text::set_text_color(text, Syntax_Color::VALUE_DEFINITION);
+		Rich_Text::append_formated(text, "%s: ", param.name->characters);
+
+		auto param_type = param.datatype;
+		if (format->remove_const_from_function_params) {
+			param_type = datatype_get_non_const_type(param_type);
+		}
+		datatype_append_to_rich_text(param_type, type_system, text, *format);
+		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
+
+		if (highlight_index == i) {
+			Rich_Text::stop_bg(text);
+		}
+		if (param.default_value_exists) {
+			Rich_Text::append_formated(text, " = ...");
+		}
+		if (i != parameters.size - 1) {
+			Rich_Text::append_formated(text, ", ");
+		}
+	}
+	Rich_Text::append_formated(text, ")");
+
+	if (signature->return_type_index != -1) {
+		Rich_Text::append(text, " => ");
+		datatype_append_to_rich_text(signature->parameters[signature->return_type_index].datatype, type_system, text, *format);
+		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
+	}
+}
+
+void call_signature_append_to_string(String* string, Type_System* type_system, Call_Signature* signature, Datatype_Format format)
+{
+	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
+	SCOPE_EXIT(Rich_Text::destroy(&text));
+	Rich_Text::add_line(&text);
+	call_signature_append_to_rich_text(signature, &text, &format, type_system);
+	Rich_Text::append_to_string(&text, string, 2);
+}
+
+Optional<Datatype*> Call_Signature::return_type()
+{
+	assert(is_registered, "");
+	if (return_type_index == -1) return optional_make_failure<Datatype*>();
+	return optional_make_success(parameters[return_type_index].datatype);
 }

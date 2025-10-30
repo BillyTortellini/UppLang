@@ -33,7 +33,6 @@ namespace Parser
         // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
     };
 
-
     // Globals
     static Parser parser;
 
@@ -755,12 +754,12 @@ namespace Parser
 
     // Always returns node, even if no arguments were found...
     // So one should always test for ( or { before calling this...
-    Arguments* parse_arguments(Node* parent, Parenthesis_Type parenthesis)
+    Call_Node* parse_call_node(Node* parent, Parenthesis_Type parenthesis)
     {
-        auto args = allocate_base<Arguments>(parent, Node_Type::ARGUMENTS);
-        args->arguments = dynamic_array_create<Argument*>();
-        args->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
-        args->uninitialized_tokens = dynamic_array_create<Expression*>();
+        auto call_node = allocate_base<Call_Node>(parent, Node_Type::CALL_NODE);
+        call_node->arguments = dynamic_array_create<Argument*>();
+        call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
+        call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
 
         {
             Parenthesis p;
@@ -768,13 +767,13 @@ namespace Parser
             p.is_open = true;
             if (!test_parenthesis(parenthesis_to_char(p))) {
                 log_error_range_offset("Expected parenthesis for parameters", 0);
-                PARSE_SUCCESS(args);
+                PARSE_SUCCESS(call_node);
             }
         }
 
         auto add_to_arguments = [](Node* parent, Node* child) 
         {
-            auto args = downcast<Arguments>(parent);
+            auto args = downcast<Call_Node>(parent);
             if (child->type == Node_Type::ARGUMENT) {
                 dynamic_array_push_back(&args->arguments, downcast<Argument>(child));
             }
@@ -791,12 +790,12 @@ namespace Parser
             }
         };
         parse_list_of_items(
-            upcast(args), 
+            upcast(call_node), 
             parse_argument_or_subtype_initializer_or_uninitialzed, 
             add_to_arguments, parenthesis, Operator::COMMA, false, false
         );
 
-        PARSE_SUCCESS(args);
+        PARSE_SUCCESS(call_node);
     }
 
     namespace Block_Items
@@ -927,7 +926,7 @@ namespace Parser
                 result->type = Extern_Type::STRUCT;
             }
             else {
-                log_error_range_offset_with_start("Expected extern-type after extern keyword!", start, 1);
+                log_error_range_offset_with_start("Expected extern-value_type after extern keyword!", start, 1);
                 result->type = Extern_Type::INVALID;
                 return result;
             }
@@ -1089,7 +1088,7 @@ namespace Parser
             }
 
             result->type = change_type;
-            result->options.arguments = parse_arguments(upcast(result), Parenthesis_Type::PARENTHESIS);
+            result->options.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 
@@ -1670,7 +1669,7 @@ namespace Parser
 
                         if (loop.increment_statement == 0) {
                             if (!error_logged) {
-                                log_error_range_offset("Expected expression or assignment as for-loop increment", 0);
+                                log_error_range_offset("Expected argument_expression or assignment as for-loop increment", 0);
                                 error_logged = true;
                             }
                             auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
@@ -1769,7 +1768,7 @@ namespace Parser
 
                     if ((int)assignment_type == -1) {
                         auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-                        log_error_range_offset("Expected assignment after expression", 0);
+                        log_error_range_offset("Expected assignment after argument_expression", 0);
                         error_expr->type = Expression_Type::ERROR_EXPR;
                         node_finalize_range(upcast(error_expr));
                         result->options.defer_restore.assignment_type = Assignment_Type::RAW;
@@ -1952,7 +1951,7 @@ namespace Parser
         assert(test_operator(Operator::ASSIGN), "Should be true after previous if"); 
         advance_token();  // Skip =
 
-        result->arguments = parse_arguments(upcast(result), Parenthesis_Type::BRACES);
+        result->call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
         PARSE_SUCCESS(result);
     }
 
@@ -1961,6 +1960,7 @@ namespace Parser
         CHECKPOINT_SETUP;
         auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
         result->is_comptime = false;
+        result->is_return_type = false;
         result->default_value.available = false;
         result->is_mutable = false;
         if (test_operator(Operator::DOLLAR)) {
@@ -2178,9 +2178,9 @@ namespace Parser
         }
 
         if (test_operator(Operator::DOLLAR) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
-            result->type = Expression_Type::TEMPLATE_PARAMETER;
+            result->type = Expression_Type::PATTERN_VARIABLE;
             advance_token();
-            result->options.polymorphic_symbol_id = get_token()->options.identifier;
+            result->options.pattern_variable_name = get_token()->options.identifier;
             advance_token();
             PARSE_SUCCESS(result);
         }
@@ -2194,7 +2194,7 @@ namespace Parser
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_failure<Expression*>();
-                init.arguments = parse_arguments(upcast(result), Parenthesis_Type::BRACES);
+                init.call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
             else if (test_parenthesis_offset('[', 0)) // Array Initializer
@@ -2243,11 +2243,10 @@ namespace Parser
             ))
         {
             result->type = Expression_Type::FUNCTION_SIGNATURE;
-            auto& signature = result->options.function_signature;
-            signature.parameters = dynamic_array_create<Parameter*>(1);
-            signature.return_value.available = false;
+            auto& signature_parameters = result->options.signature_parameters;
+            signature_parameters = dynamic_array_create<Parameter*>();
             auto add_parameter = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Expression>(parent)->options.function_signature.parameters, downcast<Parameter>(child));
+                dynamic_array_push_back(&downcast<Expression>(parent)->options.signature_parameters, downcast<Parameter>(child));
             };
             parse_list_of_items(
                 upcast(result), wrapper_parse_parameter, add_parameter, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, false
@@ -2256,7 +2255,14 @@ namespace Parser
             // Parse Return value
             if (test_operator(Operator::ARROW)) {
                 advance_token();
-                signature.return_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+                auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
+                return_param->default_value = optional_make_failure<AST::Expression*>();
+                return_param->is_comptime = false;
+                return_param->is_return_type = true;
+                return_param->is_mutable = true;
+                return_param->name = compiler.identifier_pool.predefined_ids.return_type_name;
+                return_param->type = parse_expression_or_error_expr(upcast(result));
+                dynamic_array_push_back(&signature_parameters, return_param);
             }
 
             // Check if its a function or just a function signature
@@ -2397,7 +2403,7 @@ namespace Parser
                 result->type = Expression_Type::STRUCT_INITIALIZER;
                 auto& init = result->options.struct_initializer;
                 init.type_expr = optional_make_success(child);
-                init.arguments = parse_arguments(upcast(result), Parenthesis_Type::BRACES);
+                init.call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
                 PARSE_SUCCESS(result);
             }
             else if (test_parenthesis_offset('[', 0)) // Array Initializer
@@ -2467,7 +2473,7 @@ namespace Parser
             result->type = Expression_Type::FUNCTION_CALL;
             auto& call = result->options.call;
             call.expr = child;
-            call.arguments = parse_arguments(upcast(result), Parenthesis_Type::PARENTHESIS);
+            call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
         CHECKPOINT_EXIT;

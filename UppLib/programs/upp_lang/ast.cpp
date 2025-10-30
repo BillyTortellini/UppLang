@@ -27,8 +27,8 @@ namespace AST
             }
             break;
         }
-        case Node_Type::ARGUMENTS: {
-            auto args = (Arguments*)node;
+        case Node_Type::CALL_NODE: {
+            auto args = (Call_Node*)node;
             dynamic_array_destroy(&args->arguments);
             dynamic_array_destroy(&args->subtype_initializers);
             dynamic_array_destroy(&args->uninitialized_tokens);
@@ -82,10 +82,7 @@ namespace AST
 			break;
 		}
 		case Expression_Type::FUNCTION_SIGNATURE: {
-			auto& sig = expr->options.function_signature;
-			if (sig.parameters.data != 0) {
-				dynamic_array_destroy(&sig.parameters);
-			}
+			dynamic_array_destroy(&expr->options.signature_parameters);
 			break;
 		}
 		case Expression_Type::GET_OVERLOAD: {
@@ -175,8 +172,8 @@ Node* base_get_child(Node* node, int child_index)
 		FILL_OPTIONAL(enum_member->value);
 		break;
 	}
-	case Node_Type::ARGUMENTS: {
-		auto args = (Arguments*)node;
+	case Node_Type::CALL_NODE: {
+		auto args = (Call_Node*)node;
 		FILL_ARRAY(args->arguments);
 		FILL_ARRAY(args->subtype_initializers);
 		FILL_ARRAY(args->uninitialized_tokens);
@@ -222,13 +219,13 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(context->options.import_path);
 		}
 		else {
-			FILL(context->options.arguments);
+			FILL(context->options.call_node);
 		}
 		break;
 	}
 	case Node_Type::SUBTYPE_INITIALIZER: {
 		auto init = (Subtype_Initializer*)node;
-		FILL(init->arguments);
+		FILL(init->call_node);
 		break;
 	}
 	case Node_Type::IMPORT: {
@@ -298,7 +295,7 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(expr->options.optional_pointer_child_type);
 			break;
 		}
-		case Expression_Type::TEMPLATE_PARAMETER: {
+		case Expression_Type::PATTERN_VARIABLE: {
 			break;
 		}
 		case Expression_Type::NEW_EXPR: {
@@ -339,7 +336,7 @@ Node* base_get_child(Node* node, int child_index)
 		case Expression_Type::STRUCT_INITIALIZER: {
 			auto& init = expr->options.struct_initializer;
 			FILL_OPTIONAL(init.type_expr);
-			FILL(init.arguments);
+			FILL(init.call_node);
 			break;
 		}
 		case Expression_Type::BAKE: {
@@ -405,13 +402,11 @@ Node* base_get_child(Node* node, int child_index)
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
 			FILL(call.expr);
-			FILL(call.arguments);
+			FILL(call.call_node);
 			break;
 		}
 		case Expression_Type::FUNCTION_SIGNATURE: {
-			auto& sig = expr->options.function_signature;
-			FILL_ARRAY(sig.parameters);
-			FILL_OPTIONAL(sig.return_value);
+			FILL_ARRAY(expr->options.signature_parameters);
 			break;
 		}
 		case Expression_Type::STRUCTURE_TYPE: {
@@ -559,8 +554,8 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		FILL_OPTIONAL(enum_member->value);
 		break;
 	}
-	case Node_Type::ARGUMENTS: {
-		auto args = (Arguments*)node;
+	case Node_Type::CALL_NODE: {
+		auto args = (Call_Node*)node;
 		FILL_ARRAY(args->arguments);
 		FILL_ARRAY(args->subtype_initializers);
 		FILL_ARRAY(args->uninitialized_tokens);
@@ -585,13 +580,13 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(context->options.import_path);
 		}
 		else {
-			FILL(context->options.arguments);
+			FILL(context->options.call_node);
 		}
 		break;
 	}
 	case Node_Type::SUBTYPE_INITIALIZER: {
 		auto init = (Subtype_Initializer*)node;
-		FILL(init->arguments);
+		FILL(init->call_node);
 		break;
 	}
 	case Node_Type::IMPORT: {
@@ -698,7 +693,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(expr->options.optional_pointer_child_type);
 			break;
 		}
-		case Expression_Type::TEMPLATE_PARAMETER: {
+		case Expression_Type::PATTERN_VARIABLE: {
 			break;
 		}
 		case Expression_Type::NEW_EXPR: {
@@ -739,7 +734,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		case Expression_Type::STRUCT_INITIALIZER: {
 			auto& init = expr->options.struct_initializer;
 			FILL_OPTIONAL(init.type_expr);
-			FILL(init.arguments);
+			FILL(init.call_node);
 			break;
 		}
 		case Expression_Type::BAKE: {
@@ -805,13 +800,11 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
 			FILL(call.expr);
-			FILL(call.arguments);
+			FILL(call.call_node);
 			break;
 		}
 		case Expression_Type::FUNCTION_SIGNATURE: {
-			auto& sig = expr->options.function_signature;
-			FILL_ARRAY(sig.parameters);
-			FILL_OPTIONAL(sig.return_value);
+			FILL_ARRAY(expr->options.signature_parameters);
 			break;
 		}
 		case Expression_Type::STRUCTURE_TYPE: {
@@ -973,7 +966,7 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 		str, expr->options.optional_access.is_value_access ? "Optional_Available_Check " : "Optional_Value_Access"); break;
 	case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "Optional Type"); break;
 	case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "Optional Pointer"); break;
-	case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "Template Parameter \"%s\"", expr->options.polymorphic_symbol_id->characters); break;
+	case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "Template Parameter \"%s\"", expr->options.pattern_variable_name->characters); break;
 	case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
 	case Expression_Type::NEW_EXPR: string_append_formated(str, "New expr"); break;
 	case Expression_Type::CAST: string_append_formated(str, "Cast"); break;
@@ -1025,8 +1018,8 @@ void base_append_to_string(Node* base, String* str)
 		string_append_formated(str, "DEFINITION");
 		break;
 	}
-	case Node_Type::ARGUMENTS: {
-		string_append_formated(str, "ARGS");
+	case Node_Type::CALL_NODE: {
+		string_append_formated(str, "CALL_NODE");
 		break;
 	}
 	case Node_Type::IMPORT: {
@@ -1142,7 +1135,7 @@ void base_append_to_string(Node* base, String* str)
 		case Expression_Type::OPTIONAL_ACCESS: string_append_formated(str, "OPTIONAL_ACCESS"); break;
 		case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "OPTIONAL_TYPE"); break;
 		case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "OPTIONAL_POINTER"); break;
-		case Expression_Type::TEMPLATE_PARAMETER: string_append_formated(str, "TEMPLATE_PARAMETER %s", expr->options.polymorphic_symbol_id->characters); break;
+		case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "PATTERN_VARIABLE %s", expr->options.pattern_variable_name->characters); break;
 		case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
 		case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
 		case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
@@ -1324,8 +1317,8 @@ namespace Helpers
 	bool type_correct(Subtype_Initializer* base) {
 		return base->base.type == Node_Type::SUBTYPE_INITIALIZER;
 	}
-	bool type_correct(Arguments* base) {
-		return base->base.type == Node_Type::ARGUMENTS;
+	bool type_correct(Call_Node* base) {
+		return base->base.type == Node_Type::CALL_NODE;
 	}
 	bool type_correct(Context_Change* base) {
 		return base->base.type == Node_Type::CONTEXT_CHANGE;

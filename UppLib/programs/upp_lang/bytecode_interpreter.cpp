@@ -982,7 +982,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
-                    "type_info failed, type-handle was invalid value");
+                    "type_info failed, value_type-handle was invalid value");
                 return true;
             }
             if (type_size_is_unfinished(type_system.types[type_index])) {

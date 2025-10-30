@@ -3,6 +3,22 @@
 #include "../utility/datatypes.hpp"
 #include "array.hpp"
 
+
+
+template <typename T>
+struct Hashset_Iterator;
+template <typename T>
+struct Hashset;
+
+template <typename T>
+Hashset_Iterator<T> hashset_iterator_create(Hashset<T>* set);
+template <typename T>
+bool hashset_iterator_has_next(Hashset_Iterator<T>* iterator);
+template <typename T>
+void hashset_iterator_next(Hashset_Iterator<T>* iterator);
+
+
+
 const float HASHSET_RESIZE_PERCENTAGE = 0.8f;
 
 int primes_find_next_suitable_for_set_size(int capacity);
@@ -23,6 +39,9 @@ struct Hashset
     int element_count;
     u64(*hash_function)(T*);
     bool(*equals_function)(T*, T*);
+
+    // Convenience member functions
+    Hashset_Iterator<T> make_iter() { return hashset_iterator_create(this); }
 };
 
 template <typename T>
@@ -33,6 +52,10 @@ struct Hashset_Iterator
     int current_entry_index;
     // Things users should access
     T* value;
+
+    // Convenience member functions
+    bool has_next() { return hashset_iterator_has_next<T>(this); }
+    void next() { hashset_iterator_next<T>(this); }
 };
 
 template <typename T>

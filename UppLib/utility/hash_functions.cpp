@@ -66,11 +66,19 @@ u64 hash_i32(i32* i) {
     return hash_memory(array_create_static<byte>((byte*)i, 4));
 }
 
+u64 hash_u32(u32* i) {
+    return hash_memory(array_create_static<byte>((byte*)i, 4));
+}
+
 u64 hash_i64(i64* i) {
     return hash_memory(array_create_static<byte>((byte*)i, 8));
 }
 
 u64 hash_u64(u64* i) {
+    return hash_memory(array_create_static<byte>((byte*)i, 8));
+}
+
+u64 hash_u64_non_pointer(u64 i) {
     return hash_memory(array_create_static<byte>((byte*)i, 8));
 }
 

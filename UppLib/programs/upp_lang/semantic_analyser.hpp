@@ -3,7 +3,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
-#include "../../datastructures/stack_allocator.hpp"
+#include "../../datastructures/allocators.hpp"
 #include "../../datastructures/list.hpp"
 #include "../../utility/rich_text.hpp"
 
@@ -31,11 +31,11 @@ struct Workload_Structure_Body;
 struct Function_Progress;
 struct Bake_Progress;
 struct Module_Progress;
-struct Datatype_Template;
-struct Poly_Value;
+struct Datatype_Pattern_Variable;
+struct Pattern_Variable_State;
 struct Poly_Header;
 struct Compiler_Analysis_Data;
-struct Parameter_Matching_Info;
+struct Polymorphic_Instance;
 
 namespace Parser
 {
@@ -62,7 +62,7 @@ enum class ModTree_Function_Type
 // Modtree TODO: Rename this into something more sensible, like Upp-Function
 struct ModTree_Function
 {
-    Datatype_Function* signature;
+    Call_Signature* signature;
     int function_slot_index; // Index in functions slots array
     String* name; // Symbol name, or "bake_function"/"lambda_function"
 
@@ -118,20 +118,20 @@ enum class Polymorphic_Analysis_Type
     POLYMORPHIC_INSTANCE
 };
 
-enum class Poly_Value_Type
+// The pattern_values define what happens when a pattern expression is analysed.
+enum class Pattern_Variable_State_Type
 {
-    SET,
-    UNSET,
-    TEMPLATED_TYPE, // Used for header-analysis (inferred type reads and struct-template values)
+    SET,     // Comptime value was assigned to this variable
+    UNSET,   // Causes panic when accessed, means that this variable wasn't matched yet
+    PATTERN, // Returns pattern-type on access
 };
 
-struct Poly_Value
+struct Pattern_Variable_State
 {
-    Poly_Value_Type type;
+    Pattern_Variable_State_Type type;
     union {
-        Datatype* unset_type;
-        Datatype* template_type;
-        Upp_Constant value;
+        Upp_Constant value; // Only valid if state = SET
+        Datatype* pattern_type;
     } options;
 };
 
@@ -190,15 +190,16 @@ struct Workload_Base
 
     // Polymorphic value access is rather complicated, here are some points to consider:
     //  * Multiple sets of polymorphic values can be active at once (Poly-Function defined in Poly-Function)
+    //      Update: Don't think poly in poly works, but anonymous structs, lambdas and #bake have access to the values...
     //  * Child-Workloads inherit the polymorphic-values of their parents, so we need to store a parent-child relation
     //  * Polymorphic-Instances define their own poly-values
     Workload_Base* poly_parent_workload; // Note: This is a logical parent workload, e.g. function_body -> function_header -> module_analysis
-    Array<Poly_Value> poly_values; // Non-owning
-    Poly_Header* poly_value_origin;
-    Parameter_Matching_Info* instanciate_matching_info; // Only set during instanciate, to access other parameters
-    Hashtable<AST::Expression*, Datatype_Template*>* active_valid_template_expressions; // Non-owning, will point to Poly_Header member if active
     int polymorphic_instanciation_depth; 
-    bool allow_struct_instance_templates; // For implicit polymorphism, e.g. foo :: (a: Node), where node is polymorphic
+
+    Array<Pattern_Variable_State> active_pattern_variable_states; // Non-owning
+    Poly_Header* active_pattern_variable_states_origin;
+
+    Arena scratch_arena;
 };
 
 struct Workload_Event
@@ -213,7 +214,7 @@ struct Workload_Module_Analysis;
 struct Workload_Operator_Context_Change
 {
     Workload_Base base;
-    AST::Context_Change_Type context_type_to_analyse;
+    Context_Change_Type context_type_to_analyse;
     Dynamic_Array<AST::Context_Change*> change_nodes;
     Operator_Context* context;
 };
@@ -243,8 +244,8 @@ struct Workload_Function_Header
     Function_Progress* progress;
     AST::Expression* function_node;
     // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
-    //      But it may be null for infered functions...
-    Poly_Header* poly_header_infos;
+    //      But it may be null for instanciated functions, or inferred functions
+    Poly_Header* poly_header;
 };
 
 struct Workload_Function_Body
@@ -294,70 +295,38 @@ struct Workload_Bake_Execution
 
 
 // Polymorphism
-struct Parameter_Dependency
+struct Pattern_Variable
 {
-};
+    int value_access_index; // Used to access values, index in pattern_variables array
+    Datatype_Pattern_Variable* pattern_variable_type;
 
-struct Poly_Parameter
-{
-    Function_Parameter infos;
-
-    // Polymorphic infos
-    bool is_comptime;
-    union {
-        int value_access_index; // For comptime parameters
-        int index_in_non_polymorphic_signature; // For normal parameters
-    } options;
-
-    // Polymorphic dependency infos
-	Dynamic_Array<int> depends_on; // Indices to other poly_parameters
-	Dynamic_Array<int> dependees;
-    bool has_self_dependency; // Currently unused, but records if the parameter looks up one of it's inferred types itself
-    Dynamic_Array<int> inferred_parameter_indices; // Indices if the types contains infered parameters (In expressions)
-};
-
-enum class Inferred_Parameter_Context
-{
-    TYPE,
-    ARRAY_SIZE,   // If the parameter occurs as an array-type size value
-    ARGUMENT // If the parameter appears as a function-call value
-};
-
-struct Inferred_Parameter
-{
+    // Origin infos
+    Poly_Header* origin;
+    String* name;
+    Symbol* symbol;
+    AST::Node* definition_node; // Could be either Expression::Pattern_Value or Argument
+    bool is_comptime_parameter; // e.g. foo($A: int)
     int defined_in_parameter_index;
-    Inferred_Parameter_Context context;
-    AST::Expression* expression;
-    String* id;
-    Datatype_Template* template_parameter;
 };
 
 struct Poly_Instance;
 
 struct Poly_Header
 {
-    // Parameters: List of all parameters (comptime + normal) and if return type exists, it's the last value here
-    Array<Poly_Parameter> parameters;
-    int poly_value_count; // Number of comptime + inferred parameters, which is the size of the Poly_Value array
-
-    // Order in which arguments need to be evaluated in for instanciation, -1 for return value
-    Dynamic_Array<int> parameter_analysis_order; 
-    Dynamic_Array<Inferred_Parameter> inferred_parameters;
-    Hashtable<AST::Expression*, Datatype_Template*> valid_template_expressions; // Works with Workload_Base active_valid_template_expressions
-
-    Dynamic_Array<Poly_Instance> instances;
-    Array<Poly_Value> base_analysis_values;
+    // Note: pattern_variables and parameter_nodes arrays may all have different sizes
+    Call_Signature* signature;
+    Dynamic_Array<Pattern_Variable> pattern_variables;
+    Hashset<Poly_Instance*> instances;
+    Array<Pattern_Variable_State> base_analysis_states;
 
     // For convenience
-    Workload_Base* poly_value_definition_workload;
-    int return_type_index; // -1 if no return-type exists
     AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
-    Symbol_Table* symbol_table;
-    bool found_templated_parameter_type; // e.g. foo :: (a: Node), where Node :: struct(T: Type_Handle)
+    Symbol_Table* parameter_table;
 
     // Origin infos
     String* name; // Either struct or function name, for dot-calls auto id
+    int partial_pattern_count;
     bool is_function;
     union {
         Workload_Structure_Polymorphic* struct_workload;
@@ -365,14 +334,27 @@ struct Poly_Header
     } origin;
 };
 
+enum class Poly_Instance_Type
+{
+	FUNCTION,
+	STRUCTURE,
+	STRUCT_PATTERN,
+};
+
 struct Poly_Instance
 {
     Poly_Header* header;
-    Array<Poly_Value> instance_values;
-    bool is_function;
+    Array<Pattern_Variable_State> variable_states;
+    // Note: we need all pattern instances because of "implicit" polymorphism, e.g.
+    //      foo :: (a: Node(_)) 
+    // Because in such cases no variables are available to differentiate instances
+    // Also for convenience struct-pattern instances have these set to {nullptr, 0}
+    Array<Datatype*> partial_pattern_instances;
+    Poly_Instance_Type type;
     union {
         Function_Progress* function_instance;
         Workload_Structure_Body* struct_instance;
+        Datatype_Struct_Pattern* struct_pattern;
     } options;
 };
 
@@ -391,7 +373,7 @@ struct Workload_Structure_Body
         Workload_Structure_Polymorphic* base;
         struct {
             Workload_Structure_Polymorphic* parent;
-            int instance_index;
+            Poly_Instance* poly_instance;
         } instance;
     } polymorphic;
 };
@@ -476,7 +458,7 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module* module, boo
 
 
 
-// Analysis Information
+// Expression infos
 enum class Expression_Context_Type
 {
     UNKNOWN,                // Type is not known
@@ -511,6 +493,9 @@ struct Expression_Cast_Info
     } options;
 };
 
+
+
+// ANALYSIS INFO
 enum class Expression_Result_Type
 {
     VALUE,
@@ -519,9 +504,10 @@ enum class Expression_Result_Type
     FUNCTION,
     DOT_CALL,
     HARDCODED_FUNCTION,
+    POLYMORPHIC_STRUCT, 
     POLYMORPHIC_FUNCTION,
-    POLYMORPHIC_STRUCT,
-    NOTHING, // Functions returning void
+    POLYMORPHIC_PATTERN,
+    NOTHING // Functions returning void
 };
 
 struct Expression_Info
@@ -530,13 +516,11 @@ struct Expression_Info
     Expression_Result_Type result_type;
     union
     {
-        Datatype* type;
+        Datatype* type; 
+        Datatype* polymorphic_pattern; 
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
-        struct {
-            Poly_Function poly_function;
-            ModTree_Function* instance_fn;
-        } polymorphic_function;
+        Poly_Function poly_function;
         struct {
             AST::Expression* first_argument;
             Dynamic_Array<Dot_Call_Info>* overloads; // Note: This is allocated in Compiler_Analysis_Data
@@ -547,10 +531,9 @@ struct Expression_Info
     } options;
 
     bool is_valid; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
-    union {
-        Datatype_Function* function_call_signature; // Used by code-generation for accessing default values
-        Datatype_Primitive* bitwise_primitive_type;
-        Function_Parameter* implicit_parameter;
+    union 
+    {
+        Callable_Call* call; // Same as get_info(arguments)
         struct {
             Member_Access_Type type;
             union {
@@ -571,84 +554,6 @@ struct Expression_Info
 
     Expression_Context context; // Maybe I don't even want to store the context
     Expression_Cast_Info cast_info;
-};
-
-enum class Parameter_State
-{
-    NOT_ANALYSED,
-    ANALYSED
-};
-
-struct Parameter_Match
-{
-    // Parameter-Info
-    String* name;
-    Datatype* param_type; // May be null, if it's a polymorphic parameter with dependencies
-    bool required; // Default values and implicit parameters don't require values
-    bool requires_named_addressing; // Implicit arguments and #instanciate
-    bool must_not_be_set; // #instanciate must not set specific arguments
-
-    // Argument-Info (Can be used to instanciate)
-    Parameter_State state;
-    AST::Expression* expression; // may be 0 (instanciate), otherwise the expression of the corresponding argument
-    Datatype* argument_type; // Type of analysed expression
-    bool argument_is_temporary_value; // Required when expression == 0, to check if type_mods are compatible
-    int argument_index; // -1 if argument is not set or if argument is dot-call first value
-
-    // Matching info
-    bool is_set;
-    bool reanalyse_param_type_flag; // Used by polymorphic functions (when we manually set inferred parameters)
-    bool ignore_during_code_generation; // If polymorphic_function, the argument shouldn't generate code during code-generation
-};
-
-enum class Call_Type
-{
-    FUNCTION,
-    FUNCTION_POINTER,
-    HARDCODED,
-    DOT_CALL,
-
-    POLYMORPHIC_STRUCT,
-    POLYMORPHIC_FUNCTION,
-    POLYMORPHIC_DOT_CALL,
-    INSTANCIATE,
-
-    CONTEXT_OPTION,
-    STRUCT_INITIALIZER,
-    UNION_INITIALIZER,
-
-    SLICE_INITIALIZER
-};
-
-struct Parameter_Matching_Info
-{
-    Dynamic_Array<Parameter_Match> matched_parameters;
-    AST::Arguments* arguments; // May be null
-
-    // Call to-infos
-    Call_Type call_type;
-    union 
-    {
-        ModTree_Function* function;
-        Datatype_Function* pointer_call;
-        Hardcoded_Type hardcoded;
-        ModTree_Function* dot_call_function;
-        Poly_Function poly_function;
-        Poly_Function instanciate;
-        Poly_Function poly_dotcall;
-        Workload_Structure_Polymorphic* poly_struct;
-        struct {
-            bool valid; // E.g. if the name exists
-            Datatype_Struct* structure;
-            Struct_Content* content;
-            bool subtype_valid;
-            bool supertype_valid;
-        } struct_init;
-        Datatype_Slice* slice_type;
-    } options;
-
-    bool has_return_value;
-    Datatype* return_type; // Unknown if no return value exists
 };
 
 enum class Control_Flow
@@ -735,14 +640,13 @@ struct Analysis_Info
         Statement_Info info_stat;
         Code_Block_Info info_block;
         Case_Info info_case;
-        Parameter_Matching_Info parameter_matching_info;
         Parameter_Info param_info;
         Definition_Symbol_Info definition_symbol_info;
         Symbol_Lookup_Info symbol_lookup_info;
         Path_Lookup_Info path_info;
         Module_Info module_info;
+        Callable_Call call_info; // For AST::Call_Node*
     };
-    bool is_parameter_matching; // Used for cleanup, nothing else
 };
 
 enum class Info_Query
@@ -762,7 +666,7 @@ Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
-Parameter_Matching_Info* pass_get_node_info(Analysis_Pass* pass, AST::Arguments* node, Info_Query query);
+Callable_Call* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
@@ -822,7 +726,7 @@ struct Error_Information
         Symbol* symbol;
         Exit_Code exit_code;
         Datatype* type;
-        Datatype_Function* function;
+        Datatype_Function_Pointer* function;
         struct {
             Datatype_Struct* struct_signature;
             String* member_id;
@@ -846,7 +750,7 @@ struct Semantic_Error
     Dynamic_Array<Error_Information> information;
 };
 
-void log_semantic_error(const char* msg, AST::Node* node, Parser::Section node_section = Parser::Section::WHOLE);
+void log_semantic_error_outside(const char* msg, AST::Node* node, Parser::Section node_section);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void error_information_append_to_string(
     const Error_Information& info, Compiler_Analysis_Data* analysis_data, 
@@ -885,7 +789,6 @@ struct Semantic_Analyser
     Symbol_Table* root_symbol_table;
 
     Hashset<Symbol_Table*> symbol_lookup_visited;
-    Stack_Allocator comptime_value_allocator;
 };
 
 Semantic_Analyser* semantic_analyser_initialize();
@@ -894,19 +797,13 @@ void semantic_analyser_reset();
 void semantic_analyser_finish();
 Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload);
 
-Datatype_Function* hardcoded_type_to_signature(Hardcoded_Type type, Compiler_Analysis_Data* analysis_data);
-
 
 
 ModTree_Program* modtree_program_create();
 void modtree_program_destroy(ModTree_Program* program);
-void parameter_matching_info_destroy(Parameter_Matching_Info* info);
 void function_progress_destroy(Function_Progress* progress);
 void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 
-// Poly_Header* analysis_workload_get_poly_header(Workload_Base* workload); // Returns null if none found
-String* poly_header_get_value_name(Poly_Header* header, int value_access_index);
-
 // If search_start_workload == nullptr, we start from semantic_analyser.current_workload
-Array<Poly_Value> poly_values_find_active_set(Poly_Header* poly_value_origin, Workload_Base* search_start_workload = nullptr);
+Array<Pattern_Variable_State> pattern_variables_find_active_states(Poly_Header* active_pattern_values_origin, Workload_Base* search_start_workload = nullptr);

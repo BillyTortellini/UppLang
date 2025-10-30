@@ -137,6 +137,12 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 }
 
 
+Callable callable_make(Call_Signature* signature, Callable_Type type) {
+	Callable callable;
+	callable.signature = signature;
+	callable.type = type;
+	return callable;
+}
 
 
 // Extern sources
@@ -193,6 +199,7 @@ Identifier_Pool identifier_pool_create()
 		ids.value = add_id("value");
 		ids.is_available = add_id("is_available");
 		ids.uninitialized_token = add_id("_");
+		ids.return_type_name = add_id("!return_type_name");
 		ids.c_string = add_id("c_string");
 		ids.allocator = add_id("Allocator");
 		ids.bytes = add_id("bytes");

@@ -1208,9 +1208,10 @@ void window_initialize_dxgi_output()
                 DXGI_OUTPUT_DESC desc;
                 output->GetDesc(&desc);
                 int len = lstrlenW(desc.DeviceName);
-                auto tmp = string_create_empty(32);
+                auto tmp = string_create_empty(64);
                 SCOPE_EXIT(string_destroy(&tmp));
-                wcstombs(tmp.characters, desc.DeviceName, 32);
+                size_t converted_size;
+                wcstombs_s(&converted_size, tmp.characters, 32, desc.DeviceName, 64);
                 tmp.size = (int) strlen(tmp.characters);
                 logg("Import output: %s\n", tmp.characters);
 

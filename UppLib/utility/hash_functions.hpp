@@ -7,8 +7,10 @@
 u64 hash_memory(Array<byte> memory);
 u64 hash_string(String* string);
 u64 hash_i32(i32* i);
+u64 hash_u32(u32* i);
 u64 hash_i64(i64* i);
 u64 hash_u64(u64* i);
+u64 hash_u64_non_pointer(u64 i);
 u64 hash_pointer(void* ptr);
 u64 hash_combine(u64 a, u64 b);
 u64 hash_bool(u64 a, bool value);

@@ -20,13 +20,14 @@ struct Module_Progress;
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
-struct Datatype_Template;
+struct Datatype_Pattern_Variable;
 struct Workload_Base;
 
 struct Function_Progress;
 struct Poly_Function;
 struct Function_Parameter;
 struct Poly_Header;
+struct Pattern_Variable;
 
 namespace AST
 {
@@ -36,17 +37,6 @@ namespace AST
 
 
 // OPERATOR CONTEXT
-enum class Cast_Mode
-{
-    NONE = 1,
-    EXPLICIT, // cast{u64} i
-    INFERRED, // cast i
-    POINTER_EXPLICIT, // cast_pointer{*int} ip
-    POINTER_INFERRED, // cast_pointer ip
-    IMPLICIT, // x: u32 = i
-    
-    MAX_ENUM_VALUE
-};
 
 /*
     Notes on Custom_Operator_Key:
@@ -59,7 +49,7 @@ enum class Cast_Mode
 //       For binop commutativity the custom operator is inserted twice, so only a single lookup will find one of the versions
 struct Custom_Operator_Key
 {
-    AST::Context_Change_Type type;
+    Context_Change_Type type;
     union
     {
         struct {
@@ -155,7 +145,7 @@ struct Workload_Operator_Context_Change;
 struct Operator_Context
 {
     Dynamic_Array<Operator_Context*> context_imports; // Where context 0 is always the parent import
-    Workload_Operator_Context_Change* workloads[(int)AST::Context_Change_Type::MAX_ENUM_VALUE];
+    Workload_Operator_Context_Change* workloads[(int)Context_Change_Type::MAX_ENUM_VALUE];
     Hashtable<Custom_Operator_Key, Custom_Operator> custom_operators;
 };
 
@@ -186,7 +176,7 @@ enum class Symbol_Type
     PARAMETER,
 
     TYPE,
-    POLYMORPHIC_VALUE, // Either comptime parameter or inferred parameter
+    PATTERN_VARIABLE, // Either comptime parameter or pattern value
     COMPTIME_VALUE,
     ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,
@@ -215,11 +205,7 @@ struct Symbol
             int index_in_polymorphic_signature;
             int index_in_non_polymorphic_signature;
         } parameter;
-        struct {
-            Poly_Header* poly_value_origin; // Where the poly-values came from
-            int defined_in_parameter_index;
-            int value_access_index;
-        } polymorphic_value;
+        Pattern_Variable* pattern_variable;
         Upp_Constant constant;
     } options;
 
@@ -262,7 +248,8 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
-void symbol_table_add_include_table(Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node);
+void symbol_table_add_include_table(
+    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node);
 // Note: when id == 0, all symbols that are possible will be added
 void symbol_table_query_id(
     Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited);

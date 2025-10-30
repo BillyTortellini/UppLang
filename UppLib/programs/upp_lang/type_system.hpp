@@ -5,7 +5,6 @@
 #include <initializer_list>
 #include "ast.hpp"
 #include "constant_pool.hpp"
-#include "../../utility/rich_text.hpp"
 #include "memory_source.hpp"
 
 struct Symbol;
@@ -16,10 +15,18 @@ struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
 struct Function_Progress;
-struct Poly_Value;
-struct Datatype_Template;
+struct Pattern_Variable_State;
+struct Datatype_Pattern_Variable;
 struct Struct_Content;
 struct Analysis_Pass;
+struct Pattern_Variable;
+struct Poly_Instance;
+struct Call_Signature;
+
+namespace Rich_Text
+{
+    struct Rich_Text;
+};
 
 namespace AST
 {
@@ -28,19 +35,6 @@ namespace AST
 
 
 // Helpers
-struct Function_Parameter
-{
-    String* name;
-    Datatype* type;
-
-    // If the default value does not exist, boolean is set to false and the others are nullptr
-    // If it exists, the value_expr or value_pass may still be null (In polymorphic function/on error)
-    bool default_value_exists;
-    AST::Expression* value_expr;
-    Analysis_Pass* value_pass;
-};
-Function_Parameter function_parameter_make_empty();
-
 struct Struct_Member
 {
     Datatype* type;
@@ -75,8 +69,9 @@ enum class Datatype_Type
     SLICE, // Pointer + size
     STRUCT,
     ENUM,
-    FUNCTION,
+    FUNCTION_POINTER,
     UNKNOWN_TYPE, // For error propagation
+    INVALID_TYPE, // Unlike unknown, invalid types should never be accessed
 
     // Modifier-Types
     POINTER,
@@ -85,8 +80,8 @@ enum class Datatype_Type
     SUBTYPE,
 
     // Types for polymorphism
-    TEMPLATE_TYPE,
-    STRUCT_INSTANCE_TEMPLATE
+    PATTERN_VARIABLE,
+    STRUCT_PATTERN
 };
 
 struct Datatype_Memory_Info
@@ -127,7 +122,8 @@ struct Datatype
     Workload_Structure_Body* memory_info_workload;
 
     // Some cached values so we don't have to always walk the type tree
-    bool contains_template;
+    bool contains_pattern;
+    bool contains_partial_pattern; // Patterns where variables are missing, e.g. Node(_)
     Datatype* base_type;
     Type_Mods mods; // These are the modifiers which when applied to the base_type gets us this type
 };
@@ -138,7 +134,7 @@ enum class Primitive_Class
     FLOAT,
     BOOLEAN,
     ADDRESS,
-    TYPE_HANDLE
+    TYPE_HANDLE,
 };
 
 enum class Primitive_Type
@@ -185,7 +181,7 @@ struct Datatype_Array
     bool count_known; // False in case of polymorphism (Comptime values) or when Errors occured
     u64 element_count;
 
-    Datatype_Template* polymorphic_count_variable; // May be null if it doesn't exist
+    Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
 };
 
 struct Datatype_Slice {
@@ -208,13 +204,11 @@ struct Datatype_Constant
     Datatype* element_type;
 };
 
-struct Datatype_Function
+struct Datatype_Function_Pointer
 {
     Datatype base;
-    Dynamic_Array<Function_Parameter> parameters;
-    Optional<Datatype*> return_type;
+    Call_Signature* signature;
     bool is_optional;
-    Datatype_Function* non_optional_type;
 };
 
 struct Datatype_Subtype
@@ -225,7 +219,7 @@ struct Datatype_Subtype
     int subtype_index;
 };
 
-// Note: Datatype_Optionl is seperate from option-pointers, as pointer types have a is_optional boolean
+// Note: Datatype_Optional is seperate from optional-pointers, as pointer types have a is_optional boolean
 struct Datatype_Optional
 {
     Datatype base;
@@ -244,6 +238,7 @@ struct Struct_Content
     AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
 
     // Content
+    Call_Signature* initializer_signature;
     Dynamic_Array<Struct_Member> members;
     Dynamic_Array<Struct_Content*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty
@@ -272,22 +267,19 @@ struct Datatype_Enum
     int sequence_start_value; // Usually 1
 };
 
-struct Datatype_Template
+struct Datatype_Pattern_Variable
 {
     Datatype base;
-    Symbol* symbol;
-    int value_access_index;
-    int defined_in_parameter_index;
+    Pattern_Variable* variable; // May be null if no variable is associated with the pattern
 
     bool is_reference;
-    Datatype_Template* mirrored_type; // Pointer to either the reference type or the "base" polymorphic-type
+    Datatype_Pattern_Variable* mirrored_type; // Pointer to either the reference type or the "base" variable
 };
 
-struct Datatype_Struct_Instance_Template
+struct Datatype_Struct_Pattern
 {
     Datatype base;
-    Workload_Structure_Polymorphic* struct_base;
-    Array<Poly_Value> instance_values; // These need to be stored somewhere else now...
+    Poly_Instance* instance;
 };
 
 struct Datatype_Format
@@ -369,8 +361,7 @@ struct Internal_Type_Primitive
 struct Internal_Type_Function
 {
     Upp_Slice<Upp_Type_Handle> parameters;
-    Upp_Type_Handle return_type;
-    bool has_return_type;
+    bool has_return_type; // If true, then it's the last type
 };
 
 struct Internal_Type_Struct_Member
@@ -465,7 +456,7 @@ enum class Type_Deduplication_Type
     CONSTANT,
     SLICE,
     ARRAY,
-    FUNCTION,
+    FUNCTION_POINTER,
     SUBTYPE,
     OPTIONAL
 };
@@ -491,12 +482,12 @@ struct Type_Deduplication
             Datatype* element_type;
             bool size_known;
             int element_count;
-            Datatype_Template* polymorphic_count_variable; // May be null if it doesn't exist
+            Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
         } array_type;
         struct {
-            Dynamic_Array<Function_Parameter> parameters;
-            Datatype* return_type;
-        } function;
+            Call_Signature* signature;
+            bool is_optional;
+        } function_pointer;
     } options;
 };
 
@@ -526,60 +517,23 @@ struct Predefined_Types
     Datatype* c_string;
     Datatype_Struct* bytes;
     Datatype* unknown_type;
+    Datatype* invalid_type;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
     Datatype_Struct* internal_struct_content_type;
     Datatype_Struct* internal_member_info_type;
-    Datatype_Struct* empty_struct_type; // Required for now 
 
-    Datatype_Function* empty_function;  // () 
+    Datatype_Struct* empty_struct_type; // Required for now 
+    Datatype* empty_pattern_variable;
 
     Datatype_Enum* cast_mode;
     Datatype_Enum* cast_option;
     Datatype_Enum* primitive_type_enum;
 
     Datatype_Struct* allocator;
-    Datatype_Function* allocate_function;
-    Datatype_Function* free_function;
-    Datatype_Function* resize_function;
-
-    Datatype_Function* hardcoded_system_alloc;
-    Datatype_Function* hardcoded_system_free;
-
-    Datatype_Function* type_memory_copy;
-    Datatype_Function* type_memory_zero;
-    Datatype_Function* type_memory_compare;
-
-    Datatype_Function* type_assert;
-    Datatype_Function* type_type_of;
-    Datatype_Function* type_type_info;
-    Datatype_Function* type_size_of;
-    Datatype_Function* type_align_of;
-    Datatype_Function* type_panic;
-    Datatype_Function* hardcode_struct_tag_fn;
-    Datatype_Function* hardcode_return_type_fn;
-
-    Datatype_Function* type_print_bool;
-    Datatype_Function* type_print_i32;
-    Datatype_Function* type_print_f32;
-    Datatype_Function* type_print_line;
-    Datatype_Function* type_print_string;
-    Datatype_Function* type_read_i32;
-    Datatype_Function* type_read_f32;
-    Datatype_Function* type_read_bool;
-    Datatype_Function* type_random_i32;
-
-    // Note: These are used for function overload resolution, so this is kinda wrong...
-    Datatype_Function* type_bitwise_unop;
-    Datatype_Function* type_bitwise_binop;
-
-    Datatype_Function* type_set_cast_option;
-    Datatype_Function* type_add_binop;
-    Datatype_Function* type_add_unop;
-    Datatype_Function* type_add_cast;
-    Datatype_Function* type_add_array_access;
-    Datatype_Function* type_add_dotcall;
-    Datatype_Function* type_add_iterator;
+    Datatype_Function_Pointer* allocate_function;
+    Datatype_Function_Pointer* free_function;
+    Datatype_Function_Pointer* resize_function;
 };
 
 // TYPE SYSTEM
@@ -602,21 +556,17 @@ void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
-Datatype_Template* type_system_make_template_type(Symbol* symbol, int value_access_index, int defined_in_parameter_index);
-Datatype_Struct_Instance_Template* type_system_make_struct_instance_template(Workload_Structure_Polymorphic* base, Array<Poly_Value> instance_values);
+Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variable* pattern_variable);
+Datatype_Struct_Pattern* type_system_make_struct_pattern(Poly_Instance* instance, bool is_partial_pattern);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
-Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Template* polymorphic_count_variable = 0);
+Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
 Datatype* type_system_make_constant(Datatype* datatype);
 Datatype_Optional* type_system_make_optional(Datatype* datatype);
 Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
 Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);
-
-// Note: Takes ownership of parameters (Or deletes them if type deduplication kicked in)
-Datatype_Function* type_system_make_function(Dynamic_Array<Function_Parameter> parameters, Datatype* return_type = 0); 
-Datatype_Function* type_system_make_function(std::initializer_list<Function_Parameter> parameter_types, Datatype* return_type = 0);
-Datatype_Function* type_system_make_function_optional(Datatype_Function* function);
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* call_signature, bool is_optional); 
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);
@@ -650,28 +600,28 @@ Upp_C_String upp_c_string_empty();
 // Casting functions
 inline Datatype* upcast(Datatype* value)           { return value; }
 inline Datatype* upcast(Datatype_Optional* value)  { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Function* value)  { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Function_Pointer* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct* value)    { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Enum* value)      { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Array* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Slice* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Primitive* value) { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Template* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Struct_Instance_Template* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Pattern_Variable* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Struct_Pattern* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Optional* unused) { return Datatype_Type::OPTIONAL_TYPE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
-inline Datatype_Type get_datatype_type(Datatype_Function* unused) { return Datatype_Type::FUNCTION; }
+inline Datatype_Type get_datatype_type(Datatype_Function_Pointer* unused) { return Datatype_Type::FUNCTION_POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Enum* unused) { return Datatype_Type::ENUM; }
 inline Datatype_Type get_datatype_type(Datatype_Array* unused) { return Datatype_Type::ARRAY; }
 inline Datatype_Type get_datatype_type(Datatype_Slice* unused) { return Datatype_Type::SLICE; }
 inline Datatype_Type get_datatype_type(Datatype_Primitive* unused) { return Datatype_Type::PRIMITIVE; }
 inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Datatype_Type::POINTER; }
-inline Datatype_Type get_datatype_type(Datatype_Template* unused) { return Datatype_Type::TEMPLATE_TYPE; }
-inline Datatype_Type get_datatype_type(Datatype_Struct_Instance_Template* base) { return Datatype_Type::STRUCT_INSTANCE_TEMPLATE; }
+inline Datatype_Type get_datatype_type(Datatype_Pattern_Variable* unused) { return Datatype_Type::PATTERN_VARIABLE; }
+inline Datatype_Type get_datatype_type(Datatype_Struct_Pattern* base) { return Datatype_Type::STRUCT_PATTERN; }
 inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
 inline Datatype_Type get_datatype_type(Datatype_Subtype* base) { return Datatype_Type::SUBTYPE; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }

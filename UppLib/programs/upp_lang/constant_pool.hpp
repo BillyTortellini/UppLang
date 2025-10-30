@@ -2,7 +2,7 @@
 
 #include "../../utility/datatypes.hpp"
 #include "../../datastructures/dynamic_array.hpp"
-#include "../../datastructures/stack_allocator.hpp"
+#include "../../datastructures/allocators.hpp"
 #include "../../datastructures/hashtable.hpp"
 
 struct Datatype;
@@ -33,7 +33,7 @@ struct Deduplication_Info
 struct Constant_Pool
 {
     Dynamic_Array<Upp_Constant> constants;
-    Stack_Allocator constant_memory;
+    Arena constant_memory;
     Hashtable<Deduplication_Info, Upp_Constant> deduplication_table; 
 };
 

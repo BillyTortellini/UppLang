@@ -555,8 +555,8 @@ void c_generator_output_type_reference(Datatype* type)
         }
         break;
     }
-    case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-    case Datatype_Type::TEMPLATE_TYPE:
+    case Datatype_Type::STRUCT_PATTERN:
+    case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE:
     {
         string_append_formated(&access_name, "UNUSED_TYPE_BACKEND_"); // See hardcoded_functions.h for definition
@@ -603,10 +603,10 @@ void c_generator_output_type_reference(Datatype* type)
 
         break;
     }
-    case Datatype_Type::FUNCTION:
+    case Datatype_Type::FUNCTION_POINTER:
     {
-        auto function = downcast<Datatype_Function>(type);
-        auto& parameters = function->parameters;
+        auto signature = downcast<Datatype_Function_Pointer>(type)->signature;
+        auto& parameters = signature->parameters;
         string_append_formated(&access_name, "fptr_%d", gen.name_counter);
         gen.name_counter++;
 
@@ -616,8 +616,8 @@ void c_generator_output_type_reference(Datatype* type)
 
         gen.text = &tmp;
         string_append(gen.text, "typedef ");
-        if (function->return_type.available) {
-            c_generator_output_type_reference(function->return_type.value);
+        if (signature->return_type().available) {
+            c_generator_output_type_reference(signature->return_type().value);
         }
         else {
             string_append(gen.text, "void");
@@ -626,7 +626,7 @@ void c_generator_output_type_reference(Datatype* type)
         string_append_formated(gen.text, " (*%s)(", access_name.characters);
         for (int i = 0; i < parameters.size; i++) {
             auto& param = parameters[i];
-            c_generator_output_type_reference(param.type);
+            c_generator_output_type_reference(param.datatype);
             string_append_formated(gen.text, " %s", param.name->characters);
             if (i != parameters.size - 1) {
                 string_append_formated(gen.text, ", ");
@@ -798,7 +798,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
         output_memory_as_new_constant((byte*)&content->tag_member.name, types.c_string, false, 1);
         string_append(gen.text, ";\n");
         string_add_indentation(gen.text, indentation_level);
-        string_append_formated(gen.text, "content->tag_member.type = %d;\n", content->tag_member.type.index);
+        string_append_formated(gen.text, "content->tag_member.value_type = %d;\n", content->tag_member.type.index);
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.offset = %d;\n", content->tag_member.offset);
     }
@@ -820,7 +820,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
             string_append(gen.text, ";\n");
 
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "content->members.data[%d].type = %d;\n", i, member.type.index);
+            string_append_formated(gen.text, "content->members.data[%d].value_type = %d;\n", i, member.type.index);
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "content->members.data[%d].offset = %d;\n", i, member.offset);
         }
@@ -951,9 +951,9 @@ void c_generator_generate()
 
     auto append_function_signature = [&](String* function_access_name, IR_Function* function)
     {
-        Datatype_Function* signature = function->function_type;
-        if (signature->return_type.available) {
-            c_generator_output_type_reference(signature->return_type.value);
+        Call_Signature* signature = function->signature;
+        if (signature->return_type().available) {
+            c_generator_output_type_reference(signature->return_type().value);
         }
         else {
             string_append(gen.text, "void");
@@ -965,7 +965,7 @@ void c_generator_generate()
         {
             auto& param = parameters[j];
 
-            c_generator_output_type_reference(param.type);
+            c_generator_output_type_reference(param.datatype);
             string_append(gen.text, " ");
 
             // Note: This has to be the same name as in output_data_access for parameter access
@@ -1036,8 +1036,8 @@ void c_generator_generate()
         for (int i = 0; i < program->functions.size; i++)
         {
             IR_Function* function = program->functions[i];
-            Datatype_Function* function_signature = function->function_type;
-            auto& parameters = function_signature->parameters;
+            Call_Signature* signature = function->signature;
+            auto& parameters = signature->parameters;
 
             // Generate function signature into tmp c_string
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
@@ -1101,7 +1101,7 @@ void c_generator_generate()
             string_add_indentation(gen.text, 1);
             string_append_formated(gen.text, "info = &type_infos_.infos[%d];\n", i);
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info->type      = %d;\n", type->type_handle.index);
+            string_append_formated(gen.text, "info->value_type      = %d;\n", type->type_handle.index);
             string_add_indentation(gen.text, 1);
             string_append_formated(gen.text, "info->size      = %d;\n", memory.size);
             string_add_indentation(gen.text, 1);
@@ -1118,7 +1118,7 @@ void c_generator_generate()
             case Datatype_Type::PRIMITIVE: {
                 auto primitive = downcast<Datatype_Primitive>(type);
                 Struct_Content* primitive_info = types.type_information_type->content.subtypes[(int)Datatype_Type::PRIMITIVE - 1];
-                string_append(gen.text, "info->subtypes_.Primitive.type = ");
+                string_append(gen.text, "info->subtypes_.Primitive.value_type = ");
                 output_memory_as_new_constant((byte*)&primitive->primitive_type, upcast(types.primitive_type_enum), false, 1);
                 string_append(gen.text, ";\n");
                 break;
@@ -1200,28 +1200,32 @@ void c_generator_generate()
                 }
                 break;
             }
-            case Datatype_Type::FUNCTION:
+            case Datatype_Type::FUNCTION_POINTER:
             {
-                auto function = downcast<Datatype_Function>(type);
+                auto signature = downcast<Datatype_Function_Pointer>(type)->signature;
+                auto parameters = signature->parameters;
+                auto return_type = signature->return_type();
 
-                string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", function->return_type.available ? function->return_type.value->type_handle.index : -1);
+                string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", 
+                    return_type.available ? return_type.value->type_handle.index : -1);
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function.has_return_type = %s;\n", function->return_type.available ? "true" : "false");
+                string_append_formated(gen.text, "info->subtypes_.Function.has_return_type = %s;\n", return_type.available ? "true" : "false");
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.size = %d;\n", function->parameters.size);
-                if (function->parameters.size != 0) {
+                string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.size = %d;\n", parameters.size);
+                if (parameters.size != 0) 
+                {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = new ", function->parameters.size);
+                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = new ");
                     c_generator_output_type_reference(types.type_handle); // Check if this works
-                    string_append_formated(gen.text, "[%d];\n", function->parameters.size);
-                    for (int j = 0; j < function->parameters.size; j++) {
+                    string_append_formated(gen.text, "[%d];\n", parameters.size);
+                    for (int j = 0; j < parameters.size; j++) {
                         string_add_indentation(gen.text, 1);
-                        string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, function->parameters[j].type->type_handle.index);
+                        string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, parameters[j].datatype->type_handle.index);
                     }
                 }
                 else {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = nullptr;\n", function->parameters.size);
+                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = nullptr;\n");
                 }
                 break;
             }
@@ -1235,8 +1239,8 @@ void c_generator_generate()
                 break;
             }
             case Datatype_Type::UNKNOWN_TYPE:
-            case Datatype_Type::TEMPLATE_TYPE:
-            case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
+            case Datatype_Type::PATTERN_VARIABLE:
+            case Datatype_Type::STRUCT_PATTERN:
                 break; // Nothing to do on these types
             default: panic("");
             }
@@ -1609,7 +1613,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             string_append_formated(gen.text, "::%s", member.name->characters);
             break;
         }
-        case Datatype_Type::FUNCTION:
+        case Datatype_Type::FUNCTION_POINTER:
         {
             byte* memory = base_memory;
 
@@ -1707,8 +1711,8 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
 
             break;
         }
-        case Datatype_Type::STRUCT_INSTANCE_TEMPLATE:
-        case Datatype_Type::TEMPLATE_TYPE:
+        case Datatype_Type::STRUCT_PATTERN:
+        case Datatype_Type::PATTERN_VARIABLE:
         case Datatype_Type::UNKNOWN_TYPE: {
             panic("Should not happen, this should generate an error beforehand");
             break;
@@ -1761,7 +1765,7 @@ void c_generator_output_parameter_access(IR_Function* function, int parameter_in
     }
 
     String new_name = string_create_empty(16);
-    auto& param = function->function_type->parameters[parameter_index];
+    auto& param = function->signature->parameters[parameter_index];
     string_append_formated(&new_name, "%s_%d", param.name->characters, gen.name_counter);
     gen.name_counter++;
 
@@ -2032,23 +2036,23 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
         case IR_Instruction_Type::FUNCTION_CALL:
         {
             IR_Instruction_Call* call = &instr->options.call;
-            Datatype_Function* function_sig = 0;
+            Call_Signature* signature = 0;
             switch (call->call_type) {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
-                function_sig = call->options.function->signature;
+                signature = call->options.function->signature;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                function_sig = downcast<Datatype_Function>(datatype_get_non_const_type(call->options.pointer_access->datatype));
+                signature = downcast<Datatype_Function_Pointer>(datatype_get_non_const_type(call->options.pointer_access->datatype))->signature;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                function_sig = hardcoded_type_to_signature(call->options.hardcoded, compiler.analysis_data);
+                signature = compiler.analysis_data->hardcoded_function_callables[(int)call->options.hardcoded].signature;
                 break;
             default: panic("hey");
             }
-            if (function_sig->return_type.available) {
+            if (signature->return_type().available) {
                 c_generator_output_data_access(call->destination);
                 string_append_formated(gen.text, " = ");
-                c_generator_output_cast_if_necessary(call->destination, function_sig->return_type.value);
+                c_generator_output_cast_if_necessary(call->destination, signature->return_type().value);
             }
 
             bool call_handled = false;
@@ -2225,7 +2229,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
                 string_append_formated(gen.text, "return ");
-                c_generator_output_cast_if_necessary(return_instr->options.return_value, code_block->function->function_type->return_type.value);
+                c_generator_output_cast_if_necessary(return_instr->options.return_value, code_block->function->signature->return_type().value);
                 c_generator_output_data_access(return_instr->options.return_value);
                 string_append_formated(gen.text, ";\n");
                 break;

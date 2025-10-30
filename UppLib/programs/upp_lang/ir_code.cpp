@@ -93,11 +93,11 @@ void ir_code_block_destroy(IR_Code_Block* block)
     delete block;
 }
 
-IR_Function* ir_function_create(Datatype_Function* signature, int slot_index = -1)
+IR_Function* ir_function_create(Call_Signature* signature, int slot_index = -1)
 {
     IR_Function* function = new IR_Function();
     function->code = ir_code_block_create(function);
-    function->function_type = signature;
+    function->signature = signature;
     function->program = ir_generator.program;
     dynamic_array_push_back(&ir_generator.program->functions, function);
 
@@ -165,25 +165,25 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
-        string_append_formated(string, "Global #%d, type: ", access->option.global_index);
+        string_append_formated(string, "Global #%d, value_type: ", access->option.global_index);
         datatype_append_to_string(string, type_system, access->datatype);
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
-        auto& param = param_info.function->function_type->parameters[param_info.index];
-        string_append_formated(string, "Param \"%s\", type: ", param.name->characters);
-        datatype_append_to_string(string, type_system, param.type);
+        auto& param = param_info.function->signature->parameters[param_info.index];
+        string_append_formated(string, "Param \"%s\", value_type: ", param.name->characters);
+        datatype_append_to_string(string, type_system, param.datatype);
         break;
     }
     case IR_Data_Access_Type::REGISTER: {
         auto& reg_access = access->option.register_access;
         auto& reg = reg_access.definition_block->registers[reg_access.index];
         if (reg.name.available) {
-            string_append_formated(string, "Register #%d \"%s\", type: ", reg_access.index, reg.name.value->characters);
+            string_append_formated(string, "Register #%d \"%s\", value_type: ", reg_access.index, reg.name.value->characters);
         }
         else {
-            string_append_formated(string, "Register #%d, type: ", reg_access.index);
+            string_append_formated(string, "Register #%d, value_type: ", reg_access.index);
         }
         datatype_append_to_string(string, type_system, reg.type);
         if (reg_access.definition_block != current_block) {
@@ -360,7 +360,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "FUNCTION_CALL\n");
         indent_string(string, indentation + 1);
 
-        Datatype_Function* function_sig;
+        Call_Signature* function_sig;
         switch (call->call_type)
         {
         case IR_Instruction_Call_Type::FUNCTION_CALL:
@@ -368,8 +368,8 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
             auto type = datatype_get_non_const_type(call->options.pointer_access->datatype);
-            assert(type->type == Datatype_Type::FUNCTION, "Function pointer call must be of function type!");
-            function_sig = downcast<Datatype_Function>(type);
+            assert(type->type == Datatype_Type::FUNCTION_POINTER, "Function pointer call must be of function value_type!");
+            function_sig = downcast<Datatype_Function_Pointer>(type)->signature;
             break;
         }
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
@@ -380,7 +380,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             return;
         }
         if (function_sig != 0) {
-            if (function_sig->return_type.available) {
+            if (function_sig->return_type().available) {
                 string_append_formated(string, "dst: ");
                 ir_data_access_append_to_string(call->destination, string, code_block, analysis_data);
                 string_append_formated(string, "\n");
@@ -406,7 +406,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             ir_data_access_append_to_string(call->options.pointer_access, string, code_block, analysis_data);
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-            string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
+            string_append_formated(string, "HARDCODED_FUNCTION_CALL, value_type: ");
             hardcoded_type_append_to_string(string, call->options.hardcoded);
             break;
         }
@@ -555,7 +555,7 @@ void ir_function_append_to_string(IR_Function* function, String* string, int ind
 
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
-    datatype_append_to_string(string, type_system, upcast(function->function_type));
+    call_signature_append_to_string(string, type_system, function->signature, datatype_format_make_default());
     string_append_formated(string, "\n");
     ir_code_block_append_to_string(function->code, string, indentation, analysis_data);
 }
@@ -611,7 +611,7 @@ IR_Data_Access* ir_data_access_create_global(ModTree_Global* global)
 IR_Data_Access* ir_data_access_create_parameter(IR_Function* function, int parameter_index)
 {
     IR_Data_Access* access = new IR_Data_Access;
-    access->datatype = function->function_type->parameters[parameter_index].type;
+    access->datatype = function->signature->parameters[parameter_index].datatype;
     access->type = IR_Data_Access_Type::PARAMETER;
     access->option.parameter.function = function;
     access->option.parameter.index = parameter_index;
@@ -635,7 +635,7 @@ IR_Data_Access* ir_data_access_create_intermediate(Datatype* signature)
 {
     auto& gen = ir_generator;
     assert(gen.current_block != 0, "");
-    assert(!datatype_is_unknown(signature), "Cannot have register with unknown type");
+    assert(!datatype_is_unknown(signature), "Cannot have register with unknown value_type");
     assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
 
     // Note: I don't think there is ever the need to have constant intermediates...
@@ -832,32 +832,34 @@ Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-Parameter_Matching_Info* get_info(AST::Arguments* node) {
+Callable_Call* get_info(AST::Call_Node* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
-void generate_member_initalizers(IR_Data_Access* struct_access, AST::Arguments* arguments)
+void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* arguments)
 {
-    auto param_infos = get_info(arguments);
-    assert(param_infos->call_type == Call_Type::STRUCT_INITIALIZER || param_infos->call_type == Call_Type::UNION_INITIALIZER, "");
-    auto& init_info = param_infos->options.struct_init;
+    auto call_info = get_info(arguments);
+    assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER, "");
+    auto& struct_content = call_info->callable.options.struct_content;
 
-    for (int i = 0; i < param_infos->matched_parameters.size; i++)
+    for (int i = 0; i < call_info->parameter_values.size; i++)
     {
-        auto& param_info = param_infos->matched_parameters[i];
-        if (!param_info.is_set) continue;
-        assert(param_info.expression != 0 && param_info.argument_index >= 0, "");
-        auto& member = init_info.content->members[i];
+        auto& param_value = call_info->parameter_values[i]; 
+        if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
+        assert(param_value.value_type == Parameter_Value_Type::ARGUMENT && param_value.argument_index != -1, "");
+
+        auto arg_expr = call_info->argument_infos[param_value.argument_index].expression;
+        auto& member = struct_content->members[i];
 
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
         move_instr.options.move.destination = ir_data_access_create_member(struct_access, member);
-        move_instr.options.move.source = ir_generator_generate_expression(param_info.expression);
+        move_instr.options.move.source = ir_generator_generate_expression(arg_expr);
         add_instruction(move_instr);
     }
     for (int i = 0; i < arguments->subtype_initializers.size; i++) {
         auto initializer = arguments->subtype_initializers[i];
-        generate_member_initalizers(struct_access, initializer->arguments);
+        generate_member_initalizers(struct_access, initializer->call_node);
     }
 }
 
@@ -934,6 +936,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
+    case Expression_Result_Type::POLYMORPHIC_PATTERN:
     case Expression_Result_Type::DOT_CALL:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
@@ -1078,47 +1081,55 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         panic("HEY");
         break;
     }
-    case AST::Expression_Type::TEMPLATE_PARAMETER: {
+    case AST::Expression_Type::PATTERN_VARIABLE: {
         panic("Shouldn't happen!");
     }
     case AST::Expression_Type::FUNCTION_CALL:
     {
         auto& call = expression->options.call;
-        auto call_info = get_info(call.expr);
+        auto call_info = get_info(call.call_node);
 
         IR_Instruction call_instr;
         call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        Datatype_Function* signature = nullptr;
-        switch (call_info->result_type)
+        switch (call_info->callable.type)
         {
-        case Expression_Result_Type::FUNCTION: {
+        case Callable_Type::DOT_CALL_NORMAL:
+        case Callable_Type::FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = call_info->options.function;
-            signature = call_info->options.function->signature;
+            call_instr.options.call.options.function = call_info->callable.options.function;
             break;
         }
-        case Expression_Result_Type::VALUE: {
+        case Callable_Type::DOT_CALL_POLYMORPHIC:
+        case Callable_Type::POLY_FUNCTION: {
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            call_instr.options.call.options.function = call_info->instanciation_data.function;
+            break;
+        }
+        case Callable_Type::FUNCTION_POINTER: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
             call_instr.options.call.options.pointer_access = ir_generator_generate_expression(call.expr);
-            signature = downcast<Datatype_Function>(call_info->cast_info.result_type->base_type);
             break;
         }
-        case Expression_Result_Type::CONSTANT: {
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-            call_instr.options.call.options.pointer_access = ir_data_access_create_constant(call_info->options.constant);
-            signature = downcast<Datatype_Function>(call_info->options.constant.type->base_type);
-            break;
-        }
-        case Expression_Result_Type::HARDCODED_FUNCTION:
+        case Callable_Type::HARDCODED:
         {
-            auto& hardcoded = call_info->options.hardcoded;
+            auto& hardcoded = call_info->callable.options.hardcoded;
             switch (hardcoded)
             {
+            case Hardcoded_Type::ALIGN_OF:
+            case Hardcoded_Type::SIZE_OF:
+            case Hardcoded_Type::RETURN_TYPE: 
+            case Hardcoded_Type::TYPE_OF: {
+                panic("Should be handled in semantic analyser");
+                break;
+            }
             case Hardcoded_Type::ASSERT_FN:
             {
+                auto call_info = get_info(call.call_node);
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+
                 IR_Instruction if_instr;
                 if_instr.type = IR_Instruction_Type::IF;
-                if_instr.options.if_instr.condition = ir_generator_generate_expression(call.arguments->arguments[0]->value);
+                if_instr.options.if_instr.condition = ir_generator_generate_expression(arg_expr);
                 if_instr.options.if_instr.true_branch = ir_code_block_create();
                 if_instr.options.if_instr.false_branch = ir_code_block_create();
                 add_instruction(if_instr);
@@ -1143,25 +1154,24 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             }
             case Hardcoded_Type::STRUCT_TAG: 
             {
-                auto matching = get_info(call.arguments);
-                auto struct_type = get_info(matching->matched_parameters[0].expression)->cast_info.result_type;
-                auto struct_access = ir_generator_generate_expression(matching->matched_parameters[0].expression);
+                auto call_info = get_info(call.call_node);
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+
+                auto struct_type = get_info(arg_expr)->cast_info.result_type;
+                auto struct_access = ir_generator_generate_expression(arg_expr);
                 Struct_Content* content = type_mods_get_subtype(
                     downcast<Datatype_Struct>(struct_type->base_type), struct_type->mods);
                 return move_access_to_destination(ir_data_access_create_member(struct_access, content->tag_member));
             }
-            case Hardcoded_Type::RETURN_TYPE: 
-            case Hardcoded_Type::TYPE_OF: {
-                panic("Should be handled in semantic analyser");
-                break;
-            }
             case Hardcoded_Type::BITWISE_NOT:
             {
-                auto matching = get_info(call.arguments);
+                auto call_info = get_info(call.call_node);
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+
                 IR_Instruction unop;
                 unop.type = IR_Instruction_Type::UNARY_OP;
                 unop.options.unary_op.type = IR_Unop::BITWISE_NOT;
-                unop.options.unary_op.source = ir_generator_generate_expression(matching->matched_parameters[0].expression);
+                unop.options.unary_op.source = ir_generator_generate_expression(arg_expr);
                 unop.options.unary_op.destination = make_destination_access_on_demand(result_type);
                 add_instruction(unop);
                 return unop.options.unary_op.destination;
@@ -1172,7 +1182,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::BITWISE_SHIFT_LEFT:
             case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
             {
-                auto matching = get_info(call.arguments);
+                auto call_info = get_info(call.call_node);
+                auto arg_expr0 = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+                auto arg_expr1 = call_info->argument_infos[call_info->parameter_values[1].argument_index].expression;
 
                 IR_Binop binop_type;
                 switch (hardcoded)
@@ -1188,95 +1200,54 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 IR_Instruction binop;
                 binop.type = IR_Instruction_Type::BINARY_OP;
                 binop.options.binary_op.type = binop_type;
-                binop.options.binary_op.operand_left = ir_generator_generate_expression(matching->matched_parameters[0].expression);
-                binop.options.binary_op.operand_right = ir_generator_generate_expression(matching->matched_parameters[1].expression);
+                binop.options.binary_op.operand_left = ir_generator_generate_expression(arg_expr0);
+                binop.options.binary_op.operand_right = ir_generator_generate_expression(arg_expr1);
                 binop.options.binary_op.destination = make_destination_access_on_demand(result_type);
                 add_instruction(binop);
                 return binop.options.binary_op.destination;
             }
+            default: break; // All other hardcoded-functions are passed on to the next stages
             }
+
             call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
             call_instr.options.call.options.hardcoded = hardcoded;
-            signature = hardcoded_type_to_signature(hardcoded, compiler.analysis_data);
             break;
         }
-        case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-        {
-            auto function = call_info->options.polymorphic_function.instance_fn;
-            assert(function != nullptr, "Must be instanciated at ir_code");
-            assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = function;
-            signature = function->signature;
-            break;
+        default: {
+            panic("Other cases shouldn't have made it this far...");
         }
-        case Expression_Result_Type::DOT_CALL: 
-        {
-            assert(call_info->specifics.member_access.type == Member_Access_Type::DOT_CALL, "");
-            auto function = call_info->specifics.member_access.options.dot_call_function;
-            assert(function != nullptr, "Must be instanciated at ir_code");
-            assert(function->is_runnable, "Instances that reach ir-generator must be runnable!");
-
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = function;
-            signature = function->signature;
-            break;
-        }
-        case Expression_Result_Type::POLYMORPHIC_STRUCT:
-        case Expression_Result_Type::TYPE: {
-            panic("Must not happen after semantic analysis!");
-            break;
-        }
-        default: panic("");
         }
 
         // Generate return value
-        assert(signature != nullptr, "");
-        if (signature->return_type.available) {
-            call_instr.options.call.destination = make_destination_access_on_demand(signature->return_type.value);
+        auto signature = call_info->callable.signature;
+        if (signature->return_type().available) {
+            call_instr.options.call.destination = make_destination_access_on_demand(signature->return_type().value);
         }
         else {
             call_instr.options.call.destination = ir_data_access_create_nothing();
         }
 
         // Generate arguments 
-        auto function_signature = info->specifics.function_call_signature;
-        auto param_mapping = get_info(call.arguments);
-        int next_mapping_index = 0;
         call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(signature->parameters.size);
-
-        bool is_dotcall = param_mapping->call_type == Call_Type::DOT_CALL || param_mapping->call_type == Call_Type::POLYMORPHIC_DOT_CALL;
-        if (is_dotcall) {
-            auto first_arg = call.expr;
-            assert(first_arg->type == AST::Expression_Type::MEMBER_ACCESS, "Dot call must have a member access!");
-            next_mapping_index += 1;
-            IR_Data_Access* argument_access = ir_generator_generate_expression(first_arg->options.member_access.expr);
-            dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
-        }
-
-        for (int i = is_dotcall ? 1 : 0; i < function_signature->parameters.size; i++)
+        for (int i = 0; i < call_info->parameter_values.size; i++)
         {
-            auto& param = function_signature->parameters[i];
-            Parameter_Match* match = &param_mapping->matched_parameters[next_mapping_index];
-            if (match->ignore_during_code_generation) {
-                while (match->ignore_during_code_generation) {
-                    next_mapping_index += 1;
-                    match = &param_mapping->matched_parameters[next_mapping_index];
-                }
-            }
-            else {
-                next_mapping_index += 1;
-            }
+            auto& param_info = call_info->callable.signature->parameters[i];
+            if (param_info.comptime_variable_index != -1) continue;
+            auto& param_value = call_info->parameter_values[i];
 
+            // All parameters must be set, or use default value
             IR_Data_Access* argument_access;
-            if (match->is_set) {
-                argument_access = ir_generator_generate_expression(match->expression);
+            if (param_value.value_type == Parameter_Value_Type::ARGUMENT) 
+            {
+                auto& arg_expr = call_info->argument_infos[param_value.argument_index].expression;
+                argument_access = ir_generator_generate_expression(arg_expr);
             }
-            else {
-                assert(param.default_value_exists, "");
-                assert(param.value_expr != 0 && param.value_pass != 0, "Must be, otherwise we shouldn't get to this point");
-                RESTORE_ON_SCOPE_EXIT(ir_generator.current_pass, param.value_pass);
-                argument_access = ir_generator_generate_expression(param.value_expr);
+            else 
+            {
+                assert(!param_info.required && param_info.default_value_exists, "");
+                assert(param_info.default_value_expr != 0 && param_info.default_value_pass != 0, "Must be, otherwise we shouldn't get to this point");
+                RESTORE_ON_SCOPE_EXIT(ir_generator.current_pass, param_info.default_value_pass);
+                argument_access = ir_generator_generate_expression(param_info.default_value_expr);
             }
             dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
         }
@@ -1309,31 +1280,27 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {
         // Handle slice-initializer first
-        auto arg_info = get_info(expression->options.struct_initializer.arguments);
-        if (arg_info->call_type == Call_Type::SLICE_INITIALIZER)
+        auto call_info = get_info(expression->options.struct_initializer.call_node);
+        if (call_info->callable.type == Callable_Type::SLICE_INITIALIZER)
         {
-            Datatype_Slice* slice_type = arg_info->options.slice_type;
-            assert(arg_info->matched_parameters.size == 2, "");
+            Datatype_Slice* slice_type = call_info->callable.options.slice_type;
+            assert(call_info->parameter_values.size == 2, "");
 
             IR_Data_Access* slice_access = make_destination_access_on_demand(result_type);
             IR_Data_Access* data_access = ir_data_access_create_member(slice_access, slice_type->data_member);
             IR_Data_Access* size_access = ir_data_access_create_member(slice_access, slice_type->size_member);
 
-            bool args_are_swapped = arg_info->matched_parameters[0].argument_index == 1;
-            for (int i = 0; i < 2; i++)
-            {
-                AST::Expression* arg = expression->options.struct_initializer.arguments->arguments[i]->value;
-                bool is_data = i == 0;
-                if (args_are_swapped) is_data = false;
-                IR_Data_Access* write_to = is_data ? data_access : size_access;
-                ir_generator_generate_expression(arg, write_to);
-            }
+            AST::Expression* data_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+            AST::Expression* size_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+            ir_generator_generate_expression(data_expr, data_access);
+            ir_generator_generate_expression(size_expr, size_access);
 
             return slice_access;
         }
 
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
-        auto& init_info = arg_info->options.struct_init;
+        assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER, "");
+        auto& struct_content = call_info->callable.options.struct_content;
 
         // First, set all tags to correct values
         Datatype_Struct* structure = downcast<Datatype_Struct>(result_type->base_type);
@@ -1357,7 +1324,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         }
 
         // Generate initializers for members
-        generate_member_initalizers(struct_access, expression->options.struct_initializer.arguments);
+        generate_member_initalizers(struct_access, expression->options.struct_initializer.call_node);
         return struct_access;
     }
     case AST::Expression_Type::ARRAY_INITIALIZER:
@@ -1478,7 +1445,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
+                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast value_type");
                 add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
             }
 
@@ -1852,7 +1819,7 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
             IR_Instruction exit_instr;
             exit_instr.type = IR_Instruction_Type::RETURN;
             exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Any cast downcast failed, type index was invalid");
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Any cast downcast failed, value_type index was invalid");
             add_instruction(exit_instr, branch_invalid);
         }
         return access_result;
@@ -2280,8 +2247,9 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             hashtable_insert_element(&ir_generator.variable_mapping, foreach_loop.loop_variable_definition, loop_variable_access);
 
             // Initialize
-            if (loop_info.is_custom_op) {
-                iterator_type = loop_info.custom_op.fn_create->signature->return_type.value;
+            if (loop_info.is_custom_op) 
+            {
+                iterator_type = loop_info.custom_op.fn_create->signature->return_type().value;
                 iterator_access = ir_data_access_create_intermediate(iterator_type);
                 IR_Instruction iter_create_instr;
                 iter_create_instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -2667,7 +2635,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
         break;
     }
-    default: panic("Statment type invalid!");
+    default: panic("Statment value_type invalid!");
     }
 }
 
@@ -2743,7 +2711,7 @@ void ir_generator_generate_queued_items(bool gen_bytecode)
         }
 
         // Add empty return
-        if (!ir_func->function_type->return_type.available) {
+        if (!ir_func->signature->return_type().available) {
             IR_Instruction return_instr;
             return_instr.type = IR_Instruction_Type::RETURN;
             return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
@@ -2816,7 +2784,7 @@ void ir_generator_finish(bool gen_bytecode)
         auto& types = type_system.predefined_types;
 
         auto& slots = compiler.analysis_data->function_slots;
-        auto entry_function = ir_function_create(type_system_make_function({}), -1);
+        auto entry_function = ir_function_create(compiler.analysis_data->empty_call_signature, -1);
         ir_generator.program->entry_function = entry_function;
         ir_generator.current_block = entry_function->code;
 
@@ -2954,7 +2922,7 @@ void ir_generator_reset()
         auto& slots = compiler.analysis_data->function_slots;
 
         // Create default alloc function
-        IR_Function* default_alloc_function = ir_function_create(types.allocate_function, -1);
+        IR_Function* default_alloc_function = ir_function_create(types.allocate_function->signature, -1);
         {
             auto fn = default_alloc_function;
             ir_generator.current_block = fn->code;
@@ -2978,7 +2946,7 @@ void ir_generator_reset()
         }
 
         // Default free function
-        IR_Function* default_free_function = ir_function_create(types.free_function, -1);
+        IR_Function* default_free_function = ir_function_create(types.free_function->signature, -1);
         {
             auto fn = default_free_function;
             ir_generator.current_block = fn->code;
@@ -3000,7 +2968,7 @@ void ir_generator_reset()
         }
 
         // Default resize function
-        IR_Function* default_reallocate_function = ir_function_create(types.resize_function, -1);
+        IR_Function* default_reallocate_function = ir_function_create(types.resize_function->signature, -1);
         {
             auto fn = default_reallocate_function;
             ir_generator.current_block = fn->code;

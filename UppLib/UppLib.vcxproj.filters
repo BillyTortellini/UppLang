@@ -225,12 +225,6 @@
     <ClInclude Include="win32\process.hpp">
       <Filter>Header Files\Win32</Filter>
     </ClInclude>
-    <ClInclude Include="datastructures\block_allocator.hpp">
-      <Filter>Header Files\Datastructures</Filter>
-    </ClInclude>
-    <ClInclude Include="datastructures\stack_allocator.hpp">
-      <Filter>Header Files\Datastructures</Filter>
-    </ClInclude>
     <ClInclude Include="datastructures\list.hpp">
       <Filter>Header Files\Datastructures</Filter>
     </ClInclude>
@@ -475,9 +469,6 @@
     </ClCompile>
     <ClCompile Include="programs\upp_lang\type_system.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="datastructures\stack_allocator.cpp">
-      <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
     <ClCompile Include="datastructures\dependency_graph.cpp">
       <Filter>Source Files\Datastructures</Filter>

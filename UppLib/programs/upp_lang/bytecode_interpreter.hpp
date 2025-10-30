@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../../datastructures/array.hpp"
-#include "../../datastructures/stack_allocator.hpp"
 #include "../../utility/datatypes.hpp"
 #include "../../utility/random.hpp"
 #include "semantic_analyser.hpp"

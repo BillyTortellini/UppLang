@@ -459,7 +459,7 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
 
                     // Test uniform type
                     if (info->type != uniform.value.datatype || info->array_size != 1) {
-                        logg("Uniform type does not match for uniform: %s in shader\n", uniform.value.name);
+                        logg("Uniform value_type does not match for uniform: %s in shader\n", uniform.value.name);
                         continue;
                     }
 
@@ -1019,7 +1019,7 @@ void hotreload_shader(void* userdata, const char* filename)
                         }
                     }
                     if (type_index == -1) {
-                        logg("Shader error, couldn't parse input type!\n");
+                        logg("Shader error, couldn't parse input value_type!\n");
                         continue;
                     }
                     datatype = (Shader_Datatype)type_index;
