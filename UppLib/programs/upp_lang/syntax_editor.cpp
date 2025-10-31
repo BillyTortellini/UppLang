@@ -7378,7 +7378,8 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 			}
 			lookup_workload = pass->instance_workload;
 		}
-		auto active_pattern_values = pattern_variables_find_active_states(symbol->options.pattern_variable->origin, lookup_workload);
+		auto active_pattern_values = 
+			pattern_variable_find_instance_workload(symbol->options.pattern_variable, lookup_workload, true)->active_pattern_variable_states;
 		assert(active_pattern_values.data != nullptr, "");
 
 		const auto& value = active_pattern_values[symbol->options.pattern_variable->value_access_index];
@@ -8420,16 +8421,16 @@ void syntax_editor_render()
 				if (is_dot_call && param_info.requires_named_addressing) {
 					continue;
 				}
-				// if ( info->origin_type == Call_Origin_Type::INSTANCIATE && (!param_info.requires_named_addressing || !param_info.required)) {
-				// 	continue;
-				// }
+				if (param_value.value_type != Parameter_Value_Type::ARGUMENT_EXPRESSION) {
+					continue;
+				}
 
 				if (!first) {
 					Rich_Text::append(text, ", ");
 				}
 				first = false;
 
-				bool highlight = param_value.argument_index == arg_index && arg_index != -1;
+				bool highlight = param_value.options.argument_index == arg_index && arg_index != -1;
 				if (highlight) {
 					Rich_Text::set_bg(text, vec3(0.2f, 0.3f, 0.3f));
 					Rich_Text::set_underline(text, vec3(0.8f));

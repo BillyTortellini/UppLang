@@ -5,6 +5,7 @@
 #include "../../datastructures/string.hpp"
 #include "../../win32/process.hpp"
 #include "../../win32/thread.hpp"
+#include "constant_pool.hpp"
 
 struct Datatype;
 struct String;
@@ -288,50 +289,6 @@ struct Callable
 
 Callable callable_make(Call_Signature* signature, Callable_Type type);
 
-enum class Parameter_Value_Type
-{
-    NOT_SET,   // No parameter was provided, e.g. use default value
-    ARGUMENT,  // Parameter is given as an argument expression
-    INFO_ONLY, // Datatype and temporary-info is given
-};
-
-struct Parameter_Value
-{
-    Parameter_Value_Type value_type;
-	int argument_index; // -1 if not set
-    Datatype* datatype; 
-    bool is_temporary_value; // True for return type
-};
-
-struct Argument_Info
-{
-	AST::Expression* expression;
-	Optional<String*> name;
-	bool is_analysed;
-	int parameter_index; // -1 if no matching parameter was found
-};
-
-struct Callable_Call
-{
-    Callable callable;
-    Array<Parameter_Value> parameter_values;
-	Array<Argument_Info> argument_infos;
-    AST::Call_Node* call_node; // May be null
-
-	bool argument_matching_success;
-    union 
-	{
-        ModTree_Function* function;
-		Datatype_Struct* struct_instance;
-		Datatype_Struct_Pattern* struct_pattern;
-		Datatype_Primitive* bitwise_primitive_type;
-		struct 
-		{
-			bool subtype_valid;
-			bool supertype_valid;
-		} initializer_info;
-    } instanciation_data;
-};
 
 
 

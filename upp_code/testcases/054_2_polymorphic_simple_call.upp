@@ -1,5 +1,6 @@
 
-foo::($C:int)
+foo :: ($C: int)
 	
-main::()
+
+main :: ()
 	foo(5)

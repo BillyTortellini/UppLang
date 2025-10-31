@@ -1148,6 +1148,7 @@ Datatype datatype_make_simple_base(Datatype_Type type, int size, int alignment) 
 	result.type = type;
 	result.contains_pattern = false;
 	result.contains_partial_pattern = false;
+	result.contains_pattern_variable_definition = false;
 	result.memory_info_workload = 0;
 	result.memory_info.available = true;
 	result.memory_info.value.size = size;
@@ -1177,6 +1178,7 @@ Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variab
 	Datatype_Pattern_Variable* result = new Datatype_Pattern_Variable;
 	result->base = datatype_make_simple_base(Datatype_Type::PATTERN_VARIABLE, 1, 1);
 	result->base.contains_pattern = true;
+	result->base.contains_pattern_variable_definition = true;
 
 	result->variable = pattern_variable;
 	result->is_reference = false;
@@ -1190,6 +1192,7 @@ Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variab
 	*mirror_type = *result;
 	mirror_type->mirrored_type = result;
 	mirror_type->is_reference = true;
+	mirror_type->base.contains_pattern_variable_definition = false;
 	result->mirrored_type = mirror_type;
 
 	internal_info = type_system_register_type(upcast(mirror_type));
@@ -1198,12 +1201,14 @@ Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variab
 	return result;
 }
 
-Datatype_Struct_Pattern* type_system_make_struct_pattern(Poly_Instance* instance, bool is_partial_pattern)
+Datatype_Struct_Pattern* type_system_make_struct_pattern(
+	Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition)
 {
 	Datatype_Struct_Pattern* result = new Datatype_Struct_Pattern;
 	result->base = datatype_make_simple_base(Datatype_Type::STRUCT_PATTERN, 1, 1);
 	result->base.contains_pattern = true;
 	result->base.contains_partial_pattern = is_partial_pattern; // e.g. Node(_)
+	result->base.contains_pattern_variable_definition = contains_pattern_variable_definition;
 	result->instance = instance;
 	auto internal_info = type_system_register_type(upcast(result));
 	internal_info->tag = Datatype_Type::UNKNOWN_TYPE;
@@ -1234,6 +1239,7 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
 	result->base.memory_info.value.contains_reference = true;
 	result->base.contains_pattern = child_type->contains_pattern;
 	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = child_type->contains_pattern_variable_definition;
 	result->element_type = child_type;
 	result->is_optional = is_optional;
 
@@ -1283,6 +1289,12 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 	result->base = datatype_make_simple_base(Datatype_Type::ARRAY, 1, 1);
 	result->base.contains_pattern = element_type->contains_pattern || count_variable_type != nullptr;
 	result->base.contains_partial_pattern = element_type->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = element_type->contains_pattern_variable_definition;
+	if (count_variable_type != nullptr) {
+		result->base.contains_pattern_variable_definition =
+			result->base.contains_pattern_variable_definition ||
+			!count_variable_type->is_reference;
+	}
 
 	result->element_type = element_type;
 	result->count_variable_type = count_variable_type;
@@ -1353,6 +1365,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
 	result->base.memory_info.value.contains_padding_bytes = false;
 	result->base.contains_pattern = element_type->contains_pattern;
 	result->base.contains_partial_pattern = element_type->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = element_type->contains_pattern_variable_definition;
 
 	result->element_type = element_type;
 	result->data_member = struct_member_make(upcast(type_system_make_pointer(element_type, true)), ids.data, nullptr, 0, nullptr);
@@ -1388,6 +1401,7 @@ Datatype* type_system_make_constant(Datatype* datatype)
 	result->base = datatype_make_simple_base(Datatype_Type::CONSTANT, 1, 1);
 	result->base.contains_pattern = datatype->contains_pattern;
 	result->base.contains_partial_pattern = datatype->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = datatype->contains_pattern_variable_definition;
 
 	if (datatype->memory_info.available) {
 		result->base.memory_info = datatype->memory_info;
@@ -1430,6 +1444,7 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
 	result->base = datatype_make_simple_base(Datatype_Type::OPTIONAL_TYPE, 1, 1);
 	result->base.contains_pattern = child_type->contains_pattern;
 	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = child_type->contains_pattern_variable_definition;
 
 	result->value_member = struct_member_make(child_type, ids.value, nullptr, 0, nullptr);
 	result->is_available_member = struct_member_make(upcast(type_system.predefined_types.bool_type), ids.is_available, nullptr, 0, nullptr);
@@ -1489,6 +1504,7 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
 	result->base = datatype_make_simple_base(Datatype_Type::SUBTYPE, 1, 1);
 	result->base.contains_pattern = base_type->contains_pattern;
 	result->base.contains_partial_pattern = base_type->contains_partial_pattern;
+	result->base.contains_pattern_variable_definition = base_type->contains_pattern_variable_definition;
 
 	if (base_type->memory_info.available)
 	{
@@ -1566,6 +1582,9 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 		}
 		if (param.datatype->contains_partial_pattern) {
 			result->base.contains_partial_pattern = true;
+		}
+		if (param.datatype->contains_pattern_variable_definition) {
+			result->base.contains_pattern_variable_definition = true;
 		}
 	}
 

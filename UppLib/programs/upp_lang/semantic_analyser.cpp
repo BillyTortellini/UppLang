@@ -41,6 +41,8 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
 Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node);
 bool expression_is_auto_expression_with_preferred_type(AST::Expression* expression);
 bool expression_is_auto_expression(AST::Expression* expression);
+Poly_Instance* poly_header_instanciate(
+	Callable_Call* call, AST::Node* error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE);
 
 void expression_context_apply(Expression_Info* info, Expression_Context context, AST::Expression* expression = 0, Parser::Section error_section = Parser::Section::WHOLE);
 void semantic_analyser_register_function_call(ModTree_Function* call_to);
@@ -1174,21 +1176,35 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(Datatype* dataty
     for (int i = 0; i < call_info->parameter_values.size; i++) 
     {
         auto& param_value = call_info->parameter_values[i];
-		if (param_value.value_type == Parameter_Value_Type::NOT_SET) {
-			return comptime_result_make_unavailable(datatype, "Struct-inititalizer with uninitialized values");
-		}
-		else if (param_value.value_type == Parameter_Value_Type::INFO_ONLY) {
-			return comptime_result_make_unavailable(datatype, "Struct-inititalizer with info-only parameters (From compiler)");
-		}
-		auto& expr = call_info->argument_infos[param_value.argument_index].expression;
-        assert(expr != nullptr, "");
-		auto& member = call_info->callable.options.struct_content->members[i];
+		void* member_memory = nullptr;
+		switch (param_value.value_type)
+		{
+		case Parameter_Value_Type::ARGUMENT_EXPRESSION: 
+		{
+			auto& expr = call_info->argument_infos[param_value.options.argument_index].expression;
+			assert(expr != nullptr, "");
 
-        Comptime_Result result = expression_calculate_comptime_value_internal(expr);
-        if (result.type != Comptime_Result_Type::AVAILABLE) {
-            return result;
-        }
-        memcpy(((byte*)struct_buffer) + member.offset, result.data, result.data_type->memory_info.value.size);
+			Comptime_Result result = expression_calculate_comptime_value_internal(expr);
+			if (result.type != Comptime_Result_Type::AVAILABLE) {
+			    return result;
+			}
+			member_memory = result.data;
+			break;
+		}
+		case Parameter_Value_Type::NOT_SET: {
+			return comptime_result_make_unavailable(datatype, "Struct-inititalizer parameter not set");
+		}
+		case Parameter_Value_Type::COMPTIME_VALUE: {
+			member_memory = param_value.options.constant.memory;
+		}
+		case Parameter_Value_Type::DATATYPE_KNOWN: {
+			return comptime_result_make_unavailable(datatype, "Struct-inititalizer parameter only datatype known");
+		}
+		default: panic("");
+		}
+
+		auto& member = call_info->callable.options.struct_content->members[i];
+		memcpy(((byte*)struct_buffer) + member.offset, member_memory, member.type->memory_info.value.size);
     }
 
     for (int i = 0; i < call_node->subtype_initializers.size; i++) {
@@ -1318,7 +1334,8 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		auto symbol = get_info(expr->options.path_lookup)->symbol;
 		if (symbol->type == Symbol_Type::PATTERN_VARIABLE) 
 		{
-			Array<Pattern_Variable_State> active_pattern_values = pattern_variables_find_active_states(symbol->options.pattern_variable->origin);
+			Array<Pattern_Variable_State> active_pattern_values = 
+				pattern_variable_find_instance_workload(symbol->options.pattern_variable)->active_pattern_variable_states;
 			assert(active_pattern_values.data != 0,
 				"In normal analysis we shouldn't be able to access this and in instance this would be already set");
 			return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
@@ -1715,6 +1732,31 @@ Expression_Context expression_context_make_specific_type(Datatype* signature, Ca
 	context.expected_type.type = signature;
 	context.expected_type.cast_mode = cast_mode;
 	return context;
+}
+
+Parameter_Value parameter_value_make_unset() {
+	Parameter_Value result;
+	result.value_type = Parameter_Value_Type::NOT_SET;
+	result.is_temporary_value = true;
+	result.datatype = compiler.analysis_data->type_system.predefined_types.invalid_type;
+	return result;
+}
+
+Parameter_Value parameter_value_make_datatype_known(Datatype* datatype, bool is_temporary) {
+	Parameter_Value result;
+	result.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
+	result.datatype = datatype;
+	result.is_temporary_value = is_temporary;
+	return result;
+}
+
+Parameter_Value parameter_value_make_comptime(Upp_Constant& constant) {
+	Parameter_Value result;
+	result.value_type = Parameter_Value_Type::COMPTIME_VALUE;
+	result.options.constant = constant;
+	result.datatype = constant.type;
+	result.is_temporary_value = false;
+	return result;
 }
 
 
@@ -3162,16 +3204,11 @@ Callable_Call callable_call_make_empty(Arena* arena, const Callable& callable)
 	call.callable = callable;
 	call.argument_matching_success = false;
 	call.call_node = nullptr;
-	call.instanciation_data.function = nullptr;
 	call.argument_infos = array_create_static<Argument_Info>(nullptr, 0);
 	call.parameter_values = arena->allocate_array<Parameter_Value>(callable.signature->parameters.size);
-	for (int i = 0; i < call.parameter_values.size; i++) 
-	{
-		auto& param_value = call.parameter_values[i];
-		param_value.value_type = Parameter_Value_Type::NOT_SET;
-		param_value.datatype = nullptr;
-		param_value.argument_index = -1;
-		param_value.is_temporary_value = true;
+	call.instanciated = false;
+	for (int i = 0; i < call.parameter_values.size; i++) {
+		call.parameter_values[i] = parameter_value_make_unset();
 	}
 	return call;
 }
@@ -3194,10 +3231,10 @@ Callable_Call callable_call_make_from_call_node(Arena* arena, const Callable& ca
 void analyse_parameter_value_if_not_already_done(
 	Callable_Call* call, Parameter_Value* param_value, Expression_Context context, bool allow_poly_pattern = false)
 {
-	if (param_value->value_type != Parameter_Value_Type::ARGUMENT) return;
-	assert(param_value->argument_index != -1, "");
+	if (param_value->value_type != Parameter_Value_Type::ARGUMENT_EXPRESSION) return;
+	assert(param_value->options.argument_index != -1, "");
 
-	auto arg_info = call->argument_infos[param_value->argument_index];
+	auto& arg_info = call->argument_infos[param_value->options.argument_index];
 	if (arg_info.is_analysed) return;
 	arg_info.is_analysed = true;
 
@@ -3494,7 +3531,6 @@ bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_cal
 			named_argument_encountered = true;
 
 			// Search parameters for name
-			int param_index = -1;
 			for (int j = 0; j < params.size; j++) {
 				auto& param = params[j];
 				if (param.name == arg.name.value) {
@@ -3548,8 +3584,8 @@ bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_cal
 		}
 		else {
 			arg.parameter_index = param_index;
-			call.parameter_values[param_index].value_type = Parameter_Value_Type::ARGUMENT;
-			call.parameter_values[param_index].argument_index = i;
+			call.parameter_values[param_index].value_type = Parameter_Value_Type::ARGUMENT_EXPRESSION;
+			call.parameter_values[param_index].options.argument_index = i;
 		}
 	}
 
@@ -3583,31 +3619,19 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	auto checkpoint = scratch_arena.make_checkpoint();
 	SCOPE_EXIT(scratch_arena.rewind_to_checkpoint(checkpoint));
 
-	// Init call_node values
 	Callable_Call* call = get_info(call_node, true);
 
-	auto helper_make_overload_candidate = [&](Callable callable) -> Overload_Candidate {
+	// Find all overload candidates
+	DynArray<Overload_Candidate> candidates = DynArray<Overload_Candidate>::create(&scratch_arena, 4);
+	auto helper_add_overload_candidate = [&](Callable callable) -> Overload_Candidate* {
 		Overload_Candidate candidate;
 		candidate.symbol = nullptr;
-		candidate.call.callable = callable;
-		candidate.call.call_node = call_node;
-		candidate.call.argument_matching_success = false;
-		candidate.call.parameter_values = scratch_arena.allocate_array<Parameter_Value>(callable.signature->parameters.size);
-		for (int i = 0; i < candidate.call.parameter_values.size; i++) {
-			candidate.call.parameter_values[i].value_type = Parameter_Value_Type::NOT_SET;
-		};
-		candidate.call.argument_infos = scratch_arena.allocate_array<Argument_Info>(call_node->arguments.size);
-		for (int i = 0; i < candidate.call.argument_infos.size; i++) {
-			candidate.call.argument_infos[i].expression = call_node->arguments[i]->value;
-			candidate.call.argument_infos[i].name = call_node->arguments[i]->name;
-			candidate.call.argument_infos[i].parameter_index = -1;
-			candidate.call.argument_infos[i].is_analysed = false;
-		};
-		return candidate;
+		candidate.call = callable_call_make_from_call_node(&scratch_arena, callable, call_node);
+		candidates.push_back(candidate);
+		return &candidates.last();
 	};
 
 	// Find all overload candidates (Note: Dot-calls may also be overloaded)
-	DynArray<Overload_Candidate> candidates = DynArray<Overload_Candidate>::create(&scratch_arena, 4);
 	const bool call_expr_is_path_lookup = call_expr->type == AST::Expression_Type::PATH_LOOKUP;
 	AST::Expression* dot_call_first_expr = nullptr;
 	if (call_expr_is_path_lookup)
@@ -3644,10 +3668,9 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 			if (!callable_opt.available) continue;
 
 			// Create candidate
-			Overload_Candidate candidate = helper_make_overload_candidate(callable_opt.value);
-			candidate.symbol = symbol;
-			candidate.expression_info = info;
-			candidates.push_back(candidate);
+			Overload_Candidate* candidate = helper_add_overload_candidate(callable_opt.value);
+			candidate->symbol = symbol;
+			candidate->expression_info = info;
 		}
 
 		// Check success
@@ -3676,8 +3699,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 		{
 			for (int i = 0; i < info->options.dot_call.overloads->size; i++) {
 				auto& dot_call_info = (*info->options.dot_call.overloads)[i];
-				Overload_Candidate candidate = helper_make_overload_candidate(callable_from_dot_call_info(dot_call_info));
-				candidates.push_back(candidate);
+				helper_add_overload_candidate(callable_from_dot_call_info(dot_call_info));
 			}
 			dot_call_first_expr = call_expr;
 		}
@@ -3699,7 +3721,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 			}
 
 			// Note: here I don't need to store expression-info, as it already is on the call_expr
-			candidates.push_back(helper_make_overload_candidate(candidate_opt.value));
+			helper_add_overload_candidate(candidate_opt.value);
 		}
 	}
 
@@ -4226,6 +4248,10 @@ void expression_search_for_symbol_lookups_and_pattern_variables(
 void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter* parameter_node, bool allow_pattern_type)
 {
 	auto workload = semantic_analyser.current_workload;
+	parameter.required = true;
+	if (parameter.must_not_be_set) {
+		parameter.required = false;
+	}
 
 	// Analyse type
 	parameter.name = parameter_node->name;
@@ -4253,6 +4279,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 	}
 
 	// Analyse default value (With global symbol access)
+	parameter.required = true;
 	parameter.default_value_expr = parameter_node->default_value.value;
 	parameter.default_value_pass = workload->current_pass;
 	RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
@@ -4304,7 +4331,7 @@ Poly_Header* poly_header_analyse(
 	// Define parameter symbols and search for symbol-lookups and pattern values
 	Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
 	SCOPE_EXIT(dynamic_array_destroy(&symbol_lookups));
-	int non_comptime_parameter_count = 0;
+	int comptime_param_count = 0;
 	for (int i = 0; i < parameter_nodes.size; i++)
 	{
 		auto parameter_node = parameter_nodes[i];
@@ -4323,6 +4350,7 @@ Poly_Header* poly_header_analyse(
 		if (is_comptime)
 		{
 			parameter_info->comptime_variable_index = header.pattern_variables.size;
+			comptime_param_count += 1;
 
 			Pattern_Variable variable;
 			variable.defined_in_parameter_index = i;
@@ -4338,16 +4366,22 @@ Poly_Header* poly_header_analyse(
 		else 
 		{
 			parameter_info->comptime_variable_index = -1;
-			non_comptime_parameter_count += 1;
 
 			assert(progress != nullptr, "");
 			symbol->options.parameter.function = progress;
 			symbol->options.parameter.index_in_polymorphic_signature = i;
-			symbol->options.parameter.index_in_non_polymorphic_signature = i - header.pattern_variables.size;
+			symbol->options.parameter.index_in_non_polymorphic_signature = i - comptime_param_count;
+			assert(symbol->options.parameter.index_in_non_polymorphic_signature >= 0, "");
 		}
 
 		// Find implicit parameters/lookups
+		int before_count = header.pattern_variables.size;
 		expression_search_for_symbol_lookups_and_pattern_variables(i, parameter_node->type, symbol_lookups, header.pattern_variables);
+
+		// Add self-dependencies
+		for (int i = before_count; i < header.pattern_variables.size; i++) {
+			dynamic_array_push_back(&parameter_info->dependencies, i);
+		}
 	}
 
 	// Initialize Pattern-Variables (Create symbols + Corresponding Datatype)
@@ -4467,7 +4501,10 @@ void poly_header_destroy(Poly_Header* header)
 }
 
 // Checks if any of the poly_parent workloads of this workload has the corresponding active_pattner_values set to active
-Array<Pattern_Variable_State> pattern_variables_find_active_states(Poly_Header* active_pattern_values_origin, Workload_Base* search_start_workload)
+Workload_Base* pattern_variable_find_instance_workload(
+	Pattern_Variable* variable,
+	Workload_Base* search_start_workload,
+	bool called_from_editor)
 {
 	auto workload = search_start_workload;
 	if (workload == nullptr) {
@@ -4476,8 +4513,8 @@ Array<Pattern_Variable_State> pattern_variables_find_active_states(Poly_Header* 
 	int counter = 0;
 	while (workload != nullptr)
 	{
-		if (workload->active_pattern_variable_states_origin == active_pattern_values_origin) {
-			return workload->active_pattern_variable_states;
+		if (workload->active_pattern_variable_states_origin == variable->origin) {
+			return workload;
 		}
 
 		workload = workload->poly_parent_workload;
@@ -4486,8 +4523,47 @@ Array<Pattern_Variable_State> pattern_variables_find_active_states(Poly_Header* 
 		assert(counter < 1000, "I don't think we should hit this limit, this seems like an endless loop");
 	}
 
-	panic("I think all paths that access pattern-variables should find the pattern-values eventually");
-	return array_create_static<Pattern_Variable_State>(nullptr, 0);
+	assert(called_from_editor, "In semantic context the pattern states should always be found!");
+	return nullptr;
+}
+
+void expression_info_set_to_pattern_variable(Expression_Info* result_info, Pattern_Variable* variable)
+{
+	auto& types = compiler.analysis_data->type_system.predefined_types;
+
+	auto instance_workload = pattern_variable_find_instance_workload(variable);
+	Array<Pattern_Variable_State> active_pattern_values = instance_workload->active_pattern_variable_states;
+	assert(
+		active_pattern_values.data != 0, 
+		"If the symbol was found (e.g. correct symbol-table lookup 'permissions'), then we should be able to access it"
+	);
+
+	auto& value = active_pattern_values[variable->value_access_index];
+	switch (value.type)
+	{
+	case Pattern_Variable_State_Type::SET: {
+		expression_info_set_constant(result_info, value.options.value);
+		break;
+	}
+	case Pattern_Variable_State_Type::UNSET: 
+	{
+		semantic_analyser_set_error_flag(true);
+		// Assert that we are in a function-body (BASE) analysis, otherwise panic
+		auto workload = semantic_analyser.current_workload;
+		assert(
+			!((workload->type == Analysis_Workload_Type::FUNCTION_HEADER || workload->type == Analysis_Workload_Type::STRUCT_POLYMORPHIC) &&
+				instance_workload == workload),
+			"Header analysis must not encounter unset values"
+		);
+		expression_info_set_value(result_info, types.unknown_type, false);
+		break;
+	}
+	case Pattern_Variable_State_Type::PATTERN: {
+		expression_info_set_polymorphic_pattern(result_info, value.options.pattern_type);
+		break;
+	}
+	default: panic("");
+	}
 }
 
 
@@ -4500,15 +4576,10 @@ struct Variable_Dependents
 
 struct Parameter_Run_Info
 {
-	int dependency_count; // Count of dependencies to 
+	int dependency_count;          // Count of variable-dependencies
+	int dependency_on_self_definition_count; // How many variables are defined in this parameter (e.g. a: Node($C, $T) --> 2)
 	int index_in_waiting_array; // tracks position in to_run array, if -1 it's already queue (Or doesn't need analysis)
-	// Context is not available if the parameter-type depends on other parameters that cannot be analyse yet.
-	// This could have multiple reasons:
-	//  - Parameter type contains pattern_variable
-	//  - Circular dependencies exist between parameters
-	//  - We are creating a struct-pattern 
-	//  - An error occured
-	bool analyse_without_context;
+	bool has_dependency_on_pattern_state;
 };
 
 struct Parameter_Dependency_Graph
@@ -4532,10 +4603,12 @@ Parameter_Dependency_Graph parameter_dependency_graph_create_empty(Poly_Header* 
 	return result;
 }
 
-void parameter_dependency_graph_set_parameter_runnable(Parameter_Dependency_Graph* graph, int param_index)
+void parameter_dependency_graph_set_parameter_runnable(Parameter_Dependency_Graph* graph, int param_index, bool check_dependency_count)
 {
 	auto& run_info = graph->run_infos[param_index];
 	if (run_info.index_in_waiting_array == -1) return; // Is already queued
+
+	if (check_dependency_count && run_info.dependency_count - run_info.dependency_on_self_definition_count > 0) return;
 
 	graph->runnable_indices.push_back(param_index);
 	graph->waiting_indices.swap_remove(run_info.index_in_waiting_array);
@@ -4600,18 +4673,15 @@ void pattern_matcher_set_datatype_pattern_variable_to_value(Pattern_Matcher* mat
 		{
 			auto param_index = dependents[i];
 			auto& run_info = matcher->graph->run_infos[param_index];
-			if (run_info.index_in_waiting_array == -1 || run_info.analyse_without_context) continue;
 			run_info.dependency_count -= 1;
-			assert(run_info.dependency_count >= 0, "");
-			if (run_info.dependency_count == 0) {
-				parameter_dependency_graph_set_parameter_runnable(matcher->graph, param_index);
-			}
+			parameter_dependency_graph_set_parameter_runnable(matcher->graph, param_index, true);
 		}
 		break;
 	}
 	case Pattern_Variable_State_Type::PATTERN:
 	{
 		// Not sure this can even happen currently because we don't match types if we have struct-pattern
+		panic("Just have a panic to see if this happens");
 		break;
 	}
 	default: panic("");
@@ -4645,8 +4715,9 @@ void pattern_matcher_set_variable_to_pattern(Pattern_Matcher* matcher, Pattern_V
 			// All dependents now analyse in unknown context
 			auto param_index = dependents[i];
 			auto& run_info = matcher->graph->run_infos[param_index];
-			run_info.analyse_without_context = true;
-			parameter_dependency_graph_set_parameter_runnable(matcher->graph, param_index);
+			run_info.has_dependency_on_pattern_state = true;
+			run_info.dependency_count -= 1;
+			parameter_dependency_graph_set_parameter_runnable(matcher->graph, param_index, true);
 		}
 		break;
 	}
@@ -4844,7 +4915,7 @@ bool pattern_matcher_match_pattern_internal(Pattern_Matcher* matcher, Datatype* 
 		// }
 		return false;
 	}
-	case Datatype_Type::FUNCTION_POINTER: 
+	case Datatype_Type::FUNCTION_POINTER:
 	{
 		auto af = downcast<Datatype_Function_Pointer>(pattern_type);
 		auto bf = downcast<Datatype_Function_Pointer>(match_against);
@@ -4874,6 +4945,7 @@ bool pattern_matcher_match_pattern_internal(Pattern_Matcher* matcher, Datatype* 
 	return true;
 }
 
+// This does not report errors, it just tries to fill out
 bool pattern_matcher_match_pattern(Pattern_Matcher* matcher, Datatype* pattern_type, Datatype* datatype)
 {
 	matcher->already_visited.reset();
@@ -4913,12 +4985,15 @@ bool pattern_matcher_check_constraints_valid(Pattern_Matcher* matcher)
 // Poly_Instance stuff
 // Parameter "call" is only used if it's a function, otherwise null can be passed
 // Takes ownership of "states" and "pattern_instances"
+// Generates errors
 Poly_Instance* poly_header_instanciate_with_variable_states(
-	Poly_Header* poly_header, Array<Pattern_Variable_State> states, 
-	Array<Datatype*> partial_pattern_instances, Callable_Call* call)
+	Poly_Header* poly_header, Array<Pattern_Variable_State> states,
+	Array<Datatype*> partial_pattern_instances, Callable_Call* call,
+	AST::Node* error_report_node, Parser::Section error_report_section)
 {
 	bool create_struct_pattern = false;
 	bool is_partial_struct_pattern = false;
+	bool struct_pattern_contains_pattern_variable_definition = false;
 	for (int i = 0; i < states.size; i++)
 	{
 		auto& state_type = states[i].type;
@@ -4928,6 +5003,9 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		}
 		else if (state_type == Pattern_Variable_State_Type::PATTERN) {
 			create_struct_pattern = true;
+			if (states[i].options.pattern_type->contains_pattern_variable_definition) {
+				struct_pattern_contains_pattern_variable_definition = true;
+			}
 		}
 	}
 
@@ -4940,8 +5018,14 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 
 	// Check if instanciation failed
 	// Note entirely sure about these checks yet...
-	if (!create_struct_pattern && !all_partial_patterns_set) return nullptr;
-	if (poly_header->is_function && create_struct_pattern) return nullptr;
+	if (poly_header->is_function && create_struct_pattern) {
+		log_semantic_error("Not all polymorphic parameters could be deduced in instanciation", error_report_node, error_report_section);
+		return nullptr;
+	}
+	if (!create_struct_pattern && !all_partial_patterns_set) {
+		log_semantic_error("Not all partial-pattern types could be deduced in instanciation", error_report_node, error_report_section);
+		return nullptr;
+	}
 
 	// Deduplicate instance if it isn't a struct pattern
 	if (create_struct_pattern)
@@ -4960,9 +5044,33 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 
 		// Note: Hashing instances only requires variable-states, header and partial-patterns, so we don't need to init the other values
 		Poly_Instance** found = hashset_find(&poly_header->instances, &query_instance);
-		if (found != nullptr) {
+		if (found != nullptr) 
+		{
 			array_destroy(&states);
 			array_destroy(&partial_pattern_instances);
+			if (call != nullptr)
+			{
+				call->instanciated = true;
+				Poly_Instance* instance = *found;
+				switch (instance->type)
+				{
+				case Poly_Instance_Type::FUNCTION: {
+					call->instanciation_data.function = instance->options.function_instance->function;
+					assert(call->callable.type == Callable_Type::POLY_FUNCTION || call->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC, "");
+					break;
+				}
+				case Poly_Instance_Type::STRUCTURE: {
+					call->instanciation_data.struct_instance = instance->options.struct_instance->struct_type;
+					assert(call->callable.type == Callable_Type::POLY_STRUCT, "");
+					break;
+				}
+				case Poly_Instance_Type::STRUCT_PATTERN: {
+					panic("Struct pattern's don't get deduplicated, how did I end up here?");
+					break;
+				}
+				default: panic("");
+				}
+			}
 			return *found;
 		}
 	}
@@ -4977,9 +5085,11 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 	{
 		assert(!poly_header->is_function, "hey");
 		instance->type = Poly_Instance_Type::STRUCT_PATTERN;
-		instance->options.struct_pattern = type_system_make_struct_pattern(instance, is_partial_struct_pattern);
+		instance->options.struct_pattern = type_system_make_struct_pattern(
+			instance, is_partial_struct_pattern, struct_pattern_contains_pattern_variable_definition);
 		if (call != nullptr) {
 			call->instanciation_data.struct_pattern = instance->options.struct_pattern;
+			call->instanciated = true;
 		}
 	}
 	else if (poly_header->is_function)
@@ -5030,6 +5140,7 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		semantic_analyser_register_function_call(instance_progress->function);
 
 		call->instanciation_data.function = instance_progress->function;
+		call->instanciated = true;
 	}
 	else // !poly_header.is_function
 	{
@@ -5054,6 +5165,7 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 
 		if (call != nullptr) {
 			call->instanciation_data.struct_instance = body_workload->struct_type;
+			call->instanciated = true;
 		}
 	}
 
@@ -5062,8 +5174,8 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 
 // This function tries to create a non-pattern type from pattern-type with the given pattern variables,
 //	and returns nullptr if not successfull (Variable-states not set yet, index-variable invalid or pattern not instanciatable)
-// This function doesn't log errors
-Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Variable_State> states)
+Datatype* datatype_pattern_instanciate(
+	Datatype* pattern_type, Array<Pattern_Variable_State> states, AST::Node* error_report_node, Parser::Section error_report_section)
 {
 	auto& type_system = compiler.analysis_data->type_system;
 
@@ -5071,6 +5183,7 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 		return pattern_type;
 	}
 	if (pattern_type->contains_partial_pattern) {
+		log_semantic_error("Datatype instanciate failed: Can't instanciate partial pattern", error_report_node, error_report_section);
 		return nullptr;
 	}
 
@@ -5078,53 +5191,89 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 	{
 	case Datatype_Type::PATTERN_VARIABLE:
 	{
-		auto& state = states[downcast<Datatype_Pattern_Variable>(pattern_type)->variable->value_access_index];
+		auto variable = downcast<Datatype_Pattern_Variable>(pattern_type)->variable;
+		auto& state = states[variable->value_access_index];
 		if (state.type != Pattern_Variable_State_Type::SET) {
+			log_semantic_error("Datatype instanciate failed: Pattern variable is not set", error_report_node, error_report_section);
+			log_error_info_id(variable->name);
 			return nullptr;
 		}
 
 		auto constant = state.options.value;
 		auto constant_type = datatype_get_non_const_type(constant.type);
-		if (!types_are_equal(constant_type, type_system.predefined_types.type_handle)) return nullptr;
+		if (!types_are_equal(constant_type, type_system.predefined_types.type_handle)) {
+			log_semantic_error("Datatype instanciate failed: Pattern variable is not a type handle", error_report_node, error_report_section);
+			log_error_info_id(variable->name);
+			return nullptr;
+		}
 
 		Upp_Type_Handle handle = *(Upp_Type_Handle*)constant.memory;
-		if (handle.index >= (u32) type_system.types.size) return nullptr;
+		if (handle.index >= (u32)type_system.types.size) {
+			log_semantic_error("Datatype instanciate failed: Pattern variable type-handle is invalid value", error_report_node, error_report_section);
+			log_error_info_id(variable->name);
+			return nullptr;
+		}
 		return type_system.types[handle.index]; // ? Maybe handle unknown type?
 	}
 	case Datatype_Type::STRUCT_PATTERN:
 	{
+		auto& scratch_arena = semantic_analyser.current_workload->scratch_arena;
+		auto checkpoint = scratch_arena.make_checkpoint();
+		SCOPE_EXIT(scratch_arena.rewind_to_checkpoint(checkpoint));
+
 		Datatype_Struct_Pattern* struct_pattern = downcast<Datatype_Struct_Pattern>(pattern_type);
-		// Struct pattern contains variable-states with patterns, so now we create new-states and _try_ to update those pattern variables
-		Array<Pattern_Variable_State> new_states = array_create<Pattern_Variable_State>(struct_pattern->instance->header->pattern_variables.size);
-		SCOPE_EXIT(if (new_states.data != 0) array_destroy(&new_states););
+		Poly_Header* poly_header = struct_pattern->instance->header;
+		assert(poly_header->signature->return_type_index == -1, "");
 
-		for (int i = 0; i < struct_pattern->instance->variable_states.size; i++)
+		// Create new callable call
+		Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_STRUCT);
+		callable.options.poly_struct = poly_header->origin.struct_workload;
+		Callable_Call call = callable_call_make_empty(&scratch_arena, callable);
+
+		auto& param_values = call.parameter_values;
+		for (int i = 0; i < param_values.size; i++)
 		{
-			auto& new_state = new_states[i];
-			new_state = struct_pattern->instance->variable_states[i]; // This is the state at pattern creation
+			auto& param_info = poly_header->signature->parameters[i];
+			auto& param_value = param_values[i];
+			param_value.value_type = Parameter_Value_Type::NOT_SET;
 
-			switch (new_state.type)
+			assert(param_info.comptime_variable_index != -1, "In poly-struct all parameters have comptime variables");
+			if (param_info.requires_named_addressing) { // Don't set parameters indirectly
+				continue;
+			}
+
+			auto variable = &struct_pattern->instance->header->pattern_variables[param_info.comptime_variable_index];
+			auto& var_state = struct_pattern->instance->variable_states[param_info.comptime_variable_index];
+			switch (var_state.type)
 			{
 			case Pattern_Variable_State_Type::SET: {
+				param_value = parameter_value_make_comptime(var_state.options.value);
 				continue; // Already set, so we don't have anything to do
 			}
 			case Pattern_Variable_State_Type::UNSET: {
+				log_semantic_error("Datatype instanciate failed: Pattern variable is unset", error_report_node, error_report_section);
+				log_error_info_id(variable->name);
 				return nullptr; // Return null, as this function only works if all states are set...
 			}
-			case Pattern_Variable_State_Type::PATTERN: break; // Rest of function
+			case Pattern_Variable_State_Type::PATTERN: break; // Rest of block
 			default: panic("");
 			}
 
-			auto pattern_type = new_state.options.pattern_type;
-			if (pattern_type->type == Datatype_Type::PATTERN_VARIABLE) 
+			auto pattern_type = var_state.options.pattern_type;
+			if (pattern_type->type == Datatype_Type::PATTERN_VARIABLE)
 			{
 				auto variable = downcast<Datatype_Pattern_Variable>(pattern_type)->variable;
-				new_state = states[variable->value_access_index];
-				if (new_state.type != Pattern_Variable_State_Type::SET) return nullptr;
+				auto& var_state = states[variable->value_access_index];
+				if (var_state.type != Pattern_Variable_State_Type::SET) {
+					log_semantic_error("Datatype instanciate failed: Pattern variable is unset", error_report_node, error_report_section);
+					log_error_info_id(variable->name);
+					return nullptr;
+				}
+				param_value = parameter_value_make_comptime(var_state.options.value);
 			}
-			else 
+			else
 			{
-				Datatype* instanciated_pattern_type = datatype_pattern_instanciate(pattern_type, states);
+				Datatype* instanciated_pattern_type = datatype_pattern_instanciate(pattern_type, states, error_report_node, error_report_section);
 				if (instanciated_pattern_type == nullptr) return nullptr;
 				assert(!instanciated_pattern_type->contains_pattern, "");
 
@@ -5134,17 +5283,15 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 					array_create_static_as_bytes(&instanciated_pattern_type->type_handle, 1)
 				);
 				assert(result.success, "Type-handle should always work!");
-				new_state = pattern_variable_state_make_set(result.options.constant);
+				param_value = parameter_value_make_comptime(result.options.constant);
 			}
 		}
 
-		Poly_Instance* struct_instance = poly_header_instanciate_with_variable_states(
-			struct_pattern->instance->header, new_states, 
-			array_create_static<Datatype*>(nullptr, 0), // We would have returned nullptr previously if we had partial-patterns
-			nullptr
-		);
-		assert(struct_instance->type == Poly_Instance_Type::STRUCTURE, "All states should be set now");
-		new_states.data = 0; // Cleanup was already done by instanciate
+		auto struct_instance = poly_header_instanciate(&call, error_report_node, error_report_section);
+		if (struct_instance == nullptr) {
+			return nullptr; // Errors are reported at this point
+		}
+		assert(struct_instance->type == Poly_Instance_Type::STRUCTURE, "Should be the case, as all parameters are set?");
 		return upcast(struct_instance->options.struct_instance->struct_type);
 	}
 	case Datatype_Type::FUNCTION_POINTER:
@@ -5157,7 +5304,7 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 		for (int i = 0; i < signature->parameters.size; i++)
 		{
 			auto& param = signature->parameters[i];
-			Datatype* param_instance_type = datatype_pattern_instanciate(param.datatype, states);
+			Datatype* param_instance_type = datatype_pattern_instanciate(param.datatype, states, error_report_node, error_report_section);
 			if (param_instance_type == nullptr) {
 				call_signature_destroy(new_signature);
 				return nullptr;
@@ -5175,42 +5322,55 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 		auto array = downcast<Datatype_Array>(pattern_type);
 
 		// Instanciate element type
-		Datatype* element_type = datatype_pattern_instanciate(array->element_type, states);
-		if (element_type == 0) return 0;
+		Datatype* element_type = datatype_pattern_instanciate(array->element_type, states, error_report_node, error_report_section);
+		if (element_type == nullptr) return nullptr;
 
 		// Handle polymorphic count variable
 		u64 element_count = array->element_count;
 		if (array->count_variable_type != nullptr)
 		{
 			auto& state = states[array->count_variable_type->variable->value_access_index];
-			if (state.type != Pattern_Variable_State_Type::SET) return nullptr;
+			if (state.type != Pattern_Variable_State_Type::SET) {
+				log_semantic_error("Datatype instanciate failed: Array count pattern variable is unset", error_report_node, error_report_section);
+				log_error_info_id(array->count_variable_type->variable->name);
+				return nullptr;
+			}
 			auto constant = state.options.value;
 			auto constant_type = datatype_get_non_const_type(constant.type);
-			if (constant_type->type != Datatype_Type::PRIMITIVE) return nullptr;
+			if (constant_type->type != Datatype_Type::PRIMITIVE) {
+				log_semantic_error("Datatype instanciate failed: Array count pattern variable is not an integer", error_report_node, error_report_section);
+				log_error_info_id(array->count_variable_type->variable->name);
+				return nullptr;
+			}
 			auto primitive = downcast<Datatype_Primitive>(constant_type);
-			if (primitive->primitive_class != Primitive_Class::INTEGER) return nullptr;
+			if (primitive->primitive_class != Primitive_Class::INTEGER) {
+				log_semantic_error("Datatype instanciate failed: Array count pattern variable is not an integer", error_report_node, error_report_section);
+				log_error_info_id(array->count_variable_type->variable->name);
+				return nullptr;
+			}
 
 			// Different integer sizes
+			bool less_equal_zero = false;
 			if (primitive->is_signed)
 			{
 				if (constant_type->memory_info.value.size == 1) {
 					i8 value = *((i8*)constant.memory);
-					if (value < 0) return nullptr;
+					less_equal_zero = value <= 0;
 					element_count = (u64)value;
 				}
 				else if (constant_type->memory_info.value.size == 2) {
 					i16 value = *((i16*)constant.memory);
-					if (value < 0) return nullptr;
+					less_equal_zero = value <= 0;
 					element_count = (u64)value;
 				}
 				else if (constant_type->memory_info.value.size == 4) {
 					i32 value = *((i32*)constant.memory);
-					if (value < 0) return nullptr;
+					less_equal_zero = value <= 0;
 					element_count = (u64)value;
 				}
 				else if (constant_type->memory_info.value.size == 8) {
 					i64 value = *((i64*)constant.memory);
-					if (value < 0) return nullptr;
+					less_equal_zero = value <= 0;
 					element_count = (u64)value;
 				}
 				else {
@@ -5235,29 +5395,39 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 					panic("");
 				}
 			}
+
+			if (element_count == 0 || less_equal_zero) {
+				log_semantic_error("Datatype instanciate failed: Array count pattern variable integer is <= 0", error_report_node, error_report_section);
+				log_error_info_id(array->count_variable_type->variable->name);
+				return nullptr;
+			}
 		}
 
 		return type_system_make_array(element_type, array->count_known, (int)element_count, nullptr);
 	}
 	case Datatype_Type::SLICE: {
-		Datatype* child_type = datatype_pattern_instanciate(downcast<Datatype_Slice>(pattern_type)->element_type, states);
-		if (child_type == 0) return 0;
+		Datatype* child_type = datatype_pattern_instanciate(
+			downcast<Datatype_Slice>(pattern_type)->element_type, states, error_report_node, error_report_section);
+		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_slice(child_type));
 	}
 	case Datatype_Type::OPTIONAL_TYPE: {
-		Datatype* child_type = datatype_pattern_instanciate(downcast<Datatype_Optional>(pattern_type)->value_member.type, states);
-		if (child_type == 0) return 0;
+		Datatype* child_type = datatype_pattern_instanciate(
+			downcast<Datatype_Optional>(pattern_type)->value_member.type, states, error_report_node, error_report_section);
+		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_optional(child_type));
 	}
 	case Datatype_Type::CONSTANT: {
-		Datatype* child_type = datatype_pattern_instanciate(downcast<Datatype_Constant>(pattern_type)->element_type, states);
-		if (child_type == 0) return 0;
+		Datatype* child_type = datatype_pattern_instanciate(
+			downcast<Datatype_Constant>(pattern_type)->element_type, states, error_report_node, error_report_section);
+		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_constant(child_type));
 	}
 	case Datatype_Type::POINTER: {
 		auto pointer = downcast<Datatype_Pointer>(pattern_type);
-		Datatype* child_type = datatype_pattern_instanciate(pointer->element_type, states);
-		if (child_type == 0) return 0;
+		Datatype* child_type = datatype_pattern_instanciate(
+			pointer->element_type, states, error_report_node, error_report_section);
+		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_pointer(child_type, pointer->is_optional));
 	}
 	}
@@ -5269,7 +5439,7 @@ Datatype* datatype_pattern_instanciate(Datatype* pattern_type, Array<Pattern_Var
 // Return null if not successfull
 // Analyses all set parameters if successfull
 Poly_Instance* poly_header_instanciate(
-	Callable_Call* call, AST::Node* error_report_node, Parser::Section error_report_section = Parser::Section::WHOLE)
+	Callable_Call* call, AST::Node* error_report_node, Parser::Section error_report_section)
 {
 	Poly_Header* poly_header;
 	if (call->callable.type == Callable_Type::POLY_STRUCT) {
@@ -5357,52 +5527,37 @@ Poly_Instance* poly_header_instanciate(
 		auto& run_info = graph.run_infos[param_index];
 		auto& param_value = parameter_values[param_index];
 
-		run_info.analyse_without_context = false;
-		run_info.dependency_count = 0;
-		run_info.index_in_waiting_array = -1;
-
-		// If we don't have a parameter value, this means struct-pattern or instanciate I guess
-		// We don't analyse parameters if they are not-set, non-comptime and have a normal type
-		if (param_value.value_type == Parameter_Value_Type::NOT_SET && 
-			!param_info.datatype->contains_pattern && 
-			param_info.comptime_variable_index == -1) 
-		{ 
-			// Store type for instanciate
-			param_value.datatype = param_info.datatype;
-			param_value.is_temporary_value = true;
+		// Skip explicitly set variables, there is a custom code-path for them
+		if (param_info.comptime_variable_index != -1 && param_info.requires_named_addressing) {
 			continue;
 		}
 
-		// If the type contains a pattern-variable-definition, we analyse without context (x: $T)
-		if (param_info.contains_pattern_variable_definition) {
-			run_info.analyse_without_context = true;
-		}
+		run_info.has_dependency_on_pattern_state = false;
+		run_info.dependency_count = 0;
+		run_info.dependency_on_self_definition_count = 0;
+		run_info.index_in_waiting_array = -1;
 
-		// Find dependencies if we can analyse with context
-		for (int i = 0; i < param_info.dependencies.size && !run_info.analyse_without_context; i++)
+		// Find dependencies
+		for (int i = 0; i < param_info.dependencies.size; i++)
 		{
 			auto depends_on_var = &poly_header->pattern_variables[param_info.dependencies[i]];
 			auto& var_state = variable_states[depends_on_var->value_access_index];
-			assert(depends_on_var->defined_in_parameter_index != param_index, "Otherwise we would analse_without context");
-
-			// If we have dependency on unset parameter (instanciate or struct-pattern), then analse without context
-			if (parameter_values[depends_on_var->defined_in_parameter_index].value_type == Parameter_Value_Type::NOT_SET) {
-				run_info.analyse_without_context = true;
-				break;
+			if (depends_on_var->defined_in_parameter_index == i) {
+				run_info.dependency_on_self_definition_count += 1;
 			}
+
 			run_info.dependency_count += 1;
 			graph.variable_dependents[depends_on_var->value_access_index].dependents.push_back(param_index);
 		}
 
 		// Add to correct array
 		assert(run_info.index_in_waiting_array == -1, "Should be true after init");
-		if (run_info.analyse_without_context || run_info.dependency_count == 0)
+		if (run_info.dependency_count - run_info.dependency_on_self_definition_count == 0)
 		{
-			// Add to runnables if it can be run
 			graph.runnable_indices.push_back(param_index);
 		}
 		else {
-			run_info.index_in_waiting_array = (int) graph.waiting_indices.size;
+			run_info.index_in_waiting_array = (int)graph.waiting_indices.size;
 			graph.waiting_indices.push_back(param_index);
 		}
 	}
@@ -5416,7 +5571,7 @@ Poly_Instance* poly_header_instanciate(
 		if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
 		assert(param_info.comptime_variable_index != -1 && param_info.requires_named_addressing, "");
 		assert(
-			param_value.value_type != Parameter_Value_Type::INFO_ONLY, 
+			param_value.value_type != Parameter_Value_Type::DATATYPE_KNOWN,
 			"Setting implicit parameters should not be done this way, as we need to calculate the comptime value"
 		);
 
@@ -5432,10 +5587,17 @@ Poly_Instance* poly_header_instanciate(
 			continue;
 		}
 
-		// Calculate comptime value
-		auto arg_expr = call->argument_infos[param_value.argument_index].expression;
+		// Check if param is comptime
+		if (param_value.value_type == Parameter_Value_Type::COMPTIME_VALUE) {
+			pattern_matcher_set_variable_to_value(&pattern_matcher, &pattern_variable, param_value.options.constant);
+			continue;
+		}
+
+		// Otherwise
+		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
+		auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
 		auto comptime_result = expression_calculate_comptime_value(
-		 	arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value");
+			arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value");
 		if (comptime_result.available) {
 			pattern_matcher_set_variable_to_value(&pattern_matcher, &pattern_variable, comptime_result.value);
 		}
@@ -5446,7 +5608,7 @@ Poly_Instance* poly_header_instanciate(
 	}
 
 	// Analyse all arguments
-	while (graph.waiting_indices.size > 0)
+	while (graph.waiting_indices.size > 0 || graph.runnable_indices.size > 0)
 	{
 		// Run runnable arguments
 		while (graph.runnable_indices.size > 0)
@@ -5454,134 +5616,152 @@ Poly_Instance* poly_header_instanciate(
 			int runnable_index = graph.runnable_indices.last();
 			graph.runnable_indices.swap_remove((int)graph.runnable_indices.size - 1);
 
-			auto& run_info    = graph.run_infos[runnable_index];
-			auto& param_info  = poly_header->signature->parameters[runnable_index];
+			auto& run_info = graph.run_infos[runnable_index];
+			auto& param_info = poly_header->signature->parameters[runnable_index];
 			auto& param_value = parameter_values[runnable_index];
-			assert(run_info.analyse_without_context || run_info.dependency_count == 0, "Otherwise we shouldn't run this...");
 			const bool is_return_type = runnable_index == poly_header->signature->return_type_index;
 
-			// Analyse argument in correct context
-			Expression_Context context = expression_context_make_unknown();
-			if (!run_info.analyse_without_context) 
+			// Instanciate parameter-type if possible
+			Datatype* parameter_type = param_info.datatype;
+			if (param_info.datatype->contains_pattern && run_info.dependency_count == 0 &&
+				!run_info.has_dependency_on_pattern_state && !param_info.datatype->contains_partial_pattern) 
 			{
-				Datatype* instanciated_type = datatype_pattern_instanciate(param_info.datatype, variable_states);
-				if (instanciated_type != nullptr) {
-					context = expression_context_make_specific_type(instanciated_type);
-				}
-			}
-			analyse_parameter_value_if_not_already_done(call, &param_value, context, !poly_header->is_function);
-			Datatype* argument_type = param_value.datatype;
-
-			// Match argument-type to pattern to set variables
-			if (param_info.contains_pattern_variable_definition)
-			{
-				Datatype* pattern = param_info.datatype;
-				assert(pattern->contains_pattern, "");
-
-				// Update type-mods (can fail)
-				Expression_Cast_Info cast_info;
-				Type_Mods required_type_mods;
-				if (is_return_type)
+				parameter_type = datatype_pattern_instanciate(
+					parameter_type, variable_states, error_report_node, error_report_section);
+				if (parameter_type != nullptr)
 				{
-					// We assume return type is not temporary for instanciation,
-					//	but this should result in an error down the line (when context is matched)
-					cast_info = cast_info_make_empty(param_info.datatype, false);
-					required_type_mods = argument_type->mods;
+					if (param_info.partial_pattern_index != -1) {
+						partial_pattern_instances[param_info.partial_pattern_index] = parameter_type;
+					}
 				}
 				else {
-					cast_info = cast_info_make_empty(argument_type, false);
-					required_type_mods = param_info.datatype->mods;
+					parameter_type = param_info.datatype;
 				}
+			}
 
-				if (!try_updating_type_mods(cast_info, required_type_mods))
+			// Skip parameter if not set
+			if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
+
+			// Analyse argument if given
+			if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION)
+			{
+				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+
+				Expression_Context context = expression_context_make_unknown();
+				if (!parameter_type->contains_pattern) {
+					context = expression_context_make_specific_type(parameter_type);
+				}
+				analyse_parameter_value_if_not_already_done(call, &param_value, context, param_info.comptime_variable_index != -1);
+
+				// Handle struct-pattern variables
+				if (param_value.datatype->contains_pattern)
 				{
-					log_semantic_error("Type mods of parameter and argument did not match", error_report_node, error_report_section);
-					success = false;
+					assert(param_info.comptime_variable_index != -1, "");
+					auto variable = &poly_header->pattern_variables[param_info.comptime_variable_index];
+					pattern_matcher_set_variable_to_pattern(&pattern_matcher, variable, param_value.datatype);
 					continue;
 				}
+			}
 
-				// Store result
-				if (is_return_type)
+			// Try updating expression type mods
+			auto& argument_type = param_value.datatype;
+			auto& argument_is_temporary = param_value.is_temporary_value;
+			if (is_return_type)
+			{
+				assert(param_value.value_type == Parameter_Value_Type::DATATYPE_KNOWN, "");
+				// We now want to cast from return-type (parameter-type) to expression-context (argument-type)
+				Expression_Cast_Info cast_info = cast_info_make_empty(parameter_type, true);
+				if (try_updating_type_mods(cast_info, argument_type->mods)) {
+					argument_type = type_system_make_type_with_mods(argument_type->base_type, parameter_type->mods);
+				}
+			}
+			else 
+			{
+				Expression_Cast_Info cast_info = cast_info_make_empty(argument_type, param_value.is_temporary_value);
+				if (try_updating_type_mods(cast_info, parameter_type->mods)) 
 				{
-					pattern = cast_info.result_type;
+					argument_type = cast_info.result_type;
+
+					// Update expression info
+					if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION)
+					{
+						auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+						auto expr_info = get_info(arg_expr);
+						expr_info->cast_info = cast_info;
+					}
+				}
+			}
+
+			// Match parameter to pattern
+			if (parameter_type->contains_pattern)
+			{
+				// Match pattern
+				if (pattern_matcher_match_pattern(&pattern_matcher, parameter_type, argument_type)) 
+				{
+					// Update info for later call-instanciation
+					param_value.datatype = argument_type;
+					if (param_info.partial_pattern_index != -1) {
+						partial_pattern_instances[param_info.partial_pattern_index] = argument_type;
+					}
 				}
 				else 
 				{
-					argument_type = cast_info.result_type;
-					if (param_value.value_type == Parameter_Value_Type::ARGUMENT) {
-						assert(runnable_index != poly_header->signature->return_type_index, "");
-						get_info(call->argument_infos[param_value.argument_index].expression)->cast_info = cast_info;
-					}
-				}
-
-				// Match pattern
-				if (!argument_type->contains_pattern) // Don't do this for struct-pattern
-				{
-					if (!pattern_matcher_match_pattern(&pattern_matcher, pattern, argument_type)) {
-						log_semantic_error("Could not match given value_type to pattern", error_report_node, error_report_section);
-						log_error_info_given_type(argument_type);
-						log_error_info_expected_type(pattern);
-						success = false;
-					}
-				}
-			}
-
-			// Store final parameter type (For function instance callable creation)
-			if (is_return_type)
-			{
-				param_value.datatype = param_info.datatype;
-				if (param_info.datatype->contains_pattern) 
-				{
-					param_value.datatype = datatype_pattern_instanciate(param_info.datatype, variable_states);
-					if (param_value.datatype == 0) {
-						// Note sure if this can happen, or what the correct
-						log_semantic_error("Cannot calculate instanciated return type", error_report_node, error_report_section);
-						success = false;
-						param_value.datatype = argument_type;
-					}
+					log_semantic_error("Could not match given value_type to pattern", error_report_node, error_report_section);
+					log_error_info_id(param_info.name);
+					log_error_info_given_type(argument_type);
+					log_error_info_expected_type(parameter_type);
+					success = false;
 				}
 			}
 			else
 			{
-				param_value.datatype = argument_type;
-			}
-
-			// Store partial_pattern_instance if param is a partial-pattern
-			if (param_info.partial_pattern_index != -1) {
-				partial_pattern_instances[param_info.partial_pattern_index] = param_value.datatype;
-			}
-
-			// Calculate comptime value
-			if (param_info.comptime_variable_index != -1)
-			{
-				assert(
-					param_value.value_type == Parameter_Value_Type::ARGUMENT, 
-					"In instanciate all comptime parameters are specified, so this should never happen"
-				);
-				Pattern_Variable* variable = &poly_header->pattern_variables[param_info.comptime_variable_index];
-
-				// Handle struct-pattern variables
-				if (argument_type->contains_pattern)
+				if (!types_are_equal(parameter_type, argument_type))
 				{
-					pattern_matcher_set_variable_to_pattern(&pattern_matcher, variable, argument_type);
+					log_semantic_error("Argument type does not match parameter type", error_report_node, error_report_section);
+					log_error_info_id(param_info.name);
+					log_error_info_given_type(argument_type);
+					log_error_info_expected_type(parameter_type);
+					success = false;
 				}
-				else
-				{
-					// Calculate comptime value
-					auto arg_expr = call->argument_infos[param_value.argument_index].expression;
-					auto comptime_result = expression_calculate_comptime_value(
-						arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value"
-					);
-					if (comptime_result.available) {
-						pattern_matcher_set_variable_to_value(&pattern_matcher, variable, comptime_result.value);
-					}
-					else {
-						// Note: here we could set waiting dependencies to runnable, but this still works 
-						//	because even parameter with dependencies get run eventually
-						success = false;
+			}
+
+			// Calculate comptime value if required
+			if (param_info.comptime_variable_index == -1) continue;
+			auto variable = &poly_header->pattern_variables[param_info.comptime_variable_index];
+
+			switch (param_value.value_type)
+			{
+			case Parameter_Value_Type::COMPTIME_VALUE: 
+			{
+				pattern_matcher_set_variable_to_value(&pattern_matcher, variable, param_value.options.constant);
+				break;
+			}
+			case Parameter_Value_Type::ARGUMENT_EXPRESSION: 
+			{
+				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+				bool was_not_available = false;
+				auto comptime_result = expression_calculate_comptime_value(
+					arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value", &was_not_available 
+				);
+				if (comptime_result.available) {
+					pattern_matcher_set_variable_to_value(&pattern_matcher, variable, comptime_result.value);
+				}
+				else {
+					success = false;
+					if (!was_not_available) {
 						log_semantic_error("Argument was not comptime", arg_expr, Parser::Section::FIRST_TOKEN);
 					}
 				}
+				break;
+			}
+			case Parameter_Value_Type::DATATYPE_KNOWN: 
+			{
+				success = false;
+				log_semantic_error("Parmeter requires comptime value, but only datatype is know", error_report_node, error_report_section);
+				log_error_info_id(param_info.name);
+				break;
+			}
+			default: panic("NOT set should have been skipped");
 			}
 		}
 
@@ -5603,8 +5783,7 @@ Poly_Instance* poly_header_instanciate(
 
 			auto& run_info = graph.run_infos[smallest_index_to_run];
 			assert(run_info.index_in_waiting_array == -1, "Shouldn't have been run yet");
-			run_info.analyse_without_context = true;
-			parameter_dependency_graph_set_parameter_runnable(&graph, smallest_index_to_run);
+			parameter_dependency_graph_set_parameter_runnable(&graph, smallest_index_to_run, false);
 		}
 	}
 
@@ -5616,11 +5795,11 @@ Poly_Instance* poly_header_instanciate(
 
 	// Return if there were errors/values not available
 	if (!success) {
-		log_semantic_error("Instanciation failed, errors occured", error_report_node, error_report_section);
 		return nullptr;
 	}
 
-	auto result = poly_header_instanciate_with_variable_states(poly_header, variable_states, partial_pattern_instances, call);
+	auto result = poly_header_instanciate_with_variable_states(
+		poly_header, variable_states, partial_pattern_instances, call, error_report_node, error_report_section);
 	variable_states.data = nullptr; // Don't cleanup, as line above takes ownership
 	partial_pattern_instances.data = nullptr;
 	return result;
@@ -6829,34 +7008,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 	}
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
-		auto variable = symbol->options.pattern_variable;
-		Array<Pattern_Variable_State> active_pattern_values = pattern_variables_find_active_states(variable->origin);
-		assert(active_pattern_values.data != 0, "If the symbol was found (e.g. correct symbol-table lookup 'permissions'), then we should be able to access it");
-
-		auto& value = active_pattern_values[variable->value_access_index];
-		switch (value.type)
-		{
-		case Pattern_Variable_State_Type::SET: {
-			expression_info_set_constant(&result, value.options.value);
-			break;
-		}
-		case Pattern_Variable_State_Type::UNSET: {
-			semantic_analyser_set_error_flag(true);
-			// Assert that we are in a function-body (BASE) analysis, otherwise panic
-			assert(
-				workload->type == Analysis_Workload_Type::FUNCTION_BODY || 
-				workload->type == Analysis_Workload_Type::STRUCT_BODY, 
-				"We must be in base-analysis to encounter unset variables"
-			);
-			expression_info_set_value(&result, types.unknown_type, false);
-			break;
-		}
-		case Pattern_Variable_State_Type::PATTERN: {
-			expression_info_set_polymorphic_pattern(&result, value.options.pattern_type);
-			break;
-		}
-		default: panic("");
-		}
+		expression_info_set_to_pattern_variable(&result, symbol->options.pattern_variable);
 		return result;
 	}
 	case Symbol_Type::COMPTIME_VALUE: {
@@ -6920,22 +7072,23 @@ void analyse_member_initializer_recursive(
 
 	Callable_Call* call = get_info(call_node, true);
 	*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, call_node);
-	call->instanciation_data.initializer_info.subtype_valid   = allowed_direction != -1;
+	call->instanciation_data.initializer_info.subtype_valid = allowed_direction != -1;
 	call->instanciation_data.initializer_info.supertype_valid = allowed_direction != 1;
+	call->instanciated = true;
 
 	arguments_match_to_parameters(*call);
 	callable_call_analyse_all_arguments(call, false, false);
 
 	auto helper_analyse_subtype_init_unknown = [&](AST::Subtype_Initializer* subtype_init)
-	{
-		Callable_Call* call = get_info(subtype_init->call_node, true);
-		*call = callable_call_make_from_call_node(
-			&compiler.analysis_data->arena, 
-			callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), 
-			subtype_init->call_node
-		);
-		callable_call_analyse_all_arguments(call, false, true);
-	};
+		{
+			Callable_Call* call = get_info(subtype_init->call_node, true);
+			*call = callable_call_make_from_call_node(
+				&compiler.analysis_data->arena,
+				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED),
+				subtype_init->call_node
+			);
+			callable_call_analyse_all_arguments(call, false, true);
+		};
 
 	// Go through subtype-initializers and call function recursively
 	bool subtype_initializer_found = false;
@@ -7105,13 +7258,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #define EXIT_HARDCODED(hardcoded) expression_info_set_hardcoded(info, hardcoded); return info;
 #define EXIT_FUNCTION(function) expression_info_set_function(info, function); return info;
 #define EXIT_TYPE_OR_POLY(type) \
-	if (type->contains_pattern) { \
-		expression_info_set_polymorphic_pattern(info, type); \
+	Datatype* _result_type = type; \
+	if (_result_type->contains_pattern) { \
+		expression_info_set_polymorphic_pattern(info, _result_type); \
 	} \
 	else { \
-		expression_info_set_type(info, type); \
+		expression_info_set_type(info, _result_type); \
 	} \
-	return info
+	return info;
 
 	switch (expr->type)
 	{
@@ -7125,30 +7279,33 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(call_node.expr, call_node.call_node, context);
 		info->specifics.call = call;
 
-		auto helper_set_info_to_call_return_type = [&](bool error_occured) 
-		{
-			if (error_occured) {
-				callable_call_analyse_all_arguments(call, true, true);
-			}
+		auto helper_set_info_to_call_return_type = [&](bool error_occured)
+			{
+				if (error_occured) {
+					callable_call_analyse_all_arguments(call, true, true);
+				}
 
-			auto signature = call->callable.signature;
-			if (call->callable.type == Callable_Type::POLY_FUNCTION && call->instanciation_data.function != nullptr) {
-				signature = call->instanciation_data.function->signature;
-			}
-			if (signature->return_type_index == -1) {
-				expression_info_set_no_value(info);
-				return;
-			}
-			Datatype* return_type = signature->return_type().value;
-			if (return_type->contains_pattern) {
-				expression_info_set_error(info, types.unknown_type);
-			}
-			else {
-				expression_info_set_error(info, return_type);
-			}
-		};
+				auto signature = call->callable.signature;
+				if ((call->callable.type == Callable_Type::POLY_FUNCTION ||
+					call->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC) &&
+					call->instanciated)
+				{
+					signature = call->instanciation_data.function->signature;
+				}
+				if (signature->return_type_index == -1) {
+					expression_info_set_no_value(info);
+					return;
+				}
+				Datatype* return_type = signature->return_type().value;
+				if (return_type->contains_pattern) {
+					expression_info_set_error(info, types.unknown_type);
+				}
+				else {
+					expression_info_set_value(info, return_type, true);
+				}
+			};
 
-		if (!call->argument_matching_success) 
+		if (!call->argument_matching_success)
 		{
 			helper_set_info_to_call_return_type(true);
 			return info;
@@ -7157,7 +7314,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Store expected return type in parameter_values (Used for polymorphic instanciation)
 		if (call->callable.signature->return_type_index != -1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 			auto& param_value = call->parameter_values[call->callable.signature->return_type_index];
-			param_value.value_type = Parameter_Value_Type::INFO_ONLY;
+			param_value.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
 			param_value.is_temporary_value = false;
 			param_value.datatype = context.expected_type.type;
 		}
@@ -7173,7 +7330,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			case Hardcoded_Type::TYPE_OF:
 			{
 				auto& param_value = call->parameter_values[0];
-				assert(call->parameter_values.size == 1, "");
+				assert(call->parameter_values.size == 2, "With return type we should have 2 parameters");
 				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_unknown(), false);
 				EXIT_TYPE(param_value.datatype);
 			}
@@ -7181,7 +7338,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			case Hardcoded_Type::ALIGN_OF:
 			{
 				bool is_size_of = call->callable.options.hardcoded == Hardcoded_Type::SIZE_OF;
-				assert(call->parameter_values.size == 1, "");
+				assert(call->parameter_values.size == 2, "");
 				auto param_value = &call->parameter_values[0];
 
 				analyse_parameter_value_if_not_already_done(call, param_value, expression_context_make_specific_type(types.type_handle));
@@ -7196,8 +7353,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					return info;
 				}
 
-				assert(param_value->value_type == Parameter_Value_Type::ARGUMENT, "Should be the case in function call!");
-				auto value_expr = call->argument_infos[param_value->argument_index].expression;
+				assert(param_value->value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Should be the case in function call!");
+				auto value_expr = call->argument_infos[param_value->options.argument_index].expression;
 				auto result = expression_calculate_comptime_value(value_expr, "size_of/align_of requires comptime value_type-handle");
 				if (!result.available) {
 					if (is_size_of) {
@@ -7210,7 +7367,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 
 				Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(result.value);
-				if (handle.index >= (u32)compiler.analysis_data->type_system.types.size) 
+				if (handle.index >= (u32)compiler.analysis_data->type_system.types.size)
 				{
 					log_semantic_error("Invalid value_type-handle value", value_expr);
 					if (is_size_of) {
@@ -7235,6 +7392,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::RETURN_TYPE:
 			{
+				assert(call->parameter_values.size == 1, "");
 				if (semantic_analyser.current_workload->type != Analysis_Workload_Type::FUNCTION_BODY) {
 					log_semantic_error("return_type() function needs to be called inside function_body", expr, Parser::Section::FIRST_TOKEN);
 					EXIT_ERROR(types.unknown_type);
@@ -7253,9 +7411,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::STRUCT_TAG:
 			{
-				assert(call->parameter_values.size == 1, "");
+				assert(call->parameter_values.size == 2, "");
 				auto& param_value = call->parameter_values[0];
-				auto param_expr = call->argument_infos[param_value.argument_index].expression;
+				auto param_expr = call->argument_infos[param_value.options.argument_index].expression;
 				assert(param_expr != 0, "");
 				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_unknown());
 				auto param_info = get_info(param_expr);
@@ -7312,11 +7470,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::BITWISE_NOT:
 			{
-				assert(call->parameter_values.size == 1, "");
-				call->instanciation_data.bitwise_primitive_type = types.i32_type;
+				assert(call->parameter_values.size == 2, "");
 
 				auto& param_value = call->parameter_values[0];
-				auto arg_expr = call->argument_infos[param_value.argument_index].expression;
+				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
 				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_auto_dereference());
 				Datatype* type = param_value.datatype;
 				type = datatype_get_non_const_type(type);
@@ -7333,6 +7490,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					EXIT_VALUE(upcast(types.i32_type), true);
 				}
 				call->instanciation_data.bitwise_primitive_type = primitive;
+				call->instanciated = true;
 
 				EXIT_VALUE(type, true);
 			}
@@ -7342,12 +7500,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			case Hardcoded_Type::BITWISE_SHIFT_LEFT:
 			case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
 			{
-				assert(call->parameter_values.size == 2, "");
+				assert(call->parameter_values.size == 3, "");
 				call->instanciation_data.bitwise_primitive_type = types.i32_type;
 
 				// Analyse first expression
 				auto& param_values = call->parameter_values;
-				auto expr_a = call->argument_infos[param_values[0].argument_index].expression;
+				auto expr_a = call->argument_infos[param_values[0].options.argument_index].expression;
 				analyse_parameter_value_if_not_already_done(call, &param_values[0], expression_context_make_auto_dereference());
 				Datatype* type_a = param_values[0].datatype;
 				type_a = datatype_get_non_const_type(type_a);
@@ -7365,8 +7523,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					EXIT_VALUE(upcast(types.i32_type), true);
 				}
 				call->instanciation_data.bitwise_primitive_type = primitive;
+				call->instanciated = true;
 
-				auto expr_b = call->argument_infos[param_values[1].argument_index].expression;
+				auto expr_b = call->argument_infos[param_values[1].options.argument_index].expression;
 				analyse_parameter_value_if_not_already_done(call, &param_values[1], expression_context_make_specific_type(type_a));
 				Datatype* type_b = param_values[1].datatype;
 				type_b = datatype_get_non_const_type(type_b);
@@ -7686,36 +7845,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		Pattern_Variable* variable = *variable_opt;
-		Datatype_Pattern_Variable* pattern_type = variable->pattern_variable_type;
-		assert(!pattern_type->is_reference,
+		assert(!variable->pattern_variable_type->is_reference,
 			"We can never be the reference if we are at the definition argument_expression, e.g. $T is not a symbol-read like T");
 
 		// If value is already set, return the value (Should happen in header-re-analysis)
-		Array<Pattern_Variable_State> active_pattern_values = pattern_variables_find_active_states(variable->origin);
-		assert(active_pattern_values.data != nullptr, "We should have values here, as this must be re-analysis or first time header analysis");
-
-		auto& value = active_pattern_values[variable->value_access_index];
-		switch (value.type)
-		{
-		case Pattern_Variable_State_Type::SET: {
-			expression_info_set_constant(info, value.options.value);
-			return info;
-		}
-		case Pattern_Variable_State_Type::UNSET: {
-			if (semantic_analyser.current_workload->type != Analysis_Workload_Type::FUNCTION_HEADER) {
-				panic("This should have been set to pattern in header analysis!");
-			}
-			semantic_analyser_set_error_flag(true);
-			EXIT_ERROR(types.unknown_type);
-		}
-		case Pattern_Variable_State_Type::PATTERN: {
-			expression_info_set_polymorphic_pattern(info, upcast(variable->pattern_variable_type));
-			return info;
-		}
-		default: panic("");
-		}
-
-		EXIT_ERROR(types.unknown_type);
+		expression_info_set_to_pattern_variable(info, variable);
+		return info;
 	}
 	case AST::Expression_Type::CAST:
 	{
@@ -8058,7 +8193,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		auto workload = workload_structure_create(expr, 0, false, Symbol_Access_Level::POLYMORPHIC);
 		EXIT_TYPE(upcast(workload->struct_type));
 	}
-	case AST::Expression_Type::BAKE: 
+	case AST::Expression_Type::BAKE:
 	{
 		// Create bake progress and wait for it to finish
 		Datatype* expected_type = 0;
@@ -8075,7 +8210,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			expression_info_set_constant(info, bake_result->value);
 			return info;
 		}
-		else 
+		else
 		{
 			auto return_type = progress->bake_function->signature->return_type();
 			if (return_type.available) {
@@ -8103,7 +8238,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			analyse_parameter_type_and_value(*param, param_node, false);
 		}
 		signature = call_signature_register(signature);
-		EXIT_TYPE(upcast(type_system_make_function_pointer(signature, false)));
+		EXIT_TYPE_OR_POLY(upcast(type_system_make_function_pointer(signature, false)));
 	}
 	case AST::Expression_Type::ARRAY_TYPE:
 	{
@@ -8115,16 +8250,16 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Analyse size expression (Which may be polymorhic)
 		analyse_index_accept_all_ints_as_u64(array_node.size_expr, true);
 		auto info = get_info(array_node.size_expr);
-		if (info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN) 
+		if (info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN)
 		{
 			auto pattern_type = info->options.polymorphic_pattern;
 			if (pattern_type->type != Datatype_Type::PATTERN_VARIABLE) {
 				log_semantic_error("Array-Size does not take pattern-type-tree, only single pattern values", expr, Parser::Section::ENCLOSURE);
-				EXIT_TYPE(upcast(type_system_make_array(element_type, false, 1, nullptr)))
+				EXIT_TYPE_OR_POLY(upcast(type_system_make_array(element_type, false, 1, nullptr)))
 			}
 
 			Datatype_Pattern_Variable* variable = downcast<Datatype_Pattern_Variable>(pattern_type);
-			EXIT_TYPE(upcast(type_system_make_array(element_type, false, 1, variable)));
+			EXIT_TYPE_OR_POLY(upcast(type_system_make_array(element_type, false, 1, variable)));
 		}
 
 		// Otherwise array-size needs to be comptime known
@@ -8136,15 +8271,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		{
 			array_size_known = true;
 			array_size = upp_constant_to_value<u64>(comptime.value);
-			if (array_size <= 0) {
-				log_semantic_error("Array size must be greater than zero", array_node.size_expr);
+			if ((i64)array_size < 0) {
+				log_semantic_error("Array size is probably overflowing (e.g. negative)", array_node.size_expr);
 				array_size_known = false;
+				array_size = 1;
+			}
+			else if (array_size == 0) {
+				log_semantic_error("Array size must not be 0", array_node.size_expr);
+				array_size_known = false;
+				array_size = 1;
 			}
 		}
-		EXIT_TYPE(upcast(type_system_make_array(element_type, array_size_known, array_size)))
+		EXIT_TYPE_OR_POLY(upcast(type_system_make_array(element_type, array_size_known, array_size)))
 	}
 	case AST::Expression_Type::SLICE_TYPE: {
-		EXIT_TYPE_OR_POLY(upcast(type_system_make_slice(semantic_analyser_analyse_expression_type(expr->options.slice_type, true))));
+		auto element_type = semantic_analyser_analyse_expression_type(expr->options.slice_type, true);
+		auto slice_type = type_system_make_slice(element_type);
+		EXIT_TYPE_OR_POLY(upcast(slice_type));
 	}
 	case AST::Expression_Type::CONST_TYPE: {
 		EXIT_TYPE_OR_POLY(upcast(type_system_make_constant(semantic_analyser_analyse_expression_type(expr->options.const_type, true))));
@@ -8156,10 +8299,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Handle optional function_pointer
 		bool is_constant = child_type->mods.is_constant;
 		child_type = datatype_get_non_const_type(child_type);
-		if (datatype_get_non_const_type(child_type)->type == Datatype_Type::FUNCTION_POINTER) 
+		if (datatype_get_non_const_type(child_type)->type == Datatype_Type::FUNCTION_POINTER)
 		{
 			auto function_pointer = downcast<Datatype_Function_Pointer>(child_type);
-			if (!function_pointer->is_optional) 
+			if (!function_pointer->is_optional)
 			{
 				auto result_type = type_system_make_function_pointer(function_pointer->signature, true);
 				if (is_constant) {
@@ -8289,120 +8432,120 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	{
 		log_semantic_error("Struct initializer currently unavailable", expr);
 		EXIT_ERROR(types.unknown_type);
-	// 	auto& init_node = expr->options.struct_initializer;
+		// 	auto& init_node = expr->options.struct_initializer;
 
-	// 	Datatype* type_for_init = nullptr;
-	// 	if (init_node.type_expr.available) {
-	// 		type_for_init = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
-	// 	}
-	// 	else {
-	// 		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-	// 			type_for_init = context.expected_type.type;
-	// 		}
-	// 		else {
-	// 			if (!context.unknown_due_to_error) {
-	// 				log_semantic_error("Could not determine value_type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
-	// 			}
-	// 			type_for_init = types.unknown_type;
-	// 		}
-	// 	}
+		// 	Datatype* type_for_init = nullptr;
+		// 	if (init_node.type_expr.available) {
+		// 		type_for_init = semantic_analyser_analyse_expression_type(init_node.type_expr.value);
+		// 	}
+		// 	else {
+		// 		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+		// 			type_for_init = context.expected_type.type;
+		// 		}
+		// 		else {
+		// 			if (!context.unknown_due_to_error) {
+		// 				log_semantic_error("Could not determine value_type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
+		// 			}
+		// 			type_for_init = types.unknown_type;
+		// 		}
+		// 	}
 
-	// 	// Make sure that type is a struct
-	// 	type_for_init = datatype_get_non_const_type(type_for_init);
-	// 	type_wait_for_size_info_to_finish(type_for_init);
-	// 	if (type_for_init->type == Datatype_Type::STRUCT || type_for_init->type == Datatype_Type::SUBTYPE)
-	// 	{
-	// 		Datatype_Struct* struct_type = downcast<Datatype_Struct>(type_for_init->base_type);
-	// 		if (struct_type->struct_type == AST::Structure_Type::STRUCT)
-	// 		{
-	// 			Struct_Content* content = type_mods_get_subtype(struct_type, type_for_init->mods);
-	// 			Subtype_Index* final_subtype = type_for_init->mods.subtype_index;
-	// 			analyse_member_initializer_recursive(init_node.arguments, struct_type, content, 0, &final_subtype);
+		// 	// Make sure that type is a struct
+		// 	type_for_init = datatype_get_non_const_type(type_for_init);
+		// 	type_wait_for_size_info_to_finish(type_for_init);
+		// 	if (type_for_init->type == Datatype_Type::STRUCT || type_for_init->type == Datatype_Type::SUBTYPE)
+		// 	{
+		// 		Datatype_Struct* struct_type = downcast<Datatype_Struct>(type_for_init->base_type);
+		// 		if (struct_type->struct_type == AST::Structure_Type::STRUCT)
+		// 		{
+		// 			Struct_Content* content = type_mods_get_subtype(struct_type, type_for_init->mods);
+		// 			Subtype_Index* final_subtype = type_for_init->mods.subtype_index;
+		// 			analyse_member_initializer_recursive(init_node.arguments, struct_type, content, 0, &final_subtype);
 
-	// 			// Create result type
-	// 			auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(false, 0, 0, 0, final_subtype));
-	// 			EXIT_VALUE(final_type, true);
-	// 		}
-	// 		else
-	// 		{
-	// 			// Union initializer
-	// 			Struct_Content* content = &struct_type->content;
+		// 			// Create result type
+		// 			auto final_type = type_system_make_type_with_mods(upcast(struct_type), type_mods_make(false, 0, 0, 0, final_subtype));
+		// 			EXIT_VALUE(final_type, true);
+		// 		}
+		// 		else
+		// 		{
+		// 			// Union initializer
+		// 			Struct_Content* content = &struct_type->content;
 
-	// 			auto argument_infos = get_info(init_node.arguments, true);
-	// 			*argument_infos = argument_infos_create_empty(Call_Origin_Type::UNION_INITIALIZER, content->members.size);
-	// 			argument_infos->options.struct_init.content = content;
-	// 			argument_infos->options.struct_init.structure = struct_type;
-	// 			argument_infos->options.struct_init.subtype_valid = false;
-	// 			argument_infos->options.struct_init.supertype_valid = false;
-	// 			argument_infos->options.struct_init.valid = true;
+		// 			auto argument_infos = get_info(init_node.arguments, true);
+		// 			*argument_infos = argument_infos_create_empty(Call_Origin_Type::UNION_INITIALIZER, content->members.size);
+		// 			argument_infos->options.struct_init.content = content;
+		// 			argument_infos->options.struct_init.structure = struct_type;
+		// 			argument_infos->options.struct_init.subtype_valid = false;
+		// 			argument_infos->options.struct_init.supertype_valid = false;
+		// 			argument_infos->options.struct_init.valid = true;
 
-	// 			// Match arguments to struct members
-	// 			for (int i = 0; i < content->members.size; i++) {
-	// 				auto& member = content->members[i];
-	// 				parameter_matching_info_add_param(argument_infos, member.id, false, true, member.type);
-	// 			}
+		// 			// Match arguments to struct members
+		// 			for (int i = 0; i < content->members.size; i++) {
+		// 				auto& member = content->members[i];
+		// 				parameter_matching_info_add_param(argument_infos, member.id, false, true, member.type);
+		// 			}
 
-	// 			if (arguments_match_to_parameters(init_node.arguments, argument_infos))
-	// 			{
-	// 				int match_count = 0;
-	// 				for (int i = 0; i < argument_infos->argument_values.size; i++)
-	// 				{
-	// 					auto& member = content->members[i];
-	// 					auto& param_info = argument_infos->argument_values[i];
-	// 					if (!param_info.is_set) {
-	// 						continue;
-	// 					}
-	// 					match_count += 1;
-	// 					analyse_parameter_value_if_not_already_done(&param_info, expression_context_make_specific_type(member.type));
-	// 				}
+		// 			if (arguments_match_to_parameters(init_node.arguments, argument_infos))
+		// 			{
+		// 				int match_count = 0;
+		// 				for (int i = 0; i < argument_infos->argument_values.size; i++)
+		// 				{
+		// 					auto& member = content->members[i];
+		// 					auto& param_info = argument_infos->argument_values[i];
+		// 					if (!param_info.is_set) {
+		// 						continue;
+		// 					}
+		// 					match_count += 1;
+		// 					analyse_parameter_value_if_not_already_done(&param_info, expression_context_make_specific_type(member.type));
+		// 				}
 
-	// 				if (match_count == 0) {
-	// 					log_semantic_error("Union initializer expects a value", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
-	// 				}
-	// 				else if (match_count > 1) {
-	// 					log_semantic_error("Union initializer requires exactly one argument", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
-	// 					log_error_info_argument_count(match_count, 1);
-	// 				}
-	// 			}
-	// 			else {
-	// 				argument_infos_analyse_in_unknown_context(argument_infos);
-	// 			}
+		// 				if (match_count == 0) {
+		// 					log_semantic_error("Union initializer expects a value", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
+		// 				}
+		// 				else if (match_count > 1) {
+		// 					log_semantic_error("Union initializer requires exactly one argument", upcast(init_node.arguments), Parser::Section::ENCLOSURE);
+		// 					log_error_info_argument_count(match_count, 1);
+		// 				}
+		// 			}
+		// 			else {
+		// 				argument_infos_analyse_in_unknown_context(argument_infos);
+		// 			}
 
-	// 			EXIT_VALUE(upcast(struct_type), true);
-	// 		}
-	// 	}
-	// 	else if (type_for_init->type == Datatype_Type::SLICE)
-	// 	{
-	// 		Datatype_Slice* slice_type = downcast<Datatype_Slice>(type_for_init);
+		// 			EXIT_VALUE(upcast(struct_type), true);
+		// 		}
+		// 	}
+		// 	else if (type_for_init->type == Datatype_Type::SLICE)
+		// 	{
+		// 		Datatype_Slice* slice_type = downcast<Datatype_Slice>(type_for_init);
 
-	// 		auto argument_infos = get_info(init_node.arguments, true);
-	// 		*argument_infos = argument_infos_create_empty(Call_Origin_Type::SLICE_INITIALIZER, 2);
-	// 		argument_infos->options.slice_type = slice_type;
-	// 		auto& ids = compiler.identifier_pool.predefined_ids;
-	// 		parameter_matching_info_add_param(argument_infos, ids.data, true, false, slice_type->data_member.type);
-	// 		parameter_matching_info_add_param(argument_infos, ids.size, true, false, slice_type->size_member.type);
+		// 		auto argument_infos = get_info(init_node.arguments, true);
+		// 		*argument_infos = argument_infos_create_empty(Call_Origin_Type::SLICE_INITIALIZER, 2);
+		// 		argument_infos->options.slice_type = slice_type;
+		// 		auto& ids = compiler.identifier_pool.predefined_ids;
+		// 		parameter_matching_info_add_param(argument_infos, ids.data, true, false, slice_type->data_member.type);
+		// 		parameter_matching_info_add_param(argument_infos, ids.size, true, false, slice_type->size_member.type);
 
-	// 		if (arguments_match_to_parameters(init_node.arguments, argument_infos)) {
-	// 			for (int i = 0; i < argument_infos->argument_values.size; i++) {
-	// 				auto& matched_param = argument_infos->argument_values[i];
-	// 				analyse_parameter_value_if_not_already_done(&matched_param, expression_context_make_specific_type(matched_param.param_datatype));
-	// 			}
-	// 		}
-	// 		else {
-	// 			argument_infos_analyse_in_unknown_context(argument_infos);
-	// 		}
-	// 		EXIT_VALUE(upcast(slice_type), true);
-	// 	}
-	// 	else
-	// 	{
-	// 		if (!datatype_is_unknown(type_for_init)) {
-	// 			log_semantic_error("Struct initializer requires struct value_type for initialization", expr, Parser::Section::WHOLE_NO_CHILDREN);
-	// 			log_error_info_given_type(type_for_init);
-	// 			type_for_init = types.unknown_type;
-	// 		}
-	// 		analyse_member_initializers_in_unknown_context_recursive(init_node.arguments);
-	// 	}
-	// 	EXIT_ERROR(type_for_init);
+		// 		if (arguments_match_to_parameters(init_node.arguments, argument_infos)) {
+		// 			for (int i = 0; i < argument_infos->argument_values.size; i++) {
+		// 				auto& matched_param = argument_infos->argument_values[i];
+		// 				analyse_parameter_value_if_not_already_done(&matched_param, expression_context_make_specific_type(matched_param.param_datatype));
+		// 			}
+		// 		}
+		// 		else {
+		// 			argument_infos_analyse_in_unknown_context(argument_infos);
+		// 		}
+		// 		EXIT_VALUE(upcast(slice_type), true);
+		// 	}
+		// 	else
+		// 	{
+		// 		if (!datatype_is_unknown(type_for_init)) {
+		// 			log_semantic_error("Struct initializer requires struct value_type for initialization", expr, Parser::Section::WHOLE_NO_CHILDREN);
+		// 			log_error_info_given_type(type_for_init);
+		// 			type_for_init = types.unknown_type;
+		// 		}
+		// 		analyse_member_initializers_in_unknown_context_recursive(init_node.arguments);
+		// 	}
+		// 	EXIT_ERROR(type_for_init);
 	}
 	case AST::Expression_Type::ARRAY_INITIALIZER:
 	{
@@ -8573,142 +8716,142 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		// Returns true if info was set (Some dot calls were found)
 		auto analyse_as_dot_call = [&](Datatype* datatype, bool as_member_access, Expression_Info* out_info) -> bool
-		{
-			// Find all dot-calls in current operator context
-			Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
-			SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
 			{
-				Custom_Operator_Key key;
-				key.type = Context_Change_Type::DOT_CALL;
-				key.options.dot_call.datatype = datatype->base_type;
-				key.options.dot_call.id = member_node.name;
-
-				auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(1 + operator_context->context_imports.size);
-				SCOPE_EXIT(hashset_destroy(&visited));
-				operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
-
-				// Also add dot-calls for polymorphic base
-				if (datatype->base_type->type == Datatype_Type::STRUCT)
+				// Find all dot-calls in current operator context
+				Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
+				SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
 				{
-					auto structure = downcast<Datatype_Struct>(datatype->base_type);
-					if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
+					Custom_Operator_Key key;
+					key.type = Context_Change_Type::DOT_CALL;
+					key.options.dot_call.datatype = datatype->base_type;
+					key.options.dot_call.id = member_node.name;
+
+					auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
+					Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(1 + operator_context->context_imports.size);
+					SCOPE_EXIT(hashset_destroy(&visited));
+					operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
+
+					// Also add dot-calls for polymorphic base
+					if (datatype->base_type->type == Datatype_Type::STRUCT)
 					{
-						auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
-						key.options.dot_call.datatype = upcast(base_struct);
-						hashset_reset(&visited);
-						operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
-					}
-				}
-			}
-
-			// Special path so error reporting does the right thing
-			if (dot_calls.size == 0 && as_member_access) {
-				return false;
-			}
-
-			// Filter dot-calls
-			for (int i = 0; i < dot_calls.size; i++)
-			{
-				auto& call = dot_calls[i];
-				if (!try_updating_expression_type_mods(member_node.expr, call.mods) || call.as_member_access != as_member_access) {
-					dynamic_array_swap_remove(&dot_calls, i);
-					i -= 1;
-					continue;
-				}
-			}
-			// Deduplicate dot-calls (Keep calls which fit as_member_access)
-			for (int i = 0; i < dot_calls.size; i++)
-			{
-				auto& a = dot_calls[i];
-				for (int j = i + 1; j < dot_calls.size; j++)
-				{
-					auto& b = dot_calls[j];
-					if (a.as_member_access != b.as_member_access || a.is_polymorphic != b.is_polymorphic || !type_mods_are_equal(a.mods, b.mods)) {
-						continue;
-					}
-					if (a.is_polymorphic) {
-						if (a.options.poly_function.poly_header != b.options.poly_function.poly_header ||
-							a.options.poly_function.base_progress != b.options.poly_function.base_progress) {
-							continue;
+						auto structure = downcast<Datatype_Struct>(datatype->base_type);
+						if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
+						{
+							auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
+							key.options.dot_call.datatype = upcast(base_struct);
+							hashset_reset(&visited);
+							operator_context_query_dot_calls_recursive(operator_context, key, dot_calls, visited);
 						}
 					}
-					else if (a.options.function != b.options.function) {
+				}
+
+				// Special path so error reporting does the right thing
+				if (dot_calls.size == 0 && as_member_access) {
+					return false;
+				}
+
+				// Filter dot-calls
+				for (int i = 0; i < dot_calls.size; i++)
+				{
+					auto& call = dot_calls[i];
+					if (!try_updating_expression_type_mods(member_node.expr, call.mods) || call.as_member_access != as_member_access) {
+						dynamic_array_swap_remove(&dot_calls, i);
+						i -= 1;
 						continue;
 					}
-
-					// Found duplicate
-					dynamic_array_swap_remove(&dot_calls, j);
-					j -= 1;
 				}
-			}
+				// Deduplicate dot-calls (Keep calls which fit as_member_access)
+				for (int i = 0; i < dot_calls.size; i++)
+				{
+					auto& a = dot_calls[i];
+					for (int j = i + 1; j < dot_calls.size; j++)
+					{
+						auto& b = dot_calls[j];
+						if (a.as_member_access != b.as_member_access || a.is_polymorphic != b.is_polymorphic || !type_mods_are_equal(a.mods, b.mods)) {
+							continue;
+						}
+						if (a.is_polymorphic) {
+							if (a.options.poly_function.poly_header != b.options.poly_function.poly_header ||
+								a.options.poly_function.base_progress != b.options.poly_function.base_progress) {
+								continue;
+							}
+						}
+						else if (a.options.function != b.options.function) {
+							continue;
+						}
 
-			if (dot_calls.size == 0) {
-				log_semantic_error("Could not find appropriate dot call with this name", expr, Parser::Section::WHOLE_NO_CHILDREN);
-				log_error_info_id(member_node.name);
-				expression_info_set_error(out_info, types.unknown_type);
-				return true;
-			}
+						// Found duplicate
+						dynamic_array_swap_remove(&dot_calls, j);
+						j -= 1;
+					}
+				}
 
-			if (as_member_access)
-			{
-				// Check for errors
-				if (dot_calls.size > 1) {
-					log_semantic_error("Multiple dot_call as_member_access function with this name were found", expr, Parser::Section::WHOLE_NO_CHILDREN);
+				if (dot_calls.size == 0) {
+					log_semantic_error("Could not find appropriate dot call with this name", expr, Parser::Section::WHOLE_NO_CHILDREN);
+					log_error_info_id(member_node.name);
 					expression_info_set_error(out_info, types.unknown_type);
 					return true;
 				}
 
-				auto& dotcall = dot_calls[0];
-				bool success = try_updating_expression_type_mods(member_node.expr, dotcall.mods);
-				assert(success, "Should work here");
-
-				ModTree_Function* function = nullptr;
-				if (dotcall.is_polymorphic)
+				if (as_member_access)
 				{
-					log_semantic_error("Poly-dotcall curently not available", expr);
-					return false;
-					// Argument_Infos argument_infos = argument_infos_create_empty(Call_Origin_Type::POLYMORPHIC_DOT_CALL, 1);
-					// SCOPE_EXIT(arguments_info_destroy(&argument_infos));
-					// argument_infos.options.poly_dotcall = dotcall.options.poly_function;
-					// parameter_matching_info_add_analysed_param(&argument_infos, member_node.expr);
+					// Check for errors
+					if (dot_calls.size > 1) {
+						log_semantic_error("Multiple dot_call as_member_access function with this name were found", expr, Parser::Section::WHOLE_NO_CHILDREN);
+						expression_info_set_error(out_info, types.unknown_type);
+						return true;
+					}
 
-					// // Instanciate
-					// Instanciation_Result instance_result = poly_header_instanciate(
-					// 	&argument_infos, context, upcast(expr), Parser::Section::WHOLE_NO_CHILDREN
-					// );
-					// if (instance_result.type == Instanciation_Result_Type::FUNCTION) {
-					// 	function = instance_result.options.function;
-					// }
-					// else {
-					// 	expression_info_set_error(out_info, types.unknown_type);
-					// 	return true;
-					// }
-				}
-				else {
-					function = dotcall.options.function;
-				}
+					auto& dotcall = dot_calls[0];
+					bool success = try_updating_expression_type_mods(member_node.expr, dotcall.mods);
+					assert(success, "Should work here");
 
-				// Set dot-call in Expression-Info and return
-				info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
-				info->specifics.member_access.options.dot_call_function = function;
-				if (function->signature->return_type().available) {
-					expression_info_set_value(info, function->signature->return_type().value, true);
+					ModTree_Function* function = nullptr;
+					if (dotcall.is_polymorphic)
+					{
+						log_semantic_error("Poly-dotcall curently not available", expr);
+						return false;
+						// Argument_Infos argument_infos = argument_infos_create_empty(Call_Origin_Type::POLYMORPHIC_DOT_CALL, 1);
+						// SCOPE_EXIT(arguments_info_destroy(&argument_infos));
+						// argument_infos.options.poly_dotcall = dotcall.options.poly_function;
+						// parameter_matching_info_add_analysed_param(&argument_infos, member_node.expr);
+
+						// // Instanciate
+						// Instanciation_Result instance_result = poly_header_instanciate(
+						// 	&argument_infos, context, upcast(expr), Parser::Section::WHOLE_NO_CHILDREN
+						// );
+						// if (instance_result.type == Instanciation_Result_Type::FUNCTION) {
+						// 	function = instance_result.options.function;
+						// }
+						// else {
+						// 	expression_info_set_error(out_info, types.unknown_type);
+						// 	return true;
+						// }
+					}
+					else {
+						function = dotcall.options.function;
+					}
+
+					// Set dot-call in Expression-Info and return
+					info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
+					info->specifics.member_access.options.dot_call_function = function;
+					if (function->signature->return_type().available) {
+						expression_info_set_value(info, function->signature->return_type().value, true);
+					}
+					else {
+						expression_info_set_no_value(info);
+					}
 				}
-				else {
-					expression_info_set_no_value(info);
+				else
+				{
+					Dynamic_Array<Dot_Call_Info>* overloads = compiler_analysis_data_allocate_dot_calls(compiler.analysis_data, 0);
+					assert(overloads->data == nullptr, "");
+					*overloads = dot_calls;
+					dot_calls = dynamic_array_create<Dot_Call_Info>(); // Reset to empty, so we don't free our stuff
+					expression_info_set_dot_call(info, member_node.expr, overloads);
 				}
-			}
-			else
-			{
-				Dynamic_Array<Dot_Call_Info>* overloads = compiler_analysis_data_allocate_dot_calls(compiler.analysis_data, 0);
-				assert(overloads->data == nullptr, "");
-				*overloads = dot_calls;
-				dot_calls = dynamic_array_create<Dot_Call_Info>(); // Reset to empty, so we don't free our stuff
-				expression_info_set_dot_call(info, member_node.expr, overloads);
-			}
-			return true;
-		};
+				return true;
+			};
 
 		if (member_node.is_dot_call_access) {
 			auto result_type = semantic_analyser_analyse_expression_value(member_node.expr, expression_context_make_unknown());
@@ -8724,55 +8867,55 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		bool result_is_temporary = get_info(member_node.expr)->cast_info.result_value_is_temporary;
 		auto& ids = compiler.identifier_pool.predefined_ids;
 
-		auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant> 
-		{
-			if (struct_type->workload == 0) {
-				return optional_make_failure<Upp_Constant>();
-			}
-
-			auto struct_workload = struct_type->workload;
-			Poly_Header* poly_header = 0;
-			if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-				// Accessing values of base-struct not possible
-				return optional_make_failure<Upp_Constant>(); // Not polymorphic
-			}
-			else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-				poly_header = struct_workload->polymorphic.instance.parent->poly_header;
-			}
-			else {
-				return optional_make_failure<Upp_Constant>(); // Not polymorphic
-			}
-
-			// Try to find structure parameter with this base_name
-			int value_access_index = -1;
-			for (int i = 0; i < poly_header->signature->parameters.size; i++) {
-				auto& parameter = poly_header->signature->parameters[i];
-				if (parameter.name == member_node.name) {
-					value_access_index = parameter.comptime_variable_index;
-					break;
+		auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant>
+			{
+				if (struct_type->workload == 0) {
+					return optional_make_failure<Upp_Constant>();
 				}
-			}
-			// Search implicit parameters
-			// for (int i = 0; i < poly_header->variable_states.size && value_access_index == -1; i++) {
-			// 	auto& implicit = poly_header->variable_states[i];
-			// 	if (implicit.id == member_node.name) {
-			// 		value_access_index = implicit.template_parameter->value_access_index;
-			// 		break;
-			// 	}
-			// }
 
-			if (value_access_index != -1) {
-				info->specifics.member_access.type = Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS;
-				info->specifics.member_access.options.poly_access.index = value_access_index;
-				info->specifics.member_access.options.poly_access.struct_workload = struct_workload;
+				auto struct_workload = struct_type->workload;
+				Poly_Header* poly_header = 0;
+				if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+					// Accessing values of base-struct not possible
+					return optional_make_failure<Upp_Constant>(); // Not polymorphic
+				}
+				else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+					poly_header = struct_workload->polymorphic.instance.parent->poly_header;
+				}
+				else {
+					return optional_make_failure<Upp_Constant>(); // Not polymorphic
+				}
 
-				auto& value = struct_workload->base.active_pattern_variable_states[value_access_index];
-				assert(value.type == Pattern_Variable_State_Type::SET, "Struct instance value must be set");
-				return optional_make_success(value.options.value);
-			}
+				// Try to find structure parameter with this base_name
+				int value_access_index = -1;
+				for (int i = 0; i < poly_header->signature->parameters.size; i++) {
+					auto& parameter = poly_header->signature->parameters[i];
+					if (parameter.name == member_node.name) {
+						value_access_index = parameter.comptime_variable_index;
+						break;
+					}
+				}
+				// Search implicit parameters
+				// for (int i = 0; i < poly_header->variable_states.size && value_access_index == -1; i++) {
+				// 	auto& implicit = poly_header->variable_states[i];
+				// 	if (implicit.id == member_node.name) {
+				// 		value_access_index = implicit.template_parameter->value_access_index;
+				// 		break;
+				// 	}
+				// }
 
-			return optional_make_failure<Upp_Constant>();
-		};
+				if (value_access_index != -1) {
+					info->specifics.member_access.type = Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS;
+					info->specifics.member_access.options.poly_access.index = value_access_index;
+					info->specifics.member_access.options.poly_access.struct_workload = struct_workload;
+
+					auto& value = struct_workload->base.active_pattern_variable_states[value_access_index];
+					assert(value.type == Pattern_Variable_State_Type::SET, "Struct instance value must be set");
+					return optional_make_success(value.options.value);
+				}
+
+				return optional_make_failure<Upp_Constant>();
+			};
 
 		switch (access_expr_info->result_type)
 		{
@@ -9691,7 +9834,7 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 				if (src_sig->return_type_index != dst_sig->return_type_index || src_params.size != dst_params.size) {
 					cast_valid = false;
 				}
-				else 
+				else
 				{
 					for (int i = 0; i < src_params.size; i++) {
 						auto& param1 = src_params[i];
@@ -10844,7 +10987,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				// Check return type
 				if (poly_header->return_type_index != -1)
 				{
-					// If the return type is a normal type, just use it as key, otherwise 
+					// If the return type is a normal type, just use it as key, otherwise
 					auto& return_param = poly_header->parameters[poly_header->return_type_index];
 					if (return_param.depends_on.size > 0 ||
 						return_param.pattern_value_indices.size > 0 ||
@@ -11862,146 +12005,146 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 					{
 						log_semantic_error("Poly-iter currently not supported", upcast(for_loop.expression));
 						success = false;
-					// 	// Now I have to instanciate 4 different functions here + check pointer levels I guezz
-					// 	auto& poly_bases = op->iterator.options.polymorphic;
+						// 	// Now I have to instanciate 4 different functions here + check pointer levels I guezz
+						// 	auto& poly_bases = op->iterator.options.polymorphic;
 
-					// 	Argument_Infos argument_infos = argument_infos_create_empty(Call_Origin_Type::POLYMORPHIC_FUNCTION, 1);
-					// 	SCOPE_EXIT(arguments_info_destroy(&argument_infos));
+						// 	Argument_Infos argument_infos = argument_infos_create_empty(Call_Origin_Type::POLYMORPHIC_FUNCTION, 1);
+						// 	SCOPE_EXIT(arguments_info_destroy(&argument_infos));
 
-					// 	// Prepare instanciation data
-					// 	parameter_matching_info_add_param(&argument_infos, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
-					// 	auto expr_info = get_info(for_loop.expression);
-					// 	auto& param_info = argument_infos.argument_values[0];
-					// 	param_info.state = Argument_Value_State::ANALYSED;
-					// 	param_info.is_set = true;
-					// 	param_info.argument_expression = for_loop.expression;
-					// 	param_info.argument_type = expr_info->cast_info.result_type;
-					// 	param_info.argument_is_temporary_value = expr_info->cast_info.result_value_is_temporary;
+						// 	// Prepare instanciation data
+						// 	parameter_matching_info_add_param(&argument_infos, compiler.identifier_pool.predefined_ids.value, true, false, nullptr);
+						// 	auto expr_info = get_info(for_loop.expression);
+						// 	auto& param_info = argument_infos.argument_values[0];
+						// 	param_info.state = Argument_Value_State::ANALYSED;
+						// 	param_info.is_set = true;
+						// 	param_info.argument_expression = for_loop.expression;
+						// 	param_info.argument_type = expr_info->cast_info.result_type;
+						// 	param_info.argument_is_temporary_value = expr_info->cast_info.result_value_is_temporary;
 
-					// 	// create function
-					// 	Datatype* iterator_type = types.unknown_type;
-					// 	{
-					// 		argument_infos.options.poly_function = poly_bases.fn_create;
-					// 		Instanciation_Result result = poly_header_instanciate(
-					// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-					// 		);
-					// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
-					// 			loop_info.custom_op.fn_create = result.options.function;
-					// 			assert(result.options.function->signature->return_type.available, "");
-					// 			iterator_type = result.options.function->signature->return_type.value;
-					// 		}
-					// 		else {
-					// 			log_semantic_error("Could not instanciate create function of custom iterator", upcast(statement));
-					// 			success = false;
-					// 		}
+						// 	// create function
+						// 	Datatype* iterator_type = types.unknown_type;
+						// 	{
+						// 		argument_infos.options.poly_function = poly_bases.fn_create;
+						// 		Instanciation_Result result = poly_header_instanciate(
+						// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+						// 		);
+						// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
+						// 			loop_info.custom_op.fn_create = result.options.function;
+						// 			assert(result.options.function->signature->return_type.available, "");
+						// 			iterator_type = result.options.function->signature->return_type.value;
+						// 		}
+						// 		else {
+						// 			log_semantic_error("Could not instanciate create function of custom iterator", upcast(statement));
+						// 			success = false;
+						// 		}
 
-					// 		// Update expression type, as instanciation may change it
-					// 		expr_type = get_info(for_loop.expression)->cast_info.result_type;
-					// 	}
+						// 		// Update expression type, as instanciation may change it
+						// 		expr_type = get_info(for_loop.expression)->cast_info.result_type;
+						// 	}
 
-					// 	// has_next function
-					// 	if (success)
-					// 	{
-					// 		// Set parameter to iterator
-					// 		param_info.argument_expression = nullptr;
-					// 		param_info.argument_type = iterator_type;
-					// 		param_info.argument_is_temporary_value = false;
+						// 	// has_next function
+						// 	if (success)
+						// 	{
+						// 		// Set parameter to iterator
+						// 		param_info.argument_expression = nullptr;
+						// 		param_info.argument_type = iterator_type;
+						// 		param_info.argument_is_temporary_value = false;
 
-					// 		// Instanciate
-					// 		argument_infos.options.poly_function = poly_bases.has_next;
-					// 		Instanciation_Result result = poly_header_instanciate(
-					// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-					// 		);
-					// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
-					// 			loop_info.custom_op.fn_has_next = result.options.function;
-					// 		}
-					// 		else {
-					// 			log_semantic_error("Could not instanciate has_next function of custom iterator", upcast(statement));
-					// 			success = false;
-					// 		}
-					// 	}
+						// 		// Instanciate
+						// 		argument_infos.options.poly_function = poly_bases.has_next;
+						// 		Instanciation_Result result = poly_header_instanciate(
+						// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+						// 		);
+						// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
+						// 			loop_info.custom_op.fn_has_next = result.options.function;
+						// 		}
+						// 		else {
+						// 			log_semantic_error("Could not instanciate has_next function of custom iterator", upcast(statement));
+						// 			success = false;
+						// 		}
+						// 	}
 
-					// 	// next function
-					// 	if (success)
-					// 	{
-					// 		// Re-set parameter to iterator
-					// 		param_info.argument_expression = nullptr;
-					// 		param_info.argument_type = iterator_type;
-					// 		param_info.argument_is_temporary_value = false;
+						// 	// next function
+						// 	if (success)
+						// 	{
+						// 		// Re-set parameter to iterator
+						// 		param_info.argument_expression = nullptr;
+						// 		param_info.argument_type = iterator_type;
+						// 		param_info.argument_is_temporary_value = false;
 
-					// 		// Instanciate
-					// 		argument_infos.options.poly_function = poly_bases.next;
-					// 		Instanciation_Result result = poly_header_instanciate(
-					// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-					// 		);
-					// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
-					// 			loop_info.custom_op.fn_next = result.options.function;
-					// 		}
-					// 		else {
-					// 			success = false;
-					// 			log_semantic_error("Could not instanciate next function of custom iterator", upcast(statement));
-					// 		}
-					// 	}
+						// 		// Instanciate
+						// 		argument_infos.options.poly_function = poly_bases.next;
+						// 		Instanciation_Result result = poly_header_instanciate(
+						// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+						// 		);
+						// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
+						// 			loop_info.custom_op.fn_next = result.options.function;
+						// 		}
+						// 		else {
+						// 			success = false;
+						// 			log_semantic_error("Could not instanciate next function of custom iterator", upcast(statement));
+						// 		}
+						// 	}
 
-					// 	// get_value
-					// 	if (success)
-					// 	{
-					// 		// Re-set parameter to iterator
-					// 		param_info.argument_expression = nullptr;
-					// 		param_info.argument_type = iterator_type;
-					// 		param_info.argument_is_temporary_value = false;
+						// 	// get_value
+						// 	if (success)
+						// 	{
+						// 		// Re-set parameter to iterator
+						// 		param_info.argument_expression = nullptr;
+						// 		param_info.argument_type = iterator_type;
+						// 		param_info.argument_is_temporary_value = false;
 
-					// 		// Instanciate
-					// 		argument_infos.options.poly_function = poly_bases.get_value;
-					// 		Instanciation_Result result = poly_header_instanciate(
-					// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
-					// 		);
-					// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
-					// 			loop_info.custom_op.fn_get_value = result.options.function;
-					// 		}
-					// 		else {
-					// 			success = false;
-					// 			log_semantic_error("Could not instanciate get_value of custom iterator", upcast(statement));
-					// 		}
-					// 	}
+						// 		// Instanciate
+						// 		argument_infos.options.poly_function = poly_bases.get_value;
+						// 		Instanciation_Result result = poly_header_instanciate(
+						// 			&argument_infos, expression_context_make_unknown(), upcast(statement), Parser::Section::KEYWORD
+						// 		);
+						// 		if (result.type == Instanciation_Result_Type::FUNCTION) {
+						// 			loop_info.custom_op.fn_get_value = result.options.function;
+						// 		}
+						// 		else {
+						// 			success = false;
+						// 			log_semantic_error("Could not instanciate get_value of custom iterator", upcast(statement));
+						// 		}
+						// 	}
 
-					// 	// Note: Not quite sure if we need to re-check parameters mods and return types, but I guess it cannot hurt...
-					// 	if (success)
-					// 	{
-					// 		// Check create function
-					// 		if (datatype_is_unknown(iterator_type)) {
-					// 			success = false;
-					// 		}
+						// 	// Note: Not quite sure if we need to re-check parameters mods and return types, but I guess it cannot hurt...
+						// 	if (success)
+						// 	{
+						// 		// Check create function
+						// 		if (datatype_is_unknown(iterator_type)) {
+						// 			success = false;
+						// 		}
 
-					// 		ModTree_Function* functions[3] = { loop_info.custom_op.fn_get_value, loop_info.custom_op.fn_has_next, loop_info.custom_op.fn_next };
-					// 		for (int i = 0; i < 3; i++)
-					// 		{
-					// 			ModTree_Function* function = functions[i];
-					// 			if (function->signature->parameters.size != 1) {
-					// 				log_semantic_error("Instanciated function did not have exactly 1 parameter", upcast(for_loop.expression));
-					// 				success = false;
-					// 				continue;
-					// 			}
+						// 		ModTree_Function* functions[3] = { loop_info.custom_op.fn_get_value, loop_info.custom_op.fn_has_next, loop_info.custom_op.fn_next };
+						// 		for (int i = 0; i < 3; i++)
+						// 		{
+						// 			ModTree_Function* function = functions[i];
+						// 			if (function->signature->parameters.size != 1) {
+						// 				log_semantic_error("Instanciated function did not have exactly 1 parameter", upcast(for_loop.expression));
+						// 				success = false;
+						// 				continue;
+						// 			}
 
-					// 			Datatype* param_type = function->signature->parameters[0].datatype;
-					// 			if (!types_are_equal(param_type->base_type, iterator_type->base_type)) {
-					// 				log_semantic_error("Instanciated function parameter value_type did not match iterator value_type", upcast(for_loop.expression));
-					// 				success = false;
-					// 				continue;
-					// 			}
+						// 			Datatype* param_type = function->signature->parameters[0].datatype;
+						// 			if (!types_are_equal(param_type->base_type, iterator_type->base_type)) {
+						// 				log_semantic_error("Instanciated function parameter value_type did not match iterator value_type", upcast(for_loop.expression));
+						// 				success = false;
+						// 				continue;
+						// 			}
 
-					// 			if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, false)) {
-					// 				log_semantic_error("Instanciated function parameter mods were not compatible with iterator_type mods", upcast(for_loop.expression));
-					// 				success = false;
-					// 				continue;
-					// 			}
-					// 		}
+						// 			if (!datatype_check_if_auto_casts_to_other_mods(iterator_type, param_type->mods, false)) {
+						// 				log_semantic_error("Instanciated function parameter mods were not compatible with iterator_type mods", upcast(for_loop.expression));
+						// 				success = false;
+						// 				continue;
+						// 			}
+						// 		}
 
-					// 		if (!loop_info.custom_op.fn_get_value->signature->return_type().available) {
-					// 			log_semantic_error("Get value function instanciation did not return a value", upcast(for_loop.expression));
-					// 			success = false;
-					// 		}
-					// 	}
+						// 		if (!loop_info.custom_op.fn_get_value->signature->return_type().available) {
+						// 			log_semantic_error("Get value function instanciation did not return a value", upcast(for_loop.expression));
+						// 			success = false;
+						// 		}
+						// 	}
 					}
 					else {
 						loop_info.custom_op.fn_create = op->iterator.options.normal.create;
@@ -12811,6 +12954,7 @@ void semantic_analyser_reset()
 
 		callable = call_signature_create_empty();
 		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_return_type(callable, upcast(types.empty_pattern_variable));
 		hardcoded_callables[(int)Hardcoded_Type::STRUCT_TAG].signature = call_signature_register(callable);
 
 

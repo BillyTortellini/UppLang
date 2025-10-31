@@ -458,7 +458,58 @@ Module_Progress* workload_executer_add_module_discovery(AST::Module* module, boo
 
 
 
-// Expression infos
+// ANALYSIS-INFOS (AST-Annotations)
+enum class Parameter_Value_Type
+{
+    NOT_SET,             // No parameter was provided, e.g. use default value
+    ARGUMENT_EXPRESSION, // Parameter is given as an argument expression
+    DATATYPE_KNOWN,      // Datatype and temporary-info is given
+	COMPTIME_VALUE
+};
+
+struct Parameter_Value
+{
+    Parameter_Value_Type value_type;
+	union {
+		int argument_index; // -1 if not set
+		Upp_Constant constant;
+	} options;
+    Datatype* datatype; 
+    bool is_temporary_value; // True for return type
+};
+
+struct Argument_Info
+{
+	AST::Expression* expression;
+	Optional<String*> name;
+	bool is_analysed;
+	int parameter_index; // -1 if no matching parameter was found
+};
+
+struct Callable_Call
+{
+    Callable callable;
+    Array<Parameter_Value> parameter_values;
+	Array<Argument_Info> argument_infos;
+    AST::Call_Node* call_node; // May be null
+
+	bool argument_matching_success;
+	bool instanciated;
+    union 
+	{
+        ModTree_Function* function;
+		Datatype_Struct* struct_instance;
+		Datatype_Struct_Pattern* struct_pattern;
+		Datatype_Primitive* bitwise_primitive_type;
+		struct 
+		{
+			bool subtype_valid;
+			bool supertype_valid;
+		} initializer_info;
+    } instanciation_data;
+};
+
+
 enum class Expression_Context_Type
 {
     UNKNOWN,                // Type is not known
@@ -806,4 +857,8 @@ void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 
 // If search_start_workload == nullptr, we start from semantic_analyser.current_workload
-Array<Pattern_Variable_State> pattern_variables_find_active_states(Poly_Header* active_pattern_values_origin, Workload_Base* search_start_workload = nullptr);
+Workload_Base* pattern_variable_find_instance_workload(
+    Pattern_Variable* variable,
+    Workload_Base* search_start_workload = nullptr,
+    bool called_from_editor = false
+);

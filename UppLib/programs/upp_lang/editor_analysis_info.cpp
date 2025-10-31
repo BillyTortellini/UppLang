@@ -758,6 +758,7 @@ u64 hash_call_signature(Call_Signature** callable_p)
 	for (int i = 0; i < signature->parameters.size; i++)
 	{
 		auto& param = signature->parameters[i];
+		hash = hash_combine(hash, hash_pointer(param.datatype));
 		hash = hash_combine(hash, hash_pointer(param.name));
 		hash = hash_bool(hash, param.required);
 		hash = hash_bool(hash, param.requires_named_addressing);
@@ -788,6 +789,8 @@ bool equals_call_signature(Call_Signature** app, Call_Signature** bpp)
 	{
 		auto& pa = a->parameters[i];
 		auto& pb = b->parameters[i];
+
+		if (!types_are_equal(pa.datatype, pb.datatype)) return false;
 
 		if (pa.name != pb.name || pa.required != pb.required ||
 			pa.requires_named_addressing != pb.requires_named_addressing ||

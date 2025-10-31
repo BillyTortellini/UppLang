@@ -124,6 +124,7 @@ struct Datatype
     // Some cached values so we don't have to always walk the type tree
     bool contains_pattern;
     bool contains_partial_pattern; // Patterns where variables are missing, e.g. Node(_)
+    bool contains_pattern_variable_definition; // Pattern with $T, not just reference
     Datatype* base_type;
     Type_Mods mods; // These are the modifiers which when applied to the base_type gets us this type
 };
@@ -557,7 +558,8 @@ void type_system_print(Type_System* system);
 void type_system_add_predefined_types(Type_System* system);
 
 Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variable* pattern_variable);
-Datatype_Struct_Pattern* type_system_make_struct_pattern(Poly_Instance* instance, bool is_partial_pattern);
+Datatype_Struct_Pattern* type_system_make_struct_pattern(
+    Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition);
 Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const

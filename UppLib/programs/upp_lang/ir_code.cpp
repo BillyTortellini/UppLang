@@ -845,16 +845,24 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
     for (int i = 0; i < call_info->parameter_values.size; i++)
     {
         auto& param_value = call_info->parameter_values[i]; 
-        if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
-        assert(param_value.value_type == Parameter_Value_Type::ARGUMENT && param_value.argument_index != -1, "");
-
-        auto arg_expr = call_info->argument_infos[param_value.argument_index].expression;
         auto& member = struct_content->members[i];
+        if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
+        assert(param_value.value_type != Parameter_Value_Type::DATATYPE_KNOWN, "");
+
+        IR_Data_Access* value_access;
+        if (param_value.value_type == Parameter_Value_Type::COMPTIME_VALUE) {
+            value_access = ir_data_access_create_constant(param_value.options.constant);
+        }
+        else {
+            assert(param_value.options.argument_index != -1, "");
+            auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
+            value_access = ir_generator_generate_expression(arg_expr);
+        }
 
         IR_Instruction move_instr;
         move_instr.type = IR_Instruction_Type::MOVE;
         move_instr.options.move.destination = ir_data_access_create_member(struct_access, member);
-        move_instr.options.move.source = ir_generator_generate_expression(arg_expr);
+        move_instr.options.move.source = value_access;
         add_instruction(move_instr);
     }
     for (int i = 0; i < arguments->subtype_initializers.size; i++) {
@@ -1097,12 +1105,15 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         case Callable_Type::FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.options.function = call_info->callable.options.function;
+            assert(call_instr.options.call.options.function != nullptr, "");
             break;
         }
         case Callable_Type::DOT_CALL_POLYMORPHIC:
         case Callable_Type::POLY_FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+            assert(call_info->instanciated, "");
             call_instr.options.call.options.function = call_info->instanciation_data.function;
+            assert(call_instr.options.call.options.function != nullptr, "");
             break;
         }
         case Callable_Type::FUNCTION_POINTER: {
@@ -1125,7 +1136,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::ASSERT_FN:
             {
                 auto call_info = get_info(call.call_node);
-                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
 
                 IR_Instruction if_instr;
                 if_instr.type = IR_Instruction_Type::IF;
@@ -1155,7 +1166,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::STRUCT_TAG: 
             {
                 auto call_info = get_info(call.call_node);
-                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
 
                 auto struct_type = get_info(arg_expr)->cast_info.result_type;
                 auto struct_access = ir_generator_generate_expression(arg_expr);
@@ -1166,7 +1177,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::BITWISE_NOT:
             {
                 auto call_info = get_info(call.call_node);
-                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
 
                 IR_Instruction unop;
                 unop.type = IR_Instruction_Type::UNARY_OP;
@@ -1183,8 +1194,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
             {
                 auto call_info = get_info(call.call_node);
-                auto arg_expr0 = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
-                auto arg_expr1 = call_info->argument_infos[call_info->parameter_values[1].argument_index].expression;
+                auto arg_expr0 = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+                auto arg_expr1 = call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression;
 
                 IR_Binop binop_type;
                 switch (hardcoded)
@@ -1229,7 +1240,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         // Generate arguments 
         call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(signature->parameters.size);
-        for (int i = 0; i < call_info->parameter_values.size; i++)
+        for (int i = 0; i < call_info->parameter_values.size && i != call_info->callable.signature->return_type_index; i++)
         {
             auto& param_info = call_info->callable.signature->parameters[i];
             if (param_info.comptime_variable_index != -1) continue;
@@ -1237,10 +1248,14 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             // All parameters must be set, or use default value
             IR_Data_Access* argument_access;
-            if (param_value.value_type == Parameter_Value_Type::ARGUMENT) 
+            if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION) 
             {
-                auto& arg_expr = call_info->argument_infos[param_value.argument_index].expression;
+                auto& arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
                 argument_access = ir_generator_generate_expression(arg_expr);
+            }
+            else if (param_value.value_type == Parameter_Value_Type::COMPTIME_VALUE)
+            {
+                argument_access = ir_data_access_create_constant(param_value.options.constant);
             }
             else 
             {
@@ -1290,8 +1305,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             IR_Data_Access* data_access = ir_data_access_create_member(slice_access, slice_type->data_member);
             IR_Data_Access* size_access = ir_data_access_create_member(slice_access, slice_type->size_member);
 
-            AST::Expression* data_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
-            AST::Expression* size_expr = call_info->argument_infos[call_info->parameter_values[0].argument_index].expression;
+            AST::Expression* data_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+            AST::Expression* size_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
             ir_generator_generate_expression(data_expr, data_access);
             ir_generator_generate_expression(size_expr, size_access);
 
@@ -1407,6 +1422,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             instr.options.call.destination = make_destination_access_on_demand(result_type);
             instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             dynamic_array_push_back(&instr.options.call.arguments, source);
+
+            assert(instr.options.call.options.function != nullptr, "");
 
             add_instruction(instr);
             return instr.options.call.destination;
@@ -1761,6 +1778,7 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
         instr.options.call.destination = make_destination_access_on_demand(cast_info.result_type);
         instr.options.call.options.function = cast_info.options.custom_cast_function;
         add_instruction(instr);
+        assert(instr.options.call.options.function != nullptr, "");
         return instr.options.call.destination;
     }
     case Cast_Type::FROM_ANY:
@@ -1946,6 +1964,7 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
             }
             dynamic_array_push_back(&next_call.options.call.arguments, argument_access);
             add_instruction(next_call);
+            assert(next_call.options.call.options.function != nullptr, "");
         }
         else {
             IR_Instruction element_instr;
@@ -2259,6 +2278,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 iter_create_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
                 dynamic_array_push_back(&iter_create_instr.options.call.arguments, iterable_access);
                 add_instruction(iter_create_instr);
+                assert(iter_create_instr.options.call.options.function != nullptr, "");
             }
             else
             {
@@ -2320,6 +2340,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     }
                     dynamic_array_push_back(&has_next_call.options.call.arguments, argument_access);
                     add_instruction(has_next_call, condition_code);
+                    assert(has_next_call.options.call.options.function != nullptr, "");
                 }
                 else
                 {
@@ -2370,6 +2391,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     }
                     dynamic_array_push_back(&get_value_call.options.call.arguments, argument_access);
                     add_instruction(get_value_call);
+                    assert(get_value_call.options.call.options.function != nullptr, "");
                 }
                 ir_generator_generate_block(instr.options.while_instr.code, foreach_loop.body_block);
 
@@ -2535,6 +2557,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 dynamic_array_push_back(&call.options.call.arguments, right_access);
             }
             add_instruction(call);
+            assert(call.options.call.options.function != nullptr, "");
         }
 
         break;
@@ -2839,6 +2862,7 @@ void ir_generator_finish(bool gen_bytecode)
             call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
             call_instr.options.call.options.function = ir_generator.modtree->main_function;
             add_instruction(call_instr);
+            assert(call_instr.options.call.options.function != nullptr, "");
         }
 
         // Exit
