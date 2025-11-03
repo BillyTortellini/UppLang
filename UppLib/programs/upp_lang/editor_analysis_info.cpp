@@ -879,6 +879,7 @@ void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Ri
 
 	int highlight_index = format->highlight_parameter_index;
 	format->highlight_parameter_index = 0;
+	bool require_colon = false;
 	for (int i = 0; i < parameters.size; i++)
 	{
 		auto& param = parameters[i];
@@ -886,6 +887,11 @@ void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Ri
 		// Skip parameters that shouldn't be printed
 		if (signature->return_type_index == i) continue;
 		if (param.must_not_be_set) continue;
+
+		if (require_colon) {
+			Rich_Text::append_formated(text, ", ");
+		}
+		require_colon = true;
 
 		// Print param name + type with possible highlight
 		if (highlight_index == i) {
@@ -909,9 +915,6 @@ void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Ri
 		}
 		if (param.default_value_exists) {
 			Rich_Text::append_formated(text, " = ...");
-		}
-		if (i != parameters.size - 1) {
-			Rich_Text::append_formated(text, ", ");
 		}
 	}
 	Rich_Text::append_formated(text, ")");

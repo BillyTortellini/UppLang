@@ -163,8 +163,6 @@ Analysis_Pass* analysis_pass_allocate(Workload_Base* origin, AST::Node* mapping_
     Analysis_Pass* result = new Analysis_Pass;
     dynamic_array_push_back(&compiler.analysis_data->allocated_passes, result);
     result->origin_workload = origin;
-    result->is_header_reanalysis = false;
-    result->instance_workload = nullptr;
 
     // Add mapping to workload 
     if (mapping_node) {
@@ -1140,7 +1138,7 @@ Comptime_Result comptime_result_apply_cast(Comptime_Result value, Cast_Type cast
         }
         Datatype* any_type = compiler.analysis_data->type_system.types[given->type.index];
         if (!types_are_equal(any_type, value.data_type)) {
-            return comptime_result_make_not_comptime("Any type_handle value doesn't match result value_type, actually not sure if this can happen");
+            return comptime_result_make_not_comptime("Any type_handle value doesn't match result type, actually not sure if this can happen");
         }
         return comptime_result_make_available(given->data, any_type);
     }
@@ -1341,7 +1339,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 			return comptime_result_make_unavailable(result_type, "Cannot access polymorphic parameter value in base analysis");
 		}
 		else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
-			return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-value_type");
+			return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-type");
 		}
 		return comptime_result_make_not_comptime("Encountered non-comptime symbol");
 	}
@@ -1556,7 +1554,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		if (expr->options.array_initializer.values.size == 0) {
 			assert(result_type->type == Datatype_Type::SLICE, "");
 			if (datatype_is_unknown(downcast<Datatype_Slice>(result_type)->element_type)) {
-				return comptime_result_make_unavailable(types.unknown_type, "Array value_type is unknown");
+				return comptime_result_make_unavailable(types.unknown_type, "Array type is unknown");
 			}
 			void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
 			Upp_Slice_Base* slice = (Upp_Slice_Base*)result_buffer;
@@ -1569,7 +1567,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		auto array_type = downcast<Datatype_Array>(result_type);
 		Datatype* element_type = array_type->element_type;
 		if (datatype_is_unknown(element_type)) {
-			return comptime_result_make_unavailable(element_type, "Array value_type is unknown");
+			return comptime_result_make_unavailable(element_type, "Array type is unknown");
 		}
 		assert(element_type->memory_info.available, "");
 		if (!array_type->count_known) {
@@ -1770,6 +1768,7 @@ void expression_info_set_value(Expression_Info* info, Datatype* result_type, boo
 	info->cast_info.result_type = result_type;
 	info->cast_info.initial_value_is_temporary = is_temporary;
 	info->cast_info.result_value_is_temporary = is_temporary;
+	assert(!result_type->contains_pattern, "I guess this should only be true for set_poly_pattern");
 }
 
 void expression_info_set_dot_call(Expression_Info* info, AST::Expression* first_argument, Dynamic_Array<Dot_Call_Info>* overloads)
@@ -1791,6 +1790,7 @@ void expression_info_set_dot_call(Expression_Info* info, AST::Expression* first_
 
 void expression_info_set_error(Expression_Info* info, Datatype* result_type)
 {
+	assert(!result_type->contains_pattern, "I guess this should only be true for set_poly_pattern");
 	info->result_type = Expression_Result_Type::VALUE;
 	info->cast_info.result_type = result_type;
 	info->cast_info.initial_type = result_type;
@@ -4057,6 +4057,12 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 		}
 		*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, 
 			callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
+		for (int i = 0; i < analysed_argument_indices.size; i++)
+		{
+			int arg_index = analysed_argument_indices[i];
+			auto& arg_info = call->argument_infos[arg_index];
+			arg_info.is_analysed = true;
+		}
 		return call;
 	}
 
@@ -4435,7 +4441,7 @@ Poly_Header* poly_header_analyse(
 			auto& lookup = symbol_lookups[i];
 			dynamic_array_reset(&symbols);
 			symbol_table_query_id(
-				parameter_table, lookup.lookup_id, false, Symbol_Access_Level::PARAMETERS, &symbols, &semantic_analyser.symbol_lookup_visited
+				parameter_table, lookup.lookup_id, false, Symbol_Access_Level::POLYMORPHIC, &symbols, &semantic_analyser.symbol_lookup_visited
 			);
 			if (symbols.size == 0) {
 				continue;
@@ -4444,7 +4450,7 @@ Poly_Header* poly_header_analyse(
 			assert(symbols[0]->type == Symbol_Type::PATTERN_VARIABLE, "Symbol lookup is only in parameter table, so we shouln't have other values!");
 			auto depends_on_var = symbols[0]->options.pattern_variable;
 			if (depends_on_var->is_comptime_parameter && depends_on_var->value_access_index == i) {
-				log_semantic_error("Comptime parameter value_type cannot depend on value of itself", upcast(lookup.node));
+				log_semantic_error("Comptime parameter type cannot depend on value of itself", upcast(lookup.node));
 			}
 			dynamic_array_push_back(
 				&header.signature->parameters[lookup.parameter_index].dependencies, 
@@ -4527,7 +4533,7 @@ Workload_Base* pattern_variable_find_instance_workload(
 	return nullptr;
 }
 
-void expression_info_set_to_pattern_variable(Expression_Info* result_info, Pattern_Variable* variable)
+void expression_info_set_to_pattern_variable(Expression_Info* result_info, Pattern_Variable* variable, bool is_symbol_lookup)
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 
@@ -4558,8 +4564,18 @@ void expression_info_set_to_pattern_variable(Expression_Info* result_info, Patte
 		expression_info_set_value(result_info, types.unknown_type, false);
 		break;
 	}
-	case Pattern_Variable_State_Type::PATTERN: {
+	case Pattern_Variable_State_Type::PATTERN: 
+	{
+		Datatype* pattern = value.options.pattern_type;
+		assert(pattern->contains_pattern, "");
 		expression_info_set_polymorphic_pattern(result_info, value.options.pattern_type);
+		if (pattern->type == Datatype_Type::PATTERN_VARIABLE) 
+		{
+			auto var_type = downcast<Datatype_Pattern_Variable>(pattern);
+			if (is_symbol_lookup && !var_type->is_reference) {
+				expression_info_set_polymorphic_pattern(result_info, upcast(var_type->mirrored_type));
+			} 
+		}
 		break;
 	}
 	default: panic("");
@@ -4616,6 +4632,7 @@ void parameter_dependency_graph_set_parameter_runnable(Parameter_Dependency_Grap
 	if (run_info.index_in_waiting_array < graph->waiting_indices.size) {
 		graph->run_infos[graph->waiting_indices[run_info.index_in_waiting_array]].index_in_waiting_array = run_info.index_in_waiting_array;
 	}
+	run_info.index_in_waiting_array = -1;
 }
 
 struct Matching_Constraint
@@ -4854,7 +4871,7 @@ bool pattern_matcher_match_pattern_internal(Pattern_Matcher* matcher, Datatype* 
 			auto pool_result = constant_pool_add_constant(
 				upcast(compiler.analysis_data->type_system.predefined_types.u64_type),
 				array_create_static_as_bytes(&size, 1));
-			assert(pool_result.success, "U64 value_type must work as constant");
+			assert(pool_result.success, "U64 type must work as constant");
 			pattern_matcher_set_datatype_pattern_variable_to_value(matcher, this_array->count_variable_type, pool_result.options.constant);
 		}
 		else {
@@ -4988,8 +5005,8 @@ bool pattern_matcher_check_constraints_valid(Pattern_Matcher* matcher)
 // Generates errors
 Poly_Instance* poly_header_instanciate_with_variable_states(
 	Poly_Header* poly_header, Array<Pattern_Variable_State> states,
-	Array<Datatype*> partial_pattern_instances, Callable_Call* call,
-	AST::Node* error_report_node, Parser::Section error_report_section)
+	Array<Datatype*> partial_pattern_instances, Array<Datatype*> parameter_types_instanciated,
+	Callable_Call* call, AST::Node* error_report_node, Parser::Section error_report_section)
 {
 	bool create_struct_pattern = false;
 	bool is_partial_struct_pattern = false;
@@ -5107,8 +5124,8 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 
 			Datatype* param_type = param.datatype;
 			if (param_type->contains_pattern) {
-				param_type = call->parameter_values[i].datatype;
-				assert(!param_type->contains_pattern, "must be true");
+				param_type = parameter_types_instanciated[i];
+				assert(param_type != nullptr && !param_type->contains_pattern, "must be true");
 			}
 
 			call_signature_add_parameter(
@@ -5327,6 +5344,7 @@ Datatype* datatype_pattern_instanciate(
 
 		// Handle polymorphic count variable
 		u64 element_count = array->element_count;
+		bool count_known = array->count_known;
 		if (array->count_variable_type != nullptr)
 		{
 			auto& state = states[array->count_variable_type->variable->value_access_index];
@@ -5401,9 +5419,10 @@ Datatype* datatype_pattern_instanciate(
 				log_error_info_id(array->count_variable_type->variable->name);
 				return nullptr;
 			}
+			count_known = true;
 		}
 
-		return type_system_make_array(element_type, array->count_known, (int)element_count, nullptr);
+		return type_system_make_array(element_type, count_known, (int)element_count, nullptr);
 	}
 	case Datatype_Type::SLICE: {
 		Datatype* child_type = datatype_pattern_instanciate(
@@ -5516,6 +5535,15 @@ Poly_Instance* poly_header_instanciate(
 		partial_pattern_instances[i] = nullptr;
 	}
 
+	Array<Datatype*> parameter_types_instanced = arena.allocate_array<Datatype*>(poly_header->signature->parameters.size);
+	for (int i = 0; i < parameter_types_instanced.size; i++) {
+		parameter_types_instanced[i] = nullptr;
+		auto& param_type = poly_header->signature->parameters[i].datatype;
+		if (!param_type->contains_pattern) {
+			parameter_types_instanced[i] = param_type;
+		}
+	}
+
 	// Setup datastructures
 	Parameter_Dependency_Graph graph = parameter_dependency_graph_create_empty(poly_header, &arena);
 	Pattern_Matcher pattern_matcher = pattern_matcher_create(variable_states, &graph, &arena);
@@ -5542,7 +5570,7 @@ Poly_Instance* poly_header_instanciate(
 		{
 			auto depends_on_var = &poly_header->pattern_variables[param_info.dependencies[i]];
 			auto& var_state = variable_states[depends_on_var->value_access_index];
-			if (depends_on_var->defined_in_parameter_index == i) {
+			if (depends_on_var->defined_in_parameter_index == param_index) {
 				run_info.dependency_on_self_definition_count += 1;
 			}
 
@@ -5586,6 +5614,7 @@ Poly_Instance* poly_header_instanciate(
 			pattern_matcher_set_variable_to_pattern(&pattern_matcher, &pattern_variable, param_value.datatype);
 			continue;
 		}
+		parameter_types_instanced[i] = param_value.datatype;
 
 		// Check if param is comptime
 		if (param_value.value_type == Parameter_Value_Type::COMPTIME_VALUE) {
@@ -5630,6 +5659,7 @@ Poly_Instance* poly_header_instanciate(
 					parameter_type, variable_states, error_report_node, error_report_section);
 				if (parameter_type != nullptr)
 				{
+					parameter_types_instanced[runnable_index] = parameter_type;
 					if (param_info.partial_pattern_index != -1) {
 						partial_pattern_instances[param_info.partial_pattern_index] = parameter_type;
 					}
@@ -5640,7 +5670,9 @@ Poly_Instance* poly_header_instanciate(
 			}
 
 			// Skip parameter if not set
-			if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
+			if (param_value.value_type == Parameter_Value_Type::NOT_SET) {
+				continue;
+			}
 
 			// Analyse argument if given
 			if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION)
@@ -5699,14 +5731,14 @@ Poly_Instance* poly_header_instanciate(
 				if (pattern_matcher_match_pattern(&pattern_matcher, parameter_type, argument_type)) 
 				{
 					// Update info for later call-instanciation
-					param_value.datatype = argument_type;
+					parameter_types_instanced[runnable_index] = argument_type;
 					if (param_info.partial_pattern_index != -1) {
 						partial_pattern_instances[param_info.partial_pattern_index] = argument_type;
 					}
 				}
 				else 
 				{
-					log_semantic_error("Could not match given value_type to pattern", error_report_node, error_report_section);
+					log_semantic_error("Could not match given type to pattern", error_report_node, error_report_section);
 					log_error_info_id(param_info.name);
 					log_error_info_given_type(argument_type);
 					log_error_info_expected_type(parameter_type);
@@ -5715,7 +5747,7 @@ Poly_Instance* poly_header_instanciate(
 			}
 			else
 			{
-				if (!types_are_equal(parameter_type, argument_type))
+				if (!types_are_equal(parameter_type, argument_type) && !is_return_type)
 				{
 					log_semantic_error("Argument type does not match parameter type", error_report_node, error_report_section);
 					log_error_info_id(param_info.name);
@@ -5770,19 +5802,14 @@ Poly_Instance* poly_header_instanciate(
 		{
 			// We analyse parameters from left-to-right if we have unresolvable variables
 			int smallest_index_to_run = INT_MAX;
-			int remove_index = -1;
 			for (int i = 0; i < graph.waiting_indices.size; i++) {
 				int to_run = graph.waiting_indices[i];
 				if (to_run < smallest_index_to_run) {
 					smallest_index_to_run = to_run;
-					remove_index = i;
 				}
 			}
-			assert(remove_index != -1, "");
-			graph.waiting_indices.remove_ordered(remove_index);
-
 			auto& run_info = graph.run_infos[smallest_index_to_run];
-			assert(run_info.index_in_waiting_array == -1, "Shouldn't have been run yet");
+			assert(run_info.index_in_waiting_array != -1, "Shouldn't have been run yet");
 			parameter_dependency_graph_set_parameter_runnable(&graph, smallest_index_to_run, false);
 		}
 	}
@@ -5799,7 +5826,8 @@ Poly_Instance* poly_header_instanciate(
 	}
 
 	auto result = poly_header_instanciate_with_variable_states(
-		poly_header, variable_states, partial_pattern_instances, call, error_report_node, error_report_section);
+		poly_header, variable_states, partial_pattern_instances, parameter_types_instanced, 
+		call, error_report_node, error_report_section);
 	variable_states.data = nullptr; // Don't cleanup, as line above takes ownership
 	partial_pattern_instances.data = nullptr;
 	return result;
@@ -6109,7 +6137,7 @@ void analysis_workload_entry(void* userdata)
 				}
 			}
 
-			assert(symbol->type == Symbol_Type::MODULE, "Without error symbol value_type shouldn't change!");
+			assert(symbol->type == Symbol_Type::MODULE, "Without error symbol type shouldn't change!");
 			// Add import
 			symbol_table_add_include_table(
 				semantic_analyser.current_workload->current_symbol_table,
@@ -6136,13 +6164,13 @@ void analysis_workload_entry(void* userdata)
 				if (def.type_node != 0) {
 					type = semantic_analyser_analyse_expression_type(def.type_node);
 					if (def.assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
-						log_semantic_error("Type must not be a pointer-value_type with normal value definition ': foo ='", def.type_node);
+						log_semantic_error("Type must not be a pointer-type with normal value definition ': foo ='", def.type_node);
 						type = type_system_make_type_with_mods(
 							type->base_type, type_mods_make(type->mods.is_constant, 0, 0, 0, type->mods.subtype_index)
 						);
 					}
 					else if (def.assignment_type == AST::Assignment_Type::POINTER && type->mods.pointer_level == 0) {
-						log_semantic_error("Type must be a pointer-value_type with pointer definition ': foo =*'", def.type_node);
+						log_semantic_error("Type must be a pointer-type with pointer definition ': foo =*'", def.type_node);
 						type = upcast(type_system_make_pointer(type));
 					}
 				}
@@ -6363,7 +6391,7 @@ void analysis_workload_entry(void* userdata)
 				}
 
 				if (type->type != Datatype_Type::STRUCT) {
-					log_semantic_error("extern struct must be followed by a struct value_type", import->options.struct_type_expr);
+					log_semantic_error("extern struct must be followed by a struct type", import->options.struct_type_expr);
 					break;
 				}
 
@@ -6642,7 +6670,7 @@ void analysis_workload_entry(void* userdata)
 
 		// Add result to constant pool
 		void* value_ptr = thread->return_register;
-		assert(progress->bake_function->signature->return_type().available, "Bake return value_type must have been stated at this point...");
+		assert(progress->bake_function->signature->return_type().available, "Bake return type must have been stated at this point...");
 		Constant_Pool_Result pool_result = constant_pool_add_constant(
 			result_type, array_create_static<byte>((byte*)value_ptr, result_type->memory_info.value.size));
 		if (!pool_result.success) {
@@ -7003,12 +7031,25 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 		// We should be in a function body workload
 		auto progress = analysis_workload_try_get_function_progress(workload);
 		assert(progress != 0, "We should be in function-body workload since normal parameters have internal symbol access");
-		expression_info_set_value(&result, progress->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype, false);
+		Datatype* param_type = nullptr;
+		if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) 
+		{
+			param_type = progress->poly_function.poly_header->signature->parameters[param.index_in_polymorphic_signature].datatype;
+			if (param_type->contains_pattern) {
+				param_type = types.unknown_type;
+			}
+		}
+		else {
+			param_type = progress->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+		}
+
+		assert(!param_type->contains_pattern, "");
+		expression_info_set_value(&result, param_type, false);
 		return result;
 	}
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
-		expression_info_set_to_pattern_variable(&result, symbol->options.pattern_variable);
+		expression_info_set_to_pattern_variable(&result, symbol->options.pattern_variable, true);
 		return result;
 	}
 	case Symbol_Type::COMPTIME_VALUE: {
@@ -7127,13 +7168,13 @@ void analyse_member_initializer_recursive(
 			if (parent_content == 0)
 			{
 				log_semantic_error(
-					"Base-Type initializer invalid in this context, struct value_type is already the base value_type", upcast(init_node), Parser::Section::FIRST_TOKEN);
+					"Base-Type initializer invalid in this context, struct type is already the base type", upcast(init_node), Parser::Section::FIRST_TOKEN);
 				helper_analyse_subtype_init_unknown(init_node);
 				break;
 			}
 			else if (allowed_direction == 1 || supertype_initializer_found) {
 				log_semantic_error(
-					"Cannot re-specify base-value_type members, this has already been done in this struct-initializer", upcast(init_node), Parser::Section::FIRST_TOKEN);
+					"Cannot re-specify base-type members, this has already been done in this struct-initializer", upcast(init_node), Parser::Section::FIRST_TOKEN);
 				helper_analyse_subtype_init_unknown(init_node);
 				break;
 			}
@@ -7187,7 +7228,7 @@ void analyse_member_initializer_recursive(
 			}
 			if (parent_has_members) {
 				log_semantic_error(
-					"Base-Type members were not specified, use base-value_type initializer '. = {}' for this!", upcast(call_node), Parser::Section::ENCLOSURE);
+					"Base-Type members were not specified, use base-type initializer '. = {}' for this!", upcast(call_node), Parser::Section::ENCLOSURE);
 			}
 		}
 		if (content->subtypes.size > 0 && !subtype_initializer_found && allowed_direction == 0) {
@@ -7237,7 +7278,7 @@ void analyse_index_accept_all_ints_as_u64(AST::Expression* expr, bool allow_poly
 		info->cast_info.initial_value_is_temporary, info->cast_info.initial_type, upcast(types.u64_type), Cast_Mode::IMPLICIT
 	);
 	if (info->cast_info.cast_type == Cast_Type::INVALID) {
-		log_semantic_error("Expected index value_type (integer or value castable to u64)", expr);
+		log_semantic_error("Expected index type (integer or value castable to u64)", expr);
 	}
 }
 
@@ -7293,7 +7334,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					signature = call->instanciation_data.function->signature;
 				}
 				if (signature->return_type_index == -1) {
-					expression_info_set_no_value(info);
+					if (error_occured) {
+						expression_info_set_error(info, types.unknown_type);
+					}
+					else {
+						expression_info_set_no_value(info);
+					}
 					return;
 				}
 				Datatype* return_type = signature->return_type().value;
@@ -7355,7 +7401,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 				assert(param_value->value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Should be the case in function call!");
 				auto value_expr = call->argument_infos[param_value->options.argument_index].expression;
-				auto result = expression_calculate_comptime_value(value_expr, "size_of/align_of requires comptime value_type-handle");
+				auto result = expression_calculate_comptime_value(value_expr, "size_of/align_of requires comptime type-handle");
 				if (!result.available) {
 					if (is_size_of) {
 						expression_info_set_constant_usize(info, 1);
@@ -7369,7 +7415,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(result.value);
 				if (handle.index >= (u32)compiler.analysis_data->type_system.types.size)
 				{
-					log_semantic_error("Invalid value_type-handle value", value_expr);
+					log_semantic_error("Invalid type-handle value", value_expr);
 					if (is_size_of) {
 						expression_info_set_constant_usize(info, 1);
 					}
@@ -7399,7 +7445,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 				Call_Signature* signature = downcast<Workload_Function_Body>(semantic_analyser.current_workload)->progress->function->signature;
 				if (signature->return_type_index == -1) {
-					log_semantic_error("return_type() function needs to have a return value_type", expr, Parser::Section::FIRST_TOKEN);
+					log_semantic_error("return_type() function needs to have a return type", expr, Parser::Section::FIRST_TOKEN);
 					EXIT_ERROR(types.unknown_type);
 				}
 				auto return_type = signature->return_type().value;
@@ -7849,7 +7895,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			"We can never be the reference if we are at the definition argument_expression, e.g. $T is not a symbol-read like T");
 
 		// If value is already set, return the value (Should happen in header-re-analysis)
-		expression_info_set_to_pattern_variable(info, variable);
+		expression_info_set_to_pattern_variable(info, variable, false);
 		return info;
 	}
 	case AST::Expression_Type::CAST:
@@ -8037,7 +8083,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 				if (!size_is_valid)
 				{
-					log_semantic_error("Literal value is outside the range of expected value_type. To still use this value a cast is required", expr);
+					log_semantic_error("Literal value is outside the range of expected type. To still use this value a cast is required", expr);
 					EXIT_ERROR(type_system_make_constant(context.expected_type.type));
 				}
 				literal_type = context.expected_type.type;
@@ -8177,7 +8223,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 			}
 			if (log_error) {
-				log_semantic_error("Inferred function value_type requires context, which is not available", expr, Parser::Section::FIRST_TOKEN);
+				log_semantic_error("Inferred function type requires context, which is not available", expr, Parser::Section::FIRST_TOKEN);
 			}
 		}
 
@@ -8235,7 +8281,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				continue;
 			}
 			Call_Parameter* param = call_signature_add_parameter(signature, param_node->name, nullptr, true, false, param_node->is_return_type);
-			analyse_parameter_type_and_value(*param, param_node, false);
+			analyse_parameter_type_and_value(*param, param_node, true);
+			if (param_node->is_return_type) {
+				signature->return_type_index = signature->parameters.size - 1;
+			}
 		}
 		signature = call_signature_register(signature);
 		EXIT_TYPE_OR_POLY(upcast(type_system_make_function_pointer(signature, false)));
@@ -8245,7 +8294,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		auto& array_node = expr->options.array_type;
 
 		// Analyse type expression
-		Datatype* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr);
+		Datatype* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr, true);
 
 		// Analyse size expression (Which may be polymorhic)
 		analyse_index_accept_all_ints_as_u64(array_node.size_expr, true);
@@ -8444,7 +8493,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// 		}
 		// 		else {
 		// 			if (!context.unknown_due_to_error) {
-		// 				log_semantic_error("Could not determine value_type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
+		// 				log_semantic_error("Could not determine type for auto struct initializer from context", expr, Parser::Section::WHOLE_NO_CHILDREN);
 		// 			}
 		// 			type_for_init = types.unknown_type;
 		// 		}
@@ -8539,7 +8588,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// 	else
 		// 	{
 		// 		if (!datatype_is_unknown(type_for_init)) {
-		// 			log_semantic_error("Struct initializer requires struct value_type for initialization", expr, Parser::Section::WHOLE_NO_CHILDREN);
+		// 			log_semantic_error("Struct initializer requires struct type for initialization", expr, Parser::Section::WHOLE_NO_CHILDREN);
 		// 			log_error_info_given_type(type_for_init);
 		// 			type_for_init = types.unknown_type;
 		// 		}
@@ -8567,19 +8616,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					element_type = downcast<Datatype_Slice>(expected)->element_type;
 				}
 				else {
-					log_semantic_error("Expected value_type for array-initializer should be array or slice", expr);
+					log_semantic_error("Expected type for array-initializer should be array or slice", expr);
 					log_error_info_given_type(expected);
 					element_type = types.unknown_type;
 				}
 			}
 			else if (context.type == Expression_Context_Type::UNKNOWN) {
 				if (!context.unknown_due_to_error) {
-					log_semantic_error("Could not determine array element value_type from context", expr);
+					log_semantic_error("Could not determine array element type from context", expr);
 				}
 				element_type = types.unknown_type;
 			}
 			else {
-				log_semantic_error("Could not determine array element value_type from context", expr);
+				log_semantic_error("Could not determine array element type from context", expr);
 			}
 		}
 
@@ -8962,7 +9011,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 
 			if (datatype->type != Datatype_Type::ENUM) {
-				log_semantic_error("Member access for given value_type not possible", member_node.expr);
+				log_semantic_error("Member access for given type not possible", member_node.expr);
 				log_error_info_given_type(datatype);
 				EXIT_ERROR(types.unknown_type);
 			}
@@ -9177,7 +9226,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		Datatype* expected = context.expected_type.type;
 
 		if (expected->type != Datatype_Type::ENUM) {
-			log_semantic_error("Context requires a value_type that is not an enum, so .NAME syntax is not valid", expr);
+			log_semantic_error("Context requires a type that is not an enum, so .NAME syntax is not valid", expr);
 			log_error_info_given_type(context.expected_type.type);
 			EXIT_ERROR(types.unknown_type);
 		}
@@ -9290,7 +9339,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 
 			if (!type_is_valid) {
-				log_semantic_error("Operand value_type not valid", unary_node.expr, Parser::Section::FIRST_TOKEN);
+				log_semantic_error("Operand type not valid", unary_node.expr, Parser::Section::FIRST_TOKEN);
 				EXIT_ERROR(types.unknown_type);
 			}
 			EXIT_VALUE(result_type, true);
@@ -9306,7 +9355,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			{
 				auto handle = upp_constant_to_value<Upp_Type_Handle>(operand_result->options.constant);
 				if ((int)handle.index < 0 || (int)handle.index >= type_system->types.size) {
-					log_semantic_error("Constant value_type handle is invalid", unary_node.expr);
+					log_semantic_error("Constant type handle is invalid", unary_node.expr);
 				}
 				EXIT_TYPE(upcast(type_system_make_pointer(type_system->types[handle.index])));
 			}
@@ -10080,7 +10129,7 @@ void expression_context_apply(Expression_Info* info, Expression_Context context,
 
 		// Check for errors
 		if (cast_info.cast_type == Cast_Type::INVALID) {
-			log_semantic_error("Cannot cast to required value_type", expression, error_section);
+			log_semantic_error("Cannot cast to required type", expression, error_section);
 			if (cast_info.options.error_msg != 0) {
 				log_error_info_comptime_msg(cast_info.options.error_msg);
 			}
@@ -10121,14 +10170,14 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 	switch (result->result_type)
 	{
 	case Expression_Result_Type::TYPE: {
-		assert(!result->options.type->contains_pattern, "Result value_type would need to be different, e.g. poly-pattern");
+		assert(!result->options.type->contains_pattern, "Result type would need to be different, e.g. poly-pattern");
 		return result->options.type;
 	}
 	case Expression_Result_Type::POLYMORPHIC_PATTERN:
 	{
-		if (allow_poly_pattern)
+		if (!allow_poly_pattern)
 		{
-			log_semantic_error("Expected a normal value_type, but got a polymorphic pattern", expression);
+			log_semantic_error("Expected a normal type, but got a polymorphic pattern", expression);
 			log_error_info_expression_result_type(result->result_type);
 			return types.unknown_type;
 		}
@@ -10143,7 +10192,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 		}
 		if (!types_are_equal(datatype_get_non_const_type(result->cast_info.result_type), types.type_handle))
 		{
-			log_semantic_error("Expression cannot be converted to value_type", expression);
+			log_semantic_error("Expression cannot be converted to type", expression);
 			log_error_info_given_type(result->cast_info.result_type);
 			return types.unknown_type;
 		}
@@ -10151,7 +10200,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 		// Otherwise try to convert to constant
 		Upp_Constant constant;
 		if (result->result_type == Expression_Result_Type::VALUE) {
-			auto comptime_opt = expression_calculate_comptime_value(expression, "Expression is a value_type, but it isn't known at compile time");
+			auto comptime_opt = expression_calculate_comptime_value(expression, "Expression is a type, but it isn't known at compile time");
 			Datatype* result_type = types.unknown_type;
 			if (comptime_opt.available) {
 				constant = comptime_opt.value;
@@ -10168,7 +10217,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 		auto type_index = upp_constant_to_value<u32>(constant);
 		if (type_index >= (u32)type_system.internal_type_infos.size) {
 			// Note: Always log this error, because this should never happen!
-			log_semantic_error("Expression contains invalid value_type handle", expression);
+			log_semantic_error("Expression contains invalid type handle", expression);
 			final_type = upcast(types.unknown_type);
 		}
 		else {
@@ -10178,12 +10227,12 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 		return final_type;
 	}
 	case Expression_Result_Type::DOT_CALL: {
-		log_semantic_error("Expected a value_type, given dot_call", expression);
+		log_semantic_error("Expected a type, given dot_call", expression);
 		log_error_info_expression_result_type(result->result_type);
 		return types.unknown_type;
 	}
 	case Expression_Result_Type::NOTHING: {
-		log_semantic_error("Expected a value_type, given nothing", expression);
+		log_semantic_error("Expected a type, given nothing", expression);
 		log_error_info_expression_result_type(result->result_type);
 		return types.unknown_type;
 	}
@@ -10196,7 +10245,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 	case Expression_Result_Type::HARDCODED_FUNCTION:
 	case Expression_Result_Type::POLYMORPHIC_FUNCTION:
 	case Expression_Result_Type::FUNCTION: {
-		log_semantic_error("Expected a value_type, given a function", expression);
+		log_semantic_error("Expected a type, given a function", expression);
 		log_error_info_expression_result_type(result->result_type);
 		return types.unknown_type;
 	}
@@ -10618,7 +10667,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 
 			if (!signature->return_type.available && expected_return_value) {
-				log_semantic_error("Function must have return value_type for custom operator", expr);
+				log_semantic_error("Function must have return type for custom operator", expr);
 				log_error_info_given_type(upcast(signature));
 				success = false;
 				return nullptr;
@@ -10821,7 +10870,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				}
 			}
 			else {
-				log_semantic_error("Binop value_type must be c_string literal", upcast(binop_expr));
+				log_semantic_error("Binop type must be c_string literal", upcast(binop_expr));
 				success = false;
 			}
 		}
@@ -10911,7 +10960,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				}
 			}
 			else {
-				log_semantic_error("Unop value_type must be c_string literal", upcast(unop_expr));
+				log_semantic_error("Unop type must be c_string literal", upcast(unop_expr));
 				success = false;
 			}
 		}
@@ -11001,7 +11050,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				}
 				else {
 					success = false;
-					log_semantic_error("For custom casts polymorphic function must have a return value_type", expr);
+					log_semantic_error("For custom casts polymorphic function must have a return type", expr);
 				}
 			}
 			else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
@@ -11338,7 +11387,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 							datatype_check_if_auto_casts_to_other_mods(arg_type, iterator_type->mods, false)))
 						{
 							log_semantic_error(
-								"Function parameter value_type must be compatible with iterator value_type (Create function return value_type)",
+								"Function parameter type must be compatible with iterator type (Create function return type)",
 								upcast(fn_expr)
 							);
 							log_error_info_given_type(arg_type);
@@ -11360,7 +11409,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 						}
 						else {
 							if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), function->signature->return_type.value)) {
-								log_semantic_error("Function return value_type should be bool", upcast(fn_expr));
+								log_semantic_error("Function return type should be bool", upcast(fn_expr));
 								success = false;
 							}
 						}
@@ -11406,7 +11455,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 						}
 						else {
 							if (return_should_be_boolean && !types_are_equal(upcast(types.bool_type), return_type)) {
-								log_semantic_error("Function return value_type should be bool", upcast(fn_expr));
+								log_semantic_error("Function return type should be bool", upcast(fn_expr));
 								success = false;
 							}
 						}
@@ -11538,7 +11587,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 					log_semantic_error("Function does not have a return value", return_stat.value);
 				}
 				else if (!types_are_equal(expected_return_type.value, return_type) && !is_unknown) {
-					log_semantic_error("Return value_type does not match the declared return value_type", statement);
+					log_semantic_error("Return type does not match the declared return type", statement);
 					log_error_info_given_type(return_type);
 					log_error_info_expected_type(expected_return_type.value);
 				}
@@ -12128,7 +12177,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 
 						// 			Datatype* param_type = function->signature->parameters[0].datatype;
 						// 			if (!types_are_equal(param_type->base_type, iterator_type->base_type)) {
-						// 				log_semantic_error("Instanciated function parameter value_type did not match iterator value_type", upcast(for_loop.expression));
+						// 				log_semantic_error("Instanciated function parameter type did not match iterator type", upcast(for_loop.expression));
 						// 				success = false;
 						// 				continue;
 						// 			}
@@ -12175,7 +12224,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			}
 
 			if (!try_updating_expression_type_mods(for_loop.expression, expected_mods)) {
-				log_semantic_error("Pointer level invalid for this iterable value_type", for_loop.expression);
+				log_semantic_error("Pointer level invalid for this iterable type", for_loop.expression);
 			}
 		}
 
@@ -12303,7 +12352,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 				assert(function->signature->return_type().available, "");
 				if (!types_are_equal(left_type, function->signature->return_type().value)) {
 					log_semantic_error(
-						"Overload for this binop not valid, as assignment requires return value_type to be the same",
+						"Overload for this binop not valid, as assignment requires return type to be the same",
 						upcast(statement), Parser::Section::WHOLE_NO_CHILDREN
 					);
 				}
@@ -12415,7 +12464,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			symbol->options.variable_type = compiler.analysis_data->type_system.predefined_types.unknown_type;
 
 			if (i >= types.size && types.size > 1) {
-				log_semantic_error("No value_type was specified for this symbol", upcast(symbol_nodes[i]), Parser::Section::IDENTIFIER);
+				log_semantic_error("No type was specified for this symbol", upcast(symbol_nodes[i]), Parser::Section::IDENTIFIER);
 				symbol->type = Symbol_Type::ERROR_SYMBOL;
 			}
 			if (i >= values.size && values.size > 1) {
@@ -12436,13 +12485,13 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 			// Check for errors
 			bool is_pointer = datatype_is_pointer(type);
 			if (definition->assignment_type == AST::Assignment_Type::DEREFERENCE && type->mods.pointer_level > 0) {
-				log_semantic_error("Type must not be a pointer-value_type with normal value definition 'x: foo ='", type_node);
+				log_semantic_error("Type must not be a pointer-type with normal value definition 'x: foo ='", type_node);
 				type = type_system_make_type_with_mods(
 					type->base_type, type_mods_make(type->mods.is_constant, 0, 0, 0, type->mods.subtype_index)
 				);
 			}
 			else if (definition->assignment_type == AST::Assignment_Type::POINTER && !is_pointer) {
-				log_semantic_error("Type must be a pointer-value_type with pointer definition ': foo =*'", type_node);
+				log_semantic_error("Type must be a pointer-type with pointer definition ': foo =*'", type_node);
 				type = upcast(type_system_make_pointer(type));
 			}
 
@@ -12469,7 +12518,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 					symbol->options.variable_type = type;
 				}
 				else {
-					log_semantic_error("No symbol exists on the left side of definition for this value_type", type_node);
+					log_semantic_error("No symbol exists on the left side of definition for this type", type_node);
 				}
 			}
 		}
@@ -12519,7 +12568,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 						}
 					}
 					else {
-						log_semantic_error("No value_type is specified in the definition for this value", values[i]);
+						log_semantic_error("No type is specified in the definition for this value", values[i]);
 						context = expression_context_make_unknown(true);
 					}
 				}
@@ -12934,12 +12983,12 @@ void semantic_analyser_reset()
 		hardcoded_callables[(int)Hardcoded_Type::TYPE_OF].signature = call_signature_register(callable);
 
 		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value_type"), upcast(types.type_handle), true, false, false);
+		call_signature_add_parameter(callable, make_id("type"), upcast(types.type_handle), true, false, false);
 		call_signature_add_return_type(callable, upcast(types.usize));
 		hardcoded_callables[(int)Hardcoded_Type::SIZE_OF].signature = call_signature_register(callable);
 
 		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value_type"), upcast(types.type_handle), true, false, false);
+		call_signature_add_parameter(callable, make_id("type"), upcast(types.type_handle), true, false, false);
 		call_signature_add_return_type(callable, upcast(types.u32_type));
 		hardcoded_callables[(int)Hardcoded_Type::ALIGN_OF].signature = call_signature_register(callable);
 

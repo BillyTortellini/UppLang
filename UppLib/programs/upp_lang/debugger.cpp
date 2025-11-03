@@ -1161,7 +1161,7 @@ namespace PDB_Analysis
             return false;
         }
         if (machine_type != IMAGE_FILE_MACHINE_AMD64) {
-            printf("Machine value_type of pdb was not amd64! This is the only architecture currently supported\n");
+            printf("Machine type of pdb was not amd64! This is the only architecture currently supported\n");
             return false;
         }
 
@@ -4353,7 +4353,7 @@ Debugger_Value_Read debugger_read_variable_value(
 	}
 	case PDB_Analysis::PDB_Location_Type::UNKNOWN: {
 		read_success = false;
-		read_error_msg = "Value is in Unknown-PDB location (PDB location value_type which isn't implemented)";
+		read_error_msg = "Value is in Unknown-PDB location (PDB location type which isn't implemented)";
 		break;
 	}
 	default: panic(""); ; break;

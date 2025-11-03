@@ -1495,7 +1495,7 @@ Datatype* type_system_make_subtype(Datatype* base_type, String* subtype_name, in
 		is_const = true;
 		base_type = downcast<Datatype_Constant>(base_type)->element_type;
 	}
-	assert(base_type->type == Datatype_Type::STRUCT || base_type->type == Datatype_Type::SUBTYPE, "Base value_type must be struct!");
+	assert(base_type->type == Datatype_Type::STRUCT || base_type->type == Datatype_Type::SUBTYPE, "Base type must be struct!");
 
 	Datatype_Subtype* result = new Datatype_Subtype;
 	result->base_type = base_type;
@@ -2181,7 +2181,7 @@ void type_system_add_predefined_types(Type_System* system)
 	{
 		types->any_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Any"), 0);
 		add_member_cstr(&types->any_type->content, "data", upcast(types->address));
-		add_member_cstr(&types->any_type->content, "value_type", types->type_handle);
+		add_member_cstr(&types->any_type->content, "type", types->type_handle);
 		type_system_finish_struct(types->any_type);
 		test_type_similarity<Upp_Any>(upcast(types->any_type));
 	}
@@ -2223,7 +2223,7 @@ void type_system_add_predefined_types(Type_System* system)
 		// Create type_info type
 		Datatype_Struct* type_info_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Type_Info"), 0);
 		types->type_information_type = type_info_type;
-		add_member_cstr(&type_info_type->content, "value_type", types->type_handle);
+		add_member_cstr(&type_info_type->content, "type", types->type_handle);
 		add_member_cstr(&type_info_type->content, "size", upcast(types->i32_type));
 		add_member_cstr(&type_info_type->content, "alignment", upcast(types->i32_type));
 
@@ -2287,7 +2287,7 @@ void type_system_add_predefined_types(Type_System* system)
 				add_enum_member(types->primitive_type_enum, "BOOL", 16);
 				type_system_finish_enum(types->primitive_type_enum);
 
-				add_member_cstr(subtype_primitive, "value_type", upcast(types->primitive_type_enum));
+				add_member_cstr(subtype_primitive, "type", upcast(types->primitive_type_enum));
 			}
 			// Array
 			{
@@ -2303,7 +2303,7 @@ void type_system_add_predefined_types(Type_System* system)
 				Datatype_Struct* struct_member_type = type_system_make_struct_empty(Structure_Type::STRUCT, make_id("Member_Info"), 0);
 				{
 					add_member_cstr(&struct_member_type->content, "name", upcast(types->c_string));
-					add_member_cstr(&struct_member_type->content, "value_type", types->type_handle);
+					add_member_cstr(&struct_member_type->content, "type", types->type_handle);
 					add_member_cstr(&struct_member_type->content, "offset", upcast(types->i32_type));
 					type_system_finish_struct(struct_member_type);
 				}

@@ -646,7 +646,7 @@ int run_import_gui()
                     {
                     case C_Import_Symbol_Type::FUNCTION: string_append(&tmp, " fn: "); break;
                     case C_Import_Symbol_Type::GLOBAL_VARIABLE: string_append(&tmp, " global: "); break;
-                    case C_Import_Symbol_Type::TYPE: string_append(&tmp, " value_type: "); break;
+                    case C_Import_Symbol_Type::TYPE: string_append(&tmp, " type: "); break;
                     default: panic("");
                     }
                     c_import_type_append_to_string(symbol.c_symbol->data_type, &tmp, 0, false);

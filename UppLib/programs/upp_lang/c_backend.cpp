@@ -798,7 +798,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
         output_memory_as_new_constant((byte*)&content->tag_member.name, types.c_string, false, 1);
         string_append(gen.text, ";\n");
         string_add_indentation(gen.text, indentation_level);
-        string_append_formated(gen.text, "content->tag_member.value_type = %d;\n", content->tag_member.type.index);
+        string_append_formated(gen.text, "content->tag_member.type = %d;\n", content->tag_member.type.index);
         string_add_indentation(gen.text, indentation_level);
         string_append_formated(gen.text, "content->tag_member.offset = %d;\n", content->tag_member.offset);
     }
@@ -820,7 +820,7 @@ void type_info_append_struct_content(Internal_Type_Struct_Content* content, int 
             string_append(gen.text, ";\n");
 
             string_add_indentation(gen.text, indentation_level);
-            string_append_formated(gen.text, "content->members.data[%d].value_type = %d;\n", i, member.type.index);
+            string_append_formated(gen.text, "content->members.data[%d].type = %d;\n", i, member.type.index);
             string_add_indentation(gen.text, indentation_level);
             string_append_formated(gen.text, "content->members.data[%d].offset = %d;\n", i, member.offset);
         }
@@ -1101,7 +1101,7 @@ void c_generator_generate()
             string_add_indentation(gen.text, 1);
             string_append_formated(gen.text, "info = &type_infos_.infos[%d];\n", i);
             string_add_indentation(gen.text, 1);
-            string_append_formated(gen.text, "info->value_type      = %d;\n", type->type_handle.index);
+            string_append_formated(gen.text, "info->type      = %d;\n", type->type_handle.index);
             string_add_indentation(gen.text, 1);
             string_append_formated(gen.text, "info->size      = %d;\n", memory.size);
             string_add_indentation(gen.text, 1);
@@ -1118,7 +1118,7 @@ void c_generator_generate()
             case Datatype_Type::PRIMITIVE: {
                 auto primitive = downcast<Datatype_Primitive>(type);
                 Struct_Content* primitive_info = types.type_information_type->content.subtypes[(int)Datatype_Type::PRIMITIVE - 1];
-                string_append(gen.text, "info->subtypes_.Primitive.value_type = ");
+                string_append(gen.text, "info->subtypes_.Primitive.type = ");
                 output_memory_as_new_constant((byte*)&primitive->primitive_type, upcast(types.primitive_type_enum), false, 1);
                 string_append(gen.text, ";\n");
                 break;

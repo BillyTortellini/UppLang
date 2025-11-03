@@ -576,7 +576,7 @@ void c_import_symbol_table_define_symbol(C_Import_Symbol_Table* table, C_Import_
     if (old_sym != 0)
     {
         if (old_sym->data_type != symbol.data_type) {
-            panic("Changing value_type with shadowing!");
+            panic("Changing type with shadowing!");
         }
         *old_sym = symbol;
     }

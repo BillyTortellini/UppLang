@@ -165,14 +165,14 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
-        string_append_formated(string, "Global #%d, value_type: ", access->option.global_index);
+        string_append_formated(string, "Global #%d, type: ", access->option.global_index);
         datatype_append_to_string(string, type_system, access->datatype);
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
         auto& param = param_info.function->signature->parameters[param_info.index];
-        string_append_formated(string, "Param \"%s\", value_type: ", param.name->characters);
+        string_append_formated(string, "Param \"%s\", type: ", param.name->characters);
         datatype_append_to_string(string, type_system, param.datatype);
         break;
     }
@@ -180,10 +180,10 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         auto& reg_access = access->option.register_access;
         auto& reg = reg_access.definition_block->registers[reg_access.index];
         if (reg.name.available) {
-            string_append_formated(string, "Register #%d \"%s\", value_type: ", reg_access.index, reg.name.value->characters);
+            string_append_formated(string, "Register #%d \"%s\", type: ", reg_access.index, reg.name.value->characters);
         }
         else {
-            string_append_formated(string, "Register #%d, value_type: ", reg_access.index);
+            string_append_formated(string, "Register #%d, type: ", reg_access.index);
         }
         datatype_append_to_string(string, type_system, reg.type);
         if (reg_access.definition_block != current_block) {
@@ -368,7 +368,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
             auto type = datatype_get_non_const_type(call->options.pointer_access->datatype);
-            assert(type->type == Datatype_Type::FUNCTION_POINTER, "Function pointer call must be of function value_type!");
+            assert(type->type == Datatype_Type::FUNCTION_POINTER, "Function pointer call must be of function type!");
             function_sig = downcast<Datatype_Function_Pointer>(type)->signature;
             break;
         }
@@ -406,7 +406,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             ir_data_access_append_to_string(call->options.pointer_access, string, code_block, analysis_data);
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-            string_append_formated(string, "HARDCODED_FUNCTION_CALL, value_type: ");
+            string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
             hardcoded_type_append_to_string(string, call->options.hardcoded);
             break;
         }
@@ -635,7 +635,7 @@ IR_Data_Access* ir_data_access_create_intermediate(Datatype* signature)
 {
     auto& gen = ir_generator;
     assert(gen.current_block != 0, "");
-    assert(!datatype_is_unknown(signature), "Cannot have register with unknown value_type");
+    assert(!datatype_is_unknown(signature), "Cannot have register with unknown type");
     assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
 
     // Note: I don't think there is ever the need to have constant intermediates...
@@ -1114,6 +1114,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             assert(call_info->instanciated, "");
             call_instr.options.call.options.function = call_info->instanciation_data.function;
             assert(call_instr.options.call.options.function != nullptr, "");
+            assert(call_instr.options.call.options.function != nullptr, "");
             break;
         }
         case Callable_Type::FUNCTION_POINTER: {
@@ -1231,11 +1232,29 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         // Generate return value
         auto signature = call_info->callable.signature;
-        if (signature->return_type().available) {
-            call_instr.options.call.destination = make_destination_access_on_demand(signature->return_type().value);
-        }
-        else {
-            call_instr.options.call.destination = ir_data_access_create_nothing();
+        call_instr.options.call.destination = ir_data_access_create_nothing();
+        if (signature->return_type_index != -1)
+        {
+            Datatype* return_type = nullptr;
+            if (call_info->instanciated) 
+            {
+                if (call_info->callable.type == Callable_Type::POLY_FUNCTION || call_info->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC) 
+                {
+                    return_type = call_info->instanciation_data.function->signature->return_type().value;
+                }
+                else if (call_info->callable.type == Callable_Type::HARDCODED) 
+                {
+                    return_type = upcast(call_info->instanciation_data.bitwise_primitive_type);
+                }
+                else {
+                    panic("");
+                }
+            }
+            else {
+                return_type = call_info->callable.signature->return_type().value;
+            }
+            
+            call_instr.options.call.destination = make_destination_access_on_demand(return_type);
         }
 
         // Generate arguments 
@@ -1462,7 +1481,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 IR_Instruction exit_instr;
                 exit_instr.type = IR_Instruction_Type::RETURN;
                 exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-                exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast value_type");
+                exit_instr.options.return_instr.options.exit_code = exit_code_make(
+                    Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
                 add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
             }
 
@@ -1837,7 +1857,8 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
             IR_Instruction exit_instr;
             exit_instr.type = IR_Instruction_Type::RETURN;
             exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Any cast downcast failed, value_type index was invalid");
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(
+                Exit_Code_Type::CODE_ERROR, "Any cast downcast failed, type index was invalid");
             add_instruction(exit_instr, branch_invalid);
         }
         return access_result;
@@ -2658,7 +2679,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
         break;
     }
-    default: panic("Statment value_type invalid!");
+    default: panic("Statment type invalid!");
     }
 }
 

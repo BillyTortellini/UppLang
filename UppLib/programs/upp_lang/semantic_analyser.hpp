@@ -728,8 +728,6 @@ Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is
 struct Analysis_Pass 
 {
     Workload_Base* origin_workload;
-    bool is_header_reanalysis; // Used by syntax editor
-    Workload_Base* instance_workload; // e.g. for reanalysed headers, this is set..., otherwise 0
 };
 
 struct AST_Info_Key

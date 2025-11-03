@@ -3436,10 +3436,6 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 
 	// Generate pass-string
 	Workload_Base* workload = pass->origin_workload;
-	if (pass->is_header_reanalysis && pass->instance_workload != nullptr) {
-		workload = pass->instance_workload;
-		out_is_poly = true;
-	}
 
 	int polymorphic_depth = 0;
 	int set_poly_value_count = 0;
@@ -3459,6 +3455,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			auto poly_value = active_pattern_values[i];
 
 			String* name = workload->active_pattern_variable_states_origin->pattern_variables[i].name;
+			assert(name != nullptr, "");
 			if (name == nullptr) {
 				panic("Should not happen");
 				continue;
@@ -6633,7 +6630,7 @@ void syntax_editor_update(bool& animations_running)
 		for (int i = 0; i < editor.tabs.size; i++) {
 			source_code_sanity_check(editor.tabs[i].code);
 		}
-			);
+	);
 
 	// Update particles
 	{
@@ -7352,17 +7349,25 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		after_text = "Function";
 		// type = upcast(symbol->options.function->signature);
 		break;
-	case Symbol_Type::PARAMETER: {
+	case Symbol_Type::PARAMETER: 
+	{
 		after_text = "Parameter";
-		if (pass == nullptr) {
-			type = symbol->options.parameter.function->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].datatype;
+		auto& param_info = symbol->options.parameter;
+		if (pass != nullptr)
+		{
+			auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
+			if (progress != nullptr)
+			{
+				if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+					type = progress->poly_function.poly_header->signature->parameters[param_info.index_in_polymorphic_signature].datatype;
+				}
+				else if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+					type = progress->function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
+				}
+			}
 		}
-		else if (pass->is_header_reanalysis && pass->instance_workload != nullptr) {
-			auto progress = analysis_workload_try_get_function_progress(pass->instance_workload);
-			type = progress->function->signature->parameters[symbol->options.parameter.index_in_non_polymorphic_signature].datatype;
-		}
-		else {
-			type = syntax_editor.analysis_data->type_system.predefined_types.unknown_type;
+		if (type == nullptr) {
+			type = param_info.function->function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
 		}
 		break;
 	}
@@ -7372,12 +7377,6 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		if (pass == nullptr) break;
 
 		Workload_Base* lookup_workload = pass->origin_workload;
-		if (pass->is_header_reanalysis) {
-			if (pass->instance_workload == nullptr) {
-				break;
-			}
-			lookup_workload = pass->instance_workload;
-		}
 		auto active_pattern_values = 
 			pattern_variable_find_instance_workload(symbol->options.pattern_variable, lookup_workload, true)->active_pattern_variable_states;
 		assert(active_pattern_values.data != nullptr, "");
@@ -7387,7 +7386,10 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		{
 		case Pattern_Variable_State_Type::SET: type = value.options.value.type; break;
 		case Pattern_Variable_State_Type::PATTERN: type = value.options.pattern_type; break;
-		case Pattern_Variable_State_Type::UNSET: type = nullptr; break;
+		case Pattern_Variable_State_Type::UNSET:
+			type = upcast(symbol->options.pattern_variable->pattern_variable_type); 
+			after_text = "Pattern Variable (UNSET)";
+			break;
 		default: panic("");
 		}
 		break;

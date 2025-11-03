@@ -1157,129 +1157,129 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, func-start-instr: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
-        string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-value_type: %s, src-primitive-value_type: %s",
+        string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE:
-        string_append_formated(string, "CAST_FLOAT_DIFFERENT_SIZE    dst: %d, src: %d, dst-primitive-value_type: %s, src-primitive-value_type: %s",
+        string_append_formated(string, "CAST_FLOAT_DIFFERENT_SIZE    dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_FLOAT_INTEGER:
-        string_append_formated(string, "CAST_FLOAT_INTEGER           dst: %d, src: %d, dst-primitive-value_type: %s, src-primitive-value_type: %s",
+        string_append_formated(string, "CAST_FLOAT_INTEGER           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::CAST_INTEGER_FLOAT:
-        string_append_formated(string, "CAST_INTEGER_FLOAT           dst: %d, src: %d, dst-primitive-value_type: %s, src-primitive-value_type: %s",
+        string_append_formated(string, "CAST_INTEGER_FLOAT           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_ADDITION:
-        string_append_formated(string, "BINARY_OP_ADDITION           dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_ADDITION           dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_SUBTRACTION:
-        string_append_formated(string, "BINARY_OP_SUBTRACTION        dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_SUBTRACTION        dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_MULTIPLICATION:
-        string_append_formated(string, "BINARY_OP_MULTIPLICATION     dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_MULTIPLICATION     dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_DIVISION:
-        string_append_formated(string, "BINARY_OP_DIVISION           dst %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_DIVISION           dst %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_EQUAL:
-        string_append_formated(string, "BINARY_OP_EQUAL              dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_EQUAL              dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_NOT_EQUAL:
-        string_append_formated(string, "BINARY_OP_NOT_EQUAL          dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_NOT_EQUAL          dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_GREATER_THAN:
-        string_append_formated(string, "BINARY_OP_GREATER_THAN       dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_GREATER_THAN       dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_GREATER_EQUAL:
-        string_append_formated(string, "BINARY_OP_GREATER_EQUAL      dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_GREATER_EQUAL      dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_LESS_THAN:
-        string_append_formated(string, "BINARY_OP_LESS_THAN          dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_LESS_THAN          dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_LESS_EQUAL:
-        string_append_formated(string, "BINARY_OP_LESS_EQUAL         dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_LESS_EQUAL         dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_MODULO:
-        string_append_formated(string, "BINARY_OP_MODULO             dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_MODULO             dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_AND:
-        string_append_formated(string, "BINARY_OP_AND                dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_AND                dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_OR:
-        string_append_formated(string, "BINARY_OP_OR                 dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_OR                 dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
 
     case Instruction_Type::BINARY_OP_BITWISE_AND:
-        string_append_formated(string, "BINARY_BITWISE_AND           dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_BITWISE_AND           dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_BITWISE_OR:
-        string_append_formated(string, "BINARY_OP_BITWISE_OR         dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_BITWISE_OR         dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_BITWISE_XOR:
-        string_append_formated(string, "BINARY_OP_BITWISE_XOR        dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_BITWISE_XOR        dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
-        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_LEFT dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_LEFT dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
     case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
-        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_RIGHT dst: %d, left: %d, right: %d, value_type: %s",
+        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_RIGHT dst: %d, left: %d, right: %d, type: %s",
             i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;
 
     case Instruction_Type::UNARY_OP_BITWISE_NOT:
-        string_append_formated(string, "UNARY_OP_BITWISE_NOT         dst: %d, src: %d, value_type: %s",
+        string_append_formated(string, "UNARY_OP_BITWISE_NOT         dst: %d, src: %d, type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;
     case Instruction_Type::UNARY_OP_NEGATE:
-        string_append_formated(string, "UNARY_OP_NEGATE              dst: %d, src: %d, value_type: %s",
+        string_append_formated(string, "UNARY_OP_NEGATE              dst: %d, src: %d, type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;
     case Instruction_Type::UNARY_OP_NOT:
-        string_append_formated(string, "UNARY_OP_NOT                 dst: %d, src: %d, value_type: %s",
+        string_append_formated(string, "UNARY_OP_NOT                 dst: %d, src: %d, type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;

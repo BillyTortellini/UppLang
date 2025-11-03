@@ -121,7 +121,7 @@ void struct_memory_set_padding_to_zero_recursive(
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
     auto& types = compiler.analysis_data->type_system.predefined_types;
-    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of value_type?");
+    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
 
     signature = datatype_get_non_const_type(signature); // We don't care for constants here
@@ -223,10 +223,10 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         {
             Upp_Any any = *(Upp_Any*)memory;
             if (any.type.index >= (u32)compiler.analysis_data->type_system.types.size) {
-                result = constant_pool_result_make_error("Found any value_type with invalid value_type-handle index");
+                result = constant_pool_result_make_error("Found any type with invalid type-handle index");
                 return;
             }
-            result = constant_pool_result_make_error("Value contains any-value_type, which is the same as a pointer");
+            result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
             return;
         }
         else if (types_are_equal(signature, types.c_string))
@@ -274,7 +274,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
 {
     Constant_Pool& pool = compiler.analysis_data->constant_pool;
     signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
-    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of value_type?");
+    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
     assert(memory_info.size == bytes.size, "Array/data must fit into buffer!");
 

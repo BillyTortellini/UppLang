@@ -926,7 +926,7 @@ namespace Parser
                 result->type = Extern_Type::STRUCT;
             }
             else {
-                log_error_range_offset_with_start("Expected extern-value_type after extern keyword!", start, 1);
+                log_error_range_offset_with_start("Expected extern-type after extern keyword!", start, 1);
                 result->type = Extern_Type::INVALID;
                 return result;
             }
