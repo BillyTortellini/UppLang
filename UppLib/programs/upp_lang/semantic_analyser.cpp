@@ -3834,13 +3834,16 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 					poly_resolve.match_priority = 0;
 					poly_resolve.match_success = true;
 
-					Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
-					if (!try_updating_type_mods(cast_info, candidate.active_type->mods)) {
+					Expression_Cast_Info cast_info = cast_info_make_empty(given_type, false);
+					if (try_updating_type_mods(cast_info, match_to_type->mods)) {
+						given_type = cast_info.result_type;
+					}
+					else {
 						poly_resolve.match_success = false;
 						continue;
 					}
 
-					polymorphic_overload_resolve_match_recursive(candidate.active_type, cast_info.result_type, poly_resolve);
+					polymorphic_overload_resolve_match_recursive(match_to_type, given_type, poly_resolve);
 					candidate.poly_type_matches = poly_resolve.match_success;
 					candidate.poly_type_priority = poly_resolve.match_priority;
 					if (candidate.poly_type_matches)
@@ -3861,7 +3864,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 				// Check if type-mods update is possible
 				if (types_are_equal(given_type->base_type, match_to_type->base_type)) 
 				{
-					Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
+					Expression_Cast_Info cast_info = cast_info_make_empty(given_type, false);
 					if (try_updating_type_mods(cast_info, match_to_type->mods)) {
 						candidate.overloading_arg_const_compatible = cast_info.deref_count == 0;
 						if (candidate.overloading_arg_const_compatible) {
@@ -4283,7 +4286,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 	}
 
 	// Analyse default value (With global symbol access)
-	parameter.required = true;
+	parameter.required = false;
 	parameter.default_value_expr = parameter_node->default_value.value;
 	parameter.default_value_pass = workload->current_pass;
 	RESTORE_ON_SCOPE_EXIT(workload->symbol_access_level, Symbol_Access_Level::GLOBAL);

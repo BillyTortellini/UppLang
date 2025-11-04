@@ -1,5 +1,20 @@
 
 
+TODO:
+ - Fix panics
+    006: default params not working?
+    039 parse error?
+    054_19
+    054_06
+ - Implement all unavaiable features:
+    * Struct initializer
+    * Get-overload
+    * #instanciate
+    * Context operations
+ - Fix textcases
+
+
+
 TEST NEW POLYMORPHISM:
 ----------------------
  * Comptime parameters

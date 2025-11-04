@@ -6,7 +6,10 @@ add :: (a: float, b: float) => float
 	return a + b
 
 add :: (a: $T, b: T) => T
-	return a + b
+	return a + b + 3
+
+in_range :: (value: float, expected: float, epsilon: float) => bool
+	return value >= expected - epsilon && value <= expected + epsilon
 
 Node :: struct
 	value: int
@@ -27,8 +30,9 @@ main :: ()
 	
 	a := add(5, 10)
 	assert(type_of(a) == int)
-	f := add(5.5, 10)
+	f := add(5.5, 10.3)
 	assert(type_of(f) == float)
+	assert(in_range(f, 15.8, 0.001))
 	
 	x: Upp~u64 = 5
 	z := add(x, x)
