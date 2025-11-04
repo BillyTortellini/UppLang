@@ -106,6 +106,8 @@ namespace AST
         String* file_name;
     };
 
+    // Note: #get_overload can also specify return_type, in which case the id is set appropriately (see parser.cpp)
+    //      e.g. #get_overload foo(a = int, b = float) => int
     struct Get_Overload_Argument
     {
         Node base;

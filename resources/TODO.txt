@@ -1,12 +1,22 @@
 
+Instanciate Upgrades:
+    Not all parameters need to be specified, we can see if we get a struct-pattern or error...
+    If we specify a comptime parameter, calculate comptime value, otherwise specify datatype
+        #instanciate foo(C = 5, node = Node(int))
+    remove must_not_be_set maybe?
+    Allow return type specification
+        #instanciate foo() => Node(int, float)
 
 TODO:
  - Implement all unavailable features:
-    * Get-overload
     * #instanciate
     * Context operations
  - Parameters with $T are automatically types
  - Fix textcases
+ - Write testcases
+    Polymorphism
+    #get_overload
+    #instanciate
 
 
 
@@ -30,14 +40,7 @@ TEST NEW POLYMORPHISM:
 Coloring of apply_unop not how I want it to beeeee
 
 TODO Future sub-tasks:
- function-pointer equals...
- Think about anonymous structs/lambdas/bakes in header, what to do there?
-    --> Only instance-workloads and parent workload inherit the poly-values, so this isn't a problemo
- Check if struct pattern variable states are stored correctly (Ownership)
- Expression_Info_set_type does a weird thing with struct-templates, maybe remove?
  Symbol_Access_Type::Parameter should probably not be needed anymore...
- Base analysis could figure out the base-variable types by going through matching trees, otherwise use unknown...
-    --> this is hard and cannot contain all cases, so probably not
 
 Idea notes:
     Syntax-Editor Debug-Values could use analyse-comptime value for values...
@@ -64,16 +67,43 @@ Vocabulary:
 
 Notes and Improvements (Reading through all code again and thinking about the design problems:)
 -----------------------------------------------------------------------------------------------
-
 Make use of Dot-Call -> syntax instead of .
     Expression_Result_Type::Dot_Call not needed
     Argument-Infos with dynamic array not needed
-Operator_Context:
-    Instead of cast-options, operator context could handle this...
+
+Upp_Function/Upp_Program and removal of Cluster-Workloads:
+    Combine Modtree_Function, Function_Progress, IR_Function, Bytecode_Function, C_Function
+        into one thing.
+    Struct-Dependencies can be handled by IR-Code
+    Removal of cluster-dependencies by having the bytecode-interpreter have different functions
+
+Operator-Context:
+    If we add more parameters instead of getting everything out of the passed function,
+            like add_dot_call(name, type, function)
+            add_cast(from, to, function)
+        dependencies would be on the types, not on something else.
+        This could also use pattern-matching for polymorphism
+            e.g. add_cast(Node(_), add) --> Adds add to Polymorphic struct Node type...
+        Would allow us to have a lot more granularity with our stuff...
+    Operator-Context could handle basic casts?
+    Importing should not copy all the things over, instead use structure like Symbol-Tables and fallback to defaults if something is not found
+
 Get_Overload:
     also some special id, e.g. __return_type could also be used to set return type?
     #get_overload could also work with just parameter names, e.g.
         #get_overload add(a, b, c)
+
+Module-Analysis Update:
+    Instead of having a complicated system for import resolution, we restrict it:
+        1. First run all file-imports
+        2. Analyse all ~* and ~** BUT! only use file-imports and parent symbol-table (To avoid dependency loops)
+        3. Analyse all normal imports
+    Only one workload, no more event workloads
+
+Symbol aliasing should kinda be handled somehow...
+    import X as B
+    B :: X // Kinda the same thing, no?
+
 Const inferred definitions:
     Adding const in front of a definition makes it const...
         const x, y, z := 15
@@ -81,26 +111,20 @@ Const inferred definitions:
         foo :: (mut a: int)
     x: const int = 15
     x: int = 15
+Auto-Pointer handling
+    Disable auto-pointers when * or & are used
+    Inferred definitions and assignments should be thought over
+Casts:
+    After casts other casts should not be valid...
+    Can we replace * and & operations with casts, as they aren't needed as much anymore?
+    Do we even need cast_pointer with the previous changes? Or is cast to address usually enough?
+
 I don't really like the name polymorphic,
     I kinda like parameterized generic more than polymorphic.
     Generic_Struct
     Generic_Function
-Symbol Alias handling:
-    import X as B
-    B :: X // Kinda the same thing, no?
-Import order restrictions for ~** suck
-    Instead of having a complicated system for import resolution,
-    maybe just disallow ~** during import resolution
-Auto-Pointer handling
-    Disable auto-pointers when * or & are used
-    Inferred definitions and assignments should be thought over
 Datatypes/Type-System:
     Removing the sub-types/type-mods things would be nice
-Struct/Datatype-Size dependencies are still weird I think, not quite schure why
-    I actually think this is better now than it ever was
-Operator-Context:
-    Importing should not copy all the things over, instead use structure like Symbol-Tables,
-    and have default values if something is not found
 Global-Handling in Bakes?
 AST/Parsing
     Switch syntax with 2 indentations, case variable definition
@@ -110,7 +134,7 @@ AST/Parsing
     Editor-Analysis Info is kinda complicated, which is yet another mapping
 Features:
     Do I need optional values?
-    new/delete operator
+    new/delete operator/allocator? --> probably just hardcoded function
 Source_Code / Code-History:
     Sparse Array_List should be used for Line-Bundles
     Comment and Indent handling should probably be different
@@ -126,29 +150,8 @@ Parser:
 Syntax-Editor:
     Holy sheet there's a lot of stuff there...
     But I think I'm fine with most of the things...
-Semantic_Analyser:
-    Upp_Function which combines Function_Progress, all workloads and other stuff
-    Operator Context
-        Custom syntax for operators, not the weird function thing for everything...
-        Workload dependencies could be more granular, e.g. only search for operators when necessary + by name if known.
-            e.g. dot-calls/as_member_access
-
-        Imports could do the same thing as symbol-table, and have default values if nothing is found.
-    Module_Analysis:
-        Import-Resolve + events seems overkill, maybe we can have a simpler Symbol-Rule for imports that
-            makes this easier
 IR-Generator:
     IR-Data Access with destination is confusing for me
-Casts:
-    After casts other casts should not be valid...
-    Can we replace * and & operations with casts, as they aren't needed as much anymore?
-    Do we even need cast_pointer with the previous changes? Or is cast to address usually enough?
-Operator-Context:
-    If we add more parameters instead of getting everything out of the passed function,
-        like add_dot_call(name, type, function)
-        add_cast(from, to, function)
-        dependencies would be on the types, not on something else.
-        This could also use pattern-matching for polymorphism
 
 
 

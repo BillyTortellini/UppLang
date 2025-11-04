@@ -2122,6 +2122,16 @@ namespace Parser
                 dynamic_array_push_back(&expr->options.get_overload.arguments, arg);
             };
             parse_list_of_items(upcast(result), parse_overload_argument, add_to_expr, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, true);
+
+            if (test_operator(Operator::ARROW)) {
+                AST::Get_Overload_Argument* return_type_argument = allocate_base<AST::Get_Overload_Argument>(upcast(result), AST::Node_Type::GET_OVERLOAD_ARGUMENT);
+                advance_token();
+                return_type_argument->id = compiler.identifier_pool.predefined_ids.return_type_name;
+                return_type_argument->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(return_type_argument)));
+                node_finalize_range(upcast(return_type_argument));
+                dynamic_array_push_back(&result->options.get_overload.arguments, return_type_argument);
+            }
+
             PARSE_SUCCESS(result);
         }
 

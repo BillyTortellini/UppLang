@@ -3313,22 +3313,33 @@ struct Overload_Candidate
 	bool poly_match_requires_type_mods_change;
 };
 
-struct Polymorphic_Overload_Resolve
+struct Pattern_Checker
 {
 	DynSet<Datatype*> visited;
 	bool match_success;
-	int match_priority; // Array/Slice/Struct-Instances have priority over 'normal' Pointer/Templates ($T and *$T)
+	// Array/Slice/Struct-Instances have priority over 'normal' Pointer/Templates ($T and *$T)
+	//	here we could also store something like the maximum depth of the match
+	int match_priority; 
 };
 
-void polymorphic_overload_resolve_match_recursive(Datatype* pattern_type, Datatype* match_against, Polymorphic_Overload_Resolve& resolve)
+Pattern_Checker pattern_checker_create(Arena* arena)
+{
+	Pattern_Checker result;
+	result.visited = DynSet<Datatype*>::create_pointer(arena, 0);
+	result.match_priority = 0;
+	result.match_success = false;
+	return result;
+}
+
+void pattern_checker_check_if_type_matches_recursive(Pattern_Checker& checker, Datatype* pattern_type, Datatype* match_against)
 {
 	if (!pattern_type->contains_pattern) {
 		if (!types_are_equal(pattern_type, match_against)) {
-			resolve.match_success = false;
+			checker.match_success = false;
 		}
 		return;
 	}
-	if (!resolve.visited.insert(pattern_type)) {
+	if (!checker.visited.insert(pattern_type)) {
 		return;
 	}
 
@@ -3342,33 +3353,33 @@ void polymorphic_overload_resolve_match_recursive(Datatype* pattern_type, Dataty
 		// Check for errors
 		auto struct_pattern = downcast<Datatype_Struct_Pattern>(pattern_type);
 		if (match_against->type != Datatype_Type::STRUCT) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 		Datatype_Struct* struct_type = downcast<Datatype_Struct>(match_against);
 
 		if (struct_type->workload == 0) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 		if (struct_type->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 		auto& struct_instance = struct_type->workload->polymorphic.instance;
 		if (struct_instance.parent->poly_header != struct_pattern->instance->header) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 
 		// Note: Here more advanced methods for overload resolution could compare arguments, but we don't do that now
-		resolve.match_priority = math_maximum(resolve.match_priority, 3);
+		checker.match_priority = math_maximum(checker.match_priority, 3);
 		return;
 	}
 
 	// Exit early if expected types don't match
 	if (pattern_type->type != match_against->type) {
-		resolve.match_success = false;
+		checker.match_success = false;
 		return;
 	}
 
@@ -3379,47 +3390,47 @@ void polymorphic_overload_resolve_match_recursive(Datatype* pattern_type, Dataty
 		auto poly_array = downcast<Datatype_Array>(pattern_type);
 
 		if (!normal_array->count_known) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return; // Something has to be unknown/wrong for this to be true, so don't consider this candidate
 		}
 
 		// Check if we can match array size
 		// Note: If we have a polymorphic count, it shouldn't matter what type it is
 		if (poly_array->count_known && poly_array->element_count != normal_array->element_count) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 
-		resolve.match_priority = math_maximum(resolve.match_priority, 2);
+		checker.match_priority = math_maximum(checker.match_priority, 2);
 		// Continue matching element type
-		polymorphic_overload_resolve_match_recursive(
-			downcast<Datatype_Array>(pattern_type)->element_type, downcast<Datatype_Array>(match_against)->element_type, resolve
+		pattern_checker_check_if_type_matches_recursive(
+			checker, downcast<Datatype_Array>(pattern_type)->element_type, downcast<Datatype_Array>(match_against)->element_type
 		);
 		return;
 	}
 	case Datatype_Type::OPTIONAL_TYPE: {
-		resolve.match_priority = math_maximum(resolve.match_priority, 1);
-		polymorphic_overload_resolve_match_recursive(
-			downcast<Datatype_Optional>(pattern_type)->child_type, downcast<Datatype_Optional>(match_against)->child_type, resolve
+		checker.match_priority = math_maximum(checker.match_priority, 1);
+		pattern_checker_check_if_type_matches_recursive(
+			checker, downcast<Datatype_Optional>(pattern_type)->child_type, downcast<Datatype_Optional>(match_against)->child_type
 		);
 		return;
 	}
 	case Datatype_Type::SLICE: {
-		resolve.match_priority = math_maximum(resolve.match_priority, 1);
-		polymorphic_overload_resolve_match_recursive(
-			downcast<Datatype_Slice>(pattern_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type, resolve
+		checker.match_priority = math_maximum(checker.match_priority, 1);
+		pattern_checker_check_if_type_matches_recursive(
+			checker, downcast<Datatype_Slice>(pattern_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type
 		);
 		return;
 	}
 	case Datatype_Type::POINTER: {
-		polymorphic_overload_resolve_match_recursive(
-			downcast<Datatype_Pointer>(pattern_type)->element_type, downcast<Datatype_Pointer>(match_against)->element_type, resolve
+		pattern_checker_check_if_type_matches_recursive(
+			checker, downcast<Datatype_Pointer>(pattern_type)->element_type, downcast<Datatype_Pointer>(match_against)->element_type
 		);
 		return;
 	}
 	case Datatype_Type::CONSTANT: {
-		polymorphic_overload_resolve_match_recursive(
-			downcast<Datatype_Constant>(pattern_type)->element_type, downcast<Datatype_Constant>(match_against)->element_type, resolve
+		pattern_checker_check_if_type_matches_recursive(
+			checker, downcast<Datatype_Constant>(pattern_type)->element_type, downcast<Datatype_Constant>(match_against)->element_type
 		);
 		return;
 	}
@@ -3429,36 +3440,40 @@ void polymorphic_overload_resolve_match_recursive(Datatype* pattern_type, Dataty
 		auto subtype_against = downcast<Datatype_Subtype>(match_against);
 
 		if (subtype_poly->subtype_index != subtype_against->subtype_index || subtype_poly->subtype_name != subtype_against->subtype_name) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
-		polymorphic_overload_resolve_match_recursive(subtype_poly->base_type, subtype_against->base_type, resolve);
+		pattern_checker_check_if_type_matches_recursive(
+			checker, subtype_poly->base_type, subtype_against->base_type
+		);
 		return;
 	}
 	case Datatype_Type::STRUCT: {
 		auto a = downcast<Datatype_Struct>(pattern_type);
 		auto b = downcast<Datatype_Struct>(match_against);
 		// I don't quite understand when this case should happen, but in my mind this is always false
-		resolve.match_success = false;
+		checker.match_success = false;
 		return;
 	}
 	case Datatype_Type::FUNCTION_POINTER: 
 	{
-		resolve.match_priority = math_maximum(resolve.match_priority, 2);
+		checker.match_priority = math_maximum(checker.match_priority, 2);
 		auto ap = downcast<Datatype_Function_Pointer>(pattern_type);
 		auto bp = downcast<Datatype_Function_Pointer>(match_against);
 		if (ap->is_optional != bp->is_optional) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 		auto a = ap->signature;
 		auto b = bp->signature;
 		if (a->parameters.size != b->parameters.size || a->return_type_index != b->return_type_index) {
-			resolve.match_success = false;
+			checker.match_success = false;
 			return;
 		}
 		for (int i = 0; i < a->parameters.size; i++) {
-			polymorphic_overload_resolve_match_recursive(a->parameters[i].datatype, b->parameters[i].datatype, resolve);
+			pattern_checker_check_if_type_matches_recursive(
+				checker, a->parameters[i].datatype, b->parameters[i].datatype
+			);
 		}
 		return;
 	}
@@ -3472,6 +3487,15 @@ void polymorphic_overload_resolve_match_recursive(Datatype* pattern_type, Dataty
 
 	panic("");
 	return;
+}
+
+bool pattern_checker_check_if_type_matches(Pattern_Checker& checker, Datatype* pattern_type, Datatype* match_against)
+{
+	checker.visited.reset();
+	checker.match_priority = 0;
+	checker.match_success = true;
+	pattern_checker_check_if_type_matches_recursive(checker, pattern_type, match_against);
+	return checker.match_success;
 }
 
 // Returns true if successfull
@@ -3767,8 +3791,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	DynArray<int> analysed_argument_indices = DynArray<int>::create(&scratch_arena);
 	if (candidates.size > 1)
 	{
-		Polymorphic_Overload_Resolve poly_resolve;
-		poly_resolve.visited = DynSet<Datatype*>::create_pointer(&scratch_arena, 4);
+		Pattern_Checker pattern_checker = pattern_checker_create(&scratch_arena);
 
 		// Match arguments for overloads and remove candidates that don't match
 		if (candidates.size > 1)
@@ -3829,23 +3852,14 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 				// Special code path for polymorhpic values (Do pattern matching)
 				if (match_to_type->contains_pattern)
 				{
-					// Do poly resolve here
-					poly_resolve.visited.reset();
-					poly_resolve.match_priority = 0;
-					poly_resolve.match_success = true;
-
 					Expression_Cast_Info cast_info = cast_info_make_empty(given_type, false);
 					if (try_updating_type_mods(cast_info, match_to_type->mods)) {
 						given_type = cast_info.result_type;
 					}
-					else {
-						poly_resolve.match_success = false;
-						continue;
-					}
 
-					polymorphic_overload_resolve_match_recursive(match_to_type, given_type, poly_resolve);
-					candidate.poly_type_matches = poly_resolve.match_success;
-					candidate.poly_type_priority = poly_resolve.match_priority;
+					pattern_checker_check_if_type_matches(pattern_checker, match_to_type, given_type);
+					candidate.poly_type_matches = pattern_checker.match_success;
+					candidate.poly_type_priority = pattern_checker.match_priority;
 					if (candidate.poly_type_matches)
 					{
 						candidate.poly_match_requires_type_mods_change = cast_info.deref_count != 0;
@@ -7763,17 +7777,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Get overload works by specifying the types of certain parameters.
 		//	It returns the function where all specified param-types match
 		// e.g. #get_overload add(a=int, b=int)
-		// Note: all argument names need to be specified here
+		// Note: argument names are required, but types are not required
 
 		auto& get_overload = expr->options.get_overload;
-
-		// Find all overload symbols
-		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
-		SCOPE_EXIT(dynamic_array_destroy(&symbols));
-		// Overload.path is nullptr only if there was a parsing error, so we don't need error-reporting here
-		if (get_overload.path.available) {
-			path_lookup_resolve(get_overload.path.value, symbols);
-		}
 
 		// Analyse arguments
 		auto& args = get_overload.arguments;
@@ -7784,7 +7790,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		{
 			auto arg = args[i];
 			if (arg->type_expr.available) {
-				arg_types[i] = semantic_analyser_analyse_expression_type(arg->type_expr.value);
+				arg_types[i] = semantic_analyser_analyse_expression_type(arg->type_expr.value, true);
 				if (datatype_is_unknown(arg_types[i])) {
 					encountered_unknown = true;
 					arg_types[i] = nullptr;
@@ -7795,7 +7801,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 		}
 
-		if (!get_overload.path.available) {
+		// Find all overload symbols
+		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
+		SCOPE_EXIT(dynamic_array_destroy(&symbols));
+		// Overload.path is nullptr only if there was a parsing error, so we don't need error-reporting here
+		if (get_overload.path.available) {
+			path_lookup_resolve(get_overload.path.value, symbols);
+		}
+		else {
 			semantic_analyser_set_error_flag(true);
 			EXIT_ERROR(types.unknown_type);
 		}
@@ -7804,11 +7817,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		// Remove all overloads where types don't match
-		// Also prefer overload where all parameters are matched, e.g.
-		//	add :: (a: int, b: int)
-		//  add :: (a: int, b: int, c: int = 5)
-		//  #get_overload add(a = int, b = int) --> returns first function
+		// Filter overloads (And prefer overloads where all parameters are specified)
+		Arena* scratch_arena = &semantic_analyser.current_workload->scratch_arena;
+		Pattern_Checker pattern_checker = pattern_checker_create(scratch_arena);
 		Expression_Info result_info = expression_info_make_empty(expression_context_make_unknown());
 		bool all_parameter_match_found = false;
 		for (int i = 0; i < symbols.size; i++)
@@ -7816,92 +7827,77 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			auto symbol = symbols[i];
 			Expression_Info info = analyse_symbol_as_expression(symbol, expression_context_make_unknown(), get_overload.path.value->last);
 
+			// Get signature
 			bool remove_symbol = false;
-			bool all_parameter_matched = false;
-			switch (info.result_type)
-			{
-			case Expression_Result_Type::FUNCTION:
-			{
-				if (get_overload.is_poly) {
-					remove_symbol = true;
-					break;
-				}
-
-				auto& function = info.options.function;
-				auto parameters = function->signature->parameters;
-				all_parameter_matched = parameters.size == args.size;
-
-				// Check if function is going to get filtered...
-				for (int j = 0; j < args.size && !remove_symbol; j++)
-				{
-					String* name = args[j]->id;
-					Datatype* arg_type = arg_types[j];
-
-					bool found = false;
-					for (int k = 0; k < parameters.size; k++) {
-						auto& param = parameters[k];
-						if (param.name == name) {
-							if (arg_type != nullptr && !types_are_equal(param.datatype, arg_type)) {
-								remove_symbol = true;
-							}
-							found = true;
-							break;
-						}
-					}
-					if (!found) {
-						remove_symbol = true;
-					}
-				}
-				break;
+			Call_Signature* signature = nullptr;
+			if (info.result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION) {
+				signature = info.options.poly_function.poly_header->signature;
+				remove_symbol = remove_symbol || !get_overload.is_poly;
 			}
-			case Expression_Result_Type::POLYMORPHIC_FUNCTION:
+			else if (info.result_type == Expression_Result_Type::FUNCTION) {
+				signature = info.options.function->signature;
+				remove_symbol = remove_symbol || get_overload.is_poly;
+			}
+			else {
+				// #get_overload only works for polymorphic function and functions
+				remove_symbol = true;
+			}
+
+			// Compare given argument types with parameter types
+			int normal_parameters_matched = 0;
+			for (int j = 0; j < args.size && !remove_symbol; j++)
 			{
-				if (!get_overload.is_poly) {
-					remove_symbol = true;
-					break;
-				}
+				String* name = args[j]->id;
+				Datatype* arg_type = arg_types[j];
 
-				auto& params = info.options.poly_function.poly_header->signature->parameters;
-				int param_match_count = 0;
-				for (int j = 0; j < args.size && !remove_symbol; j++)
-				{
-					String* name = args[j]->id;
-					Datatype* type = arg_types[j];
-
-					bool found = false;
-					for (int k = 0; k < params.size; k++)
-					{
-						auto& param = params[k];
-						if (param.name != name) continue;
-						param_match_count += 1;
-						found = true;
-						if (param.datatype->contains_pattern) {
-							remove_symbol = true; // We currently don't do this, but we should
-						}
-						else if (!types_are_equal(param.datatype, type)) {
-							remove_symbol = true;
-						}
+				// Find parameter with matching name
+				int param_index = -1;
+				for (int k = 0; k < signature->parameters.size; k++) {
+					auto& param = signature->parameters[k];
+					if (param.name == name) {
+						param_index = k;
 						break;
 					}
-
-					if (!found) {
-						remove_symbol = true;
-					}
 				}
 
-				all_parameter_matched = param_match_count == params.size;
-				break;
-			}
-			default: {
-				remove_symbol = true;
-				break;
-			}
+				// Remove overload if it doesn't contain a parameter with given name
+				if (param_index == -1) {
+					remove_symbol = true;
+					break;
+				}
+
+				// Arg-type may be null in #get_overload
+				if (arg_type == nullptr) continue;
+
+				auto& param_info = signature->parameters[param_index];
+				auto param_type = param_info.datatype;
+				if (param_info.requires_named_addressing) { // Cannot check pattern-variable types
+					remove_symbol = true;
+				}
+				else if (arg_type->contains_pattern) {
+					remove_symbol = remove_symbol || !pattern_checker_check_if_type_matches(pattern_checker, arg_type, param_type);
+					normal_parameters_matched += 1;
+				}
+				else {
+					remove_symbol = remove_symbol || !types_are_equal(param_type, arg_type);
+					normal_parameters_matched += 1;
+				}
 			}
 
-			if (all_parameter_match_found && !all_parameter_matched) {
-				remove_symbol = true;
+			// Check if all parameters were matched
+			bool all_parameters_matched = false;
+			if (!remove_symbol && signature != nullptr)
+			{
+				int signature_normal_parameter_count = 0;
+				for (int i = 0; i < signature->parameters.size; i++) {
+					auto& param_info = signature->parameters[i];
+					if (param_info.requires_named_addressing && i != signature->return_type_index) continue;
+					signature_normal_parameter_count += 1;
+				}
+				all_parameters_matched = normal_parameters_matched == signature_normal_parameter_count;
 			}
-			if (remove_symbol) {
+
+			if (remove_symbol || (!all_parameters_matched && all_parameter_match_found)) {
 				dynamic_array_swap_remove(&symbols, i);
 				i -= 1;
 				continue;
@@ -7909,7 +7905,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			// Store result
 			result_info = info;
-			if (!all_parameter_match_found && all_parameter_matched) {
+
+			// Remove all previous results if it is the first time we find an all_parameter match
+			if (!all_parameter_match_found && all_parameters_matched) {
 				all_parameter_match_found = true;
 				dynamic_array_remove_range_ordered(&symbols, 0, i);
 				i = 0;
