@@ -106,7 +106,8 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         auto symbol_disallows_overload = [&](Symbol* symbol) -> bool {
             return symbol->type == Symbol_Type::VARIABLE || 
                 symbol->type == Symbol_Type::VARIABLE_UNDEFINED || 
-                symbol->type == Symbol_Type::PARAMETER ||
+                symbol->type == Symbol_Type::PARAMETER || 
+				symbol->type == Symbol_Type::PATTERN_VARIABLE ||
                 symbol->type == Symbol_Type::GLOBAL;
         };
 

@@ -180,7 +180,7 @@ struct Datatype_Array
     Datatype* element_type;
 
     bool count_known; // False in case of polymorphism (Comptime values) or when Errors occured
-    u64 element_count;
+    usize element_count;
 
     Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
 };
@@ -190,6 +190,7 @@ struct Datatype_Slice {
     Datatype* element_type;
     Struct_Member data_member; // This may be problematic, as struct member doesn't have pointer to struct-content
     Struct_Member size_member;
+    Call_Signature* slice_initializer_signature_cached; // Is null until used
 };
 
 struct Datatype_Pointer 
@@ -239,7 +240,7 @@ struct Struct_Content
     AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
 
     // Content
-    Call_Signature* initializer_signature;
+    Call_Signature* initializer_signature_cached;
     Dynamic_Array<Struct_Member> members;
     Dynamic_Array<Struct_Content*> subtypes;
     Struct_Member tag_member; // Only valid if subtypes aren't empty

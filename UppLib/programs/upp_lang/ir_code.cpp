@@ -1333,7 +1333,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         }
 
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
-        assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER, "");
+        assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER ||
+            call_info->callable.type == Callable_Type::UNION_INITIALIZER, "");
         auto& struct_content = call_info->callable.options.struct_content;
 
         // First, set all tags to correct values

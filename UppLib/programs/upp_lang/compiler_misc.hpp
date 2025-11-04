@@ -255,12 +255,17 @@ struct Call_Signature
     Optional<Datatype*> return_type();
 };
 
+// Note:
+// Callable_Type is mostly used for convenience when generating code, e.g. in IR-Generator.
+// This is why we store struct/union/slice initializer seperately, even though the result-type could be used to 
+// find out which one is currently used
 enum class Callable_Type
 {
     FUNCTION,
     POLY_FUNCTION,
     POLY_STRUCT,
     STRUCT_INITIALIZER,
+    UNION_INITIALIZER,
 	SLICE_INITIALIZER, // Struct-initializer syntax for slices
 	HARDCODED,
     FUNCTION_POINTER,

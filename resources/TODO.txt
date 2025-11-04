@@ -1,16 +1,11 @@
 
 
 TODO:
- - Fix panics
-    006: default params not working?
-    039 parse error?
-    054_19
-    054_06
- - Implement all unavaiable features:
-    * Struct initializer
+ - Implement all unavailable features:
     * Get-overload
     * #instanciate
     * Context operations
+ - Parameters with $T are automatically types
  - Fix textcases
 
 

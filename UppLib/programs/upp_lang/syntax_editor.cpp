@@ -8420,10 +8420,7 @@ void syntax_editor_render()
 				const auto& param_info = call_info->callable.signature->parameters[i];
 				const auto& param_value = call_info->parameter_values[i];
 
-				if (is_dot_call && param_info.requires_named_addressing) {
-					continue;
-				}
-				if (param_value.value_type != Parameter_Value_Type::ARGUMENT_EXPRESSION) {
+				if (param_info.requires_named_addressing || param_info.must_not_be_set) {
 					continue;
 				}
 

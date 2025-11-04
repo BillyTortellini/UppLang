@@ -1370,6 +1370,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
 	result->element_type = element_type;
 	result->data_member = struct_member_make(upcast(type_system_make_pointer(element_type, true)), ids.data, nullptr, 0, nullptr);
 	result->size_member = struct_member_make(upcast(types.usize), ids.size, nullptr, 8, nullptr);
+	result->slice_initializer_signature_cached = nullptr;
 
 	auto& internal_info = type_system_register_type(upcast(result))->options.slice;
 	internal_info.element_type = element_type->type_handle;
@@ -1622,6 +1623,7 @@ Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, 
 	result->is_extern_struct = false;
 
 	result->content.name = name;
+	result->content.initializer_signature_cached = nullptr;
 	result->content.structure = result;
 	result->content.index = &compiler.analysis_data->type_system.subtype_base_index;
 	result->content.members = dynamic_array_create<Struct_Member>();
@@ -1660,6 +1662,7 @@ Struct_Content* struct_add_subtype(Struct_Content* content, String* id, AST::Nod
 	Struct_Content* subtype = new Struct_Content;
 	subtype->members = dynamic_array_create<Struct_Member>();
 	subtype->subtypes = dynamic_array_create<Struct_Content*>();
+	subtype->initializer_signature_cached = nullptr;
 	subtype->name = id;
 	subtype->tag_member = struct_member_make(
 		compiler.analysis_data->type_system.predefined_types.unknown_type, 

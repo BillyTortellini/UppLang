@@ -1,10 +1,11 @@
+import Upp~usize
 
-bar::(a:int,b:int,c:[5]*int)
+bar :: (a: int, b: int, c: [5]*int)
 	
 
-foo::(function:(a:T,b:$T,c:[C]*T),$C:int)=>int
-	return 5+3*C
-	
-main::()
-	x:=foo(bar,5)
-	assert(x==20)
+foo :: (function: (a: T, b: $T, c: [C]*T), $C: usize) => int
+	return 5 + 3 * cast{int} C
+
+main :: ()
+	x := foo(bar, 5)
+	assert(x == 20)
