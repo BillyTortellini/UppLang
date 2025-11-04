@@ -242,7 +242,7 @@ struct DynSet
 		if (sonding_increment % entries.size == 0) { // Must not be null, otherwise we wouldn't reach all element entries
 			sonding_increment = 87178291199ull; // This is a large prime not on the list of hashtable-sizes
 		}
-		return (hash_value + sonding_index * hash_value) % entries.size;
+		return (hash_value + sonding_index * sonding_increment) % entries.size;
 	}
 
 	bool insert_internal(T& value, u64 value_hash)

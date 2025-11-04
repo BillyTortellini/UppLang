@@ -1836,16 +1836,6 @@ void expression_info_set_type(Expression_Info* info, Datatype* type)
 	info->cast_info.initial_type = info->cast_info.result_type;
 	info->cast_info.initial_value_is_temporary = true;
 	info->cast_info.result_value_is_temporary = true;
-
-	if (type->type == Datatype_Type::STRUCT) {
-		auto s = downcast<Datatype_Struct>(type);
-		if (s->workload != 0) {
-			if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-				info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
-				info->options.polymorphic_struct = s->workload->polymorphic.base;
-			}
-		}
-	}
 }
 
 void expression_info_set_polymorphic_pattern(Expression_Info* info, Datatype* pattern_type)
@@ -1881,6 +1871,18 @@ void expression_info_set_polymorphic_function(Expression_Info* info, Poly_Functi
 	info->result_type = Expression_Result_Type::POLYMORPHIC_FUNCTION;
 	info->is_valid = true;
 	info->options.poly_function = poly_function;
+	info->cast_info.result_type = types.invalid_type; 
+	info->cast_info.initial_type = types.invalid_type;
+	info->cast_info.initial_value_is_temporary = true;
+	info->cast_info.result_value_is_temporary = true;
+}
+
+void expression_info_set_polymorphic_struct(Expression_Info* info, Workload_Structure_Polymorphic* poly_struct_workload) 
+{
+	auto& types = compiler.analysis_data->type_system.predefined_types;
+	info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
+	info->is_valid = true;
+	info->options.polymorphic_struct = poly_struct_workload;
 	info->cast_info.result_type = types.invalid_type; 
 	info->cast_info.initial_type = types.invalid_type;
 	info->cast_info.initial_value_is_temporary = true;
@@ -3878,7 +3880,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 				// Check if cast is possible
 				{
 					Expression_Cast_Info cast_info = semantic_analyser_check_if_cast_possible(
-						false, arg_type, given_type, Cast_Mode::IMPLICIT
+						false, given_type, match_to_type, Cast_Mode::IMPLICIT
 					);
 					if (cast_info.cast_type != Cast_Type::INVALID) {
 						candidate.overloading_arg_can_be_cast = true;
@@ -7009,7 +7011,21 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 		expression_info_set_value(&result, symbol->options.global->type, false);
 		return result;
 	}
-	case Symbol_Type::TYPE: {
+	case Symbol_Type::TYPE: 
+	{
+		// Note: Polymorphic structs are also stored as symbol_type::type, but
+		//	they have a unique expression_result_type, so we need special handling here
+		auto datatype = symbol->options.type;
+		if (datatype->type == Datatype_Type::STRUCT) {
+			auto s = downcast<Datatype_Struct>(datatype);
+			if (s->workload != 0) {
+				if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+					expression_info_set_polymorphic_struct(&result, s->workload->polymorphic.base);
+					return result;
+				}
+			}
+		}
+
 		expression_info_set_type(&result, symbol->options.type);
 		return result;
 	}
@@ -8298,10 +8314,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		// Analyse size expression (Which may be polymorhic)
 		analyse_index_accept_all_ints_as_u64(array_node.size_expr, true);
-		auto info = get_info(array_node.size_expr);
-		if (info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN)
+		auto size_info = get_info(array_node.size_expr);
+		if (size_info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN)
 		{
-			auto pattern_type = info->options.polymorphic_pattern;
+			auto pattern_type = size_info->options.polymorphic_pattern;
 			if (pattern_type->type != Datatype_Type::PATTERN_VARIABLE) {
 				log_semantic_error("Array-Size does not take pattern-type-tree, only single pattern values", expr, Parser::Section::ENCLOSURE);
 				EXIT_TYPE_OR_POLY(upcast(type_system_make_array(element_type, false, 1, nullptr)))
