@@ -56,6 +56,7 @@ void* Arena::allocate_raw(usize size, u32 alignment)
 
 bool Arena::resize(void* memory, usize old_size, usize new_size)
 {
+	assert(memory != nullptr, "");
 	usize address = (usize)memory;
 	// Check if address was last allocation
 	if (address + old_size != (usize)next) return false;
@@ -177,7 +178,7 @@ static u64 prime_values_power_2_and_between[] = {
 
 u64 find_next_suitable_prime_hashset_size(u64 value)
 {
-	if (value <= 3) return 3;
+	if (value <= 1) return 1;
 	u8 set_bit = integer_highest_set_bit_index(value);
 	int search_index = set_bit * 2;
 	while (true)

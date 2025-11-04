@@ -92,6 +92,11 @@ struct DynArray
 		usize new_size = math_maximum(requested_size, 
 			(usize) math_maximum((buffer.size * 3) / 2 + 1, 128 / (int) sizeof(T))); // Min-buffer size in bytes is 128
 
+		if (buffer.data == nullptr) {
+			buffer = arena->allocate_array<T>((int) new_size);
+			return;
+		}
+
 		// Check if resize possible
 		if (arena->resize(buffer.data, buffer.size * sizeof(T), new_size * sizeof(T))) {
 			buffer.size = (int) new_size;
@@ -100,9 +105,7 @@ struct DynArray
 
 		// Otherwise create new buffer and move data
 		Array<T> new_buffer = arena->allocate_array<T>((int) new_size);
-		if (buffer.data != nullptr) {
-			memory_copy(new_buffer.data, buffer.data, buffer.size * sizeof(T));
-		}
+		memory_copy(new_buffer.data, buffer.data, size * sizeof(T));
 		buffer = new_buffer;
 	}
 
@@ -178,7 +181,9 @@ struct DynSet
 		result.entries.data = nullptr;
 		result.entries.size = 0;
 		result.element_count = 0;
-		result.reserve(expected_element_count);
+		if (expected_element_count != 0) {
+			result.reserve(expected_element_count);
+		}
 		return result;
 	}
 
@@ -202,10 +207,16 @@ struct DynSet
 
 	void reserve(usize expected_element_count)
 	{
-		usize min_size = (usize)(expected_element_count * DYNSET_MAX_LOAD_FACTOR) + 1;
+		usize min_size = (usize)((float)expected_element_count / DYNSET_MAX_LOAD_FACTOR) + 1;
 		if (entries.size >= min_size) return;
 		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
 		usize new_size = find_next_suitable_prime_hashset_size(min_size);
+
+		if (entries.data == nullptr) {
+			entries = arena->allocate_array<DynSet_Entry<T>>((int)new_size);
+			reset();
+			return;
+		}
 
 		Arena_Checkpoint checkpoint;
 		Array<DynSet_Entry<T>> old_entries;
@@ -234,6 +245,7 @@ struct DynSet
 			if (old_entry.state != DynSet_Entry_State::OCCUPIED) continue;
 			insert_internal(old_entry.value, old_entry.hash);
 		}
+		arena->rewind_to_checkpoint(checkpoint);
 	}
 
 	int hash_to_entry_index(u64 hash_value, int sonding_index)
@@ -242,7 +254,11 @@ struct DynSet
 		if (sonding_increment % entries.size == 0) { // Must not be null, otherwise we wouldn't reach all element entries
 			sonding_increment = 87178291199ull; // This is a large prime not on the list of hashtable-sizes
 		}
-		return (hash_value + sonding_index * sonding_increment) % entries.size;
+		// NOTE: We modulo before calculation because integer overflow
+		//	will result in invalid calculations (Because the modulo will change in unpredictable ways)
+		u64 hash_pos = hash_value % entries.size;
+		sonding_increment = sonding_increment % entries.size;
+		return (hash_pos + sonding_index * sonding_increment) % entries.size;
 	}
 
 	bool insert_internal(T& value, u64 value_hash)

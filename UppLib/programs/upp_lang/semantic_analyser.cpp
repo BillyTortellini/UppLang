@@ -3624,7 +3624,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	Callable_Call* call = get_info(call_node, true);
 
 	// Find all overload candidates
-	DynArray<Overload_Candidate> candidates = DynArray<Overload_Candidate>::create(&scratch_arena, 4);
+	DynArray<Overload_Candidate> candidates = DynArray<Overload_Candidate>::create(&scratch_arena, 0);
 	auto helper_add_overload_candidate = [&](Callable callable) -> Overload_Candidate* {
 		Overload_Candidate candidate;
 		candidate.symbol = nullptr;
@@ -3767,12 +3767,8 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	DynArray<int> analysed_argument_indices = DynArray<int>::create(&scratch_arena);
 	if (candidates.size > 1)
 	{
-		Arena& arena = semantic_analyser.current_workload->scratch_arena;
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(arena.rewind_to_checkpoint(checkpoint));
-
 		Polymorphic_Overload_Resolve poly_resolve;
-		poly_resolve.visited = DynSet<Datatype*>::create_pointer(&arena, 4);
+		poly_resolve.visited = DynSet<Datatype*>::create_pointer(&scratch_arena, 4);
 
 		// Match arguments for overloads and remove candidates that don't match
 		if (candidates.size > 1)

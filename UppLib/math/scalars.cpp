@@ -100,15 +100,15 @@ u32 integer_next_power_of_2(u32 value)
 {
     if (value == 0) return 1;
 	u8 highest_bit = integer_highest_set_bit_index(value);
-	if ((1ul << (highest_bit - 1)) == value) return value;
-	return 1ul << highest_bit;
+	if ((1ul << highest_bit) == value) return value;
+	return 1ul << (highest_bit + 1);
 }
 
 u64 integer_next_power_of_2(u64 value)
 {
     if (value == 0) return 1;
 	u8 highest_bit = integer_highest_set_bit_index(value);
-	if ((1ull << (highest_bit - 1)) == value) return value;
-	return 1ull << highest_bit;
+	if ((1ull << highest_bit) == value) return value;
+	return 1ull << (highest_bit + 1);
 }
 
