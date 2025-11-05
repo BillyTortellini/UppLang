@@ -350,7 +350,10 @@ Node* base_get_child(Node* node, int child_index)
 			break;
 		}
 		case Expression_Type::INSTANCIATE: {
-			FILL(expr->options.instanciate_expr);
+			auto& instanciate = expr->options.instanciate;
+			FILL(instanciate.path_lookup);
+			FILL(instanciate.call_node);
+			FILL_OPTIONAL(instanciate.return_type);
 			break;
 		}
 		case Expression_Type::GET_OVERLOAD: {
@@ -748,7 +751,10 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			break;
 		}
 		case Expression_Type::INSTANCIATE: {
-			FILL(expr->options.instanciate_expr);
+			auto& instanciate = expr->options.instanciate;
+			FILL(instanciate.path_lookup);
+			FILL(instanciate.call_node);
+			FILL_OPTIONAL(instanciate.return_type);
 			break;
 		}
 		case Expression_Type::GET_OVERLOAD: {

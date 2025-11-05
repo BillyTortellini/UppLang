@@ -2091,7 +2091,20 @@ namespace Parser
         {
             advance_token();
             result->type = Expression_Type::INSTANCIATE;
-            result->options.instanciate_expr = parse_expression_or_error_expr(upcast(result));
+            auto& instanciate = result->options.instanciate;
+            instanciate.path_lookup = parse_path_lookup(upcast(result));
+            instanciate.return_type = optional_make_failure<AST::Expression*>();
+            if (instanciate.path_lookup == nullptr) {
+                CHECKPOINT_EXIT;
+            }
+            if (!test_parenthesis('(')) {
+                CHECKPOINT_EXIT;
+            }
+            instanciate.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
+            if (test_operator(Operator::ARROW)) {
+                advance_token();
+                instanciate.return_type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+            }
             PARSE_SUCCESS(result);
         }
 

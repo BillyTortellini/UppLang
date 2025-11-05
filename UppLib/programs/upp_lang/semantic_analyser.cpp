@@ -3164,7 +3164,8 @@ Optional<Callable> callable_from_expression_info(Expression_Info& info)
 	}
 	case Expression_Result_Type::HARDCODED_FUNCTION:
 	{
-		return optional_make_success(compiler.analysis_data->hardcoded_function_callables[(int)info.options.hardcoded]);
+		auto callable = compiler.analysis_data->hardcoded_function_callables[(int)info.options.hardcoded];
+		return optional_make_success(callable);
 	}
 	case Expression_Result_Type::DOT_CALL:
 	{
@@ -3244,7 +3245,10 @@ void analyse_parameter_value_if_not_already_done(
 	param_value->is_temporary_value = get_info(arg_info.expression)->cast_info.initial_value_is_temporary;
 }
 
-void callable_call_analyse_all_arguments(Callable_Call* call, bool allow_poly_pattern, bool analyse_subtype_initializers_as_error = false)
+void callable_call_analyse_all_arguments(
+	Callable_Call* call, bool allow_poly_pattern, 
+	bool analyse_subtype_initializers_as_error = false, 
+	bool analyse_without_context = false)
 {
 	for (int i = 0; i < call->argument_infos.size; i++)
 	{
@@ -3286,7 +3290,7 @@ void callable_call_analyse_all_arguments(Callable_Call* call, bool allow_poly_pa
 					subtype_init->call_node
 				);
 			}
-			callable_call_analyse_all_arguments(call, true, analyse_subtype_initializers_as_error);
+			callable_call_analyse_all_arguments(call, true, analyse_subtype_initializers_as_error, analyse_without_context);
 		}
 	}
 }
@@ -3499,7 +3503,7 @@ bool pattern_checker_check_if_type_matches(Pattern_Checker& checker, Datatype* p
 }
 
 // Returns true if successfull
-bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_call_first_expr = nullptr)
+bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_call_first_expr = nullptr, bool is_instanciate = false)
 {
 	call.argument_matching_success = true;
 	assert(call.call_node != nullptr, "");
@@ -3616,7 +3620,7 @@ bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_cal
 	}
 
 	// Check if all required parameters were specified
-	if (call.argument_matching_success && !(allow_uninitialized_token && call_node->uninitialized_tokens.size > 0))
+	if (call.argument_matching_success && !is_instanciate && !(allow_uninitialized_token && call_node->uninitialized_tokens.size > 0))
 	{
 		bool missing_parameter_reported = false;
 		for (int i = 0; i < params.size; i++)
@@ -3638,12 +3642,33 @@ bool arguments_match_to_parameters(Callable_Call& call, AST::Expression* dot_cal
 }
 
 // Note: Not all arguments are analysed here, and if error-occured call.matching_succeeded is false
-Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
-	AST::Expression* call_expr, AST::Call_Node* call_node, const Expression_Context& context)
+Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Expression* expression, Datatype* expected_return_type = nullptr)
 {
+	assert(expression->type == AST::Expression_Type::FUNCTION_CALL || expression->type == AST::Expression_Type::INSTANCIATE, "");
 	Arena& scratch_arena = semantic_analyser.current_workload->scratch_arena;
 	auto checkpoint = scratch_arena.make_checkpoint();
 	SCOPE_EXIT(scratch_arena.rewind_to_checkpoint(checkpoint));
+
+	// Differentiate between #instanciate and normal call
+	const bool is_instanciate = expression->type == AST::Expression_Type::INSTANCIATE;
+	AST::Path_Lookup* path_lookup = nullptr;
+	AST::Expression* call_expr = nullptr;
+	AST::Call_Node* call_node = nullptr;
+	if (is_instanciate) 
+	{
+		auto& instanciate = expression->options.instanciate;
+		path_lookup = instanciate.path_lookup;
+		call_node = instanciate.call_node;
+	}
+	else 
+	{
+		auto& call = expression->options.call;
+		call_node = call.call_node;
+		call_expr = call.expr;
+		if (call.expr->type == AST::Expression_Type::PATH_LOOKUP) {
+			path_lookup = call.expr->options.path_lookup;
+		}
+	}
 
 	Callable_Call* call = get_info(call_node, true);
 
@@ -3654,21 +3679,21 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 		candidate.symbol = nullptr;
 		candidate.call = callable_call_make_from_call_node(&scratch_arena, callable, call_node);
 		candidates.push_back(candidate);
+		candidate.expression_info.result_type = (Expression_Result_Type)-1;
 		return &candidates.last();
 	};
 
 	// Find all overload candidates (Note: Dot-calls may also be overloaded)
-	const bool call_expr_is_path_lookup = call_expr->type == AST::Expression_Type::PATH_LOOKUP;
 	AST::Expression* dot_call_first_expr = nullptr;
-	if (call_expr_is_path_lookup)
+	if (path_lookup != nullptr)
 	{
 		// Find all symbol-overloads
 		Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
 		SCOPE_EXIT(dynamic_array_destroy(&symbols));
-		path_lookup_resolve(call_expr->options.path_lookup, symbols);
+		path_lookup_resolve(path_lookup, symbols);
 		if (symbols.size == 0) {
-			log_semantic_error("Could not resolve Symbol (No definition found)", upcast(call_expr->options.path_lookup));
-			path_lookup_set_info_to_error_symbol(call_expr->options.path_lookup, semantic_analyser.current_workload);
+			log_semantic_error("Could not resolve Symbol (No definition found)", upcast(path_lookup));
+			path_lookup_set_info_to_error_symbol(path_lookup, semantic_analyser.current_workload);
 			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, 
 				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
 			return call;
@@ -3684,7 +3709,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 			}
 
 			auto info = analyse_symbol_as_expression(
-				symbol, expression_context_make_auto_dereference(), call_expr->options.path_lookup->last);
+				symbol, expression_context_make_auto_dereference(), path_lookup->last);
 			if (info.result_type == Expression_Result_Type::VALUE || info.result_type == Expression_Result_Type::CONSTANT) {
 				if (datatype_is_unknown(info.cast_info.result_type)) {
 					encountered_unknown = true;
@@ -3707,7 +3732,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 			return call;
 		}
 		if (candidates.size == 0) {
-			log_semantic_error("None of the symbol-overloads are callable!", upcast(call_expr->options.path_lookup->last));
+			log_semantic_error("None of the symbol-overloads are callable!", upcast(path_lookup->last));
 			for (int i = 0; i < symbols.size; i++) {
 				log_error_info_symbol(symbols[i]);
 			}
@@ -3718,6 +3743,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	}
 	else
 	{
+		assert(call_expr != nullptr, "");
 		auto info = semantic_analyser_analyse_expression_any(call_expr, expression_context_make_auto_dereference());
 
 		// Special handling for dot-calls
@@ -3753,12 +3779,18 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 
 	auto& helper_set_callable_to_candidate = [&](Overload_Candidate& candidate) {
 		// Update expression infos
-		if (call_expr_is_path_lookup)
+		if (path_lookup != nullptr)
 		{
-			auto call_expr_info = pass_get_node_info(semantic_analyser.current_workload->current_pass, call_expr, Info_Query::CREATE_IF_NULL);
-			*call_expr_info = candidate.expression_info;
 			assert(candidate.symbol != nullptr, "");
-			path_lookup_set_result_symbol(call_expr->options.path_lookup, candidate.symbol);
+			path_lookup_set_result_symbol(path_lookup, candidate.symbol);
+			// Note: we only need to store expr-info if we have a path-lookup and a call expression,
+			//		in the other cases the value is already set
+			if (call_expr != nullptr)
+			{
+				auto call_expr_info = pass_get_node_info(semantic_analyser.current_workload->current_pass, call_expr, Info_Query::CREATE_IF_NULL);
+				*call_expr_info = candidate.expression_info;
+				assert((int)candidate.expression_info.result_type != -1, "Candidate must have valid expression info");
+			}
 		}
 
 		*call = candidate.call;
@@ -3780,18 +3812,31 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	if (candidates.size == 1)
 	{
 		auto& candidate = candidates[0];
-		if (!arguments_match_to_parameters(candidate.call, dot_call_first_expr))
+		if (!arguments_match_to_parameters(candidate.call, dot_call_first_expr, is_instanciate))
 		{
 			helper_set_callable_to_candidate(candidate);
 			return call;
 		}
 	}
 
-	// Do Overload resolution (Disambiguate overloads by argument types + return type)
+	// Do Overload resolution
+	// Differentiate candidates based on matching and argument types
 	DynArray<int> analysed_argument_indices = DynArray<int>::create(&scratch_arena);
 	if (candidates.size > 1)
 	{
 		Pattern_Checker pattern_checker = pattern_checker_create(&scratch_arena);
+
+		// For #instanciate filter non-polymorphic functions
+		if (is_instanciate)
+		{
+			for (int i = 0; i < candidates.size; i++) {
+				auto& candidate = candidates[i];
+				if (candidate.call.callable.type != Callable_Type::POLY_FUNCTION) {
+					candidates.swap_remove(i);
+					i -= 1;
+				}
+			}
+		}
 
 		// Match arguments for overloads and remove candidates that don't match
 		if (candidates.size > 1)
@@ -3802,7 +3847,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 
 			for (int i = 0; i < candidates.size; i++) {
 				auto& candidate = candidates[i];
-				if (!arguments_match_to_parameters(candidate.call, dot_call_first_expr)) {
+				if (!arguments_match_to_parameters(candidate.call, dot_call_first_expr, is_instanciate)) {
 					candidates.swap_remove(i);
 					i -= 1;
 				}
@@ -3968,7 +4013,14 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 			for (int j = 0; j < candidates.size; j++)
 			{
 				auto& candidate = candidates[j];
-				candidate.active_type = candidate.call.callable.signature->parameters[candidate.call.argument_infos[i].parameter_index].datatype;
+				auto& param_info = candidate.call.callable.signature->parameters[candidate.call.argument_infos[i].parameter_index];
+				candidate.active_type = param_info.datatype;
+
+				// For #instanciate we can only compare the comptime variables
+				if (is_instanciate && param_info.comptime_variable_index != -1) {
+					types_are_different = false;
+					break;
+				}
 
 				// Check if types are different
 				if (prev_type == nullptr) {
@@ -3990,9 +4042,8 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 		}
 
 		// If we still have candidates, try to differentiate based on return type
-		if (candidates.size > 1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+		if (candidates.size > 1 && expected_return_type != nullptr)
 		{
-			auto expected_return_type = context.expected_type.type;
 			bool can_differentiate_based_on_return_type = false;
 			Datatype* last_return_type = 0;
 			for (int i = 0; i < candidates.size; i++)
@@ -4022,7 +4073,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 		}
 
 		// Prefer non-polymorphic functions over polymorphic functions (Specializations)
-		if (candidates.size > 1)
+		if (candidates.size > 1 && !is_instanciate)
 		{
 			bool non_polymorphic_exists = false;
 			bool polymorphic_exists = false;
@@ -4065,10 +4116,10 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(
 	{
 		// Log errors
 		if (candidates.size > 1) {
-			log_semantic_error("Could not disambiguate between function overloads", call_expr);
+			log_semantic_error("Could not disambiguate between function overloads", expression);
 		}
 		else if (candidates.size == 0) {
-			log_semantic_error("None of the function overloads are valid", call_expr);
+			log_semantic_error("None of the function overloads are valid", expression);
 		}
 		*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, 
 			callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
@@ -7403,7 +7454,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::FUNCTION_CALL:
 	{
 		auto& call_node = expr->options.call;
-		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(call_node.expr, call_node.call_node, context);
+		Datatype* expected_return_type = nullptr;
+		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+			expected_return_type = context.expected_type.type;
+		}
+		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
 		info->specifics.call = call;
 
 		auto helper_set_info_to_call_return_type = [&](bool error_occured)
@@ -7711,66 +7766,83 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	{
 		// Instanciate works by doing a normal poly_header_instanciate, 
 		//	but only comptime parameters and infered parameters are required, whereas the other's must not be set
+		auto& instanciate = expr->options.instanciate;
 
-		if (expr->options.instanciate_expr->type != AST::Expression_Type::FUNCTION_CALL)
-		{
-			if (expr->options.instanciate_expr->type == AST::Expression_Type::ERROR_EXPR) {
-				semantic_analyser_set_error_flag(false);
-				EXIT_ERROR(types.unknown_type);
+		// Analyse return type first, as this is used in overload resolution
+		Datatype* expected_return_type = nullptr;
+		if (instanciate.return_type.available) {
+			expected_return_type = semantic_analyser_analyse_expression_type(instanciate.return_type.value, false);
+		}
+
+		// Analyse path-lookup, overload resolving and parameter matching
+		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
+		if (call->callable.type != Callable_Type::POLY_FUNCTION) {
+			if (call->callable.type != Callable_Type::ERROR_OCCURED) {
+				log_semantic_error("#instanciate expects a call to a polymorphic function", expr, Parser::Section::FIRST_TOKEN);
 			}
-
-			log_semantic_error("#instanciate expects a function call as next argument_expression", expr, Parser::Section::FIRST_TOKEN);
-			semantic_analyser_analyse_expression_value(expr->options.instanciate_expr, expression_context_make_unknown(true));
+			callable_call_analyse_all_arguments(call, false, true, true);
+			EXIT_ERROR(types.unknown_type);
+		}
+		if (!call->argument_matching_success) {
+			callable_call_analyse_all_arguments(call, false, true, true);
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		auto& instanciate_call = expr->options.instanciate_expr->options.call;
-		auto& call_node = instanciate_call.call_node;
-		Callable_Call* call = get_info(call_node, true);
-		*call = callable_call_make_from_call_node(
-			&compiler.analysis_data->arena,
-			callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED),
-			call_node
-		);
+		// Store expected return type in parameter_values (Used for polymorphic instanciation)
+		if (expected_return_type != nullptr && call->callable.signature->return_type_index != -1) 
+		{
+			if (call->callable.signature->return_type_index == -1)
+			{
+				log_semantic_error(
+					"#instanciate return type was specified, but poly-function does not have a return type",
+					expr, Parser::Section::FIRST_TOKEN
+				);
+			}
+			else
+			{
+				auto& param_value = call->parameter_values[call->callable.signature->return_type_index];
+				param_value.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
+				param_value.is_temporary_value = false;
+				param_value.datatype = expected_return_type;
+			}
+		}
 
-		// Analyse function
-		auto expression_info = semantic_analyser_analyse_expression_any(instanciate_call.expr, expression_context_make_unknown());
-		if (expression_info->result_type != Expression_Result_Type::POLYMORPHIC_FUNCTION) {
-			log_semantic_error("#instanciate only works on polymorphic functions", instanciate_call.expr);
-			log_error_info_expression_result_type(expression_info->result_type);
-			callable_call_analyse_all_arguments(call, false, true);
+		// Analyse all normal parameters as types in instanciate
+		Poly_Header* poly_header = call->callable.options.poly_function.poly_header;
+		bool encountered_unknown = false;
+		for (int i = 0; i < call->argument_infos.size; i++)
+		{
+			auto& arg_info = call->argument_infos[i];
+			auto& param_info = poly_header->signature->parameters[arg_info.parameter_index];
+			auto& param_value = call->parameter_values[arg_info.parameter_index];
+
+			// Analyse comptime values normally
+			if (param_info.comptime_variable_index != -1) continue;
+
+			assert(!arg_info.is_analysed, "Overloading should skip analysing these in #instanciate");
+			assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Shouldn't be different");
+			arg_info.is_analysed = true;
+			Datatype* datatype = semantic_analyser_analyse_expression_type(arg_info.expression, false);
+			if (datatype_is_unknown(datatype)) {
+				encountered_unknown = true;
+			}
+			param_value.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
+			param_value.datatype = datatype;
+			param_value.is_temporary_value = false;
+		}
+		if (encountered_unknown) {
+			callable_call_analyse_all_arguments(call, false, true, true);
+			semantic_analyser_set_error_flag(true);
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		log_semantic_error("CURRENTLY NOT IMPLEMENTED!\n", expr);
-		EXIT_ERROR(types.unknown_type);
-
-		// // Add all implicit parameters
-		// auto progress = expression_info->options.poly_function.base_progress;
-		// for (int i = 0; i < poly_header->variable_states.size; i++) {
-		// 	auto& inferred = poly_header->variable_states[i];
-		// 	parameter_matching_info_add_param(argument_infos, inferred.id, true, true, nullptr);
-		// }
-
-		// if (!arguments_match_to_parameters(instanciate_call.arguments, argument_infos)) {
-		// 	argument_infos_analyse_in_unknown_context(argument_infos);
-		// 	EXIT_ERROR(types.unknown_type);
-		// }
-
-		// // Otherwise try to instanciate function
-		// auto result = poly_header_instanciate(
-		// 	argument_infos, expression_context_make_unknown(), upcast(instanciate_call.arguments), Parser::Section::ENCLOSURE
-		// );
-		// if (result.type == Instanciation_Result_Type::FUNCTION) {
-		// 	expression_info->options.polymorphic_function.instance_fn = result.options.function;
-		// 	EXIT_FUNCTION(result.options.function);
-		// }
-		// else {
-		// 	EXIT_ERROR(types.unknown_type);
-		// }
-
-		// panic("");
-		break;
+		// Instanciate poly-header
+		auto instance = poly_header_instanciate(call, upcast(expr), Parser::Section::FIRST_TOKEN);
+		if (instance == nullptr) {
+			EXIT_ERROR(types.unknown_type);
+		}
+		assert(instance->type == Poly_Instance_Type::FUNCTION, "Poly-function should only instanciate to function");
+		EXIT_FUNCTION(instance->options.function_instance->function);
 	}
 	case AST::Expression_Type::GET_OVERLOAD:
 	{
@@ -13031,6 +13103,8 @@ void semantic_analyser_reset()
 		call_signature_add_parameter(callable, make_id("condition"), upcast(types.bool_type), true, false, false);
 		hardcoded_callables[(int)Hardcoded_Type::ASSERT_FN].signature = call_signature_register(callable);
 
+		hardcoded_callables[(int)Hardcoded_Type::PANIC_FN].signature = compiler.analysis_data->empty_call_signature;
+
 		callable = call_signature_create_empty();
 		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
 		call_signature_add_return_type(callable, types.type_handle);
@@ -13047,7 +13121,7 @@ void semantic_analyser_reset()
 		hardcoded_callables[(int)Hardcoded_Type::ALIGN_OF].signature = call_signature_register(callable);
 
 		callable = call_signature_create_empty();
-		hardcoded_callables[(int)Hardcoded_Type::PANIC_FN].signature = call_signature_register(callable);
+		call_signature_add_return_type(callable, upcast(types.empty_pattern_variable));
 		hardcoded_callables[(int)Hardcoded_Type::RETURN_TYPE].signature = callable;
 
 		callable = call_signature_create_empty();

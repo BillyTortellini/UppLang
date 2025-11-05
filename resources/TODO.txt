@@ -6,6 +6,10 @@ Instanciate Upgrades:
     remove must_not_be_set maybe?
     Allow return type specification
         #instanciate foo() => Node(int, float)
+    #instanciate could have other structure e.g.
+        #instanciate Path-Lookup (Arguments) => Return_Type
+        
+Test instanciate
 
 TODO:
  - Implement all unavailable features:

@@ -1,15 +1,10 @@
 
-add :: (a: int, b: int) => int
-	return a + b
+test :: ()
+	a: (a: int) => int
+	a()
 
-add :: (a: float, b: float) => float
-	return a + b
+apply :: (fn: ?(x: int))
+	fn'(5)
 
-add :: (a: bool, b: bool) => bool
-	return a + b
-
-add :: (node: *int, a: int)
-	node.value += a
-
-main :: ()
-	// a := add(5, 10)
+apply :: (fn: ?(x: int) => int)
+	return fn'(5)

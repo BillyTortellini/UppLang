@@ -384,7 +384,11 @@ namespace AST
                 Dynamic_Array<Structure_Member_Node*> members;
                 Structure_Type type;
             } structure;
-            Expression* instanciate_expr; // Should be a function call...
+            struct {
+                Path_Lookup* path_lookup;
+                Call_Node* call_node;
+                Optional<AST::Expression*> return_type;
+            } instanciate;
             struct {
                 Optional<Path_Lookup*> path; // Is not available if parsing failed!
                 Dynamic_Array<Get_Overload_Argument*> arguments;
