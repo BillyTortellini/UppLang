@@ -34,7 +34,7 @@ main :: ()
 	push_back(holder, cory)
 	
 	hp :=* holder
-	hpp :=* hp
+	hpp: **Holder(Player) =* hp
 	
 	x := holder[0]
 	y := hp[1]

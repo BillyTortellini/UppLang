@@ -1,6 +1,6 @@
 
-foo::($A:B,$B:C,z:(a:$C,b:A))
+foo :: ($A: B, $B: C, z: (a: $C, b: A))
 	
 
-main::()
-	
+main :: ()
+	foo(1, 2, 3)

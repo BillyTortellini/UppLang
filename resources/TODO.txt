@@ -1,20 +1,13 @@
 
-Instanciate Upgrades:
-    Not all parameters need to be specified, we can see if we get a struct-pattern or error...
-    If we specify a comptime parameter, calculate comptime value, otherwise specify datatype
-        #instanciate foo(C = 5, node = Node(int))
-    remove must_not_be_set maybe?
-    Allow return type specification
-        #instanciate foo() => Node(int, float)
-    #instanciate could have other structure e.g.
-        #instanciate Path-Lookup (Arguments) => Return_Type
-        
-Test instanciate
+TODO:
+    Rework dot-call syntax so it doesn't fugging suck...
+    (EXPR)->name(arguments) --> Could just be function call, but with 
+
 
 TODO:
  - Implement all unavailable features:
-    * #instanciate
     * Context operations
+ - Remove Symbol_Access_Type::Parameter should probably not be needed anymore...
  - Parameters with $T are automatically types
  - Fix textcases
  - Write testcases
@@ -41,31 +34,37 @@ TEST NEW POLYMORPHISM:
  * Struct templates...
  * Partial struct-patterns
 
-Coloring of apply_unop not how I want it to beeeee
-
-TODO Future sub-tasks:
- Symbol_Access_Type::Parameter should probably not be needed anymore...
-
-Idea notes:
-    Syntax-Editor Debug-Values could use analyse-comptime value for values...
-        Would need some rewrite, as we would need to be able to parse + do semantic analysis on expression
-        Could be done with Semantic_Context instead of semantic analyser...
-        With bytecode even function calls (not accessing globals) would be possible for debugger evaluation...
-
-    
 
 
-What I do now:
- - Arena Allocator + DynArray
- - Update Source_Code with new structure
+FEATURE IMPLEMENTATION PLAN:
+----------------------------
+ * Fix up polymorphism and all testcases
+    Parameters with $T are automatically type
+ * Symbol-Table lookup/module analysis rework
+ * Operator Context rework
+    Rework dependencies
+    Redesign primitive operations maybe
+    Update dot-call lookup maybe?
+ * Default-value rework
+ * ModTree-Function/Upp-Function rework
+    IR-Code/Bytecode now waits if functions are not ready
+    Remove Cluster compile
+ * Misc smaller features
+    null-initializiation ?
+    Const values vs readonly
+        string handling with const
+        function parameters
+        const inferred
+    auto pointer handling, remove * and &
+    new delete context vs arena
+    casts, address usize isize
+    loop keyword instead of for, while
+ * Remove semantic analyser, add semantic_context, split semantic_analyser file 
+ * Incremental parser
+ * Incremental compiler
+ * New GUI maybe? Debugger upgrade
 
-Vocabulary:
-    Problems: 
-        Analysis_Items per line, so multi-line Nodes shouldn't have duplicate infos.
-        Also multiple passes per Nodes
-    Analysis_Info: Per AST::Node* information, like Expression_Info or Statement_Info, Code_Block_Info
-    Semantic_Info: Info from compiler to Syntax-Editor, stored as one dynamic array
-    Code_Analysis_Item: Per-Line info of things in the line, 
+
 
 
 
@@ -91,11 +90,6 @@ Operator-Context:
         Would allow us to have a lot more granularity with our stuff...
     Operator-Context could handle basic casts?
     Importing should not copy all the things over, instead use structure like Symbol-Tables and fallback to defaults if something is not found
-
-Get_Overload:
-    also some special id, e.g. __return_type could also be used to set return type?
-    #get_overload could also work with just parameter names, e.g.
-        #get_overload add(a, b, c)
 
 Module-Analysis Update:
     Instead of having a complicated system for import resolution, we restrict it:

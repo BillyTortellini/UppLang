@@ -106,6 +106,7 @@ enum class Context_Change_Type
 	ITERATOR,
 	CAST_OPTION,
 	IMPORT,
+
 	INVALID, // Not a valid context change
 	MAX_ENUM_VALUE
 };

@@ -334,7 +334,11 @@ namespace AST
             } unop;
             Body_Node bake_body; 
             struct {
-                Expression* expr;
+                bool is_dot_call;
+                union {
+                    Expression* expr;
+                    String* dot_call_name; // e.g. x->foo()
+                } options;
                 Call_Node* call_node;
             } call;
             struct {
@@ -356,7 +360,6 @@ namespace AST
             struct {
                 String* name;
                 Expression* expr;
-                bool is_dot_call_access; // "->" instead of only "."
             } member_access;
             Module* module;
             struct {

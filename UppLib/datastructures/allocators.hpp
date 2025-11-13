@@ -211,6 +211,7 @@ struct DynSet
 		if (entries.size >= min_size) return;
 		min_size = math_maximum((entries.size * 3) / 2 + 1, (int)min_size);
 		usize new_size = find_next_suitable_prime_hashset_size(min_size);
+		assert(new_size >= expected_element_count, "");
 
 		if (entries.data == nullptr) {
 			entries = arena->allocate_array<DynSet_Entry<T>>((int)new_size);
@@ -226,6 +227,7 @@ struct DynSet
 			checkpoint = arena->make_checkpoint();
 			old_entries = arena->allocate_array<DynSet_Entry<T>>(entries.size);
 			memory_copy(entries.data, old_entries.data, entries.size * sizeof(DynSet_Entry<T>));
+			entries.size = (int)new_size;
 		}
 		else
 		{

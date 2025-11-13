@@ -6517,7 +6517,7 @@ void watch_values_update()
 						success = false;
 						break;
 					}
-					element_count = array_type->element_count;
+					element_count = (int)array_type->element_count;
 					element_type = array_type->element_type;
 				}
 				else if (type->type == Datatype_Type::SLICE)
@@ -8013,9 +8013,6 @@ void syntax_editor_render()
 					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'
-						if (info.options.expression.expr->options.member_access.is_dot_call_access) {
-							start += 1;
-						}
 						switch (info.options.expression.info->specifics.member_access.type)
 						{
 						case Member_Access_Type::DOT_CALL:
@@ -8380,7 +8377,7 @@ void syntax_editor_render()
 
 			String* name = nullptr;
 			vec3 color = Syntax_Color::TEXT;
-			bool is_dot_call = call_info->callable.type == Callable_Type::DOT_CALL_NORMAL || 
+			const bool is_dot_call = call_info->callable.type == Callable_Type::DOT_CALL_NORMAL || 
 				call_info->callable.type ==  Callable_Type::DOT_CALL_POLYMORPHIC;
 			switch (call_info->callable.type)
 			{

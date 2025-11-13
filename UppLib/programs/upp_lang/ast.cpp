@@ -404,7 +404,9 @@ Node* base_get_child(Node* node, int child_index)
 		}
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
-			FILL(call.expr);
+			if (!call.is_dot_call) {
+				FILL(call.options.expr);
+			}
 			FILL(call.call_node);
 			break;
 		}
@@ -805,7 +807,9 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		}
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
-			FILL(call.expr);
+			if (!call.is_dot_call) {
+				FILL(call.options.expr);
+			}
 			FILL(call.call_node);
 			break;
 		}
@@ -1163,10 +1167,7 @@ void base_append_to_string(Node* base, String* str)
 			break;
 		}
 		case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
-		case Expression_Type::MEMBER_ACCESS: {
-			string_append_formated(str, expr->options.member_access.is_dot_call_access ? "DOT_CALL_ACCESS" : "MEMBER_ACCESS"); break;
-			break;
-		}
+		case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
 		case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
 		case Expression_Type::FUNCTION:  {
 			string_append_formated(str, "FUNCTION");

@@ -176,7 +176,7 @@ void datatype_append_value_to_string(
                 string_append_formated(string, "ARRAY_UNKNOWN_SIZE");
                 return;
             }
-            element_count = array_type->element_count;
+            element_count = (int)array_type->element_count;
             array_data = value_ptr;
         }
         else {
@@ -1327,7 +1327,7 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 
 	auto& internal_info = type_system_register_type(upcast(result))->options.array;
 	internal_info.element_type = element_type->type_handle;
-	internal_info.size = result->element_count;
+	internal_info.size = (int)result->element_count;
 
 	// We always store the constant array type in deduplication, and switch path depending on element type
 	Datatype* const_array_type = type_system_make_constant(upcast(result));
@@ -2195,23 +2195,23 @@ void type_system_add_predefined_types(Type_System* system)
 		Datatype* allocator_pointer = upcast(type_system_make_pointer(upcast(types->allocator), false));
 
 		Call_Signature* signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
-		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
-		call_signature_add_parameter(signature, make_id("alignment"), upcast(types->u32_type), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      type_system_make_constant(upcast(types->usize)), true, false, false);
+		call_signature_add_parameter(signature, make_id("alignment"), type_system_make_constant(upcast(types->u32_type)), true, false, false);
 		call_signature_add_return_type(signature, upcast(types->address));
 		types->allocate_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
 		signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
-		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   type_system_make_constant(upcast(types->address)), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      type_system_make_constant(upcast(types->usize)), true, false, false);
 		types->free_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
 		signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
-		call_signature_add_parameter(signature, make_id("old_size"),  upcast(types->usize), true, false, false);
-		call_signature_add_parameter(signature, make_id("new_size"),  upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   type_system_make_constant(upcast(types->address)), true, false, false);
+		call_signature_add_parameter(signature, make_id("old_size"),  type_system_make_constant(upcast(types->usize)), true, false, false);
+		call_signature_add_parameter(signature, make_id("new_size"),  type_system_make_constant(upcast(types->usize)), true, false, false);
 		call_signature_add_return_type(signature, upcast(types->bool_type));
 		types->resize_function = type_system_make_function_pointer(call_signature_register(signature), false);
 

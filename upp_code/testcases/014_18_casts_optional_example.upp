@@ -5,44 +5,44 @@ import Upp~print_line
 import Upp~print_string
 
 Optional :: struct (T: Type_Handle)
-	value:T
-	available:bool
+	value: T
+	available: bool
 
-optional_make_success::(value:$T)=>Optional(T)
-	return.{value=value,available=true}
+optional_make_success :: (value: $T) => Optional(T)
+	return .{value = value, available = true}
 
-optional_make_failure::()=>Optional($T)
-	result:Optional(T)
-	result.available=false
+optional_make_failure :: () => Optional($T)
+	result: Optional(T)
+	result.available = false
 	return result
 
-invalid_cast_fn::(value:Optional($T),something:int)=>T
+invalid_cast_fn :: (value: Optional($T), something: int) => T
 	return value.value
 
-optional_unwrap::(optional:Optional($T))=>T
+optional_unwrap :: (optional: Optional($T)) => T
 	assert(optional.available)
 	return optional.value
 
-optional_is_available::(optional:Optional($T))=>bool
+optional_is_available :: (optional: Optional($T)) => bool
 	return optional.available
 
-print_optional_int::(optional:Optional(int))
+print_optional_int :: (optional: Optional(int))
 	if optional.available
 		print_i32(optional.value)
 	else
 		print_string("Optional not available")
 	print_line()
 
-main::()
-	val:=15
-	x:=optional_make_success(val)
-	y:Optional(int)=optional_make_failure()
+main :: ()
+	val := 15
+	x := optional_make_success(val)
+	y: Optional(int) = optional_make_failure()
 	
-	context add_cast(optional_is_available,.INFERRED)
-	context add_cast(optional_unwrap,.INFERRED)
+	context add_cast(optional_is_available, .INFERRED)
+	context add_cast(optional_unwrap, .INFERRED)
 	
-	b1:bool=cast x
-	b2:bool=cast y
+	b1: bool = cast x
+	b2: bool = cast y
 	assert(b1)
 	assert(!b2)
 	

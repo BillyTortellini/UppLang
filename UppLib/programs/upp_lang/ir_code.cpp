@@ -945,7 +945,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
     case Expression_Result_Type::POLYMORPHIC_PATTERN:
-    case Expression_Result_Type::DOT_CALL:
         panic("must not happen");
     case Expression_Result_Type::VALUE:
         break; // Rest of this function
@@ -1119,7 +1118,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         }
         case Callable_Type::FUNCTION_POINTER: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(call.expr);
+            assert(!call.is_dot_call, "");
+            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(call.options.expr);
             break;
         }
         case Callable_Type::HARDCODED:

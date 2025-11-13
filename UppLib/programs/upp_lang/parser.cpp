@@ -2416,6 +2416,9 @@ namespace Parser
         // DOCU: Internal means that we don't add the result of this expression to the parameter child,
         //       but rather to the parent of the child
         CHECKPOINT_SETUP;
+
+        auto& ids = compiler.identifier_pool.predefined_ids;
+
         // Post operators
         auto result = allocate_base<Expression>(child->base.parent, Node_Type::EXPRESSION);
         if (test_operator(Operator::DOT))
@@ -2445,14 +2448,13 @@ namespace Parser
             {
                 result->type = Expression_Type::MEMBER_ACCESS;
                 result->options.member_access.expr = child;
-                result->options.member_access.is_dot_call_access = false;
                 if (test_token(Token_Type::IDENTIFIER)) {
                     result->options.member_access.name = get_token(0)->options.identifier;
                     advance_token();
                 }
                 else {
                     log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.member_access.name = compiler.identifier_pool.predefined_ids.empty_string;
+                    result->options.member_access.name = ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -2461,17 +2463,32 @@ namespace Parser
         else if (test_operator(Operator::DOT_CALL)) 
         {
             advance_token();
-            result->type = Expression_Type::MEMBER_ACCESS;
-            result->options.member_access.expr = child;
-            result->options.member_access.is_dot_call_access = true;
+
+            result->type = Expression_Type::FUNCTION_CALL;
+            auto& call = result->options.call;
+            call.is_dot_call = true;
+            call.options.dot_call_name = ids.empty_string;
+
+            // Parse dot-call identifier
             if (test_token(Token_Type::IDENTIFIER)) {
-                result->options.member_access.name = get_token(0)->options.identifier;
+                call.options.dot_call_name = get_token(0)->options.identifier;
                 advance_token();
             }
             else {
                 log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                result->options.member_access.name = compiler.identifier_pool.predefined_ids.empty_string;
             }
+
+            // Parse arguments
+            call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
+
+            // Add expr as first unnamed argument
+            AST::Argument* argument = allocate_base<Argument>(upcast(call.call_node), AST::Node_Type::ARGUMENT);
+            argument->name = optional_make_failure<String*>();
+            argument->value = child;
+            argument->base.range = child->base.range;
+            argument->base.bounding_range = child->base.bounding_range;
+            dynamic_array_insert_ordered(&call.call_node->arguments, argument, 0);
+
             PARSE_SUCCESS(result);
         }
         else if (test_parenthesis_offset('[', 0)) // Array access
@@ -2495,7 +2512,8 @@ namespace Parser
         {
             result->type = Expression_Type::FUNCTION_CALL;
             auto& call = result->options.call;
-            call.expr = child;
+            call.is_dot_call = false;
+            call.options.expr = child;
             call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }

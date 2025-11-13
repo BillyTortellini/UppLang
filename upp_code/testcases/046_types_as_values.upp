@@ -32,9 +32,9 @@ main :: ()
 		// and type_of(type_of(type_of(Type))) would be Type_Type_Type_Type
 		// But in this language, we just stay at Type because the previous behavior isn't really usefull
 		// in any practical applications
-		assert(type_of(int) == Type_Handle)
-		assert(type_of(Type_Handle) == Type_Handle)
-		assert(type_of(type_of(Type_Handle)) == Type_Handle)
+		assert(type_of(int) == const Type_Handle)
+		assert(type_of(Type_Handle) == const Type_Handle)
+		assert(type_of(type_of(Type_Handle)) == const Type_Handle)
 	
 	///
 		Ok,so we can compare types,but why is this a usefull feature?

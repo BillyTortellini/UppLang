@@ -35,7 +35,6 @@ struct Datatype_Pattern_Variable;
 struct Pattern_Variable_State;
 struct Poly_Header;
 struct Compiler_Analysis_Data;
-struct Polymorphic_Instance;
 
 namespace Parser
 {
@@ -320,7 +319,6 @@ struct Poly_Header
     Array<Pattern_Variable_State> base_analysis_states;
 
     // For convenience
-    AST::Expression* return_type_node;
     Dynamic_Array<AST::Parameter*> parameter_nodes;
     Symbol_Table* parameter_table;
 
@@ -553,7 +551,6 @@ enum class Expression_Result_Type
     TYPE,
     CONSTANT,
     FUNCTION,
-    DOT_CALL,
     HARDCODED_FUNCTION,
     POLYMORPHIC_STRUCT, 
     POLYMORPHIC_FUNCTION,
@@ -572,10 +569,6 @@ struct Expression_Info
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
         Poly_Function poly_function;
-        struct {
-            AST::Expression* first_argument;
-            Dynamic_Array<Dot_Call_Info>* overloads; // Note: This is allocated in Compiler_Analysis_Data
-        } dot_call;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
         Upp_Constant constant;
