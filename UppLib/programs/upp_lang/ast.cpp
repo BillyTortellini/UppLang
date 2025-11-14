@@ -153,7 +153,7 @@ Node* base_get_child(Node* node, int child_index)
 	}
 	case Node_Type::PARAMETER: {
 		auto param = (Parameter*)node;
-		FILL(param->type);
+		FILL_OPTIONAL(param->type);
 		FILL_OPTIONAL(param->default_value);
 		break;
 	}
@@ -627,7 +627,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 	}
 	case Node_Type::PARAMETER: {
 		auto param = (Parameter*)node;
-		FILL(param->type);
+		FILL_OPTIONAL(param->type);
 		FILL_OPTIONAL(param->default_value);
 		break;
 	}

@@ -365,9 +365,11 @@ void find_editor_infos_recursive(
 	{
 		bool is_definition = false;
 		Token_Range range = token_range_first_token(node->range, code);
-		if (node->type == AST::Node_Type::PARAMETER) {
+		if (node->type == AST::Node_Type::PARAMETER) 
+		{
 			auto param = downcast<AST::Parameter>(node);
 			int offset = 0;
+			if (param->is_return_type) break;
 			if (param->is_comptime) offset += 1;
 			if (param->is_mutable) offset += 1;
 			

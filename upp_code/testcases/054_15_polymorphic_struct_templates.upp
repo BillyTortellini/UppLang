@@ -1,7 +1,7 @@
 
 import Upp~Type_Handle
 
-Foo :: struct (T: Type_Handle, C: int, unop: (a: T) => T)
+Foo :: struct ($T: Type_Handle, $C: int, $unop: (a: T) => T)
 	data: [C]T
 
 bar :: (foo: Foo($T, $C, $unop), b: T) => T

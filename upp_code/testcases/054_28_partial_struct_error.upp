@@ -1,0 +1,24 @@
+
+Vector :: struct ($T, $C: int)
+	values: [C]T
+
+sum :: (vector: Vector($T, _)) => T
+	result: T = 0
+	for i in vector.values
+		result += i
+	return result
+
+
+main :: ()
+	v1: Vector(int, 3)
+	v1.values = .[1, 2, 3]
+	
+	v2: Vector(int, 5)
+	v2.values = .[1, 2, 3, 4, 5]
+	
+	// Also deduplication should work
+	ap := #instanciate sum(Vector(int, 5))
+	bp := #instanciate sum(Vector(int, 3))
+	assert(ap *== bp)
+
+

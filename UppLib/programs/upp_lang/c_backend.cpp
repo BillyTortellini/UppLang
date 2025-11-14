@@ -17,7 +17,7 @@
 // - C_COMPILER -
 // --------------
 
-const bool ADD_WAIT_BEFORE_EXIT = true;
+const bool ADD_WAIT_BEFORE_EXIT = false;
 
 
 void c_generator_output_global_access(int global_index);
@@ -624,13 +624,16 @@ void c_generator_output_type_reference(Datatype* type)
         }
 
         string_append_formated(gen.text, " (*%s)(", access_name.characters);
+        bool require_comma = false;
         for (int i = 0; i < parameters.size; i++) {
             auto& param = parameters[i];
-            c_generator_output_type_reference(param.datatype);
-            string_append_formated(gen.text, " %s", param.name->characters);
-            if (i != parameters.size - 1) {
+            if (i == signature->return_type_index) continue;
+            if (require_comma) {
                 string_append_formated(gen.text, ", ");
             }
+            require_comma = true;
+            c_generator_output_type_reference(param.datatype);
+            string_append_formated(gen.text, " %s", param.name->characters);
         }
         string_append_formated(gen.text, ");\n\n");
 
@@ -961,19 +964,21 @@ void c_generator_generate()
         string_append_formated(gen.text, " %s(", function_access_name->characters);
 
         auto& parameters = signature->parameters;
+        bool require_comma = false;
         for (int j = 0; j < parameters.size; j++)
         {
             auto& param = parameters[j];
+            if (j == signature->return_type_index) continue;
+            if (require_comma) {
+                string_append(gen.text, ", ");
+            }
+            require_comma = true;
 
             c_generator_output_type_reference(param.datatype);
             string_append(gen.text, " ");
 
             // Note: This has to be the same name as in output_data_access for parameter access
             c_generator_output_parameter_access(function, j);
-
-            if (j != parameters.size - 1) {
-                string_append(gen.text, ", ");
-            }
         }
         string_append(gen.text, ")");
     };
@@ -1206,9 +1211,9 @@ void c_generator_generate()
                 auto parameters = signature->parameters;
                 auto return_type = signature->return_type();
 
-                string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", 
-                    return_type.available ? return_type.value->type_handle.index : -1);
-                string_add_indentation(gen.text, 1);
+                // string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", 
+                //     return_type.available ? return_type.value->type_handle.index : -1);
+                // string_add_indentation(gen.text, 1);
                 string_append_formated(gen.text, "info->subtypes_.Function.has_return_type = %s;\n", return_type.available ? "true" : "false");
                 string_add_indentation(gen.text, 1);
                 string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.size = %d;\n", parameters.size);
@@ -1219,8 +1224,10 @@ void c_generator_generate()
                     c_generator_output_type_reference(types.type_handle); // Check if this works
                     string_append_formated(gen.text, "[%d];\n", parameters.size);
                     for (int j = 0; j < parameters.size; j++) {
+                        auto& param = parameters[j];
                         string_add_indentation(gen.text, 1);
-                        string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, parameters[j].datatype->type_handle.index);
+                        string_append_formated(
+                            gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, param.datatype->type_handle.index);
                     }
                 }
                 else {
@@ -1241,6 +1248,7 @@ void c_generator_generate()
             case Datatype_Type::UNKNOWN_TYPE:
             case Datatype_Type::PATTERN_VARIABLE:
             case Datatype_Type::STRUCT_PATTERN:
+            case Datatype_Type::INVALID_TYPE:
                 break; // Nothing to do on these types
             default: panic("");
             }

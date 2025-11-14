@@ -158,8 +158,7 @@ enum class Symbol_Access_Level
 {
     GLOBAL = 0,      // Can be accessed everywhere (comptime definitions, functions, structs)
     POLYMORPHIC = 1, // Access level for polymorphic parameters (anonymous structs/lambdas/bake)
-    PARAMETERS = 2,  // Allows access to parameters (Used in poly-function header analysis, if parameters reference each other)
-    INTERNAL = 3     // Access level for variables/parameters of functions, which only have meaningful values during execution
+    INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
 };
 
 enum class Symbol_Type

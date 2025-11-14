@@ -1963,6 +1963,10 @@ namespace Parser
         result->is_return_type = false;
         result->default_value.available = false;
         result->is_mutable = false;
+        result->type = optional_make_failure<AST::Expression*>();
+        result->default_value = optional_make_failure<AST::Expression*>();
+
+        // Parse identifier and optional mutators
         if (test_operator(Operator::DOLLAR)) {
             result->is_comptime = true;
             advance_token();
@@ -1971,21 +1975,20 @@ namespace Parser
             result->is_mutable = true;
             advance_token();
         }
-
         if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
         result->name = get_token(0)->options.identifier;
         advance_token();
 
-        if (!test_operator(Operator::COLON)) CHECKPOINT_EXIT;
-        advance_token();
-        result->type = parse_expression_or_error_expr((Node*)result);
+        if (!test_operator(Operator::COLON)) {
+            PARSE_SUCCESS(result);
+        }
+
+        advance_token(); // Skip :
+        result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
 
         if (test_operator(Operator::ASSIGN)) {
             advance_token();
-            result->default_value.value = parse_expression_or_error_expr((Node*)result);
-            if (result->default_value.value != 0) {
-                result->default_value.available = true;
-            }
+            result->default_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
         }
         PARSE_SUCCESS(result);
     }
@@ -2284,7 +2287,7 @@ namespace Parser
                 return_param->is_return_type = true;
                 return_param->is_mutable = true;
                 return_param->name = compiler.identifier_pool.predefined_ids.return_type_name;
-                return_param->type = parse_expression_or_error_expr(upcast(result));
+                return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
                 dynamic_array_push_back(&signature_parameters, return_param);
             }
 

@@ -3571,7 +3571,7 @@ bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = fa
 
 			if (param_index == -1) {
 				log_semantic_error("Argument name does not match any parameter name", error_node, Parser::Section::IDENTIFIER);
-				call.argument_matching_success = true;
+				call.argument_matching_success = false;
 				continue;
 			}
 		}
@@ -4300,9 +4300,10 @@ u64 hash_poly_instance(Poly_Instance** instance_ptr)
 	for (int i = 0; i < instance->variable_states.size; i++) {
 		hash = hash_combine(hash, hash_pattern_variable_state(&instance->variable_states[i]));
 	}
-	hash = hash_combine(hash, instance->partial_pattern_instances.size);
+	hash = hash_combine(hash, hash_i32(&instance->partial_pattern_instances.size));
 	for (int i = 0; i < instance->partial_pattern_instances.size; i++) {
-		hash = hash_combine(hash, hash_pointer(&instance->partial_pattern_instances[i]));
+		Datatype* partial_type = instance->partial_pattern_instances[i];
+		hash = hash_combine(hash, hash_pointer(partial_type));
 	}
 	return hash;
 }
@@ -4397,8 +4398,9 @@ void expression_search_for_symbol_lookups_and_pattern_variables(
 		}
 		else if (child_node->type == AST::Node_Type::PARAMETER) {
 			auto parameter_node = downcast<AST::Parameter>(child_node);
+			if (!parameter_node->type.available) continue;
 			expression_search_for_symbol_lookups_and_pattern_variables(
-				parameter_index, parameter_node->type, symbol_lookups, pattern_variables);
+				parameter_index, parameter_node->type.value, symbol_lookups, pattern_variables);
 		}
 		child_index += 1;
 		child_node = AST::base_get_child(upcast(expression), child_index);
@@ -4416,7 +4418,16 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 
 	// Analyse type
 	parameter.name = parameter_node->name;
-	parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type, allow_pattern_type);
+	if (parameter_node->type.available) {
+		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, allow_pattern_type);
+	}
+	else
+	{
+		if (!parameter_node->type.available && !parameter_node->is_comptime) {
+			log_semantic_error("Parameter type must be specified if it isn't a comptime parameter!", upcast(parameter_node), Parser::Section::IDENTIFIER);
+		}
+		parameter.datatype = compiler.analysis_data->type_system.predefined_types.type_handle;
+	}
 	if (!parameter_node->is_comptime && !parameter_node->is_mutable) {
 		parameter.datatype = type_system_make_constant(parameter.datatype);
 	}
@@ -4500,12 +4511,16 @@ Poly_Header* poly_header_analyse(
 			header.signature, parameter_node->name, nullptr, false, false, i == return_type_index);
 
 		// Define symbol (Note: return_type can still be defined as symbol, because id is unique, e.g. "!return_type")
-		bool is_comptime = parameter_node->is_comptime || progress == 0; // In poly-struct all parameters are comptime
+		bool is_comptime = parameter_node->is_comptime || progress == nullptr; // In poly-struct all parameters are comptime
 		Symbol* symbol = symbol_table_define_symbol(
 			parameter_table, parameter_node->name, (is_comptime ? Symbol_Type::PATTERN_VARIABLE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
-			(is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::PARAMETERS)
+			(is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL)
 		);
 		get_info(parameter_node, true)->symbol = symbol;
+
+		if (progress == nullptr && !parameter_node->is_comptime) {
+			log_semantic_error("Parameters of struct header must be comptime, e.g. use $", upcast(parameter_node), Parser::Section::IDENTIFIER);
+		}
 
 		// Set symbol/param infos
 		if (is_comptime)
@@ -4537,7 +4552,9 @@ Poly_Header* poly_header_analyse(
 
 		// Find implicit parameters/lookups
 		int before_count = header.pattern_variables.size;
-		expression_search_for_symbol_lookups_and_pattern_variables(i, parameter_node->type, symbol_lookups, header.pattern_variables);
+		if (parameter_node->type.available) {
+			expression_search_for_symbol_lookups_and_pattern_variables(i, parameter_node->type.value, symbol_lookups, header.pattern_variables);
+		}
 
 		// Add self-dependencies
 		for (int i = before_count; i < header.pattern_variables.size; i++) {
@@ -6603,7 +6620,7 @@ void analysis_workload_entry(void* userdata)
 			{
 				auto& param = signature->parameters[i];
 				Symbol* symbol = symbol_table_define_symbol(
-					symbol_table, param.name, Symbol_Type::PARAMETER, upcast(header_workload->function_node), Symbol_Access_Level::PARAMETERS
+					symbol_table, param.name, Symbol_Type::PARAMETER, upcast(header_workload->function_node), Symbol_Access_Level::INTERNAL
 				);
 				symbol->options.parameter.function = header_workload->progress;
 				symbol->options.parameter.index_in_non_polymorphic_signature = i;
@@ -6673,8 +6690,18 @@ void analysis_workload_entry(void* userdata)
 		{
 			auto code_block = body_workload->body_node.block;
 			Control_Flow flow = semantic_analyser_analyse_block(code_block);
-			if (flow != Control_Flow::RETURNS && function->signature->return_type().available) {
-				log_semantic_error("Function is missing a return statement", upcast(code_block), Parser::Section::END_TOKEN);
+			if (flow != Control_Flow::RETURNS && function->signature->return_type().available) 
+			{
+				Parser::Section error_report_section = Parser::Section::END_TOKEN;
+				AST::Node* error_report_node = upcast(code_block);
+				if (function->function_type == ModTree_Function_Type::NORMAL) {
+					auto symbol = function->options.normal.symbol;
+					if (symbol != nullptr && symbol->definition_node != nullptr) {
+						error_report_node = symbol->definition_node;
+						error_report_section = Parser::Section::FIRST_TOKEN;
+					}
+				}
+				log_semantic_error("Function is missing a return statement", error_report_node, error_report_section);
 			}
 		}
 

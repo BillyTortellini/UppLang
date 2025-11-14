@@ -1,0 +1,27 @@
+
+
+add :: (a: $T, b: $V) => T
+	return a + b
+
+double :: ($C: T) => $T
+	return C * 2
+
+main :: ()
+	// In instanciate we can set the datatype of non-comptime parameters
+	fn := #instanciate add(int, int)
+	sum := fn(1, 2)
+	
+	// Another way for this instanciation would be to set the implicit parameters
+	other := #instanciate add(T = int, V = int)
+	assert(other *== fn)
+	
+	// Comptime parameters in instanciate need to be set
+	int_double := #instanciate double(5, T = int)
+	assert(int_double() == 10)
+	
+	// #instanciate can also set the expected return type
+	other_double := #instanciate double(5) => int
+	assert(other_double() == 10)
+	assert(int_double *== other_double)
+	
+	assert(sum == 3)

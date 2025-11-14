@@ -58,3 +58,24 @@ void timer_sleep_for(double seconds) {
     timer_sleep_until(start + seconds);
 }
 
+
+thread_local double _time_counter = 0.0f;
+thread_local bool _timer_started = false;
+void timing_start() {
+    _time_counter = timer_current_time_in_seconds();
+    _timer_started = true;
+}
+
+void timing_log(const char* event) 
+{
+    if (!_timer_started) return;
+    double now = timer_current_time_in_seconds();
+    printf("%s took: %f\n", event, (float)(now - _time_counter));
+    _time_counter = timer_current_time_in_seconds();
+}
+
+void timing_end()
+{
+    _timer_started = false;
+}
+

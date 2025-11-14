@@ -2238,6 +2238,7 @@ void type_system_add_predefined_types(Type_System* system)
 		auto subtype_enum = add_struct_subtype(&type_info_type->content, "Enum");
 		auto subtype_function = add_struct_subtype(&type_info_type->content, "Function");
 		auto subtype_unknown = add_struct_subtype(&type_info_type->content, "Unknown");
+		auto subtype_invalid = add_struct_subtype(&type_info_type->content, "Invalid");
 
 		auto subtype_pointer = add_struct_subtype(&type_info_type->content, "Pointer");
 		auto subtype_constant = add_struct_subtype(&type_info_type->content, "Constant");

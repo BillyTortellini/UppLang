@@ -4,7 +4,7 @@ import Upp~i64
 import Upp~type_info
 import Upp~Type_Handle as Type
 
-Vector :: struct (T: Type, C: int)
+Vector :: struct ($T: Type, $C: int)
 	values: [C]T
 
 component_wise_binop :: (a: Vector($T, $C), b: Vector(T, C), $binop: (a: T, b: T) => T) => Vector(T, C)

@@ -3724,6 +3724,8 @@ bool debugger_start_process(
 	debugger->analysis_data = analysis_data;
 
 	// Load pdb file
+    // timing_start();
+    SCOPE_EXIT(timing_end());
 	debugger->pdb_info = PDB_Analysis::pdb_information_create();
 	if (!PDB_Analysis::pdb_information_fill_from_file(debugger->pdb_info, pdb_filepath, main_obj_filepath)) {
 		PDB_Analysis::pdb_information_destroy(debugger->pdb_info);
@@ -3731,6 +3733,7 @@ bool debugger_start_process(
 		printf("Couldn't parse pdb file!\n");
 		return false;
 	}
+    timing_log("PDF_information_create");
 
 	// Create process
 	{
@@ -3766,16 +3769,20 @@ bool debugger_start_process(
 		debugger->state.process_state = Debug_Process_State::RUNNING;
 	}
 
+    timing_log("Create_Process");
+
 	// Handle initial debug events (Create_Process, Create_Threads, Load_Dlls, until first breakpoint hit)
 	u64 main_address = 0;
 	while (true)
 	{
 		debugger_receive_next_debug_event(debugger, true);
+        timing_log("Receive next debug event");
 		if (debugger->state.process_state != Debug_Process_State::HALTED) {
 			debugger_reset(debugger);
 			return false;
 		}
 		debugger_handle_last_debug_event(debugger);
+        timing_log("Handle last debug event");
 
 		// Add breakpoint for main-function
 		// Note: Using hardware breakpoints between the Create_Process_Event and entering main does not work reliably
@@ -3809,6 +3816,8 @@ bool debugger_start_process(
 		}
 	}
 
+    timing_log("Initial debug event");
+
 	// Sanity check that main-thread was reported by initial debug events...
 	{
 		bool found = false;
@@ -3823,6 +3832,8 @@ bool debugger_start_process(
 			panic("Main thread not reported by initial events!");
 		}
 	}
+
+    timing_log("Sanity check");
 
 	// Set breakpoint on main and execute until main start
 	{
@@ -3841,6 +3852,8 @@ bool debugger_start_process(
 		}
 		debugger_remove_address_breakpoint(debugger, main_address);
 	}
+
+    timing_log("Execute until main");
 
 	// Generate all mappings (Upp-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
 	C_Program_Translation* c_translation = c_generator_get_translation();
@@ -4022,6 +4035,8 @@ bool debugger_start_process(
 			}
 		}
 	}
+
+    timing_log("Generate mappings");
 
 	return debugger->state.process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 }

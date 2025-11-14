@@ -2196,7 +2196,7 @@ void syntax_editor_add_fold(int line_start, int line_end, int indentation)
 			break;
 		}
 		else if (line_start == fold.line_start) {
-			if (line_start == line_end) return; // Fold already exists
+			if (line_end == fold.line_end) return; // Fold already exists
 			if (line_end > fold.line_end) {
 				break;
 			}
@@ -6675,6 +6675,8 @@ void syntax_editor_update(bool& animations_running)
 		input->key_down[(int)Key_Code::CTRL] &&
 		input->key_down[(int)Key_Code::SHIFT])
 	{
+		editor_leave_insert_mode();
+		editor.mode = Editor_Mode::NORMAL;
 		String filename = string_create();
 		SCOPE_EXIT(string_destroy(&filename));
 		bool worked = file_io_open_file_selection_dialog(&filename);
@@ -7255,7 +7257,8 @@ void syntax_editor_update(bool& animations_running)
 	{
 		editor_leave_insert_mode();
 		editor.mode = Editor_Mode::NORMAL;
-		bool started = debugger_start_process(
+
+		double started = debugger_start_process(
 			editor.debugger,
 			"D:/Projects/UppLang/backend/build/main.exe",
 			"D:/Projects/UppLang/backend/build/main.pdb",

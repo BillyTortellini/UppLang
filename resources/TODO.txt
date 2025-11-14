@@ -1,45 +1,35 @@
 
-TODO:
-    Rework dot-call syntax so it doesn't fugging suck...
-    (EXPR)->name(arguments) --> Could just be function call, but with 
 
+Git checkout if the debugger was faster on an older version
 
-TODO:
- - Implement all unavailable features:
-    * Context operations
- - Remove Symbol_Access_Type::Parameter should probably not be needed anymore...
- - Parameters with $T are automatically types
- - Fix textcases
- - Write testcases
-    Polymorphism
-    #get_overload
-    #instanciate
+C++ Profilers:
+--------------
+Omnitrace
+    CPU + GPU, profiling/tracing?
+HPCToolkit
+Caliper
+TAU
+VTune
+Nsight
+Tracy
+Intel vtune
+Visual Studio Diagnostics tool, Vs Profile
+RADTelemetry
+google perftools
+perf with hotspot
+valgrind callgrind
+kcachegrind
+verysleepy
 
+tracing vs sampling profiler
 
-
-TEST NEW POLYMORPHISM:
-----------------------
- * Comptime parameters
-    Type-Handle
-    Integer values for array-sizes
-    Normal usage (boolean)
-    Dependencies
- * Inferred parameters
-    Test Type-Trees, parameter dependencies
-        Pointer
-        Array
-        Function
-    Test implicit return type
- * Polymorphic Structs
- * Struct templates...
- * Partial struct-patterns
+HOTSPOT      --> Linux
+Superliminal --> $$$
 
 
 
 FEATURE IMPLEMENTATION PLAN:
 ----------------------------
- * Fix up polymorphism and all testcases
-    Parameters with $T are automatically type
  * Symbol-Table lookup/module analysis rework
  * Operator Context rework
     Rework dependencies

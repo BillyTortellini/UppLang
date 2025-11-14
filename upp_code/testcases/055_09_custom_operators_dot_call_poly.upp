@@ -6,7 +6,7 @@ Player :: struct
 	name: c_string
 	age: int
 
-Holder :: struct (T: Type_Handle, C: int)
+Holder :: struct ($T: Type_Handle, $C: int)
 	values: [C]T
 	size: int
 

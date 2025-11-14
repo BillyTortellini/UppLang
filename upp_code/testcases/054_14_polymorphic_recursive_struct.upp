@@ -1,7 +1,7 @@
 
 import Upp~Type_Handle
 
-Node :: struct (T: Type_Handle)
+Node :: struct ($T: Type_Handle)
 	next: *Node(T)
 	prev: *Node(T)
 	value: T

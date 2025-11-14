@@ -1,0 +1,20 @@
+
+test :: (a: *int) => bool
+	a = 1
+	return false
+
+test :: (a: *int) => int
+	a = 2
+	return 5
+
+main :: ()
+	x: int = 0
+	b: bool = test(x)
+	assert(x == 1)
+	c: int = test(x)
+	assert(x == 2)
+	
+	fn := #get_overload test() => bool
+	fn(x)
+	assert(x == 1)
+	

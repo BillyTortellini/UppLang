@@ -230,7 +230,7 @@ namespace AST
     {
         Node base;
         String* name; // name of parameter, or "!return_type" (See identifier pool)
-        Expression* type;
+        Optional<Expression*> type;
         Optional<Expression*> default_value;
         bool is_comptime;    // $ at the start
         bool is_mutable;     // mut at the start, return-type is mutable

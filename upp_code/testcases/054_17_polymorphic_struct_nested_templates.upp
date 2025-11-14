@@ -10,7 +10,7 @@ is_even :: (a: int) => bool
 
 INT_FILTER :: Filter(int).{check = is_even}
 
-Foo :: struct (F: Filter($T))
+Foo :: struct ($F: Filter($T))
 	padding: i64
 	value: T
 

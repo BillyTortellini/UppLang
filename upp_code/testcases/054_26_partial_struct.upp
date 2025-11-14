@@ -1,0 +1,41 @@
+
+Vector :: struct ($T, $C: int)
+	values: [C]T
+
+// To avoid writing to much not all struct values need to be specified
+size :: (vector: Vector(_)) => int
+	return cast vector.values.size
+
+sum :: (vector: Vector($T, _)) => T
+	result: T = 0
+	for i in vector.values
+		result += i
+	return result
+
+
+main :: ()
+	
+	v1: Vector(int, 3)
+	v1.values = .[1, 2, 3]
+	
+	v2: Vector(int, 5)
+	v2.values = .[1, 2, 3, 4, 5]
+	
+	assert(size(v1) == 3)
+	assert(size(v2) == 5)
+	
+	s := sum(v1)
+	assert(s == 6)
+	s = sum(v2)
+	assert(s == 15)
+	
+	// Also deduplication should work
+	ap := #instanciate sum(Vector(int, 5))
+	bp := #instanciate sum(Vector(int, 5))
+	cp := #instanciate sum(Vector(int, 5), T = int)
+	assert(ap *== bp)
+	assert(ap *== cp)
+	
+	
+
+

@@ -21,7 +21,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = false;
+bool enable_c_generation = true;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -36,13 +36,13 @@ bool output_timing = true;
 // Testcases
 bool enable_testcases = false;
 bool enable_stresstest = false;
-bool run_testcases_compiled = false;
+bool run_testcases_compiled = true;
 
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = false;
+bool execute_binary = true;
 
 
 // This variable gets written to in compiler_compile
@@ -634,9 +634,9 @@ void compiler_run_testcases(bool force_run)
         if (skip_file) {
             continue;
         }
-        test_case_count += 1;
 
-        logg("Testcase: %s\n", name.characters);
+        logg("Testcase #%4d: %s\n", test_case_count, name.characters);
+        test_case_count += 1;
         String path = string_create_formated("upp_code/testcases/%s", name.characters);
         SCOPE_EXIT(string_destroy(&path));
         auto source_code = compiler_add_compilation_unit(path, false, true);
