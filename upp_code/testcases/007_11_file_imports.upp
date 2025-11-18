@@ -1,6 +1,6 @@
-import "007_12_file_to_import_notest.upp"
+import "007_12_file_to_import_notest.upp" as Import
 
 main :: ()
-	success()
+	Import~success()
 
 

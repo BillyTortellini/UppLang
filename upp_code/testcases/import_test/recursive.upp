@@ -1,6 +1,6 @@
-import"other.upp"
+import "other.upp" as Other
 
-recursive_2::(n:int)=>int
-	if n<1
+recursive_2 :: (n: int) => int
+	if n < 1
 		return 0
-	return recursive_1(n-1)*2
+	return Other~recursive_1(n - 1) * 2

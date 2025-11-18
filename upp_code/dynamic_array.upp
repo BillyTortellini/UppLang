@@ -9,7 +9,7 @@ Dynamic_Array :: module
 	import Upp~size_of
 	import Upp~align_of
 	
-	Dynamic_Array :: struct (T: Type_Handle)
+	Dynamic_Array :: struct ($T: Type_Handle)
 		allocator: *Allocator
 		buffer: []T
 		size: usize

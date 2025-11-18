@@ -46,11 +46,12 @@ void* Arena::allocate_raw(usize size, u32 alignment)
 {
 	assert(size != 0 && alignment != 0, "");
 	usize result_address = math_round_next_multiple((usize)next, (usize)alignment);
-	bool resized = arena_reserve_buffer_capacity(this, result_address - (usize)buffer.data + size);
+	bool resized = arena_reserve_buffer_capacity(this, result_address - (usize)buffer.data + size + sizeof(Arena_Buffer));
 	if (resized) {
 		result_address = (usize)next;
 	}
 	next = (void*)(result_address + size);
+	assert(result_address + size <= (usize)buffer.data + buffer.capacity, "Otherwise we shoot out of our buffer!");
 	return (void*)result_address;
 }
 

@@ -84,13 +84,16 @@ struct DynArray
 		return result;
 	}
 
+	void reset() {
+		size = 0;
+	}
+
 	void reserve(usize requested_size) 
 	{
 		if (buffer.size >= requested_size) return;
 
 		// Figure out new size
-		usize new_size = math_maximum(requested_size, 
-			(usize) math_maximum((buffer.size * 3) / 2 + 1, 128 / (int) sizeof(T))); // Min-buffer size in bytes is 128
+		usize new_size = math_maximum(requested_size, (usize) (buffer.size * 3) / 2 + 1);
 
 		if (buffer.data == nullptr) {
 			buffer = arena->allocate_array<T>((int) new_size);
@@ -128,6 +131,18 @@ struct DynArray
 			buffer.data[i] = buffer.data[i + 1];
 		}
 		size -= 1;
+	}
+
+	void remove_range_ordered(int start_index, int end_index)
+	{
+	    if (size <= 0 || end_index < start_index) { return; }
+	    start_index = math_clamp(start_index, 0, (int)size);
+	    end_index = math_clamp(end_index, 0, (int)size);
+	    int length = end_index - start_index;
+	    for (int i = start_index; i < size - length; i++) {
+			buffer.data[i] = buffer.data[i + length];
+	    }
+	    size = size - length;
 	}
 
 	T& last() {

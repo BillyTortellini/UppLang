@@ -1,7 +1,7 @@
-import "import_test/other.upp"
+import "import_test/other.upp" as Other
 
 success :: ()
-	res := recursive_1(3)
+	res := Other~recursive_1(3)
 	assert(res == 9)
 
 

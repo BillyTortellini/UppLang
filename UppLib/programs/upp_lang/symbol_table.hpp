@@ -3,10 +3,12 @@
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "../../datastructures/allocators.hpp"
 #include "compiler_misc.hpp" // Upp_Constant
 #include "constant_pool.hpp"
 #include "ast.hpp"
 #include "type_system.hpp"
+
 
 // struct Function_Progress;
 struct ModTree_Global;
@@ -15,13 +17,13 @@ struct Datatype;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Polymorphic;
-struct Module_Progress;
 
 struct Symbol;
 struct Symbol_Table;
 struct Symbol_Data;
 struct Datatype_Pattern_Variable;
 struct Workload_Base;
+struct Upp_Module;
 
 struct Function_Progress;
 struct Poly_Function;
@@ -33,6 +35,7 @@ namespace AST
 {
     struct Symbol_Lookup;
     struct Node;
+    struct Import;
 }
 
 
@@ -154,17 +157,11 @@ struct Operator_Context
 // SYMBOLS
 
 // Note: Both symbols and symbol-table includes have access levels
-enum class Symbol_Access_Level
-{
-    GLOBAL = 0,      // Can be accessed everywhere (comptime definitions, functions, structs)
-    POLYMORPHIC = 1, // Access level for polymorphic parameters (anonymous structs/lambdas/bake)
-    INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
-};
-
 enum class Symbol_Type
 {
     DEFINITION_UNFINISHED,   // A Definition that isn't ready yet (global variable or comptime value)
     VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
+    ALIAS_UNFINISHED,         // An import that isn't finished yet
 
     HARDCODED_FUNCTION,
     FUNCTION,
@@ -177,7 +174,7 @@ enum class Symbol_Type
     TYPE,
     PATTERN_VARIABLE, // Either comptime parameter or pattern value
     COMPTIME_VALUE,
-    ALIAS_OR_IMPORTED_SYMBOL, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
+    ALIAS, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
     MODULE,
     ERROR_SYMBOL, 
 };
@@ -191,14 +188,15 @@ struct Symbol
         ModTree_Function* function;
         Poly_Function poly_function;
         Workload_Definition* definition_workload;
-        Workload_Import_Resolve* alias_workload;
+        Symbol* alias_for;
+        struct {
+            AST::Import* import_node;
+            Symbol_Table* symbol_table;
+        } alias_unfinished;
         Hardcoded_Type hardcoded;
         Datatype* type;
         ModTree_Global* global;
-        struct {
-            Module_Progress* progress; // Some modules (e.g. compiler created) don't have a progress
-            Symbol_Table* symbol_table;
-        } module;
+        Upp_Module* upp_module;
         struct {
             Function_Progress* function;
             int index_in_polymorphic_signature;
@@ -221,9 +219,16 @@ struct Symbol
 
 
 // SYMBOL TABLE
+enum class Include_Type
+{
+    NORMAL = 1,
+    TRANSITIVE = 2,
+    PARENT = 3, // Parent is also transitive
+};
+
 struct Included_Table
 {
-    bool transitive;
+    Include_Type include_type;
     Symbol_Access_Level access_level;
     Symbol_Table* table;
 };
@@ -246,12 +251,16 @@ Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
+Symbol* symbol_table_define_symbol(
+    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
 void symbol_table_add_include_table(
-    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node);
-// Note: when id == 0, all symbols that are possible will be added
-void symbol_table_query_id(
-    Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited);
+    Symbol_Table* symbol_table, Symbol_Table* included_table, Include_Type include_type, Symbol_Access_Level access_level,
+    AST::Node* error_report_node, Node_Section error_report_section);
+DynArray<Symbol*> symbol_table_query_id(
+    Symbol_Table* symbol_table, String* id, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena);
+DynArray<Symbol*> symbol_table_query_all_symbols(
+    Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena);
+void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);
 void symbol_append_to_string(Symbol* symbol, String* string);

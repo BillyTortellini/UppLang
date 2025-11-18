@@ -22,17 +22,5 @@ namespace Parser
     void execute_clean(Compilation_Unit* unit);
 
     // Utility
-    enum class Section
-    {
-        WHOLE,             // Every character, including child text
-        WHOLE_NO_CHILDREN, // Every character without child text
-        IDENTIFIER,        // Highlight Identifier if the node has any
-        KEYWORD,           // Highlight keyword if the node contains one
-        ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
-        NONE,              // Not quite sure if this is usefull at all
-        FIRST_TOKEN,       // To display error that isn't specific to all internal tokens
-        END_TOKEN,         // To display that something is missing
-    };
-
-    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges);
+    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Token_Range>* ranges);
 }

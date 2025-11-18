@@ -10,7 +10,6 @@
 struct Datatype;
 struct String;
 struct Type_System;
-struct Module_Progress;
 struct ModTree_Function;
 struct Datatype_Struct;
 struct Datatype_Primitive;
@@ -109,6 +108,32 @@ enum class Context_Change_Type
 
 	INVALID, // Not a valid context change
 	MAX_ENUM_VALUE
+};
+
+enum class Symbol_Access_Level
+{
+    GLOBAL = 0,      // Can be accessed everywhere (comptime definitions, functions, structs)
+    POLYMORPHIC = 1, // Access level for polymorphic parameters (anonymous structs/lambdas/bake)
+    INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
+};
+
+enum class Lookup_Type
+{
+    LOCAL_SEARCH = 1, // Only search in given symbol table
+    SEARCH_PARENT = 2, // Only search in parent table
+	NORMAL = 3,
+};
+
+enum class Node_Section
+{
+    WHOLE,             // Every character, including child text
+    WHOLE_NO_CHILDREN, // Every character without child text
+    IDENTIFIER,        // Highlight Identifier if the node has any
+    KEYWORD,           // Highlight keyword if the node contains one
+    ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
+    NONE,              // Not quite sure if this is usefull at all
+    FIRST_TOKEN,       // To display error that isn't specific to all internal tokens
+    END_TOKEN,         // To display that something is missing
 };
 
 enum class Timing_Task

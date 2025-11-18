@@ -14,7 +14,6 @@ struct Compiler;
 struct AST_Parser;
 struct Semantic_Analyser;
 struct Intermediate_Generator;
-struct Module_Progress;
 struct Bytecode_Generator;
 struct Bytecode_Thread;
 struct C_Generator;
@@ -23,6 +22,8 @@ struct IR_Generator;
 struct Source_Code;
 struct Code_History;
 struct Compiler_Analysis_Data;
+struct Upp_Module;
+
 
 
 namespace AST
@@ -49,7 +50,7 @@ struct Compilation_Unit
     AST::Module* root;
     Dynamic_Array<AST::Node*> allocated_nodes;
     Dynamic_Array<Error_Message> parser_errors;
-    Module_Progress* module_progress; // Analysis progress, may be 0 if not analysed yet
+    Upp_Module* upp_module;
 };
 
 // Compiler
@@ -98,7 +99,7 @@ void compiler_destroy();
 Compilation_Unit* compiler_add_compilation_unit(String file_path, bool open_in_editor, bool is_import_file);
 
 void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type);
-Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node); // Returns 0 if file couldn't be read
+Compilation_Unit* compiler_import_file(AST::Import* import_node); // Return 0 if file could not be read
 bool compiler_can_execute_c_compiled(Compiler_Analysis_Data* analysis_data);
 Exit_Code compiler_execute(Compiler_Analysis_Data* analysis_data);
 
@@ -106,3 +107,4 @@ bool compiler_errors_occured(Compiler_Analysis_Data* analysis_data);
 Compilation_Unit* compiler_find_ast_compilation_unit(AST::Node* base);
 void compiler_switch_timing_task(Timing_Task task);
 void compiler_run_testcases(bool force_run);
+void compiler_parse_unit(Compilation_Unit* unit);

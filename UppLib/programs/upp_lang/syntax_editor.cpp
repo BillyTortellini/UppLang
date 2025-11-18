@@ -4159,16 +4159,18 @@ void code_completion_find_suggestions()
 			if (position_info.symbol_info != nullptr) {
 				auto& symbol = position_info.symbol_info->symbol;
 				if (symbol->type == Symbol_Type::MODULE) {
-					symbol_table = symbol->options.module.symbol_table;
+					symbol_table = symbol->options.upp_module->symbol_table;
 				}
 			}
 		}
 
 		if (symbol_table != nullptr)
 		{
-			auto results = dynamic_array_create<Symbol*>();
-			SCOPE_EXIT(dynamic_array_destroy(&results));
-			symbol_table_query_id(symbol_table, 0, false, Symbol_Access_Level::INTERNAL, &results, &editor.symbol_table_already_visited);
+			Arena arena = Arena::create(256);
+			SCOPE_EXIT(arena.destroy());
+			auto results = symbol_table_query_all_symbols(
+				symbol_table, Lookup_Type::LOCAL_SEARCH, Symbol_Access_Level::INTERNAL, &arena
+			);
 			for (int i = 0; i < results.size; i++) {
 				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
@@ -4251,9 +4253,11 @@ void code_completion_find_suggestions()
 		Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
 		if (unranked_suggestions.size == 0 && symbol_table != nullptr)
 		{
-			auto results = dynamic_array_create<Symbol*>();
-			SCOPE_EXIT(dynamic_array_destroy(&results));
-			symbol_table_query_id(symbol_table, 0, true, Symbol_Access_Level::INTERNAL, &results, &editor.symbol_table_already_visited);
+			Arena arena = Arena::create(256);
+			SCOPE_EXIT(arena.destroy());
+			auto results = symbol_table_query_all_symbols(
+				symbol_table, Lookup_Type::NORMAL, Symbol_Access_Level::INTERNAL, &arena
+			);
 			for (int i = 0; i < results.size; i++) {
 				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
@@ -6186,8 +6190,8 @@ void syntax_editor_process_key_message(Key_Message& msg)
 			}
 
 			// Follow path
-			Dynamic_Array<Symbol*> symbols = dynamic_array_create<Symbol*>();
-			SCOPE_EXIT(dynamic_array_destroy(&symbols));
+			Arena arena = Arena::create(256);
+			SCOPE_EXIT(arena.destroy());
 			bool search_includes = true;
 			{
 				for (int i = 0; i < path_parts.size - 1; i++)
@@ -6198,9 +6202,9 @@ void syntax_editor_process_key_message(Key_Message& msg)
 					}
 
 					String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, part);
-					dynamic_array_reset(&symbols);
-					symbol_table_query_id(
-						symbol_table, id, search_includes, (is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &symbols, &editor.symbol_table_already_visited
+					DynArray<Symbol*> symbols = symbol_table_query_id(
+						symbol_table, id, (search_includes ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH), 
+						(is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &arena
 					);
 					search_includes = false;
 					is_intern = false;
@@ -6209,7 +6213,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 					for (int j = 0; j < symbols.size; j++) {
 						auto symbol = symbols[j];
 						if (symbol->type == Symbol_Type::MODULE) {
-							next_table = symbol->options.module.symbol_table;
+							next_table = symbol->options.upp_module->symbol_table;
 							break;
 						}
 					}
@@ -6222,8 +6226,10 @@ void syntax_editor_process_key_message(Key_Message& msg)
 			}
 
 			// Add all symbols to fuzzy search
-			dynamic_array_reset(&symbols);
-			symbol_table_query_id(symbol_table, 0, search_includes, Symbol_Access_Level::INTERNAL, &symbols, &editor.symbol_table_already_visited);
+			DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
+				symbol_table, (search_includes ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH), 
+				Symbol_Access_Level::INTERNAL, &arena
+			);
 			String last = path_parts[path_parts.size - 1];
 			fuzzy_search_start_search(last, 10);
 			for (int i = 0; i < symbols.size; i++) {

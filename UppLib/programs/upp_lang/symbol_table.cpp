@@ -22,7 +22,7 @@ Symbol_Table* symbol_table_create()
 Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level access_level)
 {
     Symbol_Table* result = symbol_table_create();
-    symbol_table_add_include_table(result, parent_table, true, access_level, 0);
+    symbol_table_add_include_table(result, parent_table, Include_Type::PARENT, access_level, nullptr, Node_Section::FIRST_TOKEN);
     result->operator_context = parent_table->operator_context;
     return result;
 }
@@ -39,17 +39,18 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
 }
 
 void symbol_table_add_include_table(
-    Symbol_Table* symbol_table, Symbol_Table* included_table, bool transitive, Symbol_Access_Level access_level, AST::Node* error_report_node)
+    Symbol_Table* symbol_table, Symbol_Table* included_table, Include_Type include_type, Symbol_Access_Level access_level, 
+    AST::Node* error_report_node, Node_Section error_report_section)
 {
     // Check for errors
     if (symbol_table == included_table) {
-        log_semantic_error_outside("Trying to include symbol table to itself!", error_report_node, Parser::Section::FIRST_TOKEN);
+        log_semantic_error_outside("Trying to include symbol table to itself!", error_report_node, Node_Section::FIRST_TOKEN);
         return;
     }
     for (int i = 0; i < symbol_table->included_tables.size; i++) {
         auto include = symbol_table->included_tables[i];
         if (include.table == included_table) {
-            log_semantic_error_outside("Table is already included!", error_report_node, Parser::Section::FIRST_TOKEN);
+            log_semantic_error_outside("Table is already included!", error_report_node, Node_Section::FIRST_TOKEN);
             return;
         }
     }
@@ -57,7 +58,7 @@ void symbol_table_add_include_table(
     // Add include
     Included_Table included;
     included.access_level = access_level;
-    included.transitive = transitive;
+    included.include_type = include_type;
     included.table = included_table;
     dynamic_array_push_back(&symbol_table->included_tables, included);
 }
@@ -99,112 +100,205 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
         symbols = hashtable_find_element(&symbol_table->symbols, id);
         assert(symbols != 0, "Just inserted!");
     }
-    else {
-        // Overloading is only allowed for functions or a type + module combo
-		// Note that it may be possible to break this currently using Import or Alias symbols
-		//		which may affect the way errors are reported (TODO: Think about this)
-        auto symbol_disallows_overload = [&](Symbol* symbol) -> bool {
-            return symbol->type == Symbol_Type::VARIABLE || 
-                symbol->type == Symbol_Type::VARIABLE_UNDEFINED || 
-                symbol->type == Symbol_Type::PARAMETER || 
-				symbol->type == Symbol_Type::PATTERN_VARIABLE ||
-                symbol->type == Symbol_Type::GLOBAL;
-        };
-
-        // Overloading is allowed for all types, except for variables
-        bool overload_valid = true;
-		if (symbol_disallows_overload(new_sym)) {
-			overload_valid = false;
-		}
-		for (int i = 0; i < symbols->size; i++) {
-			auto other = (*symbols)[i];
-			if (symbol_disallows_overload(other)) {
-				overload_valid = false;
-				break;
-			}
-		}
-
-		if (!overload_valid) {
-			// Note: Here we still return a new symbol, but this symbol can never be referenced, because it isn't added in the symbol table
-			log_semantic_error_outside("Symbol already defined in this scope", definition_node, Parser::Section::WHOLE);
-			new_sym->id = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
-			return new_sym;
-		}
-	}
 
 	// Add to symbol_table
 	dynamic_array_push_back(symbols, new_sym);
 	return new_sym;
 }
 
-
-void symbol_table_query_id_recursive(
-	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, 
-	Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited
-)
+struct Query_Table
 {
-	// Check if already visited 
-	// (Note: Actually we need to check if we have visited with given access-level, but I guess it does not make problem currently)
-	if (hashset_contains(already_visited, table)) {
-		return;
-	}
-	hashset_insert_element(already_visited, table);
+	Symbol_Table* table;
+	Lookup_Type lookup_type;
+	Symbol_Access_Level access_level;
+	int depth; // How many includes were traversed to find this query-table
+};
 
-	// Check if all symbols should be added (If id parameter == 0)
-	bool stop_further_lookup = false;
-	if (id != 0) {
-		// Try to find symbol
-		Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&table->symbols, id);
-		if (symbols != 0) {
-			for (int i = 0; i < symbols->size; i++) {
-				Symbol* symbol = (*symbols)[i];
-				if ((int)symbol->access_level <= (int)access_level) {
-					dynamic_array_push_back(results, symbol);
-					if (symbol->access_level == Symbol_Access_Level::INTERNAL) {
-						// Once a internal symbol is found (variable/parameter), stop the search. 
-						// Update: Why is this the case? Probably because overloading for variables isn't available yet?
-						stop_further_lookup = true;
-					}
-				}
-			}
+void find_all_query_tables_recursive(
+	Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, DynArray<Query_Table>& query_tables, int depth)
+{
+	// Check if already visited
+	bool create_new = true;
+	for (int i = 0; i < query_tables.size; i++) 
+	{
+		auto& query_table = query_tables[i];
+		if (query_table.table != symbol_table) continue;
+		create_new = false;
+
+		query_table.access_level = (Symbol_Access_Level)math_maximum((int)access_level, (int)query_table.access_level);
+		query_table.lookup_type  = (Lookup_Type)math_maximum((int)lookup_type, (int)query_table.lookup_type);
+		query_table.depth        = math_minimum(depth, query_table.depth);
+
+		// Return if we already had the same (or stronger) lookup
+		const bool access_level_increased = (int)access_level > (int)query_table.access_level;
+		const bool lookup_level_increased = (int)lookup_type > (int)query_table.lookup_type;
+		if (!access_level_increased && !lookup_level_increased) {
+			return;
 		}
+		break;
 	}
-	else {
-		// Otherwise add all symbols in this table
-		for (auto iter = hashtable_iterator_create(&table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter)) {
-			Dynamic_Array<Symbol*>* symbols = iter.value;
-			for (int i = 0; i < symbols->size; i++) {
-				dynamic_array_push_back(results, (*symbols)[i]);
+
+	// Create new query_table if not already visited 
+	if (create_new) 
+	{
+		Query_Table table;
+		table.access_level = access_level;
+		table.lookup_type = lookup_type;
+		table.depth = depth;
+		table.table = symbol_table;
+		query_tables.push_back(table);
+	}
+
+	// Recurse to include tables
+	if (lookup_type == Lookup_Type::LOCAL_SEARCH) return;
+	for (int i = 0; i < symbol_table->included_tables.size; i++)
+	{
+		Included_Table& included = symbol_table->included_tables[i];
+		switch (lookup_type)
+		{
+		case Lookup_Type::NORMAL: break;
+		case Lookup_Type::SEARCH_PARENT: {
+			if (included.include_type != Include_Type::PARENT) {
+				continue;
 			}
+			break;
 		}
-	}
+		default: panic("");
+		}
 
-	if (stop_further_lookup) {
-		return;
-	}
-
-	// With includes, even if we have found a symbol, we keep searching
-	for (int i = 0; i < table->included_tables.size && search_includes; i++) {
-		auto included = table->included_tables[i];
-		symbol_table_query_id_recursive(
-			included.table,
-			id,
-			included.transitive,
-			(Symbol_Access_Level)(math_minimum((int)access_level, (int)included.access_level)),
-			results,
-			already_visited
+		Lookup_Type next_lookup_type = lookup_type;
+		if (included.include_type == Include_Type::NORMAL) {
+			next_lookup_type = Lookup_Type::LOCAL_SEARCH;
+		}
+		find_all_query_tables_recursive(
+			included.table, next_lookup_type, math_minimum(included.access_level, access_level), query_tables, depth + 1
 		);
 	}
 }
 
-void symbol_table_query_id(
-	Symbol_Table* table, String* id, bool search_includes, Symbol_Access_Level access_level, 
-	Dynamic_Array<Symbol*>* results, Hashset<Symbol_Table*>* already_visited)
+DynArray<Symbol*> symbol_table_query_id(
+	Symbol_Table* symbol_table, String* id, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena)
 {
-	hashset_reset(already_visited);
-	return symbol_table_query_id_recursive(table, id, search_includes, access_level, results, already_visited);
+	assert(id != nullptr, "We added another function to query all symbols");
+
+	// Find all tables we are searching through
+	DynArray<Query_Table> query_tables = DynArray<Query_Table>::create(arena);
+	find_all_query_tables_recursive(symbol_table, lookup_type, access_level, query_tables, 0);
+
+	// Add all symbols with the given id
+	// Note: Internal symbols have priority over non-internal symbols (Parameters and variables shadow other symbols)
+	DynArray<Symbol*> results = DynArray<Symbol*>::create(arena);
+	bool found_internal = false;
+	int min_internal_depth = INT_MAX;
+	for (int i = 0; i < query_tables.size; i++)
+	{
+		auto& query_table = query_tables[i];
+		// Try to find symbol
+		Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&query_table.table->symbols, id);
+		if (symbols == nullptr) continue;
+		for (int i = 0; i < symbols->size; i++) 
+		{
+			Symbol* symbol = (*symbols)[i];
+			if (((int)symbol->access_level > (int)query_table.access_level)) continue;
+
+			const bool is_internal = symbol->access_level == Symbol_Access_Level::INTERNAL;
+			const int depth = query_table.depth;
+			if (found_internal) 
+			{
+				if (!is_internal) continue;
+				if (depth > min_internal_depth) continue;
+				else if (depth < min_internal_depth) {
+					min_internal_depth = depth;
+					results.reset();
+				}
+			}
+			else if (is_internal)
+			{
+				found_internal = true;
+				results.reset();
+				min_internal_depth = depth;
+			}
+
+			results.push_back(symbol);
+		}
+	}
+
+	return results;
 }
 
+DynArray<Symbol*> symbol_table_query_all_symbols(
+	Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena)
+{
+	DynArray<Query_Table> query_tables = DynArray<Query_Table>::create(arena);
+	find_all_query_tables_recursive(symbol_table, lookup_type, access_level, query_tables, 0);
+	DynArray<Symbol*> results = DynArray<Symbol*>::create(arena);
+	for (int i = 0; i < query_tables.size; i++)
+	{
+		auto& query_table = query_tables[i];
+		for (auto iter = hashtable_iterator_create(&query_table.table->symbols); hashtable_iterator_has_next(&iter); hashtable_iterator_next(&iter))
+		{
+			Dynamic_Array<Symbol*>* symbols = iter.value;
+			for (int j = 0; j < symbols->size; j++) {
+				Symbol* symbol = (*symbols)[j];
+				if ((int)symbol->access_level > (int)query_table.access_level) continue;
+				results.push_back(symbol);
+			}
+		}
+	}
+	return results;
+}
+
+void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols)
+{
+	// Resolve aliases
+	for (int i = 0; i < symbols.size; i++) 
+	{
+		Symbol* symbol = symbols[i];
+
+		// Note: Unresolved aliases are removed. 
+		// This special code-path is required during module-analysis, where aliases are not yet analysed
+		// Specifically, this happens during module-imports, e.g. import Foo~* as something
+		if (symbol->type == Symbol_Type::ALIAS_UNFINISHED) {
+			symbols.swap_remove(i);
+			i -= 1;
+			continue;
+		}
+
+		if (symbol->type != Symbol_Type::ALIAS) continue;
+
+		// Find what the symbol aliases (Aliases can be chained!)
+		int count = 0;
+		while (symbol->type == Symbol_Type::ALIAS) {
+			symbol = symbol->options.alias_for;
+			count += 1;
+			assert(count < 300, "I assume this is a alias circular dependency, which shouldn't happen");
+		}
+
+		// Check if the alias is already in symbols array
+		bool already_contained = false;
+		for (int j = 0; j < symbols.size; j++) {
+			auto& other = symbols[j];
+			if (symbol == other) {
+				already_contained = true;
+				break;
+			}
+		}
+
+		// Update symbols array
+		if (already_contained) {
+			symbols.swap_remove(i);
+			i -= 1;
+		}
+		else {
+			symbols[i] = symbol;
+		}
+	}
+}
+
+
+
+
+// PRINTING
 void symbol_type_append_to_string(Symbol_Type type, String* string)
 {
 	switch (type)
@@ -224,7 +318,10 @@ void symbol_type_append_to_string(Symbol_Type type, String* string)
 	case Symbol_Type::PATTERN_VARIABLE:
 		string_append_formated(string, "Pattern value");
 		break;
-	case Symbol_Type::ALIAS_OR_IMPORTED_SYMBOL:
+	case Symbol_Type::ALIAS_UNFINISHED:
+		string_append_formated(string, "Alias not yet defined");
+		break;
+	case Symbol_Type::ALIAS:
 		string_append_formated(string, "Alias or imported symbol");
 		break;
 	case Symbol_Type::VARIABLE:

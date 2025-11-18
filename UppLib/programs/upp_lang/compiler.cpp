@@ -21,7 +21,7 @@ bool enable_parsing = true;
 bool enable_analysis = true;
 bool enable_ir_gen = true;
 bool enable_bytecode_gen = true;
-bool enable_c_generation = true;
+bool enable_c_generation = false;
 bool enable_c_compilation = true;
 
 // Output stages
@@ -36,13 +36,13 @@ bool output_timing = true;
 // Testcases
 bool enable_testcases = false;
 bool enable_stresstest = false;
-bool run_testcases_compiled = true;
+bool run_testcases_compiled = false;
 
 // Execution
 bool enable_output = true;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
-bool execute_binary = true;
+bool execute_binary = false;
 
 
 // This variable gets written to in compiler_compile
@@ -159,7 +159,7 @@ Compilation_Unit* compiler_add_compilation_unit(String file_path_param, bool ope
         unit->open_in_editor = open_in_editor;
         unit->used_in_last_compile = true;
         unit->allocated_nodes = dynamic_array_create<AST::Node*>();
-        unit->module_progress = 0;
+        unit->upp_module = 0;
         unit->parser_errors = dynamic_array_create<Error_Message>();
         unit->root = 0;
         dynamic_array_push_back(&compiler.compilation_units, unit);
@@ -245,7 +245,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
         for (int i = 0; i < compiler.compilation_units.size; i++)
         {
             auto unit = compiler.compilation_units[i];
-            unit->module_progress = 0; // So that new modules are created
+            unit->upp_module = nullptr; // So that new modules are created
 
             bool should_delete = false;
             if (unit->used_in_last_compile) {
@@ -291,7 +291,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
     compiler_switch_timing_task(Timing_Task::ANALYSIS);
     bool do_analysis = enable_lexing && enable_parsing && enable_analysis;
     if (do_analysis) {
-        compiler.main_unit->module_progress = workload_executer_add_module_discovery(compiler.main_unit->root, true);
+        workload_executer_add_module_discovery(compiler.main_unit->root, true);
         workload_executer_resolve();
         semantic_analyser_finish();
     }
@@ -397,7 +397,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
     }
 }
 
-Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import_node)
+Compilation_Unit* compiler_import_file(AST::Import* import_node)
 {
     assert(import_node->type == AST::Import_Type::FILE, "");
 
@@ -421,14 +421,7 @@ Module_Progress* compiler_import_and_queue_analysis_workload(AST::Import* import
     }
 
     // Add source (checks if file is already loaded)
-    auto unit = compiler_add_compilation_unit(path, false, true);
-    if (unit == nullptr) return nullptr;
-
-    if (unit->module_progress == nullptr) {
-        compiler_parse_unit(unit);
-        unit->module_progress = workload_executer_add_module_discovery(unit->root, false);
-    }
-    return unit->module_progress;
+    return compiler_add_compilation_unit(path, false, true);
 }
 
 bool compiler_can_execute_c_compiled(Compiler_Analysis_Data* analysis_data)

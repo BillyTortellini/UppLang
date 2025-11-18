@@ -30,15 +30,15 @@ struct Workload_Structure_Body;
 
 struct Function_Progress;
 struct Bake_Progress;
-struct Module_Progress;
 struct Datatype_Pattern_Variable;
 struct Pattern_Variable_State;
 struct Poly_Header;
 struct Compiler_Analysis_Data;
+struct Compilation_Unit;
 
 namespace Parser
 {
-    enum class Section;
+    enum class Node_Section;
 }
 
 namespace AST
@@ -47,9 +47,21 @@ namespace AST
     struct Code_Block;
     struct Path_Lookup;
     struct Expression;
+    struct Module;
 }
 
 
+
+struct Upp_Module
+{
+    AST::Module* node; // Is only null for compiler-generated modules
+    Symbol_Table* symbol_table;
+    bool is_file_module;
+    union {
+        Compilation_Unit* compilation_unit;
+        Symbol* module_symbol;
+    } options;
+};
 
 enum class ModTree_Function_Type
 {
@@ -136,10 +148,7 @@ struct Pattern_Variable_State
 
 enum class Analysis_Workload_Type
 {
-    EVENT, // Empty workload, which can have dependencies and dependents
-
     MODULE_ANALYSIS, // This is basically just symbol discovery
-    IMPORT_RESOLVE,  
     OPERATOR_CONTEXT_CHANGE,
 
     FUNCTION_HEADER,
@@ -201,14 +210,6 @@ struct Workload_Base
     Arena scratch_arena;
 };
 
-struct Workload_Event
-{
-    Workload_Base base;
-    const char* description;
-};
-
-struct Workload_Module_Analysis;
-
 // Analyses context changes of a single type
 struct Workload_Operator_Context_Change
 {
@@ -221,20 +222,7 @@ struct Workload_Operator_Context_Change
 struct Workload_Module_Analysis
 {
     Workload_Base base;
-    Module_Progress* progress;
     AST::Module* module_node;
-    Symbol_Table* symbol_table;
-
-    Workload_Import_Resolve* last_import_workload;
-    Workload_Module_Analysis* parent_analysis;
-};
-
-struct Workload_Import_Resolve
-{
-    Workload_Base base;
-    AST::Import* import_node;
-    Symbol* symbol; // May be 0 if its a file import
-    Symbol* alias_for_symbol; // May be 0 if its an import
 };
 
 struct Workload_Function_Header
@@ -410,14 +398,6 @@ struct Bake_Progress
     Workload_Bake_Execution* execute_workload;
 };
 
-struct Module_Progress
-{
-    Workload_Module_Analysis* module_analysis;
-    Workload_Event* event_symbol_table_ready; // After all import workloads have ended
-    Symbol* symbol; // May be 0 if root
-};
-
-
 
 
 // WORKLOAD EXECUTER
@@ -452,7 +432,7 @@ struct Workload_Executer
 };
 
 void workload_executer_resolve();
-Module_Progress* workload_executer_add_module_discovery(AST::Module* module, bool is_root_module);
+Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, bool is_root_module);
 
 
 
@@ -674,8 +654,9 @@ struct Path_Lookup_Info {
 };
 
 struct Module_Info {
-    Symbol_Table* symbol_table;
+    Upp_Module* upp_module;
 };
+
 
 struct Analysis_Info
 {
@@ -788,11 +769,11 @@ struct Semantic_Error
 {
     const char* msg;
     AST::Node* error_node; // May be null
-    Parser::Section section;
+    Node_Section section;
     Dynamic_Array<Error_Information> information;
 };
 
-void log_semantic_error_outside(const char* msg, AST::Node* node, Parser::Section node_section);
+void log_semantic_error_outside(const char* msg, AST::Node* node, Node_Section node_section);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown);
 void error_information_append_to_string(
     const Error_Information& info, Compiler_Analysis_Data* analysis_data, 
@@ -823,14 +804,12 @@ struct Semantic_Analyser
 {
     // Result
     Workload_Base* current_workload;
-    Module_Progress* root_module; // Used for finding the main function
     Symbol* error_symbol;
     Workload_Executer* workload_executer;
     ModTree_Global* global_allocator; // Datatype: Allocator
     ModTree_Global* system_allocator; // Datatype: Allocator
     Symbol_Table* root_symbol_table;
-
-    Hashset<Symbol_Table*> symbol_lookup_visited;
+    Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of code-block comptimes
 };
 
 Semantic_Analyser* semantic_analyser_initialize();

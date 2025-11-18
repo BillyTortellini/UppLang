@@ -2699,13 +2699,13 @@ namespace Parser
     }
 
     // AST queries based on Token-Indices
-    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Section section, Dynamic_Array<Token_Range>* ranges)
+    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Token_Range>* ranges)
     {
         auto range = base->range;
         switch (section)
         {
-        case Section::NONE: break;
-        case Section::WHOLE:
+        case Node_Section::NONE: break;
+        case Node_Section::WHOLE:
         {
             if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
                 dynamic_array_push_back(ranges, base->bounding_range);
@@ -2714,7 +2714,7 @@ namespace Parser
             dynamic_array_push_back(ranges, range);
             break;
         }
-        case Section::WHOLE_NO_CHILDREN:
+        case Node_Section::WHOLE_NO_CHILDREN:
         {
             Token_Range sub_range;
             sub_range.start = range.start;
@@ -2749,7 +2749,7 @@ namespace Parser
             }
             break;
         }
-        case Section::IDENTIFIER:
+        case Node_Section::IDENTIFIER:
         {
             auto result = search_token(code, range.start, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, nullptr);
             if (!result.available) {
@@ -2759,7 +2759,7 @@ namespace Parser
             dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
             break;
         }
-        case Section::ENCLOSURE:
+        case Node_Section::ENCLOSURE:
         {
             // Find next (), {} or [], and add the tokens to the ranges
             auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
@@ -2785,7 +2785,7 @@ namespace Parser
             dynamic_array_push_back(ranges, token_range_make_offset(end_token.value, 1));
             break;
         }
-        case Section::KEYWORD:
+        case Node_Section::KEYWORD:
         {
             auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0);
             if (!result.available) {
@@ -2794,11 +2794,11 @@ namespace Parser
             dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
             break;
         }
-        case Section::FIRST_TOKEN: {
+        case Node_Section::FIRST_TOKEN: {
             dynamic_array_push_back(ranges, token_range_make_offset(range.start, 1));
             break;
         }
-        case Section::END_TOKEN: {
+        case Node_Section::END_TOKEN: {
             Token_Range end_token_range = token_range_make_offset(range.end, -1);
             end_token_range.start.token = math_maximum(0, end_token_range.start.token);
             dynamic_array_push_back(ranges, end_token_range);

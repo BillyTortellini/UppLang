@@ -161,8 +161,43 @@ void arena_test()
     std::cin.ignore();
 }
 
+void next_test()
+{
+    Arena arena = Arena::create();
+    const int SIZE = 512;
+    const int ARRAY_COUNT = 32;
+
+    Array<DynArray<int>> arrays = arena.allocate_array<DynArray<int>>(ARRAY_COUNT);
+    for (int i = 0; i < arrays.size; i++) {
+        arrays[i] = DynArray<int>::create(&arena);
+    }
+
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < arrays.size; j++) {
+            arrays[j].push_back(j);
+        }
+    }
+
+    for (int i = 0; i < arrays.size; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            arrays[i].push_back(i);
+        }
+    }
+
+    for (int i = 0; i < arrays.size; i++) 
+    {
+        DynArray<int>& array = arrays[i];
+        for (int j = 0; j < array.size; j++) {
+            assert(array[j] == i, "");
+        }
+    }
+
+    arena.destroy();
+}
+
 int main(int argc, char** argv)
 {
+    // next_test();
     // arena_test();
     // syntax_renaming();
     // return 0;

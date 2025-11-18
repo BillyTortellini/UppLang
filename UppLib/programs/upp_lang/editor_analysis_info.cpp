@@ -123,7 +123,7 @@ void find_editor_infos_recursive(
 			if (info == 0) { break; }
 			Symbol_Table_Range table_range;
 			table_range.range = token_range_to_text_range(node->bounding_range, code);
-			table_range.symbol_table = info->symbol_table;
+			table_range.symbol_table = info->upp_module->symbol_table;
 			table_range.tree_depth = tree_depth;
 			table_range.pass = pass;
 			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
@@ -477,7 +477,7 @@ void compiler_analysis_update_source_code_information()
 		dynamic_array_append_other(&compiler.analysis_data->allocated_nodes, &unit->allocated_nodes);
 		dynamic_array_reset(&unit->allocated_nodes);
 
-		if (unit->module_progress == nullptr) {
+		if (unit->upp_module == nullptr) {
 			continue;
 		}
 
@@ -610,7 +610,6 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
 	result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
 	result->pattern_variable_expression_mapping = hashtable_create_pointer_empty<AST::Expression*, Pattern_Variable*>(16);
-	result->root_module = nullptr;
 
 	// Workload executer
 	result->all_workloads = dynamic_array_create<Workload_Base*>();

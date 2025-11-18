@@ -104,7 +104,6 @@ struct Compiler_Analysis_Data
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
     Hashtable<AST::Expression*, Pattern_Variable*> pattern_variable_expression_mapping;
-    Module_Progress* root_module;
 
     // Workload executer
     Dynamic_Array<Workload_Base*> all_workloads;

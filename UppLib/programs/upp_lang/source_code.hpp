@@ -6,7 +6,6 @@
 #include "lexer.hpp"
 #include "compiler_misc.hpp"
 
-struct Module_Progress;
 struct Source_Code;
 struct Source_Line;
 struct Symbol;
