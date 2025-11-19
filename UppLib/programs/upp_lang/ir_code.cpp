@@ -832,15 +832,15 @@ Symbol* get_info(AST::Definition_Symbol* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL)->symbol;
 }
 
-Callable_Call* get_info(AST::Call_Node* node) {
+Call_Info* get_info(AST::Call_Node* node) {
     return pass_get_node_info(ir_generator.current_pass, node, Info_Query::READ_NOT_NULL);
 }
 
-void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* arguments)
+void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* call_node)
 {
-    auto call_info = get_info(arguments);
-    assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER, "");
-    auto& struct_content = call_info->callable.options.struct_content;
+    auto call_info = get_info(call_node);
+    assert(call_info->origin.type == Call_Origin_Type::STRUCT_INITIALIZER, "");
+    auto& struct_content = call_info->origin.options.struct_content;
 
     for (int i = 0; i < call_info->parameter_values.size; i++)
     {
@@ -865,8 +865,8 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
         move_instr.options.move.source = value_access;
         add_instruction(move_instr);
     }
-    for (int i = 0; i < arguments->subtype_initializers.size; i++) {
-        auto initializer = arguments->subtype_initializers[i];
+    for (int i = 0; i < call_node->subtype_initializers.size; i++) {
+        auto initializer = call_node->subtype_initializers[i];
         generate_member_initalizers(struct_access, initializer->call_node);
     }
 }
@@ -1098,17 +1098,15 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         IR_Instruction call_instr;
         call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        switch (call_info->callable.type)
+        switch (call_info->origin.type)
         {
-        case Callable_Type::DOT_CALL_NORMAL:
-        case Callable_Type::FUNCTION: {
+        case Call_Origin_Type::FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            call_instr.options.call.options.function = call_info->callable.options.function;
+            call_instr.options.call.options.function = call_info->origin.options.function;
             assert(call_instr.options.call.options.function != nullptr, "");
             break;
         }
-        case Callable_Type::DOT_CALL_POLYMORPHIC:
-        case Callable_Type::POLY_FUNCTION: {
+        case Call_Origin_Type::POLY_FUNCTION: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             assert(call_info->instanciated, "");
             call_instr.options.call.options.function = call_info->instanciation_data.function;
@@ -1116,15 +1114,15 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             assert(call_instr.options.call.options.function != nullptr, "");
             break;
         }
-        case Callable_Type::FUNCTION_POINTER: {
+        case Call_Origin_Type::FUNCTION_POINTER: {
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
             assert(!call.is_dot_call, "");
-            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(call.options.expr);
+            call_instr.options.call.options.pointer_access = ir_generator_generate_expression(call.expr);
             break;
         }
-        case Callable_Type::HARDCODED:
+        case Call_Origin_Type::HARDCODED:
         {
-            auto& hardcoded = call_info->callable.options.hardcoded;
+            auto& hardcoded = call_info->origin.options.hardcoded;
             switch (hardcoded)
             {
             case Hardcoded_Type::ALIGN_OF:
@@ -1231,19 +1229,17 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         }
 
         // Generate return value
-        auto signature = call_info->callable.signature;
+        auto signature = call_info->origin.signature;
         call_instr.options.call.destination = ir_data_access_create_nothing();
         if (signature->return_type_index != -1)
         {
             Datatype* return_type = nullptr;
             if (call_info->instanciated) 
             {
-                if (call_info->callable.type == Callable_Type::POLY_FUNCTION || call_info->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC) 
-                {
+                if (call_info->origin.type == Call_Origin_Type::POLY_FUNCTION) {
                     return_type = call_info->instanciation_data.function->signature->return_type().value;
                 }
-                else if (call_info->callable.type == Callable_Type::HARDCODED) 
-                {
+                else if (call_info->origin.type == Call_Origin_Type::HARDCODED) {
                     return_type = upcast(call_info->instanciation_data.bitwise_primitive_type);
                 }
                 else {
@@ -1251,7 +1247,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 }
             }
             else {
-                return_type = call_info->callable.signature->return_type().value;
+                return_type = call_info->origin.signature->return_type().value;
             }
             
             call_instr.options.call.destination = make_destination_access_on_demand(return_type);
@@ -1259,9 +1255,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         // Generate arguments 
         call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(signature->parameters.size);
-        for (int i = 0; i < call_info->parameter_values.size && i != call_info->callable.signature->return_type_index; i++)
+        for (int i = 0; i < call_info->parameter_values.size && i != call_info->origin.signature->return_type_index; i++)
         {
-            auto& param_info = call_info->callable.signature->parameters[i];
+            auto& param_info = call_info->origin.signature->parameters[i];
             if (param_info.comptime_variable_index != -1) continue;
             auto& param_value = call_info->parameter_values[i];
 
@@ -1315,9 +1311,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     {
         // Handle slice-initializer first
         auto call_info = get_info(expression->options.struct_initializer.call_node);
-        if (call_info->callable.type == Callable_Type::SLICE_INITIALIZER)
+        if (call_info->origin.type == Call_Origin_Type::SLICE_INITIALIZER)
         {
-            Datatype_Slice* slice_type = call_info->callable.options.slice_type;
+            Datatype_Slice* slice_type = call_info->origin.options.slice_type;
             assert(call_info->parameter_values.size == 2, "");
 
             IR_Data_Access* slice_access = make_destination_access_on_demand(result_type);
@@ -1333,9 +1329,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         }
 
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
-        assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER ||
-            call_info->callable.type == Callable_Type::UNION_INITIALIZER, "");
-        auto& struct_content = call_info->callable.options.struct_content;
+        assert(call_info->origin.type == Call_Origin_Type::STRUCT_INITIALIZER ||
+            call_info->origin.type == Call_Origin_Type::UNION_INITIALIZER, "");
+        auto& struct_content = call_info->origin.options.struct_content;
 
         // First, set all tags to correct values
         Datatype_Struct* structure = downcast<Datatype_Struct>(result_type->base_type);

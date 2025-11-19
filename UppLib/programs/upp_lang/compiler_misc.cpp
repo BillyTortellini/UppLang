@@ -137,13 +137,6 @@ void exit_code_append_to_string(String* string, Exit_Code code)
 }
 
 
-Callable callable_make(Call_Signature* signature, Callable_Type type) {
-	Callable callable;
-	callable.signature = signature;
-	callable.type = type;
-	return callable;
-}
-
 
 // Extern sources
 Extern_Sources extern_sources_create()
@@ -200,6 +193,8 @@ Identifier_Pool identifier_pool_create()
 		ids.is_available = add_id("is_available");
 		ids.uninitialized_token = add_id("_");
 		ids.return_type_name = add_id("!return_type_name");
+		ids.context = add_id("context");
+		ids.dot_call = add_id("dot_call");
 		ids.c_string = add_id("c_string");
 		ids.allocator = add_id("Allocator");
 		ids.bytes = add_id("bytes");
@@ -250,7 +245,6 @@ Identifier_Pool identifier_pool_create()
 		ids.add_unop = add_id("add_unop");
 		ids.add_cast = add_id("add_cast");
 		ids.add_array_access = add_id("add_array_access");
-		ids.add_dot_call = add_id("add_dot_call");
 		ids.add_iterator = add_id("add_iterator");
 
 		ids.cast_option = add_id("Cast_Option");

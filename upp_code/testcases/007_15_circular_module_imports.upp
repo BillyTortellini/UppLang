@@ -1,0 +1,37 @@
+
+import A as B
+import int as A
+
+Foo :: module
+	import Bar~**
+	
+	z :: ()
+		
+	
+	w :: ()
+		
+	
+	test :: ()
+		x()
+		y()
+		z()
+		w()
+
+Bar :: module
+	import Foo~**
+	
+	x :: ()
+		
+	
+	y :: ()
+		
+	
+	test :: ()
+		x()
+		y()
+		z()
+		w()
+
+main :: ()
+	Foo~test()
+	Bar~test()

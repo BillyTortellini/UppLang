@@ -190,6 +190,7 @@ void find_editor_infos_recursive(
 			option.expression.expr = expr;
 			option.expression.info = info;
 			option.expression.is_member_access = false;
+			option.expression.analysis_pass = pass;
 
 			if (expr->type == AST::Expression_Type::AUTO_ENUM)
 			{
@@ -311,10 +312,10 @@ void find_editor_infos_recursive(
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
-			Callable_Call* call = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
-			if (call != nullptr) {
+			Call_Info* call_info = pass_get_node_info(pass, arguments, Info_Query::TRY_READ);
+			if (call_info != nullptr) {
 				Semantic_Info_Option option;
-				option.call_info.callable_call = call;
+				option.call_info.callable_call = call_info;
 				option.call_info.call_node = arguments;
 				add_semantic_info(analysis_item_index, Semantic_Info_Type::CALL_INFORMATION, option, pass);
 			}
@@ -621,7 +622,6 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
 	result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
 	result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
-	result->allocated_dot_calls = dynamic_array_create<Dynamic_Array<Dot_Call_Info>*>();
 	result->allocated_nodes = dynamic_array_create<AST::Node*>();
 	result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 
@@ -695,13 +695,6 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	}
 	dynamic_array_destroy(&data->allocated_operator_contexts);
 
-	for (int i = 0; i < data->allocated_dot_calls.size; i++) {
-		auto dot_calls = data->allocated_dot_calls[i];
-		dynamic_array_destroy(dot_calls);
-		delete dot_calls;
-	}
-	dynamic_array_destroy(&data->allocated_dot_calls);
-
 	data->arena.destroy();
 
 
@@ -727,16 +720,6 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	hashset_destroy(&data->call_signatures);
 
 	delete data;
-}
-
-Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity)
-{
-	Dynamic_Array<Dot_Call_Info> initial = dynamic_array_create<Dot_Call_Info>(capacity);
-	Dynamic_Array<Dot_Call_Info>* result = new Dynamic_Array<Dot_Call_Info>;
-	*result = initial;
-
-	dynamic_array_push_back(&data->allocated_dot_calls, result);
-	return result;
 }
 
 

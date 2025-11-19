@@ -464,9 +464,43 @@ struct Argument_Info
 	int parameter_index; // -1 if no matching parameter was found
 };
 
-struct Callable_Call
+enum class Call_Origin_Type
 {
-    Callable callable;
+    FUNCTION,
+    POLY_FUNCTION,
+    POLY_STRUCT,
+    STRUCT_INITIALIZER,
+    UNION_INITIALIZER,
+	SLICE_INITIALIZER, // Struct-initializer syntax for slices
+	HARDCODED,
+    FUNCTION_POINTER,
+	CONTEXT_CHANGE,
+	ERROR_OCCURED, // In case of non-resolvable overloads or invalid symbol
+};
+
+struct Call_Origin
+{
+	Call_Signature* signature;
+    Call_Origin_Type type;
+    union {
+		ModTree_Function* function;
+		Poly_Function poly_function;
+		Workload_Structure_Polymorphic* poly_struct;
+		Hardcoded_Type hardcoded;
+		Datatype_Slice* slice_type;
+		Datatype_Function_Pointer* function_pointer;
+		Context_Change_Type context_change_type;
+		Struct_Content* struct_content;
+    } options;
+};
+
+// Note:
+// Call_Info is mostly used for convenience when generating code, e.g. in IR-Generator.
+// This is why we store struct/union/slice initializer seperately, even though the result-type could be used to 
+// find out which one is currently used
+struct Call_Info
+{
+	Call_Origin origin;
     Array<Parameter_Value> parameter_values;
 	Array<Argument_Info> argument_infos;
     AST::Call_Node* call_node; // May be null
@@ -486,7 +520,6 @@ struct Callable_Call
 		} initializer_info;
     } instanciation_data;
 };
-
 
 enum class Expression_Context_Type
 {
@@ -557,7 +590,7 @@ struct Expression_Info
     bool is_valid; // If this expression contains any errors (Not recursive), currently only used for comptime-calculation (And code editor I guess?)
     union 
     {
-        Callable_Call* call; // Same as get_info(arguments)
+        Call_Info* call_info; // Same as get_info(arguments)
         struct {
             Member_Access_Type type;
             union {
@@ -670,7 +703,7 @@ struct Analysis_Info
         Symbol_Lookup_Info symbol_lookup_info;
         Path_Lookup_Info path_info;
         Module_Info module_info;
-        Callable_Call call_info; // For AST::Call_Node*
+        Call_Info call_info; // For AST::Call_Node*
     };
 };
 
@@ -691,7 +724,7 @@ Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
 Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
 Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
-Callable_Call* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query);
+Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query);
 
 Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
@@ -832,3 +865,6 @@ Workload_Base* pattern_variable_find_instance_workload(
     Workload_Base* search_start_workload = nullptr,
     bool called_from_editor = false
 );
+bool pattern_checker_create_and_check(Arena* arena, Datatype* pattern_type, Datatype* match_against);
+Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_temporary_value);
+bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg = nullptr, Type_System* type_system = nullptr);

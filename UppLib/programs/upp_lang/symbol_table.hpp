@@ -9,8 +9,6 @@
 #include "ast.hpp"
 #include "type_system.hpp"
 
-
-// struct Function_Progress;
 struct ModTree_Global;
 struct ModTree_Function;
 struct Datatype;
@@ -72,24 +70,9 @@ struct Custom_Operator_Key
             Datatype* to_type; // May be null for polymorphic casts
         } custom_cast;
         struct {
-            Datatype* datatype;
-            String* id;
-        } dot_call;
-        struct {
             Datatype* datatype; // Iterable type
         } iterator;
         Cast_Option cast_option;
-    } options;
-};
-
-struct Dot_Call_Info
-{
-    bool as_member_access;
-    Type_Mods mods;
-    bool is_polymorphic;
-    union {
-        ModTree_Function* function;
-        Poly_Function poly_function;
     } options;
 };
 
@@ -122,7 +105,6 @@ union Custom_Operator
             Poly_Function poly_function;
         } options;
     } custom_cast;
-    Dynamic_Array<Dot_Call_Info>* dot_calls;
     struct {
         Type_Mods iterable_mods;
         bool is_polymorphic; 
@@ -189,10 +171,7 @@ struct Symbol
         Poly_Function poly_function;
         Workload_Definition* definition_workload;
         Symbol* alias_for;
-        struct {
-            AST::Import* import_node;
-            Symbol_Table* symbol_table;
-        } alias_unfinished;
+        int unfinished_alias_index;
         Hardcoded_Type hardcoded;
         Datatype* type;
         ModTree_Global* global;
@@ -221,9 +200,11 @@ struct Symbol
 // SYMBOL TABLE
 enum class Include_Type
 {
-    NORMAL = 1,
-    TRANSITIVE = 2,
-    PARENT = 3, // Parent is also transitive
+    DOT_CALL_INCLUDE = 1,
+    DOT_CALL_INCLUDE_TRANSITIVE = 2,
+    TRANSITIVE = 3,
+    NORMAL = 4,
+    PARENT = 5, // Parent is also transitive
 };
 
 struct Included_Table
@@ -255,7 +236,8 @@ Symbol* symbol_table_define_symbol(
     Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
 void symbol_table_add_include_table(
     Symbol_Table* symbol_table, Symbol_Table* included_table, Include_Type include_type, Symbol_Access_Level access_level,
-    AST::Node* error_report_node, Node_Section error_report_section);
+    AST::Node* error_report_node, Node_Section error_report_section
+);
 DynArray<Symbol*> symbol_table_query_id(
     Symbol_Table* symbol_table, String* id, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena);
 DynArray<Symbol*> symbol_table_query_all_symbols(

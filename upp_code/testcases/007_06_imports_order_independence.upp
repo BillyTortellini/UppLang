@@ -1,8 +1,8 @@
 
-X::100
+X :: 100
 
 import Y as Z
 import X as Y
 
-main::()
+main :: ()
 	

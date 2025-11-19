@@ -1,43 +1,13 @@
 
-Workload scratch_arena destroy causes errors
-
-Maybe testcase for definitions inside functions + symbol access
-Symbol-table rework thoughts:
- - Symbol lookup always goes through all symbol-tables?
- - Internal symbols (Variables/parameters) could stop lookup early (if they are deduplicated...)
-
-Allocator :: struct($T)
-    allocate:   (allocator: T, size: usize) => address
-    deallocate: (allocator: T, data: address, size: usize)
-    resize:     (allocator: T, data: address, old_size: usize, new_size: usize) => bool
-
-Dynamic_Array :: struct($T, $Allocator: Allocator_Trait($A))
-    allocator: A
-
-x := Dynamic_Array::create(arena, T = int, $Allocator = Arena_Allocator, capacity = 1024)
+Dot-Call rework:
+ - Compiler table lookup with ~name
+    Only float, int and bool stay, everything else goes into new namespace
+ - Context remove import, now working with symbol-table...
+    import context Datatstructures~something~*
+ - Rework cast options
 
 BUG: F5 -> F8 -> F5 --> crashes interpreter, I guess something do to with testcases
 Re-implement Allocators and Dynamic_Array/Hashtable for speed test...
-
-Module-analysis rework:
------------------------
-Currently we have multiple workloads:
- * Module analysis
- * Import_Resolve
- * Event
-
-Think about project structure, everything in a single file?
-I mean I can store it however i like it, and other programms can do what they want
-
-Do I need something like libraries? Probably... 
-What are those? Probably just directories with code + optionally a order-file (How it is loaded in the editor)
-
-Note: imports may appear as statements, which are treated at start of block...
-Modules are hierarchical, so it may make sense to keep this hierarchy of module-analysis workloads?
-Current analysis order is:
-   *) File imports, which always require a name
-   *) ~* and ~** imports, which only look up to parent modules and not other * and ** lookups (To avoid dependencies on each other)
-   *) import A~B (Single symbol imports)
 
 
 C++ Profilers:
@@ -68,7 +38,7 @@ Superliminal --> $$$
 
 FEATURE IMPLEMENTATION PLAN:
 ----------------------------
- * Symbol-Table lookup/module analysis rework
+ * Dot-Call rework as normal path-lookup
  * Operator Context rework
     Rework dependencies
     Redesign primitive operations maybe
@@ -77,6 +47,10 @@ FEATURE IMPLEMENTATION PLAN:
  * ModTree-Function/Upp-Function rework
     IR-Code/Bytecode now waits if functions are not ready
     Remove Cluster compile
+ ? Semantic-Analyser removal, Introduction of semantic context
+ ? Type-System rework
+    Seperate type and type-mods,
+    Remove Type_Subtype, Type_Const, Type_Pointer
  * Modules, files, directories Rework
     Do something similar to Odin, where we import "packages", which are just directories of code.
     Code editor does not work on files, but rather on packages (or whatever)
@@ -86,6 +60,7 @@ FEATURE IMPLEMENTATION PLAN:
         string handling with const
         function parameters
         const inferred
+    enum size
     auto pointer handling, remove * and &
     new delete context vs arena
     casts, address usize isize

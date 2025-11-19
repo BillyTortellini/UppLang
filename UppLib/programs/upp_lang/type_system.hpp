@@ -561,14 +561,15 @@ void type_system_add_predefined_types(Type_System* system);
 Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variable* pattern_variable);
 Datatype_Struct_Pattern* type_system_make_struct_pattern(
     Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition);
-Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false);
+Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false, Type_System* type_system = nullptr);
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
 Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
-Datatype* type_system_make_constant(Datatype* datatype);
+Datatype* type_system_make_constant(Datatype* datatype, Type_System* type_system = nullptr);
 Datatype_Optional* type_system_make_optional(Datatype* datatype);
-Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index); // Creating a subtype of a constant creates a constant subtype
-Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods);
+// Creating a subtype of a constant creates a constant subtype
+Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index, Type_System* type_system = nullptr);
+Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods, Type_System* type_system = nullptr);
 Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* call_signature, bool is_optional); 
 
 // Note: empty types need to be finished before they are used!

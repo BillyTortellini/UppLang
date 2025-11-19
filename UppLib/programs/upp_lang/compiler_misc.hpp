@@ -101,7 +101,6 @@ enum class Context_Change_Type
 	UNARY_OPERATOR,
 	ARRAY_ACCESS,
 	CAST,
-	DOT_CALL,
 	ITERATOR,
 	CAST_OPTION,
 	IMPORT,
@@ -122,6 +121,7 @@ enum class Lookup_Type
     LOCAL_SEARCH = 1, // Only search in given symbol table
     SEARCH_PARENT = 2, // Only search in parent table
 	NORMAL = 3,
+	DOT_CALL_LOOKUP = 4,
 };
 
 enum class Node_Section
@@ -281,46 +281,6 @@ struct Call_Signature
     Optional<Datatype*> return_type();
 };
 
-// Note:
-// Callable_Type is mostly used for convenience when generating code, e.g. in IR-Generator.
-// This is why we store struct/union/slice initializer seperately, even though the result-type could be used to 
-// find out which one is currently used
-enum class Callable_Type
-{
-    FUNCTION,
-    POLY_FUNCTION,
-    POLY_STRUCT,
-    STRUCT_INITIALIZER,
-    UNION_INITIALIZER,
-	SLICE_INITIALIZER, // Struct-initializer syntax for slices
-	HARDCODED,
-    FUNCTION_POINTER,
-	DOT_CALL_POLYMORPHIC,
-	DOT_CALL_NORMAL,
-	CONTEXT_CHANGE,
-	ERROR_OCCURED, // In case of non-resolvable overloads or invalid symbol
-};
-
-struct Callable
-{
-	Call_Signature* signature;
-	Callable_Type type;
-	union
-	{
-		ModTree_Function* function;
-		Poly_Function poly_function;
-		Workload_Structure_Polymorphic* poly_struct;
-		Hardcoded_Type hardcoded;
-		Datatype_Slice* slice_type;
-		Datatype_Function_Pointer* function_pointer;
-		Context_Change_Type context_change_type;
-		Struct_Content* struct_content;
-	} options;
-};
-
-Callable callable_make(Call_Signature* signature, Callable_Type type);
-
-
 
 
 // Extern Sources
@@ -355,6 +315,8 @@ struct Predefined_IDs
 	String* is_available;
 	String* uninitialized_token; // _
 	String* return_type_name; // !return_type
+	String* context;
+	String* dot_call;
 
 	String* hashtag_instanciate;
 	String* hashtag_bake;
@@ -410,7 +372,6 @@ struct Predefined_IDs
 	String* add_unop;
 	String* add_cast;
 	String* add_array_access;
-	String* add_dot_call;
 	String* add_iterator;
 
 	String* cast_option;

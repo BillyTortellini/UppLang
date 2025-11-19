@@ -154,20 +154,11 @@ void find_all_query_tables_recursive(
 	for (int i = 0; i < symbol_table->included_tables.size; i++)
 	{
 		Included_Table& included = symbol_table->included_tables[i];
-		switch (lookup_type)
-		{
-		case Lookup_Type::NORMAL: break;
-		case Lookup_Type::SEARCH_PARENT: {
-			if (included.include_type != Include_Type::PARENT) {
-				continue;
-			}
-			break;
-		}
-		default: panic("");
-		}
+		if (lookup_type == Lookup_Type::SEARCH_PARENT && included.include_type != Include_Type::PARENT) continue;
+		if (included.include_type == Include_Type::DOT_CALL_INCLUDE && lookup_type != Lookup_Type::DOT_CALL_LOOKUP) continue;
 
 		Lookup_Type next_lookup_type = lookup_type;
-		if (included.include_type == Include_Type::NORMAL) {
+		if (included.include_type == Include_Type::NORMAL || included.include_type == Include_Type::DOT_CALL_INCLUDE) {
 			next_lookup_type = Lookup_Type::LOCAL_SEARCH;
 		}
 		find_all_query_tables_recursive(

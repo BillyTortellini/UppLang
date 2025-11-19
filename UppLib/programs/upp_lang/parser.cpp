@@ -1004,7 +1004,22 @@ namespace Parser
             result->alias_name = optional_make_failure<Definition_Symbol*>();
             result->file_name = 0;
             result->path = 0;
+            result->option = Import_Option::NONE;
             advance_token();
+
+            if (test_token(Token_Type::IDENTIFIER)) 
+            {
+                auto& ids = compiler.identifier_pool.predefined_ids;
+                auto id = get_token()->options.identifier;
+                if (id == ids.context) {
+                    result->option = Import_Option::CONTEXT_IMPORT;
+                    advance_token();
+                }
+                else if (id == ids.dot_call) {
+                    result->option = Import_Option::DOT_CALL_IMPORT;
+                    advance_token();
+                }
+            }
 
             // Check if its' a file import
             if (test_token(Token_Type::LITERAL) && get_token()->options.literal_value.type == Literal_Type::STRING) {
@@ -1076,7 +1091,6 @@ namespace Parser
                 else if (id == ids.add_unop) { change_type = Context_Change_Type::UNARY_OPERATOR; }
                 else if (id == ids.add_iterator) { change_type = Context_Change_Type::ITERATOR; }
                 else if (id == ids.add_cast) { change_type = Context_Change_Type::CAST; }
-                else if (id == ids.add_dot_call) { change_type = Context_Change_Type::DOT_CALL; }
                 else if (id == ids.set_cast_option) { change_type = Context_Change_Type::CAST_OPTION; }
                 else {
                     log_error_range_offset("Identifier is not a valid context operation", 1);
@@ -2002,6 +2016,7 @@ namespace Parser
 
         Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
         path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+        path->is_dot_call_lookup = false;
 
         while (true)
         {
@@ -2031,6 +2046,24 @@ namespace Parser
 
         path->last = path->parts[path->parts.size - 1];
         PARSE_SUCCESS(path);
+    }
+
+    Path_Lookup* parse_path_lookup_or_error(Node* parent)
+    {
+        if (!test_token(Token_Type::IDENTIFIER)) 
+        {
+            Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+            path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+            path->is_dot_call_lookup = false;
+            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+            dynamic_array_push_back(&path->parts, lookup);
+            path->last = lookup;
+            lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
+            SET_END_RANGE(lookup);
+            SET_END_RANGE(path);
+            return path;
+        }
+        return parse_path_lookup(parent);
     }
 
     Expression* parse_single_expression_no_postop(Node* parent)
@@ -2470,16 +2503,12 @@ namespace Parser
             result->type = Expression_Type::FUNCTION_CALL;
             auto& call = result->options.call;
             call.is_dot_call = true;
-            call.options.dot_call_name = ids.empty_string;
 
-            // Parse dot-call identifier
-            if (test_token(Token_Type::IDENTIFIER)) {
-                call.options.dot_call_name = get_token(0)->options.identifier;
-                advance_token();
-            }
-            else {
-                log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-            }
+            Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+            call.expr = call_expr;
+            call_expr->type = AST::Expression_Type::PATH_LOOKUP;
+            call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
+            call_expr->options.path_lookup->is_dot_call_lookup = true;
 
             // Parse arguments
             call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
@@ -2516,7 +2545,7 @@ namespace Parser
             result->type = Expression_Type::FUNCTION_CALL;
             auto& call = result->options.call;
             call.is_dot_call = false;
-            call.options.expr = child;
+            call.expr = child;
             call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }

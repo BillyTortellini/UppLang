@@ -3756,45 +3756,6 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 
 
 // Code Completion
-void code_completion_find_dotcalls_in_context_recursive(
-	Operator_Context* context, Hashset<Operator_Context*>* visited, Datatype* datatype, Dynamic_Array<Editor_Suggestion>* unranked_suggestions,
-	bool as_member_access
-)
-{
-	if (hashset_contains(visited, context)) {
-		return;
-	}
-	hashset_insert_element(visited, context);
-
-	auto iter = hashtable_iterator_create(&context->custom_operators);
-	while (hashtable_iterator_has_next(&iter)) {
-		Custom_Operator_Key* key = iter.key;
-		Custom_Operator* op = iter.value;
-		if (key->type == Context_Change_Type::DOT_CALL && types_are_equal(key->options.dot_call.datatype, datatype)) {
-			String* id = key->options.dot_call.id;
-			auto& calls = *op->dot_calls;
-			bool found = false;
-			for (int i = 0; i < calls.size; i++) {
-				auto& call = calls[i];
-				if (call.as_member_access == as_member_access) {
-					found = true;
-					break;
-				}
-			}
-			if (found) {
-				fuzzy_search_add_item(*id, unranked_suggestions->size);
-				dynamic_array_push_back(unranked_suggestions, suggestion_make_id(id, Syntax_Color::FUNCTION));
-			}
-		}
-		hashtable_iterator_next(&iter);
-	}
-
-	for (int i = 0; i < context->context_imports.size; i++) {
-		auto other_context = context->context_imports[i];
-		code_completion_find_dotcalls_in_context_recursive(other_context, visited, datatype, unranked_suggestions, as_member_access);
-	}
-}
-
 void suggestions_fill_with_file_directory(String search_path)
 {
 	auto& editor = syntax_editor;
@@ -3891,6 +3852,29 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 	return false;
 }
 
+Datatype* editor_pattern_variable_get_type(Pattern_Variable* pattern_variable, Analysis_Pass* pass, Pattern_Variable_State_Type& out_state)
+{
+	out_state = Pattern_Variable_State_Type::UNSET;
+	if (pass == nullptr) return nullptr;
+
+	Workload_Base* lookup_workload = pass->origin_workload;
+	auto active_pattern_values = 
+		pattern_variable_find_instance_workload(pattern_variable, lookup_workload, true)->active_pattern_variable_states;
+	assert(active_pattern_values.data != nullptr, "");
+
+	const auto& value = active_pattern_values[pattern_variable->value_access_index];
+	out_state = value.type;
+	switch (value.type)
+	{
+	case Pattern_Variable_State_Type::SET: return value.options.value.type;
+	case Pattern_Variable_State_Type::PATTERN: return value.options.pattern_type;
+	case Pattern_Variable_State_Type::UNSET: return upcast(pattern_variable->pattern_variable_type);
+	default: panic("");
+	}
+
+	return nullptr;
+}
+
 void code_completion_find_suggestions()
 {
 	auto& editor = syntax_editor;
@@ -3976,19 +3960,23 @@ void code_completion_find_suggestions()
 	bool is_dot_call_access = false;
 	bool is_path_lookup = false;
 	bool is_hashtag = false;
+	int op_index = cursor.character;
 	{
 		int word_start = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
 		partially_typed = string_create_substring_static(&line->text, word_start, cursor.character);
 		if (partially_typed.size == 1 && !char_is_valid_identifier(partially_typed.characters[0])) {
 			partially_typed = string_create_static("");
 		}
-
 		if (test_char(line->text, word_start, '#')) {
 			is_hashtag = true;
 		}
-		if ((test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) ||
-			(test_char(line->text, cursor.character - 2, '-') && test_char(line->text, cursor.character - 1, '>'))) {
+		if (test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) {
+			op_index = word_start - 2;
 			is_dot_call_access = true;
+		}
+		else if (test_char(line->text, cursor.character - 2, '-') && test_char(line->text, cursor.character - 1, '>')) {
+			is_dot_call_access = true;
+			op_index = cursor.character - 2;
 		}
 		if (test_char(line->text, word_start - 1, '.') || test_char(line->text, cursor.character - 1, '.')) {
 			is_member_access = true;
@@ -4017,31 +4005,109 @@ void code_completion_find_suggestions()
 		fuzzy_search_add_item(*ids.hashtag_get_overload_poly, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload_poly));
 	}
-	else if (is_dot_call_access)
+	else if (is_dot_call_access && op_index > 0)
 	{
-		Datatype* type = nullptr;
-
-		auto expr_info = position_info.expression_info;
-		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr)
+		// Op index is at the -> start, so one before should be the 
+		Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, op_index - 1), nullptr);
+		Semantic_Info_Expression* expr_info = dot_call_position_info.expression_info;
+		if (expr_info != nullptr)
 		{
-			// Note: For member-accesses, we need the type of the value, not the member-access expression
-			type = expr_info->member_access_info.value_type;
-
-			// Search for dot-calls
-			if (type->type == Datatype_Type::STRUCT)
-			{
-				auto struct_type = downcast<Datatype_Struct>(type);
-				if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-				}
-			}
+			Analysis_Pass* analysis_pass = expr_info->analysis_pass;
+			Datatype* call_value_type = expr_info->info->cast_info.result_type;
 			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
 			if (symbol_table != nullptr)
 			{
-				auto context = symbol_table->operator_context;
-				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
-				SCOPE_EXIT(hashset_destroy(&visited));
-				code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions, false);
+				Arena arena = Arena::create(256);
+				SCOPE_EXIT(arena.destroy());
+				DynArray<Symbol*> symbols = symbol_table_query_all_symbols(symbol_table, Lookup_Type::DOT_CALL_LOOKUP, Symbol_Access_Level::INTERNAL, &arena);
+				for (int i = 0; i < symbols.size; i++)
+				{
+					auto symbol = symbols[i];
+
+					// Handle aliases
+					String* original_id = symbol->id;
+					while (symbol->type == Symbol_Type::ALIAS) {
+						symbol = symbol->options.alias_for;
+					}
+
+					// Check if symbol is callable
+					Datatype* value_type = nullptr;
+					Call_Signature* call_signature = nullptr;
+					switch (symbol->type)
+					{
+					case Symbol_Type::COMPTIME_VALUE: {
+						value_type = symbol->options.constant.type;
+						break;
+					}
+					case Symbol_Type::GLOBAL: {
+						value_type = symbol->options.global->type;
+						break;
+					}
+					case Symbol_Type::FUNCTION: {
+						call_signature = symbol->options.function->signature;
+						break;
+					}
+					case Symbol_Type::PARAMETER: {
+						auto& param = symbol->options.parameter;
+						value_type = param.function->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+						break;
+					}
+					case Symbol_Type::PATTERN_VARIABLE: 
+					{
+						Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
+						value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, analysis_pass, state);
+						break;
+					}
+					case Symbol_Type::VARIABLE: {
+						value_type = symbol->options.variable_type;
+						break;
+					}
+					case Symbol_Type::POLYMORPHIC_FUNCTION: {
+						call_signature = symbol->options.poly_function.poly_header->signature;
+						break;
+					}
+					case Symbol_Type::HARDCODED_FUNCTION: {
+						call_signature = editor.analysis_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
+						break;
+					}
+					}
+
+					// Check if value is callable
+					if (value_type != nullptr) {
+						value_type = value_type->base_type;
+					}
+					if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
+						call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
+					}
+
+					// Check if dot-call expr type matches function first parameter
+					if (call_signature == nullptr) continue;
+					if (call_signature->parameters.size == 0 || call_signature->return_type_index == 0) continue;
+					auto param = call_signature->parameters[0];
+					if (param.requires_named_addressing) continue;
+
+					// Check if types are compatible (Does not check for casts...)
+					Datatype* param_type = param.datatype;
+					Datatype* arg_type = call_value_type;
+
+					Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
+					const char* out_error_msg = "";
+					if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
+						continue;
+					}
+					arg_type = cast_info.result_type;
+					if (param_type->contains_pattern) {
+						if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
+							continue;
+						}
+					}
+					else if (!types_are_equal(param_type, arg_type)) {
+						continue;
+					}
+
+					fuzzy_search_add_item(*original_id, unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
+				}
 			}
 		}
 	}
@@ -4127,23 +4193,6 @@ void code_completion_find_suggestions()
 				}
 				break;
 			}
-
-			// Search for dot-calls
-			if (type->type == Datatype_Type::STRUCT)
-			{
-				auto struct_type = downcast<Datatype_Struct>(type);
-				if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					type = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
-				}
-			}
-			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
-			if (symbol_table != nullptr)
-			{
-				auto context = symbol_table->operator_context;
-				Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(4);
-				SCOPE_EXIT(hashset_destroy(&visited));
-				code_completion_find_dotcalls_in_context_recursive(context, &visited, type, &unranked_suggestions, true);
-			}
 		}
 	}
 	else if (is_path_lookup)
@@ -4206,8 +4255,6 @@ void code_completion_find_suggestions()
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_unop));
 				fuzzy_search_add_item(*ids.add_cast, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_cast));
-				fuzzy_search_add_item(*ids.add_dot_call, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_dot_call));
 				fuzzy_search_add_item(*ids.add_array_access, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_array_access));
 				fuzzy_search_add_item(*ids.add_iterator, unranked_suggestions.size);
@@ -6597,7 +6644,7 @@ void cursor_goto_selected_stack_frame()
 	if (editor.selected_stack_frame < 0 || editor.selected_stack_frame >= stack_frames.size) {
 		return;
 	}
-	auto frame = stack_frames[editor.selected_stack_frame];
+	auto& frame = stack_frames[editor.selected_stack_frame];
 	Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
 	if (info.unit == nullptr) {
 		return;
@@ -6905,8 +6952,8 @@ void syntax_editor_update(bool& animations_running)
 					for (int i = 0; i < strings.size; i++) {
 						string_destroy(&strings[i]);
 					}
-				dynamic_array_destroy(&strings);
-					);
+					dynamic_array_destroy(&strings);
+				);
 
 				for (int i = 0; i < stack_frames.size; i++)
 				{
@@ -7383,23 +7430,10 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
 		after_text = "Pattern Variable";
-		if (pass == nullptr) break;
-
-		Workload_Base* lookup_workload = pass->origin_workload;
-		auto active_pattern_values = 
-			pattern_variable_find_instance_workload(symbol->options.pattern_variable, lookup_workload, true)->active_pattern_variable_states;
-		assert(active_pattern_values.data != nullptr, "");
-
-		const auto& value = active_pattern_values[symbol->options.pattern_variable->value_access_index];
-		switch (value.type)
-		{
-		case Pattern_Variable_State_Type::SET: type = value.options.value.type; break;
-		case Pattern_Variable_State_Type::PATTERN: type = value.options.pattern_type; break;
-		case Pattern_Variable_State_Type::UNSET:
-			type = upcast(symbol->options.pattern_variable->pattern_variable_type); 
+		Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
+		type = editor_pattern_variable_get_type(symbol->options.pattern_variable, pass, state);
+		if (state == Pattern_Variable_State_Type::UNSET) {
 			after_text = "Pattern Variable (UNSET)";
-			break;
-		default: panic("");
 		}
 		break;
 	}
@@ -8384,24 +8418,40 @@ void syntax_editor_render()
 			auto call_info = hover_info.call_info->callable_call;
 			int arg_index = hover_info.call_argument_index;
 
+			// Check if call is dot-call
+			bool is_dot_call = false;
+			if (call_info->call_node != nullptr) {
+				auto call_node = call_info->call_node;
+				if (call_node->base.parent != nullptr && call_node->base.parent->type == AST::Node_Type::EXPRESSION) {
+					auto expr = downcast<AST::Expression>(call_node->base.parent);
+					if (expr->type == AST::Expression_Type::FUNCTION_CALL && expr->options.call.is_dot_call) {
+						is_dot_call = true;
+					}
+				}
+			}
+
 			String* name = nullptr;
 			vec3 color = Syntax_Color::TEXT;
-			const bool is_dot_call = call_info->callable.type == Callable_Type::DOT_CALL_NORMAL || 
-				call_info->callable.type ==  Callable_Type::DOT_CALL_POLYMORPHIC;
-			switch (call_info->callable.type)
+			bool is_struct_init = false;
+			switch (call_info->origin.type)
 			{
-			case Callable_Type::FUNCTION:           name = call_info->callable.options.function->name; color = Syntax_Color::FUNCTION; break;
-			case Callable_Type::DOT_CALL_NORMAL:    name = call_info->callable.options.function->name; color = Syntax_Color::FUNCTION; break;
-			case Callable_Type::STRUCT_INITIALIZER: {
+			case Call_Origin_Type::FUNCTION: 
+			{
+				name = call_info->origin.options.function->name;
+				color = Syntax_Color::FUNCTION;
+				break;
+			}
+			case Call_Origin_Type::STRUCT_INITIALIZER: 
+			{
+				is_struct_init = true;
 				if (call_info->argument_matching_success) {
-					name = call_info->callable.options.struct_content->name;
+					name = call_info->origin.options.struct_content->name;
 					color = Syntax_Color::TYPE;
 					break;
 				}
 			}
 			}
 
-			bool is_struct_init = call_info->callable.type == Callable_Type::STRUCT_INITIALIZER;
 			if (name != nullptr) {
 				Rich_Text::set_text_color(text, color);
 				Rich_Text::append(text, *name);
@@ -8423,7 +8473,7 @@ void syntax_editor_render()
 			bool first = true;
 			for (int i = is_dot_call ? 1 : 0; i < call_info->parameter_values.size; i += 1)
 			{
-				const auto& param_info = call_info->callable.signature->parameters[i];
+				const auto& param_info = call_info->origin.signature->parameters[i];
 				const auto& param_value = call_info->parameter_values[i];
 
 				if (param_info.requires_named_addressing || param_info.must_not_be_set) {

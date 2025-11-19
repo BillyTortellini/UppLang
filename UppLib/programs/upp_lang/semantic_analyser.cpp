@@ -42,7 +42,7 @@ Expression_Info analyse_symbol_as_expression(Symbol* symbol, Expression_Context 
 bool expression_is_auto_expression_with_preferred_type(AST::Expression* expression);
 bool expression_is_auto_expression(AST::Expression* expression);
 Poly_Instance* poly_header_instanciate(
-	Callable_Call* call, AST::Node* error_report_node, Node_Section error_report_section = Node_Section::WHOLE);
+	Call_Info* call_info, AST::Node* error_report_node, Node_Section error_report_section = Node_Section::WHOLE);
 
 void expression_context_apply(Expression_Info* info, Expression_Context context, AST::Expression* expression = 0, Node_Section error_section = Node_Section::WHOLE);
 void semantic_analyser_register_function_call(ModTree_Function* call_to);
@@ -61,13 +61,10 @@ void poly_header_destroy(Poly_Header* info);
 Operator_Context* symbol_table_install_new_operator_context_and_add_workloads(
 	Symbol_Table* symbol_table, Dynamic_Array<AST::Context_Change*> context_changes, bool force_install = false
 );
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg = nullptr);
 bool try_updating_expression_type_mods(AST::Expression* expr, Type_Mods expected_mods, const char** out_error_msg = nullptr);
 void analyse_operator_context_change(AST::Context_Change* change_node, Operator_Context* context);
 Custom_Operator* operator_context_query_custom_operator(Operator_Context* context, Custom_Operator_Key key);
 u64 custom_operator_key_hash(Custom_Operator_Key* key);
-void operator_context_query_dot_calls_recursive(
-    Operator_Context* context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>& out_results, Hashset<Operator_Context*>& visited);
 
 
 
@@ -263,7 +260,7 @@ Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Que
     return &pass_get_base_info(pass, AST::upcast(node), query)->module_info;
 }
 
-Callable_Call* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query) {
+Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query) {
 	return &pass_get_base_info(pass, AST::upcast(node), query)->call_info;
 }
 
@@ -306,7 +303,7 @@ Module_Info* get_info(AST::Module* module, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, module, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
-Callable_Call* get_info(AST::Call_Node* arguments, bool create = false) {
+Call_Info* get_info(AST::Call_Node* arguments, bool create = false) {
     return pass_get_node_info(semantic_analyser.current_workload->current_pass, arguments, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL);
 }
 
@@ -986,7 +983,7 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(Datatype* dataty
 	auto& analyser = semantic_analyser;
 	auto& arena = semantic_analyser.current_workload->scratch_arena;
 	auto call_info = get_info(call_node);
-	assert(call_info->callable.type == Callable_Type::STRUCT_INITIALIZER, "");
+	assert(call_info->origin.type == Call_Origin_Type::STRUCT_INITIALIZER, "");
 	if (!call_info->argument_matching_success) {
 		return comptime_result_make_unavailable(datatype, "Init matcher was invalid");
 	}
@@ -1021,7 +1018,7 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(Datatype* dataty
 		default: panic("");
 		}
 
-		auto& member = call_info->callable.options.struct_content->members[i];
+		auto& member = call_info->origin.options.struct_content->members[i];
 		memcpy(((byte*)struct_buffer) + member.offset, member_memory, member.type->memory_info.value.size);
 	}
 
@@ -1428,7 +1425,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	case AST::Expression_Type::STRUCT_INITIALIZER:
 	{
 		auto call_info = get_info(expr->options.struct_initializer.call_node);
-		if (call_info->callable.type == Callable_Type::SLICE_INITIALIZER) {
+		if (call_info->origin.type == Call_Origin_Type::SLICE_INITIALIZER) {
 			return comptime_result_make_unavailable(result_type, "Comptime slice initializer not implemented yet :P ");
 		}
 
@@ -1574,12 +1571,12 @@ Parameter_Value parameter_value_make_comptime(Upp_Constant& constant) {
 	return result;
 }
 
-void callable_call_set_parameter_to_expression(Callable_Call* call, int param_index, int argument_index, AST::Expression* expression)
+void call_info_set_parameter_to_expression(Call_Info* call_info, int param_index, int argument_index, AST::Expression* expression)
 {
 	bool already_analysed = false;
 	auto info_opt = pass_get_node_info(semantic_analyser.current_workload->current_pass, expression, Info_Query::TRY_READ);
 
-	auto& param_value = call->parameter_values[param_index];
+	auto& param_value = call_info->parameter_values[param_index];
 	param_value.value_type = Parameter_Value_Type::ARGUMENT_EXPRESSION;
 	param_value.options.argument_index = argument_index;
 	if (info_opt != nullptr) {
@@ -1591,7 +1588,7 @@ void callable_call_set_parameter_to_expression(Callable_Call* call, int param_in
 		param_value.datatype = compiler.analysis_data->type_system.predefined_types.invalid_type;
 	}
 
-	auto& arg_info = call->argument_infos[argument_index];
+	auto& arg_info = call_info->argument_infos[argument_index];
 	arg_info.expression = expression;
 	arg_info.is_analysed = info_opt != nullptr;
 	arg_info.name = optional_make_failure<String*>();
@@ -1793,7 +1790,7 @@ void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol) {
 // Logs an error if overloaded symbols was found
 Symbol* symbol_lookup_resolve_to_single_symbol(
 	AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table,
-	Lookup_Type lookup_type, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false)
+	Lookup_Type lookup_type, Symbol_Access_Level access_level, bool prefer_module_symbols_on_overload = false, bool resolve_aliases = true)
 {
 	// Note: if this fails: we expect paths and lookups to be initialized to error symbol with path_lookup_set_info_to_error
 	auto info = pass_get_node_info(semantic_analyser.current_workload->current_pass, lookup, Info_Query::READ_NOT_NULL);
@@ -1805,7 +1802,9 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
 	SCOPE_EXIT(arena->rewind_to_checkpoint(checkpoint));
 
 	DynArray<Symbol*> results = symbol_table_query_id(symbol_table, lookup->name, lookup_type, access_level, arena);
-	symbol_table_query_resolve_aliases(results);
+	if (resolve_aliases) {
+		symbol_table_query_resolve_aliases(results);
+	}
 
 	// Handle result array
 	if (results.size == 0) {
@@ -1935,17 +1934,21 @@ DynArray<Symbol*> path_lookup_resolve(AST::Path_Lookup* path, Arena* arena, bool
 	if (path->parts.size != 1) { // When a path is specified always use the least strong access level
 		access_level = Symbol_Access_Level::GLOBAL;
 	}
-	auto results = symbol_table_query_id(
-		symbol_table, path->last->name, (path->parts.size == 1 ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH),
-		access_level, arena
-	);
+	Lookup_Type lookup_type = Lookup_Type::NORMAL;
+	if (path->is_dot_call_lookup) {
+		lookup_type = Lookup_Type::DOT_CALL_LOOKUP;
+	}
+	if (path->parts.size > 1) {
+		lookup_type = Lookup_Type::LOCAL_SEARCH;
+	}
+	auto results = symbol_table_query_id(symbol_table, path->last->name, lookup_type, access_level, arena);
 	if (resolve_aliases) {
 		symbol_table_query_resolve_aliases(results);
 	}
 	return results;
 }
 
-Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, Lookup_Type lookup_type, bool prefer_module_symbols_on_overload)
+Symbol* path_lookup_resolve_to_single_symbol(AST::Path_Lookup* path, Lookup_Type lookup_type, bool prefer_module_symbols_on_overload, bool resolve_aliases = true)
 {
 	path_lookup_set_info_to_error_symbol(path, semantic_analyser.current_workload->current_pass);
 	auto error = semantic_analyser.error_symbol;
@@ -2832,153 +2835,224 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Dependen
 
 
 // ARGUMENTS/PARAMETER MATCHING + OVERLOADING
-Optional<Callable> callable_from_expression_info(Expression_Info& info)
+Call_Origin call_origin_make(Poly_Header* poly_header) 
+{
+	Call_Origin origin;
+	origin.type = poly_header->is_function ? Call_Origin_Type::POLY_FUNCTION : Call_Origin_Type::POLY_STRUCT;
+	if (poly_header->is_function) {
+		origin.type = Call_Origin_Type::POLY_FUNCTION;
+		origin.options.poly_function = poly_header->origin.function_progress->poly_function;
+	}
+	else {
+		origin.type = Call_Origin_Type::POLY_STRUCT;
+		origin.options.poly_struct = poly_header->origin.struct_workload;
+	}
+	origin.signature = poly_header->signature;
+	return origin;
+}
+
+Call_Origin call_origin_make(ModTree_Function* function) 
+{
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::FUNCTION;
+	origin.options.function = function;
+	origin.signature = function->signature;
+	return origin;
+}
+
+Call_Origin call_origin_make(Datatype_Function_Pointer* function_ptr_type) 
+{
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::FUNCTION_POINTER;
+	origin.options.function_pointer = function_ptr_type;
+	origin.signature = function_ptr_type->signature;
+	return origin;
+}
+
+Call_Origin call_origin_make(Hardcoded_Type hardcoded_type) 
+{
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::HARDCODED;
+	origin.options.hardcoded = hardcoded_type;
+	origin.signature = compiler.analysis_data->hardcoded_function_signatures[(int)hardcoded_type];
+	return origin;
+}
+
+Call_Origin call_origin_make(Context_Change_Type context_change_type)
+{
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::CONTEXT_CHANGE;
+	origin.options.context_change_type = context_change_type;
+	origin.signature = compiler.analysis_data->context_change_type_signatures[(int)context_change_type];
+	return origin;
+}
+
+Call_Origin call_origin_make(Struct_Content* struct_content) 
+{
+	Call_Origin origin;
+	origin.type = struct_content->structure->struct_type == AST::Structure_Type::STRUCT ?
+		Call_Origin_Type::STRUCT_INITIALIZER : Call_Origin_Type::UNION_INITIALIZER;
+	origin.options.struct_content = struct_content;
+
+	// Create initializer signature if not already done (FUTURE: May cause problems with multithreading)
+	if (struct_content->initializer_signature_cached == nullptr) 
+	{
+		Datatype_Struct* structure = struct_content->structure;
+
+		// Wait for struct-workload so members are analysed
+		if (structure->workload != nullptr) {
+			analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(structure->workload));
+			workload_executer_wait_for_dependency_resolution();
+		}
+		assert(structure->base.memory_info.available, "");
+
+		// Create new signature
+		bool is_union_initializer = structure->struct_type == AST::Structure_Type::UNION;
+		Call_Signature* signature = call_signature_create_empty();
+		for (int i = 0; i < struct_content->members.size; i++) {
+			auto& member = struct_content->members[i];
+			call_signature_add_parameter(signature, member.id, member.type, !is_union_initializer, is_union_initializer, false);
+		}
+		signature = call_signature_register(signature);
+
+		// Store signature
+		struct_content->initializer_signature_cached = signature;
+	}
+
+	origin.signature = struct_content->initializer_signature_cached;
+	return origin;
+}
+
+Call_Origin call_origin_make(Datatype_Slice* slice_type)
+{
+	if (slice_type->slice_initializer_signature_cached == nullptr) 
+	{
+		auto& ids = compiler.identifier_pool.predefined_ids;
+		Call_Signature* signature = call_signature_create_empty();
+		call_signature_add_parameter(signature, ids.data, slice_type->data_member.type, true, false, false);
+		call_signature_add_parameter(signature, ids.size, slice_type->size_member.type, true, false, false);
+		signature = call_signature_register(signature);
+		slice_type->slice_initializer_signature_cached = signature;
+	}
+
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::SLICE_INITIALIZER;
+	origin.options.slice_type = slice_type;
+	origin.signature = slice_type->slice_initializer_signature_cached;
+	return origin;
+}
+
+Call_Origin call_origin_make_error()
+{
+	Call_Origin origin;
+	origin.type = Call_Origin_Type::ERROR_OCCURED;
+	origin.signature = compiler.analysis_data->empty_call_signature;
+	return origin;
+}
+
+
+
+Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena)
+{
+	Call_Info call_info;
+	call_info.origin = origin;
+	call_info.argument_matching_success = false;
+	call_info.call_node = nullptr;
+	call_info.instanciated = false;
+	call_info.argument_infos = array_create_static<Argument_Info>(nullptr, 0);
+	call_info.parameter_values = arena->allocate_array<Parameter_Value>(origin.signature->parameters.size);
+	for (int i = 0; i < call_info.parameter_values.size; i++) {
+		call_info.parameter_values[i] = parameter_value_make_unset();
+	}
+	return call_info;
+}
+
+void call_info_add_arguments_from_call_node(Call_Info* call_info, AST::Call_Node* call_node, Arena* arena)
+{
+	call_info->call_node = call_node;
+	call_info->argument_infos = arena->allocate_array<Argument_Info>(call_node->arguments.size);
+	for (int i = 0; i < call_info->argument_infos.size; i++)
+	{
+		auto& arg_info = call_info->argument_infos[i];
+		auto& arg = call_node->arguments[i];
+		arg_info.expression = arg->value;
+		arg_info.name = arg->name;
+		arg_info.parameter_index = -1;
+		arg_info.is_analysed = false;
+	}
+}
+
+Call_Info call_info_make_from_call_node(AST::Call_Node* call_node, Call_Origin origin, Arena* arena) 
+{
+	Call_Info result = call_info_make_with_empty_arguments(origin, arena);
+	call_info_add_arguments_from_call_node(&result, call_node, arena);
+	return result;
+}
+
+Call_Info call_info_make_error(AST::Call_Node* call_node) {
+	return call_info_make_from_call_node(call_node, call_origin_make_error(), &compiler.analysis_data->arena);
+}
+
+// May return error-occured if no origin is valid...
+Call_Origin call_origin_from_expression_info(Expression_Info& info)
 {
 	// Figure out call type
-	ModTree_Function* function = nullptr;
-
 	switch (info.result_type)
 	{
 	case Expression_Result_Type::POLYMORPHIC_PATTERN:
 	case Expression_Result_Type::NOTHING:
-	case Expression_Result_Type::TYPE: {
-		return optional_make_failure<Callable>();
-	}
-	case Expression_Result_Type::POLYMORPHIC_STRUCT: {
-		auto result = callable_make(info.options.polymorphic_struct->poly_header->signature, Callable_Type::POLY_STRUCT);
-		result.options.poly_struct = info.options.polymorphic_struct;
-		return optional_make_success(result);
-	}
-	case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-		auto result = callable_make(info.options.poly_function.poly_header->signature, Callable_Type::POLY_FUNCTION);
-		result.options.poly_function = info.options.poly_function;
-		return optional_make_success(result);
-	}
-	case Expression_Result_Type::FUNCTION: {
-		function = info.options.function;
-		break;
-	}
+	case Expression_Result_Type::TYPE: return call_origin_make_error();
+	case Expression_Result_Type::POLYMORPHIC_STRUCT: return call_origin_make(info.options.polymorphic_struct->poly_header);
+	case Expression_Result_Type::POLYMORPHIC_FUNCTION: return call_origin_make(info.options.poly_function.poly_header);
+	case Expression_Result_Type::FUNCTION: return call_origin_make(info.options.function);
+	case Expression_Result_Type::HARDCODED_FUNCTION: return call_origin_make(info.options.hardcoded);
 	case Expression_Result_Type::CONSTANT:
 	{
 		auto& constant = info.options.constant;
 		auto type = datatype_get_non_const_type(constant.type);
 		if (type->type != Datatype_Type::FUNCTION_POINTER) {
-			return optional_make_failure<Callable>();;
+			return call_origin_make_error();
 		}
 
 		int function_slot_index = (int)(*(i64*)constant.memory) - 1;
 		auto& slots = compiler.analysis_data->function_slots;
 		if (function_slot_index < 0 || function_slot_index >= slots.size) {
-			return optional_make_failure<Callable>();;
+			return call_origin_make_error();
 		}
 
-		function = slots[function_slot_index].modtree_function;
+		auto function = slots[function_slot_index].modtree_function;
 		if (function == nullptr) {
 			// This is the case if we somehow managed to call a ir-generated function (entry, allocate, deallocate, reallocate)
-			// which shouldn't happen in normal circumstances, but can be made to happen
-			return optional_make_failure<Callable>();;
+			// which shouldn't happen in normal circumstances, but can be made to happen (By baking a function pointer with an integer id)
+			return call_origin_make_error();
 		}
-		break;
+		return call_origin_make(function);
 	}
 	case Expression_Result_Type::VALUE:
 	{
 		auto type = datatype_get_non_const_type(expression_info_get_type(&info, false));
 		if (type->type != Datatype_Type::FUNCTION_POINTER) {
-			return optional_make_failure<Callable>();;
+			return call_origin_make_error();
 		}
-		auto function_type = downcast<Datatype_Function_Pointer>(type);
-		if (function_type->is_optional) {
-			return optional_make_failure<Callable>();;
+		auto function_ptr_type = downcast<Datatype_Function_Pointer>(type);
+		if (function_ptr_type->is_optional) {
+			return call_origin_make_error();
 		}
-
-		Callable result = callable_make(function_type->signature, Callable_Type::FUNCTION_POINTER);
-		result.options.function_pointer = function_type;
-		return optional_make_success(result);
-	}
-	case Expression_Result_Type::HARDCODED_FUNCTION:
-	{
-		auto callable = compiler.analysis_data->hardcoded_function_callables[(int)info.options.hardcoded];
-		return optional_make_success(callable);
+		return call_origin_make(function_ptr_type);
 	}
 	default: panic("");
 	}
 
-	if (function != nullptr)
-	{
-		auto result = callable_make(function->signature, Callable_Type::FUNCTION);
-		result.options.function = function;
-		return optional_make_success(result);
-	}
-
-	panic("This code path should not happen anymore");
-	return optional_make_failure<Callable>();
-}
-
-Callable callable_from_dot_call_info(Dot_Call_Info dot_call_info)
-{
-	assert(!dot_call_info.as_member_access, "");
-	Callable result;
-	if (dot_call_info.is_polymorphic) {
-		result = callable_make(dot_call_info.options.poly_function.poly_header->signature, Callable_Type::DOT_CALL_POLYMORPHIC);
-		result.options.poly_function = dot_call_info.options.poly_function;
-	}
-	else {
-		result = callable_make(dot_call_info.options.function->signature, Callable_Type::DOT_CALL_NORMAL);
-		result.options.function = dot_call_info.options.function;
-	}
-	return result;
-}
-
-Callable_Call callable_call_make_empty(Arena* arena, const Callable& callable)
-{
-	Callable_Call call;
-	call.callable = callable;
-	call.argument_matching_success = false;
-	call.call_node = nullptr;
-	call.argument_infos = array_create_static<Argument_Info>(nullptr, 0);
-	call.parameter_values = arena->allocate_array<Parameter_Value>(callable.signature->parameters.size);
-	call.instanciated = false;
-	for (int i = 0; i < call.parameter_values.size; i++) {
-		call.parameter_values[i] = parameter_value_make_unset();
-	}
-	return call;
-}
-
-Callable_Call callable_call_make_from_call_node(
-	Arena* arena, const Callable& callable, AST::Call_Node* call_node, bool first_argument_analysed = false)
-{
-	Callable_Call call = callable_call_make_empty(arena, callable);
-	call.call_node = call_node;
-	call.argument_infos = arena->allocate_array<Argument_Info>(call_node->arguments.size);
-	for (int i = 0; i < call.argument_infos.size; i++)
-	{
-		auto& arg_info = call.argument_infos[i];
-		auto& arg = call_node->arguments[i];
-		arg_info.expression = arg->value;
-		arg_info.name = arg->name;
-		arg_info.parameter_index = -1;
-		arg_info.is_analysed = i == 0 && first_argument_analysed;
-
-		// Handle dot-call expression that is already analysed
-		if (arg_info.is_analysed && call.parameter_values.size > 0 && call.callable.signature->return_type_index != 0)
-		{
-			auto& param_value = call.parameter_values[0];
-			auto expr_info = get_info(arg->value, false);
-			param_value.datatype = expr_info->cast_info.result_type;
-			param_value.is_temporary_value = expr_info->cast_info.result_value_is_temporary;
-		}
-	}
-
-	return call;
+	return call_origin_make_error();
 }
 
 void analyse_parameter_value_if_not_already_done(
-	Callable_Call* call, Parameter_Value* param_value, Expression_Context context, bool allow_poly_pattern = false)
+	Call_Info* call_info, Parameter_Value* param_value, Expression_Context context, bool allow_poly_pattern = false)
 {
 	if (param_value->value_type != Parameter_Value_Type::ARGUMENT_EXPRESSION) return;
 	assert(param_value->options.argument_index != -1, "");
 
-	auto& arg_info = call->argument_infos[param_value->options.argument_index];
+	auto& arg_info = call_info->argument_infos[param_value->options.argument_index];
 	if (arg_info.is_analysed) return;
 	arg_info.is_analysed = true;
 
@@ -2986,20 +3060,20 @@ void analyse_parameter_value_if_not_already_done(
 	param_value->is_temporary_value = get_info(arg_info.expression)->cast_info.initial_value_is_temporary;
 }
 
-void callable_call_analyse_all_arguments(
-	Callable_Call* call, bool allow_poly_pattern,
+void call_info_analyse_all_arguments(
+	Call_Info* call_info, bool allow_poly_pattern,
 	bool analyse_subtype_initializers_as_error = false,
 	bool analyse_without_context = false)
 {
-	for (int i = 0; i < call->argument_infos.size; i++)
+	for (int i = 0; i < call_info->argument_infos.size; i++)
 	{
-		auto& argument = call->argument_infos[i];
+		auto& argument = call_info->argument_infos[i];
 		if (argument.is_analysed) continue;
 		argument.is_analysed = true;
 
 		Expression_Context context = expression_context_make_unknown(true); // If no error occured the context should always be available
 		if (argument.parameter_index != -1) {
-			auto param_type = call->callable.signature->parameters[argument.parameter_index].datatype;
+			auto param_type = call_info->origin.signature->parameters[argument.parameter_index].datatype;
 			if (!param_type->contains_pattern) {
 				context = expression_context_make_specific_type(param_type);
 			}
@@ -3011,27 +3085,23 @@ void callable_call_analyse_all_arguments(
 		semantic_analyser_analyse_expression_value(argument.expression, context, false, allow_poly_pattern);
 		auto info = get_info(argument.expression);
 		if (argument.parameter_index != -1) {
-			call->parameter_values[argument.parameter_index].datatype = info->cast_info.result_type;
-			call->parameter_values[argument.parameter_index].is_temporary_value = info->cast_info.result_value_is_temporary;
+			call_info->parameter_values[argument.parameter_index].datatype = info->cast_info.result_type;
+			call_info->parameter_values[argument.parameter_index].is_temporary_value = info->cast_info.result_value_is_temporary;
 		}
 	}
 
 	// Note: subtype-initializer already reported errors during parameter matching, so we don't do that here
-	if (analyse_subtype_initializers_as_error && call->call_node != 0)
+	if (analyse_subtype_initializers_as_error && call_info->call_node != 0)
 	{
-		for (int i = 0; i < call->call_node->subtype_initializers.size; i++)
+		for (int i = 0; i < call_info->call_node->subtype_initializers.size; i++)
 		{
-			auto subtype_init = call->call_node->subtype_initializers[i];
-			Callable_Call* call = pass_get_node_info(semantic_analyser.current_workload->current_pass, subtype_init->call_node, Info_Query::TRY_READ);
-			if (call == nullptr) {
-				call = get_info(subtype_init->call_node, true);
-				*call = callable_call_make_from_call_node(
-					&compiler.analysis_data->arena,
-					callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED),
-					subtype_init->call_node
-				);
+			auto subtype_init = call_info->call_node->subtype_initializers[i];
+			Call_Info* call_info = pass_get_node_info(semantic_analyser.current_workload->current_pass, subtype_init->call_node, Info_Query::TRY_READ);
+			if (call_info == nullptr) {
+				call_info = get_info(subtype_init->call_node, true);
+				*call_info = call_info_make_error(subtype_init->call_node);
 			}
-			callable_call_analyse_all_arguments(call, true, analyse_subtype_initializers_as_error, analyse_without_context);
+			call_info_analyse_all_arguments(call_info, true, analyse_subtype_initializers_as_error, analyse_without_context);
 		}
 	}
 }
@@ -3039,7 +3109,7 @@ void callable_call_analyse_all_arguments(
 // Parameter matching
 struct Overload_Candidate
 {
-	Callable_Call call;
+	Call_Info call_info;
 
 	// Source info (For storing infos after overload has been resolved)
 	Symbol* symbol; // May be null
@@ -3243,35 +3313,41 @@ bool pattern_checker_check_if_type_matches(Pattern_Checker& checker, Datatype* p
 	return checker.match_success;
 }
 
-// Returns true if successfull
-bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = false)
+bool pattern_checker_create_and_check(Arena* arena, Datatype* pattern_type, Datatype* match_against)
 {
-	call.argument_matching_success = true;
-	assert(call.call_node != nullptr, "");
+	Pattern_Checker checker = pattern_checker_create(arena);
+	return pattern_checker_check_if_type_matches(checker, pattern_type, match_against);
+}
 
-	auto call_node = call.call_node;
-	if (call.callable.type != Callable_Type::STRUCT_INITIALIZER)
+// Returns true if successfull
+bool arguments_match_to_parameters(Call_Info& call_info, bool is_instanciate = false)
+{
+	call_info.argument_matching_success = true;
+	assert(call_info.call_node != nullptr, "");
+
+	auto call_node = call_info.call_node;
+	if (call_info.origin.type != Call_Origin_Type::STRUCT_INITIALIZER)
 	{
 		for (int i = 0; i < call_node->subtype_initializers.size; i++) {
 			auto sub_init = call_node->subtype_initializers[i];
 			log_semantic_error("Subtype_initializer only valid on struct-initializers", upcast(sub_init), Node_Section::FIRST_TOKEN);
-			call.argument_matching_success = false;
+			call_info.argument_matching_success = false;
 		}
 	}
 	const bool allow_uninitialized_token =
-		call.callable.type == Callable_Type::STRUCT_INITIALIZER ||
-		call.callable.type == Callable_Type::POLY_STRUCT;
+		call_info.origin.type == Call_Origin_Type::STRUCT_INITIALIZER ||
+		call_info.origin.type == Call_Origin_Type::POLY_STRUCT;
 	if (!allow_uninitialized_token)
 	{
 		for (int i = 0; i < call_node->uninitialized_tokens.size; i++) {
 			auto token_expr = call_node->uninitialized_tokens[i];
 			log_semantic_error("Uninitialized-token only valid for struct-initializers", upcast(token_expr), Node_Section::FIRST_TOKEN);
-			call.argument_matching_success = false;
+			call_info.argument_matching_success = false;
 		}
 	}
 
-	auto& args = call.argument_infos;
-	auto& params = call.callable.signature->parameters;
+	auto& args = call_info.argument_infos;
+	auto& params = call_info.origin.signature->parameters;
 
 	// Match arguments to parameters and check for errors
 	bool named_argument_encountered = false;
@@ -3300,7 +3376,7 @@ bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = fa
 
 			if (param_index == -1) {
 				log_semantic_error("Argument name does not match any parameter name", error_node, Node_Section::IDENTIFIER);
-				call.argument_matching_success = false;
+				call_info.argument_matching_success = false;
 				continue;
 			}
 		}
@@ -3308,7 +3384,7 @@ bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = fa
 		{
 			if (named_argument_encountered) {
 				log_semantic_error("Unnamed call_node must not appear after named call_node!", error_node, Node_Section::FIRST_TOKEN);
-				call.argument_matching_success = false;
+				call_info.argument_matching_success = false;
 				continue;
 			}
 
@@ -3316,31 +3392,31 @@ bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = fa
 			unnamed_argument_count += 1;
 			if (param_index >= params.size) {
 				log_semantic_error("Call_Signature does not accept this many unnamed parameters", error_node, Node_Section::FIRST_TOKEN);
-				call.argument_matching_success = false;
+				call_info.argument_matching_success = false;
 				continue;
 			}
 			else if (params[param_index].requires_named_addressing) {
 				log_semantic_error("This parameter requires named addressing", error_node, Node_Section::FIRST_TOKEN);
-				call.argument_matching_success = false;
+				call_info.argument_matching_success = false;
 				continue;
 			}
 		}
 
 		auto& param_info = params[param_index];
-		auto& param_value = call.parameter_values[param_index];
+		auto& param_value = call_info.parameter_values[param_index];
 		if (param_info.must_not_be_set)
 		{
-			if (param_index == call.callable.signature->return_type_index && !arg.name.available) {
+			if (param_index == call_info.origin.signature->return_type_index && !arg.name.available) {
 				log_semantic_error("Call_Signature doesn't accept this many unnamed call_node", error_node, Node_Section::FIRST_TOKEN);
 			}
 			else {
 				log_semantic_error("Parameter must not be set", error_node, Node_Section::FIRST_TOKEN);
 			}
-			call.argument_matching_success = false;
+			call_info.argument_matching_success = false;
 		}
 		else if (param_value.value_type != Parameter_Value_Type::NOT_SET) {
 			log_semantic_error("Argument was already specified", error_node, Node_Section::FIRST_TOKEN);
-			call.argument_matching_success = false;
+			call_info.argument_matching_success = false;
 		}
 		else {
 			arg.parameter_index = param_index;
@@ -3350,96 +3426,29 @@ bool arguments_match_to_parameters(Callable_Call& call, bool is_instanciate = fa
 	}
 
 	// Check if all required parameters were specified
-	if (call.argument_matching_success && !is_instanciate && !(allow_uninitialized_token && call_node->uninitialized_tokens.size > 0))
+	if (call_info.argument_matching_success && !is_instanciate && !(allow_uninitialized_token && call_node->uninitialized_tokens.size > 0))
 	{
 		bool missing_parameter_reported = false;
 		for (int i = 0; i < params.size; i++)
 		{
 			auto& param = params[i];
-			if (call.parameter_values[i].value_type == Parameter_Value_Type::NOT_SET && param.required)
+			if (call_info.parameter_values[i].value_type == Parameter_Value_Type::NOT_SET && param.required)
 			{
 				if (!missing_parameter_reported) {
 					log_semantic_error("Missing parameters", upcast(call_node), Node_Section::ENCLOSURE);
 					missing_parameter_reported = true;
 				}
 				log_error_info_id(param.name);
-				call.argument_matching_success = false;
+				call_info.argument_matching_success = false;
 			}
 		}
 	}
 
-	return call.argument_matching_success;
-}
-
-
-void find_available_dot_calls(
-	Datatype* datatype, AST::Expression* expr, String* dot_call_name, bool as_member_access, Dynamic_Array<Dot_Call_Info>& out_dot_calls)
-{
-	// Find all dot-calls in current operator context
-	{
-		Custom_Operator_Key key;
-		key.type = Context_Change_Type::DOT_CALL;
-		key.options.dot_call.datatype = datatype->base_type;
-		key.options.dot_call.id = dot_call_name;
-
-		auto& operator_context = semantic_analyser.current_workload->current_symbol_table->operator_context;
-		Hashset<Operator_Context*> visited = hashset_create_pointer_empty<Operator_Context*>(1 + operator_context->context_imports.size);
-		SCOPE_EXIT(hashset_destroy(&visited));
-		operator_context_query_dot_calls_recursive(operator_context, key, out_dot_calls, visited);
-
-		// Also add dot-calls for polymorphic base
-		if (datatype->base_type->type == Datatype_Type::STRUCT)
-		{
-			auto structure = downcast<Datatype_Struct>(datatype->base_type);
-			if (structure->workload != 0 && structure->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
-			{
-				auto base_struct = structure->workload->polymorphic.instance.parent->body_workload->struct_type;
-				key.options.dot_call.datatype = upcast(base_struct);
-				hashset_reset(&visited);
-				operator_context_query_dot_calls_recursive(operator_context, key, out_dot_calls, visited);
-			}
-		}
-	}
-
-	// Filter dot-calls
-	for (int i = 0; i < out_dot_calls.size; i++)
-	{
-		auto& call = out_dot_calls[i];
-		if (!try_updating_expression_type_mods(expr, call.mods) || call.as_member_access != as_member_access) {
-			dynamic_array_swap_remove(&out_dot_calls, i);
-			i -= 1;
-			continue;
-		}
-	}
-	// Deduplicate dot-calls (Keep calls which fit as_member_access)
-	for (int i = 0; i < out_dot_calls.size; i++)
-	{
-		auto& a = out_dot_calls[i];
-		for (int j = i + 1; j < out_dot_calls.size; j++)
-		{
-			auto& b = out_dot_calls[j];
-			if (a.as_member_access != b.as_member_access || a.is_polymorphic != b.is_polymorphic || !type_mods_are_equal(a.mods, b.mods)) {
-				continue;
-			}
-			if (a.is_polymorphic) {
-				if (a.options.poly_function.poly_header != b.options.poly_function.poly_header ||
-					a.options.poly_function.base_progress != b.options.poly_function.base_progress) {
-					continue;
-				}
-			}
-			else if (a.options.function != b.options.function) {
-				continue;
-			}
-
-			// Found duplicate
-			dynamic_array_swap_remove(&out_dot_calls, j);
-			j -= 1;
-		}
-	}
+	return call_info.argument_matching_success;
 }
 
 // Note: Not all arguments are analysed here, and if error-occured call.matching_succeeded is false
-Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Expression* expression, Datatype* expected_return_type = nullptr)
+Call_Info* overloading_analyse_call_expression_and_resolve_overloads(AST::Expression* expression, Datatype* expected_return_type = nullptr)
 {
 	assert(expression->type == AST::Expression_Type::FUNCTION_CALL || expression->type == AST::Expression_Type::INSTANCIATE, "");
 	Arena& scratch_arena = semantic_analyser.current_workload->scratch_arena;
@@ -3460,33 +3469,28 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 	}
 	else
 	{
-		auto& call = expression->options.call;
-		call_node = call.call_node;
-		is_dot_call = call.is_dot_call;
-		if (!is_dot_call)
-		{
-
-			call_expr = call.options.expr;
-			if (call_expr->type == AST::Expression_Type::PATH_LOOKUP) {
-				path_lookup = call_expr->options.path_lookup;
-			}
+		auto& call_info = expression->options.call;
+		call_node = call_info.call_node;
+		call_expr = call_info.expr;
+		if (call_expr->type == AST::Expression_Type::PATH_LOOKUP) {
+			path_lookup = call_expr->options.path_lookup;
 		}
 	}
 
-	Callable_Call* call = get_info(call_node, true);
+	Call_Info* call_info = get_info(call_node, true);
 
 	// Find all overload candidates
 	DynArray<Overload_Candidate> candidates = DynArray<Overload_Candidate>::create(&scratch_arena, 0);
-	auto helper_add_overload_candidate = [&](Callable callable, bool is_dot_call) -> Overload_Candidate* {
+	auto helper_add_overload_candidate = [&](Call_Origin call_origin) -> Overload_Candidate* {
 		Overload_Candidate candidate;
 		candidate.symbol = nullptr;
-		candidate.call = callable_call_make_from_call_node(&scratch_arena, callable, call_node, is_dot_call);
+		candidate.call_info = call_info_make_from_call_node(call_node, call_origin, &scratch_arena);
 		candidates.push_back(candidate);
 		candidate.expression_info.result_type = (Expression_Result_Type)-1;
 		return &candidates.last();
-		};
+	};
 
-	// Find all overload candidates (Note: Dot-calls may also be overloaded)
+	// Find all overload candidates
 	if (path_lookup != nullptr)
 	{
 		// Find all symbol-overloads
@@ -3494,9 +3498,8 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 		if (symbols.size == 0) {
 			// Error is already reported here
 			log_semantic_error("No symbols found", upcast(path_lookup->last), Node_Section::FIRST_TOKEN);
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
-			return call;
+			*call_info = call_info_make_error(call_node);
+			return call_info;
 		}
 
 		// Convert symbols to overload candidates
@@ -3515,11 +3518,11 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 					encountered_unknown = true;
 				}
 			}
-			auto callable_opt = callable_from_expression_info(info);
-			if (!callable_opt.available) continue;
+			auto call_origin = call_origin_from_expression_info(info);
+			if (call_origin.type == Call_Origin_Type::ERROR_OCCURED) continue;
 
 			// Create candidate
-			Overload_Candidate* candidate = helper_add_overload_candidate(callable_opt.value, false);
+			Overload_Candidate* candidate = helper_add_overload_candidate(call_origin);
 			candidate->symbol = symbol;
 			candidate->expression_info = info;
 		}
@@ -3527,54 +3530,23 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 		// Check success
 		if (encountered_unknown) {
 			semantic_analyser_set_error_flag(true);
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
-			return call;
+			*call_info = call_info_make_error(call_node);
+			return call_info;
 		}
 		if (candidates.size == 0) {
 			log_semantic_error("None of the symbol-overloads are callable!", upcast(path_lookup->last));
 			for (int i = 0; i < symbols.size; i++) {
 				log_error_info_symbol(symbols[i]);
 			}
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
-			return call;
-		}
-	}
-	else if (is_dot_call)
-	{
-		assert(expression->type == AST::Expression_Type::FUNCTION_CALL, "");
-		assert(call_node->arguments.size > 0, "");
-		String* dot_call_name = expression->options.call.options.dot_call_name;
-
-		auto first_arg_expr = call_node->arguments[0]->value;
-		Datatype* datatype = semantic_analyser_analyse_expression_value(first_arg_expr, expression_context_make_auto_dereference());
-
-		Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
-		SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
-		find_available_dot_calls(datatype, first_arg_expr, dot_call_name, false, dot_calls);
-
-		if (dot_calls.size == 0)
-		{
-			log_semantic_error("Could not find appropriate dot call with this name", expression, Node_Section::WHOLE_NO_CHILDREN);
-			log_error_info_id(dot_call_name);
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
-			call->argument_infos[0].is_analysed = true;
-			return call;
-		}
-
-		// Add dot-calls as overloads
-		for (int i = 0; i < dot_calls.size; i++) {
-			auto& dot_call_info = dot_calls[i];
-			helper_add_overload_candidate(callable_from_dot_call_info(dot_call_info), true);
+			*call_info = call_info_make_error(call_node);
+			return call_info;
 		}
 	}
 	else // Normal function call expression
 	{
 		Expression_Info* call_expr_info = semantic_analyser_analyse_expression_any(call_expr, expression_context_make_unknown());
-		auto candidate_opt = callable_from_expression_info(*call_expr_info);
-		if (!candidate_opt.available)
+		Call_Origin call_origin = call_origin_from_expression_info(*call_expr_info);
+		if (call_origin.type == Call_Origin_Type::ERROR_OCCURED)
 		{
 			if (!datatype_is_unknown(call_expr_info->cast_info.result_type)) {
 				log_semantic_error("Expression is not callable!", upcast(call_expr));
@@ -3584,12 +3556,11 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 				semantic_analyser_set_error_flag(true);
 			}
 
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
-			return call;
+			*call_info = call_info_make_error(call_node);
+			return call_info;
 		}
 
-		helper_add_overload_candidate(candidate_opt.value, false);
+		helper_add_overload_candidate(call_origin);
 	}
 
 	auto& helper_set_callable_to_candidate = [&](Overload_Candidate& candidate) {
@@ -3608,29 +3579,29 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 			}
 		}
 
-		*call = candidate.call;
+		*call_info = candidate.call_info;
 		Arena persistent_arena = compiler.analysis_data->arena;
-		Array<Parameter_Value> persistent_values = compiler.analysis_data->arena.allocate_array<Parameter_Value>(call->parameter_values.size);
-		memory_copy(persistent_values.data, call->parameter_values.data, call->parameter_values.size * sizeof(Parameter_Value));
-		call->parameter_values = persistent_values;
-		Array<Argument_Info> persistent_infos = compiler.analysis_data->arena.allocate_array<Argument_Info>(call->argument_infos.size);
-		memory_copy(persistent_infos.data, call->argument_infos.data, call->argument_infos.size * sizeof(Argument_Info));
-		call->argument_infos = persistent_infos;
+		Array<Parameter_Value> persistent_values = compiler.analysis_data->arena.allocate_array<Parameter_Value>(call_info->parameter_values.size);
+		memory_copy(persistent_values.data, call_info->parameter_values.data, call_info->parameter_values.size * sizeof(Parameter_Value));
+		call_info->parameter_values = persistent_values;
+		Array<Argument_Info> persistent_infos = compiler.analysis_data->arena.allocate_array<Argument_Info>(call_info->argument_infos.size);
+		memory_copy(persistent_infos.data, call_info->argument_infos.data, call_info->argument_infos.size * sizeof(Argument_Info));
+		call_info->argument_infos = persistent_infos;
 
-		if (candidate.call.callable.type == Callable_Type::DOT_CALL_NORMAL || candidate.call.callable.type == Callable_Type::FUNCTION) {
-			semantic_analyser_register_function_call(candidate.call.callable.options.function);
+		if (candidate.call_info.origin.type == Call_Origin_Type::FUNCTION) {
+			semantic_analyser_register_function_call(candidate.call_info.origin.options.function);
 		}
-		};
+	};
 
 	// Do argument-parameter mapping if we only have one candidate + Early-Exit if it's not working
 	// This is done to get better error messages
 	if (candidates.size == 1)
 	{
 		auto& candidate = candidates[0];
-		if (!arguments_match_to_parameters(candidate.call, is_instanciate))
+		if (!arguments_match_to_parameters(candidate.call_info, is_instanciate))
 		{
 			helper_set_callable_to_candidate(candidate);
-			return call;
+			return call_info;
 		}
 	}
 
@@ -3646,7 +3617,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 		{
 			for (int i = 0; i < candidates.size; i++) {
 				auto& candidate = candidates[i];
-				if (candidate.call.callable.type != Callable_Type::POLY_FUNCTION) {
+				if (candidate.call_info.origin.type != Call_Origin_Type::POLY_FUNCTION) {
 					candidates.swap_remove(i);
 					i -= 1;
 				}
@@ -3662,7 +3633,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 
 			for (int i = 0; i < candidates.size; i++) {
 				auto& candidate = candidates[i];
-				if (!arguments_match_to_parameters(candidate.call, is_instanciate)) {
+				if (!arguments_match_to_parameters(candidate.call_info, is_instanciate)) {
 					candidates.swap_remove(i);
 					i -= 1;
 				}
@@ -3828,7 +3799,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 			for (int j = 0; j < candidates.size; j++)
 			{
 				auto& candidate = candidates[j];
-				auto& param_info = candidate.call.callable.signature->parameters[candidate.call.argument_infos[i].parameter_index];
+				auto& param_info = candidate.call_info.origin.signature->parameters[candidate.call_info.argument_infos[i].parameter_index];
 				candidate.active_type = param_info.datatype;
 
 				// For #instanciate we can only compare the comptime variables
@@ -3866,14 +3837,14 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 				auto& candidate = candidates[i];
 
 				// Remove candidates which don't have return type
-				if (candidate.call.callable.signature->return_type_index == -1) {
+				if (candidate.call_info.origin.signature->return_type_index == -1) {
 					candidates.swap_remove(i);
 					i -= 1;
 					continue;
 				}
 
 				// Otherwise set return type as active type
-				candidate.active_type = candidate.call.callable.signature->return_type().value;
+				candidate.active_type = candidate.call_info.origin.signature->return_type().value;
 				if (last_return_type == nullptr) {
 					last_return_type = candidate.active_type;
 				}
@@ -3896,9 +3867,9 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 			{
 				auto& candidate = candidates[i];
 				bool is_polymorphic =
-					candidate.call.callable.type == Callable_Type::POLY_STRUCT ||
-					candidate.call.callable.type == Callable_Type::POLY_FUNCTION ||
-					candidate.call.callable.type == Callable_Type::DOT_CALL_POLYMORPHIC;
+					candidate.call_info.origin.type == Call_Origin_Type::POLY_STRUCT ||
+					candidate.call_info.origin.type == Call_Origin_Type::POLY_FUNCTION;
+					
 				if (is_polymorphic) {
 					polymorphic_exists = true;
 				}
@@ -3913,9 +3884,8 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 				{
 					auto& candidate = candidates[i];
 					bool is_polymorphic =
-						candidate.call.callable.type == Callable_Type::POLY_STRUCT ||
-						candidate.call.callable.type == Callable_Type::POLY_FUNCTION ||
-						candidate.call.callable.type == Callable_Type::DOT_CALL_POLYMORPHIC;
+						candidate.call_info.origin.type == Call_Origin_Type::POLY_STRUCT ||
+						candidate.call_info.origin.type == Call_Origin_Type::POLY_FUNCTION;
 					if (is_polymorphic)
 					{
 						candidates.swap_remove(i);
@@ -3935,16 +3905,15 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 		}
 		else if (candidates.size == 0) {
 			log_semantic_error("None of the function overloads are valid", expression);
-		}
-		*call = callable_call_make_from_call_node(&compiler.analysis_data->arena,
-			callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED), call_node);
+		}	
+		*call_info = call_info_make_error(call_node);
 		for (int i = 0; i < analysed_argument_indices.size; i++)
 		{
 			int arg_index = analysed_argument_indices[i];
-			auto& arg_info = call->argument_infos[arg_index];
+			auto& arg_info = call_info->argument_infos[arg_index];
 			arg_info.is_analysed = true;
 		}
-		return call;
+		return call_info;
 	}
 
 	// Set expression/Symbol read info
@@ -3954,15 +3923,15 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 	for (int i = 0; i < analysed_argument_indices.size; i++)
 	{
 		int arg_index = analysed_argument_indices[i];
-		auto& arg_info = call->argument_infos[arg_index];
+		auto& arg_info = call_info->argument_infos[arg_index];
 		arg_info.is_analysed = true;
 
 		auto arg_expr_info = get_info(arg_info.expression);
-		auto& value_info = call->parameter_values[arg_info.parameter_index];
+		auto& value_info = call_info->parameter_values[arg_info.parameter_index];
 		value_info.datatype = arg_expr_info->cast_info.result_type;
 		value_info.is_temporary_value = arg_expr_info->cast_info.result_value_is_temporary;
 
-		Datatype* param_type = call->callable.signature->parameters[arg_info.parameter_index].datatype;
+		Datatype* param_type = call_info->origin.signature->parameters[arg_info.parameter_index].datatype;
 		auto& arg_cast_info = arg_expr_info->cast_info;
 		if (param_type->contains_pattern)
 		{
@@ -3979,7 +3948,7 @@ Callable_Call* overloading_analyse_call_expression_and_resolve_overloads(AST::Ex
 		}
 	}
 
-	return call;
+	return call_info;
 }
 
 
@@ -4905,7 +4874,7 @@ bool pattern_matcher_check_constraints_valid(Pattern_Matcher* matcher)
 Poly_Instance* poly_header_instanciate_with_variable_states(
 	Poly_Header* poly_header, Array<Pattern_Variable_State> states,
 	Array<Datatype*> partial_pattern_instances, Array<Datatype*> parameter_types_instanciated,
-	Callable_Call* call, AST::Node* error_report_node, Node_Section error_report_section)
+	Call_Info* call_info, AST::Node* error_report_node, Node_Section error_report_section)
 {
 	bool create_struct_pattern = false;
 	bool is_partial_struct_pattern = false;
@@ -4965,20 +4934,20 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		{
 			array_destroy(&states);
 			array_destroy(&partial_pattern_instances);
-			if (call != nullptr)
+			if (call_info != nullptr)
 			{
-				call->instanciated = true;
+				call_info->instanciated = true;
 				Poly_Instance* instance = *found;
 				switch (instance->type)
 				{
 				case Poly_Instance_Type::FUNCTION: {
-					call->instanciation_data.function = instance->options.function_instance->function;
-					assert(call->callable.type == Callable_Type::POLY_FUNCTION || call->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC, "");
+					call_info->instanciation_data.function = instance->options.function_instance->function;
+					assert(call_info->origin.type == Call_Origin_Type::POLY_FUNCTION, "");
 					break;
 				}
 				case Poly_Instance_Type::STRUCTURE: {
-					call->instanciation_data.struct_instance = instance->options.struct_instance->struct_type;
-					assert(call->callable.type == Callable_Type::POLY_STRUCT, "");
+					call_info->instanciation_data.struct_instance = instance->options.struct_instance->struct_type;
+					assert(call_info->origin.type == Call_Origin_Type::POLY_STRUCT, "");
 					break;
 				}
 				case Poly_Instance_Type::STRUCT_PATTERN: {
@@ -5004,14 +4973,14 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		instance->type = Poly_Instance_Type::STRUCT_PATTERN;
 		instance->options.struct_pattern = type_system_make_struct_pattern(
 			instance, is_partial_struct_pattern, struct_pattern_contains_pattern_variable_definition);
-		if (call != nullptr) {
-			call->instanciation_data.struct_pattern = instance->options.struct_pattern;
-			call->instanciated = true;
+		if (call_info != nullptr) {
+			call_info->instanciation_data.struct_pattern = instance->options.struct_pattern;
+			call_info->instanciated = true;
 		}
 	}
 	else if (poly_header->is_function)
 	{
-		assert(call != 0, "");
+		assert(call_info != 0, "");
 		int return_type_index = poly_header->signature->return_type_index;
 
 		// Create instance function signature
@@ -5056,8 +5025,8 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		instance->options.function_instance = instance_progress;
 		semantic_analyser_register_function_call(instance_progress->function);
 
-		call->instanciation_data.function = instance_progress->function;
-		call->instanciated = true;
+		call_info->instanciation_data.function = instance_progress->function;
+		call_info->instanciated = true;
 	}
 	else // !poly_header.is_function
 	{
@@ -5080,9 +5049,9 @@ Poly_Instance* poly_header_instanciate_with_variable_states(
 		instance->type = Poly_Instance_Type::STRUCTURE;
 		instance->options.struct_instance = body_workload;
 
-		if (call != nullptr) {
-			call->instanciation_data.struct_instance = body_workload->struct_type;
-			call->instanciated = true;
+		if (call_info != nullptr) {
+			call_info->instanciation_data.struct_instance = body_workload->struct_type;
+			call_info->instanciated = true;
 		}
 	}
 
@@ -5145,11 +5114,9 @@ Datatype* datatype_pattern_instanciate(
 		assert(poly_header->signature->return_type_index == -1, "");
 
 		// Create new callable call
-		Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_STRUCT);
-		callable.options.poly_struct = poly_header->origin.struct_workload;
-		Callable_Call call = callable_call_make_empty(&scratch_arena, callable);
+		Call_Info call_info = call_info_make_with_empty_arguments(call_origin_make(poly_header), &scratch_arena);
 
-		auto& param_values = call.parameter_values;
+		auto& param_values = call_info.parameter_values;
 		for (int i = 0; i < param_values.size; i++)
 		{
 			auto& param_info = poly_header->signature->parameters[i];
@@ -5206,7 +5173,7 @@ Datatype* datatype_pattern_instanciate(
 			}
 		}
 
-		auto struct_instance = poly_header_instanciate(&call, error_report_node, error_report_section);
+		auto struct_instance = poly_header_instanciate(&call_info, error_report_node, error_report_section);
 		if (struct_instance == nullptr) {
 			return nullptr; // Errors are reported at this point
 		}
@@ -5359,21 +5326,20 @@ Datatype* datatype_pattern_instanciate(
 
 // Return null if not successfull
 // Analyses all set parameters if successfull
-Poly_Instance* poly_header_instanciate(
-	Callable_Call* call, AST::Node* error_report_node, Node_Section error_report_section)
+Poly_Instance* poly_header_instanciate(Call_Info* call_info, AST::Node* error_report_node, Node_Section error_report_section)
 {
 	Poly_Header* poly_header;
-	if (call->callable.type == Callable_Type::POLY_STRUCT) {
-		poly_header = call->callable.options.poly_struct->poly_header;
+	if (call_info->origin.type == Call_Origin_Type::POLY_STRUCT) {
+		poly_header = call_info->origin.options.poly_struct->poly_header;
 	}
-	else if (call->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC || call->callable.type == Callable_Type::POLY_FUNCTION) {
-		poly_header = call->callable.options.poly_function.poly_header;
+	else if (call_info->origin.type == Call_Origin_Type::POLY_FUNCTION) {
+		poly_header = call_info->origin.options.poly_function.poly_header;
 	}
 	else {
 		panic("");
 	}
 
-	auto& parameter_values = call->parameter_values;
+	auto& parameter_values = call_info->parameter_values;
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 	auto& parameter_nodes = poly_header->parameter_nodes;
 	const int return_type_index = poly_header->signature->return_type_index;
@@ -5510,7 +5476,7 @@ Poly_Instance* poly_header_instanciate(
 		assert(variable_states[pattern_variable.value_access_index].type == Pattern_Variable_State_Type::UNSET, "");
 
 		// Analyse argument in unknown context
-		analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_unknown(), true);
+		analyse_parameter_value_if_not_already_done(call_info, &param_value, expression_context_make_unknown(), true);
 
 		// Extra code-path for setting variables to patterns, e.g. Node(V = $T)
 		if (param_value.datatype->contains_pattern) {
@@ -5532,7 +5498,7 @@ Poly_Instance* poly_header_instanciate(
 
 		// Otherwise
 		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-		auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+		auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 		auto comptime_result = expression_calculate_comptime_value(
 			arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value");
 		if (comptime_result.available) {
@@ -5585,13 +5551,13 @@ Poly_Instance* poly_header_instanciate(
 			// Analyse argument if given
 			if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION)
 			{
-				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+				auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 
 				Expression_Context context = expression_context_make_unknown();
 				if (!parameter_type->contains_pattern) {
 					context = expression_context_make_specific_type(parameter_type);
 				}
-				analyse_parameter_value_if_not_already_done(call, &param_value, context, param_info.comptime_variable_index != -1);
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, context, param_info.comptime_variable_index != -1);
 
 				// Handle struct-pattern variables
 				if (param_value.datatype->contains_pattern)
@@ -5625,7 +5591,7 @@ Poly_Instance* poly_header_instanciate(
 					// Update expression info
 					if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION)
 					{
-						auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+						auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 						bool worked = try_updating_expression_type_mods(arg_expr, parameter_type->mods);
 						assert(worked, "Should work I guess");
 					}
@@ -5693,7 +5659,7 @@ Poly_Instance* poly_header_instanciate(
 			}
 			case Parameter_Value_Type::ARGUMENT_EXPRESSION:
 			{
-				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
+				auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 				bool was_not_available = false;
 				auto comptime_result = expression_calculate_comptime_value(
 					arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value", &was_not_available
@@ -5755,7 +5721,7 @@ Poly_Instance* poly_header_instanciate(
 
 	auto result = poly_header_instanciate_with_variable_states(
 		poly_header, variable_states, partial_pattern_instances, parameter_types_instanced,
-		call, error_report_node, error_report_section);
+		call_info, error_report_node, error_report_section);
 	variable_states.data = nullptr; // Don't cleanup, as line above takes ownership
 	partial_pattern_instances.data = nullptr;
 	return result;
@@ -5775,6 +5741,7 @@ struct Module_Content
 	DynArray<Import_Info> file_imports;
 	DynArray<Import_Info> module_imports;
 	DynArray<Import_Info> symbol_imports;
+	DynArray<Import_Info> context_or_dot_call_imports;
 	DynArray<Upp_Module*> modules;
 };
 
@@ -5784,6 +5751,7 @@ Module_Content module_content_create(Arena* arena)
 	result.file_imports = DynArray<Import_Info>::create(arena);
 	result.module_imports = DynArray<Import_Info>::create(arena);
 	result.symbol_imports = DynArray<Import_Info>::create(arena);
+	result.context_or_dot_call_imports = DynArray<Import_Info>::create(arena);
 	result.modules = DynArray<Upp_Module*>::create(arena);
 	return result;
 }
@@ -5799,6 +5767,11 @@ void module_content_add_import_node(Module_Content& module_content, AST::Import*
 	case AST::Import_Type::SINGLE_SYMBOL: add_to = &module_content.symbol_imports; break;
 	default: break;
 	}
+
+	if (import_node->option != AST::Import_Option::NONE) {
+		add_to = &module_content.context_or_dot_call_imports;
+	}
+
 	Import_Info info;
 	info.import_node = import_node;
 	info.symbol_table = semantic_analyser.current_workload->current_symbol_table;
@@ -6035,6 +6008,94 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 	symbol->options.definition_workload = definition_workload;
 }
 
+struct Symbol_Import
+{
+	Symbol* symbol;
+	AST::Import* import_node;
+	Symbol_Table* symbol_table;
+	bool currently_analysing;
+	bool is_circular_start;
+};
+
+Symbol* symbol_import_resolve_recursive(Symbol_Import& symbol_import, DynArray<Symbol_Import>& symbol_imports, bool* circular_chain_found)
+{
+	Symbol* symbol = symbol_import.symbol;
+	// Return if a previous symbol-import chain has already analysed this symbol
+	if (symbol_import.symbol->type != Symbol_Type::ALIAS_UNFINISHED) return symbol;
+	symbol_import.currently_analysing = true;
+
+	AST::Path_Lookup* path = symbol_import.import_node->path;
+	path_lookup_set_info_to_error_symbol(path, semantic_analyser.current_workload->current_pass);
+	Symbol_Table* symbol_table = symbol_import.symbol_table;
+	for (int i = 0; i < path->parts.size; i++)
+	{
+		AST::Symbol_Lookup* path_part = path->parts[i];
+		Symbol* part_symbol = symbol_lookup_resolve_to_single_symbol(
+			path_part, symbol_table, (i == 0 ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH), Symbol_Access_Level::GLOBAL, 
+			(i < path->parts.size - 1), false
+		);
+
+		// Handle alias chains
+		if (part_symbol->type == Symbol_Type::ALIAS_UNFINISHED) 
+		{
+			auto& other_import = symbol_imports[part_symbol->options.unfinished_alias_index];
+			// Check if we have circular dependency
+			if (other_import.currently_analysing) 
+			{
+				*circular_chain_found = true;
+				other_import.is_circular_start = true;
+				log_semantic_error("Circular alias chain detected", upcast(path_part), Node_Section::FIRST_TOKEN);
+				symbol->type = Symbol_Type::ALIAS;
+				symbol->options.alias_for = semantic_analyser.error_symbol;
+				return symbol;
+			}
+
+			part_symbol = symbol_import_resolve_recursive(other_import, symbol_imports, circular_chain_found);
+			if (*circular_chain_found) 
+			{
+				log_semantic_error("Circular alias chain detected", upcast(path_part), Node_Section::FIRST_TOKEN);
+				symbol->type = Symbol_Type::ALIAS;
+				symbol->options.alias_for = semantic_analyser.error_symbol;
+				if (symbol_import.is_circular_start) {
+					*circular_chain_found = false;
+				}
+				return symbol;
+			}
+		}
+
+		if (part_symbol->type == Symbol_Type::ERROR_SYMBOL) 
+		{
+			symbol->type = Symbol_Type::ALIAS;
+			symbol->options.alias_for = part_symbol;
+			return symbol;
+		}
+
+		if (i == path->parts.size - 1)
+		{
+			// Check if we are at the end of the path import
+			get_info(path, false)->symbol = part_symbol;
+			symbol->type = Symbol_Type::ALIAS;
+			symbol->options.alias_for = part_symbol;
+			return symbol;
+		}
+		else
+		{
+			// Otherwise we are in the middle of the path
+			if (part_symbol->type != Symbol_Type::MODULE) {
+				log_semantic_error("Expected module in the middle of path", upcast(path_part), Node_Section::WHOLE);
+				symbol->type = Symbol_Type::ALIAS;
+				symbol->options.alias_for = semantic_analyser.error_symbol;
+				return symbol;
+			}
+
+			symbol_table = part_symbol->options.upp_module->symbol_table;
+		}
+	}
+
+	panic("Invalid code path");
+	return nullptr;
+}
+
 void module_content_analyse_items(Module_Content& module_content, Arena* scratch_arena)
 {
 	auto workload = semantic_analyser.current_workload;
@@ -6058,6 +6119,10 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		}
 		else {
 			log_semantic_error("File import requires name, e.g. import \"...\" as Name", upcast(import_node), Node_Section::FIRST_TOKEN);
+		}
+
+		if (import_node->option != AST::Import_Option::NONE) {
+			log_semantic_error("File import must not specify an import option (dot_call or context)", upcast(import_node), Node_Section::IDENTIFIER);
 		}
 
 		// Load file
@@ -6098,6 +6163,7 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		Symbol_Table* import_symbol_table = info.symbol_table;
 		AST::Import* import_node = info.import_node;
 		assert(import_node->type == AST::Import_Type::MODULE_SYMBOLS || import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE, "");
+		assert(import_node->option == AST::Import_Option::NONE, "");
 
 		if (import_node->alias_name.available) {
 			log_semantic_error("Cannot alias ~* or ~** imports", upcast(import_node), Node_Section::FIRST_TOKEN);
@@ -6114,15 +6180,18 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		}
 
 		const bool is_transitive = import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE;
+		Include_Type include_type = is_transitive ? Include_Type::TRANSITIVE : Include_Type::NORMAL;
+		if (import_node->option == AST::Import_Option::DOT_CALL_IMPORT) {
+			include_type = is_transitive ? Include_Type::DOT_CALL_INCLUDE_TRANSITIVE : Include_Type::DOT_CALL_INCLUDE;
+		}
 		symbol_table_add_include_table(
-			import_symbol_table, symbol->options.upp_module->symbol_table,
-			(is_transitive ? Include_Type::TRANSITIVE : Include_Type::NORMAL), Symbol_Access_Level::GLOBAL,
+			import_symbol_table, symbol->options.upp_module->symbol_table, include_type, Symbol_Access_Level::GLOBAL,
 			upcast(import_node), Node_Section::FIRST_TOKEN
 		);
 	}
 
 	// Create all alias symbols (Single symbol imports like import A~Node, import B~C~foo as bar)
-	DynArray<Symbol*> alias_symbols = DynArray<Symbol*>::create(scratch_arena);
+	DynArray<Symbol_Import> symbol_imports = DynArray<Symbol_Import>::create(scratch_arena);
 	for (int i = 0; i < module_content.symbol_imports.size; i++)
 	{
 		Import_Info info = module_content.symbol_imports[i];
@@ -6131,6 +6200,9 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		assert(import_node->type == AST::Import_Type::SINGLE_SYMBOL, "");
 
 		// Check for errors
+		if (import_node->option != AST::Import_Option::NONE) {
+			log_semantic_error("Symbol import must not specify an import option (dot_call or context)", upcast(import_node), Node_Section::IDENTIFIER);
+		}
 		if (import_node->path->parts.size == 1 && !import_node->alias_name.available) {
 			log_semantic_error("Cannot import single symbol, as it is already accessible", upcast(import_node), Node_Section::FIRST_TOKEN);
 			continue;
@@ -6156,64 +6228,25 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		Symbol* new_symbol = symbol_table_define_symbol(
 			import_symbol_table, name, Symbol_Type::ALIAS_UNFINISHED, definition_node, Symbol_Access_Level::GLOBAL
 		);
-		new_symbol->options.alias_unfinished.import_node = import_node;
-		new_symbol->options.alias_unfinished.symbol_table = import_symbol_table;
-
+		new_symbol->options.unfinished_alias_index = (int) symbol_imports.size;
 		if (import_node->alias_name.available) {
 			get_info(import_node->alias_name.value, true)->symbol = new_symbol;
 		}
-		alias_symbols.push_back(new_symbol);
+
+		Symbol_Import symbol_import;
+		symbol_import.symbol_table = import_symbol_table;
+		symbol_import.import_node = import_node;
+		symbol_import.symbol = new_symbol;
+		symbol_import.currently_analysing = false;
+		symbol_import.is_circular_start = false;
+		symbol_imports.push_back(symbol_import);
 	}
 
 	// Resolve all alias symbols 
-	for (int i = 0; i < alias_symbols.size; i++)
+	for (int i = 0; i < symbol_imports.size; i++)
 	{
-		Symbol* start_symbol = alias_symbols[i];
-
-		// Alias may already be resolved by previous alias resolution
-		if (start_symbol->type == Symbol_Type::ALIAS) continue;
-		assert(start_symbol->type == Symbol_Type::ALIAS_UNFINISHED, "");
-
-		// Resolve alias chain
-		Symbol* alias_symbol = start_symbol;
-		while (alias_symbol->type == Symbol_Type::ALIAS_UNFINISHED)
-		{
-			RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, alias_symbol->options.alias_unfinished.symbol_table);
-			RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
-			Symbol* alias_for = path_lookup_resolve_to_single_symbol(
-				alias_symbol->options.alias_unfinished.import_node->path, Lookup_Type::NORMAL, false
-			);
-			alias_symbol->type = Symbol_Type::ALIAS;
-			alias_symbol->options.alias_for = alias_for;
-			alias_symbol = alias_for;
-		}
-
-		// Check if we have circular dependency (If the final alias points to a previous link in the chain)
-		if (alias_symbol->type != Symbol_Type::ALIAS) continue;
-		bool found_circular_dependency = false;
-		Symbol* next = start_symbol;
-		while (next->type == Symbol_Type::ALIAS)
-		{
-			if (next == alias_symbol) break; // We reached the final alias without dependencies on previous alias
-			if (alias_symbol->options.alias_for == next) {
-				found_circular_dependency = true;
-				break;
-			}
-			next = next->options.alias_for;
-		}
-		if (!found_circular_dependency) continue;
-
-		// Report error on all involved nodes and set to error-symbol
-		Symbol* current = alias_symbol;
-		while (true)
-		{
-			assert(current->type == Symbol_Type::ALIAS, "");
-			log_semantic_error("Circular alias definition found", current->definition_node, Node_Section::FIRST_TOKEN);
-			Symbol* next = current->options.alias_for;
-			current->options.alias_for = semantic_analyser.error_symbol;
-			if (current->options.alias_for == alias_symbol) break; // Break once we looped once
-			current = current->options.alias_for;
-		}
+		bool circular_dependency_found = false;
+		symbol_import_resolve_recursive(symbol_imports[i], symbol_imports, &circular_dependency_found);
 	}
 
 	// Check if operator context changes exist
@@ -6223,6 +6256,44 @@ void module_content_analyse_items(Module_Content& module_content, Arena* scratch
 		RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, upp_module->symbol_table);
 		RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
 		symbol_table_install_new_operator_context_and_add_workloads(upp_module->symbol_table, upp_module->node->context_changes);
+	}
+
+	// Resolve all dot_call or context imports
+	for (int i = 0; i < module_content.context_or_dot_call_imports.size; i++)
+	{
+		Import_Info info = module_content.context_or_dot_call_imports[i];
+		Symbol_Table* import_symbol_table = info.symbol_table;
+		AST::Import* import_node = info.import_node;
+		assert(import_node->option != AST::Import_Option::NONE, "");
+
+		if (import_node->alias_name.available) {
+			log_semantic_error("Cannot alias dot_call or context import", upcast(import_node), Node_Section::FIRST_TOKEN);
+		}
+
+		RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->current_symbol_table, import_symbol_table);
+		RESTORE_ON_SCOPE_EXIT(semantic_analyser.current_workload->symbol_access_level, Symbol_Access_Level::GLOBAL);
+		Symbol* symbol = path_lookup_resolve_to_single_symbol(import_node->path, Lookup_Type::SEARCH_PARENT, true);
+		if (symbol->type != Symbol_Type::MODULE) {
+			if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
+				log_semantic_error("Symbol is not a module", upcast(import_node->path->last), Node_Section::FIRST_TOKEN);
+			}
+			continue;
+		}
+
+		if (import_node->option == AST::Import_Option::CONTEXT_IMPORT) {
+			log_semantic_error("Context import not yet implemented", upcast(import_node), Node_Section::FIRST_TOKEN);
+			continue;
+		}
+
+		const bool is_transitive = import_node->type == AST::Import_Type::MODULE_SYMBOLS_TRANSITIVE;
+		Include_Type include_type = is_transitive ? Include_Type::TRANSITIVE : Include_Type::NORMAL;
+		if (import_node->option == AST::Import_Option::DOT_CALL_IMPORT) {
+			include_type = is_transitive ? Include_Type::DOT_CALL_INCLUDE_TRANSITIVE : Include_Type::DOT_CALL_INCLUDE;
+		}
+		symbol_table_add_include_table(
+			import_symbol_table, symbol->options.upp_module->symbol_table, include_type, Symbol_Access_Level::GLOBAL,
+			upcast(import_node), Node_Section::FIRST_TOKEN
+		);
 	}
 }
 
@@ -6920,7 +6991,7 @@ Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_tempor
 	return cast_info;
 }
 
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg)
+bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg, Type_System* type_system)
 {
 	const char* dummy;
 	if (out_error_msg == 0) {
@@ -7025,7 +7096,7 @@ bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_
 
 	// 3. Set correct type after cast/dereference op
 	Datatype* result_type = cast_info.initial_type->base_type;
-	cast_info.result_type = type_system_make_type_with_mods(cast_info.initial_type->base_type, expected_mods);
+	cast_info.result_type = type_system_make_type_with_mods(cast_info.initial_type->base_type, expected_mods, type_system);
 	cast_info.deref_count = cast_info.initial_type->mods.pointer_level - expected_mods.pointer_level;
 	if (cast_info.deref_count > 0) {
 		cast_info.result_value_is_temporary = false;
@@ -7278,32 +7349,6 @@ bool expression_is_auto_expression_with_preferred_type(AST::Expression* expressi
 			expression->options.literal_read.type == Literal_Type::FLOAT_VAL));
 }
 
-Call_Signature* struct_content_get_cached_initializer_signature(Struct_Content* content)
-{
-	if (content->initializer_signature_cached != nullptr) return content->initializer_signature_cached;
-
-	// Wait for struct-workload so members are analysed
-	if (content->structure->workload != nullptr) {
-		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(content->structure->workload));
-		workload_executer_wait_for_dependency_resolution();
-	}
-	assert(content->structure->base.memory_info.available, "");
-
-	// Create new signature
-	bool is_union_initializer = content->structure->struct_type == AST::Structure_Type::UNION;
-	Call_Signature* signature = call_signature_create_empty();
-	for (int i = 0; i < content->members.size; i++) {
-		auto& member = content->members[i];
-		call_signature_add_parameter(signature, member.id, member.type, !is_union_initializer, is_union_initializer, false);
-	}
-	signature = call_signature_register(signature);
-
-	// Store signature
-	content->initializer_signature_cached = signature;
-
-	return signature;
-}
-
 // Allowed direction determines if initializers are allowed to contain subtype and base-type initializers (value=0), 
 // or only subtype (value=1) or base_type(value=-1)
 void analyse_member_initializer_recursive(
@@ -7311,30 +7356,23 @@ void analyse_member_initializer_recursive(
 {
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 
-	// Create callable
-	Callable callable = callable_make(struct_content_get_cached_initializer_signature(content), Callable_Type::STRUCT_INITIALIZER);
-	callable.options.struct_content = content;
-
-	Callable_Call* call = get_info(call_node, true);
-	*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, call_node);
-	call->instanciation_data.initializer_info.subtype_valid = allowed_direction != -1;
-	call->instanciation_data.initializer_info.supertype_valid = allowed_direction != 1;
-	call->instanciated = true;
+	// Create call_info
+	Call_Info* call_info = get_info(call_node, true);
+	*call_info = call_info_make_from_call_node(call_node, call_origin_make(content), &compiler.analysis_data->arena);
+	call_info->instanciation_data.initializer_info.subtype_valid = allowed_direction != -1;
+	call_info->instanciation_data.initializer_info.supertype_valid = allowed_direction != 1;
+	call_info->instanciated = true;
 
 	// Match arguments to struct members
-	arguments_match_to_parameters(*call);
-	callable_call_analyse_all_arguments(call, false, false);
+	arguments_match_to_parameters(*call_info);
+	call_info_analyse_all_arguments(call_info, false, false);
 
 	auto helper_analyse_subtype_init_unknown = [&](AST::Subtype_Initializer* subtype_init)
-		{
-			Callable_Call* call = get_info(subtype_init->call_node, true);
-			*call = callable_call_make_from_call_node(
-				&compiler.analysis_data->arena,
-				callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED),
-				subtype_init->call_node
-			);
-			callable_call_analyse_all_arguments(call, false, true);
-		};
+	{
+		Call_Info* call_info = get_info(subtype_init->call_node, true);
+		*call_info = call_info_make_error(subtype_init->call_node);
+		call_info_analyse_all_arguments(call_info, false, true);
+	};
 
 	// Go through subtype-initializers and call function recursively
 	bool subtype_initializer_found = false;
@@ -7526,77 +7564,74 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 			expected_return_type = context.expected_type.type;
 		}
-		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
-		info->specifics.call = call;
+		Call_Info* call_info = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
+		info->specifics.call_info = call_info;
 
 		auto helper_set_info_to_call_return_type = [&](bool error_occured)
-			{
-				if (error_occured) {
-					callable_call_analyse_all_arguments(call, true, true);
-				}
+		{
+			if (error_occured) {
+				call_info_analyse_all_arguments(call_info, true, true);
+			}
 
-				auto signature = call->callable.signature;
-				if ((call->callable.type == Callable_Type::POLY_FUNCTION ||
-					call->callable.type == Callable_Type::DOT_CALL_POLYMORPHIC) &&
-					call->instanciated)
-				{
-					signature = call->instanciation_data.function->signature;
-				}
-				if (signature->return_type_index == -1) {
-					if (error_occured) {
-						expression_info_set_error(info, types.unknown_type);
-					}
-					else {
-						expression_info_set_no_value(info);
-					}
-					return;
-				}
-				Datatype* return_type = signature->return_type().value;
-				if (return_type->contains_pattern) {
+			auto signature = call_info->origin.signature;
+			if (call_info->origin.type == Call_Origin_Type::POLY_FUNCTION && call_info->instanciated) {
+				signature = call_info->instanciation_data.function->signature;
+			}
+			if (signature->return_type_index == -1) {
+				if (error_occured) {
 					expression_info_set_error(info, types.unknown_type);
 				}
 				else {
-					expression_info_set_value(info, return_type, true);
+					expression_info_set_no_value(info);
 				}
-			};
+				return;
+			}
+			Datatype* return_type = signature->return_type().value;
+			if (return_type->contains_pattern) {
+				expression_info_set_error(info, types.unknown_type);
+			}
+			else {
+				expression_info_set_value(info, return_type, true);
+			}
+		};
 
-		if (!call->argument_matching_success)
+		if (!call_info->argument_matching_success)
 		{
 			helper_set_info_to_call_return_type(true);
 			return info;
 		}
 
 		// Store expected return type in parameter_values (Used for polymorphic instanciation)
-		if (call->callable.signature->return_type_index != -1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-			auto& param_value = call->parameter_values[call->callable.signature->return_type_index];
+		if (call_info->origin.signature->return_type_index != -1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+			auto& param_value = call_info->parameter_values[call_info->origin.signature->return_type_index];
 			param_value.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
 			param_value.is_temporary_value = false;
 			param_value.datatype = context.expected_type.type;
 		}
 
 		// Handle hardcoded and polymorphic functions
-		switch (call->callable.type)
+		switch (call_info->origin.type)
 		{
-		case Callable_Type::HARDCODED:
+		case Call_Origin_Type::HARDCODED:
 		{
 			// Handle specific hardcoded-types
-			switch (call->callable.options.hardcoded)
+			switch (call_info->origin.options.hardcoded)
 			{
 			case Hardcoded_Type::TYPE_OF:
 			{
-				auto& param_value = call->parameter_values[0];
-				assert(call->parameter_values.size == 2, "With return type we should have 2 parameters");
-				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_unknown(), false);
+				auto& param_value = call_info->parameter_values[0];
+				assert(call_info->parameter_values.size == 2, "With return type we should have 2 parameters");
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, expression_context_make_unknown(), false);
 				EXIT_TYPE(param_value.datatype);
 			}
 			case Hardcoded_Type::SIZE_OF:
 			case Hardcoded_Type::ALIGN_OF:
 			{
-				bool is_size_of = call->callable.options.hardcoded == Hardcoded_Type::SIZE_OF;
-				assert(call->parameter_values.size == 2, "");
-				auto param_value = &call->parameter_values[0];
+				bool is_size_of = call_info->origin.options.hardcoded == Hardcoded_Type::SIZE_OF;
+				assert(call_info->parameter_values.size == 2, "");
+				auto param_value = &call_info->parameter_values[0];
 
-				analyse_parameter_value_if_not_already_done(call, param_value, expression_context_make_specific_type(types.type_handle));
+				analyse_parameter_value_if_not_already_done(call_info, param_value, expression_context_make_specific_type(types.type_handle));
 				Datatype* expr_type = param_value->datatype;
 				if (datatype_is_unknown(expr_type)) {
 					if (is_size_of) {
@@ -7609,7 +7644,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 
 				assert(param_value->value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Should be the case in function call!");
-				auto value_expr = call->argument_infos[param_value->options.argument_index].expression;
+				auto value_expr = call_info->argument_infos[param_value->options.argument_index].expression;
 				auto result = expression_calculate_comptime_value(value_expr, "size_of/align_of requires comptime type-handle");
 				if (!result.available) {
 					if (is_size_of) {
@@ -7647,7 +7682,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::RETURN_TYPE:
 			{
-				assert(call->parameter_values.size == 1, "");
+				assert(call_info->parameter_values.size == 1, "");
 				if (semantic_analyser.current_workload->type != Analysis_Workload_Type::FUNCTION_BODY) {
 					log_semantic_error("return_type() function needs to be called inside function_body", expr, Node_Section::FIRST_TOKEN);
 					EXIT_ERROR(types.unknown_type);
@@ -7666,11 +7701,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::STRUCT_TAG:
 			{
-				assert(call->parameter_values.size == 2, "");
-				auto& param_value = call->parameter_values[0];
-				auto param_expr = call->argument_infos[param_value.options.argument_index].expression;
+				assert(call_info->parameter_values.size == 2, "");
+				auto& param_value = call_info->parameter_values[0];
+				auto param_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 				assert(param_expr != 0, "");
-				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_unknown());
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, expression_context_make_unknown());
 				auto param_info = get_info(param_expr);
 				Datatype* datatype = param_info->cast_info.result_type;
 
@@ -7725,11 +7760,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			case Hardcoded_Type::BITWISE_NOT:
 			{
-				assert(call->parameter_values.size == 2, "");
+				assert(call_info->parameter_values.size == 2, "");
 
-				auto& param_value = call->parameter_values[0];
-				auto arg_expr = call->argument_infos[param_value.options.argument_index].expression;
-				analyse_parameter_value_if_not_already_done(call, &param_value, expression_context_make_auto_dereference());
+				auto& param_value = call_info->parameter_values[0];
+				auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, expression_context_make_auto_dereference());
 				Datatype* type = param_value.datatype;
 				type = datatype_get_non_const_type(type);
 
@@ -7744,8 +7779,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					log_error_info_given_type(type);
 					EXIT_VALUE(upcast(types.i32_type), true);
 				}
-				call->instanciation_data.bitwise_primitive_type = primitive;
-				call->instanciated = true;
+				call_info->instanciation_data.bitwise_primitive_type = primitive;
+				call_info->instanciated = true;
 
 				EXIT_VALUE(type, true);
 			}
@@ -7755,13 +7790,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			case Hardcoded_Type::BITWISE_SHIFT_LEFT:
 			case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
 			{
-				assert(call->parameter_values.size == 3, "");
-				call->instanciation_data.bitwise_primitive_type = types.i32_type;
+				assert(call_info->parameter_values.size == 3, "");
+				call_info->instanciation_data.bitwise_primitive_type = types.i32_type;
 
 				// Analyse first expression
-				auto& param_values = call->parameter_values;
-				auto expr_a = call->argument_infos[param_values[0].options.argument_index].expression;
-				analyse_parameter_value_if_not_already_done(call, &param_values[0], expression_context_make_auto_dereference());
+				auto& param_values = call_info->parameter_values;
+				auto expr_a = call_info->argument_infos[param_values[0].options.argument_index].expression;
+				analyse_parameter_value_if_not_already_done(call_info, &param_values[0], expression_context_make_auto_dereference());
 				Datatype* type_a = param_values[0].datatype;
 				type_a = datatype_get_non_const_type(type_a);
 
@@ -7774,14 +7809,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (!type_valid) {
 					log_semantic_error("Type for bitwise operation must be an integer", expr_a);
 					log_error_info_given_type(type_a);
-					callable_call_analyse_all_arguments(call, false, true);
+					call_info_analyse_all_arguments(call_info, false, true);
 					EXIT_VALUE(upcast(types.i32_type), true);
 				}
-				call->instanciation_data.bitwise_primitive_type = primitive;
-				call->instanciated = true;
+				call_info->instanciation_data.bitwise_primitive_type = primitive;
+				call_info->instanciated = true;
 
-				auto expr_b = call->argument_infos[param_values[1].options.argument_index].expression;
-				analyse_parameter_value_if_not_already_done(call, &param_values[1], expression_context_make_specific_type(type_a));
+				auto expr_b = call_info->argument_infos[param_values[1].options.argument_index].expression;
+				analyse_parameter_value_if_not_already_done(call_info, &param_values[1], expression_context_make_specific_type(type_a));
 				Datatype* type_b = param_values[1].datatype;
 				type_b = datatype_get_non_const_type(type_b);
 
@@ -7792,12 +7827,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			// If we are here the code-generation stages will handle the call
 			break;
 		}
-		case Callable_Type::POLY_FUNCTION:
-		case Callable_Type::POLY_STRUCT:
-		case Callable_Type::DOT_CALL_POLYMORPHIC:
+		case Call_Origin_Type::POLY_FUNCTION:
+		case Call_Origin_Type::POLY_STRUCT:
 		{
 			// Instanciate
-			Poly_Instance* instance = poly_header_instanciate(call, upcast(expr), Node_Section::ENCLOSURE);
+			Poly_Instance* instance = poly_header_instanciate(call_info, upcast(expr), Node_Section::ENCLOSURE);
 			if (instance == nullptr) { // Errors should have already been reported at this point
 				helper_set_info_to_call_return_type(true);
 				return info;
@@ -7826,7 +7860,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		// Analyse all arguments
-		callable_call_analyse_all_arguments(call, false, true);
+		call_info_analyse_all_arguments(call_info, false, true);
 		helper_set_info_to_call_return_type(false);
 		return info;
 	}
@@ -7843,23 +7877,24 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		// Analyse path-lookup, overload resolving and parameter matching
-		Callable_Call* call = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
-		if (call->callable.type != Callable_Type::POLY_FUNCTION) {
-			if (call->callable.type != Callable_Type::ERROR_OCCURED) {
+		Call_Info* call_info = overloading_analyse_call_expression_and_resolve_overloads(expr, expected_return_type);
+		if (call_info->origin.type != Call_Origin_Type::POLY_FUNCTION) 
+		{
+			if (call_info->origin.type != Call_Origin_Type::ERROR_OCCURED) {
 				log_semantic_error("#instanciate expects a call to a polymorphic function", expr, Node_Section::FIRST_TOKEN);
 			}
-			callable_call_analyse_all_arguments(call, false, true, true);
+			call_info_analyse_all_arguments(call_info, false, true, true);
 			EXIT_ERROR(types.unknown_type);
 		}
-		if (!call->argument_matching_success) {
-			callable_call_analyse_all_arguments(call, false, true, true);
+		if (!call_info->argument_matching_success) {
+			call_info_analyse_all_arguments(call_info, false, true, true);
 			EXIT_ERROR(types.unknown_type);
 		}
 
 		// Store expected return type in parameter_values (Used for polymorphic instanciation)
-		if (expected_return_type != nullptr && call->callable.signature->return_type_index != -1)
+		if (expected_return_type != nullptr && call_info->origin.signature->return_type_index != -1)
 		{
-			if (call->callable.signature->return_type_index == -1)
+			if (call_info->origin.signature->return_type_index == -1)
 			{
 				log_semantic_error(
 					"#instanciate return type was specified, but poly-function does not have a return type",
@@ -7868,7 +7903,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			else
 			{
-				auto& param_value = call->parameter_values[call->callable.signature->return_type_index];
+				auto& param_value = call_info->parameter_values[call_info->origin.signature->return_type_index];
 				param_value.value_type = Parameter_Value_Type::DATATYPE_KNOWN;
 				param_value.is_temporary_value = false;
 				param_value.datatype = expected_return_type;
@@ -7876,13 +7911,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		// Analyse all normal parameters as types in instanciate
-		Poly_Header* poly_header = call->callable.options.poly_function.poly_header;
+		Poly_Header* poly_header = call_info->origin.options.poly_function.poly_header;
 		bool encountered_unknown = false;
-		for (int i = 0; i < call->argument_infos.size; i++)
+		for (int i = 0; i < call_info->argument_infos.size; i++)
 		{
-			auto& arg_info = call->argument_infos[i];
+			auto& arg_info = call_info->argument_infos[i];
 			auto& param_info = poly_header->signature->parameters[arg_info.parameter_index];
-			auto& param_value = call->parameter_values[arg_info.parameter_index];
+			auto& param_value = call_info->parameter_values[arg_info.parameter_index];
 
 			// Analyse comptime values normally
 			if (param_info.comptime_variable_index != -1) continue;
@@ -7899,13 +7934,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			param_value.is_temporary_value = false;
 		}
 		if (encountered_unknown) {
-			callable_call_analyse_all_arguments(call, false, true, true);
+			call_info_analyse_all_arguments(call_info, false, true, true);
 			semantic_analyser_set_error_flag(true);
 			EXIT_ERROR(types.unknown_type);
 		}
 
 		// Instanciate poly-header
-		auto instance = poly_header_instanciate(call, upcast(expr), Node_Section::FIRST_TOKEN);
+		auto instance = poly_header_instanciate(call_info, upcast(expr), Node_Section::FIRST_TOKEN);
 		if (instance == nullptr) {
 			EXIT_ERROR(types.unknown_type);
 		}
@@ -8758,18 +8793,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			{
 				// Union initializer
 				Struct_Content* content = &struct_type->content;
-				Callable callable = callable_make(struct_content_get_cached_initializer_signature(content), Callable_Type::UNION_INITIALIZER);
-				callable.options.struct_content = content;
-
-				Callable_Call* call = get_info(init_node.call_node, true);
-				*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, init_node.call_node);
-				call->instanciation_data.initializer_info.subtype_valid = false;
-				call->instanciation_data.initializer_info.supertype_valid = false;
-				call->instanciated = true;
+				Call_Info* call_info = get_info(init_node.call_node, true);
+				*call_info = call_info_make_from_call_node(init_node.call_node, call_origin_make(content), &compiler.analysis_data->arena);
+				call_info->instanciation_data.initializer_info.subtype_valid = false;
+				call_info->instanciation_data.initializer_info.supertype_valid = false;
+				call_info->instanciated = true;
 
 				// Match arguments
-				arguments_match_to_parameters(*call);
-				callable_call_analyse_all_arguments(call, false, true);
+				arguments_match_to_parameters(*call_info);
+				call_info_analyse_all_arguments(call_info, false, true);
 				if (init_node.call_node->arguments.size == 0) {
 					log_semantic_error("Union initializer expects a value", upcast(init_node.call_node), Node_Section::ENCLOSURE);
 				}
@@ -8785,24 +8817,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		else if (type_for_init->type == Datatype_Type::SLICE)
 		{
 			Datatype_Slice* slice_type = downcast<Datatype_Slice>(type_for_init);
-
-			if (slice_type->slice_initializer_signature_cached == nullptr) {
-				auto& ids = compiler.identifier_pool.predefined_ids;
-				Call_Signature* signature = call_signature_create_empty();
-				call_signature_add_parameter(signature, ids.data, slice_type->data_member.type, true, false, false);
-				call_signature_add_parameter(signature, ids.size, slice_type->size_member.type, true, false, false);
-				signature = call_signature_register(signature);
-				slice_type->slice_initializer_signature_cached = signature;
-			}
-
-			Callable callable = callable_make(slice_type->slice_initializer_signature_cached, Callable_Type::SLICE_INITIALIZER);
-			callable.options.slice_type = slice_type;
-
-			Callable_Call* call = get_info(init_node.call_node, true);
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, init_node.call_node);
-
-			arguments_match_to_parameters(*call);
-			callable_call_analyse_all_arguments(call, false, true);
+			Call_Info* call_info = get_info(init_node.call_node, true);
+			*call_info = call_info_make_from_call_node(init_node.call_node, call_origin_make(slice_type), &compiler.analysis_data->arena);
+			arguments_match_to_parameters(*call_info);
+			call_info_analyse_all_arguments(call_info, false, true);
 			EXIT_VALUE(upcast(slice_type), true);
 		}
 		else
@@ -8813,10 +8831,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				type_for_init = types.unknown_type;
 			}
 
-			Callable callable = callable_make(compiler.analysis_data->empty_call_signature, Callable_Type::ERROR_OCCURED);
-			Callable_Call* call = get_info(init_node.call_node, true);
-			*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, init_node.call_node);
-			callable_call_analyse_all_arguments(call, false, true);
+			Call_Info* call_info = get_info(init_node.call_node, true);
+			*call_info = call_info_make_error(init_node.call_node);
+			call_info_analyse_all_arguments(call_info, false, true);
 		}
 
 		EXIT_ERROR(type_for_init);
@@ -8932,7 +8949,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 		}
 
-		// Check for polymorphic operator overload
+		// Check for polymorphic operator overload on []
 		if (!type_is_valid && array_type->type == Datatype_Type::STRUCT)
 		{
 			auto struct_type = downcast<Datatype_Struct>(array_type);
@@ -8954,25 +8971,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
 
 					auto poly_header = overload->array_access.options.poly_function.poly_header;
-					Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_FUNCTION);
-					callable.options.poly_function = overload->array_access.options.poly_function;
-					Callable_Call call = callable_call_make_empty(scratch_arena, callable);
-					call.argument_infos = scratch_arena->allocate_array<Argument_Info>(2);
+					Call_Info call_info = call_info_make_with_empty_arguments(call_origin_make(poly_header), scratch_arena);
+					call_info.argument_infos = scratch_arena->allocate_array<Argument_Info>(2);
 
 					// Set parameter values
-					callable_call_set_parameter_to_expression(&call, 0, 0, access_node.array_expr);
-					callable_call_set_parameter_to_expression(&call, 1, 1, access_node.index_expr);
+					call_info_set_parameter_to_expression(&call_info, 0, 0, access_node.array_expr);
+					call_info_set_parameter_to_expression(&call_info, 1, 1, access_node.index_expr);
 					if (poly_header->signature->return_type_index != -1 && context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 						Datatype* expected_type = context.expected_type.type;
-						call.parameter_values[poly_header->signature->return_type_index] = parameter_value_make_datatype_known(expected_type, false);
+						call_info.parameter_values[poly_header->signature->return_type_index] = parameter_value_make_datatype_known(expected_type, false);
 					}
 
 					// Instanciate
-					Expression_Info* array_expr_info = get_info(access_node.array_expr);
-					Poly_Instance* instance = poly_header_instanciate(
-						&call, upcast(expr), Node_Section::ENCLOSURE
-					);
-
+					Poly_Instance* instance = poly_header_instanciate(&call_info, upcast(expr), Node_Section::ENCLOSURE);
 					if (instance != nullptr)
 					{
 						assert(instance->type == Poly_Instance_Type::FUNCTION, "");
@@ -9293,65 +9304,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					info->specifics.member_access.options.member = member;
 					EXIT_VALUE(member.type, result_is_temporary);
 				}
-			}
-
-			// Check for dot-calls as member
-			Dynamic_Array<Dot_Call_Info> dot_calls = dynamic_array_create<Dot_Call_Info>();
-			SCOPE_EXIT(dynamic_array_destroy(&dot_calls));
-			find_available_dot_calls(datatype, member_node.expr, member_node.name, true, dot_calls);
-			if (dot_calls.size > 0)
-			{
-				// Check for errors
-				if (dot_calls.size > 1) {
-					log_semantic_error("Multiple dot_call as_member_access function with this name were found", expr, Node_Section::WHOLE_NO_CHILDREN);
-					EXIT_ERROR(types.unknown_type);
-				}
-
-				auto& dotcall = dot_calls[0];
-				bool success = try_updating_expression_type_mods(member_node.expr, dotcall.mods);
-				assert(success, "Should work here");
-
-				ModTree_Function* function = nullptr;
-				if (dotcall.is_polymorphic)
-				{
-					Arena* scratch_arena = &semantic_analyser.current_workload->scratch_arena;
-					auto checkpoint = scratch_arena->make_checkpoint();
-					SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
-
-					auto poly_header = dotcall.options.poly_function.poly_header;
-					Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_FUNCTION);
-					callable.options.poly_function = dotcall.options.poly_function;
-					Callable_Call call = callable_call_make_empty(scratch_arena, callable);
-					call.argument_infos = scratch_arena->allocate_array<Argument_Info>(1);
-
-					// Set parameter values
-					callable_call_set_parameter_to_expression(&call, 0, 0, member_node.expr);
-
-					// Instanciate
-					Poly_Instance* instance = poly_header_instanciate(
-						&call, upcast(poly_header->origin.function_progress->header_workload->function_node)
-					);
-					if (instance == nullptr) {
-						EXIT_ERROR(types.unknown_type);
-					}
-
-					assert(instance->type == Poly_Instance_Type::FUNCTION, "");
-					function = instance->options.function_instance->function;
-				}
-				else {
-					function = dotcall.options.function;
-				}
-
-				// Set dot-call in Expression-Info and return
-				info->specifics.member_access.type = Member_Access_Type::DOT_CALL_AS_MEMBER;
-				info->specifics.member_access.options.dot_call_function = function;
-				if (function->signature->return_type().available) {
-					expression_info_set_value(info, function->signature->return_type().value, true);
-				}
-				else {
-					expression_info_set_no_value(info);
-				}
-				return info;
 			}
 
 			// Error if no member access was found
@@ -10197,21 +10149,19 @@ Expression_Cast_Info semantic_analyser_check_if_cast_possible(bool is_temporary_
 				SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
 
 				auto poly_header = custom_cast.options.poly_function.poly_header;
-				Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_FUNCTION);
-				callable.options.poly_function = custom_cast.options.poly_function;
-				Callable_Call call = callable_call_make_empty(scratch_arena, callable);
+				Call_Info call_info = call_info_make_with_empty_arguments(call_origin_make(poly_header), scratch_arena);
 
 				// Set parameter values
-				auto& param_value = call.parameter_values[0];
+				auto& param_value = call_info.parameter_values[0];
 				param_value = parameter_value_make_datatype_known(source_type, result.initial_value_is_temporary);
 				assert(poly_header->signature->return_type_index != -1, "");
-				auto& return_param = call.parameter_values[poly_header->signature->return_type_index];
+				auto& return_param = call_info.parameter_values[poly_header->signature->return_type_index];
 				return_param = parameter_value_make_datatype_known(destination_type, false);
 
 				// Instanciate
 				Error_Checkpoint error_checkpoint = error_checkpoint_start();
 				Poly_Instance* instance = poly_header_instanciate(
-					&call, upcast(poly_header->origin.function_progress->header_workload->function_node)
+					&call_info, upcast(poly_header->origin.function_progress->header_workload->function_node)
 				);
 				Error_Checkpoint_Info info = error_checkpoint_end(error_checkpoint);
 
@@ -10487,42 +10437,6 @@ Datatype* semantic_analyser_analyse_expression_value(
 
 
 // OPERATOR CONTEXT
-void operator_context_query_dot_calls_recursive(
-	Operator_Context* context, Custom_Operator_Key key, Dynamic_Array<Dot_Call_Info>& out_results, Hashset<Operator_Context*>& visited)
-{
-	if (hashset_contains(&visited, context)) {
-		return;
-	}
-	hashset_insert_element(&visited, context);
-
-	// Wait for change workload
-	auto change_workload = context->workloads[(int)key.type];
-	if (change_workload != 0) {
-		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(change_workload));
-		workload_executer_wait_for_dependency_resolution();
-	}
-
-	// Add all dot-calls to result
-	auto result = hashtable_find_element(&context->custom_operators, key);
-	if (result != 0) {
-		for (int i = 0; i < result->dot_calls->size; i++) {
-			dynamic_array_push_back(&out_results, (*result->dot_calls)[i]);
-		}
-	}
-
-	// Wait for import workloads
-	auto import_workload = context->workloads[(int)Context_Change_Type::IMPORT];
-	if (import_workload != 0) {
-		analysis_workload_add_dependency_internal(semantic_analyser.current_workload, upcast(import_workload));
-		workload_executer_wait_for_dependency_resolution();
-	}
-
-	// Recurse to imports
-	for (int i = 0; i < context->context_imports.size; i++) {
-		operator_context_query_dot_calls_recursive(context->context_imports[i], key, out_results, visited);
-	}
-}
-
 Custom_Operator* operator_context_query_custom_operator_recursive(Operator_Context* context, Custom_Operator_Key key, Hashset<Operator_Context*>& visited)
 {
 	if (hashset_contains(&visited, context)) {
@@ -10614,12 +10528,6 @@ u64 custom_operator_key_hash(Custom_Operator_Key* key)
 		hash = hash_combine(hash, hash_pointer(cast.to_type));
 		break;
 	}
-	case Context_Change_Type::DOT_CALL: {
-		auto& dot_call = key->options.dot_call;
-		hash = hash_combine(hash, hash_pointer(dot_call.datatype));
-		hash = hash_combine(hash, hash_pointer(dot_call.id->characters)); // Should work because all strings are in c_string pool
-		break;
-	}
 	case Context_Change_Type::ITERATOR: {
 		auto& iter = key->options.iterator;
 		hash = hash_combine(hash, hash_pointer(iter.datatype));
@@ -10663,9 +10571,6 @@ bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b) 
 	case Context_Change_Type::CAST: {
 		return types_are_equal(a->options.custom_cast.from_type, b->options.custom_cast.from_type) &&
 			types_are_equal(a->options.custom_cast.to_type, b->options.custom_cast.to_type);
-	}
-	case Context_Change_Type::DOT_CALL: {
-		return types_are_equal(a->options.dot_call.datatype, b->options.dot_call.datatype) && a->options.dot_call.id == b->options.dot_call.id;
 	}
 	case Context_Change_Type::ITERATOR: {
 		return types_are_equal(a->options.iterator.datatype, b->options.iterator.datatype);
@@ -10732,42 +10637,37 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 	auto& types = compiler.analysis_data->type_system.predefined_types;
 	bool success = true;
 
-	// log_semantic_error("Operator context change currently not supported", upcast(change_node), Parser::Section::FIRST_TOKEN);
-	// return;
-
-	Callable_Call* call = nullptr;
+	Call_Info* call_info = nullptr;
 	if (change_node->type != Context_Change_Type::IMPORT && change_node->type != Context_Change_Type::INVALID)
 	{
-		call = get_info(change_node->options.call_node, true);
-		Callable& callable = compiler.analysis_data->context_change_type_callables[(int)change_node->type];
-		*call = callable_call_make_from_call_node(&compiler.analysis_data->arena, callable, change_node->options.call_node);
-
-		if (!arguments_match_to_parameters(*call)) {
+		call_info = get_info(change_node->options.call_node, true);
+		*call_info = call_info_make_from_call_node(change_node->options.call_node, call_origin_make(change_node->type), &compiler.analysis_data->arena);
+		if (!arguments_match_to_parameters(*call_info)) {
 			success = false;
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 			return;
 		}
 	}
 
 	auto helper_parameter_set_analysed = [&](Parameter_Value& param_value) {
 		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-		auto& argument_info = call->argument_infos[param_value.options.argument_index];
+		auto& argument_info = call_info->argument_infos[param_value.options.argument_index];
 		if (!argument_info.is_analysed) {
 			argument_info.is_analysed = true;
 			auto info = get_info(argument_info.expression);
 			param_value.datatype = info->cast_info.result_type;
 			param_value.is_temporary_value = info->cast_info.initial_value_is_temporary;
 		}
-		};
+	};
 	// Returns enum value as integer or -1 if error
-	auto helper_analyse_as_comptime_enum = [&success, &call](int param_index, int max_enum_value) -> int {
+	auto helper_analyse_as_comptime_enum = [&success, &call_info](int param_index, int max_enum_value) -> int {
 		// Get param/argument info
-		auto& param_value = call->parameter_values[param_index];
-		auto& param_info = call->callable.signature->parameters[param_index];
+		auto& param_value = call_info->parameter_values[param_index];
+		auto& param_info = call_info->origin.signature->parameters[param_index];
 		if (param_value.value_type == Parameter_Value_Type::NOT_SET) return -1;
 		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
 		if (param_value.options.argument_index == -1) return -1;
-		auto& argument_info = call->argument_infos[param_value.options.argument_index];
+		auto& argument_info = call_info->argument_infos[param_value.options.argument_index];
 		assert(!argument_info.is_analysed, "");
 
 		// analyse argument
@@ -10795,14 +10695,14 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		}
 		return enum_value;
 		};
-	auto analyse_parameter_as_comptime_bool = [&success, &call, &types](int param_index) -> bool {
+	auto analyse_parameter_as_comptime_bool = [&success, &call_info, &types](int param_index) -> bool {
 		// Get param/argument info
-		auto& param_value = call->parameter_values[param_index];
-		auto& param_info = call->callable.signature->parameters[param_index];
+		auto& param_value = call_info->parameter_values[param_index];
+		auto& param_info = call_info->origin.signature->parameters[param_index];
 		if (param_value.value_type == Parameter_Value_Type::NOT_SET) return false;
 		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
 		if (param_value.options.argument_index == -1) return false;
-		auto& argument_info = call->argument_infos[param_value.options.argument_index];
+		auto& argument_info = call_info->argument_infos[param_value.options.argument_index];
 		assert(!argument_info.is_analysed, "");
 
 		// Analyse argument
@@ -10960,8 +10860,8 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 	}
 	case Context_Change_Type::CAST_OPTION:
 	{
-		auto cast_option_expr = call->argument_infos[call->parameter_values[0].options.argument_index].expression;
-		auto cast_mode_expr = call->argument_infos[call->parameter_values[1].options.argument_index].expression;
+		auto cast_option_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+		auto cast_mode_expr = call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression;
 		Cast_Option option = (Cast_Option)helper_analyse_as_comptime_enum(0, (int)Cast_Option::MAX_ENUM_VALUE);
 		Cast_Mode cast_mode = (Cast_Mode)helper_analyse_as_comptime_enum(1, (int)Cast_Mode::MAX_ENUM_VALUE);
 		if (success)
@@ -10994,16 +10894,16 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 	}
 	case Context_Change_Type::BINARY_OPERATOR:
 	{
-		auto& param_binop = call->parameter_values[0];
-		auto& param_function = call->parameter_values[1];
-		auto& param_commutative = call->parameter_values[2];
+		auto& param_binop = call_info->parameter_values[0];
+		auto& param_function = call_info->parameter_values[1];
+		auto& param_commutative = call_info->parameter_values[2];
 
 		// Find binop type
 		AST::Binop binop = AST::Binop::ADDITION;
 		if (param_binop.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_binop.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto binop_expr = call->argument_infos[param_binop.options.argument_index].expression;
+			auto binop_expr = call_info->argument_infos[param_binop.options.argument_index].expression;
 			if (binop_expr->type == AST::Expression_Type::LITERAL_READ && binop_expr->options.literal_read.type == Literal_Type::STRING)
 			{
 				auto expr_info = get_info(binop_expr, true);
@@ -11055,7 +10955,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		if (param_function.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_function.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_function.options.argument_index].expression;
+			auto function_expr = call_info->argument_infos[param_function.options.argument_index].expression;
 			Expression_Info* info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
 			helper_parameter_set_analysed(param_function);
 			Type_Mods unused;
@@ -11089,22 +10989,22 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			}
 		}
 		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 		}
 
 		break;
 	}
 	case Context_Change_Type::UNARY_OPERATOR:
 	{
-		auto& param_unop = call->parameter_values[0];
-		auto& param_function = call->parameter_values[1];
+		auto& param_unop = call_info->parameter_values[0];
+		auto& param_function = call_info->parameter_values[1];
 
 		// Analyse unop type
 		AST::Unop unop = AST::Unop::NEGATE;
 		if (param_unop.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_unop.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto unop_expr = call->argument_infos[param_unop.options.argument_index].expression;
+			auto unop_expr = call_info->argument_infos[param_unop.options.argument_index].expression;
 			if (unop_expr->type == AST::Expression_Type::LITERAL_READ && unop_expr->options.literal_read.type == Literal_Type::STRING)
 			{
 				auto expr_info = get_info(unop_expr, true);
@@ -11145,7 +11045,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		if (param_function.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_function.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_function.options.argument_index].expression;
+			auto function_expr = call_info->argument_infos[param_function.options.argument_index].expression;
 			Expression_Info* info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
 			helper_parameter_set_analysed(param_function);
 			function = analyse_expression_info_as_function(function_expr, info, 1, true, &mods);
@@ -11164,14 +11064,14 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			hashtable_insert_element(&context->custom_operators, key, op);
 		}
 		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 		}
 		break;
 	}
 	case Context_Change_Type::CAST:
 	{
-		auto& param_function = call->parameter_values[0];
-		auto& param_cast_mode = call->parameter_values[1];
+		auto& param_function = call_info->parameter_values[0];
+		auto& param_cast_mode = call_info->parameter_values[1];
 
 		Cast_Mode cast_mode = (Cast_Mode)helper_analyse_as_comptime_enum(1, (int)Cast_Mode::MAX_ENUM_VALUE);
 
@@ -11184,7 +11084,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		if (param_function.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_function.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_function.options.argument_index].expression;
+			auto function_expr = call_info->argument_infos[param_function.options.argument_index].expression;
 			Expression_Info* fn_info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
 			helper_parameter_set_analysed(param_function);
 			if (fn_info->result_type == Expression_Result_Type::FUNCTION)
@@ -11236,13 +11136,13 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			hashtable_insert_element(&context->custom_operators, key, op);
 		}
 		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 		}
 		break;
 	}
 	case Context_Change_Type::ARRAY_ACCESS:
 	{
-		auto& param_function = call->parameter_values[0];
+		auto& param_function = call_info->parameter_values[0];
 
 		Custom_Operator op;
 		memory_zero(&op);
@@ -11252,7 +11152,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		if (param_function.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_function.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_function.options.argument_index].expression;
+			auto function_expr = call_info->argument_infos[param_function.options.argument_index].expression;
 			auto fn_info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
 			helper_parameter_set_analysed(param_function);
 			if (fn_info->result_type == Expression_Result_Type::FUNCTION)
@@ -11286,125 +11186,9 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			hashtable_insert_element(&context->custom_operators, key, op);
 		}
 		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 		}
 
-		break;
-	}
-	case Context_Change_Type::DOT_CALL:
-	{
-		auto& param_function = call->parameter_values[0];
-		auto& param_as_member_access = call->parameter_values[1];
-		auto& param_name = call->parameter_values[2];
-
-		Dot_Call_Info dot_call;
-		dot_call.as_member_access = false;
-		dot_call.is_polymorphic = false;
-		dot_call.mods = type_mods_make(0, 0, 0, 0);
-		dot_call.options.function = nullptr;
-
-		Custom_Operator_Key key;
-		key.type = Context_Change_Type::DOT_CALL;
-
-		if (param_as_member_access.value_type != Parameter_Value_Type::NOT_SET) {
-			assert(param_as_member_access.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			dot_call.as_member_access = analyse_parameter_as_comptime_bool(1);
-		}
-		const bool as_member_access = dot_call.as_member_access;
-
-		if (param_function.value_type != Parameter_Value_Type::NOT_SET)
-		{
-			assert(param_function.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_function.options.argument_index].expression;
-			auto fn_info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
-			helper_parameter_set_analysed(param_function);
-			if (fn_info->result_type == Expression_Result_Type::FUNCTION)
-			{
-				ModTree_Function* function = fn_info->options.function;
-				auto& parameters = function->signature->parameters;
-				int param_count = parameters.size - (function->signature->return_type_index == -1 ? 0 : 1);
-				if (param_count == 0) {
-					log_semantic_error("Dotcall function must have at least one parameter", upcast(function_expr));
-					success = false;
-				}
-				else if (param_count != 1 && as_member_access) {
-					log_semantic_error("Dotcall function as member access must have exactly one parameter", upcast(function_expr));
-					success = false;
-				}
-				else {
-					key.options.dot_call.datatype = parameters[0].datatype->base_type;
-					dot_call.mods = parameters[0].datatype->mods;
-				}
-
-				Symbol* symbol = 0;
-				if (function->function_type == ModTree_Function_Type::NORMAL) {
-					symbol = function->options.normal.symbol;
-				}
-				if (symbol != nullptr) {
-					key.options.dot_call.id = symbol->id;
-				}
-				else {
-					key.options.dot_call.id = nullptr;
-					if (param_name.value_type != Parameter_Value_Type::NOT_SET) {
-						log_semantic_error("Dotcall with unnamed function requires the use of the name argument", upcast(function_expr));
-					}
-				}
-
-				dot_call.is_polymorphic = false;
-				dot_call.options.function = function;
-			}
-			else if (fn_info->result_type == Expression_Result_Type::POLYMORPHIC_FUNCTION)
-			{
-				Poly_Header* poly_header = fn_info->options.poly_function.poly_header;
-				dot_call.is_polymorphic = true;
-				dot_call.options.poly_function = fn_info->options.poly_function;
-				key.options.dot_call.datatype = poly_function_check_first_argument(poly_header, upcast(function_expr), &dot_call.mods, true);
-				key.options.dot_call.id = poly_header->name;
-				int required_parameter_count = as_member_access ? 1 : poly_header->parameter_nodes.size;
-				poly_function_check_argument_count_and_comptime(poly_header, upcast(function_expr), required_parameter_count, true);
-			}
-			else if (fn_info->result_type == Expression_Result_Type::VALUE && datatype_is_unknown(expression_info_get_type(fn_info, false))) {
-				success = false;
-			}
-			else {
-				success = false;
-				log_semantic_error("Function argument must be either a normal or polymorphic function", function_expr);
-			}
-		}
-
-		// If name is given, use name instead
-		if (param_name.value_type != Parameter_Value_Type::NOT_SET)
-		{
-			assert(param_name.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto name_expr = call->argument_infos[param_name.options.argument_index].expression;
-			if (name_expr->type == AST::Expression_Type::LITERAL_READ && name_expr->options.literal_read.type == Literal_Type::STRING) {
-				key.options.dot_call.id = name_expr->options.literal_read.options.string;
-				auto expr_info = get_info(name_expr, true);
-				expression_info_set_value(expr_info, upcast(types.c_string), true);
-				helper_parameter_set_analysed(param_name);
-			}
-			else {
-				log_semantic_error("Dotcall name must be a c_string literal", upcast(name_expr));
-				success = false;
-			}
-		}
-
-		if (success)
-		{
-			auto found_op = hashtable_find_element(&context->custom_operators, key);
-			if (found_op != nullptr) {
-				dynamic_array_push_back(found_op->dot_calls, dot_call);
-			}
-			else {
-				Custom_Operator op;
-				op.dot_calls = compiler_analysis_data_allocate_dot_calls(compiler.analysis_data, 1);
-				dynamic_array_push_back(op.dot_calls, dot_call);
-				hashtable_insert_element(&context->custom_operators, key, op);
-			}
-		}
-		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
-		}
 		break;
 	}
 	case Context_Change_Type::ITERATOR:
@@ -11416,11 +11200,11 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 		iter.is_polymorphic = false; // Depends on the type of the create function expression
 
 		Datatype* iterator_type = types.unknown_type; // Note: Iterator type is not available for polymorphic functions
-		auto& param_create_fn = call->parameter_values[0];
+		auto& param_create_fn = call_info->parameter_values[0];
 		if (param_create_fn.value_type != Parameter_Value_Type::NOT_SET)
 		{
 			assert(param_create_fn.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-			auto function_expr = call->argument_infos[param_create_fn.options.argument_index].expression;
+			auto function_expr = call_info->argument_infos[param_create_fn.options.argument_index].expression;
 			auto fn_info = semantic_analyser_analyse_expression_any(function_expr, expression_context_make_unknown());
 			helper_parameter_set_analysed(param_create_fn);
 			if (fn_info->result_type == Expression_Result_Type::FUNCTION)
@@ -11482,7 +11266,7 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 			{
 				if (param_value.value_type == Parameter_Value_Type::NOT_SET || !success) return;
 
-				auto fn_expr = call->argument_infos[param_value.options.argument_index].expression;
+				auto fn_expr = call_info->argument_infos[param_value.options.argument_index].expression;
 				auto fn_info = semantic_analyser_analyse_expression_any(fn_expr, expression_context_make_unknown());
 				helper_parameter_set_analysed(param_value);
 
@@ -11599,15 +11383,15 @@ void analyse_operator_context_change(AST::Context_Change* change_node, Operator_
 				}
 			};
 
-		analyse_iter_fn(call->parameter_values[1], &op.iterator.options.normal.has_next, &op.iterator.options.polymorphic.has_next, true, true);
-		analyse_iter_fn(call->parameter_values[2], &op.iterator.options.normal.next, &op.iterator.options.polymorphic.next, false, false);
-		analyse_iter_fn(call->parameter_values[3], &op.iterator.options.normal.get_value, &op.iterator.options.polymorphic.get_value, true, false);
+		analyse_iter_fn(call_info->parameter_values[1], &op.iterator.options.normal.has_next, &op.iterator.options.polymorphic.has_next, true, true);
+		analyse_iter_fn(call_info->parameter_values[2], &op.iterator.options.normal.next, &op.iterator.options.polymorphic.next, false, false);
+		analyse_iter_fn(call_info->parameter_values[3], &op.iterator.options.normal.get_value, &op.iterator.options.polymorphic.get_value, true, false);
 
 		if (success) {
 			hashtable_insert_element(&context->custom_operators, key, op);
 		}
 		else {
-			callable_call_analyse_all_arguments(call, false, true, false);
+			call_info_analyse_all_arguments(call_info, false, true, false);
 		}
 		break;
 	}
@@ -12187,30 +11971,27 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 						auto checkpoint = scratch_arena->make_checkpoint();
 						SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
 
-						auto helper_make_call = [&](Poly_Function& poly_function, int argument_info_count) -> Callable_Call {
+						auto helper_make_call = [&](Poly_Function& poly_function, int argument_info_count) -> Call_Info {
 							Poly_Header* poly_header = poly_function.poly_header;
-							Callable callable = callable_make(poly_header->signature, Callable_Type::POLY_FUNCTION);
-							callable.options.poly_function = poly_function;
-							Callable_Call call = callable_call_make_empty(scratch_arena, callable);
-							call.argument_infos = scratch_arena->allocate_array<Argument_Info>(argument_info_count);
-							return call;
-							};
-						auto helper_instanciate_call = [&](Callable_Call& call) -> ModTree_Function* {
+							Call_Info call_info = call_info_make_with_empty_arguments(call_origin_make(poly_function.poly_header), scratch_arena);
+							call_info.argument_infos = scratch_arena->allocate_array<Argument_Info>(argument_info_count);
+							return call_info;
+						};
+						auto helper_instanciate_call = [&](Call_Info& call_info) -> ModTree_Function* {
 							Poly_Instance* instance = poly_header_instanciate(
-								&call, upcast(for_loop.expression), Node_Section::FIRST_TOKEN
+								&call_info, upcast(for_loop.expression), Node_Section::FIRST_TOKEN
 							);
 							if (instance != nullptr) {
 								assert(instance->type == Poly_Instance_Type::FUNCTION, "");
-								auto function = instance->options.function_instance->function;
 								return instance->options.function_instance->function;
 							}
 							return nullptr;
-							};
+						};
 
 						// Instanciate create function
-						Callable_Call call = helper_make_call(op->iterator.options.polymorphic.fn_create, 1);
-						callable_call_set_parameter_to_expression(&call, 0, 0, for_loop.expression);
-						loop_info.custom_op.fn_create = helper_instanciate_call(call);
+						Call_Info call_info = helper_make_call(op->iterator.options.polymorphic.fn_create, 1);
+						call_info_set_parameter_to_expression(&call_info, 0, 0, for_loop.expression);
+						loop_info.custom_op.fn_create = helper_instanciate_call(call_info);
 
 						// Find iterator type
 						Datatype* iterator_type = nullptr;
@@ -12226,19 +12007,19 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement)
 						if (iterator_type != nullptr)
 						{
 							scratch_arena->rewind_to_checkpoint(checkpoint);
-							call = helper_make_call(op->iterator.options.polymorphic.has_next, 0);
-							call.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
-							loop_info.custom_op.fn_has_next = helper_instanciate_call(call);
+							call_info = helper_make_call(op->iterator.options.polymorphic.has_next, 0);
+							call_info.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
+							loop_info.custom_op.fn_has_next = helper_instanciate_call(call_info);
 
 							scratch_arena->rewind_to_checkpoint(checkpoint);
-							call = helper_make_call(op->iterator.options.polymorphic.next, 0);
-							call.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
-							loop_info.custom_op.fn_next = helper_instanciate_call(call);
+							call_info = helper_make_call(op->iterator.options.polymorphic.next, 0);
+							call_info.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
+							loop_info.custom_op.fn_next = helper_instanciate_call(call_info);
 
 							scratch_arena->rewind_to_checkpoint(checkpoint);
-							call = helper_make_call(op->iterator.options.polymorphic.get_value, 0);
-							call.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
-							loop_info.custom_op.fn_get_value = helper_instanciate_call(call);
+							call_info = helper_make_call(op->iterator.options.polymorphic.get_value, 0);
+							call_info.parameter_values[0] = parameter_value_make_datatype_known(iterator_type, false);
+							loop_info.custom_op.fn_get_value = helper_instanciate_call(call_info);
 						}
 
 						success = success &&
@@ -13040,126 +12821,117 @@ void semantic_analyser_reset()
 
 	// Predefined Callables (Hardcoded and context change)
 	{
-		auto& hardcoded_callables = compiler.analysis_data->hardcoded_function_callables;
-		auto& context_callables = compiler.analysis_data->context_change_type_callables;
+		auto& hardcoded_signatures = compiler.analysis_data->hardcoded_function_signatures;
+		auto& context_signatures = compiler.analysis_data->context_change_type_signatures;
 		auto& ids = compiler.identifier_pool.predefined_ids;
 		auto make_id = [&](const char* name) -> String* {
 			return identifier_pool_add(&pool_lock_value, string_create_static(name));
-			};
+		};
 
-		for (int i = 0; i < (int)Hardcoded_Type::MAX_ENUM_VALUE; i++) {
-			hardcoded_callables[i] = callable_make(nullptr, Callable_Type::HARDCODED);
-			hardcoded_callables[i].options.hardcoded = (Hardcoded_Type)i;
-		}
-		for (int i = 0; i < (int)Context_Change_Type::MAX_ENUM_VALUE; i++) {
-			context_callables[i] = callable_make(nullptr, Callable_Type::CONTEXT_CHANGE);
-			context_callables[i].options.context_change_type = (Context_Change_Type)i;
-		}
+		Call_Signature* call_signature = call_signature_create_empty();
+		compiler.analysis_data->empty_call_signature = call_signature_register(call_signature);
 
-		Call_Signature* callable = call_signature_create_empty();
-		compiler.analysis_data->empty_call_signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("condition"), upcast(types.bool_type), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::ASSERT_FN] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("condition"), upcast(types.bool_type), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::ASSERT_FN].signature = call_signature_register(callable);
+		hardcoded_signatures[(int)Hardcoded_Type::PANIC_FN] = compiler.analysis_data->empty_call_signature;
 
-		hardcoded_callables[(int)Hardcoded_Type::PANIC_FN].signature = compiler.analysis_data->empty_call_signature;
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_return_type(call_signature, types.type_handle);
+		hardcoded_signatures[(int)Hardcoded_Type::TYPE_OF] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_return_type(callable, types.type_handle);
-		hardcoded_callables[(int)Hardcoded_Type::TYPE_OF].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(types.usize));
+		hardcoded_signatures[(int)Hardcoded_Type::SIZE_OF] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("type"), upcast(types.type_handle), true, false, false);
-		call_signature_add_return_type(callable, upcast(types.usize));
-		hardcoded_callables[(int)Hardcoded_Type::SIZE_OF].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(types.u32_type));
+		hardcoded_signatures[(int)Hardcoded_Type::ALIGN_OF] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("type"), upcast(types.type_handle), true, false, false);
-		call_signature_add_return_type(callable, upcast(types.u32_type));
-		hardcoded_callables[(int)Hardcoded_Type::ALIGN_OF].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable));
+		hardcoded_signatures[(int)Hardcoded_Type::RETURN_TYPE] = call_signature;
 
-		callable = call_signature_create_empty();
-		call_signature_add_return_type(callable, upcast(types.empty_pattern_variable));
-		hardcoded_callables[(int)Hardcoded_Type::RETURN_TYPE].signature = callable;
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("type"), upcast(types.type_handle), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(type_system_make_pointer(upcast(types.type_information_type))));
+		hardcoded_signatures[(int)Hardcoded_Type::TYPE_INFO] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("type"), upcast(types.type_handle), true, false, false);
-		call_signature_add_return_type(callable, upcast(type_system_make_pointer(upcast(types.type_information_type))));
-		hardcoded_callables[(int)Hardcoded_Type::TYPE_INFO].signature = call_signature_register(callable);
-
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_return_type(callable, upcast(types.empty_pattern_variable));
-		hardcoded_callables[(int)Hardcoded_Type::STRUCT_TAG].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable));
+		hardcoded_signatures[(int)Hardcoded_Type::STRUCT_TAG] = call_signature_register(call_signature);
 
 
 
 		// Memory functions
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("destination"), upcast(types.address), true, false, false);
-		call_signature_add_parameter(callable, make_id("source"), upcast(types.address), true, false, false);
-		call_signature_add_parameter(callable, make_id("size"), upcast(types.usize), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::MEMORY_COPY].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.address), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("source"), upcast(types.address), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COPY] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("destination"), upcast(types.address), true, false, false);
-		call_signature_add_parameter(callable, make_id("size"), upcast(types.usize), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::MEMORY_ZERO].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.address), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::MEMORY_ZERO] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("a"), upcast(types.address), true, false, false);
-		call_signature_add_parameter(callable, make_id("b"), upcast(types.address), true, false, false);
-		call_signature_add_parameter(callable, make_id("size"), upcast(types.usize), true, false, false);
-		call_signature_add_return_type(callable, upcast(types.bool_type));
-		hardcoded_callables[(int)Hardcoded_Type::MEMORY_COMPARE].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("a"), upcast(types.address), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("b"), upcast(types.address), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(types.bool_type));
+		hardcoded_signatures[(int)Hardcoded_Type::MEMORY_COMPARE] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("size"), upcast(types.usize), true, false, false);
-		call_signature_add_return_type(callable, upcast(types.address));
-		hardcoded_callables[(int)Hardcoded_Type::SYSTEM_ALLOC].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("size"), upcast(types.usize), true, false, false);
+		call_signature_add_return_type(call_signature, upcast(types.address));
+		hardcoded_signatures[(int)Hardcoded_Type::SYSTEM_ALLOC] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("data"), upcast(types.address), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::SYSTEM_FREE].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("data"), upcast(types.address), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::SYSTEM_FREE] = call_signature_register(call_signature);
 
 
 		// Basic IO-Functions
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.bool_type), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::PRINT_BOOL].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.bool_type), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::PRINT_BOOL] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.i32_type), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::PRINT_I32].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.i32_type), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::PRINT_I32] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.f32_type), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::PRINT_F32].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.f32_type), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::PRINT_F32] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.c_string), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::PRINT_STRING].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.c_string), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::PRINT_STRING] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		hardcoded_callables[(int)Hardcoded_Type::PRINT_LINE].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		hardcoded_signatures[(int)Hardcoded_Type::PRINT_LINE] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_return_type(callable, upcast(types.i32_type));
-		hardcoded_callables[(int)Hardcoded_Type::READ_I32].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_return_type(call_signature, upcast(types.i32_type));
+		hardcoded_signatures[(int)Hardcoded_Type::READ_I32] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_return_type(callable, upcast(types.f32_type));
-		hardcoded_callables[(int)Hardcoded_Type::READ_F32].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_return_type(call_signature, upcast(types.f32_type));
+		hardcoded_signatures[(int)Hardcoded_Type::READ_F32] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_return_type(callable, upcast(types.bool_type));
-		hardcoded_callables[(int)Hardcoded_Type::READ_BOOL].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_return_type(call_signature, upcast(types.bool_type));
+		hardcoded_signatures[(int)Hardcoded_Type::READ_BOOL] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_return_type(callable, upcast(types.bool_type));
-		hardcoded_callables[(int)Hardcoded_Type::RANDOM_I32].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_return_type(call_signature, upcast(types.bool_type));
+		hardcoded_signatures[(int)Hardcoded_Type::RANDOM_I32] = call_signature_register(call_signature);
 
 
 
@@ -13168,56 +12940,50 @@ void semantic_analyser_reset()
 		call_signature_add_parameter(bitwise_binop, make_id("a"), upcast(types.empty_pattern_variable), true, false, false);
 		call_signature_add_parameter(bitwise_binop, make_id("b"), upcast(types.empty_pattern_variable), true, false, false);
 		bitwise_binop = call_signature_register(bitwise_binop);
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_AND].signature = bitwise_binop;
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_OR].signature = bitwise_binop;
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_XOR].signature = bitwise_binop;
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_SHIFT_LEFT].signature = bitwise_binop;
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_SHIFT_RIGHT].signature = bitwise_binop;
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_AND] = bitwise_binop;
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_OR] = bitwise_binop;
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_XOR] = bitwise_binop;
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_SHIFT_LEFT] = bitwise_binop;
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_SHIFT_RIGHT] = bitwise_binop;
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-		hardcoded_callables[(int)Hardcoded_Type::BITWISE_NOT].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+		hardcoded_signatures[(int)Hardcoded_Type::BITWISE_NOT] = call_signature_register(call_signature);
 
 
 
 		// Context functions
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("option"), upcast(types.cast_option), true, false, false);
-		call_signature_add_parameter(callable, make_id("cast_mode"), upcast(types.cast_mode), true, false, false);
-		context_callables[(int)Context_Change_Type::CAST_OPTION].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("option"), upcast(types.cast_option), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("cast_mode"), upcast(types.cast_mode), true, false, false);
+		context_signatures[(int)Context_Change_Type::CAST_OPTION] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("binop"), upcast(types.c_string), true, false, false);
-		call_signature_add_parameter(callable, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("commutative"), upcast(types.bool_type), false, false, false);
-		context_callables[(int)Context_Change_Type::BINARY_OPERATOR].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("binop"), upcast(types.c_string), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("commutative"), upcast(types.bool_type), false, false, false);
+		context_signatures[(int)Context_Change_Type::BINARY_OPERATOR] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("unop"), upcast(types.c_string), true, false, false);
-		call_signature_add_parameter(callable, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-		context_callables[(int)Context_Change_Type::UNARY_OPERATOR].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("unop"), upcast(types.c_string), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
+		context_signatures[(int)Context_Change_Type::UNARY_OPERATOR] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-		context_callables[(int)Context_Change_Type::ARRAY_ACCESS].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
+		context_signatures[(int)Context_Change_Type::ARRAY_ACCESS] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("as_member_access"), upcast(types.bool_type), false, false, false);
-		call_signature_add_parameter(callable, make_id("name"), upcast(types.c_string), false, false, false);
-		context_callables[(int)Context_Change_Type::DOT_CALL].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("create"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("has_next"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("next"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+		context_signatures[(int)Context_Change_Type::ITERATOR] = call_signature_register(call_signature);
 
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("create"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("has_next"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("next"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-		context_callables[(int)Context_Change_Type::ITERATOR].signature = call_signature_register(callable);
-
-		callable = call_signature_create_empty();
-		call_signature_add_parameter(callable, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-		call_signature_add_parameter(callable, make_id("cast_mode"), upcast(types.cast_mode), true, false, false);
-		context_callables[(int)Context_Change_Type::CAST].signature = call_signature_register(callable);
+		call_signature = call_signature_create_empty();
+		call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
+		call_signature_add_parameter(call_signature, make_id("cast_mode"), upcast(types.cast_mode), true, false, false);
+		context_signatures[(int)Context_Change_Type::CAST] = call_signature_register(call_signature);
 	}
 }
 

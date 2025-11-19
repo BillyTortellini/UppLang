@@ -96,9 +96,17 @@ namespace AST
         FILE                       // import "../something"
     };
 
+    enum class Import_Option
+    {
+        NONE,
+        DOT_CALL_IMPORT,
+        CONTEXT_IMPORT
+    };
+
     struct Import
     {
         Node base;
+        Import_Option option;
         Import_Type type;
         Optional<Definition_Symbol*> alias_name;
         // Depending on import type one of those is set, the other will be 0
@@ -140,6 +148,7 @@ namespace AST
         // NOTE: The last node is only a convenient pointer to the end of parts, but the
         //       node is also inside parts, e.g. parts[parts.size-1] == last
         Symbol_Lookup* last;
+        bool is_dot_call_lookup;
     };
 
     struct Module
@@ -334,12 +343,9 @@ namespace AST
             } unop;
             Body_Node bake_body; 
             struct {
-                bool is_dot_call;
-                union {
-                    Expression* expr;
-                    String* dot_call_name; // e.g. x->foo()
-                } options;
+                Expression* expr;
                 Call_Node* call_node;
+                bool is_dot_call;
             } call;
             struct {
                 Expression* type_expr;

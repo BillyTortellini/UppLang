@@ -404,9 +404,7 @@ Node* base_get_child(Node* node, int child_index)
 		}
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
-			if (!call.is_dot_call) {
-				FILL(call.options.expr);
-			}
+			FILL(call.expr);
 			FILL(call.call_node);
 			break;
 		}
@@ -807,9 +805,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		}
 		case Expression_Type::FUNCTION_CALL: {
 			auto& call = expr->options.call;
-			if (!call.is_dot_call) {
-				FILL(call.options.expr);
-			}
+			FILL(call.expr);
 			FILL(call.call_node);
 			break;
 		}
@@ -1301,7 +1297,6 @@ void context_change_type_append_to_string(Context_Change_Type type, String* stri
 	case Context_Change_Type::UNARY_OPERATOR: string_append(string, "UNARY_OPERATOR"); break;
 	case Context_Change_Type::CAST: string_append(string, "CAST"); break;
 	case Context_Change_Type::CAST_OPTION: string_append(string, "CAST_OPTION"); break;
-	case Context_Change_Type::DOT_CALL: string_append(string, "DOT_CALL"); break;
 	case Context_Change_Type::ITERATOR: string_append(string, "ITERATOR"); break;
 	case Context_Change_Type::INVALID: string_append(string, "INVALID"); break;
 	case Context_Change_Type::IMPORT: string_append(string, "IMPORT"); break;

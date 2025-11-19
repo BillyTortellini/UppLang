@@ -12,6 +12,7 @@ namespace AST
 {
     struct Node;
     struct Expression;
+    struct Call_Node;
 };
 namespace Rich_Text
 {
@@ -25,6 +26,9 @@ struct Call_Signature;
 struct Modtree_Function;
 struct Datatype_Struct;
 struct Workload_Structure_Polymorphic;
+struct Analysis_Pass;
+struct Call_Info;
+struct Symbol;
 
 
 
@@ -45,9 +49,11 @@ struct Semantic_Info_Symbol {
     Analysis_Pass* pass;
 };
 
-struct Semantic_Info_Expression {
+struct Semantic_Info_Expression 
+{
     AST::Expression* expr;
     Expression_Info* info;
+    Analysis_Pass* analysis_pass;
     bool is_member_access;
     struct {
         Datatype* value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
@@ -57,14 +63,17 @@ struct Semantic_Info_Expression {
     } member_access_info;
 };
 
-struct Semantic_Info_Call {
-    Callable_Call* callable_call;
+struct Semantic_Info_Call 
+{
+    Call_Info* callable_call;
     AST::Call_Node* call_node;
+    int test;
 };
 
 struct Semantic_Info_Argument {
     AST::Call_Node* call_node;
     int argument_index;
+    int test;
 };
 
 union Semantic_Info_Option 
@@ -72,8 +81,8 @@ union Semantic_Info_Option
     Semantic_Info_Option() {};
     Semantic_Info_Expression expression;
     Semantic_Info_Symbol symbol_info;
-    Semantic_Info_Call call_info;
     Semantic_Info_Argument argument_info;
+    Semantic_Info_Call call_info;
     vec3 markup_color;
     int error_index;
 };
@@ -114,8 +123,8 @@ struct Compiler_Analysis_Data
 
     // Call_Signatures and callables
     Hashset<Call_Signature*> call_signatures; // Callables get duplicated
-    Callable hardcoded_function_callables[(int)Hardcoded_Type::MAX_ENUM_VALUE];
-    Callable context_change_type_callables[(int)Context_Change_Type::MAX_ENUM_VALUE];
+    Call_Signature* hardcoded_function_signatures[(int)Hardcoded_Type::MAX_ENUM_VALUE];
+    Call_Signature* context_change_type_signatures[(int)Context_Change_Type::MAX_ENUM_VALUE];
     Call_Signature* empty_call_signature;
 
     // Allocations
@@ -125,14 +134,12 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Analysis_Pass*> allocated_passes;
     Dynamic_Array<Function_Progress*> allocated_function_progresses;
     Dynamic_Array<Operator_Context*> allocated_operator_contexts;
-    Dynamic_Array<Dynamic_Array<Dot_Call_Info>*> allocated_dot_calls;
     Dynamic_Array<AST::Node*> allocated_nodes;
 };
 
 Compiler_Analysis_Data* compiler_analysis_data_create();
 void compiler_analysis_data_destroy(Compiler_Analysis_Data* data);
 
-Dynamic_Array<Dot_Call_Info>* compiler_analysis_data_allocate_dot_calls(Compiler_Analysis_Data* data, int capacity = 0);
 void compiler_analysis_update_source_code_information();
 
 

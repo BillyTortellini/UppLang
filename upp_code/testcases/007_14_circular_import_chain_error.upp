@@ -1,0 +1,11 @@
+
+import C as D
+import A as B
+import D as E
+import E as A
+import B as C
+
+import D as X
+
+main :: ()
+	

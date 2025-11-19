@@ -2053,7 +2053,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 signature = downcast<Datatype_Function_Pointer>(datatype_get_non_const_type(call->options.pointer_access->datatype))->signature;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                signature = compiler.analysis_data->hardcoded_function_callables[(int)call->options.hardcoded].signature;
+                signature = compiler.analysis_data->hardcoded_function_signatures[(int)call->options.hardcoded];
                 break;
             default: panic("hey");
             }
