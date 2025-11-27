@@ -173,6 +173,7 @@ enum class IR_Cast_Type
     ADDRESS_TO_POINTER,
     ENUM_TO_INT,
     INT_TO_ENUM,
+    ENUMS,
 };
 
 struct IR_Instruction_Cast

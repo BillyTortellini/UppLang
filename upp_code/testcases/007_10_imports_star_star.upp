@@ -11,8 +11,8 @@ C::module
 	import B~**
 	
 	test::()
-		assert(x==100)
-		assert(!y)
+		~assert(x==100)
+		~assert(!y)
 
 main::()
 	C~test()

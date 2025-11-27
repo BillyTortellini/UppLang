@@ -19,4 +19,4 @@ main :: ()
 	
 	b: B~Node
 	b = B~Maker~make()
-	assert(!b.value)
+	~assert(!b.value)

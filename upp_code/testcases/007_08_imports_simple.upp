@@ -8,8 +8,8 @@ B::module
 	import A~x
 	import A~y
 	test::()
-		assert(x==100)
-		assert(!y)
+		~assert(x==100)
+		~assert(!y)
 
 main::()
 	B~test()

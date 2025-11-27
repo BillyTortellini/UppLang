@@ -26,4 +26,4 @@ main :: ()
 	for i in 10
 		sum += i
 	
-	assert(sum == 45)
+	~assert(sum == 45)

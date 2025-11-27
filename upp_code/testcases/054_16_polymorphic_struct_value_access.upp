@@ -1,6 +1,6 @@
 
-import Upp~Type_Handle
-import Upp~type_of
+import ~Type_Handle
+import ~type_of
 
 Foo :: struct ($T: Type_Handle, $C: int)
 	data: [C]T
@@ -11,6 +11,6 @@ main :: ()
 	y: [b.C]int
 	y[3] = 12
 	
-	assert(type_of(x) == bool)
-	assert(y[3] == 12)
+	~assert(type_of(x) == bool)
+	~assert(y[3] == 12)
 	

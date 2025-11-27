@@ -1,5 +1,5 @@
 
-import Upp~i64
+import ~i64
 
 main :: ()
 	// When using auto-address of and auto-dereference in combination

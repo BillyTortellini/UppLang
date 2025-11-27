@@ -17,7 +17,7 @@ main :: ()
 	// Optional pointers differ from normal optionals,
 	// as pointers don't store a boolean, but rather use null (Literal) as the 
 	// unavailable type
-	assert(Upp~type_info(?*int).size == 8)
+	~assert(~type_info(?*int).size == 8)
 	
 	x := 15
 	
@@ -29,25 +29,25 @@ main :: ()
 	// to access the pointed-to value
 	//  ip = 1 // error
 	ip' = 5
-	assert(x == 5)
-	assert(test(ip) == 6)
+	~assert(x == 5)
+	~assert(test(ip) == 6)
 	
 	// Like normal optionals, pointers can be set to null 
 	ip =* null
-	assert(test(ip) == -1)
+	~assert(test(ip) == -1)
 	
 	// Also, normal pointers auto-cast to optional pointers
 	x = 2
 	ptr: *int =* x
-	assert(test(ptr) == 3)
+	~assert(test(ptr) == 3)
 	
 	// As function-ptrs and byte-pointer are also pointer-types
 	// they can also be used as optionals
 	fn_ptr: ?(x: int) => int
 	fn_ptr = negate
-	assert(apply(10, fn_ptr) == -10)
+	~assert(apply(10, fn_ptr) == -10)
 	fn_ptr = null
-	assert(apply(10, fn_ptr) == -1)
+	~assert(apply(10, fn_ptr) == -1)
 
 
 

@@ -2,12 +2,12 @@ main :: ()
 	// Defer inside block
 	value: int = 0
 	
-		assert(value == 0)
+		~assert(value == 0)
 		defer
 			value = 1
 	
 	
-	assert(value == 1)
+	~assert(value == 1)
 	
 	// Multiple defers
 		value = 0
@@ -15,8 +15,8 @@ main :: ()
 			value = value + 1
 		defer
 			value = value + 1
-		assert(value == 0)
-	assert(value == 2)
+		~assert(value == 0)
+	~assert(value == 2)
 	
 	// Defer order
 		value = 1
@@ -26,7 +26,7 @@ main :: ()
 			value = value + 2
 		defer
 			value = 5
-	assert(value == 21)
+	~assert(value == 21)
 	
 	// Defer inside loop needs to execute after each loop
 	i := 0
@@ -35,9 +35,9 @@ main :: ()
 		defer
 			j = i
 		i = i + 1
-		assert(j == i - 1)
+		~assert(j == i - 1)
 	
-	assert(tst() == 15)
+	~assert(tst() == 15)
 
 // Defer before return
 tst :: () => int

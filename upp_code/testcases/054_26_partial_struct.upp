@@ -21,20 +21,20 @@ main :: ()
 	v2: Vector(int, 5)
 	v2.values = .[1, 2, 3, 4, 5]
 	
-	assert(size(v1) == 3)
-	assert(size(v2) == 5)
+	~assert(size(v1) == 3)
+	~assert(size(v2) == 5)
 	
 	s := sum(v1)
-	assert(s == 6)
+	~assert(s == 6)
 	s = sum(v2)
-	assert(s == 15)
+	~assert(s == 15)
 	
 	// Also deduplication should work
 	ap := #instanciate sum(Vector(int, 5))
 	bp := #instanciate sum(Vector(int, 5))
 	cp := #instanciate sum(Vector(int, 5), T = int)
-	assert(ap *== bp)
-	assert(ap *== cp)
+	~assert(ap *== bp)
+	~assert(ap *== cp)
 	
 	
 

@@ -2,8 +2,8 @@
 // As to not have to repeat the operator context,
 // It is possible to import all used operators from other modules
 
-import Upp~u32
-import Upp~i64
+import ~u32
+import ~i64
 
 Integer_Auto_Casts :: module
 	context set_cast_option(.INTEGER_SIZE_UPCAST, .IMPLICIT)

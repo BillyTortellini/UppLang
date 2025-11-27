@@ -8,6 +8,6 @@ foo :: ($C: int) => int
 main :: ()
 	a := foo(3)
 	b := foo(4)
-	assert(a == 46)
-	assert(b == 61)
+	~assert(a == 46)
+	~assert(b == 61)
 	

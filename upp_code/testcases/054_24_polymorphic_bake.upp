@@ -1,7 +1,7 @@
 
-import Upp~c_string
-import Upp~i64
-import Upp~type_info
+import ~c_string
+import ~i64
+import ~type_info
 
 string_equals :: (a: c_string, b: c_string) => bool
 	if a.bytes.size != b.bytes.size
@@ -18,7 +18,7 @@ string_equals :: (a: c_string, b: c_string) => bool
 offset_off :: (a: $T, $name: c_string) => int
 	offset := #bake
 		info := type_info(T)
-		if Upp~struct_tag(info) == .Struct
+		if ~struct_tag(info) == .Struct
 			members := info.Struct.content.members
 			i := 0
 			while cast i < members.size
@@ -43,6 +43,6 @@ main :: ()
 	offset_value := offset_off(foo, "value")
 	offset_c := offset_off(foo, "c")
 	
-	assert(offset_a == 0)
-	assert(offset_value == 4)
-	assert(offset_c == 16)
+	~assert(offset_a == 0)
+	~assert(offset_value == 4)
+	~assert(offset_c == 16)

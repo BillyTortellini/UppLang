@@ -21,12 +21,12 @@ main :: ()
 	b := true
 	values := int.[1, 2]
 	
-	assert(test(i) == 12)
-	assert(test(b) == 1)
-	assert(test(values) == 3)
+	~assert(test(i) == 12)
+	~assert(test(b) == 1)
+	~assert(test(values) == 3)
 	
 	i = test_return()
 	b = test_return()
-	assert(i == 1)
-	assert(b)
+	~assert(i == 1)
+	~assert(b)
 	

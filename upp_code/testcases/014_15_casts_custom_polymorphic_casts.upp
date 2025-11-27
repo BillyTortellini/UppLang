@@ -1,5 +1,5 @@
 
-import Upp~Type_Handle
+import ~Type_Handle
 
 // Custom casts also work on polymorphic functions
 Optional::struct($T:Type_Handle)
@@ -14,7 +14,7 @@ main::()
 	value:Optional(int)=.{15,true}
 	
 	if value
-		assert(true)
+		~assert(true)
 	else
-		assert(false)
+		~assert(false)
 	

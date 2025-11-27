@@ -1,5 +1,5 @@
 
-import Upp~*
+import ~*
 
 main :: ()
 	// Casting from one type to another is done using the cast keyword, using the syntax cast {destination_type} value

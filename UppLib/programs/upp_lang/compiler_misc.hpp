@@ -21,7 +21,6 @@ struct Source_Code;
 struct Analysis_Pass;
 struct Workload_Structure_Polymorphic;
 struct Datatype_Function_Pointer;
-struct Struct_Content;
 struct Call_Signature;
 namespace AST {
 	struct Module;
@@ -36,64 +35,43 @@ namespace AST {
 // To get a full picture of all performed operations the Expression_Cast_Info struct is required
 enum class Cast_Type
 {
-    INTEGERS,
-    FLOATS,
-    FLOAT_TO_INT,
-    INT_TO_FLOAT,
-    POINTERS,
-    POINTER_TO_ADDRESS,
-    ADDRESS_TO_POINTER,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ARRAY_TO_SLICE, 
-    TO_ANY,
-    FROM_ANY,
-    TO_OPTIONAL,
-    CUSTOM_CAST, 
-
-    NO_CAST, // No cast needed, source-type == destination-type
-    UNKNOWN, // Either source or destination type are/contain error/unknown type
-    INVALID, // Cast is not valid
-};
-const char* cast_type_to_string(Cast_Type type);
-
-enum class Cast_Mode
-{
-    NONE = 1,
-    EXPLICIT, // cast{u64} i
-    INFERRED, // cast i
-    POINTER_EXPLICIT, // cast_pointer{*int} ip
-    POINTER_INFERRED, // cast_pointer ip
-    IMPLICIT, // x: u32 = i
-    
-    MAX_ENUM_VALUE
-};
-
-enum class Cast_Option
-{
-	INTEGER_SIZE_UPCAST = 1,
-	INTEGER_SIZE_DOWNCAST,
-	INTEGER_SIGNED_TO_UNSIGNED,
-	INTEGER_UNSIGNED_TO_SIGNED,
-	FLOAT_SIZE_UPCAST,
-	FLOAT_SIZE_DOWNCAST,
-	INT_TO_FLOAT,
+	// Primitive casts
+	INTEGERS,
+	FLOATS,
+	ENUMS,
 	FLOAT_TO_INT,
-
-	POINTER_TO_POINTER, // Includes casts between pointer, function-pointer and address (But only with cast_pointer)
-	TO_BYTE_POINTER, // Does not affect cast_pointer
-	FROM_BYTE_POINTER, // Does not affect cast_pointer
-
-	TO_ANY,
-	FROM_ANY,
+	INT_TO_FLOAT,
 	ENUM_TO_INT,
 	INT_TO_ENUM,
+
+	// Pointer conversions
+	POINTERS,
+	POINTER_TO_ADDRESS,
+	ADDRESS_TO_POINTER,
+
+	// Pointer operations
+	DEREFERENCE,
+	ADDRESS_OF,
+
+	TO_SUB_TYPE,
+	TO_BASE_TYPE,
+
+	// Operation casts
 	ARRAY_TO_SLICE,
-	TO_SUBTYPE,
+	TO_ANY,
+	FROM_ANY,
 	TO_OPTIONAL,
 
+	CONST_CAST, // From const to non-const or other way round
+	CUSTOM_CAST,
+
+	// Note: From here upwards the values are not accessible in the language anymore
+	NO_CAST, // No cast needed, source-type == destination-type
+	UNKNOWN, // Either source or destination type are/contain error/unknown type
+	INVALID, // Cast is not valid
 	MAX_ENUM_VALUE
 };
+const char* cast_type_to_string(Cast_Type type);
 
 enum class Context_Change_Type
 {
@@ -303,13 +281,6 @@ struct Predefined_IDs
 	String* id_struct;
 	String* empty_string;
 	String* invalid_symbol_name;
-	String* cast_mode;
-	String* cast_mode_none;
-	String* cast_mode_explicit;
-	String* cast_mode_inferred;
-	String* cast_mode_implicit;
-	String* cast_mode_pointer_explicit;
-	String* cast_mode_pointer_inferred;
 	String* byte;
 	String* value;
 	String* is_available;
@@ -327,6 +298,7 @@ struct Predefined_IDs
 	String* defer_restore;
 	String* cast;
 	String* defer;
+	String* from;
 
 	String* lambda_function;
 	String* bake_function;
@@ -374,8 +346,8 @@ struct Predefined_IDs
 	String* add_array_access;
 	String* add_iterator;
 
-	String* cast_option;
-	String* cast_option_enum_values[(int)Cast_Option::MAX_ENUM_VALUE];
+	String* cast_type;
+	String* cast_type_enum_values[(int)Cast_Type::MAX_ENUM_VALUE];
 };
 
 struct Identifier_Pool;

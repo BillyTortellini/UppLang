@@ -8,8 +8,8 @@ B :: module
 	import A~x as a
 	import A~y as b
 	test :: ()
-		assert(a == 100)
-		assert(!b)
+		~assert(a == 100)
+		~assert(!b)
 
 main :: ()
 	B~test()

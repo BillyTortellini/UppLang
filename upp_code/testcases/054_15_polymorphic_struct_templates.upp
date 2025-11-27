@@ -1,5 +1,5 @@
 
-import Upp~Type_Handle
+import ~Type_Handle
 
 Foo :: struct ($T: Type_Handle, $C: int, $unop: (a: T) => T)
 	data: [C]T
@@ -18,9 +18,9 @@ fnegate :: (a: float) => float
 main :: ()
 	x: Foo(int, 4, negate)
 	value := bar(x, 15)
-	assert(value == -15)
+	~assert(value == -15)
 	
 	y: Foo(float, 4, fnegate)
 	f := bar(y, 1)
-	assert(f <= -0.999 && f >= -1.001)
+	~assert(f <= -0.999 && f >= -1.001)
 	

@@ -1,6 +1,6 @@
 
-import Upp~Type_Handle
-import Upp~type_of
+import ~Type_Handle
+import ~type_of
 
 Node :: struct ($T: Type_Handle)
 	value: T
@@ -17,7 +17,7 @@ main :: ()
 	c := make_node(T = int)
 	d := make_node(T = bool)
 	
-	assert(type_of(a.value) == int)
-	assert(type_of(b.value) == bool)
-	assert(type_of(c.value) == int)
-	assert(type_of(d.value) == bool)
+	~assert(type_of(a.value) == int)
+	~assert(type_of(b.value) == bool)
+	~assert(type_of(c.value) == int)
+	~assert(type_of(d.value) == bool)

@@ -1,5 +1,5 @@
 
-import Upp~u64
+import ~u64
 
 null_deref :: () => int
 	ip := cast_pointer {*int} cast {u64} 0

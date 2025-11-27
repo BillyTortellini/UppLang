@@ -16,5 +16,5 @@ main::()
 	a:=-n
 	b:=!n
 	
-	assert(a.value==-5)
-	assert(b.value==10)
+	~assert(a.value==-5)
+	~assert(b.value==10)

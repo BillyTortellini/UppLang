@@ -1,5 +1,5 @@
 
-import Upp~i64
+import ~i64
 
 foo :: ($C: int)
 	x: [C]i64

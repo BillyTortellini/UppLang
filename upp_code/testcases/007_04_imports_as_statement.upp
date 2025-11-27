@@ -10,13 +10,13 @@ B :: module
 main :: ()
 		import A~x
 		import A~y
-		assert(x == 100)
-		assert(!y)
+		~assert(x == 100)
+		~assert(!y)
 	
 		import A~*
-		assert(x == 100)
-		assert(!y)
+		~assert(x == 100)
+		~assert(!y)
 	
 		import B~**
-		assert(x == 100)
-		assert(!y)
+		~assert(x == 100)
+		~assert(!y)

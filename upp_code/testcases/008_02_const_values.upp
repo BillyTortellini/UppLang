@@ -14,7 +14,7 @@ main :: ()
 	
 	// Read accesses still work like with normal values
 	z := c * 3
-	assert(z == 45)
+	~assert(z == 45)
 	
 	// When defining variables, const is automatically removed
 	x := c
@@ -22,9 +22,9 @@ main :: ()
 	
 	// If we only have reads/assignments, constants are converted to non-const types
 	x = test(c, c)
-	assert(x == 30)
+	~assert(x == 30)
 	x = 2
 	
 	// Assigning non-constant values to constant parameters also works
 	x = test(x, x)
-	assert(x == 4)
+	~assert(x == 4)

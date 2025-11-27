@@ -1,4 +1,4 @@
-import Upp~c_string
+import ~c_string
 
 Player :: struct
 	name: c_string
@@ -21,19 +21,19 @@ global_pointer: *int
 main :: ()
 	// Test globals
 	global_x = 15 + global_y
-	assert(global_x == 20)
-	assert(global_w == 55)
+	~assert(global_x == 20)
+	~assert(global_w == 55)
 	
 	global_player.name = "Fred"
 	global_player.level = 15
 	global_player.alive = true
-	assert(global_player.level == 15)
-	assert(global_player.alive == true)
+	~assert(global_player.level == 15)
+	~assert(global_player.alive == true)
 	
 	// Test pointers to globals
 	ptr :=* global_x
 	&ptr = 30
-	assert(global_x == 30)
+	~assert(global_x == 30)
 	global_pointer =* ptr
 	&global_pointer = 15
-	assert(&ptr == 15)
+	~assert(&ptr == 15)

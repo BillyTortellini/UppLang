@@ -39,20 +39,20 @@ main :: ()
 		a: int = 5
 		b: int = 7
 		res: int = a + b
-		assert(res == 12)
+		~assert(res == 12)
 		
 		ap: *int =* a
 		bp: *int =* b
-		assert(ap != bp)
+		~assert(ap != bp)
 		
 		res = ap + b
-		assert(res == 12)
+		~assert(res == 12)
 		
 		res = a * bp
-		assert(res == 35)
+		~assert(res == 35)
 		
 		res_bool: bool = ap < bp
-		assert(res_bool == true)
+		~assert(res_bool == true)
 	
 	// This is especially usefull if we think about passing parameters to functions that take pointers
 		sum: Sum
@@ -65,15 +65,15 @@ main :: ()
 		sum_pppp :=* *sum_ppp
 		
 		res: int
-		assert(calc_sum1(sum) == 12)
-		assert(calc_sum1(sum_p) == 12)
-		assert(calc_sum1(sum_pp) == 12)
-		assert(calc_sum1(sum_ppp) == 12)
+		~assert(calc_sum1(sum) == 12)
+		~assert(calc_sum1(sum_p) == 12)
+		~assert(calc_sum1(sum_pp) == 12)
+		~assert(calc_sum1(sum_ppp) == 12)
 		
-		assert(calc_sum1(sum_pppp) == 12)
-		assert(calc_sum2(sum_pppp) == 12)
-		assert(calc_sum3(sum_pppp) == 12)
-		assert(calc_sum4(sum_pppp) == 12)
+		~assert(calc_sum1(sum_pppp) == 12)
+		~assert(calc_sum2(sum_pppp) == 12)
+		~assert(calc_sum3(sum_pppp) == 12)
+		~assert(calc_sum4(sum_pppp) == 12)
 	
 	// Currently the only operations where this doesn't exactly apply are pointer comparisons and casts to u64
 	// In these cases, Pointer Comparison and pointer_cast need to be used
@@ -83,16 +83,16 @@ main :: ()
 		a: *float =* val1
 		b: *float =* val1
 		
-		assert(a == *b)
+		~assert(a == *b)
 		b =* val2
-		assert(a != *b)
+		~assert(a != *b)
 		
-		import Upp~address
+		import ~address
 		i: int = 128
 		p: *int =* i
 		i_cast: address = cast {address} i
 		p_cast: address = cast_pointer {address} p
-		assert(i_cast != p_cast)
+		~assert(i_cast != p_cast)
 	
 	
 	// This isn't only true for dereferences, it also works with Address_Of *
@@ -101,5 +101,5 @@ main :: ()
 		sum.b = 3
 		
 		mult_and_change_sum(sum)
-		assert(sum.a == 45)
+		~assert(sum.a == 45)
 		

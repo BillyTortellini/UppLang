@@ -13,7 +13,7 @@ namespace Syntax_Color
 
     extern vec3 TEXT;
     extern vec3 VARIABLE;
-    extern vec3 TYPE;
+    extern vec3 DATATYPE;
     extern vec3 VALUE_DEFINITION;
     extern vec3 PRIMITIVE;
     extern vec3 STRING;

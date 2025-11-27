@@ -6,4 +6,4 @@ foo::(a:$T)=>T
 	
 main::()
 	x:=foo(5)
-	assert(x==16)
+	~assert(x==16)

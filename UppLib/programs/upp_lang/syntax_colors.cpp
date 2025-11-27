@@ -34,12 +34,12 @@ namespace Syntax_Color
 
     // Dark-Blue/Light blue for Types
     // vec3 PRIMITIVE =           vec3_color_from_code("#1764BB");
-    // vec3 TYPE =                vec3_color_from_code("#1764BB");//vec3_color_from_code("#28C6D9");
+    // vec3 DATATYPE =                vec3_color_from_code("#1764BB");//vec3_color_from_code("#28C6D9");
     // vec3 SUBTYPE =             vec3_color_from_code("#616161");
     // vec3 ENUM_MEMBER = vec3(0 / 255.0f, 153 / 255.0f, 204 / 255.0f);
 
     vec3 PRIMITIVE   = vec3_color_from_code("#4874DB");
-    vec3 TYPE        = vec3_color_from_code("#4874DB");//vec3_color_from_code("#28C6D9");
+    vec3 DATATYPE        = vec3_color_from_code("#4874DB");//vec3_color_from_code("#28C6D9");
     vec3 SUBTYPE     = vec3_color_from_code("#0489C9");
     vec3 ENUM_MEMBER = vec3_color_from_code("#0489C9");
 
@@ -56,7 +56,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::HARDCODED_FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::FUNCTION: return Syntax_Color::FUNCTION; 
     case Symbol_Type::MODULE: return Syntax_Color::MODULE; 
-    case Symbol_Type::TYPE: return Syntax_Color::TYPE; 
+    case Symbol_Type::DATATYPE: return Syntax_Color::DATATYPE; 
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::DEFINITION_UNFINISHED: return Syntax_Color::TEXT; 
@@ -78,8 +78,8 @@ vec3 symbol_to_color(Symbol* symbol, bool is_definition)
     int i = 0;
     switch (symbol->type)
     {
-    case Symbol_Type::TYPE: {
-        if (datatype_get_non_const_type(symbol->options.type)->type == Datatype_Type::PRIMITIVE) {
+    case Symbol_Type::DATATYPE: {
+        if (datatype_get_non_const_type(symbol->options.datatype)->type == Datatype_Type::PRIMITIVE) {
             return Syntax_Color::PRIMITIVE;
         }
     }

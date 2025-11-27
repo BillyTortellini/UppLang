@@ -8,8 +8,8 @@ import B as C
 x: int = 5
 
 main :: ()
-	assert(x == A)
-	assert(A == C)
-	assert(D == C)
-	assert(B == C)
-	assert(A == C)
+	~assert(x == A)
+	~assert(A == C)
+	~assert(D == C)
+	~assert(B == C)
+	~assert(A == C)

@@ -1,7 +1,7 @@
 
-import Upp~type_of
-import Upp~type_info
-import Upp~u64
+import ~type_of
+import ~type_info
+import ~u64
 
 Player :: struct
 	age: int
@@ -15,44 +15,44 @@ main :: ()
 	slice_const: const []int = cast values
 	const_const: const [] const int = cast values
 	
-	import Upp~usize
+	import ~usize
 	
-	assert(type_of(slice.size) == usize)
-	assert(type_of(slice[0]) == int)
-	assert(type_of(slice_const.size) == const usize)
-	assert(type_of(slice_const[0]) == int)
-	assert(type_of(const_const.size) == const usize)
-	assert(type_of(const_const[0]) == const int)
+	~assert(type_of(slice.size) == usize)
+	~assert(type_of(slice[0]) == int)
+	~assert(type_of(slice_const.size) == const usize)
+	~assert(type_of(slice_const[0]) == int)
+	~assert(type_of(const_const.size) == const usize)
+	~assert(type_of(const_const[0]) == const int)
 	
 	slice_const[1] = 5
 	slice[2] = 10
-	assert(values[1] == 5)
-	assert(values[2] == 10)
+	~assert(values[1] == 5)
+	~assert(values[2] == 10)
 	
 	// Arrays can also be constant, 
 	// and it doesn't matter if the array or the element_type is constant
 	ASDF :: [4] const int
 	// T2 :: const [4]int
-	type_a: Upp~Type_Handle = [4] const int
-	type_b: Upp~Type_Handle = const [4]int
-	type_c: Upp~Type_Handle = const [4] const int
-	assert(type_a == type_b)
-	assert(type_b == type_c)
+	type_a: ~Type_Handle = [4] const int
+	type_b: ~Type_Handle = const [4]int
+	type_c: ~Type_Handle = const [4] const int
+	~assert(type_a == type_b)
+	~assert(type_b == type_c)
 	
 	const_array: const [4]int = int.[1, 2, 3, 4]
-	assert(type_of(const_array[0]) == const int)
+	~assert(type_of(const_array[0]) == const int)
 	
 	// Structs must not contain constant members,
 	// But if the struct is constant, member accesses are also constant
 	ref_id := 15
 	p: const Player = .{15, true, ref_id}
 	
-	assert(type_of(p.age) == const int)
-	assert(type_of(p.alive) == const bool)
-	assert(type_of(p.reference_id) == const *int)
+	~assert(type_of(p.age) == const int)
+	~assert(type_of(p.alive) == const bool)
+	~assert(type_of(p.reference_id) == const *int)
 	
 	// But pointers can still be modified through constant structs
 	// e.g. the const modifier is not transitive
 	p.reference_id += 1
-	assert(ref_id == 16)
+	~assert(ref_id == 16)
 	

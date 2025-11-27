@@ -29,6 +29,7 @@ struct Workload_Structure_Polymorphic;
 struct Workload_Structure_Body;
 
 struct Function_Progress;
+struct Datatype_Struct;
 struct Bake_Progress;
 struct Datatype_Pattern_Variable;
 struct Pattern_Variable_State;
@@ -257,7 +258,6 @@ struct Workload_Definition
     union {
         struct {
             bool is_comptime;
-            AST::Assignment_Type assignment_type;
             AST::Expression* value_node; // May be null
             AST::Expression* type_node; // May be null
         } normal;
@@ -441,8 +441,8 @@ enum class Parameter_Value_Type
 {
     NOT_SET,             // No parameter was provided, e.g. use default value
     ARGUMENT_EXPRESSION, // Parameter is given as an argument expression
-    DATATYPE_KNOWN,      // Datatype and temporary-info is given
-	COMPTIME_VALUE
+    DATATYPE_KNOWN,      // Datatype is known, used for return-value types, instanciate (where only types are known) and loop iterator
+	COMPTIME_VALUE       // Used during instanciate_pattern of struct-patterns
 };
 
 struct Parameter_Value
@@ -451,17 +451,30 @@ struct Parameter_Value
 	union {
 		int argument_index; // -1 if not set
 		Upp_Constant constant;
+        Datatype* datatype;
 	} options;
-    Datatype* datatype; 
-    bool is_temporary_value; // True for return type
 };
 
 struct Argument_Info
 {
 	AST::Expression* expression;
 	Optional<String*> name;
-	bool is_analysed;
 	int parameter_index; // -1 if no matching parameter was found
+};
+
+struct Cast_Info
+{
+    Cast_Type cast_type;
+    ModTree_Function* custom_cast_function; // Optional
+    Datatype* result_type;
+};
+
+struct Expression_Value_Info 
+{
+    Datatype* initial_type;
+    Datatype* result_type;
+    bool initial_value_is_temporary;
+    bool result_value_is_temporary;
 };
 
 enum class Call_Origin_Type
@@ -475,6 +488,7 @@ enum class Call_Origin_Type
 	HARDCODED,
     FUNCTION_POINTER,
 	CONTEXT_CHANGE,
+    CAST,
 	ERROR_OCCURED, // In case of non-resolvable overloads or invalid symbol
 };
 
@@ -490,7 +504,7 @@ struct Call_Origin
 		Datatype_Slice* slice_type;
 		Datatype_Function_Pointer* function_pointer;
 		Context_Change_Type context_change_type;
-		Struct_Content* struct_content;
+		Datatype_Struct* structure;
     } options;
 };
 
@@ -512,7 +526,8 @@ struct Call_Info
         ModTree_Function* function;
 		Datatype_Struct* struct_instance;
 		Datatype_Struct_Pattern* struct_pattern;
-		Datatype_Primitive* bitwise_primitive_type;
+		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
+        Cast_Info cast_info;
 		struct 
 		{
 			bool subtype_valid;
@@ -523,36 +538,16 @@ struct Call_Info
 
 enum class Expression_Context_Type
 {
-    UNKNOWN,                // Type is not known
-    AUTO_DEREFERENCE,       // Type is not known, but we want pointer level 0, e.g. a value (e.g. member-access, slice-access, ...)
-    SPECIFIC_TYPE_EXPECTED, // Type is known, pointer level items + implicit casting enabled
+    NOT_SPECIFIED,          // Type is not known in given context
+    ERROR_OCCURED,          // An error occured, so type may or may not be known
+    DEREFERENCE,            // Similar to not specified, but dereference result value if possible (Don't log errors if not possible)
+    SPECIFIC_TYPE_EXPECTED, // Type is known
 };
 
 struct Expression_Context
 {
     Expression_Context_Type type;
-    bool unknown_due_to_error; // If true the context is unknown because an error occured, otherwise there is no info
-    struct {
-        Datatype* type;
-        Cast_Mode cast_mode;
-    } expected_type;
-};
-
-// The dereferences/address_of is applied before the cast
-struct Expression_Cast_Info
-{
-    Datatype* initial_type;
-    Datatype* result_type;
-    bool initial_value_is_temporary;
-    bool result_value_is_temporary;
-
-    int deref_count; // May be negative to indicate take-address of
-    Cast_Type cast_type;
-
-    union {
-        ModTree_Function* custom_cast_function;
-        const char* error_msg; // Null, except if the cast is invalid
-    } options;
+    Datatype* datatype;
 };
 
 
@@ -561,14 +556,14 @@ struct Expression_Cast_Info
 enum class Expression_Result_Type
 {
     VALUE,
-    TYPE,
+    DATATYPE,
     CONSTANT,
     FUNCTION,
     HARDCODED_FUNCTION,
     POLYMORPHIC_STRUCT, 
     POLYMORPHIC_FUNCTION,
     POLYMORPHIC_PATTERN,
-    NOTHING // Functions returning void
+    NOTHING  // Functions returning void
 };
 
 struct Expression_Info
@@ -577,7 +572,11 @@ struct Expression_Info
     Expression_Result_Type result_type;
     union
     {
-        Datatype* type; 
+        struct {
+            Datatype* datatype; 
+            bool is_temporary;
+        } value;
+        Datatype* datatype;
         Datatype* polymorphic_pattern; 
         Workload_Structure_Polymorphic* polymorphic_struct;
         ModTree_Function* function;
@@ -610,8 +609,12 @@ struct Expression_Info
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
-    Expression_Cast_Info cast_info;
+    Cast_Info cast_info;
 };
+
+Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system = nullptr);
+Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
+bool expression_has_memory_address(AST::Expression* expr);
 
 enum class Control_Flow
 {
@@ -651,7 +654,7 @@ struct Statement_Info
             } custom_op;
         } foreach_loop;
         struct {
-            Struct_Content* base_content; // May be null for simple enum switch
+            Datatype_Struct* structure; // May be null for simple enum switch
         } switch_statement;
     } specifics;
 };
@@ -841,7 +844,6 @@ struct Semantic_Analyser
     Workload_Executer* workload_executer;
     ModTree_Global* global_allocator; // Datatype: Allocator
     ModTree_Global* system_allocator; // Datatype: Allocator
-    Symbol_Table* root_symbol_table;
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of code-block comptimes
 };
 
@@ -865,6 +867,3 @@ Workload_Base* pattern_variable_find_instance_workload(
     Workload_Base* search_start_workload = nullptr,
     bool called_from_editor = false
 );
-bool pattern_checker_create_and_check(Arena* arena, Datatype* pattern_type, Datatype* match_against);
-Expression_Cast_Info cast_info_make_empty(Datatype* initial_type, bool is_temporary_value);
-bool try_updating_type_mods(Expression_Cast_Info& cast_info, Type_Mods expected_mods, const char** out_error_msg = nullptr, Type_System* type_system = nullptr);

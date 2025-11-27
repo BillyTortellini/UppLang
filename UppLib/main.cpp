@@ -57,27 +57,36 @@ void syntax_renaming()
             continue;
         }
 
-        // Replace -> with =>
         String text = text_opt.value;
-        for (int j = 0; j + 1 < text.size; j++) {
-            char curr = text.characters[j];
-            char next = text.characters[j + 1];
-            if (curr == '-' && next == '>') {
-                text[j] = '=';
+        auto lines = string_split(text, '\n');
+        SCOPE_EXIT(string_split_destroy(lines));
+        String result_text = string_create(text.size);
+        SCOPE_EXIT(string_destroy(&result_text));
+
+        // Replace assert with ~assert
+        String replace_text = string_create_static("Upp~");
+        String replace_with = string_create_static("~");
+        for (int line_index = 0; line_index < lines.size; line_index += 1)
+        {
+            String line = lines[line_index];
+            String new_line = string_copy(line);
+            SCOPE_EXIT(string_destroy(&new_line));
+            int replace_index = string_contains_substring(line, 0, replace_text);
+            if (replace_index != -1) 
+            {
+                printf("Found assert line: \n");
+                printf("----%s\n", new_line.characters);
+                string_remove_substring(&new_line, replace_index, replace_index + replace_text.size);
+                string_insert_string(&new_line, &replace_with, replace_index);
+                printf("----%s\n", new_line.characters);
+            }
+            string_append_string(&result_text, &new_line);
+            if (line_index != lines.size - 1) {
+                string_append_character(&result_text, '\n');
             }
         }
-
-        // Replace .> with ->
-        for (int j = 0; j + 1 < text.size; j++) {
-            char curr = text.characters[j];
-            char next = text.characters[j + 1];
-            if (curr == '.' && next == '>') {
-                text[j] = '-';
-            }
-        }
-
         // Write back new file
-        file_io_write_file(filepath.characters, array_create_static_as_bytes(text.characters, text.size));
+        file_io_write_file(filepath.characters, array_create_static_as_bytes(result_text.characters, result_text.size));
     }
 
     printf("Enter to exit");

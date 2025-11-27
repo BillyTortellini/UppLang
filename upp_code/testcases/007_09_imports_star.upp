@@ -7,8 +7,8 @@ B::module
 	// Imports are used to access symbols from other modules more easily
 	import A~*
 	test::()
-		assert(x==100)
-		assert(!y)
+		~assert(x==100)
+		~assert(!y)
 
 main::()
 	B~test()

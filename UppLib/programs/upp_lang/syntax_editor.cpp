@@ -1677,13 +1677,13 @@ namespace Text_Editing
 					out_space_after = false;
 				}
 			}
-			if ((token.options.keyword == Keyword::CAST || token.options.keyword == Keyword::CAST_POINTER) && token_index + 1 < tokens.size) {
+			if ((token.options.keyword == Keyword::CAST) && token_index + 1 < tokens.size) {
 				const auto& next = tokens[token_index + 1];
-				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::BRACES) {
+				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
 					out_space_after = false;
 				}
 			}
-			if (token.options.keyword == Keyword::CAST || token.options.keyword == Keyword::CAST_POINTER ||
+			if (token.options.keyword == Keyword::CAST ||
 				token.options.keyword == Keyword::BAKE || token.options.keyword == Keyword::INSTANCIATE ||
 				token.options.keyword == Keyword::GET_OVERLOAD || token.options.keyword == Keyword::GET_OVERLOAD_POLY ||
 				token.options.keyword == Keyword::MUTABLE || token.options.keyword == Keyword::IN_KEYWORD) 
@@ -1719,14 +1719,10 @@ namespace Text_Editing
 		case Operator::POINTER_NOT_EQUALS:
 		case Operator::DEFINE_COMPTIME:
 		case Operator::DEFINE_INFER:
-		case Operator::DEFINE_INFER_POINTER:
-		case Operator::DEFINE_INFER_RAW:
 		case Operator::AND:
 		case Operator::OR:
 		case Operator::ARROW:
 		case Operator::INFER_ARROW:
-		case Operator::ASSIGN_RAW:
-		case Operator::ASSIGN_POINTER:
 		case Operator::ASSIGN_ADD:
 		case Operator::ASSIGN_SUB:
 		case Operator::ASSIGN_DIV:
@@ -1829,7 +1825,6 @@ namespace Text_Editing
 					switch (t.options.keyword)
 					{
 					case Keyword::CAST:
-					case Keyword::CAST_POINTER:
 					case Keyword::INSTANCIATE:
 					case Keyword::NEW:
 						next_is_value = true;
@@ -4074,7 +4069,7 @@ void code_completion_find_suggestions()
 
 					// Check if value is callable
 					if (value_type != nullptr) {
-						value_type = value_type->base_type;
+						value_type = datatype_get_non_const_type(value_type);
 					}
 					if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
 						call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
@@ -4090,20 +4085,27 @@ void code_completion_find_suggestions()
 					Datatype* param_type = param.datatype;
 					Datatype* arg_type = call_value_type;
 
-					Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
-					const char* out_error_msg = "";
-					if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
+					param_type = datatype_get_non_const_type(param_type);
+					arg_type = datatype_get_non_const_type(arg_type);
+					if (!types_are_equal(param_type, arg_type)) {
 						continue;
 					}
-					arg_type = cast_info.result_type;
-					if (param_type->contains_pattern) {
-						if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
-							continue;
-						}
-					}
-					else if (!types_are_equal(param_type, arg_type)) {
-						continue;
-					}
+
+					// Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
+					// const char* out_error_msg = "";
+					// continue;
+					// // if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
+					// // 	continue;
+					// // }
+					// arg_type = cast_info.result_type;
+					// if (param_type->contains_pattern) {
+					// 	if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
+					// 		continue;
+					// 	}
+					// }
+					// else if (!types_are_equal(param_type, arg_type)) {
+					// 	continue;
+					// }
 
 					fuzzy_search_add_item(*original_id, unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
@@ -4120,18 +4122,13 @@ void code_completion_find_suggestions()
 		{
 			// Note: For member-accesses, we need the type of the value, not the member-access expression
 			type = expr_info->member_access_info.value_type;
-			if (type->mods.optional_flags != 0) {
-				fuzzy_search_add_item(string_create_static("value"), unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
-				type = nullptr;
-			}
 		}
 
 		// Add possible member-accesses for given type
 		if (type != 0)
 		{
 			auto original = type;
-			type = type->base_type;
+			type = datatype_get_undecorated(type, true, false, true, false);
 			switch (type->type)
 			{
 			case Datatype_Type::ARRAY:
@@ -4160,27 +4157,22 @@ void code_completion_find_suggestions()
 					structure = downcast<Datatype_Struct_Pattern>(type)->instance->header->origin.struct_workload->body_workload->struct_type;
 				}
 
-				Struct_Content* content = type_mods_get_subtype(structure, original->mods);
-				auto& members = content->members;
+				auto& members = structure->members;
 				for (int i = 0; i < members.size; i++) {
 					auto& mem = members[i];
 					fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
 				}
-				// if (content->subtypes.size > 0) {
-				// 	fuzzy_search_add_item(*ids.tag, unranked_suggestions.size);
-				// 	dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, content->tag_member.type, ids.tag));
-				// }
-				for (int i = 0; i < content->subtypes.size; i++) {
-					auto sub = content->subtypes[i];
+				for (int i = 0; i < structure->subtypes.size; i++) {
+					auto sub = structure->subtypes[i];
 					fuzzy_search_add_item(*sub->name, unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(sub->name));
 				}
 				// Add base name if available
-				if (original->mods.subtype_index->indices.size > 0) {
-					Struct_Content* content = type_mods_get_subtype(structure, type->mods, type->mods.subtype_index->indices.size - 1);
-					fuzzy_search_add_item(*content->name, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(content->name));
+				if (structure->parent_struct != nullptr) {
+					String* parent_name = structure->parent_struct->name;
+					fuzzy_search_add_item(*parent_name, unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(parent_name));
 				}
 				break;
 			}
@@ -4202,14 +4194,24 @@ void code_completion_find_suggestions()
 		auto text = line->text;
 		int char_index = cursor.character - 1;
 		// Move backwards to ~
+		// Note: doing the whole lookup would be better, because we wouldn't rely on updated compiler infos
 		char_index = Motions::move_while_condition(text, char_index, false, char_is_valid_identifier, nullptr, false, true);
-		if (test_char(text, char_index, '~')) {
+		if (test_char(text, char_index, '~')) 
+		{
 			Position_Info position_info = code_query_find_position_infos(text_index_make(cursor.line, char_index - 1), nullptr);
 			if (position_info.symbol_info != nullptr) {
 				auto& symbol = position_info.symbol_info->symbol;
 				if (symbol->type == Symbol_Type::MODULE) {
 					symbol_table = symbol->options.upp_module->symbol_table;
 				}
+			}
+		}
+
+		// Check for builtin lookup
+		if (symbol_table == nullptr)
+		{
+			if (char_index == 0 || !char_is_valid_identifier(text.characters[char_index - 1])) {
+				symbol_table = editor.analysis_data->builtin_symbol_table;
 			}
 		}
 
@@ -6525,22 +6527,16 @@ void watch_values_update()
 
 			if (post_op.is_member_access)
 			{
-				Struct_Content* content = nullptr;
-				if (type->type == Datatype_Type::SUBTYPE) {
-					content = type_mods_get_subtype(downcast<Datatype_Struct>(type->base_type), type->mods);
-				}
-				else if (type->type == Datatype_Type::STRUCT) {
-					content = &downcast<Datatype_Struct>(type->base_type)->content;
-				}
-				else {
+				if (type->type != Datatype_Type::STRUCT) {
 					string_append(&watch_value.value_as_text, "Member access only valid on structs in Watch-values");
 					success = false;
 					break;
 				}
 
+				Datatype_Struct* structure = downcast<Datatype_Struct>(type);
 				int member_index = -1;
-				for (int i = 0; i < content->members.size; i++) {
-					auto member = content->members[i];
+				for (int i = 0; i < structure->members.size; i++) {
+					auto member = structure->members[i];
 					if (string_equals(member.id, &post_op.member_name)) {
 						member_index = i;
 						break;
@@ -6553,7 +6549,7 @@ void watch_values_update()
 					break;
 				}
 
-				Struct_Member& member = content->members[member_index];
+				Struct_Member& member = structure->members[member_index];
 				value_ptr = value_ptr + member.offset;
 				type = datatype_get_non_const_type(member.type);
 			}
@@ -7437,8 +7433,8 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		}
 		break;
 	}
-	case Symbol_Type::TYPE:
-		type = symbol->options.type;
+	case Symbol_Type::DATATYPE:
+		type = symbol->options.datatype;
 		break;
 	case Symbol_Type::VARIABLE:
 		type = symbol->options.variable_type;
@@ -7538,8 +7534,7 @@ vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, in
 	if (test_op(1, Operator::TILDE) || test_op(1, Operator::TILDE_STAR) || test_op(1, Operator::TILDE_STAR_STAR)) {
 		return Syntax_Color::MODULE;
 	}
-	else if (test_op(1, Operator::DEFINE_INFER) || test_op(1, Operator::DEFINE_INFER_POINTER) ||
-		test_op(1, Operator::DEFINE_INFER_RAW) || test_op(1, Operator::COLON))
+	else if (test_op(1, Operator::DEFINE_INFER) || test_op(1, Operator::COLON))
 	{
 		return Syntax_Color::VALUE_DEFINITION;
 	}
@@ -8367,29 +8362,26 @@ void syntax_editor_render()
 			Rich_Text::append(text, tmp);
 
 			// Add Datatype
-			auto& cast_info = hover_info.expression_info->info->cast_info;
+			Expression_Value_Info value_info = expression_info_get_value_info(hover_info.expression_info->info, &editor.analysis_data->type_system);
 			Rich_Text::add_line(text, false, 1);
 			Rich_Text::append(text, "Result-Type:  ");
-			datatype_append_to_rich_text(cast_info.result_type, type_system, text);
-			if (cast_info.result_value_is_temporary) {
+			datatype_append_to_rich_text(value_info.result_type, type_system, text);
+			if (value_info.result_value_is_temporary) {
 				Rich_Text::set_text_color(text);
 				Rich_Text::append(text, ", temporary");
 			}
 
 			// Add cast infos
-			if (!types_are_equal(cast_info.initial_type, cast_info.result_type)) {
+			if (!types_are_equal(value_info.initial_type, value_info.result_type)) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Initial-Type: ");
-				datatype_append_to_rich_text(cast_info.initial_type, type_system, text);
-				if (cast_info.initial_value_is_temporary) {
+				datatype_append_to_rich_text(value_info.initial_type, type_system, text);
+				if (value_info.initial_value_is_temporary) {
 					Rich_Text::set_text_color(text);
 					Rich_Text::append(text, ", temporary");
 				}
 			}
-			if (cast_info.deref_count != 0) {
-				Rich_Text::add_line(text, false, 1);
-				Rich_Text::append_formated(text, "Deref-Count: %d", cast_info.deref_count);
-			}
+			auto& cast_info = hover_info.expression_info->info->cast_info;
 			if (cast_info.cast_type != Cast_Type::NO_CAST) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Cast-Type: ");
@@ -8401,9 +8393,9 @@ void syntax_editor_render()
 			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context expected: ");
-				datatype_append_to_rich_text(context.expected_type.type, type_system, text);
+				datatype_append_to_rich_text(context.datatype, type_system, text);
 			}
-			else if (context.type == Expression_Context_Type::AUTO_DEREFERENCE) {
+			else if (context.type == Expression_Context_Type::DEREFERENCE) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context: Auto-Dereference");
 			}
@@ -8445,8 +8437,8 @@ void syntax_editor_render()
 			{
 				is_struct_init = true;
 				if (call_info->argument_matching_success) {
-					name = call_info->origin.options.struct_content->name;
-					color = Syntax_Color::TYPE;
+					name = call_info->origin.options.structure->name;
+					color = Syntax_Color::DATATYPE;
 					break;
 				}
 			}

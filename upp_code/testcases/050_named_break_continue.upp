@@ -9,14 +9,14 @@ main :: ()
 		i := 0
 		while i < 10
 			i = i + 1
-		assert(i == 10)
+		~assert(i == 10)
 		
 		i = 0
 		while i < 10 i_loop:
 			i = i + 1
 			if i == 5
 				break i_loop
-		assert(i == 5)
+		~assert(i == 5)
 		
 		// If the condition expression is only a symbol read, the name of the block automatically takes that name
 		cond := true
@@ -42,7 +42,7 @@ main :: ()
 				val = 10
 			.GREEN
 				
-		assert(val == 5)
+		~assert(val == 5)
 		
 		// This also works inside the default block:
 		val = 0
@@ -54,7 +54,7 @@ main :: ()
 				val = 10
 			.GREEN
 				
-		assert(val == 5)
+		~assert(val == 5)
 	
 	// The continue keyword also exists for loops
 		i := 0
@@ -64,8 +64,8 @@ main :: ()
 			if i >= 4
 				continue sum_loop
 			val = val + i
-		assert(i == 10)
-		assert(val == 6)
+		~assert(i == 10)
+		~assert(val == 6)
 	
 	
 	// A difference to other languages is that this works for all blocks,
@@ -76,7 +76,7 @@ main :: ()
 			if (val == 10)
 				break block_lbl
 			val = 5
-		assert(val == 10)
+		~assert(val == 10)
 		
 		val = 0
 		if true if_lbl:
@@ -84,7 +84,7 @@ main :: ()
 			if true
 				break if_lbl
 			val = 5
-		assert(val == 10)
+		~assert(val == 10)
 	
 	
 	// This allows more complex control-flow, like breaking out of an outer loop
@@ -97,7 +97,7 @@ main :: ()
 				val = val + 1
 				j = j + 1
 			i = i + 1
-		assert(val == 100)
+		~assert(val == 100)
 		
 		// Breaking out of inner loop
 		i = 0
@@ -110,7 +110,7 @@ main :: ()
 				if j == 5
 					break inner
 			i = i + 1
-		assert(val == 50)
+		~assert(val == 50)
 		
 		// Breaking out of outer loop
 		i = 0
@@ -123,7 +123,7 @@ main :: ()
 				if j == 5
 					break outer
 			i = i + 1
-		assert(val == 5)
+		~assert(val == 5)
 	
 	///
 		Design-wise, this may seem like it encourages the progammer to write

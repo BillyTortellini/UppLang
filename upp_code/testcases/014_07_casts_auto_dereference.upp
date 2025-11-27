@@ -1,5 +1,5 @@
 
-import Upp~c_string
+import ~c_string
 
 double :: (n: int) => int
 	return n * 2
@@ -17,9 +17,9 @@ main::()
 	
 	a:=double(ip)
 	b:=double(i)
-	assert(a==b)
+	~assert(a==b)
 	
 	// This also means struct member access on pointers works
 	p:=Player.{"Frank",15}
 	pp:=*p
-	assert(pp.age==15)
+	~assert(pp.age==15)

@@ -8,5 +8,5 @@ foo::(a:$T,$fn:(a:T)=>T)=>T
 main::()
 	i:=5
 	a:=foo(i,negate)
-	assert(a==-5)
+	~assert(a==-5)
 	

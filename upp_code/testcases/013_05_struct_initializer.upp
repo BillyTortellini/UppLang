@@ -1,6 +1,6 @@
 
 Node :: struct
-	name: Upp~c_string
+	name: ~c_string
 	Expression:
 		is_normalized: bool
 		Binop:
@@ -18,9 +18,9 @@ Node :: struct
 
 main :: ()
 	n: Node = Node.{"Frank", .Expression = {false, .Binop = {2, 3}}}
-	assert(Upp~struct_tag(n) == .Expression)
-	assert(Upp~struct_tag(n.Expression) == .Binop)
-	assert(!n.Expression.is_normalized)
+	~assert(~struct_tag(n) == .Expression)
+	~assert(~struct_tag(n.Expression) == .Binop)
+	~assert(!n.Expression.is_normalized)
 
 
 

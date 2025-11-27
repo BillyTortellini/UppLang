@@ -1,5 +1,5 @@
 
-import Upp~u8
+import ~u8
 
 main :: ()
 	// When the result type of a cast is known, then
@@ -7,5 +7,5 @@ main :: ()
 	x: int = 15
 	val_0: u8 = cast {u8} x
 	val_1: u8 = cast x
-	assert(val_0 == val_1)
+	~assert(val_0 == val_1)
 

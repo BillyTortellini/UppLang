@@ -1,5 +1,5 @@
 
-import Upp~usize
+import ~usize
 
 main :: ()
 	// New operator with () creates a slice
@@ -12,7 +12,7 @@ main :: ()
 	array_bubble_sort(arr)
 	i = 0
 	while i < arr.size - 1
-		assert(arr[i] < arr[i + 1])
+		~assert(arr[i] < arr[i + 1])
 		i = i + 1
 	
 	// Deletion on slices

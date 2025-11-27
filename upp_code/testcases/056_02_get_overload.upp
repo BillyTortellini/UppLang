@@ -24,17 +24,17 @@ add :: (node: *Node, a: int, b: int) => int
 
 main :: ()
 	// Using the #get_overload operator, we can get distinguised values of overloads
-	import Upp~type_of
+	import ~type_of
 	
-	val64: Upp~u64 = 5
+	val64: ~u64 = 5
 	node := Node.{0}
 	
 	a := ( #get_overload add(a = const int, b = const int))(5, 10)
-	assert(type_of(a) == int)
+	~assert(type_of(a) == int)
 	( #get_overload add(node, a))(node, 5)
-	assert(node.value == 5)
+	~assert(node.value == 5)
 	( #get_overload add(node, b))(node, true)
-	assert(node.value == 10)
+	~assert(node.value == 10)
 	
 	val64 = #get_overload_poly add()(val64, val64)
-	assert(val64 == 10)
+	~assert(val64 == 10)

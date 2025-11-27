@@ -1,6 +1,6 @@
 
-import Upp~Type_Handle
-import Upp~type_of
+import ~Type_Handle
+import ~type_of
 
 adder :: (a: int, b: int) => int
 	return a + b
@@ -17,24 +17,24 @@ main :: ()
 	z :: [5]bool
 	
 	// Types can be compared to one another with != and ==, but they cannot be casted
-	assert(x == int)
-	assert(y == (*int))
-	assert(z == [5]bool)
-	assert(x != y)
-	assert(y != z)
-	assert(z != []bool) // Difference between arrays and slices!
+	~assert(x == int)
+	~assert(y == (*int))
+	~assert(z == [5]bool)
+	~assert(x != y)
+	~assert(y != z)
+	~assert(z != []bool) // Difference between arrays and slices!
 	
 	// To find the type of an expression, we can use the hardcoded type_of function
 		bool_type: Type_Handle = type_of(5 * 7 == 35)
-		assert(bool_type == bool)
+		~assert(bool_type == bool)
 		
 		// In type theory, type_of(Type) would probably be something like Type_Type,
 		// and type_of(type_of(type_of(Type))) would be Type_Type_Type_Type
 		// But in this language, we just stay at Type because the previous behavior isn't really usefull
 		// in any practical applications
-		assert(type_of(int) == const Type_Handle)
-		assert(type_of(Type_Handle) == const Type_Handle)
-		assert(type_of(type_of(Type_Handle)) == const Type_Handle)
+		~assert(type_of(int) == const Type_Handle)
+		~assert(type_of(Type_Handle) == const Type_Handle)
+		~assert(type_of(type_of(Type_Handle)) == const Type_Handle)
 	
 	///
 		Ok,so we can compare types,but why is this a usefull feature?
@@ -48,15 +48,15 @@ main :: ()
 	y_type =* x_type
 	z_type = .[true, true, false, true, true]
 	
-	assert(&y_type == 5)
-	assert(z_type[2] == false)
+	~assert(&y_type == 5)
+	~assert(z_type[2] == false)
 	
 	// This can be used like a typedef in C/C++
 	add_fn_type :: (v: int, b: int) => int
 	add_fn: add_fn_type
 	add_fn = adder
 	sum := add_fn(2, 3)
-	assert(sum == 5)
+	~assert(sum == 5)
 	
 	///
 		The real use of this is in metaprogramming/type_information/any_type.

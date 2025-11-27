@@ -48,13 +48,6 @@ namespace AST
         DEREFERENCE, // &
     };
 
-    enum class Assignment_Type
-    {
-        DEREFERENCE, // Dereferences pointers on the left side (e.g. writes to the pointer-value), ip = 15
-        POINTER, // Writes to the pointer on the left side, ip =* x
-        RAW, // Expects the exact type on the left, ip =~
-    };
-
     enum class Node_Type
     {
         EXPRESSION,
@@ -93,7 +86,8 @@ namespace AST
         SINGLE_SYMBOL,             // import A~a
         MODULE_SYMBOLS,            // import A~*
         MODULE_SYMBOLS_TRANSITIVE, // import A~**
-        FILE                       // import "../something"
+        FILE,                      // import "../something"
+        BUILTIN_TABLE
     };
 
     enum class Import_Option
@@ -148,6 +142,7 @@ namespace AST
         // NOTE: The last node is only a convenient pointer to the end of parts, but the
         //       node is also inside parts, e.g. parts[parts.size-1] == last
         Symbol_Lookup* last;
+        bool is_builtin_lookup; // Starts with ~
         bool is_dot_call_lookup;
     };
 
@@ -177,7 +172,6 @@ namespace AST
     {
         Node base;
         bool is_comptime; // :: instead of :=
-        Assignment_Type assignment_type; // :=, :=* or :=~
         Dynamic_Array<Definition_Symbol*> symbols;
         Dynamic_Array<Expression*> types;
         Dynamic_Array<Expression*> values;
@@ -252,11 +246,6 @@ namespace AST
         Dynamic_Array<Statement*> statements;
         Dynamic_Array<Context_Change*> context_changes;
         Optional<String*> block_id;
-    };
-
-    enum class Structure_Type {
-        STRUCT = 1,
-        UNION,
     };
 
     struct Structure_Member_Node
@@ -352,9 +341,8 @@ namespace AST
                 Optional<Expression*> count_expr;
             } new_expr;
             struct {
-                Optional<Expression*> to_type;
-                bool is_pointer_cast;
-                Expression* operand;
+                Call_Node* call_node;
+                bool is_dot_call;
             } cast;
             Path_Lookup* path_lookup;
             String* auto_enum;
@@ -391,7 +379,7 @@ namespace AST
             struct {
                 Dynamic_Array<Parameter*> parameters;
                 Dynamic_Array<Structure_Member_Node*> members;
-                Structure_Type type;
+                bool is_union;
             } structure;
             struct {
                 Path_Lookup* path_lookup;
@@ -449,7 +437,6 @@ namespace AST
             struct {
                 Dynamic_Array<Expression*> left_side;
                 Dynamic_Array<Expression*> right_side;
-                Assignment_Type type;
             } assignment;
             struct {
                 Definition_Symbol* loop_variable_definition;
@@ -474,7 +461,6 @@ namespace AST
             struct {
                 Expression* left_side;
                 Expression* right_side;
-                Assignment_Type assignment_type;
             } defer_restore;
             struct {
                 Expression* condition;

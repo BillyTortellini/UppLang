@@ -1,6 +1,6 @@
 
-import Upp~c_string
-import Upp~Type_Handle
+import ~c_string
+import ~Type_Handle
 
 Player :: struct
 	name: c_string
@@ -31,4 +31,4 @@ main :: ()
 	holder->push_back(pete)
 	holder->push_back(clara)
 	
-	assert(holder.values[1].age == 12)
+	~assert(holder.values[1].age == 12)

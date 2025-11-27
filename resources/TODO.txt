@@ -1,57 +1,81 @@
 
-Dot-Call rework:
- - Compiler table lookup with ~name
-    Only float, int and bool stay, everything else goes into new namespace
- - Context remove import, now working with symbol-table...
-    import context Datatstructures~something~*
- - Rework cast options
+Check which testcases crash...
+All testcases should run without crashing
+Implement operator context again (Maybe from scratch)
+    Start with cast, do other things afterwards...
+Casting with polymorphic patterns should work again/overloading should do the right thing
+
+Expression_Result_Type rework:
+    Combine constant/datatype/value maybe
+    Error type?
+
+Expression-Context rework...
+    What did I mean here
+
+Testing:
+ enum casts
+ c-generator const pointer syntax
+
+TODO (Probably):
+    - Remove const, make other values temporary (Constant and parameter access)
+        * String needs special treatment here
+        * Maybe add variable shadowing
+    - Pointer dereference as post-op maybe, as & as dereference is annoying becuase && becomes logical and... 
+    - Remove optional, it's something that is easy to implement without needing to be something special from compiler
+
+
+
+CAST/CONTEXT RE-DESIGN:
+----------------------
+ * Cast is now only done by cast-keyword, no more cast_raw/cast_pointer
+ * Cast-Modes were removed, now a cast can either be an auto-cast or not
+ * New syntax in 3 different ways (All equivalent in parser)
+    cast value
+    cast(value, from, to, cast_option)
+    value->cast(from, to, cast_option)
+ * Casts now include auto-address and dereference
+ * Auto pointer handling was removed (auto address-of and dereference)
+    Can now be enabled with auto-cast, although less powerfull
+    Assignments are now simpler, and polymorphic behavior is well defined
+    Pointer-Comparison with *== and *!= will stay
+ * Adding casts in context:
+    context add_cast(from, to, auto_cast, function, cast_type)
+        Either function or cast-type need to be specified
+    If the cast_type is specified, then to and from are not needed
+        context add_cast(cast_type = .TO_ANY, auto_cast = true)
+    Here we could support polymorphic from/to types
+        context add_cast(from = Node(_), to = Foo(_), function = node_to_foo)
+        This will require some extra thoughts
+    Making from/to a requirement allows errors to be reported at the correct place, at the add_cast
+        This also allows better dependency handling (Cyclic dependencies will work correctly)
+
+analyse_parameter_value 
+    context is not working if given --> Check how we should fix this at some point?
+    What if overloading analysed an argument which is just $T, not even a struct template?
+        add :: (a: $T, b: int)
+        add :: (a: $T, b: float)
 
 BUG: F5 -> F8 -> F5 --> crashes interpreter, I guess something do to with testcases
-Re-implement Allocators and Dynamic_Array/Hashtable for speed test...
+Re-implement Allocators and Dynamic_Array/Hashtable in Upp for speed test...
 
-
-C++ Profilers:
---------------
-Omnitrace
-    CPU + GPU, profiling/tracing?
-HPCToolkit
-Caliper
-TAU
-VTune
-Nsight
-Tracy
-Intel vtune
-Visual Studio Diagnostics tool, Vs Profile
-RADTelemetry
-google perftools
-perf with hotspot
-valgrind callgrind
-kcachegrind
-verysleepy
-
-tracing vs sampling profiler
-
-HOTSPOT      --> Linux
-Superliminal --> $$$
 
 
 
 FEATURE IMPLEMENTATION PLAN:
 ----------------------------
- * Dot-Call rework as normal path-lookup
  * Operator Context rework
+    Type-System rework --> Remove type_mods, subtype
     Rework dependencies
     Redesign primitive operations maybe
     Update dot-call lookup maybe?
- * Default-value rework
  * ModTree-Function/Upp-Function rework
     IR-Code/Bytecode now waits if functions are not ready
     Remove Cluster compile
- ? Semantic-Analyser removal, Introduction of semantic context
- ? Type-System rework
-    Seperate type and type-mods,
-    Remove Type_Subtype, Type_Const, Type_Pointer
- * Modules, files, directories Rework
+ * Default-value rework
+ * Remove semantic analyser, add semantic_context, split semantic_analyser file 
+    Remove cluster-compile dependency
+ ? Modules, files, directories Rework
+    I don't think I really wanna do this, as I will just work with large files and editor "zoom" feature
     Do something similar to Odin, where we import "packages", which are just directories of code.
     Code editor does not work on files, but rather on packages (or whatever)
  * Misc smaller features
@@ -61,11 +85,9 @@ FEATURE IMPLEMENTATION PLAN:
         function parameters
         const inferred
     enum size
-    auto pointer handling, remove * and &
-    new delete context vs arena
-    casts, address usize isize
+    ? auto pointer handling, remove * and &
+    remove new/delete, think about context vs arena
     loop keyword instead of for, while
- * Remove semantic analyser, add semantic_context, split semantic_analyser file 
  * Incremental parser
  * Incremental compiler
  * New GUI maybe? Debugger upgrade
@@ -472,6 +494,31 @@ The matching would then proceed as follows:
 Note that the hashtable needs the parent-index as a key (Widget index), so this needs to be re-hashed every frame...
     
     
+
+C++ Profilers:
+--------------
+Omnitrace
+    CPU + GPU, profiling/tracing?
+HPCToolkit
+Caliper
+TAU
+VTune
+Nsight
+Tracy
+Intel vtune
+Visual Studio Diagnostics tool, Vs Profile
+RADTelemetry
+google perftools
+perf with hotspot
+valgrind callgrind
+kcachegrind
+verysleepy
+
+tracing vs sampling profiler
+
+HOTSPOT      --> Linux
+Superliminal --> $$$
+
 
 
 VIM Plugin-research:

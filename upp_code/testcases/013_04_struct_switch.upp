@@ -1,12 +1,12 @@
 
-import Upp~c_string
-import Upp~u8
+import ~c_string
+import ~u8
 
 Address :: struct
 	IPv4:
-		bytes: [4]Upp~u8
+		bytes: [4]~u8
 	IPv6:
-		bytes: [8]Upp~u8
+		bytes: [8]~u8
 		is_local: bool
 	House:
 		zip_code: int
@@ -33,6 +33,6 @@ main :: ()
 	p2 := Address.IPv6.{.[0, 8, 8, 8, 8, 8, 8, 7], true}
 	p3 := Address.IPv4.{.[127, 0, 0, 1]}
 	
-	assert(test(p1) == 20)
-	assert(test(p2) == 10)
-	assert(test(p3) == 128)
+	~assert(test(p1) == 20)
+	~assert(test(p2) == 10)
+	~assert(test(p3) == 128)

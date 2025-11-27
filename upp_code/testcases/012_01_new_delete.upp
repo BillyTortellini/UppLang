@@ -2,7 +2,7 @@
 main :: ()
 	x :=* new int
 	x = 15
-	assert(x == 15)
+	~assert(x == 15)
 	delete x
 	
 	i := 0
@@ -16,5 +16,5 @@ main :: ()
 	for i := 0; i < 10; i += 1
 		values := new{20} int
 		values[10] = 5
-		assert(values[10] == 5)
+		~assert(values[10] == 5)
 		delete values

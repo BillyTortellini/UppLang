@@ -19,6 +19,6 @@ main :: ()
 	// Also deduplication should work
 	ap := #instanciate sum(Vector(int, 5))
 	bp := #instanciate sum(Vector(int, 3))
-	assert(ap *== bp)
+	~assert(ap *== bp)
 
 

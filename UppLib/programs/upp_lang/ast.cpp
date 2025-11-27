@@ -230,7 +230,7 @@ Node* base_get_child(Node* node, int child_index)
 	}
 	case Node_Type::IMPORT: {
 		auto import = (Import*)node;
-		if (import->type != Import_Type::FILE) {
+		if (import->type != Import_Type::FILE && import->type != Import_Type::BUILTIN_TABLE) {
 			FILL(import->path);
 		}
 		FILL_OPTIONAL(import->alias_name);
@@ -306,8 +306,7 @@ Node* base_get_child(Node* node, int child_index)
 		}
 		case Expression_Type::CAST: {
 			auto& cast = expr->options.cast;
-			FILL_OPTIONAL(cast.to_type);
-			FILL(cast.operand);
+			FILL(cast.call_node);
 			break;
 		}
 		case Expression_Type::PATH_LOOKUP: {
@@ -594,7 +593,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 	}
 	case Node_Type::IMPORT: {
 		auto import = (Import*)node;
-		if (import->type != Import_Type::FILE) {
+		if (import->type != Import_Type::FILE && import->type != Import_Type::BUILTIN_TABLE) {
 			FILL(import->path);
 		}
 		FILL_OPTIONAL(import->alias_name);
@@ -707,8 +706,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		}
 		case Expression_Type::CAST: {
 			auto& cast = expr->options.cast;
-			FILL_OPTIONAL(cast.to_type);
-			FILL(cast.operand);
+			FILL(cast.call_node);
 			break;
 		}
 		case Expression_Type::PATH_LOOKUP: {
@@ -1194,20 +1192,6 @@ void base_append_to_string(Node* base, String* str)
 		case Statement_Type::DEFINITION: string_append_formated(str, "STAT_DEF"); break;
 		case Statement_Type::BLOCK: string_append_formated(str, "STAT_BLOCK"); break;
 		case Statement_Type::ASSIGNMENT: {
-			switch (stat->options.assignment.type)
-			{
-			case Assignment_Type::DEREFERENCE: break;
-			case Assignment_Type::POINTER: {
-				string_append_formated(str, "POINTER-");
-				break;
-			}
-			case Assignment_Type::RAW: {
-				string_append_formated(str, "RAW-");
-				break;
-			}
-			default: panic("");
-			}
-
 			string_append_formated(str, "ASSIGNMENT");
 			break;
 		}

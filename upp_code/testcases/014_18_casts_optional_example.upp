@@ -1,8 +1,8 @@
 
-import Upp~Type_Handle
-import Upp~print_i32
-import Upp~print_line
-import Upp~print_string
+import ~Type_Handle
+import ~print_i32
+import ~print_line
+import ~print_string
 
 Optional :: struct ($T: Type_Handle)
 	value: T
@@ -20,7 +20,7 @@ invalid_cast_fn :: (value: Optional($T), something: int) => T
 	return value.value
 
 optional_unwrap :: (optional: Optional($T)) => T
-	assert(optional.available)
+	~assert(optional.available)
 	return optional.value
 
 optional_is_available :: (optional: Optional($T)) => bool
@@ -43,10 +43,10 @@ main :: ()
 	
 	b1: bool = cast x
 	b2: bool = cast y
-	assert(b1)
-	assert(!b2)
+	~assert(b1)
+	~assert(!b2)
 	
 	i: int = cast x
-	assert(i == 15)
+	~assert(i == 15)
 	//i2:int=cast y
 

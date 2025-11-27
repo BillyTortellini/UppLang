@@ -1,9 +1,9 @@
 
-import Upp~Any
-import Upp~c_string
-import Upp~i32
-import Upp~u32
-import Upp~u64
+import ~Any
+import ~c_string
+import ~i32
+import ~u32
+import ~u64
 
 Player :: struct
 	age: int
@@ -36,16 +36,16 @@ main :: ()
 	
 	// As mentioned before, the any type contains a data member (*void) to the data
 	// Note: Addresses are compared using ==, because address is treated similar to an int
-	assert(any_int.data == cast_pointer *val_int)
-	assert(any_player.data == cast_pointer *val_player)
+	~assert(any_int.data == cast_pointer *val_int)
+	~assert(any_player.data == cast_pointer *val_player)
 	
 	// And also the type value, which can be used in type_info
-	assert(any_player.type == Player)
-	assert(any_int.type == int)
+	~assert(any_player.type == Player)
+	~assert(any_int.type == int)
 	
 	// The Any type can again be casted to the value it contains
 	val_player_cpy := cast {Player} any_player
-	assert(val_player_cpy.age == val_player.age && val_player_cpy.alive == val_player.alive)
+	~assert(val_player_cpy.age == val_player.age && val_player_cpy.alive == val_player.alive)
 	
 	// Any type variables almost behave like variables in dynamically typed languages
 	i_val: i32 = 0
@@ -56,8 +56,8 @@ main :: ()
 	// One of the main usecases of any will be printing/formating, because you can
 	// do things like the following:
 	result := mini_calc(.[5, "+", 5, "*", 2, "-", 1])
-	assert(result.success)
-	assert(result.value == 19)
+	~assert(result.success)
+	~assert(result.value == 19)
 	
 	// Casting from any to a value will result in a crash if the types dont match, shown in next testcase
 	

@@ -14,26 +14,26 @@ main :: ()
 	color = Color.RED
 	
 	// Enums can be compared with != and ==, but not with < or >
-	assert(color == Color.RED)
-	assert(color != Color.GREEN)
+	~assert(color == Color.RED)
+	~assert(color != Color.GREEN)
 	
 	// Enums are internally stored as integers, and can be cast to/from int
 	reinterpreted: int = cast {int} color
-	assert(reinterpreted == 1)
+	~assert(reinterpreted == 1)
 	
 	// They can be explicity cast to integer to avoid the previous, more complicated pointer casting
 	casted: int = cast {int} color
-	assert(reinterpreted == casted)
+	~assert(reinterpreted == casted)
 	
 	// Enum values are stored increasingly, starting at 1
-	assert( cast {int} Color.RED == 1)
-	assert( cast {int} Color.GREEN == 2)
+	~assert( cast {int} Color.RED == 1)
+	~assert( cast {int} Color.GREEN == 2)
 	
 		// Normally values can be overwritten, but I will implement this later
 		// The values can be overwritten, and then they will count upwards from the given value
 		// Values may overlap, which will cause a compile-time error
-		assert( cast {int} Color.BLUE == 17)
-		assert( cast {int} Color.YELLOW == 18)
-		assert( cast {int} Color.PINK == 3)
-		assert( cast {int} Color.BROWN == 4)
+		~assert( cast {int} Color.BLUE == 17)
+		~assert( cast {int} Color.YELLOW == 18)
+		~assert( cast {int} Color.PINK == 3)
+		~assert( cast {int} Color.BROWN == 4)
 	

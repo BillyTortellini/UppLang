@@ -26,20 +26,20 @@ add :: (node: *Node, a: int, b: int) => int
 	return node.value
 
 main :: ()
-	import Upp~type_of
+	import ~type_of
 	
 	a := add(5, 10)
-	assert(type_of(a) == int)
+	~assert(type_of(a) == int)
 	f := add(5.5, 10.3)
-	assert(type_of(f) == float)
-	assert(in_range(f, 15.8, 0.001))
+	~assert(type_of(f) == float)
+	~assert(in_range(f, 15.8, 0.001))
 	
-	x: Upp~u64 = 5
+	x: ~u64 = 5
 	z := add(x, x)
-	assert(type_of(z) == Upp~u64)
+	~assert(type_of(z) == ~u64)
 	
 	n: Node = .{20}
 	add(n, 5)
 	add(n, true)
 	add(n, 2, 5)
-	assert(n.value == 105)
+	~assert(n.value == 105)

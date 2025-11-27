@@ -24,7 +24,7 @@ main::()
 		a:=vec2.{1,3}
 		b:=vec2.{10,0}
 		c:=a+b
-		assert(c.x==11&&c.y==3)
+		~assert(c.x==11&&c.y==3)
 	
 	// Binops also work with auto-address of + auto dereference
 		a:=vec2.{1,3}
@@ -36,7 +36,7 @@ main::()
 		context add_binop("*",add_ptr)
 		
 		c:=app*b
-		assert(c.x==6&&c.y==8)
+		~assert(c.x==6&&c.y==8)
 	
 	// Binops don't have to be symmetric
 		context add_binop("+",add_weird,commutative=true)
@@ -44,5 +44,5 @@ main::()
 		x:=i+true
 		y:=false+i
 		
-		assert(x.x==8&&x.y==8)
-		assert(y.x==7&&y.y==7)
+		~assert(x.x==8&&x.y==8)
+		~assert(y.x==7&&y.y==7)

@@ -107,6 +107,8 @@ struct Compiler_Analysis_Data
 
     // Semantic analyser
     ModTree_Program* program;
+    Symbol_Table* root_symbol_table;
+    Symbol_Table* builtin_symbol_table;
     Dynamic_Array<Function_Slot> function_slots;
     Dynamic_Array<Semantic_Error> semantic_errors;
 
@@ -125,6 +127,7 @@ struct Compiler_Analysis_Data
     Hashset<Call_Signature*> call_signatures; // Callables get duplicated
     Call_Signature* hardcoded_function_signatures[(int)Hardcoded_Type::MAX_ENUM_VALUE];
     Call_Signature* context_change_type_signatures[(int)Context_Change_Type::MAX_ENUM_VALUE];
+    Call_Signature* cast_signature;
     Call_Signature* empty_call_signature;
 
     // Allocations
@@ -151,6 +154,7 @@ void call_signature_destroy(Call_Signature* signature);
 Call_Parameter* call_signature_add_parameter(
     Call_Signature* signature, String* name, Datatype* datatype, 
     bool required, bool requires_named_addressing, bool must_not_be_set);
+
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype);
 Call_Signature* call_signature_register(Call_Signature* signature); // Takes ownership of signature, returns deduplicated signature
 void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system);

@@ -1,8 +1,8 @@
 
-import Upp~c_string
-import Upp~i64
-import Upp~type_info
-import Upp~Type_Handle as Type
+import ~c_string
+import ~i64
+import ~type_info
+import ~Type_Handle as Type
 
 Vector :: struct ($T: Type, $C: int)
 	values: [C]T

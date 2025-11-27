@@ -885,7 +885,7 @@ Optional<C_Import_Type*> header_parser_parse_type(Header_Parser* parser, bool re
                     return optional_make_failure<C_Import_Type*>();
                     //return optional_make_success(parser->result_package.type_system.error_type);
                 }
-                //assert(symbol->type == C_Import_Symbol_Type::TYPE, "HEY");
+                //assert(symbol->type == C_Import_Symbol_Type::DATATYPE, "HEY");
                 result.available = true;
                 result.value = symbol->data_type;
             }

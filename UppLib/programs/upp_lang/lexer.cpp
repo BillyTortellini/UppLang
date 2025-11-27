@@ -36,7 +36,6 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::GET_OVERLOAD_POLY: return string_create_static("#get_overload_poly");
     case Keyword::BREAK: return string_create_static("break");
     case Keyword::CAST: return string_create_static("cast");
-    case Keyword::CAST_POINTER: return string_create_static("cast_pointer");
     case Keyword::CONTINUE: return string_create_static("continue");
     case Keyword::DEFAULT: return string_create_static("default");
     case Keyword::DEFER: return string_create_static("defer");
@@ -187,20 +186,16 @@ void lexer_initialize()
         lexer.operator_strings[(int)Operator::POINTER_NOT_EQUALS] = string_create_static("*!=");
         lexer.operator_strings[(int)Operator::DEFINE_COMPTIME] = string_create_static("::");
         lexer.operator_strings[(int)Operator::DEFINE_INFER] = string_create_static(":=");
-        lexer.operator_strings[(int)Operator::DEFINE_INFER_POINTER] = string_create_static(":=*");
-        lexer.operator_strings[(int)Operator::DEFINE_INFER_RAW] = string_create_static(":=~");
         lexer.operator_strings[(int)Operator::AND] = string_create_static("&&");
         lexer.operator_strings[(int)Operator::OR] = string_create_static("||");
         lexer.operator_strings[(int)Operator::ARROW] = string_create_static("=>");
         lexer.operator_strings[(int)Operator::INFER_ARROW] = string_create_static(".=>");
         lexer.operator_strings[(int)Operator::DOLLAR] = string_create_static("$");
         lexer.operator_strings[(int)Operator::ASSIGN] = string_create_static("=");
-        lexer.operator_strings[(int)Operator::ASSIGN_RAW] = string_create_static("=~");
         lexer.operator_strings[(int)Operator::ASSIGN_ADD] = string_create_static("+=");
         lexer.operator_strings[(int)Operator::ASSIGN_SUB] = string_create_static("-=");
         lexer.operator_strings[(int)Operator::ASSIGN_DIV] = string_create_static("/=");
         lexer.operator_strings[(int)Operator::ASSIGN_MULT] = string_create_static("*=");
-        lexer.operator_strings[(int)Operator::ASSIGN_POINTER] = string_create_static("=*");
         lexer.operator_strings[(int)Operator::ASSIGN_MODULO] = string_create_static("=%");
         lexer.operator_strings[(int)Operator::UNINITIALIZED] = string_create_static("_");
     }

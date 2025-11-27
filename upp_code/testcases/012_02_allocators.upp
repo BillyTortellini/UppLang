@@ -6,14 +6,14 @@ main :: ()
 	// new and delete expect the allocation to succeed (Otherwise panic),
 	// and that the type is already corrected (We get a type pointer instead of address)
 	
-	alloc :=* Upp~global_allocator
+	alloc :=* ~global_allocator
 	ptr := alloc.allocate_fn(alloc, 100, 4)
-	assert(ptr != null)
+	~assert(ptr != null)
 	
 	ip: *int =* cast_pointer ptr
 	ip = 10
 	ip += 5
-	assert(ip == 15)
+	~assert(ip == 15)
 	
 	alloc.free_fn(alloc, ptr, 100)
 	
@@ -22,11 +22,11 @@ main :: ()
 	// create and set other allocators
 	
 	STACK_SIZE :: 256
-	import Upp~address
-	import Upp~Allocator
-	import Upp~usize
-	import Upp~u32
-	import Upp~u8
+	import ~address
+	import ~Allocator
+	import ~usize
+	import ~u32
+	import ~u8
 	Stack_Allocator :: struct
 		base: Allocator
 		memory: [STACK_SIZE]u8
@@ -57,19 +57,19 @@ main :: ()
 		_
 	}
 	
-	Upp~global_allocator =* stack_alloc.base
+	~global_allocator =* stack_alloc.base
 	
 	values := new{5} int
-	assert(stack_alloc.alloc_count == 1)
+	~assert(stack_alloc.alloc_count == 1)
 	x :=* new int
-	assert(stack_alloc.alloc_count == 2)
+	~assert(stack_alloc.alloc_count == 2)
 	
 	x = 10
 	for a, i in values
 		a = cast i
-	assert(x == 10)
+	~assert(x == 10)
 	
 	delete x
-	assert(stack_alloc.alloc_count == 1)
+	~assert(stack_alloc.alloc_count == 1)
 	delete values
-	assert(stack_alloc.alloc_count == 0)
+	~assert(stack_alloc.alloc_count == 0)

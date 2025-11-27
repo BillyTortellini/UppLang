@@ -10,11 +10,11 @@ test :: (a: *int) => int
 main :: ()
 	x: int = 0
 	b: bool = test(x)
-	assert(x == 1)
+	~assert(x == 1)
 	c: int = test(x)
-	assert(x == 2)
+	~assert(x == 2)
 	
 	fn := #get_overload test() => bool
 	fn(x)
-	assert(x == 1)
+	~assert(x == 1)
 	

@@ -1,5 +1,5 @@
 
-import Upp~Type_Handle
+import ~Type_Handle
 
 Node :: struct ($T: Type_Handle)
 	next: *Node(T)
@@ -13,4 +13,4 @@ main :: ()
 	a.next =* b
 	b.value = 15
 	
-	assert(a.next.value == 15)
+	~assert(a.next.value == 15)

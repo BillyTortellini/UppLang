@@ -1,10 +1,10 @@
 
-import Upp~print_string
-import Upp~print_bool
-import Upp~print_line
-import Upp~print_i32
-import Upp~c_string
-import Upp~struct_tag
+import ~print_string
+import ~print_bool
+import ~print_line
+import ~print_i32
+import ~c_string
+import ~struct_tag
 
 // Subtypes can form a hierarchy
 Node :: struct

@@ -25,4 +25,4 @@ main :: ()
 		for v in values
 			sum += v
 		
-		assert(sum == 260)
+		~assert(sum == 260)

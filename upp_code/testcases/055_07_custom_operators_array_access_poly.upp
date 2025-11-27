@@ -1,6 +1,6 @@
 
-import Upp~c_string
-import Upp~Type_Handle
+import ~c_string
+import ~Type_Handle
 
 Player :: struct
 	name: c_string
@@ -40,7 +40,7 @@ main :: ()
 	y := hp[1]
 	z := hpp[2]
 	
-	assert(x.age == 47)
-	assert(y.age == 12)
-	assert(z.age == 23)
+	~assert(x.age == 47)
+	~assert(y.age == 12)
+	~assert(z.age == 23)
 	

@@ -3,7 +3,7 @@
 	Polymorphic overloads are currently not resolved precisely
 	(E.g. no full matching is done), but we are rather using approximations
 
-Node :: struct ($T: Upp~Type_Handle)
+Node :: struct ($T: ~Type_Handle)
 	value: T
 
 test :: (a: int) => int
@@ -40,12 +40,12 @@ main :: ()
 	arg_6: Node(bool)
 	arg_7: Node(int)
 	
-	assert(test(arg_0) == 0)
-	assert(test(arg_1) == 1)
-	assert(test(arg_2) == 2)
-	assert(test(arg_3) == 3)
-	assert(test(arg_4) == 4)
-	assert(test(arg_5) == 5)
-	assert(test(arg_6) == 6)
-	assert(test(arg_7) == 7)
+	~assert(test(arg_0) == 0)
+	~assert(test(arg_1) == 1)
+	~assert(test(arg_2) == 2)
+	~assert(test(arg_3) == 3)
+	~assert(test(arg_4) == 4)
+	~assert(test(arg_5) == 5)
+	~assert(test(arg_6) == 6)
+	~assert(test(arg_7) == 7)
 

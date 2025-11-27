@@ -1,5 +1,5 @@
 
-import Upp~u32
+import ~u32
 
 main::()
 	i:int=15

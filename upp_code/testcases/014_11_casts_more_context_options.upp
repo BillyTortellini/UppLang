@@ -1,6 +1,6 @@
 
-import Upp~usize
-import Upp~Any
+import ~usize
+import ~Any
 
 add_numbers :: (values: []int) => int
 	sum := 0
@@ -27,10 +27,10 @@ main :: ()
 		context set_cast_option(.ARRAY_TO_SLICE, .IMPLICIT)
 		values: [4]int = .[1, 2, 3, 4]
 		sum := add_numbers(values)
-		assert(sum == 10)
+		~assert(sum == 10)
 	
 	// To and from any could also be done as auto
 		context set_cast_option(.TO_ANY, .IMPLICIT)
-		assert(primitive_type_value(15) == 0)
-		assert(primitive_type_value(2.5) == 1)
-		assert(primitive_type_value(false) == 2)
+		~assert(primitive_type_value(15) == 0)
+		~assert(primitive_type_value(2.5) == 1)
+		~assert(primitive_type_value(false) == 2)

@@ -1,5 +1,5 @@
 
-import Upp~c_string
+import ~c_string
 
 Player :: struct
 	name: c_string
@@ -32,13 +32,13 @@ main :: ()
 		can be infered from the usage context
 	
 	sum := add_ints(.[1, 2, 3, 4])
-	assert(sum == 10)
+	~assert(sum == 10)
 	
 	p: Player = .{name = "What", age = 17, alive = true}
-	assert(p.age == 17)
+	~assert(p.age == 17)
 	
 	color: Color = .RED
-	assert(color == Color.RED)
+	~assert(color == Color.RED)
 	
 	value := 0
 	switch color
@@ -48,5 +48,5 @@ main :: ()
 			value = 3
 		.RED
 			value = 1
-	assert(value == 1)
+	~assert(value == 1)
 

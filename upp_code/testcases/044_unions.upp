@@ -1,7 +1,7 @@
 
-import Upp~i32
-import Upp~u8
-import Upp~type_info
+import ~i32
+import ~u8
+import ~type_info
 
 RGBA :: union
 	value: i32
@@ -17,14 +17,14 @@ main :: ()
 	rgba.raw[1] = 1
 	rgba.raw[2] = 1
 	rgba.raw[3] = 1
-	assert(rgba.raw[0] == 1 && rgba.raw[1] == 1 && rgba.raw[2] == 1 && rgba.raw[3] == 1)
+	~assert(rgba.raw[0] == 1 && rgba.raw[1] == 1 && rgba.raw[2] == 1 && rgba.raw[3] == 1)
 	
 	// When writing to value, this
 	// also writes to raw, as they occupy the same memory
 	rgba.value = 0
-	assert(rgba.raw[0] == 0 && rgba.raw[1] == 0 && rgba.raw[2] == 0 && rgba.raw[3] == 0)
+	~assert(rgba.raw[0] == 0 && rgba.raw[1] == 0 && rgba.raw[2] == 0 && rgba.raw[3] == 0)
 	
 	// The size of the type is also only 4 bytes,
 	// which confirmes that the members must overlap
 	info := type_info(RGBA)
-	assert(info.size == 4)
+	~assert(info.size == 4)

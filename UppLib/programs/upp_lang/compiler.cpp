@@ -341,7 +341,7 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
                 logg("\n--------ROOT TABLE RESULT---------\n");
                 String root_table = string_create_empty(1024);
                 SCOPE_EXIT(string_destroy(&root_table));
-                symbol_table_append_to_string(&root_table, compiler.semantic_analyser->root_symbol_table, false);
+                symbol_table_append_to_string(&root_table, compiler.analysis_data->root_symbol_table, false);
                 logg("%s", root_table.characters);
             }
 

@@ -38,16 +38,12 @@ enum class Operator
     POINTER_NOT_EQUALS, // *!=
     DEFINE_COMPTIME, // ::
     DEFINE_INFER, // :=
-    DEFINE_INFER_POINTER, // :=*
-    DEFINE_INFER_RAW, // :=~
     AND,
     OR,
     ARROW,       // =>, note: different to DOT_CALL ->
     INFER_ARROW, // .=>
     DOLLAR,
     ASSIGN,
-    ASSIGN_POINTER, // =*
-    ASSIGN_RAW, // =~
     ASSIGN_ADD,
     ASSIGN_SUB,
     ASSIGN_MULT,
@@ -77,7 +73,6 @@ enum class Keyword
     DEFER,
     DEFER_RESTORE,
     CAST,
-    CAST_POINTER,
     BAKE,
     INSTANCIATE,
     GET_OVERLOAD,

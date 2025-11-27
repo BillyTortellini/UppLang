@@ -12,9 +12,9 @@ get_fn :: (do_add: bool) => ((a: int, b: int) => int)
 main :: ()
 	fn: (a: int, b: int) => int
 	fn = add
-	assert(fn(5, 5) == 10)
+	~assert(fn(5, 5) == 10)
 	fn = sub
-	assert(fn(5, 5) == 0)
+	~assert(fn(5, 5) == 0)
 	
-	assert(get_fn(true)(5, 5) == 10)
-	assert(get_fn(false)(5, 5) == 0)
+	~assert(get_fn(true)(5, 5) == 10)
+	~assert(get_fn(false)(5, 5) == 0)

@@ -1,5 +1,5 @@
 
-import Upp~Type_Handle
+import ~Type_Handle
 
 foo :: (a: [C]T, $C: int, $T: Type_Handle) => int
 	sum := 0
@@ -12,5 +12,5 @@ foo :: (a: [C]T, $C: int, $T: Type_Handle) => int
 main :: ()
 	values := int.[1, 2, 3, 4]
 	sum := foo(values, 4, int)
-	assert(sum == 10)
+	~assert(sum == 10)
 	

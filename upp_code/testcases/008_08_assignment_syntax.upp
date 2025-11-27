@@ -14,8 +14,8 @@ main :: ()
 	pointer =* *integer
 	pointer =* integer // The * is optional, as address-of is deduced with =*
 	
-	assert(integer == 15)
-	assert(pointer == 15)
+	~assert(integer == 15)
+	~assert(pointer == 15)
 	
 	// The same thing is also true for define_infer:
 		i := 15
@@ -23,9 +23,9 @@ main :: ()
 		copy := i
 		i = 16
 		
-		assert(i == 16)
-		assert(ip == 16)
-		assert(copy == 15)
+		~assert(i == 16)
+		~assert(ip == 16)
+		~assert(copy == 15)
 	
 	// In some template-scenarios we may still want to have 
 	// the behavior of a C assignment, which is done with '=~'
@@ -34,9 +34,9 @@ main :: ()
 		copy :=~ i
 		
 		i =~ 2
-		assert(ip == 2 && copy == 1)
+		~assert(ip == 2 && copy == 1)
 		
 		cp :=~ *copy
 		ip =~ copy
 		copy = 5
-		assert(ip == 5)
+		~assert(ip == 5)

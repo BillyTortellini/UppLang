@@ -21,7 +21,7 @@ main :: ()
 		Color.BLUE
 			a: int = 130
 	
-	assert(value == 20)
+	~assert(value == 20)
 	
 	// Switch cases work just like normal blocks
 	color = Color.GREEN
@@ -33,7 +33,7 @@ main :: ()
 		Color.BLUE
 			
 	
-	assert(value == 1)
+	~assert(value == 1)
 	
 	
 		// Cases can also be broken out of 
@@ -50,7 +50,7 @@ main :: ()
 				value = 1
 			Color.BLUE
 				
-		assert(value == 15)
+		~assert(value == 15)
 	
 	// When not all cases are specified, a default statement is needed
 	switch color
@@ -59,5 +59,5 @@ main :: ()
 		default
 			value = 12
 	
-	assert(value == 12)
+	~assert(value == 12)
 

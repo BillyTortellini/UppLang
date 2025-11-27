@@ -57,14 +57,14 @@ Constant_Pool_Result constant_pool_result_make_error(const char* error) {
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result);
 
 void struct_memory_set_padding_to_zero_recursive(
-    Struct_Content* content, byte* struct_memory_start, Subtype_Index* subtype_index, 
-    int index_level, int offset_in_struct, int subtype_end_offset, Constant_Pool_Result& result)
+    Datatype_Struct* structure, byte* struct_memory_start, int subtype_depth, Dynamic_Array<Datatype_Struct*>& expected_subtypes, 
+    int offset_in_struct, int subtype_end_offset, Constant_Pool_Result& result)
 {
     // Handle members
     int next_member_offset = offset_in_struct;
-    for (int i = 0; i < content->members.size; i++)
+    for (int i = 0; i < structure->members.size; i++)
     {
-        Struct_Member* member = &content->members[i];
+        Struct_Member* member = &structure->members[i];
         // Fill out padding until member
         if (member->offset != next_member_offset) {
             assert(member->offset > next_member_offset, "");
@@ -78,7 +78,7 @@ void struct_memory_set_padding_to_zero_recursive(
     }
 
     // Early exit if no subtypes exist
-    if (content->subtypes.size == 0) 
+    if (structure->subtypes.size == 0) 
     {
         // Fill empty bytes till subtype-end
         if (next_member_offset != subtype_end_offset) {
@@ -89,30 +89,25 @@ void struct_memory_set_padding_to_zero_recursive(
     else 
     {
         // Handle tag and subtypes 
-        Struct_Content* child_content;
-        if (index_level < subtype_index->indices.size)
-        {
-            // Here we know the subtype
-            int expected_index = subtype_index->indices[index_level].index;
-            int sub_index = (*(int*)(struct_memory_start + content->tag_member.offset)) - 1;
-            if (sub_index != expected_index) {
+        Datatype_Struct* subtype = nullptr;
+
+        int sub_index = (*(int*)(struct_memory_start + structure->tag_member.offset)) - 1;
+        if (sub_index < 0 || sub_index >= structure->subtypes.size) {
+            result = constant_pool_result_make_error("Found struct subtype where tag value is invalid");
+            return;
+        }
+        subtype = structure->subtypes[sub_index];
+
+        if (subtype_depth < expected_subtypes.size) {
+            if (subtype != expected_subtypes[subtype_depth]) {
                 result = constant_pool_result_make_error("Found struct subtype where tag doesn't match expected subtype");
                 return;
             }
-            child_content = content->subtypes[expected_index];
-        }
-        else
-        {
-            int sub_index = (*(int*)(struct_memory_start + content->tag_member.offset)) - 1;
-            if (sub_index < 0 || sub_index >= content->subtypes.size) {
-                result = constant_pool_result_make_error("Found struct subtype where tag value is invalid");
-                return;
-            }
-            child_content = content->subtypes[sub_index];
         }
 
         struct_memory_set_padding_to_zero_recursive(
-            child_content, struct_memory_start, subtype_index, index_level + 1, next_member_offset, content->tag_member.offset, result
+            subtype, struct_memory_start, subtype_depth + 1, expected_subtypes, next_member_offset, 
+            structure->tag_member.offset + structure->tag_member.type->memory_info.value.size, result
         );
     }
     return;
@@ -215,7 +210,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         }
         return;
     }
-    case Datatype_Type::SUBTYPE:
     case Datatype_Type::STRUCT:
     {
         // Check if it's Any-type or c_string
@@ -246,20 +240,24 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
 
             return;
         }
+        // TODO: type-handles should probably also always be correct values, would require less checks elsewhere
 
-        if (signature->base_type->type != Datatype_Type::STRUCT) {
-            // I guess this would only happen for struct instance template, which should be polymorphic and doesn't get to pool (e.g. fails at calculate comptime)
-            panic("I dont think this should happen");
-            return;
-        }
-
-        Datatype_Struct* structure = downcast<Datatype_Struct>(signature->base_type);
-        if (structure->struct_type == AST::Structure_Type::UNION) {
+        Datatype_Struct* structure = downcast<Datatype_Struct>(datatype_get_non_const_type(signature));
+        if (structure->is_union) {
             result = constant_pool_result_make_error("Found Union");
             return;
         }
+
+        Dynamic_Array<Datatype_Struct*> expected_subtypes = dynamic_array_create<Datatype_Struct*>();
+        SCOPE_EXIT(dynamic_array_destroy(&expected_subtypes));
+        while (structure->parent_struct != nullptr) {
+            dynamic_array_push_back(&expected_subtypes, structure);
+            structure = structure->parent_struct;
+        }
+        dynamic_array_reverse_order(&expected_subtypes);
+
         struct_memory_set_padding_to_zero_recursive(
-            &structure->content, memory, signature->mods.subtype_index, 0, 0, memory_info.size, result
+            structure, memory, 0, expected_subtypes, 0, memory_info.size, result
         );
         return;
     }

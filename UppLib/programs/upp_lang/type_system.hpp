@@ -17,7 +17,7 @@ struct Workload_Structure_Polymorphic;
 struct Function_Progress;
 struct Pattern_Variable_State;
 struct Datatype_Pattern_Variable;
-struct Struct_Content;
+struct Datatype_Struct;
 struct Analysis_Pass;
 struct Pattern_Variable;
 struct Poly_Instance;
@@ -40,11 +40,11 @@ struct Struct_Member
     Datatype* type;
     String* id;
     int offset; // Offset from base struct
-    Struct_Content* content; // In which struct-content this member is defined, may be null for slices or other things
+    Datatype_Struct* structure; // In which struct-content this member is defined, may be null for slices or other things
     AST::Node* definition_node; // May be null, used for goto-definition in editor
 };
 
-Struct_Member struct_member_make(Datatype* type, String* id, Struct_Content* content, int offset, AST::Node* definition_node);
+Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* structure, int offset, AST::Node* definition_node);
 
 struct Enum_Member
 {
@@ -71,13 +71,14 @@ enum class Datatype_Type
     ENUM,
     FUNCTION_POINTER,
     UNKNOWN_TYPE, // For error propagation
-    INVALID_TYPE, // Unlike unknown, invalid types should never be accessed
+    // Unlike unknown, invalid will always lead to errors 
+    //   Created by expressions that don't really have a type, like Poly_Struct/Poly_Function/Nothing...
+    INVALID_TYPE,
 
     // Modifier-Types
     POINTER,
     CONSTANT,
     OPTIONAL_TYPE,
-    SUBTYPE,
 
     // Types for polymorphism
     PATTERN_VARIABLE,
@@ -93,25 +94,6 @@ struct Datatype_Memory_Info
     bool contains_function_pointer;
 };
 
-struct Named_Index
-{
-    String* name;
-    int index;
-};
-
-struct Subtype_Index {
-    Dynamic_Array<Named_Index> indices;
-};
-
-struct Type_Mods
-{
-    int pointer_level;
-    u32 constant_flags; // Of pointers
-    u32 optional_flags; // Of pointers
-    bool is_constant;
-    Subtype_Index* subtype_index;
-};
-
 struct Datatype
 {
     Datatype_Type type;
@@ -125,8 +107,6 @@ struct Datatype
     bool contains_pattern;
     bool contains_partial_pattern; // Patterns where variables are missing, e.g. Node(_)
     bool contains_pattern_variable_definition; // Pattern with $T, not just reference
-    Datatype* base_type;
-    Type_Mods mods; // These are the modifiers which when applied to the base_type gets us this type
 };
 
 enum class Primitive_Class
@@ -213,14 +193,6 @@ struct Datatype_Function_Pointer
     bool is_optional;
 };
 
-struct Datatype_Subtype
-{
-    Datatype base;
-    Datatype* base_type;
-    String* subtype_name;
-    int subtype_index;
-};
-
 // Note: Datatype_Optional is seperate from optional-pointers, as pointer types have a is_optional boolean
 struct Datatype_Optional
 {
@@ -231,27 +203,20 @@ struct Datatype_Optional
     Struct_Member is_available_member;
 };
 
-struct Struct_Content
-{
-    // Info
-    Datatype_Struct* structure;
-    Subtype_Index* index; // Contains name + index in parent
-    String* name; // For base struct this is the struct-name, otherwise subtype names/ids
-    AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
-
-    // Content
-    Call_Signature* initializer_signature_cached;
-    Dynamic_Array<Struct_Member> members;
-    Dynamic_Array<Struct_Content*> subtypes;
-    Struct_Member tag_member; // Only valid if subtypes aren't empty
-    int max_alignment; // Largest alignment of all members/subtype-members
-};
-
 struct Datatype_Struct 
 {
     Datatype base;
-    AST::Structure_Type struct_type;
-    Struct_Content content;
+    Dynamic_Array<Struct_Member> members;
+    bool is_union;
+
+    String* name; // For base struct this is the struct-name, otherwise subtype names/ids
+    AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
+    Call_Signature* initializer_signature_cached;
+
+    Datatype_Struct* parent_struct;
+    Dynamic_Array<Datatype_Struct*> subtypes;
+    Struct_Member tag_member; // Only valid if subtypes aren't empty
+    int subtype_index; // Index in parent struct, without the + 1 for tag...
 
     Workload_Structure_Body* workload; // May be null if it's a predefined struct
     Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays, constant types or struct_subtypes
@@ -354,6 +319,7 @@ struct Upp_Allocator
 };
 
 
+
 // TYPE-INFORMATION STRUCTS (Usable in Upp)
 struct Internal_Type_Primitive
 {
@@ -373,25 +339,15 @@ struct Internal_Type_Struct_Member
     int offset;
 };
 
-struct Internal_Type_Subtype
-{
-    Upp_Type_Handle type;
-    Upp_C_String subtype_name;
-    int subtype_index;
-};
-
-struct Internal_Type_Struct_Content
-{
-    Upp_Slice<Internal_Type_Struct_Member> members;
-    Upp_Slice<Internal_Type_Struct_Content> subtypes;
-    Internal_Type_Struct_Member tag_member;
-    Upp_C_String name;
-};
-
 struct Internal_Type_Struct
 {
-    Internal_Type_Struct_Content content;
+    Upp_Slice<Internal_Type_Struct_Member> members;
+    Upp_C_String name;
     bool is_union;
+
+    Upp_Slice<Upp_Type_Handle> subtypes;
+    Upp_Type_Handle parent_struct;
+    Internal_Type_Struct_Member tag_member;
 };
 
 struct Internal_Type_Enum_Member
@@ -445,7 +401,6 @@ struct Internal_Type_Information
         Internal_Type_Function function;
         Internal_Type_Struct structure;
         Internal_Type_Enum enumeration;
-        Internal_Type_Subtype struct_subtype;
     } options;
     Datatype_Type tag;
 };
@@ -459,7 +414,6 @@ enum class Type_Deduplication_Type
     SLICE,
     ARRAY,
     FUNCTION_POINTER,
-    SUBTYPE,
     OPTIONAL
 };
 
@@ -476,11 +430,6 @@ struct Type_Deduplication
             bool is_optional;
         } pointer;
         struct {
-            Datatype* base_type;
-            String* name;
-            int index;
-        } subtype;
-        struct {
             Datatype* element_type;
             bool size_known;
             int element_count;
@@ -491,6 +440,16 @@ struct Type_Deduplication
             bool is_optional;
         } function_pointer;
     } options;
+};
+
+struct Type_Modifier_Info
+{
+	Datatype* initial_type; // Queried type
+	Datatype* base_type; // Dereferenced/optional base type
+	Datatype_Struct* struct_subtype; // If it's a subtype or a struct at the core
+	int pointer_level;
+	u32 const_flags;
+	u32 optional_flags;
 };
 
 struct Predefined_Types
@@ -522,14 +481,14 @@ struct Predefined_Types
     Datatype* invalid_type;
     Datatype_Struct* any_type;
     Datatype_Struct* type_information_type;
-    Datatype_Struct* internal_struct_content_type;
+    Datatype_Struct* internal_struct_info_type;
     Datatype_Struct* internal_member_info_type;
+    Datatype_Struct* internal_enum_member_info_type;
 
     Datatype_Struct* empty_struct_type; // Required for now 
     Datatype* empty_pattern_variable;
 
-    Datatype_Enum* cast_mode;
-    Datatype_Enum* cast_option;
+    Datatype_Enum* cast_type_enum;
     Datatype_Enum* primitive_type_enum;
 
     Datatype_Struct* allocator;
@@ -545,11 +504,8 @@ struct Type_System
     Predefined_Types predefined_types;
 
     Hashtable<Type_Deduplication, Datatype*> deduplication_table;
-    Hashset<Subtype_Index*> subtype_index_deduplication;
     Dynamic_Array<Datatype*> types;
     Dynamic_Array<Internal_Type_Information*> internal_type_infos;
-
-    Subtype_Index subtype_base_index;
 };
 
 Type_System type_system_create();
@@ -568,16 +524,12 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 Datatype* type_system_make_constant(Datatype* datatype, Type_System* type_system = nullptr);
 Datatype_Optional* type_system_make_optional(Datatype* datatype);
 // Creating a subtype of a constant creates a constant subtype
-Datatype* type_system_make_subtype(Datatype* datatype, String* subtype_name, int subtype_index, Type_System* type_system = nullptr);
-Datatype* type_system_make_type_with_mods(Datatype* base_type, Type_Mods mods, Type_System* type_system = nullptr);
 Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* call_signature, bool is_optional); 
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);
-Datatype_Struct* type_system_make_struct_empty(AST::Structure_Type struct_type, String* name, Workload_Structure_Body* workload = 0);
-void struct_add_member(Struct_Content* content, String* id, Datatype* member_type, AST::Node* definition_node = nullptr);
-Struct_Content* struct_add_subtype(Struct_Content* content, String* id, AST::Node* definition_node = nullptr);
-Struct_Content* struct_content_get_parent(Struct_Content* content); // Returns 0 if it's base-content
+Datatype_Struct* type_system_make_struct_empty(String* name, bool is_union = false, Datatype_Struct* parent = 0, Workload_Structure_Body* workload = 0);
+void struct_add_member(Datatype_Struct* structure, String* id, Datatype* member_type, AST::Node* definition_node = nullptr);
 void type_system_finish_struct(Datatype_Struct* structure);
 void type_system_finish_enum(Datatype_Enum* enum_type);
 void type_system_finish_array(Datatype_Array* array);
@@ -588,17 +540,16 @@ bool types_are_equal(Datatype* a, Datatype* b);
 bool datatype_is_unknown(Datatype* a);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
-Datatype* datatype_get_non_const_type(Datatype* datatype);
-bool type_mods_pointer_is_constant(Type_Mods mods, int pointer_level);
-bool type_mods_pointer_is_optional(Type_Mods mods, int pointer_level);
-bool type_mods_are_equal(const Type_Mods& a, const Type_Mods& b);
-Struct_Content* type_mods_get_subtype(Datatype_Struct* structure, Type_Mods mods, int max_level = -1);
-Subtype_Index* subtype_index_make(Dynamic_Array<Named_Index> indices); // Takes ownership of indices
-Subtype_Index* subtype_index_make_subtype(Subtype_Index* base_index, String* name, int subtype_index);
-Type_Mods type_mods_make(bool is_constant, int pointer_level, u32 const_flags, u32 optional_flags, Subtype_Index* subtype = 0);
+Datatype* datatype_get_non_const_type(Datatype* datatype, bool* out_was_const = nullptr);
+Datatype* datatype_get_undecorated(
+    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true, bool remove_const = true, 
+    bool remove_optional_pointer = false, bool remove_optional = false
+);
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
+Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
 Upp_C_String upp_c_string_from_id(String* id);
 Upp_C_String upp_c_string_empty();
+
 
 
 // Casting functions
@@ -627,7 +578,6 @@ inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Dataty
 inline Datatype_Type get_datatype_type(Datatype_Pattern_Variable* unused) { return Datatype_Type::PATTERN_VARIABLE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct_Pattern* base) { return Datatype_Type::STRUCT_PATTERN; }
 inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
-inline Datatype_Type get_datatype_type(Datatype_Subtype* base) { return Datatype_Type::SUBTYPE; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>

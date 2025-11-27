@@ -1007,6 +1007,12 @@ namespace Parser
             result->option = Import_Option::NONE;
             advance_token();
 
+            if (test_operator(Operator::TILDE_STAR) || test_operator(Operator::TILDE_STAR_STAR)) {
+                result->type = Import_Type::BUILTIN_TABLE;
+                advance_token();
+                PARSE_SUCCESS(result);
+            }
+
             if (test_token(Token_Type::IDENTIFIER)) 
             {
                 auto& ids = compiler.identifier_pool.predefined_ids;
@@ -1116,7 +1122,6 @@ namespace Parser
 
             auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
             result->is_comptime = false;
-            result->assignment_type = AST::Assignment_Type::DEREFERENCE;
             result->symbols = dynamic_array_create<Definition_Symbol*>(1);
             result->types = dynamic_array_create<AST::Expression*>(1);
             result->values = dynamic_array_create<AST::Expression*>(1);
@@ -1127,8 +1132,6 @@ namespace Parser
                     (token.options.op == Operator::COLON ||
                         token.options.op == Operator::DEFINE_COMPTIME ||
                         token.options.op == Operator::DEFINE_INFER ||
-                        token.options.op == Operator::DEFINE_INFER_POINTER ||
-                        token.options.op == Operator::DEFINE_INFER_RAW ||
                         token.options.op == Operator::SEMI_COLON);
             };
             auto definition_add_symbol = [](Node* parent, Node* child) {
@@ -1152,8 +1155,6 @@ namespace Parser
                     return token.type == Token_Type::OPERATOR &&
                         (token.options.op == Operator::COLON ||
                          token.options.op == Operator::ASSIGN ||
-                         token.options.op == Operator::ASSIGN_POINTER ||
-                         token.options.op == Operator::ASSIGN_RAW ||
                          token.options.op == Operator::SEMI_COLON);
                 };
                 parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_type, found_value_start, nullptr, Operator::COMMA);
@@ -1166,40 +1167,17 @@ namespace Parser
                     result->is_comptime = true;
                     advance_token();
                 }
-                else if (test_operator(Operator::ASSIGN_POINTER)) { // : ... =*
-                    result->is_comptime = false;
-                    result->assignment_type = Assignment_Type::POINTER;
-                    advance_token();
-                }
-                else if (test_operator(Operator::ASSIGN_RAW)) { // : ... =~
-                    result->is_comptime = false;
-                    result->assignment_type = Assignment_Type::RAW;
-                    advance_token();
-                }
                 else {
-                    result->assignment_type = Assignment_Type::RAW; // If no values exist, then the definition is raw, e.g. x: *int
                     PARSE_SUCCESS(result);
                 }
             }
             else if (test_operator(Operator::DEFINE_COMPTIME)) { // x :: 
                 advance_token();
                 result->is_comptime = true;
-                result->assignment_type = Assignment_Type::DEREFERENCE;
             }
             else if (test_operator(Operator::DEFINE_INFER)) { // x :=
                 advance_token();
                 result->is_comptime = false;
-                result->assignment_type = Assignment_Type::DEREFERENCE;
-            }
-            else if (test_operator(Operator::DEFINE_INFER_POINTER)) { // x:=*
-                advance_token();
-                result->is_comptime = false;
-                result->assignment_type = Assignment_Type::POINTER;
-            }
-            else if (test_operator(Operator::DEFINE_INFER_RAW)) { // x:=-
-                advance_token();
-                result->is_comptime = false;
-                result->assignment_type = Assignment_Type::RAW;
             }
             else {
                 CHECKPOINT_EXIT;
@@ -1325,28 +1303,17 @@ namespace Parser
                 result->type = Statement_Type::ASSIGNMENT;
                 result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                result->options.assignment.type = Assignment_Type::DEREFERENCE;
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
 
                 // Parse remaining left_side expressions
                 auto is_assign = [](Token& token, void* userdata) -> bool {
-                    return token.type == Token_Type::OPERATOR && 
-                        (token.options.op == Operator::ASSIGN || token.options.op == Operator::ASSIGN_POINTER || token.options.op == Operator::ASSIGN_RAW || token.options.op == Operator::SEMI_COLON); 
+                    return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::SEMI_COLON); 
                 };
                 parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_left_side, is_assign, nullptr, Operator::COMMA);
 
                 // Check if assignment found, otherwise error
-                if (test_operator(Operator::ASSIGN)) {
-                    result->options.assignment.type = Assignment_Type::DEREFERENCE;
-                }
-                else if (test_operator(Operator::ASSIGN_POINTER)) {
-                    result->options.assignment.type = Assignment_Type::POINTER;
-                }
-                else if (test_operator(Operator::ASSIGN_RAW)) {
-                    result->options.assignment.type = Assignment_Type::RAW;
-                }
-                else {
+                if (!test_operator(Operator::ASSIGN)) {
                     CHECKPOINT_EXIT;
                 }
                 advance_token();
@@ -1355,23 +1322,11 @@ namespace Parser
                 parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, stop_at_semicolon, nullptr, Operator::COMMA);
                 PARSE_SUCCESS(result);
             }
-            else if (test_operator(Operator::ASSIGN) || test_operator(Operator::ASSIGN_POINTER) || test_operator(Operator::ASSIGN_RAW))
+            else if (test_operator(Operator::ASSIGN))
             {
                 result->type = Statement_Type::ASSIGNMENT;
                 result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
                 result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                if (test_operator(Operator::ASSIGN)) {
-                    result->options.assignment.type = Assignment_Type::DEREFERENCE;
-                }
-                else if (test_operator(Operator::ASSIGN_POINTER)) {
-                    result->options.assignment.type = Assignment_Type::POINTER;
-                }
-                else if (test_operator(Operator::ASSIGN_RAW)) {
-                    result->options.assignment.type = Assignment_Type::RAW;
-                }
-                else {
-                    panic("If should have handled this case");
-                }
                 dynamic_array_push_back(&result->options.assignment.left_side, expr);
                 advance_token();
 
@@ -1769,29 +1724,16 @@ namespace Parser
                     advance_token();
                     result->type = Statement_Type::DEFER_RESTORE;
                     result->options.defer_restore.left_side = parse_expression_or_error_expr(upcast(result));
-                    Assignment_Type assignment_type = (Assignment_Type) -1;
-                    if (test_operator(Operator::ASSIGN_POINTER)) {
-                        assignment_type = Assignment_Type::POINTER;
-                    }
-                    else if (test_operator(Operator::ASSIGN)) {
-                        assignment_type = Assignment_Type::DEREFERENCE;
-                    }
-                    else if (test_operator(Operator::ASSIGN_RAW)) {
-                        assignment_type = Assignment_Type::RAW;
-                    }
-
-                    if ((int)assignment_type == -1) {
+                    if (!test_operator(Operator::ASSIGN)) {
                         auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
                         log_error_range_offset("Expected assignment after argument_expression", 0);
                         error_expr->type = Expression_Type::ERROR_EXPR;
                         node_finalize_range(upcast(error_expr));
-                        result->options.defer_restore.assignment_type = Assignment_Type::RAW;
                         result->options.defer_restore.right_side = error_expr;
                         PARSE_SUCCESS(result);
                     }
 
                     advance_token();
-                    result->options.defer_restore.assignment_type = assignment_type;
                     result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
                     PARSE_SUCCESS(result);
                 }
@@ -2009,14 +1951,22 @@ namespace Parser
 
     Path_Lookup* parse_path_lookup(Node* parent)
     {
-        CHECKPOINT_SETUP;
-        if (!test_token(Token_Type::IDENTIFIER)) {
-            CHECKPOINT_EXIT;
+        if (!test_token(Token_Type::IDENTIFIER) &&
+           !(test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1)))
+        {
+            return nullptr;
         }
+
+        CHECKPOINT_SETUP;
 
         Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
         path->parts = dynamic_array_create<Symbol_Lookup*>(1);
         path->is_dot_call_lookup = false;
+        path->is_builtin_lookup = false;
+        if (test_operator(Operator::TILDE)) {
+            path->is_builtin_lookup = true;
+            advance_token();
+        }
 
         while (true)
         {
@@ -2050,7 +2000,7 @@ namespace Parser
 
     Path_Lookup* parse_path_lookup_or_error(Node* parent)
     {
-        if (!test_token(Token_Type::IDENTIFIER)) 
+        if (!test_token(Token_Type::IDENTIFIER) && !(test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1))) 
         {
             Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
             path->parts = dynamic_array_create<Symbol_Lookup*>(1);
@@ -2185,21 +2135,35 @@ namespace Parser
         }
 
         // Casts
-        if (test_keyword(Keyword::CAST) || test_keyword(Keyword::CAST_POINTER))
+        if (test_keyword(Keyword::CAST))
         {
             result->type = Expression_Type::CAST;
             auto& cast = result->options.cast;
-            cast.is_pointer_cast = test_keyword(Keyword::CAST_POINTER);
+            cast.is_dot_call = false;
             advance_token();
-            cast.to_type.available = false;
-            if (test_parenthesis_offset('{', 0))
+
+            if (test_parenthesis('(')) {
+                // cast(value, to, from, option)
+                cast.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
+            }
+            else 
             {
-                advance_token();
-                cast.to_type = optional_make_success(parse_single_expression_or_error(&result->base));
-                if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
+                // cast x
+                Call_Node* call_node = allocate_base<Call_Node>(upcast(result), Node_Type::CALL_NODE);
+                call_node->arguments = dynamic_array_create<Argument*>(1);
+                call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
+                call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
+                
+                Argument* argument = allocate_base<Argument>(upcast(call_node), Node_Type::ARGUMENT);;
+                argument->name.available = false;
+                argument->value = parse_single_expression_or_error(upcast(argument));
+                dynamic_array_push_back(&call_node->arguments, argument);
+
+                node_finalize_range(upcast(argument));
+                node_finalize_range(upcast(call_node));
+                cast.call_node = call_node;
             }
 
-            cast.operand = parse_single_expression_or_error(&result->base);
             PARSE_SUCCESS(result);
         }
 
@@ -2229,10 +2193,10 @@ namespace Parser
         }
 
         // Path/Identifier
-        if (test_token(Token_Type::IDENTIFIER))
+        if (test_token(Token_Type::IDENTIFIER) || (test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1)))
         {
             result->type = Expression_Type::PATH_LOOKUP;
-            result->options.path_lookup = parse_path_lookup(upcast(result)); // Note: parsing path cannot fail in this case
+            result->options.path_lookup = parse_path_lookup_or_error(upcast(result));
             PARSE_SUCCESS(result);
         }
 
@@ -2384,17 +2348,12 @@ namespace Parser
             result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
             PARSE_SUCCESS(result);
         }
-        if (test_keyword_offset(Keyword::STRUCT, 0) || test_keyword_offset(Keyword::UNION, 0))
+        if (test_keyword(Keyword::STRUCT) || test_keyword(Keyword::UNION))
         {
             result->type = Expression_Type::STRUCTURE_TYPE;
             result->options.structure.members = dynamic_array_create<Structure_Member_Node*>();
             result->options.structure.parameters = dynamic_array_create<Parameter*>();
-            if (test_keyword_offset(Keyword::STRUCT, 0)) {
-                result->options.structure.type = AST::Structure_Type::STRUCT;
-            }
-            else {
-                result->options.structure.type = AST::Structure_Type::UNION;
-            }
+            result->options.structure.is_union = test_keyword(Keyword::UNION);
             advance_token();
 
             // Parse struct parameters
@@ -2500,26 +2459,47 @@ namespace Parser
         {
             advance_token();
 
-            result->type = Expression_Type::FUNCTION_CALL;
-            auto& call = result->options.call;
-            call.is_dot_call = true;
+            bool is_cast = false;
+            if (test_keyword(Keyword::CAST))
+            {
+                is_cast = true;
+                result->type = Expression_Type::CAST;
+                result->options.cast.is_dot_call = true;
+                result->options.cast.call_node = nullptr;
+                advance_token();
+            }
+            else
+            {
+                result->type = Expression_Type::FUNCTION_CALL;
+                auto& call = result->options.call;
+                call.is_dot_call = true;
 
-            Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-            call.expr = call_expr;
-            call_expr->type = AST::Expression_Type::PATH_LOOKUP;
-            call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
-            call_expr->options.path_lookup->is_dot_call_lookup = true;
+                Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+                call_expr->type = AST::Expression_Type::PATH_LOOKUP;
+                call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
+                call_expr->options.path_lookup->is_dot_call_lookup = true;
+                node_finalize_range(upcast(call_expr));
+
+                call.expr = call_expr;
+            }
 
             // Parse arguments
-            call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
+            AST::Call_Node* call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
 
             // Add expr as first unnamed argument
-            AST::Argument* argument = allocate_base<Argument>(upcast(call.call_node), AST::Node_Type::ARGUMENT);
+            AST::Argument* argument = allocate_base<Argument>(upcast(call_node), AST::Node_Type::ARGUMENT);
             argument->name = optional_make_failure<String*>();
             argument->value = child;
             argument->base.range = child->base.range;
             argument->base.bounding_range = child->base.bounding_range;
-            dynamic_array_insert_ordered(&call.call_node->arguments, argument, 0);
+            dynamic_array_insert_ordered(&call_node->arguments, argument, 0);
+
+            if (is_cast) {
+                result->options.cast.call_node = call_node;
+            }
+            else {
+                result->options.call.call_node = call_node;
+            }
 
             PARSE_SUCCESS(result);
         }

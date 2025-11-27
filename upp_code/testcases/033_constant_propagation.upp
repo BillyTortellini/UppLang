@@ -6,17 +6,17 @@ main :: ()
 	
 	// Most expressions are able to do constant propagation
 	arr_1: [5 + 5 * 2]int
-	assert(arr_1.size == 15)
+	~assert(arr_1.size == 15)
 	
 	arr_2: [arr_1.size]int
-	assert(arr_2.size == 15)
+	~assert(arr_2.size == 15)
 	
 	// Propagation logically also works with comptime definitions
-	size :: cast {Upp~u64} 10
+	size :: cast {~u64} 10
 	size_double :: size * 2
 	arr_3: [size_double]int
-	assert(arr_3.size == 20)
+	~assert(arr_3.size == 20)
 	
 	size_2 :: size_double - 3
 	arr_4: [size_2]int
-	assert(arr_4.size == 17)
+	~assert(arr_4.size == 17)

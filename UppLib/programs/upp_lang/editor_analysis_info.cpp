@@ -194,7 +194,7 @@ void find_editor_infos_recursive(
 
 			if (expr->type == AST::Expression_Type::AUTO_ENUM)
 			{
-				auto type = datatype_get_non_const_type(info->cast_info.initial_type);
+				auto type = datatype_get_non_const_type(expression_info_get_type(info, true));
 				if (type->type == Datatype_Type::ENUM) {
 					option.expression.is_member_access = true;
 					option.expression.member_access_info.value_type = type;
@@ -220,8 +220,8 @@ void find_editor_infos_recursive(
 				auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ);
 				if (value_info != nullptr && value_info->is_valid) {
 					option.expression.member_access_info.value_type = value_info->cast_info.result_type;
-					if (value_info->result_type == Expression_Result_Type::TYPE) {
-						option.expression.member_access_info.value_type = value_info->options.type;
+					if (value_info->result_type == Expression_Result_Type::DATATYPE) {
+						option.expression.member_access_info.value_type = value_info->options.datatype;
 					}
 				}
 				// Note: Info->is_valid does not really mean a lot anymore

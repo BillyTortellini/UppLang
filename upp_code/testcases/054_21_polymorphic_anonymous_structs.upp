@@ -1,5 +1,5 @@
 
-import Upp~Type_Handle
+import ~Type_Handle
 
 Node :: struct ($T: Type_Handle)
 	a: T
@@ -23,7 +23,7 @@ main :: ()
 	a.type.z = .RED
 	a.type.w = 21
 	
-	assert(a.b.x == false)
-	assert(a.b.y == 15)
-	assert(a.type.w == 21)
+	~assert(a.b.x == false)
+	~assert(a.b.y == 15)
+	~assert(a.type.w == 21)
 	

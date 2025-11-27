@@ -17,18 +17,18 @@ main :: ()
 	// They can be accessed with the ? and ' operators
 	opt? = true
 	opt' = 1
-	assert(test(opt) == 2)
+	~assert(test(opt) == 2)
 	
 	// Values can be cast to optionals (Which sets available to true)
 	opt = cast 12
-	assert(test(opt) == 13)
+	~assert(test(opt) == 13)
 	
 	// To make an optional not available, you can either set the member manually
 	opt? = false
-	assert(test(opt) == -1)
+	~assert(test(opt) == -1)
 	
 	// Or use null
 	opt = null
-	assert(test(opt) == -1)
+	~assert(test(opt) == -1)
 	
 	

@@ -1,6 +1,6 @@
 
-import Upp~Type_Handle
-import Upp~i64
+import ~Type_Handle
+import ~i64
 
 Filter :: struct ($T: Type_Handle)
 	check: (a: T) => bool
@@ -27,6 +27,6 @@ main :: ()
 	x.value = 13
 	b2 := check_filter(x)
 	
-	assert(b1 == true)
-	assert(b2 == false)
+	~assert(b1 == true)
+	~assert(b2 == false)
 	

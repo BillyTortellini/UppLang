@@ -1,8 +1,8 @@
-import Upp~c_string
-import Upp~Type_Info
-import Upp~type_info
-import Upp~Type_Handle
-import Upp~usize
+import ~c_string
+import ~Type_Info
+import ~type_info
+import ~Type_Handle
+import ~usize
 
 Player :: struct
 	age: int
@@ -27,17 +27,17 @@ main :: ()
 	int_size := info.size
 	int_alignment := info.alignment
 	
-	assert(int_size == 4)
-	assert(int_alignment == 4)
-	assert(info.type == int)
+	~assert(int_size == 4)
+	~assert(int_alignment == 4)
+	~assert(info.type == int)
 	
 	// To give an example of what could be done, lets search for a member and get its offset
 	name_offset := member_offset(Player, "name")
-	assert(name_offset == 8)
+	~assert(name_offset == 8)
 	
 	// With bake, this is a zero-cost operation
 	offset := #bake member_offset(Player, "alive")
-	assert(offset == 24)
+	~assert(offset == 24)
 	///
 		This still seems kinda inconvenient compared to C's'offset_of'
 		But in the future you will be able to get almost the same syntax with
@@ -47,7 +47,7 @@ main :: ()
 member_offset :: (type: Type_Handle, name: c_string) => int
 	
 	info := type_info(type)
-	if Upp~struct_tag(info) != .Struct
+	if ~struct_tag(info) != .Struct
 		return -1
 	
 	members := info.Struct.content.members

@@ -72,7 +72,7 @@ struct Custom_Operator_Key
         struct {
             Datatype* datatype; // Iterable type
         } iterator;
-        Cast_Option cast_option;
+        // Cast_Option cast_option;
     } options;
 };
 
@@ -80,25 +80,25 @@ union Custom_Operator
 {
     struct {
         bool switch_left_and_right;
-        Type_Mods left_mods;
-        Type_Mods right_mods;
+        // Type_Mods left_mods;
+        // Type_Mods right_mods;
         ModTree_Function* function;
     } binop;
     struct {
         ModTree_Function* function;
-        Type_Mods mods;
+        // Type_Mods mods;
     } unop;
     struct {
         bool is_polymorphic;
-        Type_Mods mods;
+        // Type_Mods mods;
         union {
             ModTree_Function* function;
             Poly_Function poly_function;
         } options;
     } array_access;
     struct {
-        Cast_Mode cast_mode;
-        Type_Mods mods;
+        // Cast_Mode cast_mode;
+        // Type_Mods mods;
         bool is_polymorphic;
         union {
             ModTree_Function* function;
@@ -106,7 +106,7 @@ union Custom_Operator
         } options;
     } custom_cast;
     struct {
-        Type_Mods iterable_mods;
+        // Type_Mods iterable_mods;
         bool is_polymorphic; 
         union {
             struct {
@@ -123,7 +123,7 @@ union Custom_Operator
             } polymorphic;
         } options;
     } iterator;
-    Cast_Mode cast_mode;
+    // Cast_Mode cast_mode;
 };
 
 struct Workload_Operator_Context_Change;
@@ -153,7 +153,7 @@ enum class Symbol_Type
     GLOBAL,
     PARAMETER,
 
-    TYPE,
+    DATATYPE,
     PATTERN_VARIABLE, // Either comptime parameter or pattern value
     COMPTIME_VALUE,
     ALIAS, // Alias created by import, e.g. import Algorithms~bubble_sort as sort
@@ -173,7 +173,7 @@ struct Symbol
         Symbol* alias_for;
         int unfinished_alias_index;
         Hardcoded_Type hardcoded;
-        Datatype* type;
+        Datatype* datatype;
         ModTree_Global* global;
         Upp_Module* upp_module;
         struct {

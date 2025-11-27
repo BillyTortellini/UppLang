@@ -1,6 +1,6 @@
 
-import Upp~Type_Handle
-import Upp~i64
+import ~Type_Handle
+import ~i64
 
 Foo :: struct ($T: Type_Handle)
 	padding: i64
@@ -12,5 +12,5 @@ main :: ()
 	a.value = 15
 	b.value = false
 	
-	assert(a.value == 15)
-	assert(b.value == false)
+	~assert(a.value == 15)
+	~assert(b.value == false)

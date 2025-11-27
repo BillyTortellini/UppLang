@@ -14,6 +14,7 @@ const char* cast_type_to_string(Cast_Type type)
 	case Cast_Type::POINTERS: return "POINTERS";
 	case Cast_Type::POINTER_TO_ADDRESS: return "POINTER_TO_ADDRESS";
 	case Cast_Type::ADDRESS_TO_POINTER: return "ADDRESS_TO_POINTER";
+	case Cast_Type::ENUMS: return "ENUMS";
 	case Cast_Type::ENUM_TO_INT: return "ENUM_TO_INT";
 	case Cast_Type::INT_TO_ENUM: return "INT_TO_ENUM";
 	case Cast_Type::ARRAY_TO_SLICE: return "ARRAY_TO_SLICE";
@@ -23,6 +24,11 @@ const char* cast_type_to_string(Cast_Type type)
 	case Cast_Type::CUSTOM_CAST: return "CUSTOM_CAST";
 	case Cast_Type::NO_CAST: return "NO_CAST";
 	case Cast_Type::UNKNOWN: return "UNKNOWN";
+	case Cast_Type::TO_BASE_TYPE: return "TO_BASE_TYPE";
+	case Cast_Type::TO_SUB_TYPE: return "TO_SUB_TYPE";
+	case Cast_Type::DEREFERENCE: return "DEREFERENCE";
+	case Cast_Type::ADDRESS_OF: return "ADDRESS_OF";
+	case Cast_Type::CONST_CAST: return "CONST_CAST";
 	case Cast_Type::INVALID: return "INVALID";
 	default: panic("");
 	}
@@ -210,6 +216,7 @@ Identifier_Pool identifier_pool_create()
 		ids.defer_restore = add_id("defer_restore");
 		ids.cast = add_id("cast");
 		ids.defer = add_id("defer");
+		ids.from = add_id("from");
 
 		ids.function = add_id("function");
 		ids.create_fn = add_id("create_fn");
@@ -230,14 +237,6 @@ Identifier_Pool identifier_pool_create()
 		ids.header_dir = add_id("header_dir");
 		ids.definition = add_id("definition");
 
-		ids.cast_mode = add_id("Cast_Mode");
-		ids.cast_mode_none = add_id("NONE");
-		ids.cast_mode_explicit = add_id("EXPLICIT");
-		ids.cast_mode_inferred = add_id("INFERRED");
-		ids.cast_mode_implicit = add_id("IMPLICIT");
-		ids.cast_mode_pointer_explicit = add_id("POINTER_EXPLICIT");
-		ids.cast_mode_pointer_inferred = add_id("POINTER_INFERRED");
-
 		ids.id_import = add_id("import");
 		ids.set_option = add_id("set_option");
 		ids.set_cast_option = add_id("set_cast_option");
@@ -247,26 +246,30 @@ Identifier_Pool identifier_pool_create()
 		ids.add_array_access = add_id("add_array_access");
 		ids.add_iterator = add_id("add_iterator");
 
-		ids.cast_option = add_id("Cast_Option");
-		ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
-		ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIZE_UPCAST] = add_id("INTEGER_SIZE_UPCAST");
-		ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIZE_DOWNCAST] = add_id("INTEGER_SIZE_DOWNCAST");
-		ids.cast_option_enum_values[(int)Cast_Option::INTEGER_SIGNED_TO_UNSIGNED] = add_id("INTEGER_SIGNED_TO_UNSIGNED");
-		ids.cast_option_enum_values[(int)Cast_Option::INTEGER_UNSIGNED_TO_SIGNED] = add_id("INTEGER_UNSIGNED_TO_SIGNED");
-		ids.cast_option_enum_values[(int)Cast_Option::FLOAT_SIZE_UPCAST] = add_id("FLOAT_SIZE_UPCAST");
-		ids.cast_option_enum_values[(int)Cast_Option::FLOAT_SIZE_DOWNCAST] = add_id("FLOAT_SIZE_DOWNCAST");
-		ids.cast_option_enum_values[(int)Cast_Option::INT_TO_FLOAT] = add_id("INT_TO_FLOAT");
-		ids.cast_option_enum_values[(int)Cast_Option::FLOAT_TO_INT] = add_id("FLOAT_TO_INT");
-		ids.cast_option_enum_values[(int)Cast_Option::POINTER_TO_POINTER] = add_id("POINTER_TO_POINTER");
-		ids.cast_option_enum_values[(int)Cast_Option::FROM_BYTE_POINTER] = add_id("FROM_BYTE_POINTER");
-		ids.cast_option_enum_values[(int)Cast_Option::TO_BYTE_POINTER] = add_id("TO_BYTE_POINTER");
-		ids.cast_option_enum_values[(int)Cast_Option::TO_ANY] = add_id("TO_ANY");
-		ids.cast_option_enum_values[(int)Cast_Option::FROM_ANY] = add_id("FROM_ANY");
-		ids.cast_option_enum_values[(int)Cast_Option::ENUM_TO_INT] = add_id("ENUM_TO_INT");
-		ids.cast_option_enum_values[(int)Cast_Option::INT_TO_ENUM] = add_id("INT_TO_ENUM");
-		ids.cast_option_enum_values[(int)Cast_Option::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
-		ids.cast_option_enum_values[(int)Cast_Option::TO_SUBTYPE] = add_id("TO_SUBTYPE");
-		ids.cast_option_enum_values[(int)Cast_Option::TO_OPTIONAL] = add_id("TO_OPTIONAL");
+		ids.cast_type = add_id("Cast_Type");
+		ids.cast_type_enum_values[(int)Cast_Type::INTEGERS] = add_id("INTEGERS");
+		ids.cast_type_enum_values[(int)Cast_Type::FLOATS] = add_id("FLOATS");
+		ids.cast_type_enum_values[(int)Cast_Type::ENUMS] = add_id("ENUMS");
+		ids.cast_type_enum_values[(int)Cast_Type::FLOAT_TO_INT] = add_id("FLOAT_TO_INT");
+		ids.cast_type_enum_values[(int)Cast_Type::INT_TO_FLOAT] = add_id("INT_TO_FLOAT");
+		ids.cast_type_enum_values[(int)Cast_Type::ENUM_TO_INT] = add_id("ENUM_TO_INT");
+		ids.cast_type_enum_values[(int)Cast_Type::INT_TO_ENUM] = add_id("INT_TO_ENUM");
+		ids.cast_type_enum_values[(int)Cast_Type::POINTERS] = add_id("POINTERS");
+		ids.cast_type_enum_values[(int)Cast_Type::POINTER_TO_ADDRESS] = add_id("POINTER_TO_ADDRESS");
+		ids.cast_type_enum_values[(int)Cast_Type::ADDRESS_TO_POINTER] = add_id("ADDRESS_TO_POINTER");
+		ids.cast_type_enum_values[(int)Cast_Type::DEREFERENCE] = add_id("DEREFERENCE");
+		ids.cast_type_enum_values[(int)Cast_Type::ADDRESS_OF] = add_id("ADDRESS_OF");
+		ids.cast_type_enum_values[(int)Cast_Type::TO_SUB_TYPE] = add_id("TO_SUB_TYPE");
+		ids.cast_type_enum_values[(int)Cast_Type::TO_BASE_TYPE] = add_id("TO_BASE_TYPE");
+		ids.cast_type_enum_values[(int)Cast_Type::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
+		ids.cast_type_enum_values[(int)Cast_Type::TO_ANY] = add_id("TO_ANY");
+		ids.cast_type_enum_values[(int)Cast_Type::FROM_ANY] = add_id("FROM_ANY");
+		ids.cast_type_enum_values[(int)Cast_Type::TO_OPTIONAL] = add_id("TO_OPTIONAL");
+		ids.cast_type_enum_values[(int)Cast_Type::CUSTOM_CAST] = add_id("CUSTOM_CAST");
+		ids.cast_type_enum_values[(int)Cast_Type::NO_CAST] = add_id("NO_CAST");
+		ids.cast_type_enum_values[(int)Cast_Type::CONST_CAST] = add_id("CONST_CAST");
+		ids.cast_type_enum_values[(int)Cast_Type::UNKNOWN] = add_id("UNKNOWN");
+		ids.cast_type_enum_values[(int)Cast_Type::INVALID] = add_id("INVALID");
 	}
 
 	return result;

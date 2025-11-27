@@ -12,7 +12,7 @@ main::()
 			if i%2==0
 				continue i_loop
 			even_count=even_count+1
-		assert(even_count==5)
+		~assert(even_count==5)
 	
 	// Break defer
 		// If the defer is not reached, it won't be executed 
@@ -22,7 +22,7 @@ main::()
 				break block
 			defer
 				val=10
-		assert(val==0)
+		~assert(val==0)
 		
 		// If it is reached, it is executed at the break
 		val=0
@@ -32,7 +32,7 @@ main::()
 			if true
 				break block
 			val=100
-		assert(val==10)
+		~assert(val==10)
 		
 		// Defers aren't executed if the break is in the wrong scope
 		val=0
@@ -42,7 +42,7 @@ main::()
 			inner:
 				if true
 					break inner
-			assert(val==0)
-		assert(val==10)
+			~assert(val==0)
+		~assert(val==10)
 	
 

@@ -321,7 +321,7 @@ void symbol_type_append_to_string(Symbol_Type type, String* string)
 	case Symbol_Type::GLOBAL:
 		string_append_formated(string, "Global");
 		break;
-	case Symbol_Type::TYPE:
+	case Symbol_Type::DATATYPE:
 		string_append_formated(string, "Type");
 		break;
 	case Symbol_Type::ERROR_SYMBOL:
