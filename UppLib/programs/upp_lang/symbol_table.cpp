@@ -12,18 +12,21 @@ Symbol_Table* symbol_table_create()
 {
     auto analyser = compiler.semantic_analyser;
     Symbol_Table* result = new Symbol_Table;
+    result->custom_operator_table = nullptr;
+	result->parent_table = nullptr;
+	result->parent_access_level = Symbol_Access_Level::GLOBAL;
     dynamic_array_push_back(&compiler.analysis_data->allocated_symbol_tables, result);
-    result->included_tables = dynamic_array_create<Included_Table>();
+    result->imports = dynamic_array_create<Symbol_Table_Import>();
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
-    result->operator_context = 0;
     return result;
 }
 
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level access_level)
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level)
 {
     Symbol_Table* result = symbol_table_create();
-    symbol_table_add_include_table(result, parent_table, Include_Type::PARENT, access_level, nullptr, Node_Section::FIRST_TOKEN);
-    result->operator_context = parent_table->operator_context;
+	result->parent_table = parent_table;
+	result->parent_access_level = parent_access_level;
+    result->custom_operator_table = parent_table->custom_operator_table;
     return result;
 }
 
@@ -34,33 +37,41 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
         dynamic_array_destroy(iter.value);
     }
     hashtable_destroy(&symbol_table->symbols);
-	dynamic_array_destroy(&symbol_table->included_tables);
+	dynamic_array_destroy(&symbol_table->imports);
     delete symbol_table;
 }
 
-void symbol_table_add_include_table(
-    Symbol_Table* symbol_table, Symbol_Table* included_table, Include_Type include_type, Symbol_Access_Level access_level, 
-    AST::Node* error_report_node, Node_Section error_report_section)
+void symbol_table_add_import(
+    Symbol_Table* symbol_table, Symbol_Table* imported_table, 
+	Import_Type import_type, bool is_transitive, Symbol_Access_Level access_level,
+    AST::Node* error_report_node, Node_Section error_report_section
+)
 {
+	assert(import_type != Import_Type::NONE, "None should only be used for lookups!");
+
     // Check for errors
-    if (symbol_table == included_table) {
+    if (symbol_table == imported_table) {
         log_semantic_error_outside("Trying to include symbol table to itself!", error_report_node, Node_Section::FIRST_TOKEN);
         return;
     }
-    for (int i = 0; i < symbol_table->included_tables.size; i++) {
-        auto include = symbol_table->included_tables[i];
-        if (include.table == included_table) {
-            log_semantic_error_outside("Table is already included!", error_report_node, Node_Section::FIRST_TOKEN);
-            return;
+    for (int i = 0; i < symbol_table->imports.size; i++) {
+        auto& import = symbol_table->imports[i];
+        if (import.table == imported_table) 
+		{
+			if (import.type == import_type) {
+				log_semantic_error_outside("Table is already included!", error_report_node, Node_Section::FIRST_TOKEN);
+				return;
+			}
         }
     }
 
     // Add include
-    Included_Table included;
-    included.access_level = access_level;
-    included.include_type = include_type;
-    included.table = included_table;
-    dynamic_array_push_back(&symbol_table->included_tables, included);
+	Symbol_Table_Import table_import;
+	table_import.table = imported_table;
+	table_import.type = import_type;
+	table_import.access_level = access_level;
+	table_import.is_transitive = is_transitive;
+    dynamic_array_push_back(&symbol_table->imports, table_import);
 }
 
 void symbol_destroy(Symbol* symbol) {
@@ -106,79 +117,104 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 	return new_sym;
 }
 
-struct Query_Table
+Symbol_Query_Info symbol_query_info_make(
+    Symbol_Access_Level access_level, Import_Type import_search_type, bool search_parents
+)
 {
-	Symbol_Table* table;
-	Lookup_Type lookup_type;
-	Symbol_Access_Level access_level;
-	int depth; // How many includes were traversed to find this query-table
-};
+	Symbol_Query_Info result;
+	result.access_level = access_level;
+	result.import_search_type = import_search_type;
+	result.search_parents = search_parents;
+	return result;
+}
 
-void find_all_query_tables_recursive(
-	Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, DynArray<Query_Table>& query_tables, int depth)
+void symbol_table_find_all_reachable_tables_recursive(
+	Symbol_Table* symbol_table, Symbol_Query_Info query_info, DynArray<Reachable_Table>& reachable_tables, int depth)
 {
+	const bool search_imports = (query_info.import_search_type != Import_Type::NONE);
+
 	// Check if already visited
 	bool create_new = true;
-	for (int i = 0; i < query_tables.size; i++) 
+	for (int i = 0; i < reachable_tables.size; i++)
 	{
-		auto& query_table = query_tables[i];
-		if (query_table.table != symbol_table) continue;
+		auto& reachable_table = reachable_tables[i];
+		if (reachable_table.table != symbol_table) continue;
 		create_new = false;
 
-		query_table.access_level = (Symbol_Access_Level)math_maximum((int)access_level, (int)query_table.access_level);
-		query_table.lookup_type  = (Lookup_Type)math_maximum((int)lookup_type, (int)query_table.lookup_type);
-		query_table.depth        = math_minimum(depth, query_table.depth);
+		const bool import_search_improved = search_imports && !reachable_table.search_imports;
+		const bool parent_search_improved = query_info.search_parents && !reachable_table.search_parents;
+		const bool access_level_improved  = (int)query_info.access_level > (int)reachable_table.access_level;
+
+		reachable_table.access_level       = math_maximum(query_info.access_level, reachable_table.access_level);
+		reachable_table.search_imports     = reachable_table.search_imports || search_imports;
+		reachable_table.search_parents     = reachable_table.search_parents || query_info.search_parents;
+		reachable_table.depth              = math_minimum(depth, reachable_table.depth);
 
 		// Return if we already had the same (or stronger) lookup
-		const bool access_level_increased = (int)access_level > (int)query_table.access_level;
-		const bool lookup_level_increased = (int)lookup_type > (int)query_table.lookup_type;
-		if (!access_level_increased && !lookup_level_increased) {
+		if (!import_search_improved && !parent_search_improved && !access_level_improved) {
 			return;
 		}
 		break;
 	}
 
-	// Create new query_table if not already visited 
+	// Create new reachable_table if not already visited 
 	if (create_new) 
 	{
-		Query_Table table;
-		table.access_level = access_level;
-		table.lookup_type = lookup_type;
+		Reachable_Table table;
+		table.access_level = query_info.access_level;
+		table.search_imports = search_imports;
+		table.search_parents = query_info.search_parents;
 		table.depth = depth;
 		table.table = symbol_table;
-		query_tables.push_back(table);
+		reachable_tables.push_back(table);
 	}
 
-	// Recurse to include tables
-	if (lookup_type == Lookup_Type::LOCAL_SEARCH) return;
-	for (int i = 0; i < symbol_table->included_tables.size; i++)
-	{
-		Included_Table& included = symbol_table->included_tables[i];
-		if (lookup_type == Lookup_Type::SEARCH_PARENT && included.include_type != Include_Type::PARENT) continue;
-		if (included.include_type == Include_Type::DOT_CALL_INCLUDE && lookup_type != Lookup_Type::DOT_CALL_LOOKUP) continue;
-
-		Lookup_Type next_lookup_type = lookup_type;
-		if (included.include_type == Include_Type::NORMAL || included.include_type == Include_Type::DOT_CALL_INCLUDE) {
-			next_lookup_type = Lookup_Type::LOCAL_SEARCH;
-		}
-		find_all_query_tables_recursive(
-			included.table, next_lookup_type, math_minimum(included.access_level, access_level), query_tables, depth + 1
+	if (query_info.search_parents && symbol_table->parent_table != nullptr) {
+		Symbol_Access_Level new_level = math_minimum(query_info.access_level, symbol_table->parent_access_level);
+		Symbol_Query_Info new_query = symbol_query_info_make(
+			new_level, query_info.import_search_type, true
 		);
+		symbol_table_find_all_reachable_tables_recursive(symbol_table->parent_table, new_query, reachable_tables, depth + 1);
+	}
+
+	// Search imported tables
+	if (!search_imports) return;
+	for (int i = 0; i < symbol_table->imports.size; i++)
+	{
+		Symbol_Table_Import& import  = symbol_table->imports[i];
+		// Skip other types
+		if (import.type != query_info.import_search_type) {
+			// Special exception: Import_Type::DOT_CALL also queries normal imports
+			if (!(import.type == Import_Type::SYMBOLS && query_info.import_search_type == Import_Type::DOT_CALLS)) {
+				continue;
+			}
+		}
+
+		Symbol_Access_Level next_level = math_minimum(query_info.access_level, import.access_level);
+		Import_Type next_type = query_info.import_search_type;
+		if (!import.is_transitive) {
+			next_type = Import_Type::NONE;
+		}
+		Symbol_Query_Info new_query_info = symbol_query_info_make(next_level, next_type, false);
+		symbol_table_find_all_reachable_tables_recursive(import.table, new_query_info, reachable_tables, depth + 1);
 	}
 }
 
-DynArray<Symbol*> symbol_table_query_id(
-	Symbol_Table* symbol_table, String* id, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena)
+DynArray<Reachable_Table> symbol_table_query_all_reachable_tables(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena)
 {
-	assert(id != nullptr, "We added another function to query all symbols");
+	DynArray<Reachable_Table> reachable_tables = DynArray<Reachable_Table>::create(arena);
+	symbol_table_find_all_reachable_tables_recursive(symbol_table, query_info, reachable_tables, 0);
+	return reachable_tables;
+}
 
+DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, String* id, Symbol_Query_Info query_info, Arena* arena)
+{
 	// Find all tables we are searching through
-	DynArray<Query_Table> query_tables = DynArray<Query_Table>::create(arena);
-	find_all_query_tables_recursive(symbol_table, lookup_type, access_level, query_tables, 0);
+	DynArray<Reachable_Table> query_tables = symbol_table_query_all_reachable_tables(symbol_table, query_info, arena);
+	DynArray<Symbol*> results = DynArray<Symbol*>::create(arena);
 
 	// Add all symbols with the given id
 	// Note: Internal symbols have priority over non-internal symbols (Parameters and variables shadow other symbols)
-	DynArray<Symbol*> results = DynArray<Symbol*>::create(arena);
 	bool found_internal = false;
 	int min_internal_depth = INT_MAX;
 	for (int i = 0; i < query_tables.size; i++)
@@ -217,12 +253,12 @@ DynArray<Symbol*> symbol_table_query_id(
 	return results;
 }
 
-DynArray<Symbol*> symbol_table_query_all_symbols(
-	Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena)
+DynArray<Symbol*> symbol_table_query_all_symbols(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena)
 {
-	DynArray<Query_Table> query_tables = DynArray<Query_Table>::create(arena);
-	find_all_query_tables_recursive(symbol_table, lookup_type, access_level, query_tables, 0);
+	// Find all tables we are searching through
+	DynArray<Reachable_Table> query_tables = symbol_table_query_all_reachable_tables(symbol_table, query_info, arena);
 	DynArray<Symbol*> results = DynArray<Symbol*>::create(arena);
+
 	for (int i = 0; i < query_tables.size; i++)
 	{
 		auto& query_table = query_tables[i];

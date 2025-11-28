@@ -212,12 +212,12 @@ struct Workload_Base
 };
 
 // Analyses context changes of a single type
-struct Workload_Operator_Context_Change
+struct Workload_Custom_Operator
 {
     Workload_Base base;
-    Context_Change_Type context_type_to_analyse;
-    Dynamic_Array<AST::Context_Change*> change_nodes;
-    Operator_Context* context;
+    Custom_Operator_Type type_to_analyse; // Note: Dependencies are split on different custom-operator types
+    Dynamic_Array<AST::Custom_Operator_Node*> change_nodes;
+    Custom_Operator_Table* operator_table;
 };
 
 struct Workload_Module_Analysis
@@ -503,7 +503,7 @@ struct Call_Origin
 		Hardcoded_Type hardcoded;
 		Datatype_Slice* slice_type;
 		Datatype_Function_Pointer* function_pointer;
-		Context_Change_Type context_change_type;
+		Custom_Operator_Type context_change_type;
 		Datatype_Struct* structure;
     } options;
 };
@@ -598,7 +598,6 @@ struct Expression_Info
                     int index; // Either normal member index, or polymorphic parameter index
                 } poly_access;
                 Struct_Member member;
-                ModTree_Function* dot_call_function;
             } options;
         } member_access;
         bool is_optional_pointer;
@@ -628,7 +627,6 @@ struct Statement_Info
     Control_Flow flow;
     struct {
         AST::Code_Block* block; // Continue/break
-        bool is_struct_split; // Definition or assignment
         struct {
             ModTree_Function* function;
             bool switch_arguments;

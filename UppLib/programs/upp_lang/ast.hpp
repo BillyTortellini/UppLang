@@ -42,10 +42,10 @@ namespace AST
 
     enum class Unop
     {
-        NOT, // !
-        NEGATE, // -
-        POINTER, // *
-        DEREFERENCE, // &
+        NOT,         // !
+        NEGATE,      // -
+        ADDRESS_OF,  // -&
+        DEREFERENCE, // -*
     };
 
     enum class Node_Type
@@ -81,31 +81,24 @@ namespace AST
         Token_Range bounding_range;
     };
 
-    enum class Import_Type
+    enum class Import_Operator
     {
         SINGLE_SYMBOL,             // import A~a
-        MODULE_SYMBOLS,            // import A~*
-        MODULE_SYMBOLS_TRANSITIVE, // import A~**
-        FILE,                      // import "../something"
-        BUILTIN_TABLE
-    };
-
-    enum class Import_Option
-    {
-        NONE,
-        DOT_CALL_IMPORT,
-        CONTEXT_IMPORT
+        MODULE_IMPORT,            // import A~*
+        MODULE_IMPORT_TRANSITIVE, // import A~**
+        FILE_IMPORT,               // import "filename"
     };
 
     struct Import
     {
         Node base;
-        Import_Option option;
-        Import_Type type;
+        Import_Type import_type;
+        Import_Operator operator_type;
         Optional<Definition_Symbol*> alias_name;
-        // Depending on import type one of those is set, the other will be 0
-        Path_Lookup* path;
-        String* file_name;
+        union {
+            Path_Lookup* path;
+            String* file_name;
+        } options;
     };
 
     // Note: #get_overload can also specify return_type, in which case the id is set appropriately (see parser.cpp)
@@ -118,21 +111,18 @@ namespace AST
     };
 
     struct Argument;
-    struct Context_Change
+    struct Custom_Operator_Node
     {
         Node base;
-        Context_Change_Type type;
-        union 
-        {
-            Path_Lookup* import_path;
-            Call_Node* call_node; 
-        } options;
+        Custom_Operator_Type type;
+        Call_Node* call_node; 
     };
 
     struct Symbol_Lookup
     {
         Node base;
-        String* name;
+        String* name; // Name for root is Root_Module, unique id
+        bool is_root_module; // E.g. ~, like ~, or ~foo~bar
     };
 
     struct Path_Lookup
@@ -142,7 +132,6 @@ namespace AST
         // NOTE: The last node is only a convenient pointer to the end of parts, but the
         //       node is also inside parts, e.g. parts[parts.size-1] == last
         Symbol_Lookup* last;
-        bool is_builtin_lookup; // Starts with ~
         bool is_dot_call_lookup;
     };
 
@@ -150,7 +139,7 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Definition*> definitions;
-        Dynamic_Array<Context_Change*> context_changes;
+        Dynamic_Array<Custom_Operator_Node*> custom_operators;
         Dynamic_Array<Import*> import_nodes;
         Dynamic_Array<Extern_Import*> extern_imports;
     };
@@ -244,7 +233,7 @@ namespace AST
     {
         Node base;
         Dynamic_Array<Statement*> statements;
-        Dynamic_Array<Context_Change*> context_changes;
+        Dynamic_Array<Custom_Operator_Node*> custom_operators;
         Optional<String*> block_id;
     };
 
@@ -302,6 +291,7 @@ namespace AST
         ARRAY_TYPE,
         SLICE_TYPE,
         CONST_TYPE,
+        POINTER_TYPE,      // *int 
         OPTIONAL_TYPE,     // ? [type-expr]
         OPTIONAL_POINTER,  // ?* [type-expr]
 
@@ -376,6 +366,7 @@ namespace AST
             } array_type;
             Expression* slice_type;
             Expression* const_type;
+            Expression* pointer_points_to_type;
             struct {
                 Dynamic_Array<Parameter*> parameters;
                 Dynamic_Array<Structure_Member_Node*> members;
@@ -491,7 +482,7 @@ namespace AST
     void expression_append_to_string(AST::Expression* expr, String* str);
     void base_append_to_string(Node* base, String* str);
 
-    void context_change_type_append_to_string(Context_Change_Type type, String* string);
+    void custom_operator_type_append_to_string(Custom_Operator_Type type, String* string);
     void path_lookup_append_to_string(Path_Lookup* read, String* string);
     int binop_priority(Binop binop);
 
@@ -511,7 +502,7 @@ namespace AST
         bool type_correct(Path_Lookup* base);
         bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);
-        bool type_correct(Context_Change* base);
+        bool type_correct(Custom_Operator_Node* base);
         bool type_correct(Structure_Member_Node* base);
         bool type_correct(Call_Node* base);
         bool type_correct(Subtype_Initializer* base);

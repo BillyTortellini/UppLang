@@ -484,7 +484,7 @@ namespace Parser
                     auto& code_block = statement->options.block;
                     code_block = allocate_base<Code_Block>(AST::upcast(statement), Node_Type::CODE_BLOCK);
                     code_block->statements = dynamic_array_create<Statement*>();
-                    code_block->context_changes = dynamic_array_create<Context_Change*>();
+                    code_block->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
                     code_block->block_id = optional_make_failure<String*>();
 
                     int block_start_line = pos.line;
@@ -752,6 +752,78 @@ namespace Parser
         return upcast(result);
     }
 
+    Path_Lookup* parse_path_lookup(Node* parent)
+    {
+        auto& ids = compiler.identifier_pool.predefined_ids;
+
+        if (!test_token(Token_Type::IDENTIFIER) && !(test_operator(Operator::TILDE)))
+        {
+            return nullptr;
+        }
+
+        CHECKPOINT_SETUP;
+
+        Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+        path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+        path->is_dot_call_lookup = false;
+
+        if (test_operator(Operator::TILDE)) {
+            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+            dynamic_array_push_back(&path->parts, lookup);
+            lookup->is_root_module = true;
+            lookup->name = ids.root_module;
+            advance_token();
+            node_finalize_range(upcast(lookup));
+        }
+
+        while (true)
+        {
+            // Add symbol-lookup Node
+            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+            dynamic_array_push_back(&path->parts, lookup);
+
+            // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
+            // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
+            if (test_token(Token_Type::IDENTIFIER)) {
+                lookup->name = get_token()->options.identifier;
+                advance_token();
+            }
+            else {
+                log_error("Expected identifier", token_range_make_offset(parser.state.pos, -1)); // Put error on the ~
+                lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
+            }
+            SET_END_RANGE(lookup);
+
+            if (test_operator(Operator::TILDE)) {
+                advance_token();
+            }
+            else {
+                break;
+            }
+        }
+
+        path->last = path->parts[path->parts.size - 1];
+        PARSE_SUCCESS(path);
+    }
+
+    Path_Lookup* parse_path_lookup_or_error(Node* parent)
+    {
+        if (!test_token(Token_Type::IDENTIFIER) && !test_operator(Operator::TILDE)) 
+        {
+            Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+            path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+            path->is_dot_call_lookup = false;
+            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+            dynamic_array_push_back(&path->parts, lookup);
+            path->last = lookup;
+            lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
+            SET_END_RANGE(lookup);
+            SET_END_RANGE(path);
+            return path;
+        }
+        return parse_path_lookup(parent);
+    }
+
     // Always returns node, even if no arguments were found...
     // So one should always test for ( or { before calling this...
     Call_Node* parse_call_node(Node* parent, Parenthesis_Type parenthesis)
@@ -824,7 +896,7 @@ namespace Parser
             dynamic_array_push_back(&block->statements, downcast<AST::Statement>(child));
         }
         else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
-            dynamic_array_push_back(&block->context_changes, downcast<AST::Context_Change>(child));
+            dynamic_array_push_back(&block->custom_operators, downcast<AST::Custom_Operator_Node>(child));
         }
         else {
             panic("");
@@ -844,7 +916,7 @@ namespace Parser
             dynamic_array_push_back(&module->extern_imports, downcast<Extern_Import>(child));
         }
         else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
-            dynamic_array_push_back(&module->context_changes, downcast<Context_Change>(child));
+            dynamic_array_push_back(&module->custom_operators, downcast<Custom_Operator_Node>(child));
         }
         else {
             panic("");
@@ -994,6 +1066,8 @@ namespace Parser
         // Block Item functions
         Import* parse_import(Node* parent)
         {
+            auto& ids = compiler.identifier_pool.predefined_ids;
+
             CHECKPOINT_SETUP;
             if (!test_keyword_offset(Keyword::IMPORT, 0)) {
                 CHECKPOINT_EXIT;
@@ -1002,50 +1076,64 @@ namespace Parser
 
             auto result = allocate_base<Import>(parent, Node_Type::IMPORT);
             result->alias_name = optional_make_failure<Definition_Symbol*>();
-            result->file_name = 0;
-            result->path = 0;
-            result->option = Import_Option::NONE;
+            result->options.path = nullptr;
+            result->import_type = Import_Type::SYMBOLS;
+            result->operator_type = Import_Operator::SINGLE_SYMBOL;
             advance_token();
-
-            if (test_operator(Operator::TILDE_STAR) || test_operator(Operator::TILDE_STAR_STAR)) {
-                result->type = Import_Type::BUILTIN_TABLE;
-                advance_token();
-                PARSE_SUCCESS(result);
-            }
 
             if (test_token(Token_Type::IDENTIFIER)) 
             {
-                auto& ids = compiler.identifier_pool.predefined_ids;
                 auto id = get_token()->options.identifier;
-                if (id == ids.context) {
-                    result->option = Import_Option::CONTEXT_IMPORT;
+                if (id == ids.operators) {
+                    result->import_type = Import_Type::OPERATORS;
                     advance_token();
                 }
-                else if (id == ids.dot_call) {
-                    result->option = Import_Option::DOT_CALL_IMPORT;
+                else if (id == ids.dot_calls) {
+                    result->import_type = Import_Type::DOT_CALLS;
                     advance_token();
                 }
             }
 
-            // Check if its' a file import
+            // Special path for import ~* and import ~**, because they are custom tokens
+            if (test_operator(Operator::TILDE_STAR) || test_operator(Operator::TILDE_STAR_STAR)) 
+            {
+                result->operator_type = 
+                    test_operator(Operator::TILDE_STAR) ? Import_Operator::MODULE_IMPORT : Import_Operator::MODULE_IMPORT_TRANSITIVE;
+
+                Path_Lookup* path_lookup = allocate_base<Path_Lookup>(upcast(result), Node_Type::PATH_LOOKUP);
+                path_lookup->is_dot_call_lookup = false;
+                path_lookup->parts = dynamic_array_create<Symbol_Lookup*>(1);
+
+                Symbol_Lookup* symbol_lookup = allocate_base<Symbol_Lookup>(upcast(path_lookup), Node_Type::SYMBOL_LOOKUP);
+                symbol_lookup->is_root_module = true;
+                symbol_lookup->name = ids.root_module;
+                advance_token();
+
+                dynamic_array_push_back(&path_lookup->parts, symbol_lookup);
+                path_lookup->last = symbol_lookup;
+                node_finalize_range(upcast(symbol_lookup));
+                node_finalize_range(upcast(path_lookup));
+
+                result->options.path = path_lookup;
+                PARSE_SUCCESS(result);
+            }
+
+            // Check if it's a file import
             if (test_token(Token_Type::LITERAL) && get_token()->options.literal_value.type == Literal_Type::STRING) {
-                result->type = Import_Type::FILE;
-                result->file_name = get_token()->options.literal_value.options.string;
+                result->operator_type = Import_Operator::FILE_IMPORT;
+                result->options.file_name = get_token()->options.literal_value.options.string;
                 advance_token();
             }
-            else {
-                result->type = Import_Type::SINGLE_SYMBOL;
-                result->path = parse_path_lookup(upcast(result));
-                if (result->path == 0) {
-                    CHECKPOINT_EXIT;
-                }
-
+            else 
+            {
+                result->operator_type = Import_Operator::SINGLE_SYMBOL;
+                result->options.path = parse_path_lookup_or_error(upcast(result));
                 if (test_operator(Operator::TILDE_STAR)) {
-                    result->type = Import_Type::MODULE_SYMBOLS;
+                    result->operator_type = Import_Operator::MODULE_IMPORT;
                     advance_token();
                 }
                 else if (test_operator(Operator::TILDE_STAR_STAR)) {
-                    result->type = Import_Type::MODULE_SYMBOLS_TRANSITIVE;
+                    result->operator_type = Import_Operator::MODULE_IMPORT_TRANSITIVE;
                     advance_token();
                 }
             }
@@ -1057,58 +1145,31 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
-        Context_Change* parse_context_change(Node* parent)
+        Custom_Operator_Node* parse_context_change(Node* parent)
         {
             auto& ids = compiler.identifier_pool.predefined_ids;
 
-            if (!test_keyword_offset(Keyword::CONTEXT, 0)) {
-                return 0;
+            if (!test_token(Token_Type::KEYWORD)) {
+                return nullptr;
+            }
+            auto keyword = get_token()->options.keyword;
+            Custom_Operator_Type custom_op_type;
+            switch (keyword)
+            {
+            case Keyword::ADD_ARRAY_ACCESS: custom_op_type = Custom_Operator_Type::ARRAY_ACCESS; break;
+            case Keyword::ADD_AUTO_CAST_TYPE: custom_op_type = Custom_Operator_Type::AUTO_CAST_TYPE; break;
+            case Keyword::ADD_CAST: custom_op_type = Custom_Operator_Type::CAST; break;
+            case Keyword::ADD_UNOP: custom_op_type = Custom_Operator_Type::UNOP; break;
+            case Keyword::ADD_BINOP: custom_op_type = Custom_Operator_Type::BINOP; break;
+            case Keyword::ADD_ITERATOR: custom_op_type = Custom_Operator_Type::ITERATOR; break;
+            default: return nullptr;
             }
 
 		    CHECKPOINT_SETUP;
-            auto result = allocate_base<Context_Change>(parent, Node_Type::CONTEXT_CHANGE);
+            auto result = allocate_base<Custom_Operator_Node>(parent, Node_Type::CONTEXT_CHANGE);
             advance_token();
-            result->type = Context_Change_Type::INVALID;
-
-            // Check if import
-            if (test_keyword(Keyword::IMPORT)) {
-                result->type = Context_Change_Type::IMPORT;
-                advance_token();
-
-                auto path = parse_path_lookup(upcast(result));
-                if (path == 0) {
-                    CHECKPOINT_EXIT;
-                }
-
-                result->options.import_path = path;
-                PARSE_SUCCESS(result);
-            }
-
-
-            // Check for identifier
-            Context_Change_Type change_type = Context_Change_Type::INVALID;
-            if (test_token(Token_Type::IDENTIFIER)) 
-            {
-                auto& ids = compiler.identifier_pool.predefined_ids;
-                auto id = get_token()->options.identifier;
-
-                if (id == ids.add_array_access) { change_type = Context_Change_Type::ARRAY_ACCESS; }
-                else if (id == ids.add_binop) { change_type = Context_Change_Type::BINARY_OPERATOR; }
-                else if (id == ids.add_unop) { change_type = Context_Change_Type::UNARY_OPERATOR; }
-                else if (id == ids.add_iterator) { change_type = Context_Change_Type::ITERATOR; }
-                else if (id == ids.add_cast) { change_type = Context_Change_Type::CAST; }
-                else if (id == ids.set_cast_option) { change_type = Context_Change_Type::CAST_OPTION; }
-                else {
-                    log_error_range_offset("Identifier is not a valid context operation", 1);
-                }
-                advance_token();
-            }
-            else {
-                log_error_range_offset("Expected identifier", 0);
-            }
-
-            result->type = change_type;
-            result->options.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
+            result->type = custom_op_type;
+            result->call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
 
@@ -1702,7 +1763,7 @@ namespace Parser
                         {
                             Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
                             code_block->statements = dynamic_array_create<Statement*>(1);
-                            code_block->context_changes = dynamic_array_create<Context_Change*>();
+                            code_block->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
                             code_block->block_id = optional_make_failure<String*>();
 
                             dynamic_array_push_back(&code_block->statements, statement);
@@ -1858,7 +1919,7 @@ namespace Parser
     {
         auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
         result->statements = dynamic_array_create<Statement*>();
-        result->context_changes = dynamic_array_create<Context_Change*>();
+        result->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
         result->block_id = parse_block_label_or_use_related_node_id(related_node);
         parse_list_of_items(
             upcast(result), wrapper_parse_statement_or_context_change, code_block_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, true
@@ -1949,73 +2010,6 @@ namespace Parser
         PARSE_SUCCESS(result);
     }
 
-    Path_Lookup* parse_path_lookup(Node* parent)
-    {
-        if (!test_token(Token_Type::IDENTIFIER) &&
-           !(test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1)))
-        {
-            return nullptr;
-        }
-
-        CHECKPOINT_SETUP;
-
-        Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
-        path->parts = dynamic_array_create<Symbol_Lookup*>(1);
-        path->is_dot_call_lookup = false;
-        path->is_builtin_lookup = false;
-        if (test_operator(Operator::TILDE)) {
-            path->is_builtin_lookup = true;
-            advance_token();
-        }
-
-        while (true)
-        {
-            // Add symbol-lookup Node
-            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-            dynamic_array_push_back(&path->parts, lookup);
-
-            // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
-            // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
-            if (test_token(Token_Type::IDENTIFIER)) {
-                lookup->name = get_token()->options.identifier;
-                advance_token();
-            }
-            else {
-                log_error("Expected identifier", token_range_make_offset(parser.state.pos, -1)); // Put error on the ~
-                lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
-            }
-            SET_END_RANGE(lookup);
-
-            if (test_operator(Operator::TILDE)) {
-                advance_token();
-            }
-            else {
-                break;
-            }
-        }
-
-        path->last = path->parts[path->parts.size - 1];
-        PARSE_SUCCESS(path);
-    }
-
-    Path_Lookup* parse_path_lookup_or_error(Node* parent)
-    {
-        if (!test_token(Token_Type::IDENTIFIER) && !(test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1))) 
-        {
-            Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
-            path->parts = dynamic_array_create<Symbol_Lookup*>(1);
-            path->is_dot_call_lookup = false;
-            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-            dynamic_array_push_back(&path->parts, lookup);
-            path->last = lookup;
-            lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
-            SET_END_RANGE(lookup);
-            SET_END_RANGE(path);
-            return path;
-        }
-        return parse_path_lookup(parent);
-    }
-
     Expression* parse_single_expression_no_postop(Node* parent)
     {
         // DOCU: Parses Pre-Ops + Bases, but no postops
@@ -2045,10 +2039,9 @@ namespace Parser
             {
             case Operator::SUBTRACTION: unop = Unop::NEGATE; break;
             case Operator::NOT: unop = Unop::NOT; break;
-            case Operator::AMPERSAND: unop = Unop::DEREFERENCE; break;
-            case Operator::MULTIPLY: unop = Unop::POINTER; break;
             default: valid = false;
             }
+
             if (valid) {
                 advance_token();
                 result->type = Expression_Type::UNARY_OPERATION;
@@ -2056,6 +2049,14 @@ namespace Parser
                 result->options.unop.expr = parse_single_expression_or_error(&result->base);
                 PARSE_SUCCESS(result);
             }
+        }
+
+        if (test_operator(Operator::MULTIPLY)) 
+        {
+            advance_token();
+            result->type = Expression_Type::POINTER_TYPE;
+            result->options.optional_pointer_child_type = parse_single_expression_or_error(&result->base);
+            PARSE_SUCCESS(result);
         }
 
         if (test_keyword_offset(Keyword::BAKE, 0))
@@ -2391,7 +2392,7 @@ namespace Parser
             auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
             module->definitions = dynamic_array_create<Definition*>(1);
             module->import_nodes = dynamic_array_create<Import*>(1);
-            module->context_changes = dynamic_array_create<Context_Change*>(1);
+            module->custom_operators = dynamic_array_create<Custom_Operator_Node*>(1);
             advance_token();
             parse_list_of_items(
                 upcast(module), wrapper_parse_module_item, module_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
@@ -2529,6 +2530,15 @@ namespace Parser
             call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
+        else if (test_operator(Operator::DEREFERENCE) || test_operator(Operator::ADDRESS_OF))
+        {
+            result->type = Expression_Type::UNARY_OPERATION;
+            result->options.unop.type = test_operator(Operator::DEREFERENCE) ? Unop::DEREFERENCE : Unop::ADDRESS_OF;
+            result->options.unop.expr = child;
+            advance_token();
+            PARSE_SUCCESS(result);
+        }
+
         CHECKPOINT_EXIT;
     }
 
@@ -2672,7 +2682,7 @@ namespace Parser
         parser.unit->root = root;
         root->definitions = dynamic_array_create<Definition*>();
         root->import_nodes = dynamic_array_create<Import*>();
-        root->context_changes = dynamic_array_create<Context_Change*>();
+        root->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
 
         // Initialize state
         parser.state.pos = token_index_make(0, 0);

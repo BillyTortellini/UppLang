@@ -50,8 +50,8 @@ namespace AST
             if (block->statements.data != 0) {
                 dynamic_array_destroy(&block->statements);
             }
-            if (block->context_changes.data != 0) {
-                dynamic_array_destroy(&block->context_changes);
+            if (block->custom_operators.data != 0) {
+                dynamic_array_destroy(&block->custom_operators);
             }
             break;
         }
@@ -66,8 +66,8 @@ namespace AST
             if (module->extern_imports.data != 0) {
                 dynamic_array_destroy(&module->extern_imports);
             }
-            if (module->context_changes.data != 0) {
-                dynamic_array_destroy(&module->context_changes);
+            if (module->custom_operators.data != 0) {
+                dynamic_array_destroy(&module->custom_operators);
             }
             break;
         }
@@ -196,7 +196,7 @@ Node* base_get_child(Node* node, int child_index)
 	}
 	case Node_Type::CODE_BLOCK: {
 		auto block = (Code_Block*)node;
-		FILL_ARRAY(block->context_changes);
+		FILL_ARRAY(block->custom_operators);
 		FILL_ARRAY(block->statements);
 		break;
 	}
@@ -214,13 +214,8 @@ Node* base_get_child(Node* node, int child_index)
 		break;
 	}
 	case Node_Type::CONTEXT_CHANGE: {
-		auto context = (Context_Change*)node;
-		if (context->type == Context_Change_Type::IMPORT) {
-			FILL(context->options.import_path);
-		}
-		else {
-			FILL(context->options.call_node);
-		}
+		auto custom_op = (Custom_Operator_Node*)node;
+		FILL(custom_op->call_node);
 		break;
 	}
 	case Node_Type::SUBTYPE_INITIALIZER: {
@@ -230,8 +225,8 @@ Node* base_get_child(Node* node, int child_index)
 	}
 	case Node_Type::IMPORT: {
 		auto import = (Import*)node;
-		if (import->type != Import_Type::FILE && import->type != Import_Type::BUILTIN_TABLE) {
-			FILL(import->path);
+		if (import->operator_type != Import_Operator::FILE_IMPORT) {
+			FILL(import->options.path);
 		}
 		FILL_OPTIONAL(import->alias_name);
 		break;
@@ -263,7 +258,7 @@ Node* base_get_child(Node* node, int child_index)
 		auto module = (Module*)node;
 		FILL_ARRAY(module->import_nodes);
 		FILL_ARRAY(module->extern_imports);
-		FILL_ARRAY(module->context_changes);
+		FILL_ARRAY(module->custom_operators);
 		FILL_ARRAY(module->definitions);
 		break;
 	}
@@ -380,6 +375,10 @@ Node* base_get_child(Node* node, int child_index)
 		case Expression_Type::CONST_TYPE: {
 			auto& const_type = expr->options.const_type;
 			FILL(const_type);
+			break;
+		}
+		case Expression_Type::POINTER_TYPE: {
+			FILL(expr->options.pointer_points_to_type);
 			break;
 		}
 		case Expression_Type::AUTO_ENUM: {
@@ -577,13 +576,8 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		break;
 	}
 	case Node_Type::CONTEXT_CHANGE: {
-		auto context = (Context_Change*)node;
-		if (context->type == Context_Change_Type::IMPORT) {
-			FILL(context->options.import_path);
-		}
-		else {
-			FILL(context->options.call_node);
-		}
+		auto custom_op = (Custom_Operator_Node*)node;
+		FILL(custom_op->call_node);
 		break;
 	}
 	case Node_Type::SUBTYPE_INITIALIZER: {
@@ -593,8 +587,8 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 	}
 	case Node_Type::IMPORT: {
 		auto import = (Import*)node;
-		if (import->type != Import_Type::FILE && import->type != Import_Type::BUILTIN_TABLE) {
-			FILL(import->path);
+		if (import->operator_type != Import_Operator::FILE_IMPORT) {
+			FILL(import->options.path);
 		}
 		FILL_OPTIONAL(import->alias_name);
 		break;
@@ -645,7 +639,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 	}
 	case Node_Type::CODE_BLOCK: {
 		auto block = (Code_Block*)node;
-		FILL_ARRAY(block->context_changes);
+		FILL_ARRAY(block->custom_operators);
 		FILL_ARRAY(block->statements);
 		break;
 	}
@@ -663,7 +657,7 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		auto module = (Module*)node;
 		FILL_ARRAY(module->import_nodes);
 		FILL_ARRAY(module->extern_imports);
-		FILL_ARRAY(module->context_changes);
+		FILL_ARRAY(module->custom_operators);
 		FILL_ARRAY(module->definitions);
 		break;
 	}
@@ -780,6 +774,10 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 		case Expression_Type::CONST_TYPE: {
 			auto& const_type = expr->options.const_type;
 			FILL(const_type);
+			break;
+		}
+		case Expression_Type::POINTER_TYPE: {
+			FILL(expr->options.pointer_points_to_type);
 			break;
 		}
 		case Expression_Type::AUTO_ENUM: {
@@ -1002,6 +1000,7 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 	case Expression_Type::ARRAY_TYPE: string_append_formated(str, "Array Type"); break;
 	case Expression_Type::SLICE_TYPE: string_append_formated(str, "Slice Type"); break;
 	case Expression_Type::CONST_TYPE: string_append_formated(str, "Const Type"); break;
+	case Expression_Type::POINTER_TYPE: string_append_formated(str, "Pointer Type"); break;
 	case Expression_Type::ERROR_EXPR: string_append_formated(str, "Error"); break;
 	case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "Struct Initializer"); break;
 	case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "Array Initializer"); break;
@@ -1029,13 +1028,13 @@ void base_append_to_string(Node* base, String* str)
 	case Node_Type::IMPORT: {
 		auto import = (Import*)base;
 		string_append_formated(str, "IMPORT ");
-		if (import->type == Import_Type::FILE) {
-			string_append_formated(str, "\"%s\" ", import->file_name->characters);
+		if (import->operator_type == Import_Operator::FILE_IMPORT) {
+			string_append_formated(str, "\"%s\" ", import->options.file_name->characters);
 		}
-		else if (import->type == Import_Type::MODULE_SYMBOLS) {
+		else if (import->operator_type == Import_Operator::MODULE_IMPORT) {
 			string_append_formated(str, "~* ");
 		}
-		else if (import->type == Import_Type::MODULE_SYMBOLS_TRANSITIVE) {
+		else if (import->operator_type == Import_Operator::MODULE_IMPORT_TRANSITIVE) {
 			string_append_formated(str, "~** ");
 		}
 		break;
@@ -1077,7 +1076,7 @@ void base_append_to_string(Node* base, String* str)
 		break;
 	}
 	case Node_Type::CONTEXT_CHANGE: {
-		context_change_type_append_to_string(downcast<Context_Change>(base)->type, str);
+		custom_operator_type_append_to_string(downcast<Custom_Operator_Node>(base)->type, str);
 		break;
 	}
 	case Node_Type::SUBTYPE_INITIALIZER: {
@@ -1176,6 +1175,7 @@ void base_append_to_string(Node* base, String* str)
 		case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
 		case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
 		case Expression_Type::CONST_TYPE: string_append_formated(str, "CONST_TYPE"); break;
+		case Expression_Type::POINTER_TYPE: string_append_formated(str, "POINTER_TYPE"); break;
 		case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
 		case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
 		case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;
@@ -1272,18 +1272,16 @@ int binop_priority(Binop binop)
 	return 0;
 }
 
-void context_change_type_append_to_string(Context_Change_Type type, String* string)
+void custom_operator_type_append_to_string(Custom_Operator_Type type, String* string)
 {
 	switch (type)
 	{
-	case Context_Change_Type::ARRAY_ACCESS: string_append(string, "ARRAY_ACCESS"); break;
-	case Context_Change_Type::BINARY_OPERATOR: string_append(string, "BINARY_OPERATOR"); break;
-	case Context_Change_Type::UNARY_OPERATOR: string_append(string, "UNARY_OPERATOR"); break;
-	case Context_Change_Type::CAST: string_append(string, "CAST"); break;
-	case Context_Change_Type::CAST_OPTION: string_append(string, "CAST_OPTION"); break;
-	case Context_Change_Type::ITERATOR: string_append(string, "ITERATOR"); break;
-	case Context_Change_Type::INVALID: string_append(string, "INVALID"); break;
-	case Context_Change_Type::IMPORT: string_append(string, "IMPORT"); break;
+	case Custom_Operator_Type::ARRAY_ACCESS: string_append(string, "ARRAY_ACCESS"); break;
+	case Custom_Operator_Type::BINOP: string_append(string, "BINARY_OPERATOR"); break;
+	case Custom_Operator_Type::UNOP: string_append(string, "UNARY_OPERATOR"); break;
+	case Custom_Operator_Type::CAST: string_append(string, "CAST"); break;
+	case Custom_Operator_Type::AUTO_CAST_TYPE: string_append(string, "AUTO_CAST_TYPE"); break;
+	case Custom_Operator_Type::ITERATOR: string_append(string, "ITERATOR"); break;
 	default: panic("");
 	}
 }
@@ -1306,7 +1304,7 @@ namespace Helpers
 	bool type_correct(Call_Node* base) {
 		return base->base.type == Node_Type::CALL_NODE;
 	}
-	bool type_correct(Context_Change* base) {
+	bool type_correct(Custom_Operator_Node* base) {
 		return base->base.type == Node_Type::CONTEXT_CHANGE;
 	}
 	bool type_correct(Structure_Member_Node* base) {

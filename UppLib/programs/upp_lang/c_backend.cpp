@@ -1900,6 +1900,15 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
         }
         break;
     }
+    case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST:
+    {
+        auto& infos = access->option.non_destructive_cast;
+        string_append_formated(gen.text, "(");
+        c_generator_output_type_reference(access->datatype);
+        string_append_formated(gen.text, ") ");
+        c_generator_output_data_access(infos.value_access, add_parenthesis_on_pointer_ops);
+        break;
+    }
     case IR_Data_Access_Type::NOTHING:
     {
         panic("Not sure if this should happen");

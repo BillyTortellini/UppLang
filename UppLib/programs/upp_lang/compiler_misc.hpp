@@ -73,17 +73,15 @@ enum class Cast_Type
 };
 const char* cast_type_to_string(Cast_Type type);
 
-enum class Context_Change_Type
+enum class Custom_Operator_Type
 {
-	BINARY_OPERATOR,
-	UNARY_OPERATOR,
-	ARRAY_ACCESS,
 	CAST,
+	BINOP,
+	UNOP,
+	ARRAY_ACCESS,
 	ITERATOR,
-	CAST_OPTION,
-	IMPORT,
+	AUTO_CAST_TYPE,
 
-	INVALID, // Not a valid context change
 	MAX_ENUM_VALUE
 };
 
@@ -94,12 +92,12 @@ enum class Symbol_Access_Level
     INTERNAL = 2     // Access level for variables/parameters of functions, which only have meaningful values during execution
 };
 
-enum class Lookup_Type
+enum class Import_Type
 {
-    LOCAL_SEARCH = 1, // Only search in given symbol table
-    SEARCH_PARENT = 2, // Only search in parent table
-	NORMAL = 3,
-	DOT_CALL_LOOKUP = 4,
+	NONE,      // for lookups, if we don't want to query imports
+    SYMBOLS,   // import Foo~*
+    DOT_CALLS,  // import dot_call Foo
+    OPERATORS, // import operators Foo
 };
 
 enum class Node_Section
@@ -183,8 +181,6 @@ enum class Member_Access_Type
 	STRUCT_MEMBER_ACCESS, // Includes subtype and tag access
 	STRUCT_POLYMORHPIC_PARAMETER_ACCESS,
 	ENUM_MEMBER_ACCESS,
-	DOT_CALL_AS_MEMBER,
-	DOT_CALL,
 	STRUCT_SUBTYPE, // Generates a type, e.g. x: Node.Expression
 	STRUCT_UP_OR_DOWNCAST, // a: Node, a.Expression.something --> The .Expression is a downcast
 };
@@ -280,21 +276,27 @@ struct Predefined_IDs
 	String* main;
 	String* id_struct;
 	String* empty_string;
+	String* root_module;
 	String* invalid_symbol_name;
 	String* byte;
 	String* value;
 	String* is_available;
 	String* uninitialized_token; // _
 	String* return_type_name; // !return_type
-	String* context;
-	String* dot_call;
+	String* operators;
+	String* dot_calls;
 
 	String* hashtag_instanciate;
 	String* hashtag_bake;
 	String* hashtag_get_overload;
 	String* hashtag_get_overload_poly;
+	String* hashtag_add_binop;
+	String* hashtag_add_unop;
+	String* hashtag_add_cast;
+	String* hashtag_add_auto_cast_type;
+	String* hashtag_add_iterator;
+	String* hashtag_add_array_access;
 
-	String* cast_pointer;
 	String* defer_restore;
 	String* cast;
 	String* defer;
@@ -336,16 +338,7 @@ struct Predefined_IDs
 	String* allocator;
 	String* bytes;
 
-	// Context members 
-	String* id_import;
-	String* set_option;
-	String* set_cast_option;
-	String* add_binop;
-	String* add_unop;
-	String* add_cast;
-	String* add_array_access;
-	String* add_iterator;
-
+	// Cast type
 	String* cast_type;
 	String* cast_type_enum_values[(int)Cast_Type::MAX_ENUM_VALUE];
 };

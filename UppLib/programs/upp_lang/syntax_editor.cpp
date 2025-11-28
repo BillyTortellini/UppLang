@@ -1667,28 +1667,49 @@ namespace Text_Editing
 			out_space_after = false;
 			return;
 		}
-		case Token_Type::INVALID:
-		case Token_Type::KEYWORD: {
+		case Token_Type::INVALID: {
+			out_space_after = false;
+			out_space_before = false;
+			return;
+		}
+		case Token_Type::KEYWORD: 
+		{
 			out_space_before = true;
 			out_space_after = true;
-			if (token.options.keyword == Keyword::NEW && token_index + 1 < tokens.size) {
-				const auto& next = tokens[token_index + 1];
-				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::BRACES) {
-					out_space_after = false;
-				}
+			auto keyword = token.options.keyword;
+
+			bool no_space_if_next_is_parenthesis = false;
+
+			switch (keyword)
+			{
+			case Keyword::ADD_CAST:
+			case Keyword::ADD_AUTO_CAST_TYPE:
+			case Keyword::ADD_ARRAY_ACCESS:
+			case Keyword::ADD_BINOP:
+			case Keyword::ADD_UNOP:
+			case Keyword::ADD_ITERATOR:
+			case Keyword::NEW: no_space_if_next_is_parenthesis = true; break;
+			case Keyword::CAST: {
+				out_space_before = false;
+				no_space_if_next_is_parenthesis = true; 
+				break;
 			}
-			if ((token.options.keyword == Keyword::CAST) && token_index + 1 < tokens.size) {
+			case Keyword::BAKE:
+			case Keyword::INSTANCIATE:
+			case Keyword::GET_OVERLOAD:
+			case Keyword::GET_OVERLOAD_POLY:
+			case Keyword::MUTABLE:
+			case Keyword::IN_KEYWORD: {
+				out_space_before = false;
+				break;
+			}
+			}
+
+			if (no_space_if_next_is_parenthesis && token_index + 1 < tokens.size) {
 				const auto& next = tokens[token_index + 1];
 				if (next.type == Token_Type::PARENTHESIS && next.options.parenthesis.is_open && next.options.parenthesis.type == Parenthesis_Type::PARENTHESIS) {
 					out_space_after = false;
 				}
-			}
-			if (token.options.keyword == Keyword::CAST ||
-				token.options.keyword == Keyword::BAKE || token.options.keyword == Keyword::INSTANCIATE ||
-				token.options.keyword == Keyword::GET_OVERLOAD || token.options.keyword == Keyword::GET_OVERLOAD_POLY ||
-				token.options.keyword == Keyword::MUTABLE || token.options.keyword == Keyword::IN_KEYWORD) 
-			{
-				out_space_before = false;
 			}
 			return;
 		}
@@ -1743,6 +1764,8 @@ namespace Text_Editing
 		case Operator::UNINITIALIZED:
 		case Operator::QUESTION_MARK:
 		case Operator::OPTIONAL_POINTER:
+		case Operator::ADDRESS_OF:
+		case Operator::DEREFERENCE:
 		case Operator::DOT_CALL:
 		case Operator::DOLLAR: {
 			out_space_after = false;
@@ -1787,7 +1810,7 @@ namespace Text_Editing
 		}
 
 								 // Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
-		case Operator::MULTIPLY: // Could also be pointer dereference...
+		case Operator::MULTIPLY: // Could also be pointer type
 		case Operator::SUBTRACTION:
 		{
 			// If we don't have a token before or after, assume that it's a Unop
@@ -3870,6 +3893,75 @@ Datatype* editor_pattern_variable_get_type(Pattern_Variable* pattern_variable, A
 	return nullptr;
 }
 
+struct String_Path_Lookup_Info
+{
+	DynArray<Symbol*> symbols;
+	String last_part;
+};
+
+String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symbol_Table* symbol_table, Import_Type import_type, Arena* arena)
+{
+	String_Path_Lookup_Info result;
+	result.symbols = DynArray<Symbol*>::create(arena);
+	result.last_part = string_create_static("");
+
+	// No suggestions if text is empty
+	if (path_lookup_text.size == 0) {
+		return result;
+	}
+	assert(symbol_table != nullptr, "Note: Previously there was some text that this may be null on the very first compile");
+
+	Array<String> path_parts = string_split(path_lookup_text, '~');
+	SCOPE_EXIT(string_split_destroy(path_parts));
+	String last_part = path_parts[path_parts.size - 1];
+	result.last_part = last_part;
+
+	Symbol_Query_Info query_info = symbol_query_info_make(Symbol_Access_Level::INTERNAL, import_type, true);
+	int start_index = 0;
+	if (path_lookup_text[0] == '~') 
+	{
+		Upp_Module* builtin_module = syntax_editor.analysis_data->builtin_module;
+		if (builtin_module == nullptr) return result;
+		symbol_table = builtin_module->symbol_table;
+		start_index = 1;
+
+		query_info.access_level = Symbol_Access_Level::GLOBAL;
+		query_info.search_parents = false;
+		query_info.import_search_type = Import_Type::NONE;
+	}
+
+	// Follow path
+	for (int i = start_index; i < path_parts.size - 1; i++)
+	{
+		String part = path_parts[i];
+
+		String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, part);
+		DynArray<Symbol*> symbols = symbol_table_query_id(symbol_table, id, query_info, arena);
+
+		// After first lookup the query-type changes
+		query_info.access_level = Symbol_Access_Level::GLOBAL;
+		query_info.search_parents = false;
+		query_info.import_search_type = Import_Type::NONE;
+
+		Symbol_Table* next_table = nullptr;
+		for (int j = 0; j < symbols.size; j++) {
+			auto symbol = symbols[j];
+			if (symbol->type == Symbol_Type::MODULE) {
+				next_table = symbol->options.upp_module->symbol_table;
+				break;
+			}
+		}
+
+		if (next_table == 0) {
+			return result;
+		}
+		symbol_table = next_table;
+	}
+
+	result.symbols = symbol_table_query_all_symbols(symbol_table, query_info, arena);
+	return result;
+}
+
 void code_completion_find_suggestions()
 {
 	auto& editor = syntax_editor;
@@ -3950,37 +4042,64 @@ void code_completion_find_suggestions()
 	auto& ids = compiler.identifier_pool.predefined_ids;
 
 	// Get partially typed word
-	String partially_typed = string_create_static("");
+	String fuzzy_search_string = string_create_static("");
 	bool is_member_access = false;
 	bool is_dot_call_access = false;
 	bool is_path_lookup = false;
 	bool is_hashtag = false;
-	int op_index = cursor.character;
+	int word_start = cursor.character;
 	{
-		int word_start = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
-		partially_typed = string_create_substring_static(&line->text, word_start, cursor.character);
-		if (partially_typed.size == 1 && !char_is_valid_identifier(partially_typed.characters[0])) {
-			partially_typed = string_create_static("");
+		// Figure out word-start index
+		// Check if char before cursor is a character
+		if (word_start > 0 && char_is_valid_identifier(line->text[word_start - 1])) {
+			word_start = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
 		}
+		fuzzy_search_string = string_create_substring_static(&line->text, word_start, cursor.character);
+
+		// Figure out operation
 		if (test_char(line->text, word_start, '#')) {
 			is_hashtag = true;
 		}
-		if (test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) {
-			op_index = word_start - 2;
-			is_dot_call_access = true;
-		}
-		else if (test_char(line->text, cursor.character - 2, '-') && test_char(line->text, cursor.character - 1, '>')) {
-			is_dot_call_access = true;
-			op_index = cursor.character - 2;
-		}
-		if (test_char(line->text, word_start - 1, '.') || test_char(line->text, cursor.character - 1, '.')) {
+		if (test_char(line->text, word_start - 1, '.')) {
 			is_member_access = true;
 		}
-		if (test_char(line->text, word_start - 1, '~') || test_char(line->text, cursor.character - 1, '~')) {
+		if (test_char(line->text, word_start - 1, '~'))
+		{
 			is_path_lookup = true;
+			if (!test_char(line->text, word_start, '~')) {
+				word_start = word_start - 1; // We start on '~' character
+			}
+			while (true)
+			{
+				if (word_start - 1 < 0) break;
+				int next_start = Motions::move_while_condition(line->text, word_start - 1, false, char_is_valid_identifier, nullptr, false, true);
+				// Stop if we haven't moved (e.g. before ~ there are no valid identifiers)
+				if (next_start == word_start - 1) {
+					break;
+				}
+
+				// Check if we landed on a ~
+				if (test_char(line->text, next_start, '~')) {
+					word_start = next_start;
+					continue;
+				}
+				else if (next_start == 0 && char_is_valid_identifier(line->text.characters[0], nullptr)) {
+					word_start = 0;
+					break;
+				}
+				else {
+					word_start = next_start + 1;
+					break;
+				}
+			}
+			word_start = word_start;
+		}
+		// Note: Checking for dot-call after path-lookup
+		if (test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) {
+			is_dot_call_access = true;
 		}
 	}
-	fuzzy_search_start_search(partially_typed, 10);
+	fuzzy_search_start_search(fuzzy_search_string, 10);
 	syntax_editor_synchronize_code_information();
 
 	Text_Index cursor_char_index = tab.cursor;
@@ -3988,129 +4107,179 @@ void code_completion_find_suggestions()
 		cursor_char_index.character -= 1;
 	}
 	Position_Info position_info = code_query_find_position_infos(cursor_char_index, nullptr);
+	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
 
 	// Member-Access code completion
-	if (is_hashtag) {
-		fuzzy_search_add_item(*ids.hashtag_bake, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_bake));
-		fuzzy_search_add_item(*ids.hashtag_instanciate, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_instanciate));
-		fuzzy_search_add_item(*ids.hashtag_get_overload, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload));
-		fuzzy_search_add_item(*ids.hashtag_get_overload_poly, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.hashtag_get_overload_poly));
-	}
-	else if (is_dot_call_access && op_index > 0)
+	if (is_hashtag)
 	{
-		// Op index is at the -> start, so one before should be the 
-		Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, op_index - 1), nullptr);
-		Semantic_Info_Expression* expr_info = dot_call_position_info.expression_info;
-		if (expr_info != nullptr)
+		auto helper_add_ids = [&](std::initializer_list<String*> ids) {
+			for (String* id : ids) {
+				fuzzy_search_add_item(*id, unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
+			}
+			};
+		helper_add_ids({
+			ids.hashtag_instanciate,
+			ids.hashtag_bake,
+			ids.hashtag_get_overload,
+			ids.hashtag_get_overload_poly,
+			ids.hashtag_add_binop,
+			ids.hashtag_add_unop,
+			ids.hashtag_add_cast,
+			ids.hashtag_add_auto_cast_type,
+			ids.hashtag_add_iterator,
+			ids.hashtag_add_array_access
+			});
+	}
+	else if (symbol_table != nullptr && (is_path_lookup || is_dot_call_access)) // Both path-lookup and dot-call access can be true
+	{
+		Arena arena = Arena::create(256);
+		SCOPE_EXIT(arena.destroy());
+
+		// First resolve path
+		DynArray<Symbol*> symbols;
 		{
-			Analysis_Pass* analysis_pass = expr_info->analysis_pass;
-			Datatype* call_value_type = expr_info->info->cast_info.result_type;
-			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
-			if (symbol_table != nullptr)
+			Import_Type import_type = Import_Type::SYMBOLS;
+			String path_string = string_create_substring_static(&line->text, word_start, cursor.character);
+			symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &arena).symbols;
+		}
+
+		// Filter symbols if it's dot-call
+		if (is_dot_call_access) // On dot-call access we filter symbols based on previous type
+		{
+			// Find call value type, should be info before ->, so op_index - 1
+			Datatype* call_value_type = nullptr;
+			Analysis_Pass* call_value_pass = nullptr;
+			if (word_start - 3 > 0)
 			{
-				Arena arena = Arena::create(256);
-				SCOPE_EXIT(arena.destroy());
-				DynArray<Symbol*> symbols = symbol_table_query_all_symbols(symbol_table, Lookup_Type::DOT_CALL_LOOKUP, Symbol_Access_Level::INTERNAL, &arena);
-				for (int i = 0; i < symbols.size; i++)
-				{
-					auto symbol = symbols[i];
-
-					// Handle aliases
-					String* original_id = symbol->id;
-					while (symbol->type == Symbol_Type::ALIAS) {
-						symbol = symbol->options.alias_for;
-					}
-
-					// Check if symbol is callable
-					Datatype* value_type = nullptr;
-					Call_Signature* call_signature = nullptr;
-					switch (symbol->type)
-					{
-					case Symbol_Type::COMPTIME_VALUE: {
-						value_type = symbol->options.constant.type;
-						break;
-					}
-					case Symbol_Type::GLOBAL: {
-						value_type = symbol->options.global->type;
-						break;
-					}
-					case Symbol_Type::FUNCTION: {
-						call_signature = symbol->options.function->signature;
-						break;
-					}
-					case Symbol_Type::PARAMETER: {
-						auto& param = symbol->options.parameter;
-						value_type = param.function->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
-						break;
-					}
-					case Symbol_Type::PATTERN_VARIABLE: 
-					{
-						Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
-						value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, analysis_pass, state);
-						break;
-					}
-					case Symbol_Type::VARIABLE: {
-						value_type = symbol->options.variable_type;
-						break;
-					}
-					case Symbol_Type::POLYMORPHIC_FUNCTION: {
-						call_signature = symbol->options.poly_function.poly_header->signature;
-						break;
-					}
-					case Symbol_Type::HARDCODED_FUNCTION: {
-						call_signature = editor.analysis_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
-						break;
-					}
-					}
-
-					// Check if value is callable
-					if (value_type != nullptr) {
-						value_type = datatype_get_non_const_type(value_type);
-					}
-					if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
-						call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
-					}
-
-					// Check if dot-call expr type matches function first parameter
-					if (call_signature == nullptr) continue;
-					if (call_signature->parameters.size == 0 || call_signature->return_type_index == 0) continue;
-					auto param = call_signature->parameters[0];
-					if (param.requires_named_addressing) continue;
-
-					// Check if types are compatible (Does not check for casts...)
-					Datatype* param_type = param.datatype;
-					Datatype* arg_type = call_value_type;
-
-					param_type = datatype_get_non_const_type(param_type);
-					arg_type = datatype_get_non_const_type(arg_type);
-					if (!types_are_equal(param_type, arg_type)) {
-						continue;
-					}
-
-					// Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
-					// const char* out_error_msg = "";
-					// continue;
-					// // if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
-					// // 	continue;
-					// // }
-					// arg_type = cast_info.result_type;
-					// if (param_type->contains_pattern) {
-					// 	if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
-					// 		continue;
-					// 	}
-					// }
-					// else if (!types_are_equal(param_type, arg_type)) {
-					// 	continue;
-					// }
-
-					fuzzy_search_add_item(*original_id, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
+				Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
+				Semantic_Info_Expression* expr_info = dot_call_position_info.expression_info;
+				if (expr_info != nullptr) {
+					call_value_type = expr_info->info->cast_info.result_type;
+					call_value_pass = expr_info->analysis_pass;
 				}
 			}
+
+			DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
+				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::DOT_CALLS, true), &arena
+			);
+			for (int i = 0; i < symbols.size; i++)
+			{
+				auto symbol = symbols[i];
+
+				bool remove_symbol = true;
+				SCOPE_EXIT(if (remove_symbol) {
+					symbols.swap_remove(i);
+					i -= 1;
+				});
+
+				// Handle aliases
+				String* original_id = symbol->id;
+				while (symbol->type == Symbol_Type::ALIAS) {
+					symbol = symbol->options.alias_for;
+				}
+
+				// Check if symbol is callable
+				Datatype* value_type = nullptr;
+				Call_Signature* call_signature = nullptr;
+				switch (symbol->type)
+				{
+				case Symbol_Type::COMPTIME_VALUE: {
+					value_type = symbol->options.constant.type;
+					break;
+				}
+				case Symbol_Type::GLOBAL: {
+					value_type = symbol->options.global->type;
+					break;
+				}
+				case Symbol_Type::FUNCTION: {
+					call_signature = symbol->options.function->signature;
+					break;
+				}
+				case Symbol_Type::PARAMETER: {
+					auto& param = symbol->options.parameter;
+					value_type = param.function->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+					break;
+				}
+				case Symbol_Type::PATTERN_VARIABLE:
+				{
+					Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
+					if (call_value_pass == nullptr) {
+						remove_symbol = false;
+						continue;
+					}
+					value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, call_value_pass, state);
+					break;
+				}
+				case Symbol_Type::VARIABLE: {
+					value_type = symbol->options.variable_type;
+					break;
+				}
+				case Symbol_Type::POLYMORPHIC_FUNCTION: {
+					call_signature = symbol->options.poly_function.poly_header->signature;
+					break;
+				}
+				case Symbol_Type::HARDCODED_FUNCTION: {
+					call_signature = editor.analysis_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
+					break;
+				}
+				}
+
+				// Check if value is callable
+				if (value_type != nullptr) {
+					value_type = datatype_get_non_const_type(value_type);
+				}
+				if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
+					call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
+				}
+
+				// Check if dot-call expr type matches function first parameter
+				if (call_signature == nullptr) continue;
+				if (call_signature->parameters.size == 0 || call_signature->return_type_index == 0) continue;
+				auto param = call_signature->parameters[0];
+				if (param.requires_named_addressing) continue;
+
+				// Keep symbol if editor does not have type-infos on call-value
+				if (call_value_type == nullptr) {
+					remove_symbol = false;
+					continue;
+				}
+
+				// Check if types are compatible (Does not check for casts...)
+				Datatype* param_type = param.datatype;
+				Datatype* arg_type = call_value_type;
+
+				param_type = datatype_get_non_const_type(param_type);
+				arg_type = datatype_get_non_const_type(arg_type);
+				if (!types_are_equal(param_type, arg_type)) {
+					continue;
+				}
+
+				remove_symbol = false;
+
+				// Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
+				// const char* out_error_msg = "";
+				// continue;
+				// // if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
+				// // 	continue;
+				// // }
+				// arg_type = cast_info.result_type;
+				// if (param_type->contains_pattern) {
+				// 	if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
+				// 		continue;
+				// 	}
+				// }
+				// else if (!types_are_equal(param_type, arg_type)) {
+				// 	continue;
+				// }
+			}
+		}
+
+		// Add symbols to results 
+		for (int i = 0; i < symbols.size; i++) {
+			Symbol* symbol = symbols[i];
+			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
 		}
 	}
 	else if (is_member_access)
@@ -4187,83 +4356,8 @@ void code_completion_find_suggestions()
 			}
 		}
 	}
-	else if (is_path_lookup)
-	{
-		Symbol_Table* symbol_table = nullptr;
-
-		auto text = line->text;
-		int char_index = cursor.character - 1;
-		// Move backwards to ~
-		// Note: doing the whole lookup would be better, because we wouldn't rely on updated compiler infos
-		char_index = Motions::move_while_condition(text, char_index, false, char_is_valid_identifier, nullptr, false, true);
-		if (test_char(text, char_index, '~')) 
-		{
-			Position_Info position_info = code_query_find_position_infos(text_index_make(cursor.line, char_index - 1), nullptr);
-			if (position_info.symbol_info != nullptr) {
-				auto& symbol = position_info.symbol_info->symbol;
-				if (symbol->type == Symbol_Type::MODULE) {
-					symbol_table = symbol->options.upp_module->symbol_table;
-				}
-			}
-		}
-
-		// Check for builtin lookup
-		if (symbol_table == nullptr)
-		{
-			if (char_index == 0 || !char_is_valid_identifier(text.characters[char_index - 1])) {
-				symbol_table = editor.analysis_data->builtin_symbol_table;
-			}
-		}
-
-		if (symbol_table != nullptr)
-		{
-			Arena arena = Arena::create(256);
-			SCOPE_EXIT(arena.destroy());
-			auto results = symbol_table_query_all_symbols(
-				symbol_table, Lookup_Type::LOCAL_SEARCH, Symbol_Access_Level::INTERNAL, &arena
-			);
-			for (int i = 0; i < results.size; i++) {
-				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(results[i]));
-			}
-		}
-	}
 	else
 	{
-		// Auto-Complete context _option_()
-		if (unranked_suggestions.size == 0)
-		{
-			// Check if we should fill context options
-			bool fill_context_options = false;
-			int word_end = cursor.character - 1;
-			word_end = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, true);
-			word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
-			int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
-			if (word_start != word_end) {
-				String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
-				if (string_equals_cstring(&substring, "context")) {
-					fill_context_options = true;
-				}
-			}
-
-			if (fill_context_options) {
-				fuzzy_search_add_item(*ids.set_cast_option, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.set_cast_option));
-				fuzzy_search_add_item(*ids.id_import, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.id_import));
-				fuzzy_search_add_item(*ids.add_binop, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_binop));
-				fuzzy_search_add_item(*ids.add_unop, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_unop));
-				fuzzy_search_add_item(*ids.add_cast, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_cast));
-				fuzzy_search_add_item(*ids.add_array_access, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_array_access));
-				fuzzy_search_add_item(*ids.add_iterator, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.add_iterator));
-			}
-		}
-
 		// Auto complete continue/break
 		if (unranked_suggestions.size == 0)
 		{
@@ -4294,7 +4388,7 @@ void code_completion_find_suggestions()
 		}
 
 		// Exit if nothing specific was found
-		if (unranked_suggestions.size == 0 && partially_typed.size == 0) {
+		if (unranked_suggestions.size == 0 && fuzzy_search_string.size == 0) {
 			return;
 		}
 
@@ -4305,7 +4399,7 @@ void code_completion_find_suggestions()
 			Arena arena = Arena::create(256);
 			SCOPE_EXIT(arena.destroy());
 			auto results = symbol_table_query_all_symbols(
-				symbol_table, Lookup_Type::NORMAL, Symbol_Access_Level::INTERNAL, &arena
+				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &arena
 			);
 			for (int i = 0; i < results.size; i++) {
 				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
@@ -4314,8 +4408,6 @@ void code_completion_find_suggestions()
 		}
 
 		// Experimental: Add longer keywords to suggestions
-		fuzzy_search_add_item(*ids.cast_pointer, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.cast_pointer, Syntax_Color::KEYWORD));
 		fuzzy_search_add_item(*ids.defer_restore, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer_restore, Syntax_Color::KEYWORD));
 		fuzzy_search_add_item(*ids.cast, unranked_suggestions.size);
@@ -4423,7 +4515,7 @@ void editor_split_line_at_cursor(int indentation_offset)
 	cursor = text_index_make(new_line_index, 0);
 }
 
-Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
+Text_Index movement_evaluate(const Movement & movement, Text_Index pos)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -4749,7 +4841,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 	return pos;
 }
 
-Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
+Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -4913,7 +5005,7 @@ Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 	return result;
 }
 
-bool motion_is_line_motion(const Motion& motion) {
+bool motion_is_line_motion(const Motion & motion) {
 	return
 		motion.motion_type == Motion_Type::BLOCK ||
 		motion.motion_type == Motion_Type::PARAGRAPH ||
@@ -4925,7 +5017,7 @@ bool motion_is_line_motion(const Motion& motion) {
 				motion.movement.type == Movement_Type::MOVE_DOWN));
 }
 
-void text_range_append_to_string(Text_Range range, String* str)
+void text_range_append_to_string(Text_Range range, String * str)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -5101,7 +5193,7 @@ void center_cursor_on_error(int error_index)
 	normal_command_execute(cmd);
 }
 
-void normal_command_execute(Normal_Mode_Command& command)
+void normal_command_execute(Normal_Mode_Command & command)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -5920,7 +6012,7 @@ void remove_folds_on_cursor()
 	}
 }
 
-void syntax_editor_process_key_message(Key_Message& msg)
+void syntax_editor_process_key_message(Key_Message & msg)
 {
 	auto& mode = syntax_editor.mode;
 	auto& editor = syntax_editor;
@@ -6118,6 +6210,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 			return;
 		}
 
+		// On enter goto file or symbol
 		if (msg.key_code == Key_Code::RETURN && msg.key_down)
 		{
 			if (editor.suggestions.size == 0) {
@@ -6149,6 +6242,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 			return;
 		}
 
+		// Do auto complete on tab or shift-space
 		bool changed = false;
 		bool auto_complete = msg.key_down && ((msg.key_code == Key_Code::TAB) || (msg.key_code == Key_Code::SPACE && msg.shift_down));
 		if (auto_complete && msg.key_down && editor.suggestions.size > 0)
@@ -6200,99 +6294,39 @@ void syntax_editor_process_key_message(Key_Message& msg)
 			changed = line_editor_feed_key_message(editor.search_text_edit, &editor.fuzzy_search_text, msg);
 		}
 
+		// Update suggestions if search changed
 		if (changed)
 		{
-			if (editor.fuzzy_search_text.size == 0) {
-				dynamic_array_reset(&editor.suggestions);
-				return;
-			}
-
 			auto& tab = editor.tabs[editor.open_tab_index];
+			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
+			if (symbol_table == nullptr) break;
 
-			String search = editor.fuzzy_search_text;
-			if (search.size >= 2 && search.characters[0] == '.' && search.characters[1] == '/') {
-				search = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size);
-				suggestions_fill_with_file_directory(search);
+			// Special code path for file search
+			String search_text = editor.fuzzy_search_text;
+			if (search_text.size >= 2 && search_text.characters[0] == '.' && search_text.characters[1] == '/') {
+				search_text = string_create_substring_static(&editor.fuzzy_search_text, 2, editor.fuzzy_search_text.size);
+				suggestions_fill_with_file_directory(search_text);
 				break;
 			}
 
-			Symbol_Table* symbol_table = nullptr;
-			Array<String> path_parts = string_split(editor.fuzzy_search_text, '~');
-			SCOPE_EXIT(string_split_destroy(path_parts));
-
-			bool is_intern = true;
-			if (path_parts[0].size == 0) { // E.g. first term is a ~
-				search = string_create_substring_static(&editor.fuzzy_search_text, 1, editor.fuzzy_search_text.size);
-				symbol_table = tab.code->root_table;
-				is_intern = false;
-			}
-			else
-			{
-				symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
-				is_intern = true;
-			}
-
-			// Note: Usually root-symbol table is never null, but it may happen
-			// on the very first compile after initialize, or if compiler has analysis disabled
-			if (symbol_table == nullptr) {
-				break;
-			}
-
-			// Follow path
-			Arena arena = Arena::create(256);
+			// Do path-lookup from string
+			Arena arena = Arena::create(512);
 			SCOPE_EXIT(arena.destroy());
-			bool search_includes = true;
-			{
-				for (int i = 0; i < path_parts.size - 1; i++)
-				{
-					String part = path_parts[i];
-					if (i == 0 && part.size == 0) {
-						continue;
-					}
+			String_Path_Lookup_Info lookup_info = string_path_lookup_resolve(search_text, symbol_table, Import_Type::SYMBOLS, &arena);
 
-					String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, part);
-					DynArray<Symbol*> symbols = symbol_table_query_id(
-						symbol_table, id, (search_includes ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH), 
-						(is_intern ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), &arena
-					);
-					search_includes = false;
-					is_intern = false;
-
-					Symbol_Table* next_table = nullptr;
-					for (int j = 0; j < symbols.size; j++) {
-						auto symbol = symbols[j];
-						if (symbol->type == Symbol_Type::MODULE) {
-							next_table = symbol->options.upp_module->symbol_table;
-							break;
-						}
-					}
-
-					if (next_table == 0) {
-						return;
-					}
-					symbol_table = next_table;
-				}
-			}
-
-			// Add all symbols to fuzzy search
-			DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
-				symbol_table, (search_includes ? Lookup_Type::NORMAL : Lookup_Type::LOCAL_SEARCH), 
-				Symbol_Access_Level::INTERNAL, &arena
-			);
-			String last = path_parts[path_parts.size - 1];
-			fuzzy_search_start_search(last, 10);
-			for (int i = 0; i < symbols.size; i++) {
-				auto symbol = symbols[i];
+			// Do fuzzy search on symbols
+			fuzzy_search_start_search(lookup_info.last_part, 10);
+			for (int i = 0; i < lookup_info.symbols.size; i++) {
+				auto symbol = lookup_info.symbols[i];
 				if (symbol->definition_unit != 0) {
 					fuzzy_search_add_item(*symbol->id, i);
 				}
 			}
-
 			auto items = fuzzy_search_get_results(true, 3);
 			auto& suggestions = editor.suggestions;
 			dynamic_array_reset(&suggestions);
 			for (int i = 0; i < items.size; i++) {
-				dynamic_array_push_back(&suggestions, suggestion_make_symbol(symbols[items[i].user_index]));
+				dynamic_array_push_back(&suggestions, suggestion_make_symbol(lookup_info.symbols[items[i].user_index]));
 			}
 		}
 		break;
@@ -6334,7 +6368,7 @@ void syntax_editor_process_key_message(Key_Message& msg)
 	}
 }
 
-int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block* block, AST::Statement* statement, IR_Code_Block** out_code_block)
+int ir_block_find_first_instruction_hitting_statement_rec(IR_Code_Block * block, AST::Statement * statement, IR_Code_Block * *out_code_block)
 {
 	for (int i = 0; i < block->instructions.size; i++)
 	{
@@ -6679,7 +6713,7 @@ void syntax_editor_update(bool& animations_running)
 		for (int i = 0; i < editor.tabs.size; i++) {
 			source_code_sanity_check(editor.tabs[i].code);
 		}
-	);
+			);
 
 	// Update particles
 	{
@@ -6948,8 +6982,8 @@ void syntax_editor_update(bool& animations_running)
 					for (int i = 0; i < strings.size; i++) {
 						string_destroy(&strings[i]);
 					}
-					dynamic_array_destroy(&strings);
-				);
+				dynamic_array_destroy(&strings);
+					);
 
 				for (int i = 0; i < stack_frames.size; i++)
 				{
@@ -7380,7 +7414,7 @@ void syntax_editor_update(bool& animations_running)
 
 // Syntax Highlighting
 // Rendering
-void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, const char** out_text)
+void symbol_get_infos(Symbol * symbol, Analysis_Pass * pass, Datatype * *out_type, const char** out_text)
 {
 	Datatype* type = nullptr;
 	const char* after_text = nullptr;
@@ -7401,7 +7435,7 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		after_text = "Function";
 		// type = upcast(symbol->options.function->signature);
 		break;
-	case Symbol_Type::PARAMETER: 
+	case Symbol_Type::PARAMETER:
 	{
 		after_text = "Parameter";
 		auto& param_info = symbol->options.parameter;
@@ -8053,8 +8087,6 @@ void syntax_editor_render()
 						start += 1; // Skip member access '.'
 						switch (info.options.expression.info->specifics.member_access.type)
 						{
-						case Member_Access_Type::DOT_CALL:
-						case Member_Access_Type::DOT_CALL_AS_MEMBER: color = Syntax_Color::FUNCTION; break;
 						case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
 						case Member_Access_Type::STRUCT_MEMBER_ACCESS: color = Syntax_Color::MEMBER; break;
 						case Member_Access_Type::STRUCT_SUBTYPE:
@@ -8066,6 +8098,9 @@ void syntax_editor_render()
 					}
 					case Semantic_Info_Type::SYMBOL_LOOKUP:
 					{
+						if (!info.options.symbol_info.add_color) {
+							continue;
+						}
 						auto symbol = info.options.symbol_info.symbol;
 						color = symbol_to_color(symbol, info.options.symbol_info.is_definition);
 						// Highlight background if hover symbol
@@ -8427,13 +8462,13 @@ void syntax_editor_render()
 			bool is_struct_init = false;
 			switch (call_info->origin.type)
 			{
-			case Call_Origin_Type::FUNCTION: 
+			case Call_Origin_Type::FUNCTION:
 			{
 				name = call_info->origin.options.function->name;
 				color = Syntax_Color::FUNCTION;
 				break;
 			}
-			case Call_Origin_Type::STRUCT_INITIALIZER: 
+			case Call_Origin_Type::STRUCT_INITIALIZER:
 			{
 				is_struct_init = true;
 				if (call_info->argument_matching_success) {

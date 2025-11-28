@@ -192,6 +192,7 @@ Identifier_Pool identifier_pool_create()
 		ids.type_of = add_id("type_of");
 		ids.type_info = add_id("type_info");
 		ids.empty_string = add_id("");
+		ids.root_module = add_id("_ROOT_");
 		ids.invalid_symbol_name = add_id("__INVALID_SYMBOL_NAME");
 		ids.id_struct = add_id("Struct");
 		ids.byte = add_id("byte");
@@ -199,8 +200,8 @@ Identifier_Pool identifier_pool_create()
 		ids.is_available = add_id("is_available");
 		ids.uninitialized_token = add_id("_");
 		ids.return_type_name = add_id("!return_type_name");
-		ids.context = add_id("context");
-		ids.dot_call = add_id("dot_call");
+		ids.operators = add_id("operators");
+		ids.dot_calls = add_id("dot_calls");
 		ids.c_string = add_id("c_string");
 		ids.allocator = add_id("Allocator");
 		ids.bytes = add_id("bytes");
@@ -211,8 +212,13 @@ Identifier_Pool identifier_pool_create()
 		ids.hashtag_bake = add_id("#bake");
 		ids.hashtag_get_overload = add_id("#get_overload");
 		ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
+	    ids.hashtag_add_binop = add_id("#add_binop");
+	    ids.hashtag_add_unop = add_id("#add_unop");
+	    ids.hashtag_add_cast = add_id("#add_cast");
+	    ids.hashtag_add_auto_cast_type = add_id("#add_auto_cast_type");
+	    ids.hashtag_add_iterator = add_id("#add_iterator");
+	    ids.hashtag_add_array_access = add_id("#add_array_access");
 
-		ids.cast_pointer = add_id("cast_pointer");
 		ids.defer_restore = add_id("defer_restore");
 		ids.cast = add_id("cast");
 		ids.defer = add_id("defer");
@@ -236,15 +242,6 @@ Identifier_Pool identifier_pool_create()
 		ids.header = add_id("header");
 		ids.header_dir = add_id("header_dir");
 		ids.definition = add_id("definition");
-
-		ids.id_import = add_id("import");
-		ids.set_option = add_id("set_option");
-		ids.set_cast_option = add_id("set_cast_option");
-		ids.add_binop = add_id("add_binop");
-		ids.add_unop = add_id("add_unop");
-		ids.add_cast = add_id("add_cast");
-		ids.add_array_access = add_id("add_array_access");
-		ids.add_iterator = add_id("add_iterator");
 
 		ids.cast_type = add_id("Cast_Type");
 		ids.cast_type_enum_values[(int)Cast_Type::INTEGERS] = add_id("INTEGERS");

@@ -47,6 +47,7 @@ struct Semantic_Info_Symbol {
     Symbol* symbol;
     bool is_definition;
     Analysis_Pass* pass;
+    bool add_color;
 };
 
 struct Semantic_Info_Expression 
@@ -108,7 +109,7 @@ struct Compiler_Analysis_Data
     // Semantic analyser
     ModTree_Program* program;
     Symbol_Table* root_symbol_table;
-    Symbol_Table* builtin_symbol_table;
+    Upp_Module* builtin_module;
     Dynamic_Array<Function_Slot> function_slots;
     Dynamic_Array<Semantic_Error> semantic_errors;
 
@@ -126,7 +127,7 @@ struct Compiler_Analysis_Data
     // Call_Signatures and callables
     Hashset<Call_Signature*> call_signatures; // Callables get duplicated
     Call_Signature* hardcoded_function_signatures[(int)Hardcoded_Type::MAX_ENUM_VALUE];
-    Call_Signature* context_change_type_signatures[(int)Context_Change_Type::MAX_ENUM_VALUE];
+    Call_Signature* context_change_type_signatures[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
     Call_Signature* cast_signature;
     Call_Signature* empty_call_signature;
 
@@ -136,7 +137,7 @@ struct Compiler_Analysis_Data
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
     Dynamic_Array<Function_Progress*> allocated_function_progresses;
-    Dynamic_Array<Operator_Context*> allocated_operator_contexts;
+    Dynamic_Array<Custom_Operator_Table*> allocated_custom_operator_tables;
     Dynamic_Array<AST::Node*> allocated_nodes;
 };
 

@@ -197,6 +197,10 @@ int data_access_is_completely_on_stack(Bytecode_Generator* generator, IR_Data_Ac
         assert(array_type->count_known && index >= 0 && index < array_type->element_count, "");
         return array_stack_offset + index * array_type->element_type->memory_info.value.size;
     }
+    case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST:
+    {
+        return data_access_is_completely_on_stack(generator, access->option.non_destructive_cast.value_access);
+    }
     default: return -1;
     }
 
@@ -316,6 +320,10 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
         }
 
         break;
+    }
+    case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST: 
+    {
+        return data_access_get_pointer_to_value(generator, access->option.non_destructive_cast.value_access, pointer_stack_offset);
     }
     default: panic("Should not happen");
     }
@@ -445,6 +453,10 @@ int data_access_read_value(Bytecode_Generator* generator, IR_Data_Access* access
             instruction_make_3(Instruction_Type::READ_MEMORY, dst, value_address, memory_info.size)
         );
         return dst;
+    }
+    case IR_Data_Access_Type::NON_DESTRUCTIVE_CAST: 
+    {
+        return data_access_read_value(generator, access->option.non_destructive_cast.value_access, read_to_offset);
     }
     default: panic("Should not happen");
     }
@@ -885,6 +897,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 bytecode_generator_move_accesses(generator, cast->destination, cast->source);
                 break;
             }
+            case IR_Cast_Type::ENUMS:
             case IR_Cast_Type::ENUM_TO_INT:
             case IR_Cast_Type::INT_TO_ENUM:
             case IR_Cast_Type::INTEGERS:
@@ -896,6 +909,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 Datatype* cast_destination = cast->destination->datatype;
                 Instruction_Type instr_type;
                 switch (cast->type) {
+                    case IR_Cast_Type::ENUMS: 
                     case IR_Cast_Type::ENUM_TO_INT: 
                     case IR_Cast_Type::INT_TO_ENUM:
                     case IR_Cast_Type::INTEGERS:

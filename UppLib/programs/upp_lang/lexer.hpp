@@ -15,18 +15,20 @@ enum class Operator
     DIVISON,
     MULTIPLY,
     MODULO,
-    COMMA,           // ,
-    DOT,             // .
-    TILDE,           // ~    Used in Path-lookup A~B~c
-    TILDE_STAR,      // ~*   Import all
-    TILDE_STAR_STAR, // ~**  Transitive import all
-    COLON,           // :
-    SEMI_COLON,      // ;
-    APOSTROPHE,      // '
-    QUESTION_MARK,   // ?
-    OPTIONAL_POINTER,   // ?*
-    DOT_CALL,        // .>
-    NOT,            // !
+    COMMA,            // ,
+    DOT,              // .
+    TILDE,            // ~    Used in Path-lookup A~B~c
+    TILDE_STAR,       // ~*   Import all
+    TILDE_STAR_STAR,  // ~**  Transitive import all
+    COLON,            // :
+    SEMI_COLON,       // ;
+    APOSTROPHE,       // '
+    QUESTION_MARK,    // ?
+    OPTIONAL_POINTER, // ?*
+    DOT_CALL,         // ->
+    NOT,              // !
+    DEREFERENCE,      // -&
+    ADDRESS_OF,       // -*
     AMPERSAND,
     LESS_THAN,
     GREATER_THAN,
@@ -79,12 +81,18 @@ enum class Keyword
     GET_OVERLOAD_POLY,
     IMPORT,
     AS,
-    CONTEXT,
     FOR,
     IN_KEYWORD,
     CONST_KEYWORD,
     MUTABLE, // mut
     EXTERN,
+
+    ADD_BINOP,
+    ADD_UNOP,
+    ADD_CAST,
+    ADD_AUTO_CAST_TYPE,
+    ADD_ARRAY_ACCESS,
+    ADD_ITERATOR,
 
     MAX_ENUM_VALUE
 };

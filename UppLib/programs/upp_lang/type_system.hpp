@@ -524,7 +524,7 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 Datatype* type_system_make_constant(Datatype* datatype, Type_System* type_system = nullptr);
 Datatype_Optional* type_system_make_optional(Datatype* datatype);
 // Creating a subtype of a constant creates a constant subtype
-Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* call_signature, bool is_optional); 
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional, Type_System* type_system = nullptr);
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);

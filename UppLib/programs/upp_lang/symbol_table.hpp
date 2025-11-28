@@ -28,6 +28,7 @@ struct Poly_Function;
 struct Function_Parameter;
 struct Poly_Header;
 struct Pattern_Variable;
+struct Custom_Operator_Table;
 
 namespace AST
 {
@@ -37,101 +38,93 @@ namespace AST
 }
 
 
-// OPERATOR CONTEXT
-
+// CUSTOM_OPERATORS
 /*
     Notes on Custom_Operator_Key:
+    Operator_Context stores multiple ways to reach a single Custom-Operator
     The key-types are always stored as the base_type (E.g. no pointer/constant types).
     After querying the analyse has to make sure that the pointer/constant levels are valid
 */
-
-// Note: Left and right types are always stored as the base types of pointers + pointer level.
-//       Polymorphic custom operators make use of the struct-base as the datatype and null for some Datatype* values.
-//       For binop commutativity the custom operator is inserted twice, so only a single lookup will find one of the versions
 struct Custom_Operator_Key
 {
-    Context_Change_Type type;
+    Custom_Operator_Type type;
+    Datatype* first_type;
+    Datatype* second_type;
     union
     {
-        struct {
-            AST::Binop binop;
+        AST::Binop binop;
+        AST::Unop unop;
+        Cast_Type cast_type;
+    } specifics;
+};
+
+struct Custom_Operator
+{
+    AST::Custom_Operator_Node* node;
+    union
+    {
+        struct
+        {
             Datatype* left_type;
             Datatype* right_type;
+            Function_Progress* function;
+            bool switch_left_and_right;
+            bool take_pointer_left;
+            bool take_pointer_right;
         } binop;
-        struct {
-            AST::Unop unop;
-            Datatype* type;
+        struct
+        {
+            Datatype* datatype;
+            Function_Progress* function;
+            bool take_pointer;
         } unop;
-        struct {
-            Datatype* array_type;
+        struct
+        {
+            Datatype* container_type;
+            Datatype* index_type;
+            Function_Progress* function;
+            bool take_pointer_for_container;
+            bool take_pointer_for_index;
         } array_access;
-        struct {
-            Datatype* from_type;
-            Datatype* to_type; // May be null for polymorphic casts
+        struct
+        {
+            Function_Progress* function;
+            bool take_pointer;
         } custom_cast;
-        struct {
-            Datatype* datatype; // Iterable type
+        struct
+        {
+            Datatype* iterable_type;
+            Datatype* iterator_type;
+            Function_Progress* create;
+            Function_Progress* has_next;
+            Function_Progress* next;
+            Function_Progress* get_value;
+            bool take_pointer_for_iterable;
+            bool take_pointer_for_iterator;
         } iterator;
-        // Cast_Option cast_option;
+        Cast_Type auto_cast_type;
     } options;
 };
 
-union Custom_Operator
+struct Workload_Custom_Operator;
+struct Custom_Operator_Table
 {
-    struct {
-        bool switch_left_and_right;
-        // Type_Mods left_mods;
-        // Type_Mods right_mods;
-        ModTree_Function* function;
-    } binop;
-    struct {
-        ModTree_Function* function;
-        // Type_Mods mods;
-    } unop;
-    struct {
-        bool is_polymorphic;
-        // Type_Mods mods;
-        union {
-            ModTree_Function* function;
-            Poly_Function poly_function;
-        } options;
-    } array_access;
-    struct {
-        // Cast_Mode cast_mode;
-        // Type_Mods mods;
-        bool is_polymorphic;
-        union {
-            ModTree_Function* function;
-            Poly_Function poly_function;
-        } options;
-    } custom_cast;
-    struct {
-        // Type_Mods iterable_mods;
-        bool is_polymorphic; 
-        union {
-            struct {
-                ModTree_Function* create;
-                ModTree_Function* has_next;
-                ModTree_Function* next;
-                ModTree_Function* get_value;
-            } normal;
-            struct {
-                Poly_Function fn_create;
-                Poly_Function has_next;
-                Poly_Function next;
-                Poly_Function get_value;
-            } polymorphic;
-        } options;
-    } iterator;
-    // Cast_Mode cast_mode;
+    Workload_Custom_Operator* workloads[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
+    bool contains_operator[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
+    // Note: custom operators are allocated in analysis-data arena
+    Hashtable<Custom_Operator_Key, Custom_Operator*> custom_operators;
 };
 
-struct Workload_Operator_Context_Change;
-struct Operator_Context
+struct Reachable_Operator_Table
 {
-    Dynamic_Array<Operator_Context*> context_imports; // Where context 0 is always the parent import
-    Workload_Operator_Context_Change* workloads[(int)Context_Change_Type::MAX_ENUM_VALUE];
-    Hashtable<Custom_Operator_Key, Custom_Operator> custom_operators;
+	Custom_Operator_Table* operator_table;
+	int depth;
+};
+
+struct Custom_Operator_Match
+{
+	Custom_Operator* custom_op;
+	int depth;
 };
 
 
@@ -198,27 +191,37 @@ struct Symbol
 
 
 // SYMBOL TABLE
-enum class Include_Type
+struct Symbol_Table_Import
 {
-    DOT_CALL_INCLUDE = 1,
-    DOT_CALL_INCLUDE_TRANSITIVE = 2,
-    TRANSITIVE = 3,
-    NORMAL = 4,
-    PARENT = 5, // Parent is also transitive
-};
-
-struct Included_Table
-{
-    Include_Type include_type;
-    Symbol_Access_Level access_level;
     Symbol_Table* table;
+    Import_Type type;
+    Symbol_Access_Level access_level;
+    bool is_transitive;
 };
 
 struct Symbol_Table
 {
-    Dynamic_Array<Included_Table> included_tables;
+    Symbol_Table* parent_table;
+    Symbol_Access_Level parent_access_level;
+    Dynamic_Array<Symbol_Table_Import> imports;
     Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
-    Operator_Context* operator_context;
+    Custom_Operator_Table* custom_operator_table;
+};
+
+struct Reachable_Table
+{
+	Symbol_Table* table;
+	Symbol_Access_Level access_level;
+	int depth; // How many includes were traversed to find this query-table
+	bool search_imports;
+	bool search_parents;
+};
+
+struct Symbol_Query_Info
+{
+    Symbol_Access_Level access_level;
+    Import_Type import_search_type;
+    bool search_parents;
 };
 
 struct Symbol_Error
@@ -228,20 +231,25 @@ struct Symbol_Error
 };
 
 Symbol_Table* symbol_table_create();
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level access_level);
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(
-    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level);
-void symbol_table_add_include_table(
-    Symbol_Table* symbol_table, Symbol_Table* included_table, Include_Type include_type, Symbol_Access_Level access_level,
+    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level
+);
+void symbol_table_add_import(
+    Symbol_Table* symbol_table, Symbol_Table* imported_table, Import_Type import_type, 
+    bool is_transitive, Symbol_Access_Level access_level,
     AST::Node* error_report_node, Node_Section error_report_section
 );
-DynArray<Symbol*> symbol_table_query_id(
-    Symbol_Table* symbol_table, String* id, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena);
-DynArray<Symbol*> symbol_table_query_all_symbols(
-    Symbol_Table* symbol_table, Lookup_Type lookup_type, Symbol_Access_Level access_level, Arena* arena);
+
+Symbol_Query_Info symbol_query_info_make(
+    Symbol_Access_Level access_level, Import_Type import_search_type, bool search_parents
+);
+DynArray<Reachable_Table> symbol_table_query_all_reachable_tables(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena);
+DynArray<Symbol*> symbol_table_query_id(Symbol_Table* symbol_table, String* id, Symbol_Query_Info query_info, Arena* arena);
+DynArray<Symbol*> symbol_table_query_all_symbols(Symbol_Table* symbol_table, Symbol_Query_Info query_info, Arena* arena);
 void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols);
 
 void symbol_table_append_to_string(String* string, Symbol_Table* table, bool print_root);

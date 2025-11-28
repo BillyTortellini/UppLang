@@ -29,7 +29,7 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
+bool output_ir = true;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -399,7 +399,8 @@ void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type)
 
 Compilation_Unit* compiler_import_file(AST::Import* import_node)
 {
-    assert(import_node->type == AST::Import_Type::FILE, "");
+    assert(import_node->operator_type == AST::Import_Operator::FILE_IMPORT, "");
+    String* filename = import_node->options.file_name;
 
     // Resolve file-path (E.g. imports are relative from the file they are in)
     auto src = compiler_find_ast_compilation_unit(&import_node->base);
@@ -416,7 +417,7 @@ Compilation_Unit* compiler_import_file(AST::Import* import_node)
         else {
             string_reset(&path);
         }
-        string_append_string(&path, import_node->file_name);
+        string_append_string(&path, filename);
         file_io_relative_to_full_path(&path);
     }
 

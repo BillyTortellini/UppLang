@@ -1332,9 +1332,11 @@ Datatype_Optional* type_system_make_optional(Datatype* child_type)
 	return result;
 }
 
-Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional)
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional, Type_System* type_system)
 {
-	auto& type_system = compiler.analysis_data->type_system;
+	if (type_system == nullptr) {
+		type_system = &compiler.analysis_data->type_system;
+	}
 
 	Type_Deduplication dedup;
 	dedup.type = Type_Deduplication_Type::FUNCTION_POINTER;
@@ -1343,7 +1345,7 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 
 	// Check if type was already created
 	{
-		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
+		auto type_opt = hashtable_find_element(&type_system->deduplication_table, dedup);
 		if (type_opt != nullptr) {
 			Datatype* type = *type_opt;
 			assert(type->type == Datatype_Type::FUNCTION_POINTER, "");
@@ -1372,7 +1374,7 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 		}
 	}
 
-	auto& internal_info = type_system_register_type(upcast(result), &type_system)->options.function;
+	auto& internal_info = type_system_register_type(upcast(result), type_system)->options.function;
 	{
 		internal_info.parameters.size = parameters.size;
 		internal_info.has_return_type = signature->return_type_index != -1;
@@ -1387,7 +1389,7 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 		}
 	}
 
-	hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
+	hashtable_insert_element(&type_system->deduplication_table, dedup, upcast(result));
 	return result;
 }
 

@@ -250,31 +250,6 @@ void find_editor_infos_recursive(
 					goto_node = enum_type->definition_node;
 					break;
 				}
-				case Member_Access_Type::DOT_CALL_AS_MEMBER:
-				case Member_Access_Type::DOT_CALL:
-				{
-					ModTree_Function* fn = access_info.options.dot_call_function;
-					if (fn == nullptr) break;
-					switch (fn->function_type)
-					{
-					case ModTree_Function_Type::NORMAL: {
-						goto_node = upcast(fn->options.normal.progress->header_workload->function_node);
-						break;
-					}
-					case ModTree_Function_Type::BAKE: {
-						// This does not happen in goto definition on member access
-						break;
-					}
-					case ModTree_Function_Type::EXTERN: {
-						if (fn->options.extern_definition->symbol != nullptr) {
-							goto_node = fn->options.extern_definition->symbol->definition_node;
-						}
-						break;
-					}
-					default: panic("");
-					}
-					break;
-				}
 				default: panic("");
 				}
 
@@ -390,6 +365,7 @@ void find_editor_infos_recursive(
 
 			Symbol* symbol = nullptr;
 			AST::Symbol_Lookup* lookup = nullptr;
+			bool add_color = true;
 			switch (node->type)
 			{
 			case AST::Node_Type::DEFINITION_SYMBOL: {
@@ -400,6 +376,9 @@ void find_editor_infos_recursive(
 			}
 			case AST::Node_Type::SYMBOL_LOOKUP: {
 				lookup = AST::downcast<AST::Symbol_Lookup>(node);
+				if (lookup->is_root_module) {
+					add_color = false;
+				}
 				auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ);
 				symbol = info == nullptr ? 0 : info->symbol;
 				break;
@@ -419,6 +398,7 @@ void find_editor_infos_recursive(
 				option.symbol_info.symbol = symbol;
 				option.symbol_info.is_definition = is_definition;
 				option.symbol_info.pass = pass;
+				option.symbol_info.add_color = add_color;
 				add_semantic_info(analysis_item_index, Semantic_Info_Type::SYMBOL_LOOKUP, option, pass);
 			}
 			else if (node->type == AST::Node_Type::PARAMETER) {
@@ -621,7 +601,7 @@ Compiler_Analysis_Data* compiler_analysis_data_create()
 	result->allocated_symbols = dynamic_array_create<Symbol*>();
 	result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
 	result->allocated_function_progresses = dynamic_array_create<Function_Progress*>();
-	result->allocated_operator_contexts = dynamic_array_create<Operator_Context*>();
+	result->allocated_custom_operator_tables = dynamic_array_create<Custom_Operator_Table*>();
 	result->allocated_nodes = dynamic_array_create<AST::Node*>();
 	result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 
@@ -686,14 +666,12 @@ void compiler_analysis_data_destroy(Compiler_Analysis_Data* data)
 	}
 	dynamic_array_destroy(&data->allocated_function_progresses);
 
-	for (int i = 0; i < data->allocated_operator_contexts.size; i++) {
-		auto context = data->allocated_operator_contexts[i];
-		dynamic_array_destroy(&context->context_imports);
-
+	for (int i = 0; i < data->allocated_custom_operator_tables.size; i++) {
+		auto context = data->allocated_custom_operator_tables[i];
 		hashtable_destroy(&context->custom_operators);
-		delete data->allocated_operator_contexts[i];
+		delete data->allocated_custom_operator_tables[i];
 	}
-	dynamic_array_destroy(&data->allocated_operator_contexts);
+	dynamic_array_destroy(&data->allocated_custom_operator_tables);
 
 	data->arena.destroy();
 

@@ -24,8 +24,9 @@ enum class IR_Data_Access_Type
     // Operation Accesses
     MEMBER_ACCESS,
     ARRAY_ELEMENT_ACCESS, // Either on a slice or on an array
-    POINTER_DEREFERENCE, // &ip
-    ADDRESS_OF_VALUE, // &ip
+    POINTER_DEREFERENCE,  // &ip
+    ADDRESS_OF_VALUE,     // &ip
+    NON_DESTRUCTIVE_CAST, // To/From subtype cast, const cast
 };
 
 struct IR_Data_Access
@@ -54,6 +55,10 @@ struct IR_Data_Access
         } array_access;
         IR_Data_Access* pointer_value; // For pointer dereferences
         IR_Data_Access* address_of_value;
+        struct {
+            Cast_Type cast_type;
+            IR_Data_Access* value_access;
+        } non_destructive_cast;
     } option;
 };
 
