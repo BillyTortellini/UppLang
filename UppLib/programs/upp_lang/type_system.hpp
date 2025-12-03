@@ -10,7 +10,6 @@
 struct Symbol;
 struct Datatype;
 struct Datatype_Struct;
-struct Datatype_Subtype;
 struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;
@@ -67,18 +66,15 @@ enum class Datatype_Type
     PRIMITIVE = 1, // Int, float, bool, type_handle, address, isize, usize
     ARRAY, // Array with compile-time known size, like [5]int
     SLICE, // Pointer + size
+    POINTER,
+    FUNCTION_POINTER,
     STRUCT,
     ENUM,
-    FUNCTION_POINTER,
+
     UNKNOWN_TYPE, // For error propagation
     // Unlike unknown, invalid will always lead to errors 
     //   Created by expressions that don't really have a type, like Poly_Struct/Poly_Function/Nothing...
     INVALID_TYPE,
-
-    // Modifier-Types
-    POINTER,
-    CONSTANT,
-    OPTIONAL_TYPE,
 
     // Types for polymorphism
     PATTERN_VARIABLE,
@@ -116,6 +112,7 @@ enum class Primitive_Class
     BOOLEAN,
     ADDRESS,
     TYPE_HANDLE,
+    C_STRING,
 };
 
 enum class Primitive_Type
@@ -131,11 +128,12 @@ enum class Primitive_Type
     U64,
 
     // 'Integer-Aliases'
-    ADDRESS,
+    ADDRESS, // translates to void* in c-generator
     ISIZE,
     USIZE,
     TYPE_HANDLE, // 32-bit unsigned int
-    C_CHAR,      // Exists for c-strings? Because c differentiates 3! different char types, signed, unsigned and other
+    C_CHAR,      // Exists for c-compatability, because c differentiates 3! different char types (signed, unsigned and non-specified)
+    C_STRING,    // translates to const char*, because upp does not support const types
 
     // Floats
     F32,
@@ -180,27 +178,10 @@ struct Datatype_Pointer
     bool is_optional;
 };
 
-struct Datatype_Constant
-{
-    Datatype base;
-    Datatype* element_type;
-};
-
 struct Datatype_Function_Pointer
 {
     Datatype base;
     Call_Signature* signature;
-    bool is_optional;
-};
-
-// Note: Datatype_Optional is seperate from optional-pointers, as pointer types have a is_optional boolean
-struct Datatype_Optional
-{
-    Datatype base;
-    Datatype* child_type;
-
-    Struct_Member value_member;
-    Struct_Member is_available_member;
 };
 
 struct Datatype_Struct 
@@ -253,7 +234,6 @@ struct Datatype_Format
 {
     int highlight_parameter_index; // -1 If invalid
     vec3 highlight_color;
-    bool remove_const_from_function_params;
     bool append_struct_poly_parameter_values;
 };
 Datatype_Format datatype_format_make_default();
@@ -299,10 +279,11 @@ struct Upp_Slice_Base
     u64 size;
 };
 
-// A c_string as it is currently defined in the upp-language
+// The 'primitive' string type as it is currently defined in the upp-language
 // The size of the bytes don't include the null-terminator, which is still expected
-struct Upp_C_String {
-    Upp_Slice<const u8> bytes;
+struct Upp_String {
+    void* data;
+    usize size;
 };
 
 struct Upp_Any
@@ -334,7 +315,7 @@ struct Internal_Type_Function
 
 struct Internal_Type_Struct_Member
 {
-    Upp_C_String name;
+    Upp_String name;
     Upp_Type_Handle type;
     int offset;
 };
@@ -342,7 +323,7 @@ struct Internal_Type_Struct_Member
 struct Internal_Type_Struct
 {
     Upp_Slice<Internal_Type_Struct_Member> members;
-    Upp_C_String name;
+    Upp_String name;
     bool is_union;
 
     Upp_Slice<Upp_Type_Handle> subtypes;
@@ -352,7 +333,7 @@ struct Internal_Type_Struct
 
 struct Internal_Type_Enum_Member
 {
-    Upp_C_String name;
+    Upp_String name;
     int value;
 };
 
@@ -370,19 +351,13 @@ struct Internal_Type_Slice
 struct Internal_Type_Enum
 {
     Upp_Slice<Internal_Type_Enum_Member> members;
-    Upp_C_String name;
+    Upp_String name;
 };
 
 struct Internal_Type_Pointer
 {
     Upp_Type_Handle child_type;
     bool is_optional;
-};
-
-struct Internal_Type_Optional
-{
-    Upp_Type_Handle child_type;
-    int available_offset;
 };
 
 struct Internal_Type_Information
@@ -393,9 +368,7 @@ struct Internal_Type_Information
 
     union {
         Internal_Type_Pointer pointer;
-        Internal_Type_Optional optional;
         Internal_Type_Array array;
-        Upp_Type_Handle constant;
         Internal_Type_Slice slice;
         Internal_Type_Primitive primitive;
         Internal_Type_Function function;
@@ -410,11 +383,9 @@ struct Internal_Type_Information
 enum class Type_Deduplication_Type
 {
     POINTER,
-    CONSTANT,
     SLICE,
     ARRAY,
     FUNCTION_POINTER,
-    OPTIONAL
 };
 
 struct Type_Deduplication
@@ -422,9 +393,7 @@ struct Type_Deduplication
     Type_Deduplication_Type type;
     union
     {
-        Datatype* non_constant_type;
         Datatype* slice_element_type;
-        Datatype* optional_child_type;
         struct {
             Datatype* child_type;
             bool is_optional;
@@ -435,20 +404,15 @@ struct Type_Deduplication
             int element_count;
             Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
         } array_type;
-        struct {
-            Call_Signature* signature;
-            bool is_optional;
-        } function_pointer;
+        Call_Signature* function_pointer_signature;
     } options;
 };
 
 struct Type_Modifier_Info
 {
-	Datatype* initial_type; // Queried type
 	Datatype* base_type; // Dereferenced/optional base type
-	Datatype_Struct* struct_subtype; // If it's a subtype or a struct at the core
+	Datatype_Struct* struct_subtype; // If it's a subtype or a struct at the core, otherwise nullptr
 	int pointer_level;
-	u32 const_flags;
 	u32 optional_flags;
 };
 
@@ -473,9 +437,10 @@ struct Predefined_Types
     Datatype_Primitive* usize;
     Datatype_Primitive* bool_type;
     Datatype*           type_handle;
+    Datatype*           c_string;
 
     // Prebuilt structs/types used by compiler
-    Datatype* c_string;
+    Datatype* string;
     Datatype_Struct* bytes;
     Datatype* unknown_type;
     Datatype* invalid_type;
@@ -488,7 +453,6 @@ struct Predefined_Types
     Datatype_Struct* empty_struct_type; // Required for now 
     Datatype* empty_pattern_variable;
 
-    Datatype_Enum* cast_type_enum;
     Datatype_Enum* primitive_type_enum;
 
     Datatype_Struct* allocator;
@@ -521,10 +485,8 @@ Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optiona
 Datatype_Slice* type_system_make_slice(Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
 Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
-Datatype* type_system_make_constant(Datatype* datatype, Type_System* type_system = nullptr);
-Datatype_Optional* type_system_make_optional(Datatype* datatype);
-// Creating a subtype of a constant creates a constant subtype
-Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional, Type_System* type_system = nullptr);
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, Type_System* type_system = nullptr);
+Datatype* datatype_make_with_modifiers(Datatype* base_type, int pointer_level, u32 optional_flags);
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);
@@ -538,23 +500,21 @@ void type_system_finish_array(Datatype_Array* array);
 
 bool types_are_equal(Datatype* a, Datatype* b);
 bool datatype_is_unknown(Datatype* a);
+bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
-Datatype* datatype_get_non_const_type(Datatype* datatype, bool* out_was_const = nullptr);
 Datatype* datatype_get_undecorated(
-    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true, bool remove_const = true, 
-    bool remove_optional_pointer = false, bool remove_optional = false
+    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true, bool remove_optional_pointer = false
 );
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
-Upp_C_String upp_c_string_from_id(String* id);
-Upp_C_String upp_c_string_empty();
+Upp_String upp_string_from_id(String* id);
+Upp_String upp_string_empty();
 
 
 
 // Casting functions
 inline Datatype* upcast(Datatype* value)           { return value; }
-inline Datatype* upcast(Datatype_Optional* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Function_Pointer* value)  { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct* value)    { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Enum* value)      { return (Datatype*)value; }
@@ -564,10 +524,7 @@ inline Datatype* upcast(Datatype_Primitive* value) { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pattern_Variable* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Struct_Pattern* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Constant* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Subtype* value)   { return (Datatype*)value; }
 
-inline Datatype_Type get_datatype_type(Datatype_Optional* unused) { return Datatype_Type::OPTIONAL_TYPE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
 inline Datatype_Type get_datatype_type(Datatype_Function_Pointer* unused) { return Datatype_Type::FUNCTION_POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Enum* unused) { return Datatype_Type::ENUM; }
@@ -577,7 +534,6 @@ inline Datatype_Type get_datatype_type(Datatype_Primitive* unused) { return Data
 inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Datatype_Type::POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Pattern_Variable* unused) { return Datatype_Type::PATTERN_VARIABLE; }
 inline Datatype_Type get_datatype_type(Datatype_Struct_Pattern* base) { return Datatype_Type::STRUCT_PATTERN; }
-inline Datatype_Type get_datatype_type(Datatype_Constant* base) { return Datatype_Type::CONSTANT; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>

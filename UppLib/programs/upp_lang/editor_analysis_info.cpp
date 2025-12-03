@@ -194,7 +194,7 @@ void find_editor_infos_recursive(
 
 			if (expr->type == AST::Expression_Type::AUTO_ENUM)
 			{
-				auto type = datatype_get_non_const_type(expression_info_get_type(info, true));
+				auto type = expression_info_get_type(info, true);
 				if (type->type == Datatype_Type::ENUM) {
 					option.expression.is_member_access = true;
 					option.expression.member_access_info.value_type = type;
@@ -244,7 +244,6 @@ void find_editor_infos_recursive(
 				case Member_Access_Type::ENUM_MEMBER_ACCESS: {
 					Datatype* type = option.expression.member_access_info.value_type;
 					if (type == nullptr) break;
-					type = datatype_get_non_const_type(type);
 					if (type->type != Datatype_Type::ENUM) break;
 					auto enum_type = downcast<Datatype_Enum>(type);
 					goto_node = enum_type->definition_node;
@@ -347,7 +346,6 @@ void find_editor_infos_recursive(
 			int offset = 0;
 			if (param->is_return_type) break;
 			if (param->is_comptime) offset += 1;
-			if (param->is_mutable) offset += 1;
 			
 			auto& tokens = source_code_get_line(code, range.start.line)->tokens;
 			range.start.token = math_minimum(range.start.token + offset, tokens.size);
@@ -866,9 +864,6 @@ void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Ri
 		Rich_Text::append_formated(text, "%s: ", param.name->characters);
 
 		auto param_type = param.datatype;
-		if (format->remove_const_from_function_params) {
-			param_type = datatype_get_non_const_type(param_type);
-		}
 		datatype_append_to_rich_text(param_type, type_system, text, *format);
 		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
 

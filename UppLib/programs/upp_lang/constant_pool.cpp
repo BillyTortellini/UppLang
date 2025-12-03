@@ -115,11 +115,11 @@ void struct_memory_set_padding_to_zero_recursive(
 
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
 {
-    auto& types = compiler.analysis_data->type_system.predefined_types;
+    auto& type_system = compiler.analysis_data->type_system;
+    auto& types = type_system.predefined_types;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
 
-    signature = datatype_get_non_const_type(signature); // We don't care for constants here
     switch (signature->type)
     {
     case Datatype_Type::PATTERN_VARIABLE:
@@ -129,8 +129,17 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         return;
     }
     case Datatype_Type::ENUM: return;
-    case Datatype_Type::PRIMITIVE: {
+    case Datatype_Type::PRIMITIVE: 
+    {
         auto primitive = downcast<Datatype_Primitive>(signature);
+        if (primitive->primitive_class == Primitive_Class::TYPE_HANDLE) {
+            Upp_Type_Handle handle;
+            memory_copy(&handle, memory, sizeof(Upp_Type_Handle));
+            if (handle.index >= (u32)type_system.types.size) {
+                result = constant_pool_result_make_error("Invalid type handle found");
+                return;
+            }
+        }
         if (primitive->primitive_type == Primitive_Type::ADDRESS) {
             void* pointer = *(void**)memory;
             if (pointer != nullptr) {
@@ -138,10 +147,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
                 return;
             }
         }
-        return;
-    }
-    case Datatype_Type::CONSTANT: {
-        panic("Shouldn't happen after previous call");
         return;
     }
     case Datatype_Type::FUNCTION_POINTER: {
@@ -192,27 +197,9 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         }
         return;
     }
-    case Datatype_Type::OPTIONAL_TYPE: 
-    {
-        auto opt = downcast<Datatype_Optional>(signature);
-        bool available = *(bool*)(memory + opt->is_available_member.offset);
-
-        if (!available) {
-            memory_set_bytes(memory, opt->base.memory_info.value.size, 0);
-        }
-        else {
-            datatype_memory_check_correctness_and_set_padding_bytes_zero(opt->child_type, memory, result);
-            int size = opt->base.memory_info.value.size;
-            int end = opt->is_available_member.offset + 1;
-            if (end < size) {
-                memory_set_bytes(memory + end, size - end, 0);
-            }
-        }
-        return;
-    }
     case Datatype_Type::STRUCT:
     {
-        // Check if it's Any-type or c_string
+        // Check if it's Any-type or string
         if (types_are_equal(signature, upcast(types.any_type)))
         {
             Upp_Any any = *(Upp_Any*)memory;
@@ -223,26 +210,25 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
             result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
             return;
         }
-        else if (types_are_equal(signature, types.c_string))
+        else if (types_are_equal(signature, types.string))
         {
-            Upp_C_String string = *(Upp_C_String*)memory;
+            // Note: We don't store c-strings in constant-pool, only upp-strings
+            Upp_String string = *(Upp_String*)memory;
 
             // Check if memory is readable
-            if (!memory_is_readable((void*)string.bytes.data, string.bytes.size)) {
-                result = constant_pool_result_make_error("Value contains c_string with unreadable memory");
+            if (!memory_is_readable((void*)string.data, string.size)) {
+                result = constant_pool_result_make_error("Value contains string with unreadable memory");
                 return;
             }
 
-            auto id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static((const char*)string.bytes.data));
             // Create c_string value pointing to identifier pool (Always null terminated)
-            memory_set_bytes(&string, sizeof(Upp_C_String), 0);
-            *(Upp_C_String*)memory = upp_c_string_from_id(id);;
-
+            auto id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static((const char*)string.data));
+            memory_set_bytes(&string, sizeof(Upp_String), 0);
+            *(Upp_String*)memory = upp_string_from_id(id);;
             return;
         }
-        // TODO: type-handles should probably also always be correct values, would require less checks elsewhere
 
-        Datatype_Struct* structure = downcast<Datatype_Struct>(datatype_get_non_const_type(signature));
+        Datatype_Struct* structure = downcast<Datatype_Struct>(signature);
         if (structure->is_union) {
             result = constant_pool_result_make_error("Found Union");
             return;
@@ -271,7 +257,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
 Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes)
 {
     Constant_Pool& pool = compiler.analysis_data->constant_pool;
-    signature = type_system_make_constant(signature); // All types in constant pool are constant? Not sure if this is working as intended!
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
     assert(memory_info.size == bytes.size, "Array/data must fit into buffer!");

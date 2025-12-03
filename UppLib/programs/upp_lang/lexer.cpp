@@ -26,8 +26,6 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::AS: return string_create_static("as");
     case Keyword::FOR: return string_create_static("for");
     case Keyword::IN_KEYWORD: return string_create_static("in");
-    case Keyword::CONST_KEYWORD: return string_create_static("const");
-    case Keyword::MUTABLE: return string_create_static("mut");
     case Keyword::EXTERN: return string_create_static("extern");
     case Keyword::BAKE: return string_create_static("#bake");
     case Keyword::INSTANCIATE: return string_create_static("#instanciate");
@@ -53,7 +51,6 @@ String syntax_keyword_as_string(Keyword keyword)
     case Keyword::ADD_BINOP: return string_create_static("#add_binop");
     case Keyword::ADD_UNOP: return string_create_static("#add_unop");
     case Keyword::ADD_CAST: return string_create_static("#add_cast");
-    case Keyword::ADD_AUTO_CAST_TYPE: return string_create_static("#add_auto_cast_type");
     case Keyword::ADD_ITERATOR: return string_create_static("#add_iterator");
     case Keyword::ADD_ARRAY_ACCESS: return string_create_static("#add_array_access");
     default:panic("");
@@ -180,8 +177,8 @@ void lexer_initialize()
         lexer.operator_strings[(int)Operator::SEMI_COLON] = string_create_static(";");
         lexer.operator_strings[(int)Operator::APOSTROPHE] = string_create_static("'");
         lexer.operator_strings[(int)Operator::NOT] = string_create_static("!");
-        lexer.operator_strings[(int)Operator::AMPERSAND] = string_create_static("&");
         lexer.operator_strings[(int)Operator::DEREFERENCE] = string_create_static("-&");
+        lexer.operator_strings[(int)Operator::OPTIONAL_DEREFERENCE] = string_create_static("-?&");
         lexer.operator_strings[(int)Operator::ADDRESS_OF] = string_create_static("-*");
         lexer.operator_strings[(int)Operator::LESS_THAN] = string_create_static("<");
         lexer.operator_strings[(int)Operator::GREATER_THAN] = string_create_static(">");

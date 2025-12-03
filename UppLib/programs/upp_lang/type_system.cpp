@@ -91,27 +91,55 @@ void datatype_append_value_to_string(
 
         return;
     }
-    else if (types_are_equal(type, types.c_string))
+    else if (types_are_equal(type, types.string))
     {
-        Upp_C_String c_string;
-        if (!local_memory.read_single_value(value_ptr, &c_string)) {
+        Upp_String upp_string;
+        if (!local_memory.read_single_value(value_ptr, &upp_string)) {
             string_append_formated(string, "MEMORY_NOT_READABLE");
             return;
         }
-        if (c_string.bytes.data == nullptr || c_string.bytes.size == 0) {
-            string_append_formated(string, "c_string.{ size = %d, bytes = %p }", c_string.bytes.size, c_string.bytes.data);
+        if (upp_string.data == nullptr || upp_string.size == 0) {
+            string_append_formated(string, "string.{ characters = %p, size = %lld }", upp_string.data, upp_string.size);
+            return;
+        }
+
+        Dynamic_Array<u8> buffer = dynamic_array_create<u8>(upp_string.size);
+        SCOPE_EXIT(dynamic_array_destroy(&buffer));
+
+        pointer_memory.read_array((void*)upp_string.data, &buffer, upp_string.size);
+		String str;
+		str.capacity = buffer.size;
+		str.characters = (char*) buffer.data;
+		str.size = buffer.size;
+		string_append_character(string, '\"');
+        string_append_string(string, &str);
+		string_append_character(string, '\"');
+        return;
+    }
+	else if (types_are_equal(type, types.c_string))
+	{
+		const char* pointer;
+        if (!local_memory.read_single_value(value_ptr, &pointer)) {
+            string_append_formated(string, "MEMORY_NOT_READABLE");
+            return;
+        }
+        if (pointer == nullptr) {
+            string_append_formated(string, "nullptr");
             return;
         }
 
         String tmp = string_create();
         SCOPE_EXIT(string_destroy(&tmp));
-        Dynamic_Array<u8> buffer = dynamic_array_create<u8>(math_minimum(1024ull, c_string.bytes.size));
+        Dynamic_Array<u8> buffer = dynamic_array_create<u8>(0);
         SCOPE_EXIT(dynamic_array_destroy(&buffer));
 
-        pointer_memory.read_null_terminated_string((void*)c_string.bytes.data, &tmp, c_string.bytes.size + 1, false, &buffer);
-        string_append_formated(string, "\"%s\"", tmp.characters);
+        pointer_memory.read_null_terminated_string((void*)pointer, &tmp, 64, false, &buffer);
+		string_append_character(string, '\"');
+        string_append_string(string, &tmp);
+		string_append_character(string, '\"');
         return;
-    }
+
+	}
 
     switch (type->type)
     {
@@ -140,11 +168,6 @@ void datatype_append_value_to_string(
     case Datatype_Type::STRUCT_PATTERN: {
         // How do we ever print a value of this?
         string_append(string, "STRUCT_PATTERN?");
-        break;
-    }
-    case Datatype_Type::CONSTANT: {
-        auto constant = downcast<Datatype_Constant>(type);
-        datatype_append_value_to_string(constant->element_type, type_system, value_ptr, string, format, indentation, local_memory, pointer_memory);
         break;
     }
     case Datatype_Type::PATTERN_VARIABLE: {
@@ -269,28 +292,6 @@ void datatype_append_value_to_string(
         }
         else {
             string_append(string, " }");
-        }
-        break;
-    }
-    case Datatype_Type::OPTIONAL_TYPE:
-    {
-        auto opt = downcast<Datatype_Optional>(type);
-        byte* available_ptr = value_ptr + opt->is_available_member.offset;
-        bool available = false;
-        bool success = local_memory.read_single_value(available_ptr, &available);
-        if (!success) {
-            string_append_formated(string, "ERROR_ACCESSING_AVAILABLE_MEMBER");
-            break;
-        }
-
-        if (available) {
-            string_append_formated(string, "Opt-Value: ");
-            datatype_append_value_to_string(
-                opt->child_type, type_system, value_ptr + opt->value_member.offset, string, format, indentation + 1, local_memory, pointer_memory
-            );
-        }
-        else {
-            string_append_formated(string, "Optional Unavailable");
         }
         break;
     }
@@ -513,7 +514,6 @@ Datatype_Format datatype_format_make_default()
     Datatype_Format format;
     format.append_struct_poly_parameter_values = true;
     format.highlight_parameter_index = -1;
-    format.remove_const_from_function_params = true;
     format.highlight_color = vec3(0.3f);
     return format;
 }
@@ -566,13 +566,6 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         Rich_Text::append_formated(text, "%s", polymorphic->variable->name->characters);
         break;
     }
-    case Datatype_Type::CONSTANT: {
-        Datatype_Constant* constant = downcast<Datatype_Constant>(signature);
-        Rich_Text::set_text_color(text, Syntax_Color::KEYWORD);
-        Rich_Text::append_formated(text, "const ");
-        datatype_append_to_rich_text(constant->element_type, type_system, text, format);
-        break;
-    }
     case Datatype_Type::ARRAY: {
         auto array_type = downcast<Datatype_Array>(signature);
         if (array_type->count_known) {
@@ -603,12 +596,6 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
         }
         Rich_Text::append_formated(text, "*");
         datatype_append_to_rich_text(pointer_type->element_type, type_system, text, format);
-        break;
-    }
-    case Datatype_Type::OPTIONAL_TYPE: {
-        auto opt = downcast<Datatype_Optional>(signature);
-        Rich_Text::append_character(text, '?');
-        datatype_append_to_rich_text(opt->child_type, type_system, text, format);
         break;
     }
     case Datatype_Type::PRIMITIVE: 
@@ -657,6 +644,10 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
             }
             break;
         }
+		case Primitive_Class::C_STRING: {
+            Rich_Text::append(text, "c_string");
+            break;
+		}
         default: panic("Heyo");
         }
         break;
@@ -779,9 +770,6 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 	case Datatype_Type::FUNCTION_POINTER:
 	{
 		auto function_pointer = downcast<Datatype_Function_Pointer>(signature);
-		if (function_pointer->is_optional) {
-			Rich_Text::append_character(text, '?');
-		}
 		call_signature_append_to_rich_text(function_pointer->signature, text, &format, type_system);
 		break;
 	}
@@ -821,12 +809,6 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
 			a.options.array_type.count_variable_type == b.options.array_type.count_variable_type &&
 			a.options.array_type.size_known == b.options.array_type.size_known;
 	}
-	case Type_Deduplication_Type::CONSTANT: {
-		return a.options.non_constant_type == b.options.non_constant_type;
-	}
-	case Type_Deduplication_Type::OPTIONAL: {
-		return a.options.optional_child_type == b.options.optional_child_type;
-	}
 	case Type_Deduplication_Type::SLICE: {
 		return a.options.slice_element_type == b.options.slice_element_type;
 	}
@@ -836,10 +818,7 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
 	}
 	case Type_Deduplication_Type::FUNCTION_POINTER:
 	{
-		// Check return types
-		auto& pa = a.options.function_pointer;
-		auto& pb = b.options.function_pointer;
-		return pa.is_optional == pb.is_optional && pa.signature == pb.signature;
+		return a.options.function_pointer_signature == b.options.function_pointer_signature;
 	}
 	default: panic("");
 	}
@@ -856,10 +835,6 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 
 	switch (dedup->type)
 	{
-	case Type_Deduplication_Type::OPTIONAL: {
-		hash = hash_combine(hash, hash_pointer(dedup->options.optional_child_type));
-		break;
-	}
 	case Type_Deduplication_Type::POINTER: {
 		hash = hash_combine(hash, hash_pointer(dedup->options.pointer.child_type));
 		hash = hash_bool(hash, dedup->options.pointer.is_optional);
@@ -867,10 +842,6 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 	}
 	case Type_Deduplication_Type::SLICE: {
 		hash = hash_combine(hash, hash_pointer(dedup->options.slice_element_type));
-		break;
-	}
-	case Type_Deduplication_Type::CONSTANT: {
-		hash = hash_combine(hash, hash_pointer(dedup->options.non_constant_type));
 		break;
 	}
 	case Type_Deduplication_Type::ARRAY: {
@@ -882,9 +853,7 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 		break;
 	}
 	case Type_Deduplication_Type::FUNCTION_POINTER: {
-		auto& pointer = dedup->options.function_pointer;
-		hash = hash_combine(hash, hash_pointer(pointer.signature));
-		hash = hash_bool(hash, pointer.is_optional);
+		hash = hash_combine(hash, hash_pointer(dedup->options.function_pointer_signature));
 		break;
 	}
 	default: panic("");
@@ -1117,9 +1086,6 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 		element_count = 1;
 	}
 
-	bool element_type_is_const = element_type->type == Datatype_Type::CONSTANT;
-	element_type = datatype_get_non_const_type(element_type);
-
 	Type_Deduplication dedup;
 	dedup.type = Type_Deduplication_Type::ARRAY;
 	dedup.options.array_type.element_count = element_count;
@@ -1132,11 +1098,7 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
 		if (type_opt != nullptr) {
 			Datatype* type = *type_opt;
-			assert(type->type == Datatype_Type::CONSTANT, "");
-			assert(datatype_get_non_const_type(type)->type == Datatype_Type::ARRAY, "");
-			if (!element_type_is_const) {
-				return datatype_get_non_const_type(type);
-			}
+			assert(type->type == Datatype_Type::ARRAY, "");
 			return type;
 		}
 	}
@@ -1186,13 +1148,8 @@ Datatype* type_system_make_array(Datatype* element_type, bool count_known, int e
 	internal_info.size = (int)result->element_count;
 
 	// We always store the constant array type in deduplication, and switch path depending on element type
-	Datatype* const_array_type = type_system_make_constant(upcast(result));
-	hashtable_insert_element(&type_system.deduplication_table, dedup, const_array_type);
-
-	if (!element_type_is_const) {
-		return upcast(result);
-	}
-	return const_array_type;
+	hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
+	return upcast(result);
 }
 
 Datatype_Slice* type_system_make_slice(Datatype* element_type)
@@ -1235,104 +1192,7 @@ Datatype_Slice* type_system_make_slice(Datatype* element_type)
 	return result;
 }
 
-Datatype* type_system_make_constant(Datatype* datatype, Type_System* type_system)
-{
-	if (datatype->type == Datatype_Type::CONSTANT) return datatype;
-
-	if (type_system == nullptr) {
-		type_system = &compiler.analysis_data->type_system;
-	}
-
-	Type_Deduplication dedup;
-	dedup.type = Type_Deduplication_Type::CONSTANT;
-	dedup.options.non_constant_type = datatype;
-	// Check if type was already created
-	{
-		auto type_opt = hashtable_find_element(&type_system->deduplication_table, dedup);
-		if (type_opt != nullptr) {
-			Datatype* type = *type_opt;
-			assert(type->type == Datatype_Type::CONSTANT, "");
-			return type;
-		}
-	}
-
-	Datatype_Constant* result = new Datatype_Constant;
-	result->element_type = datatype;
-	result->base = datatype_make_simple_base(Datatype_Type::CONSTANT, 1, 1);
-	result->base.contains_pattern = datatype->contains_pattern;
-	result->base.contains_partial_pattern = datatype->contains_partial_pattern;
-	result->base.contains_pattern_variable_definition = datatype->contains_pattern_variable_definition;
-
-	if (datatype->memory_info.available) {
-		result->base.memory_info = datatype->memory_info;
-		result->base.memory_info_workload = nullptr;
-	}
-	else {
-		result->base.memory_info.available = false;
-		result->base.memory_info_workload = datatype->memory_info_workload;
-		dynamic_array_push_back(&datatype->memory_info_workload->struct_type->types_waiting_for_size_finish, upcast(result));
-	}
-
-	type_system_register_type(upcast(result), type_system)->options.constant = datatype->type_handle;
-	hashtable_insert_element(&type_system->deduplication_table, dedup, upcast(result));
-
-	return upcast(result);
-}
-
-Datatype_Optional* type_system_make_optional(Datatype* child_type)
-{
-	auto& type_system = compiler.analysis_data->type_system;
-	auto& ids = compiler.identifier_pool.predefined_ids;
-	bool child_is_constant = child_type->type == Datatype_Type::CONSTANT;
-	child_type = datatype_get_non_const_type(child_type);
-	assert(child_type->type != Datatype_Type::POINTER, "Should be handled elsewhere i guess");
-
-	Type_Deduplication dedup;
-	dedup.type = Type_Deduplication_Type::OPTIONAL;
-	dedup.options.optional_child_type = child_type;
-	// Check if type was already created
-	{
-		auto type_opt = hashtable_find_element(&type_system.deduplication_table, dedup);
-		if (type_opt != nullptr) {
-			Datatype* type = *type_opt;
-			assert(type->type == Datatype_Type::OPTIONAL_TYPE, "");
-			return downcast<Datatype_Optional>(type);
-		}
-	}
-
-	Datatype_Optional* result = new Datatype_Optional;
-	result->child_type = child_type;
-	result->base = datatype_make_simple_base(Datatype_Type::OPTIONAL_TYPE, 1, 1);
-	result->base.contains_pattern = child_type->contains_pattern;
-	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
-	result->base.contains_pattern_variable_definition = child_type->contains_pattern_variable_definition;
-
-	result->value_member = struct_member_make(child_type, ids.value, nullptr, 0, nullptr);
-	result->is_available_member = struct_member_make(upcast(type_system.predefined_types.bool_type), ids.is_available, nullptr, 0, nullptr);
-
-	// Note: is_available offset will be set when type is finished
-	if (child_type->memory_info.available) {
-		result->base.memory_info = child_type->memory_info;
-		result->base.memory_info_workload = nullptr;
-		auto& mem = result->base.memory_info.value;
-		result->is_available_member.offset = mem.size;
-		mem.size = math_round_next_multiple(mem.size + 1, (u64)mem.alignment);
-	}
-	else {
-		result->base.memory_info.available = false;
-		result->base.memory_info_workload = child_type->memory_info_workload;
-		dynamic_array_push_back(&child_type->memory_info_workload->struct_type->types_waiting_for_size_finish, upcast(result));
-	}
-
-	auto& opt = type_system_register_type(upcast(result), &type_system)->options.optional;
-	opt.child_type = child_type->type_handle;
-	opt.available_offset = result->is_available_member.offset;
-	hashtable_insert_element(&type_system.deduplication_table, dedup, upcast(result));
-
-	return result;
-}
-
-Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, bool is_optional, Type_System* type_system)
+Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, Type_System* type_system)
 {
 	if (type_system == nullptr) {
 		type_system = &compiler.analysis_data->type_system;
@@ -1340,8 +1200,7 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 
 	Type_Deduplication dedup;
 	dedup.type = Type_Deduplication_Type::FUNCTION_POINTER;
-	dedup.options.function_pointer.signature = signature;
-	dedup.options.function_pointer.is_optional = is_optional;
+	dedup.options.function_pointer_signature = signature;
 
 	// Check if type was already created
 	{
@@ -1359,7 +1218,6 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 	result->base = datatype_make_simple_base(Datatype_Type::FUNCTION_POINTER, 8, 8);
 	result->base.memory_info.value.contains_function_pointer = true;
 	result->signature = signature;
-	result->is_optional = is_optional;
 	for (int i = 0; i < parameters.size; i++) {
 		auto& param = parameters[i];
 		assert(param.comptime_variable_index == -1, "Function pointers should only have normal arguments");
@@ -1392,6 +1250,18 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* sig
 	hashtable_insert_element(&type_system->deduplication_table, dedup, upcast(result));
 	return result;
 }
+
+Datatype* datatype_make_with_modifiers(Datatype* base_type, int pointer_level, u32 optional_flags)
+{
+	assert(base_type->type != Datatype_Type::POINTER, "");
+	Datatype* result_type = base_type;
+	for (int i = 0; i < pointer_level; i++) {
+		bool is_opt   = (optional_flags & (1 << (i + 1))) != 0;
+		result_type = upcast(type_system_make_pointer(result_type, is_opt));
+	}
+	return result_type;
+}
+
 
 Datatype_Struct* type_system_make_struct_empty(String* name, bool is_union, Datatype_Struct* parent, Workload_Structure_Body* workload)
 {
@@ -1481,16 +1351,16 @@ void internal_type_struct_mirror_recursive(Datatype_Struct* structure)
 	internal_info->tag = structure->base.type;
 
 	Internal_Type_Struct* internal = &internal_info->options.structure;
-	internal->name = upp_c_string_from_id(structure->name);
+	internal->name = upp_string_from_id(structure->name);
 	internal->is_union = structure->is_union;
 
 	if (structure->subtypes.size > 0) {
-		internal->tag_member.name = upp_c_string_from_id(structure->tag_member.id);
+		internal->tag_member.name = upp_string_from_id(structure->tag_member.id);
 		internal->tag_member.offset = structure->tag_member.offset;
 		internal->tag_member.type = structure->tag_member.type->type_handle;
 	}
 	else {
-		internal->tag_member.name = upp_c_string_empty();
+		internal->tag_member.name = upp_string_empty();
 		internal->tag_member.offset = 0;
 		internal->tag_member.type = compiler.analysis_data->type_system.predefined_types.unknown_type->type_handle;
 	}
@@ -1504,7 +1374,7 @@ void internal_type_struct_mirror_recursive(Datatype_Struct* structure)
 		{
 			Internal_Type_Struct_Member* mem_i = &internal->members.data[i];
 			Struct_Member& mem = structure->members[i];
-			mem_i->name = upp_c_string_from_id(mem.id);
+			mem_i->name = upp_string_from_id(mem.id);
 			mem_i->offset = mem.offset;
 			mem_i->type = mem.type->type_handle;
 		}
@@ -1687,25 +1557,6 @@ void struct_distribute_memory_info_to_subtypes(Datatype_Struct* structure, Datat
 			type_system_finish_array(downcast<Datatype_Array>(type));
 			continue;
 		}
-		else if (type->type == Datatype_Type::CONSTANT)
-		{
-			assert(type->type == Datatype_Type::CONSTANT, "");
-			auto constant = downcast<Datatype_Constant>(type);
-			assert(constant->element_type->memory_info.available, "");
-			type->memory_info = constant->element_type->memory_info;
-		}
-		else if (type->type == Datatype_Type::OPTIONAL_TYPE)
-		{
-			auto opt = downcast<Datatype_Optional>(type);
-			assert(!opt->base.memory_info.available, "");
-			opt->base.memory_info = opt->child_type->memory_info;
-			auto& mem = opt->base.memory_info.value;
-			opt->is_available_member.offset = mem.size;
-			mem.size = math_round_next_multiple(mem.size + 1, (u64)mem.alignment);
-
-			auto& info_internal = type_system.internal_type_infos[type->type_handle.index];
-			info_internal->options.optional.available_offset = opt->is_available_member.offset;
-		}
 		else {
 			panic("I don't think other types can wait for this");
 		}
@@ -1787,10 +1638,10 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
 
 	// Make mirroring internal info
 	if (enum_type->name == 0) {
-		internal_info->options.enumeration.name = upp_c_string_empty();
+		internal_info->options.enumeration.name = upp_string_empty();
 	}
 	else {
-		internal_info->options.enumeration.name = upp_c_string_from_id(enum_type->name);
+		internal_info->options.enumeration.name = upp_string_from_id(enum_type->name);
 	}
 	int member_count = members.size;
 	internal_info->options.enumeration.members.size = member_count;
@@ -1799,7 +1650,7 @@ void type_system_finish_enum(Datatype_Enum* enum_type)
 	{
 		Enum_Member* member = &members[i];
 		Internal_Type_Enum_Member* internal_member = &internal_info->options.enumeration.members.data[i];
-		internal_member->name = upp_c_string_from_id(member->name);
+		internal_member->name = upp_string_from_id(member->name);
 		internal_member->value = member->value;
 	}
 }
@@ -1830,12 +1681,14 @@ void type_system_add_predefined_types(Type_System* system)
 		types->f32_type = type_system_make_primitive(Primitive_Type::F32, Primitive_Class::FLOAT, 4, true);
 		types->f64_type = type_system_make_primitive(Primitive_Type::F64, Primitive_Class::FLOAT, 8, true);
 
-		types->c_char = type_system_make_primitive(Primitive_Type::C_CHAR, Primitive_Class::INTEGER, 1, false);
 		types->bool_type = type_system_make_primitive(Primitive_Type::BOOLEAN, Primitive_Class::BOOLEAN, 1, false);
 		types->address = type_system_make_primitive(Primitive_Type::ADDRESS, Primitive_Class::ADDRESS, 8, false);
 		types->isize = type_system_make_primitive(Primitive_Type::ISIZE, Primitive_Class::INTEGER, 8, true);
 		types->usize = type_system_make_primitive(Primitive_Type::USIZE, Primitive_Class::INTEGER, 8, false);
 		types->type_handle = upcast(type_system_make_primitive(Primitive_Type::TYPE_HANDLE, Primitive_Class::TYPE_HANDLE, 4, false));
+
+		types->c_char   = type_system_make_primitive(Primitive_Type::C_CHAR, Primitive_Class::INTEGER, 1, false);
+		types->c_string = upcast(type_system_make_primitive(Primitive_Type::C_STRING, Primitive_Class::C_STRING, 8, false));
 	}
 
 	// Other basic types
@@ -1852,18 +1705,6 @@ void type_system_add_predefined_types(Type_System* system)
 
 	{
 		types->empty_pattern_variable = upcast(type_system_make_pattern_variable_type(nullptr));
-	}
-
-	{
-		types->cast_type_enum = type_system_make_enum_empty(ids.cast_type);
-		auto cast_type_names = ids.cast_type_enum_values;
-		for (int i = 0; i < (int)Cast_Type::NO_CAST; i += 1) {
-			Enum_Member item;
-			item.name = cast_type_names[i];
-			item.value = i; // Note: cast-type already starts with 1
-			dynamic_array_push_back(&types->cast_type_enum->members, item);
-		}
-		type_system_finish_enum(types->cast_type_enum);
 	}
 
 	auto make_id = [&](const char* name) -> String* { return identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static(name)); };
@@ -1900,12 +1741,12 @@ void type_system_add_predefined_types(Type_System* system)
 
 	// String
 	{
-		Datatype_Struct* c_string = type_system_make_struct_empty(ids.c_string);
-		Datatype_Slice* slice_type = type_system_make_slice(type_system_make_constant(upcast(types->c_char)));
-		struct_add_member(c_string, ids.bytes, upcast(slice_type));
-		type_system_finish_struct(c_string);
-		types->c_string = upcast(c_string);
-		test_type_similarity<Upp_C_String>(types->c_string);
+		Datatype_Struct* upp_string = type_system_make_struct_empty(ids.string);
+		struct_add_member(upp_string, ids.data, upcast(types->address));
+		struct_add_member(upp_string, ids.size, upcast(types->usize));
+		type_system_finish_struct(upp_string);
+		types->string = upcast(upp_string);
+		test_type_similarity<Upp_String>(types->string);
 	}
 
 	// Any
@@ -1923,23 +1764,23 @@ void type_system_add_predefined_types(Type_System* system)
 		Datatype* allocator_pointer = upcast(type_system_make_pointer(upcast(types->allocator), false));
 
 		Call_Signature* signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
-		call_signature_add_parameter(signature, make_id("size"),      type_system_make_constant(upcast(types->usize)), true, false, false);
-		call_signature_add_parameter(signature, make_id("alignment"), type_system_make_constant(upcast(types->u32_type)), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("alignment"), upcast(types->u32_type), true, false, false);
 		call_signature_add_return_type(signature, upcast(types->address));
 		types->allocate_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
 		signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   type_system_make_constant(upcast(types->address)), true, false, false);
-		call_signature_add_parameter(signature, make_id("size"),      type_system_make_constant(upcast(types->usize)), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
 		types->free_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
 		signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, make_id("allocator"), type_system_make_constant(upcast(allocator_pointer)), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   type_system_make_constant(upcast(types->address)), true, false, false);
-		call_signature_add_parameter(signature, make_id("old_size"),  type_system_make_constant(upcast(types->usize)), true, false, false);
-		call_signature_add_parameter(signature, make_id("new_size"),  type_system_make_constant(upcast(types->usize)), true, false, false);
+		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("old_size"),  upcast(types->usize), true, false, false);
+		call_signature_add_parameter(signature, make_id("new_size"),  upcast(types->usize), true, false, false);
 		call_signature_add_return_type(signature, upcast(types->bool_type));
 		types->resize_function = type_system_make_function_pointer(call_signature_register(signature), false);
 
@@ -1962,30 +1803,19 @@ void type_system_add_predefined_types(Type_System* system)
 		auto subtype_primitive = add_struct_subtype(type_info_type, "Primitive");
 		auto subtype_array =     add_struct_subtype(type_info_type, "Array");
 		auto subtype_slice =     add_struct_subtype(type_info_type, "Slice");
+		auto subtype_pointer =   add_struct_subtype(type_info_type, "Pointer");
+		auto subtype_function =  add_struct_subtype(type_info_type, "Function_Pointer");
 		auto subtype_struct =    add_struct_subtype(type_info_type, "Struct");
 		auto subtype_enum =      add_struct_subtype(type_info_type, "Enum");
-		auto subtype_function =  add_struct_subtype(type_info_type, "Function");
 		auto subtype_unknown =   add_struct_subtype(type_info_type, "Unknown");
 		auto subtype_invalid =   add_struct_subtype(type_info_type, "Invalid");
 
-		auto subtype_pointer =   add_struct_subtype(type_info_type, "Pointer");
-		auto subtype_constant =  add_struct_subtype(type_info_type, "Constant");
-		auto subtype_optional =  add_struct_subtype(type_info_type, "Optional");
-
 		// Fill subtypes
 		{
-			add_member_cstr(subtype_constant, "element_type", types->type_handle);
-
 			// Pointer
 			{
 				add_member_cstr(subtype_pointer, "element_type", types->type_handle);
 				add_member_cstr(subtype_pointer, "is_optional", upcast(types->bool_type));
-			}
-
-			// Optional
-			{
-				add_member_cstr(subtype_optional, "child_type", types->type_handle);
-				add_member_cstr(subtype_optional, "available_offset", upcast(types->i32_type));
 			}
 
 			// Primitive
@@ -2013,9 +1843,10 @@ void type_system_add_predefined_types(Type_System* system)
 				add_enum_member(types->primitive_type_enum, "USIZE", 11);
 				add_enum_member(types->primitive_type_enum, "TYPE_HANDLE", 12);
 				add_enum_member(types->primitive_type_enum, "C_CHAR", 13);
-				add_enum_member(types->primitive_type_enum, "F32", 14);
-				add_enum_member(types->primitive_type_enum, "F64", 15);
-				add_enum_member(types->primitive_type_enum, "BOOL", 16);
+				add_enum_member(types->primitive_type_enum, "C_STRING", 14);
+				add_enum_member(types->primitive_type_enum, "F32", 15);
+				add_enum_member(types->primitive_type_enum, "F64", 16);
+				add_enum_member(types->primitive_type_enum, "BOOL", 17);
 				type_system_finish_enum(types->primitive_type_enum);
 
 				add_member_cstr(subtype_primitive, "type", upcast(types->primitive_type_enum));
@@ -2033,7 +1864,7 @@ void type_system_add_predefined_types(Type_System* system)
 			{
 				Datatype_Struct* struct_member_type = type_system_make_struct_empty(make_id("Member_Info"));
 				{
-					add_member_cstr(struct_member_type, "name", upcast(types->c_string));
+					add_member_cstr(struct_member_type, "name", upcast(types->string));
 					add_member_cstr(struct_member_type, "type", types->type_handle);
 					add_member_cstr(struct_member_type, "offset", upcast(types->i32_type));
 					type_system_finish_struct(struct_member_type);
@@ -2042,7 +1873,7 @@ void type_system_add_predefined_types(Type_System* system)
 
 				{
 					add_member_cstr(subtype_struct, "members", upcast(type_system_make_slice(upcast(struct_member_type))));
-					add_member_cstr(subtype_struct, "name", upcast(types->c_string));
+					add_member_cstr(subtype_struct, "name", upcast(types->string));
 					add_member_cstr(subtype_struct, "is_union", upcast(types->bool_type));
 					add_member_cstr(subtype_struct, "subtypes", upcast(type_system_make_slice(types->type_handle)));
 					add_member_cstr(subtype_struct, "parent_struct", types->type_handle);
@@ -2055,13 +1886,13 @@ void type_system_add_predefined_types(Type_System* system)
 				{
 					String* id = make_id("Enum_Member");
 					Datatype_Struct* enum_member_type = type_system_make_struct_empty(id);
-					add_member_cstr(enum_member_type, "name", upcast(types->c_string));
+					add_member_cstr(enum_member_type, "name", upcast(types->string));
 					add_member_cstr(enum_member_type, "value", upcast(types->i32_type));
 					type_system_finish_struct(enum_member_type);
 					add_member_cstr(subtype_enum, "members", upcast(type_system_make_slice(upcast(enum_member_type))));
 					types->internal_enum_member_info_type = enum_member_type;
 				}
-				add_member_cstr(subtype_enum, "name", upcast(types->c_string));
+				add_member_cstr(subtype_enum, "name", upcast(types->string));
 			}
 			// Function
 			{
@@ -2123,7 +1954,7 @@ bool type_size_is_unfinished(Datatype* a) {
 }
 
 Datatype* datatype_get_undecorated(
-    Datatype* datatype, bool remove_pointer, bool remove_subtype, bool remove_const, bool remove_optional_pointer, bool remove_optional
+    Datatype* datatype, bool remove_pointer, bool remove_subtype, bool remove_optional_pointer
 )
 {
 	while (true)
@@ -2141,12 +1972,6 @@ Datatype* datatype_get_undecorated(
 			}
 			return upcast(structure);
 		}
-		else if (remove_const && datatype->type == Datatype_Type::CONSTANT) {
-			datatype = downcast<Datatype_Constant>(datatype)->element_type;
-		}
-		else if (remove_optional && datatype->type == Datatype_Type::OPTIONAL_TYPE) {
-			datatype = downcast<Datatype_Optional>(datatype)->child_type;
-		}
 		else {
 			return datatype;
 		}
@@ -2155,25 +1980,17 @@ Datatype* datatype_get_undecorated(
 	return datatype;
 }
 
-Datatype* datatype_get_non_const_type(Datatype* datatype, bool* out_was_const)
-{
-	if (out_was_const != nullptr) {
-		*out_was_const = datatype->type == Datatype_Type::CONSTANT;
-	}
-	if (datatype->type == Datatype_Type::CONSTANT) {
-		return downcast<Datatype_Constant>(datatype)->element_type;
-	}
-	return datatype;
+bool datatype_is_unknown(Datatype* datatype) {
+	return datatype_get_undecorated(datatype, true, true, true)->type == Datatype_Type::UNKNOWN_TYPE;
 }
 
-bool datatype_is_unknown(Datatype* datatype) {
-	datatype = datatype_get_undecorated(datatype, true, true, true, true);
-	return datatype->type == Datatype_Type::UNKNOWN_TYPE;
+bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class) {
+	if (datatype->type != Datatype_Type::PRIMITIVE) return false;
+	return downcast<Datatype_Primitive>(datatype)->primitive_class == primitive_class;
 }
 
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
 {
-	datatype = datatype_get_non_const_type(datatype);
 	if (out_is_optional != nullptr) {
 		*out_is_optional = false;
 	}
@@ -2186,9 +2003,6 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
 		return true;
 	}
 	else if (datatype->type == Datatype_Type::FUNCTION_POINTER) {
-		if (out_is_optional != nullptr) {
-			*out_is_optional = downcast<Datatype_Function_Pointer>(datatype)->is_optional;
-		}
 		return true;
 	}
 
@@ -2198,9 +2012,7 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 {
 	Type_Modifier_Info info;
-	info.initial_type = datatype;
 	info.pointer_level = 0;
-	info.const_flags = 0;
 	info.optional_flags = 0;
 
 	while (true)
@@ -2208,7 +2020,6 @@ Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 		if (datatype->type == Datatype_Type::POINTER) 
 		{
 			info.pointer_level += 1;
-			info.const_flags    = info.const_flags << 1;
 			info.optional_flags = info.optional_flags << 1;
 
 			auto ptr_type = downcast<Datatype_Pointer>(datatype);
@@ -2216,24 +2027,6 @@ Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 				info.optional_flags = info.optional_flags | 1;
 			}
 			datatype = ptr_type->element_type;
-		}
-		else if (datatype->type == Datatype_Type::FUNCTION_POINTER) 
-		{
-			if (downcast<Datatype_Function_Pointer>(datatype)->is_optional) {
-				info.optional_flags = info.optional_flags | 1;
-			}
-			break;
-		}
-		else if (datatype->type == Datatype_Type::CONSTANT) 
-		{
-			datatype = downcast<Datatype_Constant>(datatype)->element_type;
-			info.const_flags = info.const_flags | 1;
-		}
-		else if (datatype->type == Datatype_Type::OPTIONAL_TYPE) 
-		{
-			datatype = downcast<Datatype_Optional>(datatype)->child_type;
-			info.optional_flags = info.optional_flags | 1;
-			break;
 		}
 		else {
 			break;
@@ -2255,18 +2048,18 @@ Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 	return info;
 }
 
-Upp_C_String upp_c_string_from_id(String* id)
+Upp_String upp_string_from_id(String* id)
 {
-	Upp_C_String result;
-	result.bytes.size = id->size;
-	result.bytes.data = (const u8*)id->characters;
+	Upp_String result;
+	result.data = id->characters;
+	result.size = id->size;
 	return result;
 }
 
-Upp_C_String upp_c_string_empty() {
-	Upp_C_String result;
-	result.bytes.data = (const u8*)"";
-	result.bytes.size = 0;
+Upp_String upp_string_empty() {
+	Upp_String result;
+	result.data = nullptr;
+	result.size = 0;
 	return result;
 }
 

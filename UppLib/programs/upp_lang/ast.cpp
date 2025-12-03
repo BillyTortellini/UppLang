@@ -278,18 +278,6 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(unop.expr);
 			break;
 		}
-		case Expression_Type::OPTIONAL_ACCESS: {
-			FILL(expr->options.optional_access.expr);
-			break;
-		}
-		case Expression_Type::OPTIONAL_TYPE: {
-			FILL(expr->options.optional_child_type);
-			break;
-		}
-		case Expression_Type::OPTIONAL_POINTER: {
-			FILL(expr->options.optional_pointer_child_type);
-			break;
-		}
 		case Expression_Type::PATTERN_VARIABLE: {
 			break;
 		}
@@ -372,13 +360,8 @@ Node* base_get_child(Node* node, int child_index)
 			FILL(slice);
 			break;
 		}
-		case Expression_Type::CONST_TYPE: {
-			auto& const_type = expr->options.const_type;
-			FILL(const_type);
-			break;
-		}
 		case Expression_Type::POINTER_TYPE: {
-			FILL(expr->options.pointer_points_to_type);
+			FILL(expr->options.pointer_type.child_type);
 			break;
 		}
 		case Expression_Type::AUTO_ENUM: {
@@ -677,18 +660,6 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(unop.expr);
 			break;
 		}
-		case Expression_Type::OPTIONAL_ACCESS: {
-			FILL(expr->options.optional_access.expr);
-			break;
-		}
-		case Expression_Type::OPTIONAL_TYPE: {
-			FILL(expr->options.optional_child_type);
-			break;
-		}
-		case Expression_Type::OPTIONAL_POINTER: {
-			FILL(expr->options.optional_pointer_child_type);
-			break;
-		}
 		case Expression_Type::PATTERN_VARIABLE: {
 			break;
 		}
@@ -771,13 +742,8 @@ void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill)
 			FILL(slice);
 			break;
 		}
-		case Expression_Type::CONST_TYPE: {
-			auto& const_type = expr->options.const_type;
-			FILL(const_type);
-			break;
-		}
 		case Expression_Type::POINTER_TYPE: {
-			FILL(expr->options.pointer_points_to_type);
+			FILL(expr->options.pointer_type.child_type);
 			break;
 		}
 		case Expression_Type::AUTO_ENUM: {
@@ -964,10 +930,6 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 		break;
 	}
 	case Expression_Type::UNARY_OPERATION: string_append_formated(str, "Unop"); break;
-	case Expression_Type::OPTIONAL_ACCESS: string_append_formated(
-		str, expr->options.optional_access.is_value_access ? "Optional_Available_Check " : "Optional_Value_Access"); break;
-	case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "Optional Type"); break;
-	case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "Optional Pointer"); break;
 	case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "Template Parameter \"%s\"", expr->options.pattern_variable_name->characters); break;
 	case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
 	case Expression_Type::NEW_EXPR: string_append_formated(str, "New expr"); break;
@@ -999,8 +961,15 @@ void expression_append_to_string(AST::Expression* expr, String* str)
 	case Expression_Type::ENUM_TYPE: string_append_formated(str, "Enum Type"); break;
 	case Expression_Type::ARRAY_TYPE: string_append_formated(str, "Array Type"); break;
 	case Expression_Type::SLICE_TYPE: string_append_formated(str, "Slice Type"); break;
-	case Expression_Type::CONST_TYPE: string_append_formated(str, "Const Type"); break;
-	case Expression_Type::POINTER_TYPE: string_append_formated(str, "Pointer Type"); break;
+	case Expression_Type::POINTER_TYPE: {
+		if (expr->options.pointer_type.is_optional) {
+			string_append_formated(str, "Optional Pointer Type");
+		}
+		else {
+			string_append_formated(str, "Pointer Type");
+		}
+		break;
+	}
 	case Expression_Type::ERROR_EXPR: string_append_formated(str, "Error"); break;
 	case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "Struct Initializer"); break;
 	case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "Array Initializer"); break;
@@ -1135,9 +1104,6 @@ void base_append_to_string(Node* base, String* str)
 		{
 		case Expression_Type::BINARY_OPERATION: string_append_formated(str, "BINARY_OPERATION"); break;
 		case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
-		case Expression_Type::OPTIONAL_ACCESS: string_append_formated(str, "OPTIONAL_ACCESS"); break;
-		case Expression_Type::OPTIONAL_TYPE: string_append_formated(str, "OPTIONAL_TYPE"); break;
-		case Expression_Type::OPTIONAL_POINTER: string_append_formated(str, "OPTIONAL_POINTER"); break;
 		case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "PATTERN_VARIABLE %s", expr->options.pattern_variable_name->characters); break;
 		case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
 		case Expression_Type::NEW_EXPR: string_append_formated(str, "NEW_EXPR"); break;
@@ -1174,8 +1140,15 @@ void base_append_to_string(Node* base, String* str)
 		case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;
 		case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
 		case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
-		case Expression_Type::CONST_TYPE: string_append_formated(str, "CONST_TYPE"); break;
-		case Expression_Type::POINTER_TYPE: string_append_formated(str, "POINTER_TYPE"); break;
+		case Expression_Type::POINTER_TYPE: {
+			if (expr->options.pointer_type.is_optional) {
+				string_append_formated(str, "OPTIONAL_POINTER_TYPE"); 
+			}
+			else {
+				string_append_formated(str, "POINTER_TYPE"); 
+			}
+			break;
+		}
 		case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
 		case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
 		case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;
@@ -1280,7 +1253,6 @@ void custom_operator_type_append_to_string(Custom_Operator_Type type, String* st
 	case Custom_Operator_Type::BINOP: string_append(string, "BINARY_OPERATOR"); break;
 	case Custom_Operator_Type::UNOP: string_append(string, "UNARY_OPERATOR"); break;
 	case Custom_Operator_Type::CAST: string_append(string, "CAST"); break;
-	case Custom_Operator_Type::AUTO_CAST_TYPE: string_append(string, "AUTO_CAST_TYPE"); break;
 	case Custom_Operator_Type::ITERATOR: string_append(string, "ITERATOR"); break;
 	default: panic("");
 	}

@@ -372,7 +372,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             function_sig = call->options.function->signature;
             break;
         case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
-            auto type = datatype_get_non_const_type(call->options.pointer_access->datatype);
+            auto type = call->options.pointer_access->datatype;
             assert(type->type == Datatype_Type::FUNCTION_POINTER, "Function pointer call must be of function type!");
             function_sig = downcast<Datatype_Function_Pointer>(type)->signature;
             break;
@@ -440,7 +440,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     }
     case IR_Instruction_Type::SWITCH: 
     {
-        Datatype* value_type = datatype_get_non_const_type(instruction->options.switch_instr.condition_access->datatype);
+        Datatype* value_type = instruction->options.switch_instr.condition_access->datatype;
         Datatype_Enum* enum_type = 0;
         if (value_type->type == Datatype_Type::STRUCT) {
             enum_type = downcast<Datatype_Enum>(downcast<Datatype_Struct>(value_type)->tag_member.type);
@@ -642,10 +642,6 @@ IR_Data_Access* ir_data_access_create_intermediate(Datatype* signature)
     assert(!datatype_is_unknown(signature), "Cannot have register with unknown type");
     assert(!type_size_is_unfinished(signature), "Cannot have register with 0 size!");
 
-    // Note: I don't think there is ever the need to have constant intermediates...
-    // This is here to make the C-Generator work 
-    signature = datatype_get_non_const_type(signature);
-
     IR_Data_Access* access = new IR_Data_Access;
     access->datatype = signature;
     access->type = IR_Data_Access_Type::REGISTER;
@@ -669,7 +665,7 @@ IR_Data_Access* ir_data_access_create_dereference(IR_Data_Access* pointer_access
         return pointer_access->option.address_of_value;
     }
 
-    Datatype* ptr_type = datatype_get_non_const_type(pointer_access->datatype);
+    Datatype* ptr_type = pointer_access->datatype;
     assert(ptr_type->type == Datatype_Type::POINTER, "");
 
     IR_Data_Access* access = new IR_Data_Access;
@@ -721,14 +717,10 @@ IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* arra
 {
     auto& types = compiler.analysis_data->type_system.predefined_types;
 
-    bool is_const = false;
-    Datatype* array_type = datatype_get_non_const_type(array_access->datatype, &is_const);
+    Datatype* array_type = array_access->datatype;
     Datatype* element_type = 0;
     if (array_type->type == Datatype_Type::ARRAY) {
         element_type = downcast<Datatype_Array>(array_type)->element_type;
-        if (is_const) {
-            element_type = type_system_make_constant(element_type);
-        }
     }
     else if (array_type->type == Datatype_Type::SLICE) {
         element_type = downcast<Datatype_Slice>(array_type)->element_type;
@@ -1008,41 +1000,13 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
         return make_simple_cast(source, cast_info.result_type, IR_Cast_Type::INT_TO_ENUM);
     }
     case Cast_Type::TO_BASE_TYPE:
-    case Cast_Type::TO_SUB_TYPE:
-    case Cast_Type::CONST_CAST: {
+    case Cast_Type::TO_SUB_TYPE: {
         return move_access_to_destination(ir_data_access_create_non_destructive_cast(source, cast_info.result_type, cast_info.cast_type));
-    }
-    case Cast_Type::DEREFERENCE: 
-    {
-        Datatype* from_type = source->datatype;
-        Datatype* to_type = cast_info.result_type;
-
-        IR_Data_Access* access = source;
-        while (from_type != to_type)
-        {
-            if (from_type->type == Datatype_Type::POINTER) {
-                auto ptr = downcast<Datatype_Pointer>(from_type);
-                access = ir_data_access_create_dereference(access);
-                assert(!ptr->is_optional, "");
-                from_type = ptr->element_type;
-            }
-            else if (from_type->type == Datatype_Type::CONSTANT) {
-                from_type = downcast<Datatype_Constant>(from_type)->element_type;
-            }
-            else {
-                panic("");
-            }
-        }
-        return move_access_to_destination(access);
-    }
-    case Cast_Type::ADDRESS_OF: 
-    {
-        return move_access_to_destination(ir_data_access_create_address_of(source));
     }
     case Cast_Type::ARRAY_TO_SLICE:
     {
-        Datatype_Slice* slice_type = downcast<Datatype_Slice>(datatype_get_non_const_type(cast_info.result_type));
-        Datatype_Array* array_type = downcast<Datatype_Array>(datatype_get_non_const_type(source_type));
+        Datatype_Slice* slice_type = downcast<Datatype_Slice>(cast_info.result_type);
+        Datatype_Array* array_type = downcast<Datatype_Array>(source_type);
         IR_Data_Access* slice_access = make_destination_access_on_demand(cast_info.result_type);
         // Set size
         {
@@ -1065,24 +1029,6 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
         }
         return destination;
     }
-    case Cast_Type::TO_OPTIONAL: 
-    {
-        IR_Data_Access* optional_access = make_destination_access_on_demand(cast_info.result_type);
-        auto opt_type = downcast<Datatype_Optional>(datatype_get_non_const_type(cast_info.result_type));
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::MOVE;
-        instr.options.move.destination = ir_data_access_create_member(optional_access, opt_type->value_member);
-        instr.options.move.source = source;
-        add_instruction(instr);
-
-        bool value = true;
-        instr.type = IR_Instruction_Type::MOVE;
-        instr.options.move.destination = ir_data_access_create_member(optional_access, opt_type->is_available_member);
-        instr.options.move.source = ir_data_access_create_constant_bool(true);
-        add_instruction(instr);
-
-        return optional_access;
-    }
     case Cast_Type::CUSTOM_CAST: {
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::FUNCTION_CALL;
@@ -1103,7 +1049,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
         IR_Data_Access* access_result = make_destination_access_on_demand(cast_info.result_type);
         {
             // Note: We always compare with non-const type, so any casts work from/to const
-            auto type_handle = datatype_get_non_const_type(cast_info.result_type)->type_handle;
+            auto type_handle = cast_info.result_type->type_handle;
 
             IR_Instruction cmp_instr;
             cmp_instr.type = IR_Instruction_Type::BINARY_OP;
@@ -1182,8 +1128,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
         }
         // Set type
         {
-            // Note: We always compare with non-const type, so any casts work from/to const
-            auto type_handle = datatype_get_non_const_type(source_type)->type_handle;
+            auto type_handle = source_type->type_handle;
 
             IR_Instruction instr;
             instr.type = IR_Instruction_Type::MOVE;
@@ -1204,6 +1149,8 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
 
 IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expression, IR_Data_Access* destination = 0)
 {
+    auto type_system = &compiler.analysis_data->type_system;
+    auto& types = type_system->predefined_types;
     auto& gen = ir_generator;
     auto ir_block = gen.current_block;
 
@@ -1213,8 +1160,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
     auto info = get_info(expression);
     auto result_type = expression_info_get_type(info, true);
-    auto type_system = &compiler.analysis_data->type_system;
-    auto& types = type_system->predefined_types;
+    if (info->result_type == Expression_Result_Type::VALUE) {
+        result_type = info->options.value.datatype;
+    }
     assert(info->is_valid, "Cannot contain errors!");
 
     auto move_access_to_destination = [&](IR_Data_Access* access) -> IR_Data_Access* {
@@ -1264,7 +1212,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
 
     // Handle expression value
-    Datatype* value_type = expression_info_get_value_info(info).initial_type;
+    Datatype* value_type = result_type;
     switch (expression->type)
     {
     case AST::Expression_Type::BINARY_OPERATION:
@@ -1297,8 +1245,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         auto right = ir_generator_generate_expression(binop.right);
 
         // Custom code-path for pointer-arithmetic
-        bool left_is_address = types_are_equal(datatype_get_non_const_type(left->datatype), upcast(types.address));
-        bool right_is_address = types_are_equal(datatype_get_non_const_type(right->datatype), upcast(types.address));
+        bool left_is_address = types_are_equal(left->datatype, upcast(types.address));
+        bool right_is_address = types_are_equal(right->datatype, upcast(types.address));
 
         // Note: We want comparison binops for two addresse to not use this code-path
         bool is_comparison = 
@@ -1396,6 +1344,46 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             instr.options.unary_op.source = access;
             add_instruction(instr);
             return instr.options.unary_op.destination;
+        }
+        case AST::Unop::OPTIONAL_DEREFERENCE:
+        {
+            destination = move_access_to_destination(ir_data_access_create_address_of(access));
+
+            // Do null check here
+            IR_Instruction cmp_instr;
+            cmp_instr.type = IR_Instruction_Type::BINARY_OP;
+            cmp_instr.options.binary_op.destination = ir_data_access_create_intermediate(upcast(types.bool_type));
+            cmp_instr.options.binary_op.operand_left = destination;
+            void* null_val = nullptr;
+            cmp_instr.options.binary_op.operand_right = ir_data_access_create_constant(access->datatype, array_create_static_as_bytes(&null_val, 1));
+            cmp_instr.options.binary_op.type = IR_Binop::EQUAL;
+            add_instruction(cmp_instr);
+
+            IR_Instruction if_instr;
+            if_instr.type = IR_Instruction_Type::IF;
+            if_instr.options.if_instr.condition = cmp_instr.options.binary_op.destination;
+            if_instr.options.if_instr.true_branch = ir_code_block_create();
+            if_instr.options.if_instr.false_branch = ir_code_block_create();
+            add_instruction(if_instr);
+
+            IR_Instruction exit_instr;
+            exit_instr.type = IR_Instruction_Type::RETURN;
+            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Dereferencing null-pointer");
+            add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
+        }
+        case AST::Unop::NULL_CHECK:
+        {
+            destination = make_destination_access_on_demand(upcast(types.bool_type));
+            IR_Instruction check_instr;
+            check_instr.type = IR_Instruction_Type::BINARY_OP;
+            check_instr.options.binary_op.destination = destination;
+            check_instr.options.binary_op.operand_left = access;
+            void* null_val = nullptr;
+            check_instr.options.binary_op.operand_right = ir_data_access_create_constant(access->datatype, array_create_static_as_bytes(&null_val, 1));
+            check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
+            add_instruction(check_instr);
+            return destination;
         }
         default: panic("HEY");
         }
@@ -1670,7 +1658,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     {
         auto& array_init = expression->options.array_initializer;
         IR_Data_Access* array_access = make_destination_access_on_demand(result_type);
-        auto array_type = datatype_get_non_const_type(result_type);
+        auto array_type = result_type;
         if (array_type->type == Datatype_Type::SLICE)
         {
             assert(array_init.values.size == 0, "");
@@ -1732,7 +1720,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case AST::Expression_Type::MEMBER_ACCESS:
     {
         auto mem_access = expression->options.member_access;
-        auto src_type = get_info(mem_access.expr)->cast_info.result_type;
+        auto src_type = expression_info_get_type(get_info(mem_access.expr), false);
 
         // Handle custom member accesses
         if (info->specifics.member_access.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST)
@@ -1740,9 +1728,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             auto source = ir_generator_generate_expression(mem_access.expr, destination);
 
             // Tag-check on downcast
-            auto dst_type = expression_info_get_type(info, false);
-            Datatype_Struct* src_struct = downcast<Datatype_Struct>(datatype_get_non_const_type(src_type));
-            Datatype_Struct* dst_struct = downcast<Datatype_Struct>(datatype_get_non_const_type(dst_type));
+            auto dst_type = result_type;
+            Datatype_Struct* src_struct = downcast<Datatype_Struct>(src_type);
+            Datatype_Struct* dst_struct = downcast<Datatype_Struct>(dst_type);
             if (dst_struct->parent_struct == src_struct)
             {
                 int child_tag_value = dst_struct->subtype_index + 1;
@@ -1777,7 +1765,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         // Handle special case of array.data, which basically becomes an address of, but has the type of element pointer
         auto source = ir_generator_generate_expression(mem_access.expr);
-        if (datatype_get_non_const_type(src_type)->type == Datatype_Type::ARRAY)
+        if (src_type->type == Datatype_Type::ARRAY)
         {
             assert(mem_access.name == compiler.identifier_pool.predefined_ids.data, "Member access on array must be data or handled elsewhere!");
             IR_Data_Access* result_access = ir_data_access_create_address_of(source);
@@ -1878,45 +1866,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         IR_Data_Access* value_access = ir_generator_generate_expression(arg_expr, nullptr);
         return ir_generator_generate_cast(value_access, destination, cast_info);
     }
-    case AST::Expression_Type::OPTIONAL_ACCESS:
-    {
-        auto data_access = ir_generator_generate_expression(expression->options.optional_access.expr);
-        if (info->specifics.is_optional_pointer) 
-        {
-            if (expression->options.optional_access.is_value_access)
-            {
-                // TODO: Add null pointer check...
-                return move_access_to_destination(data_access); // Not sure what happens with constant/optional here...
-            }
-            else 
-            {
-                destination = make_destination_access_on_demand(upcast(types.bool_type));
-                assert(datatype_is_pointer(data_access->datatype), "");
-                IR_Instruction check_instr;
-                check_instr.type = IR_Instruction_Type::BINARY_OP;
-                check_instr.options.binary_op.destination = destination;
-                check_instr.options.binary_op.operand_left = data_access;
-                void* null_val = nullptr;
-                check_instr.options.binary_op.operand_right = ir_data_access_create_constant(data_access->datatype, array_create_static_as_bytes(&null_val, 1));
-                check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-                add_instruction(check_instr);
-                return destination;
-            }
-        }
-
-        // Otherwise return data or value member
-        auto type = datatype_get_non_const_type(data_access->datatype);
-        assert(type->type == Datatype_Type::OPTIONAL_TYPE, "");
-        auto optional_type = downcast<Datatype_Optional>(type);
-        if (expression->options.optional_access.is_value_access) {
-            // Check if optional is available, otherwise trigger assert
-            return move_access_to_destination(ir_data_access_create_member(data_access, optional_type->value_member));
-        }
-        return move_access_to_destination(ir_data_access_create_member(data_access, optional_type->is_available_member));
-    }
-    case AST::Expression_Type::OPTIONAL_POINTER:
     case AST::Expression_Type::POINTER_TYPE:
-    case AST::Expression_Type::OPTIONAL_TYPE:
     case AST::Expression_Type::BAKE:
     case AST::Expression_Type::ENUM_TYPE:
     case AST::Expression_Type::ERROR_EXPR:
@@ -1958,7 +1908,25 @@ IR_Data_Access* ir_generator_generate_expression(AST::Expression* expression, IR
     gen.current_expr = expression;
     SCOPE_EXIT(gen.current_expr = expression);
 
-    return ir_generator_generate_cast(ir_generator_generate_expression_no_cast(expression, destination), destination, cast_info);
+    // Check if casts or auto-deref exist
+    int auto_deref_count = 0;
+    if (info->result_type == Expression_Result_Type::VALUE) {
+        auto_deref_count = info->options.value.auto_dereference_count;
+    }
+
+    // Early-exit if there is nothing to do
+    if (cast_info.cast_type == Cast_Type::NO_CAST && auto_deref_count == 0) {
+        return ir_generator_generate_expression_no_cast(expression, destination);
+    }
+
+    // Do auto-dereference if we are dealing with a value
+    IR_Data_Access* result = ir_generator_generate_expression_no_cast(expression, nullptr);
+    for (int i = 0; i < auto_deref_count; i++) {
+        result = ir_data_access_create_dereference(result);
+    }
+
+    // Apply cast
+    return ir_generator_generate_cast(result, destination, cast_info);
 }
 
 void ir_generator_work_through_defers(int defer_to_index, bool rewind_stack)
@@ -2344,7 +2312,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             }
             else
             {
-                iterable_type = datatype_get_non_const_type(iterable_type);
+                iterable_type = iterable_type;
                 assert(iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE, "Other types not supported currently");
                 IR_Instruction element_instr;
                 element_instr.type = IR_Instruction_Type::MOVE;
@@ -2560,7 +2528,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         if (info->specifics.overload.function == 0)
         {
             // Handle pointer arithmetic
-            auto left_type = datatype_get_non_const_type(left_access->datatype);
+            auto left_type = left_access->datatype;
             if (types_are_equal(left_type, upcast(types.address)))
             {
                 auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
@@ -2659,7 +2627,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         auto& analyser = compiler.semantic_analyser;
 
         IR_Data_Access* delete_access = ir_generator_generate_expression(statement->options.delete_expr);
-        auto delete_type = datatype_get_non_const_type(delete_access->datatype);
+        auto delete_type = delete_access->datatype;
         IR_Data_Access* size_access = nullptr;
         IR_Data_Access* pointer_to_delete_access = nullptr;
         if (delete_type->type == Datatype_Type::SLICE)

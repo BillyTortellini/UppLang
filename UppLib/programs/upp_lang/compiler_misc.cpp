@@ -20,15 +20,11 @@ const char* cast_type_to_string(Cast_Type type)
 	case Cast_Type::ARRAY_TO_SLICE: return "ARRAY_TO_SLICE";
 	case Cast_Type::TO_ANY: return "TO_ANY";
 	case Cast_Type::FROM_ANY: return "FROM_ANY";
-	case Cast_Type::TO_OPTIONAL: return "TO_OPTIONAL";
 	case Cast_Type::CUSTOM_CAST: return "CUSTOM_CAST";
 	case Cast_Type::NO_CAST: return "NO_CAST";
 	case Cast_Type::UNKNOWN: return "UNKNOWN";
 	case Cast_Type::TO_BASE_TYPE: return "TO_BASE_TYPE";
 	case Cast_Type::TO_SUB_TYPE: return "TO_SUB_TYPE";
-	case Cast_Type::DEREFERENCE: return "DEREFERENCE";
-	case Cast_Type::ADDRESS_OF: return "ADDRESS_OF";
-	case Cast_Type::CONST_CAST: return "CONST_CAST";
 	case Cast_Type::INVALID: return "INVALID";
 	default: panic("");
 	}
@@ -203,6 +199,7 @@ Identifier_Pool identifier_pool_create()
 		ids.operators = add_id("operators");
 		ids.dot_calls = add_id("dot_calls");
 		ids.c_string = add_id("c_string");
+		ids.string = add_id("string");
 		ids.allocator = add_id("Allocator");
 		ids.bytes = add_id("bytes");
 		ids.lambda_function = add_id("lambda_function");
@@ -254,17 +251,13 @@ Identifier_Pool identifier_pool_create()
 		ids.cast_type_enum_values[(int)Cast_Type::POINTERS] = add_id("POINTERS");
 		ids.cast_type_enum_values[(int)Cast_Type::POINTER_TO_ADDRESS] = add_id("POINTER_TO_ADDRESS");
 		ids.cast_type_enum_values[(int)Cast_Type::ADDRESS_TO_POINTER] = add_id("ADDRESS_TO_POINTER");
-		ids.cast_type_enum_values[(int)Cast_Type::DEREFERENCE] = add_id("DEREFERENCE");
-		ids.cast_type_enum_values[(int)Cast_Type::ADDRESS_OF] = add_id("ADDRESS_OF");
 		ids.cast_type_enum_values[(int)Cast_Type::TO_SUB_TYPE] = add_id("TO_SUB_TYPE");
 		ids.cast_type_enum_values[(int)Cast_Type::TO_BASE_TYPE] = add_id("TO_BASE_TYPE");
 		ids.cast_type_enum_values[(int)Cast_Type::ARRAY_TO_SLICE] = add_id("ARRAY_TO_SLICE");
 		ids.cast_type_enum_values[(int)Cast_Type::TO_ANY] = add_id("TO_ANY");
 		ids.cast_type_enum_values[(int)Cast_Type::FROM_ANY] = add_id("FROM_ANY");
-		ids.cast_type_enum_values[(int)Cast_Type::TO_OPTIONAL] = add_id("TO_OPTIONAL");
 		ids.cast_type_enum_values[(int)Cast_Type::CUSTOM_CAST] = add_id("CUSTOM_CAST");
 		ids.cast_type_enum_values[(int)Cast_Type::NO_CAST] = add_id("NO_CAST");
-		ids.cast_type_enum_values[(int)Cast_Type::CONST_CAST] = add_id("CONST_CAST");
 		ids.cast_type_enum_values[(int)Cast_Type::UNKNOWN] = add_id("UNKNOWN");
 		ids.cast_type_enum_values[(int)Cast_Type::INVALID] = add_id("INVALID");
 	}

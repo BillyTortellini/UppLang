@@ -42,10 +42,12 @@ namespace AST
 
     enum class Unop
     {
-        NOT,         // !
-        NEGATE,      // -
-        ADDRESS_OF,  // -&
-        DEREFERENCE, // -*
+        NOT,                  // !
+        NEGATE,               // -
+        ADDRESS_OF,           // -*
+        DEREFERENCE,          // -&
+        NULL_CHECK,           // ?
+        OPTIONAL_DEREFERENCE, // -?&
     };
 
     enum class Node_Type
@@ -225,7 +227,6 @@ namespace AST
         Optional<Expression*> type;
         Optional<Expression*> default_value;
         bool is_comptime;    // $ at the start
-        bool is_mutable;     // mut at the start, return-type is mutable
         bool is_return_type;
     };
 
@@ -272,7 +273,6 @@ namespace AST
         BAKE,
         INSTANCIATE,
         GET_OVERLOAD,
-        OPTIONAL_ACCESS, // either value or is_available access, e.g. opt_val! or opt_val?
 
         // Memory Reads
         PATH_LOOKUP,
@@ -290,10 +290,7 @@ namespace AST
         ENUM_TYPE,
         ARRAY_TYPE,
         SLICE_TYPE,
-        CONST_TYPE,
-        POINTER_TYPE,      // *int 
-        OPTIONAL_TYPE,     // ? [type-expr]
-        OPTIONAL_POINTER,  // ?* [type-expr]
+        POINTER_TYPE,      // *int  or ?*
 
         ERROR_EXPR,
     };
@@ -305,12 +302,10 @@ namespace AST
         union
         {
             String* pattern_variable_name;
-            Expression* optional_child_type; // ?int
-            Expression* optional_pointer_child_type; // ?*int
             struct {
-                Expression* expr;
-                bool is_value_access; // Either value access "opt!" or available access "opt?"
-            } optional_access;
+                Expression* child_type; // ?int
+                bool is_optional;
+            } pointer_type;
             struct {
                 Expression* left;
                 Expression* right;
@@ -365,8 +360,6 @@ namespace AST
                 Expression* type_expr;
             } array_type;
             Expression* slice_type;
-            Expression* const_type;
-            Expression* pointer_points_to_type;
             struct {
                 Dynamic_Array<Parameter*> parameters;
                 Dynamic_Array<Structure_Member_Node*> members;

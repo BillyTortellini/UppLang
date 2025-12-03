@@ -1157,7 +1157,6 @@ namespace Parser
             switch (keyword)
             {
             case Keyword::ADD_ARRAY_ACCESS: custom_op_type = Custom_Operator_Type::ARRAY_ACCESS; break;
-            case Keyword::ADD_AUTO_CAST_TYPE: custom_op_type = Custom_Operator_Type::AUTO_CAST_TYPE; break;
             case Keyword::ADD_CAST: custom_op_type = Custom_Operator_Type::CAST; break;
             case Keyword::ADD_UNOP: custom_op_type = Custom_Operator_Type::UNOP; break;
             case Keyword::ADD_BINOP: custom_op_type = Custom_Operator_Type::BINOP; break;
@@ -1979,17 +1978,12 @@ namespace Parser
         result->is_comptime = false;
         result->is_return_type = false;
         result->default_value.available = false;
-        result->is_mutable = false;
         result->type = optional_make_failure<AST::Expression*>();
         result->default_value = optional_make_failure<AST::Expression*>();
 
         // Parse identifier and optional mutators
         if (test_operator(Operator::DOLLAR)) {
             result->is_comptime = true;
-            advance_token();
-        }
-        else if (test_keyword(Keyword::MUTABLE)) {
-            result->is_mutable = true;
             advance_token();
         }
         if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
@@ -2020,19 +2014,6 @@ namespace Parser
         // Unops
         if (test_token(Token_Type::OPERATOR))
         {
-            if (test_operator(Operator::QUESTION_MARK)) {
-                advance_token();
-                result->type = Expression_Type::OPTIONAL_TYPE;
-                result->options.optional_child_type= parse_single_expression_or_error(&result->base);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_operator(Operator::OPTIONAL_POINTER)) {
-                advance_token();
-                result->type = Expression_Type::OPTIONAL_POINTER;
-                result->options.optional_pointer_child_type = parse_single_expression_or_error(&result->base);
-                PARSE_SUCCESS(result);
-            }
-
             Unop unop;
             bool valid = true;
             switch (get_token(0)->options.op)
@@ -2051,11 +2032,11 @@ namespace Parser
             }
         }
 
-        if (test_operator(Operator::MULTIPLY)) 
-        {
-            advance_token();
+        if (test_operator(Operator::MULTIPLY) || test_operator(Operator::OPTIONAL_POINTER)) {
             result->type = Expression_Type::POINTER_TYPE;
-            result->options.optional_pointer_child_type = parse_single_expression_or_error(&result->base);
+            result->options.pointer_type.is_optional = test_operator(Operator::OPTIONAL_POINTER);
+            advance_token();
+            result->options.pointer_type.child_type = parse_single_expression_or_error(&result->base);
             PARSE_SUCCESS(result);
         }
 
@@ -2186,13 +2167,6 @@ namespace Parser
             PARSE_SUCCESS(result);
         }
 
-        if (test_keyword(Keyword::CONST_KEYWORD)) {
-            advance_token();
-            result->type = Expression_Type::CONST_TYPE;
-            result->options.const_type = parse_expression_or_error_expr(&result->base);
-            PARSE_SUCCESS(result);
-        }
-
         // Path/Identifier
         if (test_token(Token_Type::IDENTIFIER) || (test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1)))
         {
@@ -2262,8 +2236,7 @@ namespace Parser
         if (test_parenthesis_offset('(', 0) && (
             test_parenthesis_offset(')', 1) ||
             (test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Operator::COLON, 2)) ||
-            (test_operator_offset(Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2)) ||
-            (test_keyword_offset(Keyword::MUTABLE, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
+            (test_operator_offset(Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
             ))
         {
             result->type = Expression_Type::FUNCTION_SIGNATURE;
@@ -2283,7 +2256,6 @@ namespace Parser
                 return_param->default_value = optional_make_failure<AST::Expression*>();
                 return_param->is_comptime = false;
                 return_param->is_return_type = true;
-                return_param->is_mutable = true;
                 return_param->name = compiler.identifier_pool.predefined_ids.return_type_name;
                 return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
                 dynamic_array_push_back(&signature_parameters, return_param);
@@ -2513,14 +2485,6 @@ namespace Parser
             if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
             PARSE_SUCCESS(result);
         }
-        else if (test_operator(Operator::QUESTION_MARK) || test_operator(Operator::APOSTROPHE)) 
-        {
-            result->type = Expression_Type::OPTIONAL_ACCESS;
-            result->options.optional_access.expr = child;
-            result->options.optional_access.is_value_access = test_operator(Operator::APOSTROPHE);
-            advance_token();
-            PARSE_SUCCESS(result);
-        }
         else if (test_parenthesis_offset('(', 0)) // Function call
         {
             result->type = Expression_Type::FUNCTION_CALL;
@@ -2530,10 +2494,25 @@ namespace Parser
             call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
             PARSE_SUCCESS(result);
         }
-        else if (test_operator(Operator::DEREFERENCE) || test_operator(Operator::ADDRESS_OF))
+
+        // Test unops
+        Unop unop = (Unop)-1;
+        if (test_operator(Operator::ADDRESS_OF)) {
+            unop = Unop::ADDRESS_OF;
+        }
+        else if (test_operator(Operator::DEREFERENCE)) {
+            unop = Unop::DEREFERENCE;
+        }
+        else if (test_operator(Operator::OPTIONAL_DEREFERENCE)) {
+            unop = Unop::OPTIONAL_DEREFERENCE;
+        }
+        else if (test_operator(Operator::QUESTION_MARK)) {
+            unop = Unop::NULL_CHECK;
+        }
+        if ((int)unop != -1)
         {
             result->type = Expression_Type::UNARY_OPERATION;
-            result->options.unop.type = test_operator(Operator::DEREFERENCE) ? Unop::DEREFERENCE : Unop::ADDRESS_OF;
+            result->options.unop.type = unop;
             result->options.unop.expr = child;
             advance_token();
             PARSE_SUCCESS(result);

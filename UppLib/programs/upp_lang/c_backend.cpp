@@ -408,8 +408,8 @@ void c_generator_generate_struct_content(Datatype_Struct* structure, C_Type_Depe
         string_append_formated(gen.text, " %s;\n", member.id->characters);
 
         // Add dependencies if necessary
-        auto member_type = datatype_get_non_const_type(member.type);
-        if (member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE)
+        auto member_type = member.type;
+        if (member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY)
         {
             member_type = datatype_get_undecorated(member_type);
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
@@ -471,7 +471,8 @@ void c_generator_output_type_reference(Datatype* type)
 {
     auto& gen = c_generator;
 
-    type = datatype_get_undecorated(type, false, true, false, false, false); // remove subtypes
+    Type_Modifier_Info mod_info = datatype_get_modifier_info(type);
+    type = datatype_make_with_modifiers(mod_info.base_type, mod_info.pointer_level, 0); // Remove optional modifiers and subtype modifiers
 
     // Check if datatype was already created
     C_Translation translation;
@@ -521,6 +522,7 @@ void c_generator_output_type_reference(Datatype* type)
         case Primitive_Type::USIZE: string_append(&access_name, "u64"); break;
         case Primitive_Type::TYPE_HANDLE: string_append(&access_name, "Type_Handle_"); break; // See hardcoded_functions.h for definition
         case Primitive_Type::C_CHAR: string_append(&access_name, "char"); break;
+        case Primitive_Type::C_STRING: string_append(&access_name, "const char*"); break;
         case Primitive_Type::F32: string_append(&access_name, "f32"); break;
         case Primitive_Type::F64: string_append(&access_name, "f64"); break;
         case Primitive_Type::BOOLEAN: string_append(&access_name, "bool"); break;
@@ -614,31 +616,6 @@ void c_generator_output_type_reference(Datatype* type)
         string_append(gen.text, tmp.characters);
         break;
     }
-    case Datatype_Type::OPTIONAL_TYPE:
-    {
-        auto opt = downcast<Datatype_Optional>(type);
-        string_append_formated(&access_name, "Optional_%d", gen.name_counter);
-        gen.name_counter += 1;
-        string_append_formated(&gen.sections[(int)Generator_Section::STRUCT_PROTOTYPES], "struct %s;\n", access_name.characters);
-
-        C_Type_Dependency* dependency = get_type_dependency(type);
-        gen.text = &dependency->type_definition;
-        string_append_formated(gen.text, "struct %s {\n    ", access_name.characters);
-        c_generator_output_type_reference(opt->child_type);
-        string_append(gen.text, " value;\n    bool is_available;\n};\n");
-
-        auto member_type = datatype_get_non_const_type(opt->child_type);
-        if (member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY || member_type->type == Datatype_Type::OPTIONAL_TYPE)
-        {
-            member_type = datatype_get_undecorated(member_type, false, true, false, false, false);
-            C_Type_Dependency* member_dependency = get_type_dependency(member_type);
-            dynamic_array_push_back(&dependency->depends_on, member_dependency);
-            dynamic_array_push_back(&member_dependency->dependees, dependency);
-            dependency->dependency_count += 1;
-        }
-
-        break;
-    }
     case Datatype_Type::STRUCT:
     {
         auto structure = downcast<Datatype_Struct>(type);
@@ -711,14 +688,14 @@ void c_generator_output_type_reference(Datatype* type)
         //      In type_system, if the element_type is constant, the array_type is also constant
         //      In C, if a struct is constant, the array in the struct is also automatically constant
         //      By not making the values constant, array_initializers will still work by using a temporary, non-const array
-        c_generator_output_type_reference(datatype_get_non_const_type(array_type->element_type));
+        c_generator_output_type_reference(array_type->element_type);
         string_append_formated(gen.text, " values[%d];\n};\n", array_type->element_count);
 
         // Add dependency if necessary
-        auto member_type = datatype_get_non_const_type(array_type->element_type);
+        auto member_type = array_type->element_type;
         if (member_type->type == Datatype_Type::STRUCT || member_type->type == Datatype_Type::ARRAY)
         {
-            member_type = datatype_get_undecorated(member_type, false, true, true, true, false);
+            member_type = datatype_get_undecorated(member_type, true, true, true);
             C_Type_Dependency* member_dependency = get_type_dependency(member_type);
             dynamic_array_push_back(&dependency->depends_on, member_dependency);
             dynamic_array_push_back(&member_dependency->dependees, dependency);
@@ -734,26 +711,9 @@ void c_generator_output_type_reference(Datatype* type)
     {
         Datatype_Pointer* pointer_type = downcast<Datatype_Pointer>(type);
         Datatype* child_type = pointer_type->element_type;
-        bool points_to_const = child_type->type == Datatype_Type::CONSTANT;
-        if (points_to_const) {
-            child_type = datatype_get_non_const_type(child_type);
-        }
         gen.text = &access_name;
         c_generator_output_type_reference(child_type);
-        if (points_to_const) {
-            string_append(&access_name, " const *");
-        }
-        else {
-            string_append(&access_name, "*");
-        }
-        break;
-    }
-    case Datatype_Type::CONSTANT: 
-    {
-        Datatype* child_type = downcast<Datatype_Constant>(type)->element_type;
-        gen.text = &access_name;
-        string_append(&access_name, "const ");
-        c_generator_output_type_reference(child_type);
+        string_append(&access_name, "*");
         break;
     }
     default: panic("Hey");
@@ -793,21 +753,20 @@ void c_generator_generate()
 
     // Define translations for hardcoded types (Because we don't want to have 2 definitons for those, and they are already defined in the header)
     {
-        // Slice_U8
-        {
-            Datatype* const_u8_slice = upcast(type_system_make_slice(type_system_make_constant(upcast(types.u8_type))));
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = const_u8_slice;
-            String name = string_create("Slice_U8_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
         // String
         {
             C_Translation translation;
             translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.c_string;
+            translation.options.datatype = types.string;
             String name = string_create("Upp_String_"); // See hardcoded_functions.h
+            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
+        }
+        // C-String
+        {
+            C_Translation translation;
+            translation.type = C_Translation_Type::DATATYPE;
+            translation.options.datatype = types.c_string;
+            String name = string_create("const char*"); // See hardcoded_functions.h
             hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
         // Type_Handle
@@ -949,7 +908,7 @@ void c_generator_generate()
             Call_Signature* signature = function->signature;
             auto& parameters = signature->parameters;
 
-            // Generate function signature into tmp c_string
+            // Generate function signature into tmp string
             gen.text = &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION];
             {
                 if (function != program->entry_function)
@@ -1041,19 +1000,6 @@ void c_generator_generate()
                 string_append_formated(gen.text, "info->subtypes_.Pointer.element_type = %d;\n", pointer->element_type->type_handle.index);
                 break;
             }
-            case Datatype_Type::OPTIONAL_TYPE: {
-                auto opt = downcast<Datatype_Optional>(type);
-                auto& internal_info = type_system.internal_type_infos[i]->options.optional;
-                string_append_formated(gen.text, "info->subtypes_.Optional.child_type = %d;\n", internal_info.child_type.index);
-                string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Optional.available_offset = %d;\n", internal_info.available_offset);
-                break;
-            }
-            case Datatype_Type::CONSTANT: {
-                auto constant = downcast<Datatype_Constant>(type);
-                string_append_formated(gen.text, "info->subtypes_.Constant.element_type = %d;\n", constant->element_type->type_handle.index);
-                break;
-            }
             case Datatype_Type::SLICE: {
                 auto slice = downcast<Datatype_Slice>(type);
                 string_append_formated(gen.text, "info->subtypes_.Slice.element_type = %d;\n", slice->element_type->type_handle.index);
@@ -1064,7 +1010,7 @@ void c_generator_generate()
                 auto enumeration = downcast<Datatype_Enum>(type);
                 auto& internal_info = type_system.internal_type_infos[i]->options.enumeration;
                 string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
-                output_memory_as_new_constant((byte*)&internal_info.name, types.c_string, false, 1);
+                output_memory_as_new_constant((byte*)&internal_info.name, types.string, false, 1);
                 string_append(gen.text, ";\n");
 
                 string_add_indentation(gen.text, 1);
@@ -1079,7 +1025,7 @@ void c_generator_generate()
                         auto& member = internal_info.members.data[j];
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
-                        output_memory_as_new_constant((byte*)&member.name, types.c_string, false, 1);
+                        output_memory_as_new_constant((byte*)&member.name, types.string, false, 1);
                         string_append(gen.text, ";\n");
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
@@ -1099,25 +1045,25 @@ void c_generator_generate()
                 // string_append_formated(gen.text, "info->subtypes_.Function.return_type = %d;\n", 
                 //     return_type.available ? return_type.value->type_handle.index : -1);
                 // string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function.has_return_type = %s;\n", return_type.available ? "true" : "false");
+                string_append_formated(gen.text, "info->subtypes_.Function_Pointer.has_return_type = %s;\n", return_type.available ? "true" : "false");
                 string_add_indentation(gen.text, 1);
-                string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.size = %d;\n", parameters.size);
+                string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.size = %d;\n", parameters.size);
                 if (parameters.size != 0) 
                 {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = new ");
+                    string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = new ");
                     c_generator_output_type_reference(types.type_handle); // Check if this works
                     string_append_formated(gen.text, "[%d];\n", parameters.size);
                     for (int j = 0; j < parameters.size; j++) {
                         auto& param = parameters[j];
                         string_add_indentation(gen.text, 1);
                         string_append_formated(
-                            gen.text, "info->subtypes_.Function.parameter_types.data[%d] = %d;\n", j, param.datatype->type_handle.index);
+                            gen.text, "info->subtypes_.Function_Pointer.parameter_types.data[%d] = %d;\n", j, param.datatype->type_handle.index);
                     }
                 }
                 else {
                     string_add_indentation(gen.text, 1);
-                    string_append_formated(gen.text, "info->subtypes_.Function.parameter_types.data = nullptr;\n");
+                    string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = nullptr;\n");
                 }
                 break;
             }
@@ -1131,15 +1077,18 @@ void c_generator_generate()
                 string_add_indentation(gen.text, indentation_level);
 
                 string_append_formated(gen.text, "%s.name = ", access_prefix);
-                output_memory_as_new_constant((byte*)&structure->name, types.c_string, false, 1);
+                Upp_String upp_string = upp_string_from_id(structure->name);
+                output_memory_as_new_constant((byte*)&upp_string, types.string, false, 1);
                 string_append(gen.text, ";\n");
 
-                // Generate tag member
+                // Generate tag member info
                 if (structure->subtypes.size > 0)
                 {
+                    const char* access_prefix = "info->subtypes_.Struct.tag_member";
                     string_add_indentation(gen.text, indentation_level);
                     string_append_formated(gen.text, "%s.name = ", access_prefix);
-                    output_memory_as_new_constant((byte*)&structure->tag_member.id, types.c_string, false, 1);
+                    upp_string = upp_string_from_id(structure->tag_member.id);
+                    output_memory_as_new_constant((byte*)&upp_string, types.string, false, 1);
                     string_append(gen.text, ";\n");
                     string_add_indentation(gen.text, indentation_level);
                     string_append_formated(gen.text, "%s.type = %d;\n", access_prefix, structure->tag_member.type->type_handle.index);
@@ -1160,7 +1109,8 @@ void c_generator_generate()
                         auto& member = structure->members.data[i];
                         string_add_indentation(gen.text, indentation_level);
                         string_append_formated(gen.text, "%s.members.data[%d].name = ", access_prefix, i);
-                        output_memory_as_new_constant((byte*)&member.id, types.c_string, false, 1);
+                        upp_string = upp_string_from_id(member.id);
+                        output_memory_as_new_constant((byte*)&upp_string, types.string, false, 1);
                         string_append(gen.text, ";\n");
 
                         string_add_indentation(gen.text, indentation_level);
@@ -1185,16 +1135,13 @@ void c_generator_generate()
                     string_append_formated(gen.text, "[%d];\n", structure->subtypes.size);
                     for (int i = 0; i < structure->subtypes.size; i++) {
                         string_add_indentation(gen.text, indentation_level);
-                        string_append_formated(gen.text, "%s.subtypes.data[%d] = %d\n", access_prefix, i, structure->subtypes[i]->base.type_handle.index);
+                        string_append_formated(gen.text, "%s.subtypes.data[%d] = %d;\n", access_prefix, i, structure->subtypes[i]->base.type_handle.index);
                     }
                 }
                 else {
                     string_add_indentation(gen.text, indentation_level);
                     string_append_formated(gen.text, "%s.subtypes.data = nullptr;\n", access_prefix);
                 }
-
-                string_add_indentation(gen.text, indentation_level - 1);
-                string_append_formated(gen.text, "}\n");
 
                 break;
             }
@@ -1446,9 +1393,9 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
     String* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
 
-    Datatype* type = datatype_get_non_const_type(constant.type);
+    Datatype* type = constant.type;
     if (type->type == Datatype_Type::ARRAY || type->type == Datatype_Type::SLICE ||
-        type->type == Datatype_Type::STRUCT || type->type == Datatype_Type::OPTIONAL_TYPE) {
+        type->type == Datatype_Type::STRUCT) {
         requires_memory_address = true;
     }
 
@@ -1516,6 +1463,10 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 byte* pointer = *(byte**)memory;
                 assert(pointer == 0, "Pointers must be null in constant memory");
                 string_append(gen.text, "nullptr");
+                break;
+            }
+            case Primitive_Class::C_STRING: {
+                panic("C-strings should not happen");
                 break;
             }
             case Primitive_Class::INTEGER: {
@@ -1624,29 +1575,20 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
             string_append(gen.text, "\n}");
             break;
         }
-        case Datatype_Type::OPTIONAL_TYPE:
-        {
-            auto opt = downcast<Datatype_Optional>(type);
-            bool is_available = *(bool*)(constant.memory + opt->is_available_member.offset);
-            string_append(gen.text, "{.value = ");
-            output_memory_as_new_constant(constant.memory, opt->child_type, false, 1);
-            string_append_formated(gen.text, ", .is_available = %s}", is_available ? "true" : "false");
-            break;
-        }
         case Datatype_Type::STRUCT:
         {
             // Handle c_string
-            if (types_are_equal(type, types.c_string))
+            if (types_are_equal(type, types.string))
             {
                 // Note: Maybe we need something smarter in the future to handle multi-line strings 
-                Upp_C_String string = *(Upp_C_String*)base_memory;
-                string_append_formated(gen.text, "{.bytes = {.data = (const u8*) \"");
+                Upp_String string = *(Upp_String*)base_memory;
+                string_append_formated(gen.text, "{.data = (void*) \"");
 
                 // Note: I need to escape escape sequences, so this is what i'm doing now...
                 String escaped = string_create_empty(16);
                 SCOPE_EXIT(string_destroy(&escaped));
-                for (int i = 0; i < string.bytes.size; i++) {
-                    char c = (char)string.bytes.data[i];
+                for (int i = 0; i < string.size; i++) {
+                    char c = ((const char*)string.data)[i];
                     switch (c)
                     {
                     case '\n': string_append(&escaped, "\\n"); break;
@@ -1660,7 +1602,7 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
                 }
 
                 string_append(gen.text, escaped.characters);
-                string_append_formated(gen.text, "\", .size = %d} }", string.bytes.size);
+                string_append_formated(gen.text, "\", .size = %d }", string.size);
                 break;
             }
 
@@ -1675,10 +1617,6 @@ void c_generator_output_constant_access(Upp_Constant& constant, bool requires_me
         case Datatype_Type::PATTERN_VARIABLE:
         case Datatype_Type::UNKNOWN_TYPE: {
             panic("Should not happen, this should generate an error beforehand");
-            break;
-        }
-        case Datatype_Type::CONSTANT: {
-            panic("Should not happen as we stripped the constant before");
             break;
         }
         default: panic("");
@@ -1854,7 +1792,6 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
 
         // Handle members of struct subtypes
         Datatype* access_type = access->option.member_access.struct_access->datatype;
-        access_type = datatype_get_non_const_type(access_type);
         assert(!datatype_is_pointer(access_type), "");
         if (access_type->type == Datatype_Type::STRUCT)
         {
@@ -1883,7 +1820,7 @@ void c_generator_output_data_access(IR_Data_Access* access, bool add_parenthesis
     }
     case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS:
     {
-        auto array_type = datatype_get_non_const_type(access->option.array_access.array_access->datatype);
+        auto array_type = access->option.array_access.array_access->datatype;
         if (array_type->type == Datatype_Type::SLICE)
         {
             c_generator_output_data_access(access->option.array_access.array_access, true);
@@ -2010,7 +1947,7 @@ void c_generator_output_code_block(IR_Code_Block* code_block, int indentation_le
                 signature = call->options.function->signature;
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                signature = downcast<Datatype_Function_Pointer>(datatype_get_non_const_type(call->options.pointer_access->datatype))->signature;
+                signature = downcast<Datatype_Function_Pointer>(call->options.pointer_access->datatype)->signature;
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
                 signature = compiler.analysis_data->hardcoded_function_signatures[(int)call->options.hardcoded];

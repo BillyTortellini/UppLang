@@ -79,7 +79,7 @@ vec3 symbol_to_color(Symbol* symbol, bool is_definition)
     switch (symbol->type)
     {
     case Symbol_Type::DATATYPE: {
-        if (datatype_get_non_const_type(symbol->options.datatype)->type == Datatype_Type::PRIMITIVE) {
+        if (symbol->options.datatype->type == Datatype_Type::PRIMITIVE) {
             return Syntax_Color::PRIMITIVE;
         }
     }

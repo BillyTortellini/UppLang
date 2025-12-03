@@ -1,16 +1,10 @@
 
-X install operator-context workloads at correct time 
-    Because symbol-tables inherit their parents operator-context
-X implement the cast-mode operator context thing
-X check_if_cast_possible should use this
-X imports should work
+#add_cast(cast_fn, auto_cast, call_by_reference, return_by_reference)
+    cast_fn :: (from: From_Type) -> To_Type
+ * Implement custom cast
+ * Implement custom cast polymorphic
+ * Add all other custom operators
 
-check_if_cast_possible called from editor...
-
-Next TODO:
- 1. Install operator-context at correct time
- 2. Re-Implement the context-change analysis
- 3. Re-Implement the context-changes one by one...
 
 How does operator context work:
  1. A context change node is found in a code-block or module
@@ -23,17 +17,14 @@ How does operator context work:
     * At the end of the workload (Or where appropriate), instanciate the operation with given types
  3. Maybe store a list of instances
 
- 4. Path.parts.last may be nullptr because of editor, but editor should resolve the whole path by itself...
 
 TODO:
  * Update Symbol-Lookup once again, just without ~** imports, because ordered aliases and ~* should work
     Maybe, not quite sure yet with cyclic alias dependencies 
     I'm pretty sure this doesn't work with dependencies and aliases...
- * Remove const and optional values
- * Think about prefix/postfix operators, in regards to address-of and alias
-    use -* and -&, as these are fast to write and are unique.
-    
  * New Syntax for block-id:
+    #block_id what
+    for while if switch anon-block
     #block Foo
     #block_id Foo
     if i

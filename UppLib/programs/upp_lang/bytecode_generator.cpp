@@ -290,7 +290,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
         }
 
         auto& array_access = access->option.array_access;
-        auto array_type = datatype_get_non_const_type(array_access.array_access->datatype);
+        auto array_type = array_access.array_access->datatype;
         if (array_type->type == Datatype_Type::SLICE) 
         {
             Datatype_Slice* slice = downcast<Datatype_Slice>(array_type);
@@ -509,7 +509,6 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Acc
 // Code Generation
 Bytecode_Type type_base_to_bytecode_type(Datatype* type)
 {
-    type = datatype_get_non_const_type(type);
     assert(type->type == Datatype_Type::PRIMITIVE || type->type == Datatype_Type::ENUM, "HEY");
     if (type->type == Datatype_Type::ENUM) {
         return Bytecode_Type::INT32;
@@ -656,7 +655,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 signature = call->options.function->signature; // Note: this must be a normal function
                 break;
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
-                signature = downcast<Datatype_Function_Pointer>(datatype_get_non_const_type(call->options.pointer_access->datatype))->signature;
+                signature = downcast<Datatype_Function_Pointer>(call->options.pointer_access->datatype)->signature;
                 function_pointer_stack_offset = data_access_read_value(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
@@ -982,7 +981,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             default: panic("");
             }
 
-            Datatype* operand_types = datatype_get_non_const_type(binary_op->operand_left->datatype);
+            Datatype* operand_types = binary_op->operand_left->datatype;
             if (datatype_is_pointer(operand_types)) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
@@ -1012,7 +1011,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             default: panic("");
             }
 
-            Datatype* operand_type = datatype_get_non_const_type(unary_op->source->datatype);
+            Datatype* operand_type = unary_op->source->datatype;
             assert(operand_type->type == Datatype_Type::PRIMITIVE, "Should not happen");
             instr.op3 = (int)type_base_to_bytecode_type(operand_type);
             instr.op2 = data_access_read_value(generator, unary_op->source);

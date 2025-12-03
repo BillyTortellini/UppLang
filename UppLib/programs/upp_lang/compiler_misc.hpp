@@ -49,10 +49,6 @@ enum class Cast_Type
 	POINTER_TO_ADDRESS,
 	ADDRESS_TO_POINTER,
 
-	// Pointer operations
-	DEREFERENCE,
-	ADDRESS_OF,
-
 	TO_SUB_TYPE,
 	TO_BASE_TYPE,
 
@@ -60,9 +56,6 @@ enum class Cast_Type
 	ARRAY_TO_SLICE,
 	TO_ANY,
 	FROM_ANY,
-	TO_OPTIONAL,
-
-	CONST_CAST, // From const to non-const or other way round
 	CUSTOM_CAST,
 
 	// Note: From here upwards the values are not accessible in the language anymore
@@ -80,7 +73,6 @@ enum class Custom_Operator_Type
 	UNOP,
 	ARRAY_ACCESS,
 	ITERATOR,
-	AUTO_CAST_TYPE,
 
 	MAX_ENUM_VALUE
 };
@@ -335,6 +327,7 @@ struct Predefined_IDs
 	String* anon_struct;
 	String* anon_enum;
 	String* c_string;
+	String* string;
 	String* allocator;
 	String* bytes;
 

@@ -15,21 +15,21 @@ enum class Operator
     DIVISON,
     MULTIPLY,
     MODULO,
-    COMMA,            // ,
-    DOT,              // .
-    TILDE,            // ~    Used in Path-lookup A~B~c
-    TILDE_STAR,       // ~*   Import all
-    TILDE_STAR_STAR,  // ~**  Transitive import all
-    COLON,            // :
-    SEMI_COLON,       // ;
-    APOSTROPHE,       // '
-    QUESTION_MARK,    // ?
-    OPTIONAL_POINTER, // ?*
-    DOT_CALL,         // ->
-    NOT,              // !
-    DEREFERENCE,      // -&
-    ADDRESS_OF,       // -*
-    AMPERSAND,
+    COMMA,                // ,
+    DOT,                  // .
+    TILDE,                // ~    Used in Path-lookup A~B~c
+    TILDE_STAR,           // ~*   Import all
+    TILDE_STAR_STAR,      // ~**  Transitive import all
+    COLON,                // :
+    SEMI_COLON,           // ;
+    APOSTROPHE,           // '
+    QUESTION_MARK,        // ?
+    OPTIONAL_POINTER,     // ?*
+    NOT,                  // !
+    DOT_CALL,             // ->
+    ADDRESS_OF,           // -*
+    DEREFERENCE,          // -&
+    OPTIONAL_DEREFERENCE, // -?&
     LESS_THAN,
     GREATER_THAN,
     LESS_EQUAL,
@@ -38,8 +38,8 @@ enum class Operator
     NOT_EQUALS,
     POINTER_EQUALS,     // *==
     POINTER_NOT_EQUALS, // *!=
-    DEFINE_COMPTIME, // ::
-    DEFINE_INFER, // :=
+    DEFINE_COMPTIME,    // ::
+    DEFINE_INFER,       // :=
     AND,
     OR,
     ARROW,       // =>, note: different to DOT_CALL ->
@@ -83,14 +83,11 @@ enum class Keyword
     AS,
     FOR,
     IN_KEYWORD,
-    CONST_KEYWORD,
-    MUTABLE, // mut
     EXTERN,
 
     ADD_BINOP,
     ADD_UNOP,
     ADD_CAST,
-    ADD_AUTO_CAST_TYPE,
     ADD_ARRAY_ACCESS,
     ADD_ITERATOR,
 

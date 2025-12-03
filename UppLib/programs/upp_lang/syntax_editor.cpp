@@ -1683,7 +1683,6 @@ namespace Text_Editing
 			switch (keyword)
 			{
 			case Keyword::ADD_CAST:
-			case Keyword::ADD_AUTO_CAST_TYPE:
 			case Keyword::ADD_ARRAY_ACCESS:
 			case Keyword::ADD_BINOP:
 			case Keyword::ADD_UNOP:
@@ -1698,7 +1697,6 @@ namespace Text_Editing
 			case Keyword::INSTANCIATE:
 			case Keyword::GET_OVERLOAD:
 			case Keyword::GET_OVERLOAD_POLY:
-			case Keyword::MUTABLE:
 			case Keyword::IN_KEYWORD: {
 				out_space_before = false;
 				break;
@@ -1759,13 +1757,13 @@ namespace Text_Editing
 		case Operator::DOT:
 		case Operator::TILDE:
 		case Operator::NOT:
-		case Operator::AMPERSAND:
 		case Operator::APOSTROPHE:
 		case Operator::UNINITIALIZED:
 		case Operator::QUESTION_MARK:
 		case Operator::OPTIONAL_POINTER:
 		case Operator::ADDRESS_OF:
 		case Operator::DEREFERENCE:
+		case Operator::OPTIONAL_DEREFERENCE:
 		case Operator::DOT_CALL:
 		case Operator::DOLLAR: {
 			out_space_after = false;
@@ -4226,9 +4224,6 @@ void code_completion_find_suggestions()
 				}
 
 				// Check if value is callable
-				if (value_type != nullptr) {
-					value_type = datatype_get_non_const_type(value_type);
-				}
 				if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
 					call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
 				}
@@ -4249,8 +4244,8 @@ void code_completion_find_suggestions()
 				Datatype* param_type = param.datatype;
 				Datatype* arg_type = call_value_type;
 
-				param_type = datatype_get_non_const_type(param_type);
-				arg_type = datatype_get_non_const_type(arg_type);
+				param_type = param_type;
+				arg_type = arg_type;
 				if (!types_are_equal(param_type, arg_type)) {
 					continue;
 				}
@@ -4297,7 +4292,7 @@ void code_completion_find_suggestions()
 		if (type != 0)
 		{
 			auto original = type;
-			type = datatype_get_undecorated(type, true, false, true, false);
+			type = datatype_get_undecorated(type, true, false, true);
 			switch (type->type)
 			{
 			case Datatype_Type::ARRAY:
@@ -4306,13 +4301,6 @@ void code_completion_find_suggestions()
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
 				fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
-				break;
-			}
-			case Datatype_Type::OPTIONAL_TYPE: {
-				fuzzy_search_add_item(*ids.value, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.value));
-				fuzzy_search_add_item(*ids.is_available, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.is_available));
 				break;
 			}
 			case Datatype_Type::STRUCT_PATTERN:
@@ -6539,7 +6527,6 @@ void watch_values_update()
 		{
 			auto& post_op = post_ops[i];
 
-			type = datatype_get_non_const_type(type);
 			// Dereference pointers
 			while (type->type == Datatype_Type::POINTER)
 			{
@@ -6555,7 +6542,7 @@ void watch_values_update()
 					break;
 				}
 				value_ptr = (byte*)pointer;
-				type = datatype_get_non_const_type(downcast<Datatype_Pointer>(type)->element_type);
+				type = downcast<Datatype_Pointer>(type)->element_type;
 				local_source = debugger_get_state(debugger).memory_source;
 			}
 
@@ -6585,7 +6572,7 @@ void watch_values_update()
 
 				Struct_Member& member = structure->members[member_index];
 				value_ptr = value_ptr + member.offset;
-				type = datatype_get_non_const_type(member.type);
+				type = member.type;
 			}
 			else
 			{
@@ -7525,28 +7512,28 @@ vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, in
 	auto& test_op = [&](int offset, Operator op) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
-		auto t = tokens[i];
+		auto& t = tokens[i];
 		if (t.type != Token_Type::OPERATOR) return false;
 		return t.options.op == op;
 		};
 	auto& test_keyword = [&](int offset, Keyword keyword) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
-		auto t = tokens[i];
+		auto& t = tokens[i];
 		if (t.type != Token_Type::KEYWORD) return false;
 		return t.options.keyword == keyword;
 		};
 	auto& test_parenthesis = [&](int offset, Parenthesis parenthesis) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
-		auto t = tokens[i];
+		auto& t = tokens[i];
 		if (t.type != Token_Type::PARENTHESIS) return false;
 		return t.options.parenthesis.is_open == parenthesis.is_open && t.options.parenthesis.type == parenthesis.type;
 		};
 	auto& test_identifier = [&](int offset) -> bool {
 		int i = index + offset;
 		if (i < 0 || i >= tokens.size) return false;
-		auto t = tokens[i];
+		auto& t = tokens[i];
 		return t.type == Token_Type::IDENTIFIER;
 		};
 
@@ -7587,7 +7574,7 @@ vec3 token_get_syntax_color_based_on_surrounding(Dynamic_Array<Token> tokens, in
 		if (!test_parenthesis(2, char_to_parenthesis('('))) return Syntax_Color::VALUE_DEFINITION;
 		// Now we have identifier :: (
 		if (!test_parenthesis(3, char_to_parenthesis(')'))) return Syntax_Color::FUNCTION;
-		if (test_op(3, Operator::DOLLAR) || test_keyword(3, Keyword::MUTABLE)) return Syntax_Color::FUNCTION;
+		if (test_op(3, Operator::DOLLAR)) return Syntax_Color::FUNCTION;
 		if (test_identifier(3) && test_op(4, Operator::COLON)) return Syntax_Color::FUNCTION;
 
 		// Otherwise we don't assume it's a function, but a normal value
@@ -8429,8 +8416,11 @@ void syntax_editor_render()
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context expected: ");
 				datatype_append_to_rich_text(context.datatype, type_system, text);
+				if (context.auto_dereference) {
+					Rich_Text::append(text, "  auto-dereference");
+				}
 			}
-			else if (context.type == Expression_Context_Type::DEREFERENCE) {
+			else if (context.auto_dereference) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context: Auto-Dereference");
 			}

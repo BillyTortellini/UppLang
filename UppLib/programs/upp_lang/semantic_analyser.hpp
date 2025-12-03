@@ -540,7 +540,6 @@ enum class Expression_Context_Type
 {
     NOT_SPECIFIED,          // Type is not known in given context
     ERROR_OCCURED,          // An error occured, so type may or may not be known
-    DEREFERENCE,            // Similar to not specified, but dereference result value if possible (Don't log errors if not possible)
     SPECIFIC_TYPE_EXPECTED, // Type is known
 };
 
@@ -548,6 +547,7 @@ struct Expression_Context
 {
     Expression_Context_Type type;
     Datatype* datatype;
+    bool auto_dereference;
 };
 
 
@@ -574,6 +574,7 @@ struct Expression_Info
     {
         struct {
             Datatype* datatype; 
+            int auto_dereference_count;
             bool is_temporary;
         } value;
         Datatype* datatype;
@@ -600,7 +601,6 @@ struct Expression_Info
                 Struct_Member member;
             } options;
         } member_access;
-        bool is_optional_pointer;
         struct {
             ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;

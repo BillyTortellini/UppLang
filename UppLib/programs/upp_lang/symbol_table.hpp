@@ -54,12 +54,12 @@ struct Custom_Operator_Key
     {
         AST::Binop binop;
         AST::Unop unop;
-        Cast_Type cast_type;
     } specifics;
 };
 
 struct Custom_Operator
 {
+    Custom_Operator_Type type;
     AST::Custom_Operator_Node* node;
     union
     {
@@ -89,7 +89,9 @@ struct Custom_Operator
         struct
         {
             Function_Progress* function;
-            bool take_pointer;
+            bool call_by_reference;
+            bool return_by_reference;
+            bool auto_cast;
         } custom_cast;
         struct
         {
@@ -102,7 +104,6 @@ struct Custom_Operator
             bool take_pointer_for_iterable;
             bool take_pointer_for_iterator;
         } iterator;
-        Cast_Type auto_cast_type;
     } options;
 };
 
