@@ -130,29 +130,29 @@ String token_type_as_string(Token_Type type)
     switch (type)
     {
     case Token_Type::IDENTIFIER: return string_create_static("IDENTIFIER");
-            case Token_Type::KEYWORD: return string_create_static("KEYWORD");
-            case Token_Type::LITERAL: return string_create_static("LITERAL");
-            case Token_Type::OPERATOR: return string_create_static("OPERATOR");
-            case Token_Type::PARENTHESIS: return string_create_static("PARENTHESIS");
-            case Token_Type::INVALID: return string_create_static("INVALID");
-            case Token_Type::COMMENT: return string_create_static("COMMENT");
+    case Token_Type::KEYWORD: return string_create_static("KEYWORD");
+    case Token_Type::LITERAL: return string_create_static("LITERAL");
+    case Token_Type::OPERATOR: return string_create_static("OPERATOR");
+    case Token_Type::PARENTHESIS: return string_create_static("PARENTHESIS");
+    case Token_Type::INVALID: return string_create_static("INVALID");
+    case Token_Type::COMMENT: return string_create_static("COMMENT");
     }
     panic("Hey");
     return string_create_static("Hey");
 }
 
 // Lexer
-struct Source_Lexer
+struct Tokenizer
 {
     Hashtable<String, Keyword> keyword_table;
     String operator_strings[(int)Operator::MAX_ENUM_VALUE];
 };
 
-static Source_Lexer lexer;
+static Tokenizer tokenizer;
 
-void lexer_initialize()
+void tokenizer_initialize()
 {
-    auto& keyword_table = lexer.keyword_table;
+    auto& keyword_table = tokenizer.keyword_table;
     keyword_table = hashtable_create_empty<String, Keyword>(8, hash_string, string_equals);
     for (int i = 0; i < (int)Keyword::MAX_ENUM_VALUE; i++) {
         hashtable_insert_element(&keyword_table, syntax_keyword_as_string((Keyword)i), (Keyword)i);
@@ -160,56 +160,56 @@ void lexer_initialize()
 
     // Initialize Operator strings
     {
-        lexer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
-        lexer.operator_strings[(int)Operator::SUBTRACTION] = string_create_static("-");
-        lexer.operator_strings[(int)Operator::DIVISON] = string_create_static("/");
-        lexer.operator_strings[(int)Operator::MULTIPLY] = string_create_static("*");
-        lexer.operator_strings[(int)Operator::MODULO] = string_create_static("%");
-        lexer.operator_strings[(int)Operator::COMMA] = string_create_static(",");
-        lexer.operator_strings[(int)Operator::DOT] = string_create_static(".");
-        lexer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
-        lexer.operator_strings[(int)Operator::QUESTION_MARK] = string_create_static("?");
-        lexer.operator_strings[(int)Operator::OPTIONAL_POINTER] = string_create_static("?*");
-        lexer.operator_strings[(int)Operator::DOT_CALL] = string_create_static("->");
-        lexer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
-        lexer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
-        lexer.operator_strings[(int)Operator::COLON] = string_create_static(":");
-        lexer.operator_strings[(int)Operator::SEMI_COLON] = string_create_static(";");
-        lexer.operator_strings[(int)Operator::APOSTROPHE] = string_create_static("'");
-        lexer.operator_strings[(int)Operator::NOT] = string_create_static("!");
-        lexer.operator_strings[(int)Operator::DEREFERENCE] = string_create_static("-&");
-        lexer.operator_strings[(int)Operator::OPTIONAL_DEREFERENCE] = string_create_static("-?&");
-        lexer.operator_strings[(int)Operator::ADDRESS_OF] = string_create_static("-*");
-        lexer.operator_strings[(int)Operator::LESS_THAN] = string_create_static("<");
-        lexer.operator_strings[(int)Operator::GREATER_THAN] = string_create_static(">");
-        lexer.operator_strings[(int)Operator::LESS_EQUAL] = string_create_static("<=");
-        lexer.operator_strings[(int)Operator::GREATER_EQUAL] = string_create_static(">=");
-        lexer.operator_strings[(int)Operator::EQUALS] = string_create_static("==");
-        lexer.operator_strings[(int)Operator::NOT_EQUALS] = string_create_static("!=");
-        lexer.operator_strings[(int)Operator::POINTER_EQUALS] = string_create_static("*==");
-        lexer.operator_strings[(int)Operator::POINTER_NOT_EQUALS] = string_create_static("*!=");
-        lexer.operator_strings[(int)Operator::DEFINE_COMPTIME] = string_create_static("::");
-        lexer.operator_strings[(int)Operator::DEFINE_INFER] = string_create_static(":=");
-        lexer.operator_strings[(int)Operator::AND] = string_create_static("&&");
-        lexer.operator_strings[(int)Operator::OR] = string_create_static("||");
-        lexer.operator_strings[(int)Operator::ARROW] = string_create_static("=>");
-        lexer.operator_strings[(int)Operator::INFER_ARROW] = string_create_static(".=>");
-        lexer.operator_strings[(int)Operator::DOLLAR] = string_create_static("$");
-        lexer.operator_strings[(int)Operator::ASSIGN] = string_create_static("=");
-        lexer.operator_strings[(int)Operator::ASSIGN_ADD] = string_create_static("+=");
-        lexer.operator_strings[(int)Operator::ASSIGN_SUB] = string_create_static("-=");
-        lexer.operator_strings[(int)Operator::ASSIGN_DIV] = string_create_static("/=");
-        lexer.operator_strings[(int)Operator::ASSIGN_MULT] = string_create_static("*=");
-        lexer.operator_strings[(int)Operator::ASSIGN_MODULO] = string_create_static("=%");
-        lexer.operator_strings[(int)Operator::UNINITIALIZED] = string_create_static("_");
+        tokenizer.operator_strings[(int)Operator::ADDITION] = string_create_static("+");
+        tokenizer.operator_strings[(int)Operator::SUBTRACTION] = string_create_static("-");
+        tokenizer.operator_strings[(int)Operator::DIVISON] = string_create_static("/");
+        tokenizer.operator_strings[(int)Operator::MULTIPLY] = string_create_static("*");
+        tokenizer.operator_strings[(int)Operator::MODULO] = string_create_static("%");
+        tokenizer.operator_strings[(int)Operator::COMMA] = string_create_static(",");
+        tokenizer.operator_strings[(int)Operator::DOT] = string_create_static(".");
+        tokenizer.operator_strings[(int)Operator::TILDE] = string_create_static("~");
+        tokenizer.operator_strings[(int)Operator::QUESTION_MARK] = string_create_static("?");
+        tokenizer.operator_strings[(int)Operator::OPTIONAL_POINTER] = string_create_static("?*");
+        tokenizer.operator_strings[(int)Operator::DOT_CALL] = string_create_static("->");
+        tokenizer.operator_strings[(int)Operator::TILDE_STAR] = string_create_static("~*");
+        tokenizer.operator_strings[(int)Operator::TILDE_STAR_STAR] = string_create_static("~**");
+        tokenizer.operator_strings[(int)Operator::COLON] = string_create_static(":");
+        tokenizer.operator_strings[(int)Operator::SEMI_COLON] = string_create_static(";");
+        tokenizer.operator_strings[(int)Operator::APOSTROPHE] = string_create_static("'");
+        tokenizer.operator_strings[(int)Operator::NOT] = string_create_static("!");
+        tokenizer.operator_strings[(int)Operator::DEREFERENCE] = string_create_static("-&");
+        tokenizer.operator_strings[(int)Operator::OPTIONAL_DEREFERENCE] = string_create_static("-?&");
+        tokenizer.operator_strings[(int)Operator::ADDRESS_OF] = string_create_static("-*");
+        tokenizer.operator_strings[(int)Operator::LESS_THAN] = string_create_static("<");
+        tokenizer.operator_strings[(int)Operator::GREATER_THAN] = string_create_static(">");
+        tokenizer.operator_strings[(int)Operator::LESS_EQUAL] = string_create_static("<=");
+        tokenizer.operator_strings[(int)Operator::GREATER_EQUAL] = string_create_static(">=");
+        tokenizer.operator_strings[(int)Operator::EQUALS] = string_create_static("==");
+        tokenizer.operator_strings[(int)Operator::NOT_EQUALS] = string_create_static("!=");
+        tokenizer.operator_strings[(int)Operator::POINTER_EQUALS] = string_create_static("*==");
+        tokenizer.operator_strings[(int)Operator::POINTER_NOT_EQUALS] = string_create_static("*!=");
+        tokenizer.operator_strings[(int)Operator::DEFINE_COMPTIME] = string_create_static("::");
+        tokenizer.operator_strings[(int)Operator::DEFINE_INFER] = string_create_static(":=");
+        tokenizer.operator_strings[(int)Operator::AND] = string_create_static("&&");
+        tokenizer.operator_strings[(int)Operator::OR] = string_create_static("||");
+        tokenizer.operator_strings[(int)Operator::ARROW] = string_create_static("=>");
+        tokenizer.operator_strings[(int)Operator::INFER_ARROW] = string_create_static(".=>");
+        tokenizer.operator_strings[(int)Operator::DOLLAR] = string_create_static("$");
+        tokenizer.operator_strings[(int)Operator::ASSIGN] = string_create_static("=");
+        tokenizer.operator_strings[(int)Operator::ASSIGN_ADD] = string_create_static("+=");
+        tokenizer.operator_strings[(int)Operator::ASSIGN_SUB] = string_create_static("-=");
+        tokenizer.operator_strings[(int)Operator::ASSIGN_DIV] = string_create_static("/=");
+        tokenizer.operator_strings[(int)Operator::ASSIGN_MULT] = string_create_static("*=");
+        tokenizer.operator_strings[(int)Operator::ASSIGN_MODULO] = string_create_static("=%");
+        tokenizer.operator_strings[(int)Operator::UNINITIALIZED] = string_create_static("_");
     }
 }
 
-void lexer_shutdown() {
-    hashtable_destroy(&lexer.keyword_table);
+void tokenizer_shutdown() {
+    hashtable_destroy(&tokenizer.keyword_table);
 }
 
-void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool_lock)
+void tokenizer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool_lock)
 {
     dynamic_array_reset(tokens);
     int index = 0;
@@ -229,7 +229,7 @@ void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_P
             }
 
             String substring = string_create_substring_static(&text, start_index, index);
-            Keyword* keyword = hashtable_find_element(&lexer.keyword_table, substring);
+            Keyword* keyword = hashtable_find_element(&tokenizer.keyword_table, substring);
             if (keyword != 0) {
                 token.type = Token_Type::KEYWORD;
                 token.options.keyword = *keyword;
@@ -448,7 +448,7 @@ void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_P
             // Check all operators
             for (int i = 0; i < (int)Operator::MAX_ENUM_VALUE; i++)
             {
-                auto op_str = lexer.operator_strings[i];
+                auto op_str = tokenizer.operator_strings[i];
                 bool matches = true;
 
                 int end = index;
@@ -491,7 +491,7 @@ void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_P
 String token_get_string(Token token, String text)
 {
     if (token.type == Token_Type::OPERATOR) {
-        return lexer.operator_strings[(int)token.options.op];
+        return tokenizer.operator_strings[(int)token.options.op];
     }
     else {
         return string_create_substring_static(&text, token.start_index, token.end_index);
@@ -500,7 +500,7 @@ String token_get_string(Token token, String text)
 
 String operator_get_string(Operator op)
 {
-    return lexer.operator_strings[(int)op];
+    return tokenizer.operator_strings[(int)op];
 }
 
 

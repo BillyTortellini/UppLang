@@ -23,7 +23,7 @@ void add_first_bundle_and_line(Source_Code* code)
     first_line.indentation = 0;
     first_line.text = string_create();
     first_line.tokens = dynamic_array_create<Token>();
-    first_line.item_infos = dynamic_array_create<Code_Analysis_Item>();
+    first_line.item_infos = dynamic_array_create<Editor_Info_Reference>();
     first_line.is_comment = false;
     first_line.comment_block_indentation = -1;
     first_line.is_folded = false;
@@ -272,7 +272,7 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         line.indentation = indentation;
         line.text = string_create();
         line.tokens = dynamic_array_create<Token>();
-        line.item_infos = dynamic_array_create<Code_Analysis_Item>();
+        line.item_infos = dynamic_array_create<Editor_Info_Reference>();
         line.is_comment = false;
         line.is_folded = false;
         line.comment_block_indentation = -1;
@@ -474,7 +474,7 @@ void source_text_remove_invalid_whitespaces(String& text)
 }
 
 void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock) {
-    lexer_tokenize_line(line->text, &line->tokens, pool_lock);
+    tokenizer_tokenize_line(line->text, &line->tokens, pool_lock);
 }
 
 void source_code_tokenize(Source_Code* code, Identifier_Pool_Lock* pool_lock)

@@ -15,9 +15,8 @@ struct IR_Function;
 
 
 // C_COMPILER
-C_Compiler* c_compiler_initialize();
-void c_compiler_shutdown();
-void c_compiler_compile();
+void c_compiler_initialize();
+void c_compiler_compile(Compilation_Data* compilation_data);
 Exit_Code c_compiler_execute();
 
 
@@ -74,8 +73,8 @@ struct C_Program_Translation
 
 
 
-C_Generator* c_generator_initialize();
-void c_generator_shutdown();
+C_Generator* c_generator_create(Compilation_Data* compilation_data);
+void c_generator_destroy(C_Generator* generator);
 
-void c_generator_generate();
-C_Program_Translation* c_generator_get_translation();
+void c_generator_generate(C_Generator* generator);
+C_Program_Translation* c_generator_get_translation(C_Generator* generator);

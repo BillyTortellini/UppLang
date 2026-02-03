@@ -2021,7 +2021,7 @@ struct Debugger
     Dynamic_Array<u8> byte_buffer;
     Dynamic_Array<INSTRUX> disassembly_buffer;
     Hardware_Breakpoint hardware_breakpoints[HARDWARE_BREAKPOINT_COUNT];
-    Compiler_Analysis_Data* analysis_data;
+    Compilation_Data* compilation_data;
 
     // Event handling
     DEBUG_EVENT last_debug_event;
@@ -2100,7 +2100,7 @@ void debugger_reset(Debugger* debugger)
     debugger->main_thread_id = -1;
 
     debugger->exe_pe_info_index = -1;
-    debugger->analysis_data = nullptr;
+    debugger->compilation_data = nullptr;
     debugger->main_thread_info_index = -1;
     debugger->last_debug_event_requires_handling = false;
     debugger->event_count = 0;
@@ -3718,10 +3718,12 @@ void debugger_resume_until_next_halt_or_exit(Debugger* debugger)
 }
 
 bool debugger_start_process(
-	Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data)
+	Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compilation_Data* compilation_data)
 {
+    Compiler* compiler = compilation_data->compiler;
+
 	debugger_reset(debugger);
-	debugger->analysis_data = analysis_data;
+	debugger->compilation_data = compilation_data;
 
 	// Load pdb file
     // timing_start();
@@ -3855,9 +3857,9 @@ bool debugger_start_process(
 
     timing_log("Execute until main");
 
-	// Generate all mappings (Upp-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
-	C_Program_Translation* c_translation = c_generator_get_translation();
-	if (analysis_data != nullptr)
+	// Generate all mappings (Upp-Source-Code <-> Statements <-> IR_Instructions <-> C-Lines <-> Assembly)
+	C_Program_Translation* c_translation = c_generator_get_translation(compilation_data->c_generator);
+	if (compilation_data != nullptr)
 	{
 		auto pdb_info = debugger->pdb_info;
 
@@ -3865,16 +3867,18 @@ bool debugger_start_process(
 		SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
 
 		// Create Compilation-Unit <-> Upp_Line mapping
-		for (int i = 0; i < compiler.compilation_units.size; i++)
+        semaphore_wait(compiler->add_compilation_unit_semaphore);
+		for (int i = 0; i < compiler->compilation_units.size; i++)
 		{
-			auto unit = compiler.compilation_units[i];
-			if (!unit->used_in_last_compile) continue;
+			auto unit = compiler->compilation_units[i];
+            if (!compilation_unit_was_used_in_compile(unit, compilation_data)) continue;
 
 			Compilation_Unit_Mapping unit_mapping;
 			unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);
 			unit_mapping.compilation_unit = unit;
 			dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
 		}
+        semaphore_increment(compiler->add_compilation_unit_semaphore, 1);
 		for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)
 		{
 			Compilation_Unit_Mapping* unit_mapping = &debugger->compilation_unit_mapping[i];
@@ -3904,8 +3908,9 @@ bool debugger_start_process(
 		}
 
 		// Add IR-Instruction to Statement mapping
-		for (int i = 0; i < compiler.ir_generator->program->functions.size; i++) {
-			auto ir_fn = compiler.ir_generator->program->functions[i];
+        IR_Program* ir_program = compilation_data->ir_generator->program;
+		for (int i = 0; i < ir_program->functions.size; i++) {
+			auto ir_fn = ir_program->functions[i];
 			source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger); // Note: This only enumerates/finds all IR-Instructions
 		}
 		for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)
@@ -3954,9 +3959,9 @@ bool debugger_start_process(
 
 		// Add IR_Function-Mapping
 		dynamic_array_reset(&debugger->ir_function_mapping);
-		dynamic_array_reserve(&debugger->ir_function_mapping, ir_generator.program->functions.size);
-		for (int i = 0; i < ir_generator.program->functions.size; i++) {
-			IR_Function* ir_function = ir_generator.program->functions[i];
+		dynamic_array_reserve(&debugger->ir_function_mapping, ir_program->functions.size);
+		for (int i = 0; i < ir_program->functions.size; i++) {
+			IR_Function* ir_function = ir_program->functions[i];
 			IR_Function_Mapping mapping;
 			mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
 			mapping.name = string_create_static("");
@@ -4122,7 +4127,7 @@ void debugger_step_over_statement(Debugger* debugger, bool step_into)
 		Assembly_Source_Information source_info = debugger_get_assembly_source_information(debugger, stack_frames[0].instruction_pointer);
 		ModTree_Function* current_function = nullptr;
 		if (source_info.ir_function != nullptr) {
-			current_function = debugger->analysis_data->function_slots[source_info.ir_function->function_slot_index].modtree_function;
+			current_function = debugger->compilation_data->function_slots[source_info.ir_function->function_slot_index].modtree_function;
 			if (current_function == nullptr) {
 				steps_in_unknown_function_count += 1;
 			}
@@ -4229,9 +4234,9 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 	// If not found try to find global with same name
 	if ((int)translation.type == -1)
 	{
-		for (int i = 0; i < debugger->analysis_data->program->globals.size; i++)
+		for (int i = 0; i < debugger->compilation_data->program->globals.size; i++)
 		{
-			auto& global = debugger->analysis_data->program->globals[i];
+			auto& global = debugger->compilation_data->program->globals[i];
 			if (global->symbol == 0) continue;
 			if (string_equals(global->symbol->id, &variable_name)) {
 				translation.type = C_Translation_Type::GLOBAL;
@@ -4246,7 +4251,7 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
 
-	String* c_name_opt = hashtable_find_element(&c_generator_get_translation()->name_mapping, translation);
+	String* c_name_opt = hashtable_find_element(&c_generator_get_translation(debugger->compilation_data->c_generator)->name_mapping, translation);
 	if (c_name_opt == nullptr) {
 		return optional_make_failure<PDB_Analysis::PDB_Location>();
 	}
@@ -4273,7 +4278,7 @@ Debugger_Value_Read debugger_read_variable_value(
 		return result;
 	}
 
-	Datatype* value_type = debugger->analysis_data->type_system.predefined_types.unknown_type;
+	Datatype* value_type = debugger->compilation_data->type_system->predefined_types.unknown_type;
 	Optional<PDB_Analysis::PDB_Location> value_query = optional_make_failure<PDB_Analysis::PDB_Location>();
 	int stack_frame_index = 0;
 	for (int i = 0; i < max_frame_depth; i++)
@@ -4619,7 +4624,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				SCOPE_EXIT(string_destroy(&str));
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
                 datatype_append_value_to_string(
-                    value_read.result_type, &debugger->analysis_data->type_system, byte_buffer.data, &str,
+                    value_read.result_type, debugger->compilation_data->type_system, byte_buffer.data, &str,
                     datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source
                 );
 				printf("Variable-value: \"%s\"\n", str.characters);
@@ -4699,7 +4704,7 @@ Array<Stack_Frame> debugger_get_stack_frames(Debugger* debugger)
 	return dynamic_array_as_array(&debugger->stack_frames);
 }
 
-void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compiler_Analysis_Data* analysis_data)
+void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compilation_Data* compilation_data)
 {
 	printf("Mapping info for line #%d of %s\n", line_index, compilation_unit->filepath.characters);
 
@@ -4715,7 +4720,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 	if (line_index < 0 || line_index >= unit_map->lines.size)  return;
 
 	// Prepare temporary values
-	auto c_source = c_generator_get_translation()->source_code;
+	auto c_source = c_generator_get_translation(compilation_data->c_generator)->source_code;
 	auto c_line_array = string_split(c_source, '\n');
 	SCOPE_EXIT(string_split_destroy(c_line_array));
 
@@ -4739,7 +4744,7 @@ void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compi
 		{
 			auto ir_instr_map = stat_map->ir_instructions[j];
 			ir_instruction_append_to_string(
-				&ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, analysis_data);
+				&ir_instr_map->code_block->instructions[ir_instr_map->instruction_index], &tmp, 0, ir_instr_map->code_block, compilation_data);
 			printf("  IR-Instr: #%d: %s\n", j, tmp.characters);
 			string_reset(&tmp);
 

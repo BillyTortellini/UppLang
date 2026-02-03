@@ -20,22 +20,25 @@ int align_offset_next_multiple(int offset, int alignment)
     return offset + (alignment - dist);
 }
 
-Bytecode_Generator bytecode_generator_create()
+Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data)
 {
-    Bytecode_Generator result;
+    Bytecode_Generator* generator = new Bytecode_Generator;
+    generator->compilation_data = compilation_data;
+
     // Code
-    result.instructions = dynamic_array_create<Bytecode_Instruction>(64);
+    generator->instructions = dynamic_array_create<Bytecode_Instruction>(64);
 
     // Code Information
-    result.function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
-    result.code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-    result.stack_offsets = dynamic_array_create<Array<int>>(32);
+    generator->function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
+    generator->code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
+    generator->stack_offsets = dynamic_array_create<Array<int>>(32);
 
     // Fill outs
-    result.fill_out_gotos = dynamic_array_create<Goto_Label>(64);
-    result.label_locations = dynamic_array_create<int>(64);
-    result.fill_out_calls = dynamic_array_create<Function_Reference>(64);
-    return result;
+    generator->fill_out_gotos = dynamic_array_create<Goto_Label>(64);
+    generator->label_locations = dynamic_array_create<int>(64);
+    generator->fill_out_calls = dynamic_array_create<Function_Reference>(64);
+
+    return generator;
 }
 
 void bytecode_generator_destroy(Bytecode_Generator* generator)
@@ -56,28 +59,6 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     dynamic_array_destroy(&generator->label_locations);
     dynamic_array_destroy(&generator->fill_out_calls);
 } 
-
-void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler)
-{
-    generator->ir_program = compiler->ir_generator->program;
-    generator->compiler = compiler;
-    // Reset previous code
-    {
-        dynamic_array_reset(&generator->instructions);
-        // Reset information
-        hashtable_reset(&generator->code_block_register_stack_offset_index);
-        hashtable_reset(&generator->function_parameter_stack_offset_index);
-        for (int i = 0; i < generator->stack_offsets.size; i++) {
-            array_destroy(&generator->stack_offsets[i]);
-        }
-        dynamic_array_reset(&generator->stack_offsets);
-        // Reset fill outs
-        dynamic_array_reset(&generator->label_locations);
-        dynamic_array_reset(&generator->fill_out_gotos);
-        dynamic_array_reset(&generator->fill_out_calls);
-    }
-}
-
 
 
 
@@ -145,6 +126,8 @@ int bytecode_generator_create_temporary_stack_offset(Bytecode_Generator* generat
 
 int data_access_is_completely_on_stack(Bytecode_Generator* generator, IR_Data_Access* access)
 {
+    auto& types = generator->compilation_data->type_system->predefined_types;
+
     switch (access->type)
     {
     case IR_Data_Access_Type::REGISTER: 
@@ -182,8 +165,8 @@ int data_access_is_completely_on_stack(Bytecode_Generator* generator, IR_Data_Ac
             return -1;
         }
 
-        auto& index_constant = compiler.analysis_data->constant_pool.constants[index_access->option.constant_index];
-        if (!types_are_equal(index_constant.type, upcast(compiler.analysis_data->type_system.predefined_types.i32_type))) {
+        auto& index_constant = generator->compilation_data->constant_pool->constants[index_access->option.constant_index];
+        if (!types_are_equal(index_constant.type, upcast(types.i32_type))) {
             return -1;
         }
         int index = *(int*)index_constant.memory;
@@ -212,7 +195,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     Datatype* access_type = access->datatype;
     assert(access_type->memory_info.available, "");
     auto& memory_info = access_type->memory_info.value;
-    auto& types = compiler.analysis_data->type_system.predefined_types;
+    auto& types = generator->compilation_data->type_system->predefined_types;
 
     // Check if it's on stack
     {
@@ -339,7 +322,7 @@ int data_access_read_value(Bytecode_Generator* generator, IR_Data_Access* access
     Datatype* access_type = access->datatype;
     assert(access_type->memory_info.available, "");
     auto& memory_info = access_type->memory_info.value;
-    auto& types = compiler.analysis_data->type_system.predefined_types;
+    auto& types = generator->compilation_data->type_system->predefined_types;
 
     // Check if it's on stack
     {
@@ -605,6 +588,9 @@ Exit_Code exit_code_from_exit_instruction(const Bytecode_Instruction& exit_instr
 
 void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Code_Block* code_block)
 {
+    auto compilation_data = generator->compilation_data;
+    auto& types = generator->compilation_data->type_system->predefined_types;
+
     // Generate Stack offsets
     int rewind_stack_offset = generator->current_stack_offset;
     SCOPE_EXIT(generator->current_stack_offset = rewind_stack_offset);
@@ -629,7 +615,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
     }
 
-    auto& types = compiler.analysis_data->type_system.predefined_types;
     const int PLACEHOLDER = 0;
     // Generate instructions
     for (int i = 0; i < code_block->instructions.size; i++)
@@ -659,7 +644,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_pointer_stack_offset = data_access_read_value(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                signature = compiler.analysis_data->hardcoded_function_signatures[(int)call->options.hardcoded];
+                signature = compilation_data->hardcoded_function_signatures[(int)call->options.hardcoded];
                 break;
             default: panic("Error");
             }
@@ -695,7 +680,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                     break;
                 }
 
-                auto& slots = compiler.analysis_data->function_slots;
+                auto& slots = compilation_data->function_slots;
                 auto ir_function = slots[call->options.function->function_slot_index].ir_function;
                 assert(ir_function != nullptr, "");
                 
@@ -939,7 +924,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
             IR_Instruction_Function_Address* function_address = &instr->options.function_address;
-            auto& slots = compiler.analysis_data->function_slots;
+            auto& slots = compilation_data->function_slots;
             auto& slot = slots[function_address->function_slot_index];
 
             if (slot.modtree_function != nullptr && slot.modtree_function->function_type == ModTree_Function_Type::EXTERN) {
@@ -1024,7 +1009,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
 void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function)
 {
-    auto& slot = compiler.analysis_data->function_slots[function->function_slot_index];
+    auto& slot = generator->compilation_data->function_slots[function->function_slot_index];
     assert(slot.bytecode_start_instruction == -1, "Function must not be generated yet!\n");
 
     // Generate parameter offsets
@@ -1066,7 +1051,7 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
     // Fill out all function calls
     for (int i = 0; i < generator->fill_out_calls.size; i++) {
         Function_Reference& call_loc = generator->fill_out_calls[i];
-        int location = compiler.analysis_data->function_slots[call_loc.function->function_slot_index].bytecode_start_instruction;
+        int location = generator->compilation_data->function_slots[call_loc.function->function_slot_index].bytecode_start_instruction;
         assert(location != -1, "Function should have already been compiled!");
         generator->instructions[call_loc.instruction_index].op1 = location;
     }
@@ -1082,7 +1067,7 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
 
 void bytecode_generator_set_entry_function(Bytecode_Generator* generator)
 {
-    int entry_index = compiler.analysis_data->function_slots[generator->ir_program->entry_function->function_slot_index].bytecode_start_instruction;
+    int entry_index = generator->compilation_data->function_slots[generator->compilation_data->ir_generator->program->entry_function->function_slot_index].bytecode_start_instruction;
     assert(entry_index != -1, "");
     generator->entry_point_index = entry_index;
     assert(generator->entry_point_index >= 0 && generator->entry_point_index < generator->instructions.size, "");
@@ -1304,7 +1289,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
-    auto& slots = compiler.analysis_data->function_slots;
+    auto& slots = generator->compilation_data->function_slots;
 
     for (int i = 0; i < slots.size; i++)
     {
@@ -1316,16 +1301,17 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
         }
         else if (slot.ir_function != nullptr) 
         {
-            if (slot.ir_function == ir_generator.default_allocate_function) {
+            auto ir_gen = generator->compilation_data->ir_generator;
+            if (slot.ir_function == ir_gen->default_allocate_function) {
                 string_append_formated(string, "System-Allocate fn");
             }
-            else if (slot.ir_function == ir_generator.default_free_function) {
+            else if (slot.ir_function == ir_gen->default_free_function) {
                 string_append_formated(string, "System-Free fn");
             }
-            else if (slot.ir_function == ir_generator.default_reallocate_function) {
+            else if (slot.ir_function == ir_gen->default_reallocate_function) {
                 string_append_formated(string, "System-Reallocate fn");
             }
-            else if (slot.ir_function == ir_generator.program->entry_function) {
+            else if (slot.ir_function == ir_gen->program->entry_function) {
                 string_append_formated(string, "Entry-Function");
             }
             else {

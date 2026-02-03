@@ -23,6 +23,8 @@ const char* cast_type_to_string(Cast_Type type)
 	case Cast_Type::CUSTOM_CAST: return "CUSTOM_CAST";
 	case Cast_Type::NO_CAST: return "NO_CAST";
 	case Cast_Type::UNKNOWN: return "UNKNOWN";
+	case Cast_Type::DEREFERENCE: return "DEREFERENCE";
+	case Cast_Type::ADDRESS_OF: return "ADDRESS_OF";
 	case Cast_Type::TO_BASE_TYPE: return "TO_BASE_TYPE";
 	case Cast_Type::TO_SUB_TYPE: return "TO_SUB_TYPE";
 	case Cast_Type::INVALID: return "INVALID";
@@ -99,9 +101,6 @@ void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded)
 		break;
 	case Hardcoded_Type::READ_BOOL:
 		string_append_formated(string, "READ_BOOL");
-		break;
-	case Hardcoded_Type::RANDOM_I32:
-		string_append_formated(string, "RANDOM_I32");
 		break;
 	default: panic("Should not happen");
 	}
@@ -381,7 +380,8 @@ void fiber_pool_destroy(Fiber_Pool* pool) {
 	delete pool;
 }
 
-void fiber_pool_instance_entry(void* userdata) {
+void fiber_pool_instance_entry(void* userdata) 
+{
 	// Copy startup info to local stack
 	Fiber_Startup_Info startup = *((Fiber_Startup_Info*)userdata);
 	auto pool = startup.pool;
@@ -407,7 +407,8 @@ void fiber_pool_instance_entry(void* userdata) {
 	}
 }
 
-Fiber_Pool_Handle fiber_pool_get_handle(Fiber_Pool* pool, fiber_entry_fn entry_fn, void* userdata) {
+Fiber_Pool_Handle fiber_pool_get_handle(Fiber_Pool* pool, fiber_entry_fn entry_fn, void* userdata) 
+{
 	// Setup new fiber if no free one is in pool
 	if (pool->next_free_index.size == 0)
 	{
@@ -451,7 +452,8 @@ bool fiber_pool_switch_to_handel(Fiber_Pool_Handle handle)
 	return !info->has_task_to_run;
 }
 
-void fiber_pool_check_all_handles_completed(Fiber_Pool* pool) {
+void fiber_pool_check_all_handles_completed(Fiber_Pool* pool) 
+{
 	for (int i = 0; i < pool->allocated_fibers.size; i++) {
 		auto& info = pool->allocated_fibers[i];
 		assert(!info.has_task_to_run, "Task must be completed!\n");

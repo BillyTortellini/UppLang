@@ -9,6 +9,8 @@
 #include "ast.hpp"
 #include "type_system.hpp"
 
+struct Compilation_Data;
+struct Semantic_Context;
 struct ModTree_Global;
 struct ModTree_Function;
 struct Datatype;
@@ -42,27 +44,35 @@ namespace AST
 /*
     Notes on Custom_Operator_Key:
     Operator_Context stores multiple ways to reach a single Custom-Operator
-    The key-types are always stored as the base_type (E.g. no pointer/constant types).
-    After querying the analyse has to make sure that the pointer/constant levels are valid
+    The key-types are always stored as the base_type (E.g. no pointer/optional_pointer/subtype).
+    After querying the analyse has to make sure that the type-mods are correct
 */
 struct Custom_Operator_Key
 {
     Custom_Operator_Type type;
-    Datatype* first_type;
-    Datatype* second_type;
     union
     {
+        struct {
+            Datatype* from_type; // Stored as base-type
+            Datatype* to_type;   // Stored as base-type
+        } custom_cast;
         AST::Binop binop;
         AST::Unop unop;
-    } specifics;
+    } options;
 };
 
 struct Custom_Operator
 {
     Custom_Operator_Type type;
-    AST::Custom_Operator_Node* node;
     union
     {
+        struct
+        {
+            Function_Progress* function;
+            bool call_by_reference;
+            bool return_by_reference;
+            bool auto_cast;
+        } custom_cast;
         struct
         {
             Datatype* left_type;
@@ -88,13 +98,6 @@ struct Custom_Operator
         } array_access;
         struct
         {
-            Function_Progress* function;
-            bool call_by_reference;
-            bool return_by_reference;
-            bool auto_cast;
-        } custom_cast;
-        struct
-        {
             Datatype* iterable_type;
             Datatype* iterator_type;
             Function_Progress* create;
@@ -107,13 +110,19 @@ struct Custom_Operator
     } options;
 };
 
+struct Custom_Operator_Install
+{
+    Custom_Operator* custom_operator;
+    AST::Custom_Operator_Node* node;
+};
+
 struct Workload_Custom_Operator;
 struct Custom_Operator_Table
 {
     Workload_Custom_Operator* workloads[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
     bool contains_operator[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
-    // Note: custom operators are allocated in analysis-data arena
-    Hashtable<Custom_Operator_Key, Custom_Operator*> custom_operators;
+    // Note: The DynArrays are allocated in analysis-data arena
+    Hashtable<Custom_Operator_Key, DynArray<Custom_Operator_Install>> installed_operators;
 };
 
 struct Reachable_Operator_Table
@@ -122,11 +131,8 @@ struct Reachable_Operator_Table
 	int depth;
 };
 
-struct Custom_Operator_Match
-{
-	Custom_Operator* custom_op;
-	int depth;
-};
+u64  hash_custom_operator(Custom_Operator* op);
+bool equals_custom_operator(Custom_Operator* a, Custom_Operator* b);
 
 
 
@@ -231,17 +237,17 @@ struct Symbol_Error
     AST::Node* error_node;
 };
 
-Symbol_Table* symbol_table_create();
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level);
+Symbol_Table* symbol_table_create(Compilation_Data* compilation_data);
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level, Compilation_Data* compilation_data);
 void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(
-    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level
+    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level, Compilation_Data* compilation_data
 );
 void symbol_table_add_import(
     Symbol_Table* symbol_table, Symbol_Table* imported_table, Import_Type import_type, 
-    bool is_transitive, Symbol_Access_Level access_level,
+    bool is_transitive, Symbol_Access_Level access_level, Semantic_Context* semantic_context,
     AST::Node* error_report_node, Node_Section error_report_section
 );
 

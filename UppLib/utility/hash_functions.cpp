@@ -96,7 +96,7 @@ u64 hash_bool(u64 a, bool value) {
     u64 result = a;
     if (value) {
         result = result << 1;
-        result = result | (a & 1);
+        result = result ^ a;
     }
     return result;
 }

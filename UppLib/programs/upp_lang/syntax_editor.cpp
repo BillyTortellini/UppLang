@@ -312,6 +312,21 @@ struct Pass_Filter
 	bool connected_to_next;
 };
 
+struct Compiler_Thread_Data
+{
+    Thread compiler_thread;
+	Compiler* compiler;
+
+    Compilation_Unit* compiler_main_unit;
+	Compilation_Data* compilation_data; // Is created by compilation thread
+
+    Semaphore compiler_wait_semaphore;
+    Semaphore compilation_finish_semaphore;
+    bool thread_should_exit;
+    bool work_started;
+    bool build_code;
+};
+
 struct Syntax_Editor
 {
     // Editing
@@ -322,15 +337,13 @@ struct Syntax_Editor
     int main_tab_index; // If -1, use the currently open tab for compiling
     float normal_text_size_pixel;
     int compile_count;
+	Compiler* compiler;
 
     bool last_compile_was_with_code_gen;
     Compilation_Unit* last_compile_main_unit;
 
     String yank_string;
     bool yank_was_line;
-
-    // Compiler Info
-    Compiler_Analysis_Data* analysis_data;
 
     // Command repeating
     Normal_Mode_Command last_normal_command;
@@ -387,14 +400,8 @@ struct Syntax_Editor
     int frame_index;
 
     // Compiler thread
-    Thread compiler_thread;
-    Semaphore compiler_wait_semaphore;
-    Semaphore compilation_finish_semaphore;
-    bool compiler_thread_should_close;
-    bool compiler_work_started;
-
-    bool compiler_build_code;
-    Compilation_Unit* compiler_main_unit;
+	Compiler_Thread_Data compiler_thread_data;
+	Compilation_Data* editor_compilation_data; // Finished compilation data that the editor can use
 
     // Debugger
     Debugger* debugger;
@@ -1878,7 +1885,7 @@ namespace Text_Editing
 		auto code = tab.code;
 		Source_Line* line = source_code_get_line(code, line_index);
 		if (line->is_comment || line->comment_block_indentation != -1) {
-			lexer_tokenize_line(line->text, &line->tokens, pool_lock);
+			tokenizer_tokenize_line(line->text, &line->tokens, pool_lock);
 			return;
 		}
 
@@ -1974,7 +1981,7 @@ namespace Text_Editing
 		// 2. Tokenize trimmed-string
 		auto& tokens = line->tokens;
 		dynamic_array_reset(&tokens);
-		lexer_tokenize_line(trimmed_text, &tokens, pool_lock);
+		tokenizer_tokenize_line(trimmed_text, &tokens, pool_lock);
 
 		// 3. Add visual (non-critical) spaces between tokens
 		int index_shift_for_tokens_after_current = 0;
@@ -2096,17 +2103,22 @@ Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* 
 
 
 // Tabs
-// Returns new tab index
+// Returns new tab index (Or current tab if file cannot be loaded)
 int syntax_editor_add_tab(String file_path)
 {
 	auto& editor = syntax_editor;
 
-	Compilation_Unit* unit = compiler_add_compilation_unit(file_path, true, false);
+	Compilation_Unit* unit = compiler_add_compilation_unit(editor.compiler, file_path);
+
+	// Return current tab if file cannot be loaded
 	if (unit == nullptr) {
 		return editor.open_tab_index;
 	}
-	if (unit->editor_tab_index != -1) {
-		return unit->editor_tab_index;
+
+	// Check if file is already open in another tab
+	for (int i = 0; i < editor.tabs.size; i++) {
+		auto tab = editor.tabs[i];
+		if (tab.compilation_unit == unit) return i;
 	}
 
 	// Otherwise create new tab
@@ -2130,28 +2142,25 @@ int syntax_editor_add_tab(String file_path)
 	tab.last_jump_index = -1;
 	tab.jump_list = dynamic_array_create<Text_Index>();
 	dynamic_array_push_back(&syntax_editor.tabs, tab);
-	unit->editor_tab_index = syntax_editor.tabs.size - 1;
 
 	syntax_editor_update_line_visible_and_fold_info(syntax_editor.tabs.size - 1);
 	// Auto format all lines
-	auto lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+	auto lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
 	SCOPE_EXIT(identifier_pool_lock_release(lock));
 	for (int i = 0; i < tab.code->line_count; i++) {
 		auto line = source_code_get_line(tab.code, i);
-		lexer_tokenize_line(line->text, &line->tokens, &lock);
+		tokenizer_tokenize_line(line->text, &line->tokens, &lock);
 	}
 
 	return syntax_editor.tabs.size - 1;
 }
 
-void editor_tab_destroy(Editor_Tab* tab) {
+void editor_tab_destroy(Editor_Tab* tab) 
+{
 	code_history_destroy(&tab->history);
 	dynamic_array_destroy(&tab->folds);
 	dynamic_array_destroy(&tab->jump_list);
 	dynamic_array_destroy(&tab->breakpoints);
-	if (tab->compilation_unit != nullptr) {
-		tab->compilation_unit->open_in_editor = false;
-	}
 	source_code_destroy(tab->code);
 }
 
@@ -2233,8 +2242,8 @@ struct Comparator_Compiler_Error
 	bool operator()(const int& a_index, const int& b_index)
 	{
 		auto& editor = syntax_editor;
-		Compiler_Error_Info& a = editor.analysis_data->compiler_errors[a_index];
-		Compiler_Error_Info& b = editor.analysis_data->compiler_errors[b_index];
+		Compiler_Error_Info& a = editor.editor_compilation_data->compiler_errors[a_index];
+		Compiler_Error_Info& b = editor.editor_compilation_data->compiler_errors[b_index];
 
 		int tab_a = -1;
 		int tab_b = -1;
@@ -2264,8 +2273,8 @@ void sort_error_indices()
 	auto& editor = syntax_editor;
 	auto& indices = editor.error_indices_sorted;
 	dynamic_array_reset(&indices);
-	dynamic_array_reserve(&indices, editor.analysis_data->compiler_errors.size);
-	for (int i = 0; i < editor.analysis_data->compiler_errors.size; i++) {
+	dynamic_array_reserve(&indices, editor.editor_compilation_data->compiler_errors.size);
+	for (int i = 0; i < editor.editor_compilation_data->compiler_errors.size; i++) {
 		dynamic_array_push_back(&indices, i);
 	}
 	dynamic_array_sort(&indices, Comparator_Compiler_Error());
@@ -2280,9 +2289,7 @@ void syntax_editor_switch_tab(int new_tab_index)
 	editor.open_tab_index = new_tab_index;
 	auto& tab = editor.tabs[editor.open_tab_index];
 	// Re-Sort errors since sorting depends on open tab
-	if (editor.analysis_data != nullptr) {
-		sort_error_indices();
-	}
+	sort_error_indices();
 }
 
 void syntax_editor_close_tab(int tab_index, bool force_close = false)
@@ -2294,15 +2301,8 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 	syntax_editor_save_text_file();
 
 	Editor_Tab* tab = &editor.tabs[tab_index];
-	tab->compilation_unit->editor_tab_index = -1;
 	editor_tab_destroy(&editor.tabs[tab_index]);
 	dynamic_array_remove_ordered(&editor.tabs, tab_index);
-
-	// Update tab index for all compilation units
-	for (int i = 0; i < editor.tabs.size; i++) {
-		auto& tab = editor.tabs[i];
-		tab.compilation_unit->editor_tab_index = i;
-	}
 
 	editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
 	if (tab_index == editor.main_tab_index) {
@@ -2315,7 +2315,6 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 
 
 
-
 void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* renderer_2D, Window* window, Input* input)
 {
 	memory_zero(&syntax_editor);
@@ -2323,6 +2322,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	gui_initialize(text_renderer, window);
 	ui_system_initialize();
 
+	syntax_editor.compiler = compiler_create();
 	syntax_editor.debugger = debugger_create();
 	syntax_editor.last_code_completion_tab = -1;
 	syntax_editor.compile_count = 0;
@@ -2334,7 +2334,6 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.directory_crawler = directory_crawler_create();
 	syntax_editor.frame_index = 1;
 	syntax_editor.last_compile_was_with_code_gen = false;
-	syntax_editor.analysis_data = nullptr;
 	syntax_editor.editor_text = Rich_Text::create(vec3(1.0f));
 	syntax_editor.normal_text_size_pixel = convertHeight(0.48f, Unit::CENTIMETER);
 	syntax_editor.text_display = Text_Display::make(
@@ -2373,22 +2372,12 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 
 	syntax_editor.error_indices_sorted = dynamic_array_create<int>();
 
-	compiler_initialize();
-
 	String default_filename = string_create_static("upp_code/editor_text.upp");
 	int tab_index = syntax_editor_add_tab(default_filename);
 	syntax_editor_switch_tab(tab_index);
 	assert(tab_index != -1, "");
 	syntax_editor.open_tab_index = 0;
 	syntax_editor.main_tab_index = 0;
-
-	syntax_editor.compiler_build_code = false;
-	syntax_editor.compiler_main_unit = nullptr;
-	syntax_editor.compiler_work_started = false;
-	syntax_editor.compiler_thread_should_close = false;
-	syntax_editor.compiler_wait_semaphore = semaphore_create(0, 1);
-	syntax_editor.compilation_finish_semaphore = semaphore_create(0, 1);
-	syntax_editor.compiler_thread = thread_create(compiler_thread_entry_fn, nullptr);
 
 	syntax_editor.watch_values = dynamic_array_create<Watch_Value>();
 	syntax_editor.selected_stack_frame = 0;
@@ -2398,11 +2387,25 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.filtered_passes = hashtable_create_pointer_empty<Analysis_Pass*, bool>(1);
 	syntax_editor.prefer_poly_passes = true;
 	syntax_editor.prefer_base_pass = false;
+
+	// Init compiler thread info
+	syntax_editor.editor_compilation_data = compilation_data_create(syntax_editor.compiler);
+	auto& compiler_thread_data = syntax_editor.compiler_thread_data;
+	compiler_thread_data.compiler = syntax_editor.compiler;
+	compiler_thread_data.compilation_data = nullptr;
+	compiler_thread_data.build_code = false;
+	compiler_thread_data.compiler_main_unit = nullptr;
+	compiler_thread_data.work_started = false;
+	compiler_thread_data.thread_should_exit = false;
+	compiler_thread_data.compiler_wait_semaphore = semaphore_create(0, 1);
+	compiler_thread_data.compilation_finish_semaphore = semaphore_create(0, 1);
+	compiler_thread_data.compiler_thread = thread_create(compiler_thread_entry_fn, &syntax_editor.compiler_thread_data);
 }
 
 void syntax_editor_destroy()
 {
 	auto& editor = syntax_editor;
+	compiler_destroy(editor.compiler);
 	ui_system_shutdown();
 	debugger_destroy(editor.debugger);
 	hashset_destroy(&editor.symbol_table_already_visited);
@@ -2414,7 +2417,6 @@ void syntax_editor_destroy()
 	string_destroy(&syntax_editor.yank_string);
 	string_destroy(&syntax_editor.fuzzy_search_text);
 	string_destroy(&syntax_editor.search_text);
-	compiler_destroy();
 	dynamic_array_destroy(&syntax_editor.error_indices_sorted);
 
 
@@ -2712,7 +2714,7 @@ void code_diff_update_folds_jumps_and_breakpoints(Code_Diff code_diff, int tab_i
 
 void code_diff_update_tokenization(Code_Diff& code_diff, Source_Code* code, int tab_index)
 {
-	Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+	Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&syntax_editor.compiler->identifier_pool);
 	SCOPE_EXIT(identifier_pool_lock_release(lock));
 	for (int i = 0; i < code_diff.line_diffs.size; i++)
 	{
@@ -2817,34 +2819,37 @@ void syntax_editor_synchronize_code_information()
 
 unsigned long compiler_thread_entry_fn(void* userdata)
 {
-	auto& editor = syntax_editor;
+	Compiler_Thread_Data* compiler_thread_data = (Compiler_Thread_Data*) userdata;
 
 	bool worked = fiber_initialize();
 	assert(worked, "panic");
 
 	// logg("Compiler thread waiting now\n");
-	semaphore_wait(editor.compiler_wait_semaphore);
-	while (!editor.compiler_thread_should_close)
+	semaphore_wait(compiler_thread_data->compiler_wait_semaphore);
+	while (!compiler_thread_data->thread_should_exit)
 	{
-		Compilation_Unit* compilation_unit = editor.compiler_main_unit;
-		bool generate_code = editor.compiler_build_code;
+		Compilation_Unit* compilation_unit = compiler_thread_data->compiler_main_unit;
+		bool generate_code = compiler_thread_data->build_code;
 		// logg("Compiler thread signaled\n");
 
+		Compilation_Data* compilation_data = compilation_data_create(compiler_thread_data->compiler);
+		compiler_thread_data->compilation_data = compilation_data;
+
 		// Compile here
-		compiler_compile(compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
-		compiler_analysis_update_source_code_information();
+		compilation_data_compile(compilation_data, compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
+		compilation_data_update_source_code_information(compilation_data);
 
 		// Artificial sleep, to see how 'sluggish' editor becomes...
 		// timer_sleep_for(1.0);
 
-		semaphore_increment(editor.compilation_finish_semaphore, 1);
+		semaphore_increment(compiler_thread_data->compilation_finish_semaphore, 1);
 		//logg("Compiler thread waiting now\n");
-		semaphore_wait(editor.compiler_wait_semaphore);
+		semaphore_wait(compiler_thread_data->compiler_wait_semaphore);
 	}
 
-	semaphore_destroy(editor.compilation_finish_semaphore);
-	semaphore_destroy(editor.compiler_wait_semaphore);
-	thread_destroy(editor.compiler_thread);
+	semaphore_destroy(compiler_thread_data->compilation_finish_semaphore);
+	semaphore_destroy(compiler_thread_data->compiler_wait_semaphore);
+	thread_destroy(compiler_thread_data->compiler_thread);
 	return 0;
 }
 
@@ -2875,47 +2880,82 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 	}
 
 	// Get latest compiler work (Check semaphore if compilation was finished)
-	bool got_compiler_update = editor.compiler_work_started;
-	if (editor.compiler_work_started)
+	auto& compiler_thread_data = editor.compiler_thread_data;
+	bool got_compiler_update = compiler_thread_data.work_started;
+	if (compiler_thread_data.work_started)
 	{
-		bool compiler_finished_compile = semaphore_try_wait(editor.compilation_finish_semaphore);
+		bool compiler_finished_compile = semaphore_try_wait(compiler_thread_data.compilation_finish_semaphore);
 		if (!compiler_finished_compile) {
 			return;
 		}
-		editor.compiler_work_started = false;
-
-		// Update open_in_editor info
-		for (int i = 0; i < compiler.compilation_units.size; i++) {
-			compiler.compilation_units[i]->open_in_editor = false;
-		}
-		for (int i = 0; i < editor.tabs.size; i++) {
-			editor.tabs[i].compilation_unit->open_in_editor = true;
-		}
+		compiler_thread_data.work_started = false;
 	}
 
-	assert(!editor.compiler_work_started, "");
+	assert(!compiler_thread_data.work_started, "");
 	if (!should_compile && !got_compiler_update) {
 		return;
 	}
 	// logg("Synchronize with compiler: text-updated: %s, compiler-update_received: %s\n", (should_compile ? "TRUE" : "FALSE"), (got_compiler_update ? "TRUE" : "FALSE"));
 
+	// Update editor data with new data from compiler
 	if (got_compiler_update)
 	{
-		if (editor.analysis_data != nullptr) {
-			compiler_analysis_data_destroy(editor.analysis_data);
-			editor.analysis_data = nullptr;
-		}
-		editor.analysis_data = compiler.analysis_data;
-		compiler.analysis_data = nullptr;
+		assert(syntax_editor.editor_compilation_data != nullptr, "Should never be null");
+		compilation_data_destroy(editor.editor_compilation_data);
+		editor.editor_compilation_data = compiler_thread_data.compilation_data;
+		compiler_thread_data.compilation_data = nullptr;
+
 		sort_error_indices();
 		dynamic_array_reset(&editor.suggestions);
 		hashtable_reset(&editor.filtered_passes);
 		editor.compile_count += 1;
+
+		// Remove unused compilation-units from compiler
+		{
+			auto compilation_data = editor.editor_compilation_data;
+			auto compiler = compilation_data->compiler;
+		    semaphore_wait(compiler->add_compilation_unit_semaphore);
+		    SCOPE_EXIT(semaphore_increment(compiler->add_compilation_unit_semaphore, 1));
+		
+		    auto units = compiler->compilation_units;
+		    Array<bool> should_delete = array_create<bool>(units.size);
+			SCOPE_EXIT(array_destroy(&should_delete));
+		    for (int i = 0; i < should_delete.size; i++) {
+		        should_delete[i] = true;
+		    }
+
+			// Only keep compilation units that are either open in editor or used in last compile
+			for (int i = 0; i < units.size; i++) 
+			{
+				auto unit = units[i];
+				if (compilation_unit_was_used_in_compile(unit, compilation_data)) {
+					should_delete[i] = false;
+					continue;
+				}
+				for (int j = 0; j < editor.tabs.size; j++) {
+					if (editor.tabs[j].compilation_unit == unit) {
+						should_delete[i] = false;
+						break;
+					}
+				}
+			}
+		
+			// Remove unused units
+		    for (int i = 0; i < units.size; i++)
+		    {
+		        auto unit = units[i];
+				if (!should_delete[i]) continue;
+		
+		        compilation_unit_destroy(unit);
+		        dynamic_array_swap_remove(&units, i);
+		        i -= 1;
+		    }
+		}
 	}
 
+	// Update compiler with new code (Swap out editor and compiler source-code)
 	if (got_compiler_update || should_compile)
 	{
-		// Update compiler with new code (Swap out editor and compiler source-code)
 		for (int i = 0; i < editor.tabs.size; i++)
 		{
 			auto& tab = editor.tabs[i];
@@ -2929,9 +2969,9 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			Code_Diff code_diff = code_diff_create_from_changes(changes);
 			SCOPE_EXIT(code_diff_destroy(&code_diff));
 
+			// Update compiler source-code version (Add changes and tokenize correctly)
 			if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile)
 			{
-				// Keep the compiler-version of the code up-to-date (Add changes and tokenize correctly)
 				for (int i = 0; i < changes.size; i++) {
 					code_change_apply(tab.compilation_unit->code, &changes[i], true);
 				}
@@ -2940,8 +2980,9 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				tab.requires_recompile = false;
 			}
 
-			if (got_compiler_update) {
-				// Swap out code so we get newest analysis infos
+			// Swap out source-code so we get newest analysis infos
+			if (got_compiler_update) 
+			{
 				Source_Code* swap = tab.code;
 				tab.code = tab.compilation_unit->code;
 				tab.compilation_unit->code = swap;
@@ -2962,24 +3003,24 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		editor.last_compile_was_with_code_gen = generate_code;
 
 		// Start work in compile thread
-		editor.compiler_main_unit = main_tab.compilation_unit;
-		editor.compiler_build_code = generate_code;
-		semaphore_increment(editor.compiler_wait_semaphore, 1);
-		editor.compiler_work_started = true;
+		compiler_thread_data.compiler_main_unit = main_tab.compilation_unit;
+		compiler_thread_data.build_code = generate_code;
+		semaphore_increment(compiler_thread_data.compiler_wait_semaphore, 1);
+		compiler_thread_data.work_started = true;
 	}
 }
 
 void syntax_editor_wait_for_newest_compiler_info(bool build_code)
 {
-	auto& editor = syntax_editor;
-	if (editor.compiler_work_started) {
-		semaphore_wait(editor.compilation_finish_semaphore);
-		semaphore_increment(editor.compilation_finish_semaphore, 1);
+	auto& compiler_thread_data = syntax_editor.compiler_thread_data;
+	if (compiler_thread_data.work_started) {
+		semaphore_wait(compiler_thread_data.compilation_finish_semaphore);
+		semaphore_increment(compiler_thread_data.compilation_finish_semaphore, 1);
 	}
 	syntax_editor_synchronize_with_compiler(build_code);
-	if (editor.compiler_work_started) {
-		semaphore_wait(editor.compilation_finish_semaphore);
-		semaphore_increment(editor.compilation_finish_semaphore, 1);
+	if (compiler_thread_data.work_started) {
+		semaphore_wait(compiler_thread_data.compilation_finish_semaphore);
+		semaphore_increment(compiler_thread_data.compilation_finish_semaphore, 1);
 		syntax_editor_synchronize_with_compiler(build_code);
 	}
 }
@@ -3494,7 +3535,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			format.datatype_format = datatype_format_make_default();
 			format.datatype_format.append_struct_poly_parameter_values = true;
 			datatype_append_value_to_string(
-				poly_value.options.value.type, &syntax_editor.analysis_data->type_system, poly_value.options.value.memory,
+				poly_value.options.value.type, syntax_editor.editor_compilation_data->type_system, poly_value.options.value.memory,
 				string, format, 0, Memory_Source(nullptr), Memory_Source(nullptr)
 			);
 
@@ -3595,16 +3636,17 @@ bool analysis_pass_passes_filters(Analysis_Pass* pass)
 }
 
 // This function uses the Pass-Filter to find a pass that is preferred
-Semantic_Info* code_analysis_item_get_selected_semantic_info(Code_Analysis_Item& item)
+Editor_Info* code_analysis_item_get_selected_semantic_info(Editor_Info_Reference& item)
 {
-	assert(item.semantic_info_mapping_count != 0, "Should not happen with current implementation");
-	if (item.semantic_info_mapping_count == 1) {
-		return &syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index];
+	auto& editor_infos = syntax_editor.editor_compilation_data->semantic_infos;
+	assert(item.editor_info_mapping_count != 0, "Should not happen with current implementation");
+	if (item.editor_info_mapping_count == 1) {
+		return &editor_infos[item.editor_info_mapping_start_index];
 	}
 
 	// Pick the first pass that passes filters
-	for (int i = 0; i < item.semantic_info_mapping_count; i++) {
-		auto& semantic_info = syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index + i];
+	for (int i = 0; i < item.editor_info_mapping_count; i++) {
+		auto& semantic_info = editor_infos[item.editor_info_mapping_start_index + i];
 		auto pass = semantic_info.pass;
 		if (analysis_pass_passes_filters(pass)) {
 			return &semantic_info;
@@ -3612,14 +3654,14 @@ Semantic_Info* code_analysis_item_get_selected_semantic_info(Code_Analysis_Item&
 	}
 
 	// If no preferred pass was found, just return the first one (Maybe we should notify the user if this happens)
-	return &syntax_editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index];
+	return &editor_infos[item.editor_info_mapping_start_index];
 }
 
 struct Position_Info
 {
-	Semantic_Info_Expression* expression_info;
-	Semantic_Info_Symbol* symbol_info;
-	Semantic_Info_Call* call_info;
+	Editor_Info_Expression* expression_info;
+	Editor_Info_Symbol* symbol_info;
+	Editor_Info_Call* call_info;
 	int call_argument_index;
 };
 
@@ -3650,17 +3692,17 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 			on_item = index.character >= item.start_char && index.character < item.end_char;
 		}
 		if (!on_item) continue;
-		if (item.semantic_info_mapping_count == 0) continue; // Shouldn't happen currently, but still check
+		if (item.editor_info_mapping_count == 0) continue; // Shouldn't happen currently, but still check
 
 		// Now we need to select the analysis pass we want to use
-		int semantic_info_index = item.semantic_info_mapping_start_index;
+		int semantic_info_index = item.editor_info_mapping_start_index;
 		// TODO: Change selection based on some input or whatever
 
 		auto semantic_info_ptr = code_analysis_item_get_selected_semantic_info(item);
-		Semantic_Info& semantic_info = *semantic_info_ptr;
+		Editor_Info& semantic_info = *semantic_info_ptr;
 		switch (semantic_info.type)
 		{
-		case Semantic_Info_Type::CALL_INFORMATION:
+		case Editor_Info_Type::CALL_INFORMATION:
 		{
 			if (item.tree_depth > previous_call_depth)
 			{
@@ -3681,8 +3723,8 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 					int min_dist = 1000000;
 					for (int j = 0; j < analysis_items.size; j++) {
 						const auto& other_item = analysis_items[j];
-						const auto& other_info = editor.analysis_data->semantic_infos[other_item.semantic_info_mapping_start_index];
-						if (other_info.type != Semantic_Info_Type::ARGUMENT) continue;
+						const auto& other_info = editor.editor_compilation_data->semantic_infos[other_item.editor_info_mapping_start_index];
+						if (other_info.type != Editor_Info_Type::ARGUMENT) continue;
 						auto arg_info = other_info.options.argument_info;
 						if (arg_info.call_node != semantic_info.options.call_info.call_node) continue;
 						int distance = math_minimum(
@@ -3703,25 +3745,25 @@ Position_Info code_query_find_position_infos(Text_Index index, Dynamic_Array<int
 			}
 			break;
 		}
-		case Semantic_Info_Type::SYMBOL_LOOKUP: {
+		case Editor_Info_Type::SYMBOL_LOOKUP: {
 			result.symbol_info = &semantic_info.options.symbol_info;
 			break;
 		}
-		case Semantic_Info_Type::ERROR_ITEM: {
+		case Editor_Info_Type::ERROR_ITEM: {
 			if (errors_to_fill != nullptr) {
 				dynamic_array_push_back(errors_to_fill, semantic_info.options.error_index);
 			}
 			break;
 		}
-		case Semantic_Info_Type::EXPRESSION_INFO: {
+		case Editor_Info_Type::EXPRESSION_INFO: {
 			if (item.tree_depth > previous_expr_depth) {
 				result.expression_info = &semantic_info.options.expression;
 				previous_expr_depth = item.tree_depth;
 			}
 			break;
 		}
-		case Semantic_Info_Type::ARGUMENT:
-		case Semantic_Info_Type::MARKUP: {
+		case Editor_Info_Type::ARGUMENT:
+		case Editor_Info_Type::MARKUP: {
 			break;
 		}
 		default: panic("");
@@ -3735,7 +3777,6 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
-	if (editor.analysis_data == nullptr) return nullptr;
 
 	index = code_query_text_index_at_last_synchronize(index, editor.open_tab_index, false);
 
@@ -3875,7 +3916,7 @@ Datatype* editor_pattern_variable_get_type(Pattern_Variable* pattern_variable, A
 
 	Workload_Base* lookup_workload = pass->origin_workload;
 	auto active_pattern_values = 
-		pattern_variable_find_instance_workload(pattern_variable, lookup_workload, true)->active_pattern_variable_states;
+		pattern_variable_find_instance_workload(pattern_variable, lookup_workload)->active_pattern_variable_states;
 	assert(active_pattern_values.data != nullptr, "");
 
 	const auto& value = active_pattern_values[pattern_variable->value_access_index];
@@ -3918,7 +3959,7 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 	int start_index = 0;
 	if (path_lookup_text[0] == '~') 
 	{
-		Upp_Module* builtin_module = syntax_editor.analysis_data->builtin_module;
+		Upp_Module* builtin_module = syntax_editor.editor_compilation_data->builtin_module;
 		if (builtin_module == nullptr) return result;
 		symbol_table = builtin_module->symbol_table;
 		start_index = 1;
@@ -3933,7 +3974,7 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 	{
 		String part = path_parts[i];
 
-		String* id = identifier_pool_lock_and_add(&compiler.identifier_pool, part);
+		String* id = identifier_pool_lock_and_add(&syntax_editor.compiler->identifier_pool, part);
 		DynArray<Symbol*> symbols = symbol_table_query_id(symbol_table, id, query_info, arena);
 
 		// After first lookup the query-type changes
@@ -4037,7 +4078,7 @@ void code_completion_find_suggestions()
 
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
-	auto& ids = compiler.identifier_pool.predefined_ids;
+	auto& ids = syntax_editor.compiler->identifier_pool.predefined_ids;
 
 	// Get partially typed word
 	String fuzzy_search_string = string_create_static("");
@@ -4148,17 +4189,17 @@ void code_completion_find_suggestions()
 			// Find call value type, should be info before ->, so op_index - 1
 			Datatype* call_value_type = nullptr;
 			Analysis_Pass* call_value_pass = nullptr;
-			if (word_start - 3 > 0)
+			if (word_start - 3 >= 0)
 			{
 				Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
-				Semantic_Info_Expression* expr_info = dot_call_position_info.expression_info;
+				Editor_Info_Expression* expr_info = dot_call_position_info.expression_info;
 				if (expr_info != nullptr) {
 					call_value_type = expr_info->info->cast_info.result_type;
 					call_value_pass = expr_info->analysis_pass;
 				}
 			}
 
-			DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
+			symbols = symbol_table_query_all_symbols(
 				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::DOT_CALLS, true), &arena
 			);
 			for (int i = 0; i < symbols.size; i++)
@@ -4218,7 +4259,7 @@ void code_completion_find_suggestions()
 					break;
 				}
 				case Symbol_Type::HARDCODED_FUNCTION: {
-					call_signature = editor.analysis_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
+					call_signature = editor.editor_compilation_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
 					break;
 				}
 				}
@@ -4240,33 +4281,68 @@ void code_completion_find_suggestions()
 					continue;
 				}
 
-				// Check if types are compatible (Does not check for casts...)
+				// Check if types can be cast are compatible (Does not check for casts...)
 				Datatype* param_type = param.datatype;
 				Datatype* arg_type = call_value_type;
+				bool types_are_compatible = false;
+				if (param_type->contains_pattern)
+				{
+					// Try updating type-modifiers
+					Type_Modifier_Info src_mods = datatype_get_modifier_info(arg_type);
+					Type_Modifier_Info dst_mods = datatype_get_modifier_info(param_type);
+					Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
+					if (cast_type == Cast_Type::INVALID) {
+						remove_symbol = true;
+						continue;
+					}
 
-				param_type = param_type;
-				arg_type = arg_type;
-				if (!types_are_equal(param_type, arg_type)) {
+					// Check if patterns match (simple version for editor)
+					Datatype* src = src_mods.base_type;
+					Datatype* dst = dst_mods.base_type;
+					if (dst->type == Datatype_Type::PATTERN_VARIABLE) {
+						remove_symbol = false;
+						continue;
+					}
+					if (dst->type == Datatype_Type::STRUCT_PATTERN) 
+					{
+						if (src->type != Datatype_Type::STRUCT) {
+							remove_symbol = true;
+							continue;
+						}
+						Datatype_Struct* structure = downcast<Datatype_Struct>(src);
+						if (structure->workload == nullptr) {
+							remove_symbol = true;
+							continue;
+						}
+						if (structure->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+							remove_symbol = true;
+							continue;
+						}
+						Workload_Structure_Polymorphic* arg_parent = structure->workload->polymorphic.instance.parent;
+						Workload_Structure_Polymorphic* param_parent = downcast<Datatype_Struct_Pattern>(dst)->instance->header->origin.struct_workload;
+						if (arg_parent != param_parent) {
+							remove_symbol = true;
+							continue;
+						}
+
+						remove_symbol = false;
+						continue;
+					}
+					if (src->type != dst->type) {
+						remove_symbol = true;
+						continue;
+					}
+
+					remove_symbol = false;
 					continue;
 				}
-
-				remove_symbol = false;
-
-				// Expression_Cast_Info cast_info = cast_info_make_empty(arg_type, false);
-				// const char* out_error_msg = "";
-				// continue;
-				// // if (!try_updating_type_mods(cast_info, param_type->mods, &out_error_msg, &editor.analysis_data->type_system)) {
-				// // 	continue;
-				// // }
-				// arg_type = cast_info.result_type;
-				// if (param_type->contains_pattern) {
-				// 	if (!pattern_checker_create_and_check(&arena, param_type, arg_type)) {
-				// 		continue;
-				// 	}
-				// }
-				// else if (!types_are_equal(param_type, arg_type)) {
-				// 	continue;
-				// }
+				else
+				{
+					remove_symbol = true;
+					// remove_symbol = check_if_cast_possible(
+					// 	arg_type, param_type, false, true, true, &editor.editor_compilation_data->type_system
+					// ).cast_type == Cast_Type::INVALID;
+				}
 			}
 		}
 
@@ -5162,10 +5238,7 @@ void center_cursor_on_error(int error_index)
 {
 	auto& editor = syntax_editor;
 
-	if (editor.analysis_data == nullptr) {
-		return;
-	}
-	auto& errors = editor.analysis_data->compiler_errors;
+	auto& errors = editor.editor_compilation_data->compiler_errors;
 	if (error_index < 0 || error_index >= errors.size) return;
 
 	// Note: We need to take the error out of the error list here, as tab-switching will change the error index
@@ -5402,11 +5475,11 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::FORMAT_MOTION: {
 		auto range = motion_evaluate(command.options.motion, cursor);
-		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
+		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&syntax_editor.compiler->identifier_pool);
+		SCOPE_EXIT(identifier_pool_lock_release(lock));
 		for (int i = range.start.line; i <= range.end.line; i++) {
 			Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, i, &lock);
 		}
-		identifier_pool_lock_release(lock);
 		break;
 	}
 	case Normal_Command_Type::UNDO: {
@@ -5539,10 +5612,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::ENTER_SHOW_ERROR_MODE: {
 		syntax_editor_wait_for_newest_compiler_info(false);
-		if (editor.analysis_data == nullptr) {
-			break;
-		}
-		else if (editor.analysis_data->compiler_errors.size == 0) {
+		if (editor.editor_compilation_data->compiler_errors.size == 0) {
 			break;
 		}
 
@@ -5754,10 +5824,10 @@ void insert_command_execute(Insert_Command input)
 	SCOPE_EXIT(syntax_editor_sanitize_cursor());
 
 	SCOPE_EXIT(
-		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&compiler.identifier_pool);
-	Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, cursor.line, &lock);
-	identifier_pool_lock_release(lock);
-		);
+		Identifier_Pool_Lock lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
+		Text_Editing::tokenize_and_auto_format_line(editor.open_tab_index, cursor.line, &lock);
+		identifier_pool_lock_release(lock);
+	);
 
 	if (editor.record_insert_commands) {
 		dynamic_array_push_back(&editor.last_insert_commands, input);
@@ -6341,7 +6411,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		if (msg.character == 'j' || msg.character == 'k')
 		{
 			auto& index = editor.navigate_error_index;
-			auto& errors = editor.analysis_data->compiler_errors;
+			auto& errors = editor.editor_compilation_data->compiler_errors;
 			index += msg.character == 'j' ? 1 : -1;
 			index = math_clamp(index, 0, errors.size - 1);
 			center_cursor_on_error(editor.error_indices_sorted[index]);
@@ -6643,7 +6713,7 @@ void watch_values_update()
 			format.show_datatype = false;
 		}
 		datatype_append_value_to_string(
-			type, &editor.analysis_data->type_system, value_ptr, &watch_value.value_as_text,
+			type, editor.editor_compilation_data->type_system, value_ptr, &watch_value.value_as_text,
 			format, 0, local_source, debugger_state.memory_source
 		);
 	}
@@ -6867,8 +6937,8 @@ void syntax_editor_update(bool& animations_running)
 			auto line = source_code_get_line(editor.tabs[editor.open_tab_index].code, editor.tabs[editor.open_tab_index].cursor.line);
 			for (int i = 0; i < line->item_infos.size; i++) {
 				auto& item = line->item_infos[i];
-				for (int j = 0; j < item.semantic_info_mapping_count; j++) {
-					auto& semantic_info = editor.analysis_data->semantic_infos[item.semantic_info_mapping_start_index + j];
+				for (int j = 0; j < item.editor_info_mapping_count; j++) {
+					auto& semantic_info = editor.editor_compilation_data->semantic_infos[item.editor_info_mapping_start_index + j];
 					dynamic_array_push_back(&passes, semantic_info.pass);
 				}
 			}
@@ -6980,7 +7050,7 @@ void syntax_editor_update(bool& animations_running)
 					bool found_info = false;
 					Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
 					if (info.ir_function != 0) {
-						auto slot = editor.analysis_data->function_slots[info.ir_function->function_slot_index];
+						auto slot = editor.editor_compilation_data->function_slots[info.ir_function->function_slot_index];
 						if (slot.modtree_function != 0) {
 							string_append_string(&str, slot.modtree_function->name);
 							found_info = true;
@@ -7244,13 +7314,13 @@ void syntax_editor_update(bool& animations_running)
 	}
 
 	// Handle error navigation mode
-	if (mode == Editor_Mode::ERROR_NAVIGATION && editor.analysis_data != 0 && editor.analysis_data->compiler_errors.size == 0) {
+	if (mode == Editor_Mode::ERROR_NAVIGATION && editor.editor_compilation_data->compiler_errors.size == 0) {
 		mode = Editor_Mode::NORMAL;
 	}
 
 	bool synch_with_compiler = syntax_editor.input->key_pressed[(int)Key_Code::N] && syntax_editor.input->key_down[(int)Key_Code::CTRL];
 	bool build_and_run = syntax_editor.input->key_pressed[(int)Key_Code::F5];
-	if (editor.compiler_work_started) {
+	if (editor.compiler_thread_data.work_started) {
 		animations_running = true;
 	}
 
@@ -7271,7 +7341,7 @@ void syntax_editor_update(bool& animations_running)
 		// Execute Actions
 		if (action_print_line_info) {
 			auto& tab = editor.tabs[editor.open_tab_index];
-			debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.analysis_data);
+			debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.editor_compilation_data);
 		}
 		if (action_open_debugger_command_line) {
 			window_set_focus_on_console();
@@ -7318,12 +7388,12 @@ void syntax_editor_update(bool& animations_running)
 		syntax_editor_wait_for_newest_compiler_info(build_and_run);
 	}
 
-	if (!build_and_run || editor.analysis_data == nullptr) {
+	if (!build_and_run) {
 		return;
 	}
 
 	// Start debugger if we are in C-Compilation mode
-	if (compiler_can_execute_c_compiled(editor.analysis_data))
+	if (compiler_can_execute_c_compiled(editor.editor_compilation_data))
 	{
 		editor_leave_insert_mode();
 		editor.mode = Editor_Mode::NORMAL;
@@ -7333,7 +7403,7 @@ void syntax_editor_update(bool& animations_running)
 			"D:/Projects/UppLang/backend/build/main.exe",
 			"D:/Projects/UppLang/backend/build/main.pdb",
 			"D:/Projects/UppLang/backend/build/main.obj",
-			editor.analysis_data
+			editor.editor_compilation_data
 		);
 
 		// Add breakpoints
@@ -7360,11 +7430,11 @@ void syntax_editor_update(bool& animations_running)
 		return;
 	}
 
-	auto& errors = editor.analysis_data->compiler_errors;
+	auto& errors = editor.editor_compilation_data->compiler_errors;
 	// Display error messages or run the program
 	if (errors.size == 0)
 	{
-		auto exit_code = compiler_execute(editor.analysis_data);
+		auto exit_code = compiler_execute(editor.editor_compilation_data);
 		String output = string_create_empty(256);
 		SCOPE_EXIT(string_destroy(&output));
 		exit_code_append_to_string(&output, exit_code);
@@ -7388,7 +7458,7 @@ void syntax_editor_update(bool& animations_running)
 		}
 
 		// Append semantic errors
-		semantic_analyser_append_semantic_errors_to_string(editor.analysis_data, &tmp, 1);
+		semantic_analyser_append_semantic_errors_to_string(editor.editor_compilation_data, &tmp, 1);
 		logg(tmp.characters);
 
 		// Enter error-show mode
@@ -7412,7 +7482,7 @@ void symbol_get_infos(Symbol * symbol, Analysis_Pass * pass, Datatype * *out_typ
 		type = symbol->options.constant.type;
 		break;
 	case Symbol_Type::HARDCODED_FUNCTION:
-		// type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded, syntax_editor.analysis_data));
+		// type = upcast(hardcoded_type_to_signature(symbol->options.hardcoded, syntax_editor.compilation_data));
 		break;
 	case Symbol_Type::GLOBAL:
 		after_text = "Global";
@@ -7769,14 +7839,14 @@ void syntax_editor_render()
 					leaving_function = true;
 				}
 
-				auto modtree_fn = editor.analysis_data->function_slots[info.ir_function->function_slot_index].modtree_function;
+				auto modtree_fn = editor.editor_compilation_data->function_slots[info.ir_function->function_slot_index].modtree_function;
 				AST::Node* function_origin_node = nullptr;
 				if (modtree_fn != nullptr)
 				{
 					switch (modtree_fn->function_type)
 					{
 					case ModTree_Function_Type::BAKE: {
-						function_origin_node = upcast(modtree_fn->options.bake->analysis_workload->bake_node);
+						function_origin_node = upcast(modtree_fn->options.bake->bake_node);
 						break;
 					}
 					case ModTree_Function_Type::EXTERN: {
@@ -7787,7 +7857,7 @@ void syntax_editor_render()
 						break;
 					}
 					case ModTree_Function_Type::NORMAL: {
-						function_origin_node = upcast(modtree_fn->options.normal.progress->body_workload->body_node);
+						function_origin_node = upcast(modtree_fn->options.normal.progress->function_node->options.function.body);
 						break;
 					}
 					default: panic("");
@@ -7795,7 +7865,7 @@ void syntax_editor_render()
 				}
 
 				if (function_origin_node != nullptr) {
-					unit = compiler_find_ast_compilation_unit(function_origin_node);
+					unit = compiler_find_ast_compilation_unit(editor.compiler, function_origin_node);
 					upp_line_index = function_origin_node->range.start.line;
 				}
 			}
@@ -7929,9 +7999,8 @@ void syntax_editor_render()
 				auto& fold = tab.folds[line->fold_index];
 				bool contains_errors = false;
 
-				if (editor.analysis_data != 0)
 				{
-					auto& errors = editor.analysis_data->compiler_errors;
+					auto& errors = editor.editor_compilation_data->compiler_errors;
 					for (int i = 0; i < errors.size; i++) {
 						const auto& error = errors[i];
 						if (error.unit != tab.compilation_unit) {
@@ -8064,11 +8133,11 @@ void syntax_editor_render()
 					vec3 color = vec3(1, 0, 0);
 					Rich_Text::Mark_Type mark_type = Rich_Text::Mark_Type::TEXT_COLOR;
 					int start = analysis_item.start_char;
-					Semantic_Info* semantic_info_ptr = code_analysis_item_get_selected_semantic_info(analysis_item);
-					Semantic_Info& info = *semantic_info_ptr;
+					Editor_Info* semantic_info_ptr = code_analysis_item_get_selected_semantic_info(analysis_item);
+					Editor_Info& info = *semantic_info_ptr;
 					switch (info.type)
 					{
-					case Semantic_Info_Type::EXPRESSION_INFO:
+					case Editor_Info_Type::EXPRESSION_INFO:
 					{
 						if (info.options.expression.expr->type != AST::Expression_Type::MEMBER_ACCESS) continue;
 						start += 1; // Skip member access '.'
@@ -8083,7 +8152,7 @@ void syntax_editor_render()
 						}
 						break;
 					}
-					case Semantic_Info_Type::SYMBOL_LOOKUP:
+					case Editor_Info_Type::SYMBOL_LOOKUP:
 					{
 						if (!info.options.symbol_info.add_color) {
 							continue;
@@ -8099,8 +8168,8 @@ void syntax_editor_render()
 						}
 						break;
 					}
-					case Semantic_Info_Type::MARKUP: color = info.options.markup_color; break;
-					case Semantic_Info_Type::ERROR_ITEM:
+					case Editor_Info_Type::MARKUP: color = info.options.markup_color; break;
+					case Editor_Info_Type::ERROR_ITEM:
 					{
 						// Special handling, as errors may appear at the end of the line
 						int end_char = analysis_item.end_char;
@@ -8170,7 +8239,7 @@ void syntax_editor_render()
 	// Calculate context
 	auto suggestions_append_to_rich_text = [](Rich_Text::Rich_Text* text)
 		{
-			auto type_system = &syntax_editor.analysis_data->type_system;
+			auto type_system = syntax_editor.editor_compilation_data->type_system;
 			auto suggestions = syntax_editor.suggestions;
 
 			int max_suggestion_length = 0;
@@ -8285,11 +8354,11 @@ void syntax_editor_render()
 
 		// Add error infos
 		if (error.semantic_error_index != -1 && with_info) {
-			auto& semantic_error = syntax_editor.analysis_data->semantic_errors[error.semantic_error_index];
+			auto& semantic_error = syntax_editor.editor_compilation_data->semantic_errors[error.semantic_error_index];
 			for (int j = 0; j < semantic_error.information.size; j++) {
 				auto& error_info = semantic_error.information[j];
 				Rich_Text::add_line(text, false, 1);
-				error_information_append_to_rich_text(error_info, editor.analysis_data, text);
+				error_information_append_to_rich_text(error_info, editor.editor_compilation_data, text);
 			}
 		}
 		};
@@ -8307,7 +8376,7 @@ void syntax_editor_render()
 	Rich_Text::Rich_Text call_info_text = Rich_Text::create(vec3(1));
 	SCOPE_EXIT(Rich_Text::destroy(&context_text));
 
-	auto type_system = &syntax_editor.analysis_data->type_system;
+	auto type_system = syntax_editor.editor_compilation_data->type_system;
 	String tmp = string_create();
 	SCOPE_EXIT(string_destroy(&tmp));
 	if (show_context)
@@ -8330,7 +8399,7 @@ void syntax_editor_render()
 		// Show hover errors
 		for (int i = 0; i < hover_errors.size; i++)
 		{
-			auto& error = editor.analysis_data->compiler_errors[hover_errors[i]];
+			auto& error = editor.editor_compilation_data->compiler_errors[hover_errors[i]];
 			show_normal_mode_context = false;
 			if (i == 0) {
 				Rich_Text::add_seperator_line(text);
@@ -8384,7 +8453,7 @@ void syntax_editor_render()
 			Rich_Text::append(text, tmp);
 
 			// Add Datatype
-			Expression_Value_Info value_info = expression_info_get_value_info(hover_info.expression_info->info, &editor.analysis_data->type_system);
+			Expression_Value_Info value_info = expression_info_get_value_info(hover_info.expression_info->info, type_system);
 			Rich_Text::add_line(text, false, 1);
 			Rich_Text::append(text, "Result-Type:  ");
 			datatype_append_to_rich_text(value_info.result_type, type_system, text);
@@ -8416,11 +8485,8 @@ void syntax_editor_render()
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context expected: ");
 				datatype_append_to_rich_text(context.datatype, type_system, text);
-				if (context.auto_dereference) {
-					Rich_Text::append(text, "  auto-dereference");
-				}
 			}
-			else if (context.auto_dereference) {
+			else if (context.type == Expression_Context_Type::AUTO_DEREFERENCE) {
 				Rich_Text::add_line(text, false, 1);
 				Rich_Text::append(text, "Context: Auto-Dereference");
 			}
@@ -8678,7 +8744,7 @@ void syntax_editor_render()
 
 		if (editor.mode == Editor_Mode::ERROR_NAVIGATION)
 		{
-			auto& errors = editor.analysis_data->compiler_errors;
+			auto& errors = editor.editor_compilation_data->compiler_errors;
 			int& index = editor.navigate_error_index;
 			int& cam_start = editor.navigate_error_cam_start;
 			const int& MAX_LINES = 5;

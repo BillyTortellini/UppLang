@@ -34,7 +34,7 @@ struct Bake_Progress;
 struct Datatype_Pattern_Variable;
 struct Pattern_Variable_State;
 struct Poly_Header;
-struct Compiler_Analysis_Data;
+struct Compilation_Data;
 struct Compilation_Unit;
 
 namespace Parser
@@ -82,7 +82,6 @@ struct ModTree_Function
     union {
         struct {
             Symbol* symbol; // May be 0 if function is anonymous
-            Symbol_Table* parameter_table; 
             Function_Progress* progress;
         } normal;
         Bake_Progress* bake;
@@ -123,6 +122,26 @@ struct ModTree_Program
 
 
 // WORKLOADS
+struct Workload_Base;
+struct Semantic_Context
+{
+    // Data required for analysis
+    Compilation_Data* compilation_data;
+    Workload_Base* current_workload;
+    Symbol_Table* current_symbol_table;
+    Symbol_Access_Level symbol_access_level;
+    Analysis_Pass* current_pass;
+
+    // Current position info's
+    ModTree_Function* current_function;
+    Expression_Info* current_expression;
+    bool statement_reachable;
+
+    // Scratch data during analysis
+    DynArray<AST::Code_Block*> block_stack;
+    Arena* scratch_arena;
+};
+
 enum class Polymorphic_Analysis_Type
 {
     NON_POLYMORPHIC,
@@ -149,6 +168,8 @@ struct Pattern_Variable_State
 
 enum class Analysis_Workload_Type
 {
+    ROOT, // Root workload, which spawns all other workloads
+
     MODULE_ANALYSIS, // This is basically just symbol discovery
     OPERATOR_CONTEXT_CHANGE,
 
@@ -181,17 +202,6 @@ struct Workload_Base
     Workload_Base* cluster;
     Dynamic_Array<Workload_Base*> reachable_clusters;
 
-    // Information required to be consistent during workload switches
-    // Note: These members are automatically set in functions like analyse_expression, analyse_statement...
-    //       Also note that some of these may not be set depending on the workload type
-    ModTree_Function* current_function;
-    Expression_Info* current_expression;
-    bool statement_reachable;
-    Symbol_Table* current_symbol_table;
-    Symbol_Access_Level symbol_access_level;
-    Analysis_Pass* current_pass;
-    Dynamic_Array<AST::Code_Block*> block_stack; // NOTE: This is here because it is required by Bake-Analysis and code-block, also for statement blocks...
-
     // Errors
     int real_error_count;
     int errors_due_to_unknown_count;
@@ -207,8 +217,11 @@ struct Workload_Base
 
     Array<Pattern_Variable_State> active_pattern_variable_states; // Non-owning
     Poly_Header* active_pattern_variable_states_origin;
+};
 
-    Arena scratch_arena;
+struct Workload_Root
+{
+    Workload_Base base;
 };
 
 // Analyses context changes of a single type
@@ -216,7 +229,9 @@ struct Workload_Custom_Operator
 {
     Workload_Base base;
     Custom_Operator_Type type_to_analyse; // Note: Dependencies are split on different custom-operator types
+    Analysis_Pass* analysis_pass;
     Dynamic_Array<AST::Custom_Operator_Node*> change_nodes;
+    Symbol_Table* symbol_table;
     Custom_Operator_Table* operator_table;
 };
 
@@ -230,7 +245,6 @@ struct Workload_Function_Header
 {
     Workload_Base base;
     Function_Progress* progress;
-    AST::Expression* function_node;
     // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
     //      But it may be null for instanciated functions, or inferred functions
     Poly_Header* poly_header;
@@ -240,7 +254,7 @@ struct Workload_Function_Body
 {
     Workload_Base base;
     Function_Progress* progress;
-    AST::Body_Node body_node;
+    Analysis_Pass* body_pass; // Used later in ir-generator
 };
 
 struct Workload_Function_Cluster_Compile
@@ -254,6 +268,8 @@ struct Workload_Definition
 {
     Workload_Base base;
     Symbol* symbol;
+    Symbol_Table* symbol_table;
+    Analysis_Pass* analysis_pass;
     bool is_extern_import;
     union {
         struct {
@@ -269,14 +285,12 @@ struct Workload_Bake_Analysis
 {
     Workload_Base base;
     Bake_Progress* progress;
-    AST::Expression* bake_node;
 };
 
 struct Workload_Bake_Execution
 {
     Workload_Base base;
     Bake_Progress* progress;
-    AST::Expression* bake_node;
 };
 
 
@@ -351,6 +365,9 @@ struct Workload_Structure_Body
 {
     Workload_Base base;
 
+    Symbol_Table* symbol_table;
+    Symbol_Access_Level symbol_access_level;
+    Analysis_Pass* analysis_pass;
     Datatype_Struct* struct_type;
     AST::Expression* struct_node;
 
@@ -380,6 +397,9 @@ struct Function_Progress
 {
     ModTree_Function* function;
 
+    Symbol_Table* parameter_table; 
+    AST::Expression* function_node;
+
     Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
     Workload_Function_Body* body_workload;
     Workload_Function_Cluster_Compile* compile_workload;
@@ -390,6 +410,10 @@ struct Function_Progress
 
 struct Bake_Progress
 {
+    Symbol_Table* symbol_table;
+    AST::Expression* bake_node;
+    Analysis_Pass* analysis_pass;
+
     ModTree_Function* bake_function;
     Datatype* result_type;
     Optional<Upp_Constant> result;
@@ -424,15 +448,20 @@ struct Dependency_Information
 
 struct Workload_Executer
 {
+    Fiber_Pool* fiber_pool;
+    Compilation_Data* compilation_data;
+    Dynamic_Array<Workload_Base*> all_workloads; // Owning array
     Dynamic_Array<Workload_Base*> runnable_workloads;
     Dynamic_Array<Workload_Base*> finished_workloads;
     bool progress_was_made;
-
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
 };
 
-void workload_executer_resolve();
-Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, bool is_root_module);
+Workload_Executer* workload_executer_create(Fiber_Pool* fiber_pool, Compilation_Data* compilation_data);
+void workload_executer_destroy(Workload_Executer* executer);
+void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
+Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data);
+Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, Compilation_Data* compilation_data);
 
 
 
@@ -541,13 +570,13 @@ enum class Expression_Context_Type
     NOT_SPECIFIED,          // Type is not known in given context
     ERROR_OCCURED,          // An error occured, so type may or may not be known
     SPECIFIC_TYPE_EXPECTED, // Type is known
+    AUTO_DEREFERENCE,       // 
 };
 
 struct Expression_Context
 {
     Expression_Context_Type type;
     Datatype* datatype;
-    bool auto_dereference;
 };
 
 
@@ -574,7 +603,6 @@ struct Expression_Info
     {
         struct {
             Datatype* datatype; 
-            int auto_dereference_count;
             bool is_temporary;
         } value;
         Datatype* datatype;
@@ -611,9 +639,9 @@ struct Expression_Info
     Cast_Info cast_info;
 };
 
-Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system = nullptr);
-Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
-bool expression_has_memory_address(AST::Expression* expr);
+Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system);
+Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied, Type_System* type_system);
+bool expression_has_memory_address(AST::Expression* expr, Semantic_Context* semantic_context);
 
 enum class Control_Flow
 {
@@ -716,18 +744,17 @@ enum class Info_Query
     CREATE_IF_NULL, // Always returns info (Creates one if not existing)
 };
 
-Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query);
-Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query);
-Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query);
-Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query);
-Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query);
-Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query);
-Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query);
-Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query);
-Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query);
-Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query);
+Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query, Compilation_Data* compilation_data);
+Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query, Compilation_Data* compilation_data);
+Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query, Compilation_Data* compilation_data);
+Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query, Compilation_Data* compilation_data);
+Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query, Compilation_Data* compilation_data);
+Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query, Compilation_Data* compilation_data);
+Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query, Compilation_Data* compilation_data);
+Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query, Compilation_Data* compilation_data);
+Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query, Compilation_Data* compilation_data);
+Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query, Compilation_Data* compilation_data);
 
-Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied);
 
 
 
@@ -807,17 +834,17 @@ struct Semantic_Error
     Dynamic_Array<Error_Information> information;
 };
 
-void log_semantic_error_outside(const char* msg, AST::Node* node, Node_Section node_section);
-void semantic_analyser_set_error_flag(bool error_due_to_unknown);
+void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section = Node_Section::WHOLE);
+void semantic_analyser_set_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
 void error_information_append_to_string(
-    const Error_Information& info, Compiler_Analysis_Data* analysis_data, 
+    const Error_Information& info, Compilation_Data* compilation_data, 
     String* string, Datatype_Format format = datatype_format_make_default()
 );
 void error_information_append_to_rich_text(
-    const Error_Information& info, Compiler_Analysis_Data* analysis_data, Rich_Text::Rich_Text* text, 
+    const Error_Information& info, Compilation_Data* compilation_data, Rich_Text::Rich_Text* text, 
     Datatype_Format format = datatype_format_make_default()
 );
-void semantic_analyser_append_semantic_errors_to_string(Compiler_Analysis_Data* analysis_data, String* string, int indentation);
+void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
 
 
 
@@ -833,35 +860,33 @@ struct Function_Slot
     int bytecode_end_instruction;
 };
 
-// ANALYSER
-struct Semantic_Analyser
-{
-    // Result
-    Workload_Base* current_workload;
-    Symbol* error_symbol;
-    Workload_Executer* workload_executer;
-    ModTree_Global* global_allocator; // Datatype: Allocator
-    ModTree_Global* system_allocator; // Datatype: Allocator
-    Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of code-block comptimes
-};
 
-Semantic_Analyser* semantic_analyser_initialize();
-void semantic_analyser_destroy();
-void semantic_analyser_reset();
-void semantic_analyser_finish();
+
+// ANALYSER (Does not really exist anymore)
+Semantic_Context semantic_context_make(
+    Compilation_Data* compilation_data, Workload_Base* workload,
+    Symbol_Table* symbol_table, Symbol_Access_Level symbol_access_level,
+    Analysis_Pass* analysis_pass, Arena* scratch_arena
+);
 Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload);
 
+
+ModTree_Global* modtree_program_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern);
+void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 
 
 ModTree_Program* modtree_program_create();
 void modtree_program_destroy(ModTree_Program* program);
-void function_progress_destroy(Function_Progress* progress);
 void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
+ModTree_Global* modtree_program_add_global_assert_type_finished(Compilation_Data* compilation_data, Datatype* datatype, Symbol* symbol, bool is_extern);
 
+Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
+Cast_Info check_if_cast_possible(
+    Datatype* from_type, Datatype* to_type, bool value_is_temporary, bool is_auto_cast, Semantic_Context* semantic_context
+);
 // If search_start_workload == nullptr, we start from semantic_analyser.current_workload
 Workload_Base* pattern_variable_find_instance_workload(
     Pattern_Variable* variable,
-    Workload_Base* search_start_workload = nullptr,
-    bool called_from_editor = false
+    Workload_Base* search_start_workload
 );

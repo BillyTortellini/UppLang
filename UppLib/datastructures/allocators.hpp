@@ -145,6 +145,12 @@ struct DynArray
 	    size = size - length;
 	}
 
+	void rollback_to_size(int new_size)
+	{
+		assert((usize)new_size < size, "Can only make array smaller");
+		size = (usize)new_size;
+	}
+
 	T& last() {
 		assert(size > 0, "");
 		return buffer[size - 1];
@@ -333,7 +339,7 @@ struct DynSet
 		return insert_internal(value, value_hash);
 	}
 
-	bool contains(T& value)
+	T* find(T& value)
 	{
 		int sonding_index = 0;
 		u64 value_hash = hash_function(&value);
@@ -342,17 +348,22 @@ struct DynSet
 			auto& entry = entries[hash_to_entry_index(value_hash, sonding_index)];
 
 			if (entry.state == DynSet_Entry_State::FREE) {
-				return false;
+				return nullptr;
 			}
 			else if (entry.state == DynSet_Entry_State::OCCUPIED) {
 				if (entry.hash == value_hash && equals_function(&entry.value, &value)) {
-					return true;
+					return &entry.value;
 				}
 			}
 
 			// Otherwise search at next sonding-index
 			sonding_index += 1;
 		}
+	}
+
+	bool contains(T& value)
+	{
+		return find(value) != nullptr;
 	}
 
 	// Returns true if the operation succeeded, otherwise false

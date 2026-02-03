@@ -7,12 +7,12 @@
 #include "ir_code.hpp"
 #include "editor_analysis_info.hpp"
 
-Bytecode_Thread* bytecode_thread_create(Compiler_Analysis_Data* analysis_data, int instruction_limit)
+Bytecode_Thread* bytecode_thread_create(Compilation_Data* compilation_data, int instruction_limit)
 {
     Bytecode_Thread* result = new Bytecode_Thread;
     result->heap_allocations = hashtable_create_pointer_empty<void*, int>(8);
     result->heap_memory_consumption = 0;
-    result->analysis_data = analysis_data;
+    result->compilation_data = compilation_data;
     result->instruction_limit = instruction_limit;
     result->waiting_for_type_finish_type = 0;
     return result;
@@ -645,10 +645,11 @@ void interpreter_safe_memcopy(Bytecode_Thread* thread, void* dst, void* src, int
 // Returns true if we need to stop execution, e.g. on exit instruction
 bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
 {
-    auto& globals = thread->analysis_data->program->globals;
-    auto& constant_pool = thread->analysis_data->constant_pool;
-    auto& generator = compiler.bytecode_generator;
-    auto& instructions = compiler.bytecode_generator->instructions;
+    auto compilation_data = thread->compilation_data;
+    auto& globals = compilation_data->program->globals;
+    auto& constant_pool = compilation_data->constant_pool;
+    auto& generator = compilation_data->bytecode_generator;
+    auto& instructions = generator->instructions;
 
     Bytecode_Instruction* i = &instructions[thread->instruction_index];
     switch (i->instruction_type)
@@ -688,7 +689,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         interpreter_safe_memcopy(thread, *(void**)(thread->stack_pointer + i->op1), *(void**)(thread->stack_pointer + i->op2), i->op3);
         break;
     case Instruction_Type::READ_CONSTANT:
-        interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, constant_pool.constants[i->op2].memory, i->op3);
+        interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, constant_pool->constants[i->op2].memory, i->op3);
         break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
         *(u64*)(thread->stack_pointer + i->op1) = *(u64*)(thread->stack_pointer + i->op2) + (i->op3);
@@ -748,7 +749,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         int jmp_to_instr_index;
         {
             int function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
-            auto& slots = thread->analysis_data->function_slots;
+            auto& slots = thread->compilation_data->function_slots;
             if (function_index < 0 || function_index >= slots.size) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, pointer does not point to valid function");
                 return true;
@@ -967,31 +968,26 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             }
             break;
         }
-        case Hardcoded_Type::RANDOM_I32: {
-            i32 result = random_next_u32(&compiler.random);
-            interpreter_safe_memcopy(thread, thread->return_register, &result, 4);
-            break;
-        }
         case Hardcoded_Type::TYPE_INFO: 
         {
-            auto& type_system = thread->analysis_data->type_system;
+            auto& type_system = thread->compilation_data->type_system;
 
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             int type_index = *(int*)(argument_start);
-            if (type_index > type_system.types.size || type_index < 0) {
+            if (type_index > type_system->types.size || type_index < 0) {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "type_info failed, type-handle was invalid value");
                 return true;
             }
-            if (type_size_is_unfinished(type_system.types[type_index])) {
+            if (type_size_is_unfinished(type_system->types[type_index])) {
                 thread->error_occured = true;
                 thread->exit_code = exit_code_make(Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED);
-                thread->waiting_for_type_finish_type = type_system.types[type_index];
+                thread->waiting_for_type_finish_type = type_system->types[type_index];
                 return true;
             }
-            *((Internal_Type_Information**)&thread->return_register[0]) = type_system.internal_type_infos[type_index];
+            *((Internal_Type_Information**)&thread->return_register[0]) = type_system->internal_type_infos[type_index];
             break;
         }
         default: {panic("What"); }
@@ -1015,7 +1011,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         break;
     }
     case Instruction_Type::LOAD_CONSTANT_ADDRESS:
-        *(void**)(thread->stack_pointer + i->op1) = (void*)(constant_pool.constants[i->op2].memory);
+        *(void**)(thread->stack_pointer + i->op1) = (void*)(constant_pool->constants[i->op2].memory);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         *(i64*)(thread->stack_pointer + i->op1) = (i64)(i->op2 + 1); // Note: Function pointers are encoded as function indices in interpreter
@@ -1166,8 +1162,8 @@ void bytecode_thread_set_initial_state(Bytecode_Thread* thread, int function_sta
 
 void bytecode_thread_execute(Bytecode_Thread* thread)
 {
-    Timing_Task before_task = compiler.task_current;
-    compiler_switch_timing_task(Timing_Task::CODE_EXEC);
+    Timing_Task before_task = thread->compilation_data->task_current;
+    compilation_data_switch_timing_task(thread->compilation_data, Timing_Task::CODE_EXEC);
     thread->error_occured = false;
     thread->waiting_for_type_finish_type = 0;
     thread->exit_code = exit_code_make(Exit_Code_Type::SUCCESS);
@@ -1198,5 +1194,5 @@ void bytecode_thread_execute(Bytecode_Thread* thread)
         thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Internal exception occured (Division by 0, invalid memory access, ...)");
     }
 
-    compiler_switch_timing_task(before_task);
+    compilation_data_switch_timing_task(thread->compilation_data, Timing_Task::CODE_EXEC);
 }

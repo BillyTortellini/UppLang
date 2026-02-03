@@ -7,7 +7,7 @@
 
 struct Debugger;
 struct Compilation_Unit;
-struct Compiler_Analysis_Data;
+struct Compilation_Data;
 struct IR_Code_Block;
 struct IR_Function;
 struct Datatype;
@@ -178,7 +178,7 @@ void debugger_destroy(Debugger* debugger);
 void debugger_reset(Debugger* debugger);
 
 bool debugger_start_process(
-    Debugger* debugger, const char* exe_filename, const char* pdb_filename, const char* main_obj_filepath, Compiler_Analysis_Data* analysis_data
+    Debugger* debugger, const char* exe_filename, const char* pdb_filename, const char* main_obj_filepath, Compilation_Data* compilation_data
 );
 
 void debugger_resume_until_next_halt_or_exit(Debugger* debugger);
@@ -197,7 +197,7 @@ Source_Breakpoint* debugger_add_source_breakpoint(Debugger* debugger, int line_i
 void debugger_remove_source_breakpoint(Debugger* debugger, Source_Breakpoint* breakpoint);
 Array<Stack_Frame> debugger_get_stack_frames(Debugger* debugger);
 
-void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compiler_Analysis_Data* analysis_data);
+void debugger_print_line_translation(Debugger* debugger, Compilation_Unit* compilation_unit, int line_index, Compilation_Data* compilation_data);
 
 
 

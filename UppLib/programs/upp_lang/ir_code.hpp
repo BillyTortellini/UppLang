@@ -356,12 +356,12 @@ struct IR_Instruction_Reference
 struct IR_Generator
 {
     IR_Program* program;
-    ModTree_Program* modtree;
     IR_Function* default_allocate_function;
     IR_Function* default_free_function;
     IR_Function* default_reallocate_function;
 
     // Stuff needed for compilation
+    Compilation_Data* compilation_data;
     Dynamic_Array<IR_Data_Access*> data_accesses;
     IR_Data_Access nothing_access;
 
@@ -385,21 +385,15 @@ struct IR_Generator
     IR_Code_Block* current_block;
 };
 
-extern IR_Generator ir_generator;
+IR_Generator* ir_generator_create(Compilation_Data* compilation_data);
+void ir_generator_destroy(IR_Generator* ir_generator);
 
-IR_Generator* ir_generator_initialize();
-void ir_generator_destroy();
-void ir_generator_reset();
+void ir_generator_queue_function(Compilation_Data* compilation_data, ModTree_Function* function);
+void ir_generator_generate_queued_items(Compilation_Data* compilation_data, bool gen_bytecode);
+void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode);
 
-void ir_generator_queue_function(ModTree_Function* function);
-void ir_generator_generate_queued_items(bool gen_bytecode);
-void ir_generator_finish(bool gen_bytecode);
-
-IR_Program* ir_program_create(Type_System* type_system);
-void ir_program_destroy(IR_Program* program);
-
-void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions, Compiler_Analysis_Data* analysis_data);
-void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compiler_Analysis_Data* analysis_data);
+void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions, Compilation_Data* compilation_data);
+void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
 IR_Binop ast_binop_to_ir_binop(AST::Binop binop);
 
 

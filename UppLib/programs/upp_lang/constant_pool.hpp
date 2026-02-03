@@ -6,11 +6,12 @@
 #include "../../datastructures/hashtable.hpp"
 
 struct Datatype;
+struct Compilation_Data;
 
 struct Upp_Constant
 {
     Datatype* type;
-    byte* memory; // memory in stack-allocator of constant_pool
+    byte* memory; // memory in arena of corresponding constant pool
     int constant_index;
 };
 
@@ -35,11 +36,12 @@ struct Constant_Pool
     Dynamic_Array<Upp_Constant> constants;
     Arena constant_memory;
     Hashtable<Deduplication_Info, Upp_Constant> deduplication_table; 
+    Compilation_Data* compilation_data;
 };
 
-Constant_Pool constant_pool_create();
+Constant_Pool* constant_pool_create(Compilation_Data* compilation_data);
 void constant_pool_destroy(Constant_Pool* pool);
-Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes);
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* constant_pool, Datatype* signature, Array<byte> bytes);
 
 bool upp_constant_is_equal(Upp_Constant a, Upp_Constant b);
 template<typename T>

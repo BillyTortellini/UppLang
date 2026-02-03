@@ -7,6 +7,7 @@
 #include "constant_pool.hpp"
 #include "memory_source.hpp"
 
+struct Compilation_Data;
 struct Symbol;
 struct Datatype;
 struct Datatype_Struct;
@@ -466,35 +467,35 @@ struct Type_System
 {
     double register_time;
     Predefined_Types predefined_types;
+    Identifier_Pool* identifier_pool;
 
     Hashtable<Type_Deduplication, Datatype*> deduplication_table;
     Dynamic_Array<Datatype*> types;
     Dynamic_Array<Internal_Type_Information*> internal_type_infos;
+
 };
 
-Type_System type_system_create();
+Type_System* type_system_create(Compilation_Data* compilation_data);
 void type_system_destroy(Type_System* system);
-void type_system_reset(Type_System* system);
 void type_system_print(Type_System* system);
-void type_system_add_predefined_types(Type_System* system);
 
-Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Pattern_Variable* pattern_variable);
+Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Type_System* type_system, Pattern_Variable* pattern_variable);
 Datatype_Struct_Pattern* type_system_make_struct_pattern(
-    Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition);
-Datatype_Pointer* type_system_make_pointer(Datatype* child_type, bool is_optional = false, Type_System* type_system = nullptr);
-Datatype_Slice* type_system_make_slice(Datatype* element_type);
+    Type_System* type_system, Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition);
+Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type, bool is_optional = false);
+Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
-Datatype* type_system_make_array(Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
-Datatype_Function_Pointer* type_system_make_function_pointer(Call_Signature* signature, Type_System* type_system = nullptr);
-Datatype* datatype_make_with_modifiers(Datatype* base_type, int pointer_level, u32 optional_flags);
+Datatype* type_system_make_array(Type_System* type_system, Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
+Datatype_Function_Pointer* type_system_make_function_pointer(Type_System* type_system, Call_Signature* signature);
+Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level, u32 optional_flags);
 
 // Note: empty types need to be finished before they are used!
-Datatype_Enum* type_system_make_enum_empty(String* name, AST::Node* definition_node = 0);
-Datatype_Struct* type_system_make_struct_empty(String* name, bool is_union = false, Datatype_Struct* parent = 0, Workload_Structure_Body* workload = 0);
+Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, String* name, AST::Node* definition_node = 0);
+Datatype_Struct* type_system_make_struct_empty(Type_System* type_system, String* name, bool is_union = false, Datatype_Struct* parent = 0, Workload_Structure_Body* workload = 0);
 void struct_add_member(Datatype_Struct* structure, String* id, Datatype* member_type, AST::Node* definition_node = nullptr);
-void type_system_finish_struct(Datatype_Struct* structure);
-void type_system_finish_enum(Datatype_Enum* enum_type);
-void type_system_finish_array(Datatype_Array* array);
+void type_system_finish_struct(Type_System* type_system, Datatype_Struct* structure);
+void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type);
+void type_system_finish_array(Type_System* type_system, Datatype_Array* array);
 
 
 
@@ -504,7 +505,8 @@ bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_c
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_undecorated(
-    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true, bool remove_optional_pointer = false
+    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true,
+    bool remove_optional_pointer = false, bool struct_pattern_to_base_struct = false
 );
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);

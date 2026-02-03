@@ -124,6 +124,8 @@ struct Bytecode_Generator
     Dynamic_Array<Bytecode_Instruction> instructions;
 
     // Program Information
+    Compilation_Data* compilation_data;
+
     Dynamic_Array<Array<int>> stack_offsets; // For both registers and functions
     Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
     Hashtable<IR_Function*, int> function_parameter_stack_offset_index;
@@ -132,9 +134,6 @@ struct Bytecode_Generator
     int maximum_function_stack_depth;
 
     // Data required for generation
-    IR_Program* ir_program;
-    Compiler* compiler;
-
     Hashtable<IR_Code_Block*, int> continue_location;
     Hashtable<IR_Code_Block*, int> break_location;
     Dynamic_Array<Function_Reference> fill_out_calls;
@@ -144,9 +143,8 @@ struct Bytecode_Generator
     int current_stack_offset;
 };
 
-Bytecode_Generator bytecode_generator_create();
+Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data);
 void bytecode_generator_destroy(Bytecode_Generator* generator);
-void bytecode_generator_reset(Bytecode_Generator* generator, Compiler* compiler);
 
 /*
     Scheme for partial compilation:

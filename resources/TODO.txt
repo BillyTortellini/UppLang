@@ -1,9 +1,104 @@
 
+Notes:
+------
+Note: Different compilation stages have different properties:
+ * atomic: IR-Generator, Tokenizer, Parser never generate dependencies/need to wait on something else
+ * Error-Free: Only semantic_analyser and parser stages can actually produce errors
+
+Architecture Upgrades:
+----------------------
+ - Compiler/Compilation_Units + Identifier pool stuff sucks ass (Syntax-Editor)
+    Compilation_Units are kinda a data-race, and we could remove the whole Compiler thing completely
+        if we could get it out of the way...
+ - Source_Code should not store tokenization, should be done by parser... 
+    Problems: 
+        * Inside String/Comment/Multi-Line comments
+        * Token-Ranges/Error ranges?
+    Advantages: 
+        * Don't need to store tokens anymore! (Also no token updating, beeing not up-to-date)
+        * Removal of Token-Indices (Only text indices)
+        * Parser can insert special tokens for new blocks and stuff, 
+            so we don't need special handling for lines and other things
+ - Upp_Function/Upp_Program:
+    Currently we have Upp_Function, Function_Progress, Function_Slot, IR_Function, C-Function...
+        All of this could be combined into one big structure, which would make a lot more sense for me...
+    Also IR-Program and all the associated sheet...
+ - IR-Function should check which functions are called, and remove workload clustering
+ - Replace main loop in workload executer by just having other threads yield?
+    Syntax editor could just be another fiber that generates/waits for things to finish when calling some functions like
+    analyse_node or whatever
+ - Call-Signature could _NOT_ store all this extra information and be a thing in the type-system, not something out of it...
+
+
+
+If every semantic context requires a workload, why do we need semantic context in the first place?
+Some solutions:
+ - On workload start we only pass Analysis-Data* and workload, and workload needs to figure out the rest. (Semantic Context on stack)
+ - Don't store semantic context in workloads
+    --> Seems reasonable
+
+What should be the order:
+ - Everybody can create an empty Compilation_Data structure (With type-system, constant-pool, primitive, types, builtin-table, everything initialized)
+    Problem that fiber-pool is a shared resource (Cuz we want to reuse fibers...)
+ - Analysing with a main-compilation unit starts all workloads
+ - Returns with finished compilation_data...
+
+Goals with this rework:
+ - Remove all globals
+ - Editor should be able to do normal analysis things without worrying about threads
+ - Remove as much nulls as possible, we can always return the global-symbol table for example...
+    We can also always have the full compilation-data, just with some things missing.
+    This seems also like the path forward to having incremental compilation
+
+TODO:
+ - Fix all errors, make everything work with semantic_context
+ - Remove compiler global
+ - Rename editor analysis infos
+ - Remove global entities (ir-generator, bytecode-generator, c-generator, bytecode-interpreter?)
+ 
+
+A semantic_context should be easy to construct:
+ 1. A workload, to know where dis is from (Make workloads for semantic_editor and compilation_start)
+ 2. Compilation_Data --> Should be known (Altough 2 are currently in circulation)
+ 3. Analysis-Pass, where analysis information is stored (When things are analysed)
+ 4. Symbol_Table/Symbol_Access_Level (Root symbol table could be used)
+
+
+
+Move to new (Semantic_Analysis) file
+    - Expression Analysis
+    - Statement Analysis
+    - Analysis Infos
+    - Calculate Comptime value
+
+
+
+
+
+TODO for add_cast:
+ - From-by-reference and to-by-reference
+    Result-type is temporary fix...
+ - Check if weirder cast types work
+ - check_if_cast_possible from editor (arena and symbol-table)
+    Semantic_Context would be great
+        Symbol_Table symbol_table,
+        Arena* persistent_arena;
+        Arena* scratch_arena,
+        Type_System,
+        Constant_Pool,
+        Identifier_Pool?
+
+
 #add_cast(cast_fn, auto_cast, call_by_reference, return_by_reference)
     cast_fn :: (from: From_Type) -> To_Type
  * Implement custom cast
  * Implement custom cast polymorphic
+ * check_cast in syntax-editor
  * Add all other custom operators
+    - Array-Access
+    - Binary Operator
+    - Unary Operator
+    - Iterator
 
 
 How does operator context work:
@@ -19,9 +114,6 @@ How does operator context work:
 
 
 TODO:
- * Update Symbol-Lookup once again, just without ~** imports, because ordered aliases and ~* should work
-    Maybe, not quite sure yet with cyclic alias dependencies 
-    I'm pretty sure this doesn't work with dependencies and aliases...
  * New Syntax for block-id:
     #block_id what
     for while if switch anon-block
@@ -62,15 +154,6 @@ Expression_Result_Type rework:
 Testing:
  enum casts
  c-generator const pointer syntax
-
-TODO (Probably):
-    - Remove const, make other values temporary (Constant and parameter access)
-        * String needs special treatment here
-            c_string is just size and address, and array-access returns a temporary value
-        * Maybe add variable shadowing
-            i thought maybe for optionals but I'm not sure anymore
-    - Remove optional, it's something that is easy to implement without needing to be something special from compiler
-    - Pointer dereference as post-op maybe, as & as dereference is annoying becuase && becomes logical and... 
 
 
 
@@ -140,7 +223,6 @@ FEATURE IMPLEMENTATION PLAN:
     Code editor does not work on files, but rather on packages (or whatever)
  * Incremental parser
  * Incremental compiler
- * New GUI maybe? Debugger upgrade
 
 
 

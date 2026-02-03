@@ -15,11 +15,12 @@ namespace AST
 }
 
 struct Compilation_Unit;
+struct Predefined_IDs;
 
 namespace Parser 
 {
     // PARSER
-    void execute_clean(Compilation_Unit* unit);
+    void execute_clean(Compilation_Unit* unit, Predefined_IDs* predefined_ids);
 
     // Utility
     void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Token_Range>* ranges);

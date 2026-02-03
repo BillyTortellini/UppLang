@@ -28,6 +28,12 @@ namespace AST {
 	struct Call_Node;
 }
 
+enum class Compile_Type
+{
+    ANALYSIS_ONLY,
+    BUILD_CODE,
+};
+
 // Note:
 // Cast type records all cast where 'an actual operation' happens, e.g. new values are created
 // The type of the result may still change, even if there is no cast involved,
@@ -53,6 +59,8 @@ enum class Cast_Type
 	TO_BASE_TYPE,
 
 	// Operation casts
+	DEREFERENCE,
+	ADDRESS_OF,
 	ARRAY_TO_SLICE,
 	TO_ANY,
 	FROM_ANY,
@@ -88,7 +96,7 @@ enum class Import_Type
 {
 	NONE,      // for lookups, if we don't want to query imports
     SYMBOLS,   // import Foo~*
-    DOT_CALLS,  // import dot_call Foo
+    DOT_CALLS, // import dot_calls Foo
     OPERATORS, // import operators Foo
 };
 
@@ -162,7 +170,6 @@ enum class Hardcoded_Type
 	READ_I32,
 	READ_F32,
 	READ_BOOL,
-	RANDOM_I32,
 
 	MAX_ENUM_VALUE
 };

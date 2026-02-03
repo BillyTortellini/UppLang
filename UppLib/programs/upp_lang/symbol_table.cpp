@@ -8,22 +8,21 @@
 #include "editor_analysis_info.hpp"
 
 // SYMBOL TABLE FUNCTIONS
-Symbol_Table* symbol_table_create()
+Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 {
-    auto analyser = compiler.semantic_analyser;
     Symbol_Table* result = new Symbol_Table;
     result->custom_operator_table = nullptr;
 	result->parent_table = nullptr;
 	result->parent_access_level = Symbol_Access_Level::GLOBAL;
-    dynamic_array_push_back(&compiler.analysis_data->allocated_symbol_tables, result);
+    dynamic_array_push_back(&compilation_data->allocated_symbol_tables, result);
     result->imports = dynamic_array_create<Symbol_Table_Import>();
     result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
     return result;
 }
 
-Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level)
+Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol_Access_Level parent_access_level, Compilation_Data* compilation_data)
 {
-    Symbol_Table* result = symbol_table_create();
+    Symbol_Table* result = symbol_table_create(compilation_data);
 	result->parent_table = parent_table;
 	result->parent_access_level = parent_access_level;
     result->custom_operator_table = parent_table->custom_operator_table;
@@ -43,7 +42,7 @@ void symbol_table_destroy(Symbol_Table* symbol_table)
 
 void symbol_table_add_import(
     Symbol_Table* symbol_table, Symbol_Table* imported_table, 
-	Import_Type import_type, bool is_transitive, Symbol_Access_Level access_level,
+	Import_Type import_type, bool is_transitive, Symbol_Access_Level access_level, Semantic_Context* semantic_context,
     AST::Node* error_report_node, Node_Section error_report_section
 )
 {
@@ -51,7 +50,7 @@ void symbol_table_add_import(
 
     // Check for errors
     if (symbol_table == imported_table) {
-        log_semantic_error_outside("Trying to include symbol table to itself!", error_report_node, Node_Section::FIRST_TOKEN);
+        log_semantic_error(semantic_context, "Trying to include symbol table to itself!", error_report_node, Node_Section::FIRST_TOKEN);
         return;
     }
     for (int i = 0; i < symbol_table->imports.size; i++) {
@@ -59,7 +58,7 @@ void symbol_table_add_import(
         if (import.table == imported_table) 
 		{
 			if (import.type == import_type) {
-				log_semantic_error_outside("Table is already included!", error_report_node, Node_Section::FIRST_TOKEN);
+				log_semantic_error(semantic_context, "Table is already included!", error_report_node, Node_Section::FIRST_TOKEN);
 				return;
 			}
         }
@@ -79,13 +78,15 @@ void symbol_destroy(Symbol* symbol) {
     delete symbol;
 }
 
-Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level)
+Symbol* symbol_table_define_symbol(
+	Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level,
+	Compilation_Data* compilation_data)
 {
     assert(id != 0, "HEY");
 
     // Create new symbol
     Symbol* new_sym = new Symbol;
-    dynamic_array_push_back(&compiler.analysis_data->allocated_symbols, new_sym);
+    dynamic_array_push_back(&compilation_data->allocated_symbols, new_sym);
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
@@ -94,7 +95,7 @@ Symbol* symbol_table_define_symbol(Symbol_Table* symbol_table, String* id, Symbo
 
     new_sym->definition_node = definition_node;
     if (definition_node != nullptr) {
-        new_sym->definition_unit = compiler_find_ast_compilation_unit(new_sym->definition_node);
+        new_sym->definition_unit = compiler_find_ast_compilation_unit(compilation_data->compiler, new_sym->definition_node);
         new_sym->definition_text_index = token_index_to_text_index(definition_node->range.start, new_sym->definition_unit->code, true);
     }
     else {
@@ -322,6 +323,48 @@ void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols)
 	}
 }
 
+
+
+// CUSTOM OPERATORS
+u64 hash_custom_operator(Custom_Operator* op)
+{
+	int type = (int)op->type;
+	u64 hash = hash_i32(&type);
+	switch (op->type)
+	{
+	case Custom_Operator_Type::CAST: 
+	{
+		auto& cast = op->options.custom_cast;
+		hash = hash_combine(hash, hash_pointer(cast.function));
+		hash = hash_bool(hash, cast.auto_cast);
+		hash = hash_bool(hash, cast.call_by_reference);
+		hash = hash_bool(hash, cast.return_by_reference);
+		break;
+	}
+	}
+	return hash;
+}
+
+bool equals_custom_operator(Custom_Operator* a_op, Custom_Operator* b_op)
+{
+	if (a_op->type != b_op->type) return false;
+
+	switch (a_op->type)
+	{
+	case Custom_Operator_Type::CAST: 
+	{
+		auto& a = a_op->options.custom_cast;
+		auto& b = b_op->options.custom_cast;
+		return
+			a.function == b.function &&
+			a.call_by_reference == b.call_by_reference &&
+			a.return_by_reference == b.return_by_reference &&
+			a.auto_cast == b.auto_cast;
+	}
+	}
+
+	return true;
+}
 
 
 

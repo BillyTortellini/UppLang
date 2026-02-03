@@ -12,7 +12,6 @@
 
 struct Compiler;
 struct AST_Parser;
-struct Semantic_Analyser;
 struct Intermediate_Generator;
 struct Bytecode_Generator;
 struct Bytecode_Thread;
@@ -21,7 +20,7 @@ struct C_Compiler;
 struct IR_Generator;
 struct Source_Code;
 struct Code_History;
-struct Compiler_Analysis_Data;
+struct Compilation_Data;
 struct Upp_Module;
 
 
@@ -32,25 +31,15 @@ namespace AST
     struct Module;
 }
 
-enum class Compile_Type
-{
-    ANALYSIS_ONLY,
-    BUILD_CODE,
-};
-
 struct Compilation_Unit
 {
     Source_Code* code;
-    bool open_in_editor;
-    int editor_tab_index; // -1 if not opened
-    bool used_in_last_compile;
     String filepath; // For deduplication, full-filepath
 
-    // Analysis-Info
+    // Parser data (Stored in unit because this can be reused between compiles)
     AST::Module* root;
     Dynamic_Array<AST::Node*> allocated_nodes;
     Dynamic_Array<Error_Message> parser_errors;
-    Upp_Module* upp_module;
 };
 
 // Compiler
@@ -58,53 +47,31 @@ struct Compiler
 {
     // Compiler internals
     Dynamic_Array<Compilation_Unit*> compilation_units;
-    Compilation_Unit* main_unit;
-    bool generate_code; // This indicates if we want to compile (E.g. user pressed CTRL-B or F5)
-    Compiler_Analysis_Data* analysis_data;
-
-    // Helpers
-    Identifier_Pool identifier_pool;
-    Fiber_Pool* fiber_pool;
-    Random random;
-
-    // Stages
-    Semantic_Analyser* semantic_analyser;
-    IR_Generator* ir_generator;
-    Bytecode_Generator* bytecode_generator;
-    C_Generator* c_generator;
-    C_Compiler* c_compiler;
     Semaphore add_compilation_unit_semaphore;
 
-    // Timing stuff
-    Timing_Task task_current;
-    double task_last_start_time;
-    double time_compile_start;
-    double time_lexing;
-    double time_parsing;
-    double time_analysing;
-    double time_code_gen;
-    double time_output;
-    double time_code_exec;
-    double time_reset;
+    // Permanent data (Stays across compiles)
+    Identifier_Pool identifier_pool;
+    Fiber_Pool* fiber_pool;
 };
 
-extern Compiler compiler;
-
-Compiler* compiler_initialize();
-void compiler_destroy();
+Compiler* compiler_create();
+void compiler_destroy(Compiler* compiler);
 
 // Expects file_path to be a full path (For deduplication)
 // If source_code is null, and we haven't loaded the file previously, the file is loaded
 // Returns 0 if file does not exist
-Compilation_Unit* compiler_add_compilation_unit(String file_path, bool open_in_editor, bool is_import_file);
+Compilation_Unit* compiler_add_compilation_unit(Compiler* compiler, String file_path);
+bool compilation_unit_was_used_in_compile(Compilation_Unit* compilation_unit, Compilation_Data* compilation_data);
+void compilation_unit_destroy(Compilation_Unit* unit);
 
-void compiler_compile(Compilation_Unit* main_unit, Compile_Type compile_type);
-Compilation_Unit* compiler_import_file(AST::Import* import_node); // Return 0 if file could not be read
-bool compiler_can_execute_c_compiled(Compiler_Analysis_Data* analysis_data);
-Exit_Code compiler_execute(Compiler_Analysis_Data* analysis_data);
+void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
+Compilation_Unit* compiler_import_file(Compiler* compiler, AST::Import* import_node); // Returns 0 if file could not be read
+bool compiler_can_execute_c_compiled(Compilation_Data* compilation_data);
+Exit_Code compiler_execute(Compilation_Data* compilation_data);
 
-bool compiler_errors_occured(Compiler_Analysis_Data* analysis_data);
-Compilation_Unit* compiler_find_ast_compilation_unit(AST::Node* base);
-void compiler_switch_timing_task(Timing_Task task);
+bool compilation_data_errors_occured(Compilation_Data* compilation_data);
+Compilation_Unit* compiler_find_ast_compilation_unit(Compiler* compiler, AST::Node* base);
+void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task);
+Exit_Code compiler_execute(Compilation_Data* compilation_data);
 void compiler_run_testcases(bool force_run);
-void compiler_parse_unit(Compilation_Unit* unit);
+void compiler_parse_unit(Compilation_Unit* unit, Compilation_Data* compilation_data);

@@ -30,11 +30,12 @@ namespace Parser
         Source_Code* code;
         Compilation_Unit* unit;
         Parse_State state;
+        Predefined_IDs* predefined_ids;
         // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
     };
 
-    // Globals
-    static Parser parser;
+    // Globals (Thread-Local so i don't have to rewrite everything, but this doesn't work well with fiber-pool!)
+    static thread_local Parser parser;
 
     // Parser Functions
     void parser_rollback(Parse_State checkpoint)
@@ -754,7 +755,7 @@ namespace Parser
 
     Path_Lookup* parse_path_lookup(Node* parent)
     {
-        auto& ids = compiler.identifier_pool.predefined_ids;
+        auto& ids = *parser.predefined_ids;
 
         if (!test_token(Token_Type::IDENTIFIER) && !(test_operator(Operator::TILDE)))
         {
@@ -790,7 +791,7 @@ namespace Parser
             }
             else {
                 log_error("Expected identifier", token_range_make_offset(parser.state.pos, -1)); // Put error on the ~
-                lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
+                lookup->name = ids.empty_string;
             }
             SET_END_RANGE(lookup);
 
@@ -808,6 +809,8 @@ namespace Parser
 
     Path_Lookup* parse_path_lookup_or_error(Node* parent)
     {
+        auto& ids = parser.predefined_ids;
+
         if (!test_token(Token_Type::IDENTIFIER) && !test_operator(Operator::TILDE)) 
         {
             Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
@@ -816,7 +819,7 @@ namespace Parser
             Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
             dynamic_array_push_back(&path->parts, lookup);
             path->last = lookup;
-            lookup->name = compiler.identifier_pool.predefined_ids.empty_string;
+            lookup->name = ids->empty_string;
             SET_END_RANGE(lookup);
             SET_END_RANGE(path);
             return path;
@@ -945,6 +948,8 @@ namespace Parser
 
         AST::Extern_Import* parse_extern_import(AST::Node* parent)
         {
+            auto& ids = *parser.predefined_ids;
+
             auto start = parser.state.pos;
             if (!test_keyword(Keyword::EXTERN)) {
                 return 0;
@@ -956,7 +961,6 @@ namespace Parser
 
             if (test_token(Token_Type::IDENTIFIER))
             {
-                auto& ids = compiler.identifier_pool.predefined_ids;
                 String* id = get_token()->options.identifier;
                 if (id == ids.function) {
                     result->type = Extern_Type::FUNCTION;
@@ -1066,7 +1070,7 @@ namespace Parser
         // Block Item functions
         Import* parse_import(Node* parent)
         {
-            auto& ids = compiler.identifier_pool.predefined_ids;
+            auto& ids = *parser.predefined_ids;
 
             CHECKPOINT_SETUP;
             if (!test_keyword_offset(Keyword::IMPORT, 0)) {
@@ -1147,7 +1151,7 @@ namespace Parser
 
         Custom_Operator_Node* parse_context_change(Node* parent)
         {
-            auto& ids = compiler.identifier_pool.predefined_ids;
+            auto& ids = *parser.predefined_ids;
 
             if (!test_token(Token_Type::KEYWORD)) {
                 return nullptr;
@@ -1342,6 +1346,8 @@ namespace Parser
         // This function exists because for loops only allow assignments (+ binop assign) + expression in their last part...
         AST::Statement* parse_assignment_or_expression_statement(Node* parent)
         {
+            auto& ids = *parser.predefined_ids;
+
             CHECKPOINT_SETUP;
             auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
 
@@ -1431,6 +1437,8 @@ namespace Parser
 
         AST::Statement* parse_statement(Node * parent)
         {
+            auto& ids = *parser.predefined_ids;
+
             CHECKPOINT_SETUP;
             auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
 
@@ -1553,7 +1561,7 @@ namespace Parser
                     AST::Definition_Symbol* loop_variable = parse_definition_symbol(upcast(result));
                     if (loop_variable == 0) {
                         auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                        definition_node->name = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
+                        definition_node->name = ids.invalid_symbol_name;
                         node_finalize_range(upcast(definition_node));
                         loop_variable = definition_node;
                         if (!error_logged) {
@@ -1578,7 +1586,7 @@ namespace Parser
                             loop.index_variable_definition.value = parse_definition_symbol(upcast(result));
                             if (loop.index_variable_definition.value == 0) {
                                 auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                                definition_node->name = compiler.identifier_pool.predefined_ids.invalid_symbol_name;
+                                definition_node->name = ids.invalid_symbol_name;
                                 node_finalize_range(upcast(definition_node));
                                 loop.index_variable_definition.value = definition_node;
                                 if (!error_logged) {
@@ -2006,6 +2014,8 @@ namespace Parser
 
     Expression* parse_single_expression_no_postop(Node* parent)
     {
+        auto& ids = *parser.predefined_ids;
+
         // DOCU: Parses Pre-Ops + Bases, but no postops
         // --*x   -> is 3 pre-ops + base x
         CHECKPOINT_SETUP;
@@ -2107,7 +2117,7 @@ namespace Parser
             if (test_operator(Operator::ARROW)) {
                 AST::Get_Overload_Argument* return_type_argument = allocate_base<AST::Get_Overload_Argument>(upcast(result), AST::Node_Type::GET_OVERLOAD_ARGUMENT);
                 advance_token();
-                return_type_argument->id = compiler.identifier_pool.predefined_ids.return_type_name;
+                return_type_argument->id = ids.return_type_name;
                 return_type_argument->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(return_type_argument)));
                 node_finalize_range(upcast(return_type_argument));
                 dynamic_array_push_back(&result->options.get_overload.arguments, return_type_argument);
@@ -2216,7 +2226,7 @@ namespace Parser
                 }
                 else {
                     log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.auto_enum = compiler.identifier_pool.predefined_ids.empty_string;
+                    result->options.auto_enum = ids.empty_string;
                 }
                 PARSE_SUCCESS(result);
             }
@@ -2256,7 +2266,7 @@ namespace Parser
                 return_param->default_value = optional_make_failure<AST::Expression*>();
                 return_param->is_comptime = false;
                 return_param->is_return_type = true;
-                return_param->name = compiler.identifier_pool.predefined_ids.return_type_name;
+                return_param->name = ids.return_type_name;
                 return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
                 dynamic_array_push_back(&signature_parameters, return_param);
             }
@@ -2381,11 +2391,11 @@ namespace Parser
 
     Expression* parse_post_operator_internal(Expression* child)
     {
+        auto& ids = *parser.predefined_ids;
+
         // DOCU: Internal means that we don't add the result of this expression to the parameter child,
         //       but rather to the parent of the child
         CHECKPOINT_SETUP;
-
-        auto& ids = compiler.identifier_pool.predefined_ids;
 
         // Post operators
         auto result = allocate_base<Expression>(child->base.parent, Node_Type::EXPRESSION);
@@ -2678,7 +2688,7 @@ namespace Parser
         root->base.bounding_range = range;
     }
 
-    void execute_clean(Compilation_Unit* unit)
+    void execute_clean(Compilation_Unit* unit, Predefined_IDs* predefined_ids)
     {
         for (int i = 0; i < unit->allocated_nodes.size; i++) {
             AST::base_destroy(unit->allocated_nodes[i]);
@@ -2687,6 +2697,7 @@ namespace Parser
         dynamic_array_reset(&unit->parser_errors);
         unit->root = 0;
 
+        parser.predefined_ids = predefined_ids;
         parser.code = unit->code;
         parser.unit = unit;
         parser.state.allocated_count = 0;

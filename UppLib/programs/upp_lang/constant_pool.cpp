@@ -17,12 +17,13 @@ u64 hash_deduplication(Deduplication_Info* info) {
 }
 
 // Constant Pool
-Constant_Pool constant_pool_create()
+Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
 {
-    Constant_Pool result;
-    result.constant_memory = Arena::create(2048);
-    result.constants = dynamic_array_create<Upp_Constant>(2048);
-    result.deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
+    Constant_Pool* result = new Constant_Pool;
+    result->compilation_data = compilation_data;
+    result->constant_memory = Arena::create(2048);
+    result->constants = dynamic_array_create<Upp_Constant>(2048);
+    result->deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
     return result;
 }
 
@@ -31,6 +32,7 @@ void constant_pool_destroy(Constant_Pool* pool)
     pool->constant_memory.destroy();
     dynamic_array_destroy(&pool->constants);
     hashtable_destroy(&pool->deduplication_table);
+    delete pool;
 }
 
 bool upp_constant_is_equal(Upp_Constant a, Upp_Constant b) {
@@ -54,11 +56,12 @@ Constant_Pool_Result constant_pool_result_make_error(const char* error) {
 }
 
 // prototype
-void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result);
+void datatype_memory_check_correctness_and_set_padding_bytes_zero(
+    Datatype* signature, byte* memory, Constant_Pool_Result& result, Compilation_Data* compilation_data);
 
 void struct_memory_set_padding_to_zero_recursive(
     Datatype_Struct* structure, byte* struct_memory_start, int subtype_depth, Dynamic_Array<Datatype_Struct*>& expected_subtypes, 
-    int offset_in_struct, int subtype_end_offset, Constant_Pool_Result& result)
+    int offset_in_struct, int subtype_end_offset, Constant_Pool_Result& result, Compilation_Data* compilation_data)
 {
     // Handle members
     int next_member_offset = offset_in_struct;
@@ -73,7 +76,7 @@ void struct_memory_set_padding_to_zero_recursive(
         next_member_offset = member->offset + member->type->memory_info.value.size;
 
         // Handle member types
-        datatype_memory_check_correctness_and_set_padding_bytes_zero(member->type, struct_memory_start + member->offset, result);
+        datatype_memory_check_correctness_and_set_padding_bytes_zero(member->type, struct_memory_start + member->offset, result, compilation_data);
         if (!result.success) return;
     }
 
@@ -107,16 +110,17 @@ void struct_memory_set_padding_to_zero_recursive(
 
         struct_memory_set_padding_to_zero_recursive(
             subtype, struct_memory_start, subtype_depth + 1, expected_subtypes, next_member_offset, 
-            structure->tag_member.offset + structure->tag_member.type->memory_info.value.size, result
+            structure->tag_member.offset + structure->tag_member.type->memory_info.value.size, result, compilation_data
         );
     }
     return;
 }
 
-void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* signature, byte* memory, Constant_Pool_Result& result)
+void datatype_memory_check_correctness_and_set_padding_bytes_zero(
+    Datatype* signature, byte* memory, Constant_Pool_Result& result, Compilation_Data* compilation_data)
 {
-    auto& type_system = compiler.analysis_data->type_system;
-    auto& types = type_system.predefined_types;
+    Type_System* type_system = compilation_data->type_system;
+    auto& types = type_system->predefined_types;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
 
@@ -135,7 +139,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         if (primitive->primitive_class == Primitive_Class::TYPE_HANDLE) {
             Upp_Type_Handle handle;
             memory_copy(&handle, memory, sizeof(Upp_Type_Handle));
-            if (handle.index >= (u32)type_system.types.size) {
+            if (handle.index >= (u32)type_system->types.size) {
                 result = constant_pool_result_make_error("Invalid type handle found");
                 return;
             }
@@ -151,7 +155,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
     }
     case Datatype_Type::FUNCTION_POINTER: {
         // Check if function index is correct
-        auto& slots = compiler.analysis_data->function_slots;
+        auto& slots = compilation_data->function_slots;
         i64 function_index = (*(i64*)memory) - 1;
         if (function_index < -1 || function_index >= slots.size) { // Note: -1 would mean nullptr in this context
             result = constant_pool_result_make_error("Found function pointer with invalid value");
@@ -192,7 +196,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         // Handle all elements
         for (int i = 0; i < array->element_count; i++) {
             byte* element_memory = memory + array->element_type->memory_info.value.size * i;
-            datatype_memory_check_correctness_and_set_padding_bytes_zero(array->element_type, element_memory, result);
+            datatype_memory_check_correctness_and_set_padding_bytes_zero(array->element_type, element_memory, result, compilation_data);
             if (!result.success) return;
         }
         return;
@@ -203,7 +207,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         if (types_are_equal(signature, upcast(types.any_type)))
         {
             Upp_Any any = *(Upp_Any*)memory;
-            if (any.type.index >= (u32)compiler.analysis_data->type_system.types.size) {
+            if (any.type.index >= (u32)type_system->types.size) {
                 result = constant_pool_result_make_error("Found any type with invalid type-handle index");
                 return;
             }
@@ -222,7 +226,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
             }
 
             // Create c_string value pointing to identifier pool (Always null terminated)
-            auto id = identifier_pool_lock_and_add(&compiler.identifier_pool, string_create_static((const char*)string.data));
+            auto id = identifier_pool_lock_and_add(&compilation_data->compiler->identifier_pool, string_create_static((const char*)string.data));
             memory_set_bytes(&string, sizeof(Upp_String), 0);
             *(Upp_String*)memory = upp_string_from_id(id);;
             return;
@@ -243,7 +247,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
         dynamic_array_reverse_order(&expected_subtypes);
 
         struct_memory_set_padding_to_zero_recursive(
-            structure, memory, 0, expected_subtypes, 0, memory_info.size, result
+            structure, memory, 0, expected_subtypes, 0, memory_info.size, result, compilation_data
         );
         return;
     }
@@ -254,9 +258,9 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(Datatype* sign
     return;
 }
 
-Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte> bytes)
+Constant_Pool_Result constant_pool_add_constant(Constant_Pool* constant_pool, Datatype* signature, Array<byte> bytes)
 {
-    Constant_Pool& pool = compiler.analysis_data->constant_pool;
+    Constant_Pool& pool = *constant_pool;
     assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
     auto& memory_info = signature->memory_info.value;
     assert(memory_info.size == bytes.size, "Array/data must fit into buffer!");
@@ -269,7 +273,7 @@ Constant_Pool_Result constant_pool_add_constant(Datatype* signature, Array<byte>
     // Set padding to zero
     Constant_Pool_Result result;
     result.success = true;
-    datatype_memory_check_correctness_and_set_padding_bytes_zero(signature, bytes.data, result);
+    datatype_memory_check_correctness_and_set_padding_bytes_zero(signature, bytes.data, result, pool.compilation_data);
     if (!result.success) {
         return result;
     }

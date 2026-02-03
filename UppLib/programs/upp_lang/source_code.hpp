@@ -73,13 +73,13 @@ bool token_range_contains(Token_Range range, Token_Index index);
 
 
 // Analysis Info
-struct Code_Analysis_Item
+struct Editor_Info_Reference
 {
     int start_char;
     int end_char;
     int tree_depth;
-    int semantic_info_mapping_start_index;
-    int semantic_info_mapping_count;
+    int editor_info_mapping_start_index;
+    int editor_info_mapping_count;
     int item_index;
 };
 
@@ -117,7 +117,7 @@ struct Source_Line
 
     // Analysis Info
     Dynamic_Array<Token> tokens;
-    Dynamic_Array<Code_Analysis_Item> item_infos;
+    Dynamic_Array<Editor_Info_Reference> item_infos;
 
     // Comment/Lexing info
     bool is_comment; // True if we are inside a comment block or if the line starts with //

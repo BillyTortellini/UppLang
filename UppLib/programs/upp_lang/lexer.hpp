@@ -167,7 +167,7 @@ String operator_get_string(Operator op);
 
 
 // Lexer
-void lexer_initialize();
-void lexer_shutdown();
-void lexer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool);
+void tokenizer_initialize();
+void tokenizer_shutdown();
+void tokenizer_tokenize_line(String text, Dynamic_Array<Token>* tokens, Identifier_Pool_Lock* identifier_pool);
 
