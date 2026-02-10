@@ -6203,7 +6203,8 @@ void module_content_add_import_node(Module_Content& module_content, AST::Import*
 
 void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Module_Content* content, Semantic_Context* context);
 
-Upp_Module* analyse_module_node(AST::Module* module_node, Module_Content* module_content, Semantic_Context* semantic_context)
+Upp_Module* analyse_module_node(
+	AST::Module* module_node, Module_Content* module_content, Semantic_Context* semantic_context, Compilation_Unit* compilation_unit)
 {
 	auto compilation_data = semantic_context->compilation_data;
 
@@ -6216,6 +6217,11 @@ Upp_Module* analyse_module_node(AST::Module* module_node, Module_Content* module
 	upp_module->is_file_module = false;
 	upp_module->options.module_symbol = nullptr;
 	module_content->modules.push_back(upp_module);
+
+	if (compilation_unit != nullptr ) {
+		assert(compilation_unit->module == nullptr, "Otherwise this was already analysed...");
+		compilation_unit->module = upp_module;
+	}
 
 	// Store infos
 	get_info(module_node, semantic_context, true)->upp_module = upp_module;
@@ -6391,7 +6397,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 		{
 		case AST::Expression_Type::MODULE:
 		{
-			Upp_Module* upp_module = analyse_module_node(value->options.module, module_content, semantic_context);
+			Upp_Module* upp_module = analyse_module_node(value->options.module, module_content, semantic_context, nullptr);
 			symbol->type = Symbol_Type::MODULE;
 			symbol->options.upp_module = upp_module;
 			upp_module->is_file_module = false;
@@ -6566,7 +6572,7 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 		}
 
 		// Load file
-		Compilation_Unit* compilation_unit = compiler_import_file(compiler, import_node);
+		Compilation_Unit* compilation_unit = compiler_import_file(compilation_data, import_node);
 		if (compilation_unit == nullptr)
 		{
 			log_semantic_error(semantic_context, "Could not load file", upcast(import_node), Node_Section::FIRST_TOKEN);
@@ -6587,7 +6593,7 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_pass, import_module_pass);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, semantic_context->compilation_data->root_symbol_table);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::GLOBAL);
-			import_module = analyse_module_node(compilation_unit->root, &module_content, semantic_context);
+			import_module = analyse_module_node(compilation_unit->root, &module_content, semantic_context, compilation_unit);
 		}
 		else
 		{
@@ -6808,7 +6814,10 @@ void analysis_workload_entry(void* userdata)
 
 		// Analyse module and sub-modules recursive
 		Module_Content module_content = module_content_create(&scratch_arena);
-		Upp_Module* main_module = analyse_module_node(module_node, &module_content, &semantic_context);
+		Upp_Module* main_module = analyse_module_node(
+			module_node, &module_content, &semantic_context, 
+			compiler_find_ast_compilation_unit(compilation_data, upcast(module_node))
+		);
 		main_module->is_file_module = true;
 		main_module->options.compilation_unit = compilation_data->main_unit;
 		module_content_analyse_items(module_content, &semantic_context);

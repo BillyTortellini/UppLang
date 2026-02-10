@@ -12,6 +12,7 @@
 #include "bytecode_generator.hpp"
 #include "ir_code.hpp"
 #include "c_backend.hpp"
+#include "../../utility/file_io.hpp"
 
 
 
@@ -207,7 +208,7 @@ void find_editor_infos_recursive(
 					{
 						option.expression.member_access_info.has_definition = true;
 						option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(
-							compilation_data->compiler, enum_type->definition_node
+							compilation_data, enum_type->definition_node
 						);
 						option.expression.member_access_info.definition_index = token_index_to_text_index(
 							enum_type->definition_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
@@ -259,7 +260,7 @@ void find_editor_infos_recursive(
 				if (goto_node != nullptr)
 				{
 					option.expression.member_access_info.has_definition = true;
-					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(compilation_data->compiler, goto_node);
+					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(compilation_data, goto_node);
 					option.expression.member_access_info.definition_index = token_index_to_text_index(
 						goto_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
 					);
@@ -461,9 +462,9 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	dynamic_array_reset(&errors);
 	Compiler* compiler = compilation_data->compiler;
 
-	for (int i = 0; i < compiler->compilation_units.size; i++)
+	for (int i = 0; i < compilation_data->compilation_units.size; i++)
 	{
-		auto unit = compiler->compilation_units[i];
+		auto unit = compilation_data->compilation_units[i];
 
 		// Reset analysis data for unit
 		dynamic_array_reset(&unit->code->block_id_range);
@@ -512,7 +513,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	{
 		const auto& error = compilation_data->semantic_errors[i];
 
-		auto unit = compiler_find_ast_compilation_unit(compilation_data->compiler, error.error_node);
+		auto unit = compiler_find_ast_compilation_unit(compilation_data, error.error_node);
 
 		dynamic_array_reset(&ranges);
 		Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &ranges);
@@ -563,9 +564,9 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		}
 
 		// Update analysis-item infos in source-code
-		for (int i = 0; i < compiler->compilation_units.size; i++)
+		for (int i = 0; i < compilation_data->compilation_units.size; i++)
 		{
-			auto unit = compiler->compilation_units[i];
+			auto unit = compilation_data->compilation_units[i];
 			for (int j = 0; j < unit->code->line_count; j++) 
 			{
 				auto& analysis_items = source_code_get_line(unit->code, j)->item_infos;
@@ -616,6 +617,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 		result->code_block_comptimes = hashtable_create_pointer_empty<AST::Code_Block*, Symbol_Table*>(1);
 
 		// Allocations
+		result->compilation_units = dynamic_array_create<Compilation_Unit*>();
 		result->arena = Arena::create(2048);
 		result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
 		result->allocated_symbols = dynamic_array_create<Symbol*>();
@@ -994,6 +996,61 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 	return result;
 }
 
+Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identifier_pool)
+{
+	Optional<String> file_content = file_io_load_text_file(filepath.characters);
+	SCOPE_EXIT(file_io_unload_text_file(&file_content));
+	if (!file_content.available) {
+	    return nullptr;
+	}
+
+	Source_Code* source_code = source_code_create();
+	source_code_fill_from_string(source_code, file_content.value);
+	auto lock = identifier_pool_lock_aquire(identifier_pool);
+	SCOPE_EXIT(identifier_pool_lock_release(lock));
+	source_code_tokenize(source_code, &lock);
+	return source_code;
+}
+
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new)
+{
+    String full_file_path = string_copy(filepath);
+    file_io_relative_to_full_path(&full_file_path);
+    SCOPE_EXIT(string_destroy(&full_file_path)); // On success capacity is set to 0, so this won't do anything
+
+	// Check if filename alreay exists
+	for (int i = 0; i < compilation_data->compilation_units.size; i++) {
+		auto other = compilation_data->compilation_units[i];
+		if (string_equals(&other->filepath, &full_file_path)) {
+			return other;
+		}
+	}
+
+	Source_Code* source_code = nullptr;
+	if (load_file_if_new)
+	{
+		source_code = source_code_load_from_file(full_file_path, &compilation_data->compiler->identifier_pool);
+		if (source_code == nullptr) {
+		    return nullptr;
+		}
+	}
+
+	// Otherwise create new compilation-unit
+	Compilation_Unit* unit = new Compilation_Unit;
+	unit->filepath = full_file_path;
+	full_file_path.capacity = 0;
+	unit->allocated_nodes = dynamic_array_create<AST::Node*>();
+	unit->parser_errors   = dynamic_array_create<Error_Message>();
+
+	unit->code = source_code;
+	unit->root = nullptr;
+	unit->module = nullptr;
+
+	dynamic_array_push_back(&compilation_data->compilation_units, unit);
+
+	return unit;
+}
+
 void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_data)
 {
 	auto& type_system = compilation_data->type_system;
@@ -1128,6 +1185,11 @@ void compilation_data_destroy(Compilation_Data* data)
 		call_signature_destroy(*iter.value);
 	}
 	hashset_destroy(&data->call_signatures);
+
+	for (int i = 0; i < data->compilation_units.size; i++) {
+		compilation_unit_destroy(data->compilation_units[i]);
+	}
+	dynamic_array_destroy(&data->compilation_units);
 
 	delete data;
 }

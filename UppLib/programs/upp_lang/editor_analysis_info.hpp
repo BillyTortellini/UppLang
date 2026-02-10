@@ -21,6 +21,7 @@ namespace Rich_Text
 };
 
 struct Call_Signature;
+struct Source_Code;
 struct Upp_Module;
 struct Workload_Root;
 struct Compiler;
@@ -113,6 +114,7 @@ struct Compilation_Data
     Compile_Type compile_type;
     Compilation_Unit* main_unit;
 
+    Dynamic_Array<Compilation_Unit*> compilation_units;
     Dynamic_Array<Compiler_Error_Info> compiler_errors; // List of parser and semantic errors
     Constant_Pool* constant_pool;
     Type_System* type_system;
@@ -175,6 +177,7 @@ struct Compilation_Data
 };
 
 Compilation_Data* compilation_data_create(Compiler* compiler);
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new);
 void compilation_data_destroy(Compilation_Data* data);
 void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_data);
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data);
@@ -195,6 +198,7 @@ Call_Signature* call_signature_register(Call_Signature* signature, Compilation_D
 void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system);
 void call_signature_append_to_string(String* string, Type_System* type_system, Call_Signature* signature, Datatype_Format format);
 
+Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identifier_pool);
 
 
 

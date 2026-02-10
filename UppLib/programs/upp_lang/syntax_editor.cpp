@@ -233,9 +233,10 @@ struct Line_Breakpoint
 
 struct Editor_Tab
 {
+	String filepath;
     Source_Code* code; // Note: This is different than the code in the compilation unit
     Code_History history;
-    Compilation_Unit* compilation_unit;
+
     History_Timestamp last_code_info_synch;
     History_Timestamp last_compiler_synchronized;
     int last_code_completion_info_index;
@@ -340,7 +341,7 @@ struct Syntax_Editor
 	Compiler* compiler;
 
     bool last_compile_was_with_code_gen;
-    Compilation_Unit* last_compile_main_unit;
+	int last_compile_main_tab_index;
 
     String yank_string;
     bool yank_was_line;
@@ -2104,27 +2105,55 @@ Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* 
 
 // Tabs
 // Returns new tab index (Or current tab if file cannot be loaded)
+int compilation_unit_find_tab_index(Compilation_Unit* unit)
+{
+	auto& tabs = syntax_editor.tabs;
+	for (int i = 0; i < tabs.size; i++)
+	{
+		Editor_Tab* tab = &tabs[i];
+		if (string_equals(&unit->filepath, &tab->filepath)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+Compilation_Unit* tab_to_compilation_unit(Editor_Tab* tab)
+{
+	auto& units = syntax_editor.editor_compilation_data->compilation_units;
+	for (int i = 0; i < units.size; i++)
+	{
+		if (string_equals(&units[i]->filepath, &tab->filepath)) {
+			return units[i];
+		}
+	}
+	return nullptr;
+}
+
+Compilation_Unit* tab_to_compilation_unit(int tab_index) {
+	return tab_to_compilation_unit(&syntax_editor.tabs[tab_index]);
+}
+
 int syntax_editor_add_tab(String file_path)
 {
 	auto& editor = syntax_editor;
 
-	Compilation_Unit* unit = compiler_add_compilation_unit(editor.compiler, file_path);
+	// Check if file is already open in another tab
+	for (int i = 0; i < editor.tabs.size; i++) {
+		auto& tab = editor.tabs[i];
+		if (string_equals(&file_path, &tab.filepath)) return i;
+	}
 
 	// Return current tab if file cannot be loaded
-	if (unit == nullptr) {
+	if (!file_io_check_if_file_exists(file_path.characters)) {
 		return editor.open_tab_index;
 	}
 
-	// Check if file is already open in another tab
-	for (int i = 0; i < editor.tabs.size; i++) {
-		auto tab = editor.tabs[i];
-		if (tab.compilation_unit == unit) return i;
-	}
-
-	// Otherwise create new tab
+	// Create new tab
 	Editor_Tab tab;
-	tab.compilation_unit = unit;
-	tab.code = source_code_copy(tab.compilation_unit->code);
+	tab.filepath = string_copy(file_path);
+	tab.code = source_code_load_from_file(tab.filepath, &editor.compiler->identifier_pool);
+
 	tab.requires_recompile = true;
 	tab.history = code_history_create(tab.code);
 	tab.folds = dynamic_array_create<Code_Fold>();
@@ -2144,13 +2173,13 @@ int syntax_editor_add_tab(String file_path)
 	dynamic_array_push_back(&syntax_editor.tabs, tab);
 
 	syntax_editor_update_line_visible_and_fold_info(syntax_editor.tabs.size - 1);
-	// Auto format all lines
-	auto lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
-	SCOPE_EXIT(identifier_pool_lock_release(lock));
-	for (int i = 0; i < tab.code->line_count; i++) {
-		auto line = source_code_get_line(tab.code, i);
-		tokenizer_tokenize_line(line->text, &line->tokens, &lock);
-	}
+	// Auto format all lines (WE DONT DO THAT ANYMORE ON FILE LOAD)
+	// auto lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
+	// SCOPE_EXIT(identifier_pool_lock_release(lock));
+	// for (int i = 0; i < tab.code->line_count; i++) {
+	// 	auto line = source_code_get_line(tab.code, i);
+	// 	tokenizer_tokenize_line(line->text, &line->tokens, &lock);
+	// }
 
 	return syntax_editor.tabs.size - 1;
 }
@@ -2162,6 +2191,7 @@ void editor_tab_destroy(Editor_Tab* tab)
 	dynamic_array_destroy(&tab->jump_list);
 	dynamic_array_destroy(&tab->breakpoints);
 	source_code_destroy(tab->code);
+	string_destroy(&tab->filepath);
 }
 
 void syntax_editor_update_line_visible_and_fold_info(int tab_index)
@@ -2245,17 +2275,8 @@ struct Comparator_Compiler_Error
 		Compiler_Error_Info& a = editor.editor_compilation_data->compiler_errors[a_index];
 		Compiler_Error_Info& b = editor.editor_compilation_data->compiler_errors[b_index];
 
-		int tab_a = -1;
-		int tab_b = -1;
-		for (int i = 0; i < editor.tabs.size; i++) {
-			auto unit = editor.tabs[i].compilation_unit;
-			if (a.unit == unit) {
-				tab_a = i;
-			}
-			if (b.unit == unit) {
-				tab_b = i;
-			}
-		}
+		int tab_a = compilation_unit_find_tab_index(a.unit);
+		int tab_b = compilation_unit_find_tab_index(b.unit);
 
 		if (tab_a != tab_b) {
 			return tab_a < tab_b;
@@ -2305,6 +2326,12 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 	dynamic_array_remove_ordered(&editor.tabs, tab_index);
 
 	editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
+	if (tab_index < editor.last_compile_main_tab_index) {
+		editor.last_compile_main_tab_index -= 1;
+	}
+	else if (tab_index == editor.last_compile_main_tab_index) {
+		editor.last_compile_main_tab_index = -1;
+	}
 	if (tab_index == editor.main_tab_index) {
 		editor.main_tab_index = -1;
 	}
@@ -2372,13 +2399,6 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 
 	syntax_editor.error_indices_sorted = dynamic_array_create<int>();
 
-	String default_filename = string_create_static("upp_code/editor_text.upp");
-	int tab_index = syntax_editor_add_tab(default_filename);
-	syntax_editor_switch_tab(tab_index);
-	assert(tab_index != -1, "");
-	syntax_editor.open_tab_index = 0;
-	syntax_editor.main_tab_index = 0;
-
 	syntax_editor.watch_values = dynamic_array_create<Watch_Value>();
 	syntax_editor.selected_stack_frame = 0;
 
@@ -2392,7 +2412,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.editor_compilation_data = compilation_data_create(syntax_editor.compiler);
 	auto& compiler_thread_data = syntax_editor.compiler_thread_data;
 	compiler_thread_data.compiler = syntax_editor.compiler;
-	compiler_thread_data.compilation_data = nullptr;
+	compiler_thread_data.compilation_data = compilation_data_create(syntax_editor.compiler);
 	compiler_thread_data.build_code = false;
 	compiler_thread_data.compiler_main_unit = nullptr;
 	compiler_thread_data.work_started = false;
@@ -2400,6 +2420,14 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	compiler_thread_data.compiler_wait_semaphore = semaphore_create(0, 1);
 	compiler_thread_data.compilation_finish_semaphore = semaphore_create(0, 1);
 	compiler_thread_data.compiler_thread = thread_create(compiler_thread_entry_fn, &syntax_editor.compiler_thread_data);
+
+	// Open initial tab
+	String default_filename = string_create_static("upp_code/editor_text.upp");
+	int tab_index = syntax_editor_add_tab(default_filename);
+	syntax_editor_switch_tab(tab_index);
+	assert(tab_index != -1, "");
+	syntax_editor.open_tab_index = 0;
+	syntax_editor.main_tab_index = 0;
 }
 
 void syntax_editor_destroy()
@@ -2448,7 +2476,7 @@ void syntax_editor_save_text_file()
 		String whole_text = string_create_empty(256);
 		SCOPE_EXIT(string_destroy(&whole_text));
 		source_code_append_to_string(tab.code, &whole_text);
-		auto path = tab.compilation_unit->filepath;
+		auto path = tab.filepath;
 		auto success = file_io_write_file(path.characters, array_create_static((byte*)whole_text.characters, whole_text.size));
 		if (!success) {
 			logg("Saving file failed for path \"%s\"\n", path.characters);
@@ -2832,10 +2860,8 @@ unsigned long compiler_thread_entry_fn(void* userdata)
 		bool generate_code = compiler_thread_data->build_code;
 		// logg("Compiler thread signaled\n");
 
-		Compilation_Data* compilation_data = compilation_data_create(compiler_thread_data->compiler);
-		compiler_thread_data->compilation_data = compilation_data;
-
 		// Compile here
+		Compilation_Data* compilation_data = compiler_thread_data->compilation_data;
 		compilation_data_compile(compilation_data, compilation_unit, generate_code ? Compile_Type::BUILD_CODE : Compile_Type::ANALYSIS_ONLY);
 		compilation_data_update_source_code_information(compilation_data);
 
@@ -2860,7 +2886,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 	auto& editor = syntax_editor;
 
 	// Check if code has changed
-	Editor_Tab& main_tab = syntax_editor.tabs[editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index];
+	int compile_tab_index = editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index;
+	Editor_Tab& main_tab = syntax_editor.tabs[compile_tab_index];
 	bool should_compile = true;
 	{
 		bool code_has_changed = false;
@@ -2870,7 +2897,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				code_has_changed = true;
 			}
 		}
-		if (editor.last_compile_main_unit != main_tab.compilation_unit) {
+		if (editor.last_compile_main_tab_index != compile_tab_index) {
 			code_has_changed = true;
 		}
 
@@ -2881,85 +2908,84 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 	// Get latest compiler work (Check semaphore if compilation was finished)
 	auto& compiler_thread_data = editor.compiler_thread_data;
-	bool got_compiler_update = compiler_thread_data.work_started;
+	bool got_compiler_update = false;
 	if (compiler_thread_data.work_started)
 	{
 		bool compiler_finished_compile = semaphore_try_wait(compiler_thread_data.compilation_finish_semaphore);
-		if (!compiler_finished_compile) {
-			return;
+		if (compiler_finished_compile) {
+			got_compiler_update = true;
+			compiler_thread_data.work_started = false;
 		}
-		compiler_thread_data.work_started = false;
+		else {
+			got_compiler_update = false;
+			should_compile = false; // Don't start a new compile while the compiler is working
+		}
 	}
 
-	assert(!compiler_thread_data.work_started, "");
 	if (!should_compile && !got_compiler_update) {
 		return;
 	}
 	// logg("Synchronize with compiler: text-updated: %s, compiler-update_received: %s\n", (should_compile ? "TRUE" : "FALSE"), (got_compiler_update ? "TRUE" : "FALSE"));
 
-	// Update editor data with new data from compiler
+
+
+	// Update editor-compilation-data if we got an compiler update
 	if (got_compiler_update)
 	{
-		assert(syntax_editor.editor_compilation_data != nullptr, "Should never be null");
 		compilation_data_destroy(editor.editor_compilation_data);
 		editor.editor_compilation_data = compiler_thread_data.compilation_data;
-		compiler_thread_data.compilation_data = nullptr;
+		compiler_thread_data.compilation_data = compilation_data_create(editor.compiler);
+
+		// Move compilation-units from old data to new data
+		for (int i = 0; i < editor.editor_compilation_data->compilation_units.size; i++)
+		{
+			Compilation_Unit* old_unit = editor.editor_compilation_data->compilation_units[i];
+
+			int tab_index = compilation_unit_find_tab_index(old_unit);
+			// Remove units if they weren't used during compilation and are also not open in any tab
+			if (old_unit->module == nullptr && tab_index == -1) {
+				continue;
+			}
+
+			// Create new unit and move source-code over
+			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(compiler_thread_data.compilation_data, old_unit->filepath, false);
+			assert(new_unit->code == nullptr && old_unit->code != nullptr, "All units from old code should be unique");
+			new_unit->code = old_unit->code;
+			old_unit->code = nullptr; // So it won't get destroyed
+		}
 
 		sort_error_indices();
 		dynamic_array_reset(&editor.suggestions);
 		hashtable_reset(&editor.filtered_passes);
 		editor.compile_count += 1;
-
-		// Remove unused compilation-units from compiler
-		{
-			auto compilation_data = editor.editor_compilation_data;
-			auto compiler = compilation_data->compiler;
-		    semaphore_wait(compiler->add_compilation_unit_semaphore);
-		    SCOPE_EXIT(semaphore_increment(compiler->add_compilation_unit_semaphore, 1));
-		
-		    auto units = compiler->compilation_units;
-		    Array<bool> should_delete = array_create<bool>(units.size);
-			SCOPE_EXIT(array_destroy(&should_delete));
-		    for (int i = 0; i < should_delete.size; i++) {
-		        should_delete[i] = true;
-		    }
-
-			// Only keep compilation units that are either open in editor or used in last compile
-			for (int i = 0; i < units.size; i++) 
-			{
-				auto unit = units[i];
-				if (compilation_unit_was_used_in_compile(unit, compilation_data)) {
-					should_delete[i] = false;
-					continue;
-				}
-				for (int j = 0; j < editor.tabs.size; j++) {
-					if (editor.tabs[j].compilation_unit == unit) {
-						should_delete[i] = false;
-						break;
-					}
-				}
-			}
-		
-			// Remove unused units
-		    for (int i = 0; i < units.size; i++)
-		    {
-		        auto unit = units[i];
-				if (!should_delete[i]) continue;
-		
-		        compilation_unit_destroy(unit);
-		        dynamic_array_swap_remove(&units, i);
-		        i -= 1;
-		    }
-		}
 	}
 
-	// Update compiler with new code (Swap out editor and compiler source-code)
-	if (got_compiler_update || should_compile)
+	// Update all versions of source-code (And potentially swap in new versions)
+	Compilation_Unit* main_compilation_unit = nullptr;
 	{
+		Compilation_Data* compilation_data = editor.compiler_thread_data.compilation_data;
 		for (int i = 0; i < editor.tabs.size; i++)
 		{
 			auto& tab = editor.tabs[i];
-			assert(tab.code != tab.compilation_unit->code, "");
+
+			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false);
+			if (i == compile_tab_index) {
+				main_compilation_unit = unit;
+			}
+
+			if (unit->code == nullptr) 
+			{
+				unit->code = source_code_copy(tab.code);
+				auto lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
+				SCOPE_EXIT(identifier_pool_lock_release(lock));
+				source_code_tokenize(unit->code, &lock);
+				if (got_compiler_update) {
+					auto swap = tab.code;
+					tab.code = unit->code;
+					unit->code = tab.code;
+				}
+				continue;
+			}
 
 			// Update code if necessary
 			auto now = history_get_timestamp(&tab.history);
@@ -2973,9 +2999,9 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile)
 			{
 				for (int i = 0; i < changes.size; i++) {
-					code_change_apply(tab.compilation_unit->code, &changes[i], true);
+					code_change_apply(unit->code, &changes[i], true);
 				}
-				code_diff_update_tokenization(code_diff, tab.compilation_unit->code, i);
+				code_diff_update_tokenization(code_diff, unit->code, i);
 				tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
 				tab.requires_recompile = false;
 			}
@@ -2984,8 +3010,8 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			if (got_compiler_update) 
 			{
 				Source_Code* swap = tab.code;
-				tab.code = tab.compilation_unit->code;
-				tab.compilation_unit->code = swap;
+				tab.code = unit->code;
+				unit->code = swap;
 				tab.history.code = tab.code;
 
 				// Note: I don't think we should tokenize here, as tokenization is always correct when passed to compiler
@@ -2999,14 +3025,14 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 	if (should_compile)
 	{
-		editor.last_compile_main_unit = main_tab.compilation_unit;
+		editor.last_compile_main_tab_index = compile_tab_index;
 		editor.last_compile_was_with_code_gen = generate_code;
 
 		// Start work in compile thread
-		compiler_thread_data.compiler_main_unit = main_tab.compilation_unit;
+		compiler_thread_data.compiler_main_unit = main_compilation_unit;
 		compiler_thread_data.build_code = generate_code;
-		semaphore_increment(compiler_thread_data.compiler_wait_semaphore, 1);
 		compiler_thread_data.work_started = true;
+		semaphore_increment(compiler_thread_data.compiler_wait_semaphore, 1);
 	}
 }
 
@@ -3029,6 +3055,8 @@ void syntax_editor_save_state(String file_path)
 {
 	auto& editor = syntax_editor;
 
+	syntax_editor_save_text_file();
+
 	String output = string_create();
 	SCOPE_EXIT(string_destroy(&output));
 	string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
@@ -3037,7 +3065,7 @@ void syntax_editor_save_state(String file_path)
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
 		auto& tab = editor.tabs[i];
-		string_append_formated(&output, "tab=%s\n", tab.compilation_unit->filepath.characters);
+		string_append_formated(&output, "tab=%s\n", tab.filepath.characters);
 		string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
 		string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
 		string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
@@ -3089,7 +3117,7 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 	bp.src_breakpoint = nullptr;
 	bp.enabled = true;
 	if (debugger_running) {
-		bp.src_breakpoint = debugger_add_source_breakpoint(syntax_editor.debugger, bp.line_number, tab.compilation_unit);
+		bp.src_breakpoint = debugger_add_source_breakpoint(syntax_editor.debugger, bp.line_number, tab_to_compilation_unit(tab_index));
 	}
 	dynamic_array_push_back(&breakpoints, bp);
 
@@ -3131,6 +3159,10 @@ void syntax_editor_load_state(String file_path)
 	bool first_tab = true;
 	int open_tab_index = -5;
 	int main_tab_index = -5;
+	String setting = string_create_empty(16);
+	SCOPE_EXIT(string_destroy(&setting));
+	String value = string_create_empty(16);
+	SCOPE_EXIT(string_destroy(&value));
 	for (int i = 0; i < lines.size; i++)
 	{
 		String line = lines[i];
@@ -3138,8 +3170,10 @@ void syntax_editor_load_state(String file_path)
 		if (!seperator.available) {
 			continue;
 		}
-		String setting = string_create_substring_static(&line, 0, seperator.value);
-		String value = string_create_substring_static(&line, seperator.value + 1, line.size);
+		string_reset(&setting);
+		string_append_string(&setting, &string_create_substring_static(&line, 0, seperator.value));
+		string_reset(&value);
+		string_append_string(&value, &string_create_substring_static(&line, seperator.value + 1, line.size));
 		if (setting.size == 0 || value.size == 0) continue;
 
 		int* int_value_to_set = nullptr;
@@ -3822,7 +3856,7 @@ void suggestions_fill_with_file_directory(String search_path)
 	SCOPE_EXIT(string_split_destroy(path_parts));
 
 	Directory_Crawler* crawler = editor.directory_crawler;
-	directory_crawler_set_path_to_file_dir(crawler, tab.compilation_unit->filepath);
+	directory_crawler_set_path_to_file_dir(crawler, tab.filepath);
 
 	bool success = true;
 	for (int i = 0; i < path_parts.size - 1 && success; i++)
@@ -4026,7 +4060,7 @@ void code_completion_find_suggestions()
 	auto line = source_code_get_line(tab.code, cursor.line);
 	bool inside_string_literal = false;
 	{
-		if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || tab.compilation_unit == nullptr || line->is_comment || line->is_folded) {
+		if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || line->is_comment || line->is_folded) {
 			return;
 		}
 
@@ -5243,7 +5277,8 @@ void center_cursor_on_error(int error_index)
 
 	// Note: We need to take the error out of the error list here, as tab-switching will change the error index
 	Compiler_Error_Info error = errors[error_index];
-	if (error.unit != editor.tabs[editor.open_tab_index].compilation_unit) {
+	auto tab_unit = tab_to_compilation_unit(editor.open_tab_index);
+	if (error.unit != tab_unit) {
 		int tab_index = syntax_editor_add_tab(error.unit->filepath);
 		syntax_editor_switch_tab(tab_index);
 	}
@@ -6740,7 +6775,8 @@ void cursor_goto_selected_stack_frame()
 	int line_index = info.upp_line_index;
 
 	// Switch to correct tab
-	if (editor.tabs[editor.open_tab_index].compilation_unit != unit) {
+	auto tab_unit = tab_to_compilation_unit(editor.open_tab_index);
+	if (tab_unit != unit) {
 		int tab_index = syntax_editor_add_tab(unit->filepath);
 		syntax_editor_switch_tab(tab_index);
 	}
@@ -6770,7 +6806,7 @@ void syntax_editor_update(bool& animations_running)
 		for (int i = 0; i < editor.tabs.size; i++) {
 			source_code_sanity_check(editor.tabs[i].code);
 		}
-			);
+	);
 
 	// Update particles
 	{
@@ -7129,7 +7165,7 @@ void syntax_editor_update(bool& animations_running)
 				auto& tab = editor.tabs[i];
 				if (i == editor.open_tab_index) continue;
 				if (tab.breakpoints.size == 0) continue;
-				String name = string_create_filename_from_path_static(&tab.compilation_unit->filepath);
+				String name = string_create_filename_from_path_static(&tab.filepath);
 				ui_system_push_label(name, false);
 				push_tab_breakpoints(i);
 			}
@@ -7230,7 +7266,7 @@ void syntax_editor_update(bool& animations_running)
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
 				auto& tab = editor.tabs[i];
-				String name = tab.compilation_unit->filepath;
+				String name = tab.filepath;
 				int start = 0;
 				int end = name.size;
 
@@ -7341,7 +7377,10 @@ void syntax_editor_update(bool& animations_running)
 		// Execute Actions
 		if (action_print_line_info) {
 			auto& tab = editor.tabs[editor.open_tab_index];
-			debugger_print_line_translation(editor.debugger, tab.compilation_unit, tab.cursor.line, editor.editor_compilation_data);
+			auto unit = tab_to_compilation_unit(editor.open_tab_index);
+			if (unit != nullptr) {
+				debugger_print_line_translation(editor.debugger, unit, tab.cursor.line, editor.editor_compilation_data);
+			}
 		}
 		if (action_open_debugger_command_line) {
 			window_set_focus_on_console();
@@ -7414,10 +7453,12 @@ void syntax_editor_update(bool& animations_running)
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
 				auto& tab = editor.tabs[i];
+				auto unit = tab_to_compilation_unit(&tab);
+				if (unit == nullptr) continue;
 				auto& line_breakpoints = tab.breakpoints;
 				for (int i = 0; i < line_breakpoints.size; i++) {
 					auto& line_bp = line_breakpoints[i];
-					line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, tab.compilation_unit);
+					line_bp.src_breakpoint = debugger_add_source_breakpoint(editor.debugger, line_bp.line_number, unit);
 				}
 			}
 
@@ -7865,12 +7906,13 @@ void syntax_editor_render()
 				}
 
 				if (function_origin_node != nullptr) {
-					unit = compiler_find_ast_compilation_unit(editor.compiler, function_origin_node);
+					unit = compiler_find_ast_compilation_unit(editor.editor_compilation_data, function_origin_node);
 					upp_line_index = function_origin_node->range.start.line;
 				}
 			}
 
-			if (upp_line_index == -1 || editor.tabs[editor.open_tab_index].compilation_unit != unit) {
+			auto tab_unit = tab_to_compilation_unit(editor.open_tab_index);
+			if (upp_line_index == -1 || tab_unit != unit) {
 				continue;
 			}
 
@@ -7990,7 +8032,7 @@ void syntax_editor_render()
 				else {
 					line_index = Line_Movement::move_visible_lines_up_or_down(line_index, 1);
 				}
-					);
+			);
 
 			// Handle fold rendering
 			Source_Line* line = source_code_get_line(code, line_index);
@@ -8001,9 +8043,10 @@ void syntax_editor_render()
 
 				{
 					auto& errors = editor.editor_compilation_data->compiler_errors;
+					auto tab_unit = tab_to_compilation_unit(editor.open_tab_index);
 					for (int i = 0; i < errors.size; i++) {
 						const auto& error = errors[i];
-						if (error.unit != tab.compilation_unit) {
+						if (error.unit != tab_unit) {
 							continue;
 						}
 						// Check if error range has lines in 

@@ -33,11 +33,13 @@ namespace AST
 
 struct Compilation_Unit
 {
-    Source_Code* code;
-    String filepath; // For deduplication, full-filepath
+    String filepath; // For deduplication, full-filepath, owned by this structure
 
-    // Parser data (Stored in unit because this can be reused between compiles)
+    // All data may be nullptr until loaded...
+    Source_Code* code;
     AST::Module* root;
+    Upp_Module* module;
+
     Dynamic_Array<AST::Node*> allocated_nodes;
     Dynamic_Array<Error_Message> parser_errors;
 };
@@ -45,10 +47,6 @@ struct Compilation_Unit
 // Compiler
 struct Compiler
 {
-    // Compiler internals
-    Dynamic_Array<Compilation_Unit*> compilation_units;
-    Semaphore add_compilation_unit_semaphore;
-
     // Permanent data (Stays across compiles)
     Identifier_Pool identifier_pool;
     Fiber_Pool* fiber_pool;
@@ -60,17 +58,15 @@ void compiler_destroy(Compiler* compiler);
 // Expects file_path to be a full path (For deduplication)
 // If source_code is null, and we haven't loaded the file previously, the file is loaded
 // Returns 0 if file does not exist
-Compilation_Unit* compiler_add_compilation_unit(Compiler* compiler, String file_path);
-bool compilation_unit_was_used_in_compile(Compilation_Unit* compilation_unit, Compilation_Data* compilation_data);
 void compilation_unit_destroy(Compilation_Unit* unit);
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
-Compilation_Unit* compiler_import_file(Compiler* compiler, AST::Import* import_node); // Returns 0 if file could not be read
+Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Import* import_node); // Returns 0 if file could not be read
 bool compiler_can_execute_c_compiled(Compilation_Data* compilation_data);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
 
 bool compilation_data_errors_occured(Compilation_Data* compilation_data);
-Compilation_Unit* compiler_find_ast_compilation_unit(Compiler* compiler, AST::Node* base);
+Compilation_Unit* compiler_find_ast_compilation_unit(Compilation_Data* compilation_data, AST::Node* base);
 void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
 void compiler_run_testcases(bool force_run);

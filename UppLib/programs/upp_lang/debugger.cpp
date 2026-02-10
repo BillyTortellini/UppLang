@@ -3867,18 +3867,16 @@ bool debugger_start_process(
 		SCOPE_EXIT(hashtable_destroy(&statement_to_mapping_table));
 
 		// Create Compilation-Unit <-> Upp_Line mapping
-        semaphore_wait(compiler->add_compilation_unit_semaphore);
-		for (int i = 0; i < compiler->compilation_units.size; i++)
+		for (int i = 0; i < compilation_data->compilation_units.size; i++)
 		{
-			auto unit = compiler->compilation_units[i];
-            if (!compilation_unit_was_used_in_compile(unit, compilation_data)) continue;
+			auto unit = compilation_data->compilation_units[i];
+            if (unit->module == nullptr) continue; // Skip unused units
 
 			Compilation_Unit_Mapping unit_mapping;
 			unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);
 			unit_mapping.compilation_unit = unit;
 			dynamic_array_push_back(&debugger->compilation_unit_mapping, unit_mapping);
 		}
-        semaphore_increment(compiler->add_compilation_unit_semaphore, 1);
 		for (int i = 0; i < debugger->compilation_unit_mapping.size; i++)
 		{
 			Compilation_Unit_Mapping* unit_mapping = &debugger->compilation_unit_mapping[i];

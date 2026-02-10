@@ -1,4 +1,16 @@
 
+Okk, what do I want to work on next?
+ * TOKENS/PARSER/IDENTIFIER_POOL upgrade...
+ * Don't store tokens per line, Update parser with new tokens...
+ * Upp_Function/Upp_Program: 
+    Merge ModTree_Function, Function_Slot, IR_Function, Bytecode-Function, C-Function...
+ * Remove workload clustering
+
+DONE:
+ * Compilation_Units (Remove, and just have loaded files or something)
+
+
+
 Notes:
 ------
 Note: Different compilation stages have different properties:
@@ -28,49 +40,6 @@ Architecture Upgrades:
     Syntax editor could just be another fiber that generates/waits for things to finish when calling some functions like
     analyse_node or whatever
  - Call-Signature could _NOT_ store all this extra information and be a thing in the type-system, not something out of it...
-
-
-
-If every semantic context requires a workload, why do we need semantic context in the first place?
-Some solutions:
- - On workload start we only pass Analysis-Data* and workload, and workload needs to figure out the rest. (Semantic Context on stack)
- - Don't store semantic context in workloads
-    --> Seems reasonable
-
-What should be the order:
- - Everybody can create an empty Compilation_Data structure (With type-system, constant-pool, primitive, types, builtin-table, everything initialized)
-    Problem that fiber-pool is a shared resource (Cuz we want to reuse fibers...)
- - Analysing with a main-compilation unit starts all workloads
- - Returns with finished compilation_data...
-
-Goals with this rework:
- - Remove all globals
- - Editor should be able to do normal analysis things without worrying about threads
- - Remove as much nulls as possible, we can always return the global-symbol table for example...
-    We can also always have the full compilation-data, just with some things missing.
-    This seems also like the path forward to having incremental compilation
-
-TODO:
- - Fix all errors, make everything work with semantic_context
- - Remove compiler global
- - Rename editor analysis infos
- - Remove global entities (ir-generator, bytecode-generator, c-generator, bytecode-interpreter?)
- 
-
-A semantic_context should be easy to construct:
- 1. A workload, to know where dis is from (Make workloads for semantic_editor and compilation_start)
- 2. Compilation_Data --> Should be known (Altough 2 are currently in circulation)
- 3. Analysis-Pass, where analysis information is stored (When things are analysed)
- 4. Symbol_Table/Symbol_Access_Level (Root symbol table could be used)
-
-
-
-Move to new (Semantic_Analysis) file
-    - Expression Analysis
-    - Statement Analysis
-    - Analysis Infos
-    - Calculate Comptime value
-
 
 
 
@@ -626,6 +595,49 @@ The matching would then proceed as follows:
 Note that the hashtable needs the parent-index as a key (Widget index), so this needs to be re-hashed every frame...
     
     
+
+SEMANTIC_CONTEXT THOUGHTS
+-------------------------
+If every semantic context requires a workload, why do we need semantic context in the first place?
+Some solutions:
+ - On workload start we only pass Analysis-Data* and workload, and workload needs to figure out the rest. (Semantic Context on stack)
+ - Don't store semantic context in workloads
+    --> Seems reasonable
+
+What should be the order:
+ - Everybody can create an empty Compilation_Data structure (With type-system, constant-pool, primitive, types, builtin-table, everything initialized)
+    Problem that fiber-pool is a shared resource (Cuz we want to reuse fibers...)
+ - Analysing with a main-compilation unit starts all workloads
+ - Returns with finished compilation_data...
+
+Goals with this rework:
+ - Remove all globals
+ - Editor should be able to do normal analysis things without worrying about threads
+ - Remove as much nulls as possible, we can always return the global-symbol table for example...
+    We can also always have the full compilation-data, just with some things missing.
+    This seems also like the path forward to having incremental compilation
+
+TODO:
+ - Fix all errors, make everything work with semantic_context
+ - Remove compiler global
+ - Rename editor analysis infos
+ - Remove global entities (ir-generator, bytecode-generator, c-generator, bytecode-interpreter?)
+
+A semantic_context should be easy to construct:
+ 1. A workload, to know where dis is from (Make workloads for semantic_editor and compilation_start)
+ 2. Compilation_Data --> Should be known (Altough 2 are currently in circulation)
+ 3. Analysis-Pass, where analysis information is stored (When things are analysed)
+ 4. Symbol_Table/Symbol_Access_Level (Root symbol table could be used)
+
+Move to new (Semantic_Analysis) file
+    - Expression Analysis
+    - Statement Analysis
+    - Analysis Infos
+    - Calculate Comptime value
+
+
+
+
 
 C++ Profilers:
 --------------

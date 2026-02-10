@@ -54,10 +54,8 @@ bool do_output;
 Compiler* compiler_create()
 {
     Compiler* compiler = new Compiler;
-    compiler->add_compilation_unit_semaphore = semaphore_create(1, 1);
     compiler->identifier_pool = identifier_pool_create();
     compiler->fiber_pool = fiber_pool_create();
-    compiler->compilation_units = dynamic_array_create<Compilation_Unit*>();
 
     tokenizer_initialize();
 
@@ -66,7 +64,10 @@ Compiler* compiler_create()
 
 void compilation_unit_destroy(Compilation_Unit* unit)
 {
-    source_code_destroy(unit->code);
+    if (unit->code != nullptr) {
+        source_code_destroy(unit->code);
+        unit->code = nullptr;
+    }
     dynamic_array_destroy(&unit->parser_errors);
     for (int i = 0; i < unit->allocated_nodes.size; i++) {
         AST::base_destroy(unit->allocated_nodes[i]);
@@ -78,69 +79,16 @@ void compilation_unit_destroy(Compilation_Unit* unit)
 
 void compiler_destroy(Compiler* compiler)
 {
-    semaphore_destroy(compiler->add_compilation_unit_semaphore);
     tokenizer_shutdown();
     fiber_pool_destroy(compiler->fiber_pool);
     compiler->fiber_pool = 0;
 
     identifier_pool_destroy(&compiler->identifier_pool);
-
-    for (int i = 0; i < compiler->compilation_units.size; i++) {
-        compilation_unit_destroy(compiler->compilation_units[i]);
-    }
-    dynamic_array_destroy(&compiler->compilation_units);
 }
 
 
 
 // Compiling
-Compilation_Unit* compiler_add_compilation_unit(Compiler* compiler, String file_path_param)
-{
-    String full_file_path = string_copy(file_path_param);
-    file_io_relative_to_full_path(&full_file_path);
-    SCOPE_EXIT(string_destroy(&full_file_path));
-
-    semaphore_wait(compiler->add_compilation_unit_semaphore);
-    SCOPE_EXIT(semaphore_increment(compiler->add_compilation_unit_semaphore, 1););
-
-    // Check if file is already loaded
-    Compilation_Unit* unit = nullptr;
-    for (int i = 0; i < compiler->compilation_units.size; i++) {
-        auto comp_unit = compiler->compilation_units[i];
-        if (string_equals(&comp_unit->filepath, &full_file_path)) {
-            unit = comp_unit;
-            break;
-        }
-    }
-
-    // Otherwise create new compilation unit
-    if (unit == nullptr)
-    {
-        auto result = file_io_load_text_file(full_file_path.characters);
-        SCOPE_EXIT(file_io_unload_text_file(&result));
-        if (!result.available) {
-            return 0;
-        }
-
-        auto source_code = source_code_create();
-        source_code_fill_from_string(source_code, result.value);
-        auto lock = identifier_pool_lock_aquire(&compiler->identifier_pool);
-        source_code_tokenize(source_code, &lock);
-        identifier_pool_lock_release(lock);
-
-        unit = new Compilation_Unit;
-        unit->code = source_code;
-        unit->filepath = full_file_path;
-        full_file_path.capacity = 0;
-        unit->allocated_nodes = dynamic_array_create<AST::Node*>();
-        unit->parser_errors = dynamic_array_create<Error_Message>();
-        unit->root = nullptr;
-        dynamic_array_push_back(&compiler->compilation_units, unit);
-    }
-
-    return unit;
-}
-
 void compiler_parse_unit(Compilation_Unit* unit, Compilation_Data* compilation_data)
 {
     Timing_Task before = compilation_data->task_current;
@@ -186,13 +134,8 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
         compilation_data_switch_timing_task(compilation_data, Timing_Task::RESET);
     }
 
-    // Parse all compilation units
-    semaphore_wait(compiler->add_compilation_unit_semaphore);
-    for (int i = 0; i < compiler->compilation_units.size; i++) {
-        auto unit = compiler->compilation_units[i];
-        compiler_parse_unit(unit, compilation_data);
-    }
-    semaphore_increment(compiler->add_compilation_unit_semaphore, 1);
+    // Parse main unit
+    compiler_parse_unit(main_unit, compilation_data);
 
     Timing_Task before = compilation_data->task_current;
     SCOPE_EXIT(compilation_data_switch_timing_task(compilation_data, before));
@@ -308,14 +251,14 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
     }
 }
 
-Compilation_Unit* compiler_import_file(Compiler* compiler, AST::Import* import_node)
+Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Import* import_node)
 {
     assert(import_node->operator_type == AST::Import_Operator::FILE_IMPORT, "");
     String* filename = import_node->options.file_name;
 
     // Resolve file-path (E.g. imports are relative from the file they are in)
-    auto src = compiler_find_ast_compilation_unit(compiler, &import_node->base);
-    String path = string_copy(src->filepath);
+    auto current_unit = compiler_find_ast_compilation_unit(compilation_data, &import_node->base);
+    String path = string_copy(current_unit->filepath);
     SCOPE_EXIT(string_destroy(&path));
     file_io_relative_to_full_path(&path);
 
@@ -332,8 +275,7 @@ Compilation_Unit* compiler_import_file(Compiler* compiler, AST::Import* import_n
         file_io_relative_to_full_path(&path);
     }
 
-    // Add source (checks if file is already loaded)
-    return compiler_add_compilation_unit(compiler, path);
+    return compilation_data_add_compilation_unit_unique(compilation_data, path, true);
 }
 
 bool compiler_can_execute_c_compiled(Compilation_Data* compilation_data)
@@ -416,29 +358,24 @@ bool compilation_data_errors_occured(Compilation_Data* compilation_data)
 {
     if (compilation_data->semantic_errors.size > 0) return true;
 
-    auto compiler = compilation_data->compiler;
-    semaphore_wait(compiler->add_compilation_unit_semaphore);
-    SCOPE_EXIT(semaphore_increment(compiler->add_compilation_unit_semaphore, 1));
-    for (int i = 0; i < compiler->compilation_units.size; i++) {
-        auto code = compiler->compilation_units[i];
-	    bool was_analysed = hashtable_find_element(&compilation_data->ast_to_pass_mapping, upcast(code->root)) != nullptr;
-        if (!was_analysed) continue;
-        if (code->parser_errors.size > 0) return true;
+    for (int i = 0; i < compilation_data->compilation_units.size; i++) 
+    {
+        auto unit = compilation_data->compilation_units[i];
+        if (unit->module == nullptr) continue; // Checking if unit was analysed
+        if (unit->parser_errors.size > 0) return true;
     }
     return false;
 }
 
-Compilation_Unit* compiler_find_ast_compilation_unit(Compiler* compiler, AST::Node* base)
+Compilation_Unit* compiler_find_ast_compilation_unit(Compilation_Data* compilation_data, AST::Node* base)
 {
     while (base->parent != nullptr) {
         base = base->parent;
     }
-    semaphore_wait(compiler->add_compilation_unit_semaphore);
-    SCOPE_EXIT(semaphore_increment(compiler->add_compilation_unit_semaphore, 1));
-    for (int i = 0; i < compiler->compilation_units.size; i++) {
-        auto code = compiler->compilation_units[i];
-        if (upcast(code->root) == base) {
-            return code;
+    for (int i = 0; i < compilation_data->compilation_units.size; i++) {
+        auto unit = compilation_data->compilation_units[i];
+        if (upcast(unit->root) == base) {
+            return unit;
         }
     }
     return 0;
@@ -552,17 +489,19 @@ void compiler_run_testcases(bool force_run)
 
         logg("Testcase #%4d: %s\n", test_case_count, name.characters);
         test_case_count += 1;
+
+        Compilation_Data* compilation_data = compilation_data_create(compiler);
+        SCOPE_EXIT(compilation_data_destroy(compilation_data));
+
         String path = string_create_formated("upp_code/testcases/%s", name.characters);
         SCOPE_EXIT(string_destroy(&path));
-        Compilation_Unit* main_unit = compiler_add_compilation_unit(compiler, path);
-        if (main_unit == 0) {
+        Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true);
+        if (main_unit == nullptr) {
             string_append_formated(&result, "ERROR:   Test %s could not load test file\n", name.characters);
             errors_occured = true;
             continue;
         }
 
-        Compilation_Data* compilation_data = compilation_data_create(compiler);
-        SCOPE_EXIT(compilation_data_destroy(compilation_data));
         compilation_data_compile(compilation_data, main_unit, Compile_Type::BUILD_CODE);
         Exit_Code exit_code = compiler_execute(compilation_data);
         if (exit_code.type != Exit_Code_Type::SUCCESS && case_should_succeed)
@@ -572,9 +511,9 @@ void compiler_run_testcases(bool force_run)
             string_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
-                for (int i = 0; i < compiler->compilation_units.size; i++) 
+                for (int i = 0; i < compilation_data->compilation_units.size; i++) 
                 {
-                    auto unit = compiler->compilation_units[i];
+                    auto unit = compilation_data->compilation_units[i];
                     if (!compilation_unit_was_used_in_compile(unit, compilation_data)) continue;
                     auto parser_errors = unit->parser_errors;
                     for (int j = 0; j < parser_errors.size; j++) {
