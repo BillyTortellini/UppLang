@@ -9,6 +9,27 @@
 
 struct String;
 
+enum class Literal_Type
+{
+    INTEGER,
+    FLOAT_VAL,
+    BOOLEAN,
+    STRING,
+    NULL_VAL,
+};
+
+struct Literal_Value
+{
+    Literal_Type type;
+    union {
+        String* string;
+        i64 int_val;
+        f64 float_val;
+        bool boolean;
+        void* null_ptr;
+    } options;
+};
+
 namespace AST
 {
     struct Expression;
@@ -79,8 +100,8 @@ namespace AST
     {
         Node_Type type;
         Node* parent;
-        Token_Range range;
-        Token_Range bounding_range;
+        Text_Range range;
+        Text_Range bounding_range;
     };
 
     enum class Import_Operator
@@ -437,6 +458,10 @@ namespace AST
                 Code_Block* body_block;
             } foreach_loop;
             struct {
+                Optional<Expression*> condition;
+                Code_Block* block;
+            } while_statement;
+            struct {
                 Expression* left_side;
                 Expression* right_side;
                 Binop binop;
@@ -451,10 +476,6 @@ namespace AST
                 Code_Block* block;
                 Optional<Code_Block*> else_block;
             } if_statement;
-            struct {
-                Expression* condition;
-                Code_Block* block;
-            } while_statement;
             struct {
                 Expression* condition;
                 Dynamic_Array<Switch_Case*> cases;
@@ -515,6 +536,5 @@ namespace AST
         return &node->base;
     }
     AST::Node* upcast(Body_Node node);
-    Node* find_smallest_enclosing_node(Node* start_node, Token_Index index);
 }
 

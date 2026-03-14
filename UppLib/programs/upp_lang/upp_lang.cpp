@@ -21,6 +21,7 @@
 #include "../../math/umath.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/hashset.hpp"
+#include "../../datastructures/allocators.hpp"
 #include "../../utility/hash_functions.hpp"
 
 #include "syntax_editor.hpp"

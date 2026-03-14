@@ -7,2821 +7,2821 @@
 
 namespace Parser
 {
-    // Types
-    using namespace AST;
+	void log_error_text_range(const char* msg, Text_Range range);
+}
 
-    struct Binop_Link
-    {
-        Binop binop;
-        Token_Index token_index;
-        Expression* expr;
-    };
+void print_tokens(DynArray<Token> tokens)
+{
+	printf("\n\n------------------------------\n");
+	int indentation = 0;
+	for (int i = 0; i < tokens.size; i++)
+	{
+		Token& token = tokens[i];
+		printf("%s ", token_type_as_cstring(token.type));
 
-    struct Parse_State
-    {
-        Token_Index pos;
-        Source_Line* line;
-        int allocated_count;
-        int error_count;
-    };
+		bool line_break = false;
+		if (token.type == Token_Type::BLOCK_START) {
+			indentation += 1;
+			line_break = true;
+		}
+		else if (token.type == Token_Type::BLOCK_END) {
+			indentation -= 1;
+			line_break = true;;
+		}
+		else if (token.type == Token_Type::LINE_END) {
+			line_break = true;
+		}
 
-    struct Parser
-    {
-        Source_Code* code;
-        Compilation_Unit* unit;
-        Parse_State state;
-        Predefined_IDs* predefined_ids;
-        // Dynamic_Array<Error_Message> new_error_messages; // Required in incremental parsing (We need a distinction between old and new errors)
-    };
+		if (line_break) {
+			printf("\n");
+			for (int i = 0; i < indentation; i++) {
+				printf("  ");
+			}
+		}
+	}
+	printf("\n");
+}
 
-    // Globals (Thread-Local so i don't have to rewrite everything, but this doesn't work well with fiber-pool!)
-    static thread_local Parser parser;
+struct List_Info
+{
+	int start;
+	int last_seperator;
+	Token_Type type;
+	bool is_block_list;
+};
 
-    // Parser Functions
-    void parser_rollback(Parse_State checkpoint)
-    {
-        auto& nodes = parser.unit->allocated_nodes;
-        auto& errors = parser.unit->parser_errors;
+List_Info list_info_make(int start, int seperator, Token_Type type, bool is_block_list)
+{
+	List_Info info;
+	info.start = start;
+	info.last_seperator = seperator;
+	info.type = type;
+	info.is_block_list = is_block_list;
+	return info;
+}
 
-        assert(checkpoint.allocated_count <= nodes.size, "");
-        for (int i = checkpoint.allocated_count; i < nodes.size; i++) {
-            AST::base_destroy(nodes[i]);
-        }
-        dynamic_array_rollback_to_size(&nodes, checkpoint.allocated_count);
-        dynamic_array_rollback_to_size(&errors, checkpoint.error_count);
-        parser.state = checkpoint;
-    }
+// Note: this logs errors in parser...
+Text_Range token_get_text_range(Token& token) {
+	return text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end));
+}
 
-    template<typename T>
-    T* allocate_base(Node* parent, Node_Type type)
-    {
-        // PERF: A block allocator could probably be used here
-        auto result = new T;
-        memory_zero(result);
-        dynamic_array_push_back(&parser.unit->allocated_nodes, &result->base);
-        parser.state.allocated_count = parser.unit->allocated_nodes.size;
+DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Arena* arena, Identifier_Pool_Lock* pool_lock)
+{
+	String string_buffer = string_create_empty(256);
+	SCOPE_EXIT(string_destroy(&string_buffer));
 
-        Node* base = &result->base;
-        base->parent = parent;
-        base->type = type;
-        base->range.start = parser.state.pos;
-        base->range.end = base->range.start;
+	DynArray<Token> tokens = DynArray<Token>::create(arena, 256);
+	tokens.push_back(token_make(Token_Type::BLOCK_START, 0, 0, 0));
 
-        return result;
-    }
+	// First pass
+	int indentation = 0;
+	Text_Index last_text_pos = text_index_make(0, 0);
+	bool concatenate_to_last_line = false;
+	for (int bundle_index = 0; bundle_index < code->bundles.size; bundle_index += 1)
+	{
+		Line_Bundle& bundle = code->bundles[bundle_index];
+		for (int in_bundle_index = 0; in_bundle_index < bundle.lines.size; in_bundle_index += 1)
+		{
+			Source_Line& line = bundle.lines[in_bundle_index];
+			int line_index = in_bundle_index + bundle.first_line_index;
 
+			bool next_concatenate = false;
+			SCOPE_EXIT(concatenate_to_last_line = next_concatenate);
+			bool line_is_empty = true;
+			{
+				for (int i = 0; i < line.text.size; i += 1) {
+					char c = line.text[i];
+					if (c == '/' && i + 1 < line.text.size && line.text[i + 1] == '/') {
+						line_is_empty = true;
+						break;
+					}
+					if (c != ' ' && c != '\t') {
+						line_is_empty = false;
+						break;
+					}
+				}
+			}
+			if (line_is_empty) {
+				continue;
+			}
 
+			// Insert Block-Start/End tokens
+			bool added_block_end = false;
+			while (indentation != line.indentation && !concatenate_to_last_line)
+			{
+				while (tokens.last().type == Token_Type::LINE_END) {
+					tokens.size -= 1;
+				}
+				
+				if (line.indentation > indentation) {
+					tokens.push_back(token_make(Token_Type::BLOCK_START, last_text_pos.character, last_text_pos.character, last_text_pos.line));
+					indentation += 1;
+				}
+				else {
+					tokens.push_back(token_make(Token_Type::BLOCK_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
+					indentation -= 1;
+					added_block_end = true;
+				}
+			}
+			if (added_block_end) {
+				tokens.push_back(token_make(Token_Type::LINE_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
+			}
 
-    // Error reporting
-    void log_error(const char* msg, Token_Range range)
-    {
-        if (range.end.line >= parser.code->line_count) {
-            range.end = token_index_make_line_end(parser.code, parser.code->line_count - 1);
-        }
-        if (range.start.line >= parser.code->line_count) {
-            range.start = token_index_make_line_end(parser.code, parser.code->line_count - 1);
-        }
+			// Tokenize line
+			int token_count_before = tokens.size;
+			tokenizer_tokenize_line(line.text, &tokens, line_index, true);
+			if (tokens.last().type == Token_Type::CONCATENATE_LINES) {
+				tokens.size -= 1;
+				next_concatenate = true;
+			}
+			else {
+				Token& last_token = tokens.last();
+				last_text_pos = text_index_make(last_token.line, last_token.end);
+				tokens.push_back(token_make(Token_Type::LINE_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
+			}
 
-        Error_Message err;
-        err.msg = msg;
-        err.range = range;
-        dynamic_array_push_back(&parser.unit->parser_errors, err);
-        parser.state.error_count = parser.unit->parser_errors.size;
-    }
+			// Parse string literals and identifiers
+			for (int i = token_count_before; i < tokens.size; i++)
+			{
+				Token& token = tokens[i];
 
-    void log_error_to_pos(const char* msg, Token_Index pos) {
-        log_error(msg, token_range_make(parser.state.pos, pos));
-    }
+				if (token.type == Token_Type::IDENTIFIER) {
+					token.options.string_value = identifier_pool_add(pool_lock, string_create_substring_static(&line.text, token.start, token.end));
+					continue;
+				}
+				else if (token.type == Token_Type::LITERAL_STRING) {
+					auto substring = string_create_substring_static(&line.text, token.start, token.end);
+					string_reset(&string_buffer);
+					tokenizer_parse_string_literal(substring, &string_buffer);
+					token.options.string_value = identifier_pool_add(pool_lock, string_buffer);
+					continue;
+				}
+			}
+		}
+	}
 
-    void log_error_range_offset_with_start(const char* msg, Token_Index start, int token_offset) {
-        log_error(msg, token_range_make_offset(parser.state.pos, token_offset));
-    }
+	// Add missing block-end tokens
+	while (tokens.last().type == Token_Type::LINE_END) {
+		tokens.size -= 1;
+	}
+	for (int i = 0; i < indentation + 1; i += 1) {
+		tokens.push_back(token_make(Token_Type::BLOCK_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
+	}
+	tokens.push_back(token_make(Token_Type::INVALID, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 
-    int remaining_line_tokens();
-    void log_error_range_offset(const char* msg, int token_offset) {
-        if (remaining_line_tokens() <= 0) {
-            token_offset = 0;
-        }
-        log_error_range_offset_with_start(msg, parser.state.pos, token_offset);
-    }
-
-
-
-    // Positional Stuff
-    Token* get_token(int offset) {
-        return &parser.state.line->tokens[parser.state.pos.token + offset];
-    }
-
-    Token* get_token() {
-        return &parser.state.line->tokens[parser.state.pos.token];
-    }
-
-    int remaining_line_tokens() {
-        if (parser.state.line == 0) return 0;
-        auto& tokens = parser.state.line->tokens;
-        int remaining = tokens.size - parser.state.pos.token;
-        if (tokens.size != 0 && tokens[tokens.size - 1].type == Token_Type::COMMENT) {
-            remaining -= 1;
-        }
-        return remaining;
-    }
-
-    bool test_parenthesis(char c);
-
-    bool on_follow_block() {
-        auto& pos = parser.state.pos;
-        auto code = parser.code;
-
-        if (test_parenthesis('{')) return true;
-        if (pos.line + 1 >= code->line_count) return false;
-        if (remaining_line_tokens() > 0) return false;
-        auto next_line = source_code_get_line(code, pos.line + 1);
-        return next_line->indentation > parser.state.line->indentation;
-    }
-
-    void advance_token() {
-        parser.state.pos.token += 1;
-    }
-
-
-
-    // Token Testing functions
-    bool test_token_offset(Token_Type type, int offset) {
-        if (offset >= remaining_line_tokens()) return false;
-        auto token = get_token(offset);
-        return token->type == type;
-    }
-
-    bool test_token(Token_Type type) {
-        return test_token_offset(type, 0);
-    }
-
-    bool test_token_2(Token_Type t0, Token_Type t1) {
-        return test_token_offset(t0, 0) && test_token_offset(t1, 1);
-    }
-
-    bool test_token_3(Token_Type t0, Token_Type t1, Token_Type t2) {
-        return test_token_offset(t0, 0) && test_token_offset(t1, 1) && test_token_offset(t2, 2);
-    }
-
-    bool test_token_4(Token_Type t0, Token_Type t1, Token_Type t2, Token_Type t3) {
-        return test_token_offset(t0, 0) && test_token_offset(t1, 1) && test_token_offset(t2, 2) && test_token_offset(t3, 3);
-    }
-
-    bool test_operator_offset(Operator op, int offset) {
-        if (!test_token_offset(Token_Type::OPERATOR, offset))
-            return false;
-        return get_token(offset)->options.op == op;
-    }
-
-    bool test_operator(Operator op) {
-        return test_operator_offset(op, 0);
-    }
-
-    bool test_keyword_offset(Keyword keyword, int offset) {
-        if (!test_token_offset(Token_Type::KEYWORD, offset))
-            return false;
-        return get_token(offset)->options.keyword == keyword;
-    }
-
-    bool test_keyword(Keyword keyword) {
-        return test_keyword_offset(keyword, 0);
-    }
-
-    bool test_parenthesis_offset(char c, int offset) {
-        Parenthesis p = char_to_parenthesis(c);
-        if (!test_token_offset(Token_Type::PARENTHESIS, offset))
-            return false;
-        auto given = get_token(offset)->options.parenthesis;
-        return given.is_open == p.is_open && given.type == p.type;
-    }
-
-    bool test_parenthesis(char c) {
-        return test_parenthesis_offset(c, 0);
-    }
-
-    void node_calculate_bounding_range(AST::Node* node)
-    {
-        auto& bounding_range = node->bounding_range;
-        bounding_range = node->range;
-        int index = 0;
-        auto child = AST::base_get_child(node, index);
-        while (child != 0) 
-        {
-            auto child_range = child->bounding_range;
-            if (token_index_compare(bounding_range.start, child_range.start) < 0) {
-                bounding_range.start = child_range.start;
-            }
-            if (token_index_compare(child_range.end, bounding_range.end) < 0) {
-                bounding_range.end = child_range.end;
-            }
-
-            index += 1;
-            child = AST::base_get_child(node, index);
-        }
-    }
-
-    void node_finalize_range(AST::Node* node) 
-    {
-        // NOTE: This function did more in the past with hierarchical text-structure
-        // Now it does 3 things: 
-        //      * Sanity checks
-        //      * Sets the end of the node
-        //      * Calcualtes bounding-ranges (for editor)
-        auto code = parser.code;
-
-        // Set end of node
-        auto& range = node->range;
-        range.end = parser.state.pos;
-        if (range.end.line >= code->line_count) {
-            range.end = token_index_make_line_end(code, code->line_count - 1);
-        }
-        else if (range.start.line != range.end.line && range.end.token == 0 && range.end.line > 0) {
-            // Here we have the difference between next line token zero or end of line last token
-            range.end = token_index_make_line_end(code, range.end.line - 1);
-        }
-        
-        // Calculate bounding range
-        node_calculate_bounding_range(node);
-
-        // Sanity-Check that start/end is in order
-        int order = token_index_compare(range.start, range.end);
-        assert(order != -1, "Ranges must be in order");
-    }
+	return tokens;
+}
 
 
 
+namespace Parser
+{
+	// Types
+	using namespace AST;
 
-    // Parsing Helpers
+	struct Binop_Link
+	{
+		Binop binop;
+		int token_index;
+		Expression* expr;
+	};
+
+	struct Parse_State
+	{
+		int pos; // Token-Index
+		int allocated_count;
+		int error_count;
+	};
+
+	struct Parser
+	{
+		Arena* arena;
+		DynArray<Token> tokens;
+		Compilation_Unit* unit;
+		Predefined_IDs* predefined_ids;
+		Token error_token;
+		Parse_State state;
+	};
+
+	// Globals (Thread-Local so i don't have to rewrite everything, but this doesn't work well with fiber-pool!)
+	static thread_local Parser parser;
+
+	// Parser Functions
+	void parser_rollback(Parse_State checkpoint)
+	{
+		auto& nodes = parser.unit->allocated_nodes;
+		auto& errors = parser.unit->parser_errors;
+
+		assert(checkpoint.allocated_count <= nodes.size, "");
+		for (int i = checkpoint.allocated_count; i < nodes.size; i++) {
+			AST::base_destroy(nodes[i]);
+		}
+		dynamic_array_rollback_to_size(&nodes, checkpoint.allocated_count);
+		dynamic_array_rollback_to_size(&errors, checkpoint.error_count);
+		parser.state = checkpoint;
+	}
+
+	template<typename T>
+	T* allocate_base(Node* parent, Node_Type type)
+	{
+		// PERF: A block allocator could probably be used here
+		auto result = new T;
+		memory_zero(result);
+		dynamic_array_push_back(&parser.unit->allocated_nodes, &result->base);
+		parser.state.allocated_count = parser.unit->allocated_nodes.size;
+
+		Node* base = &result->base;
+		base->parent = parent;
+		base->type = type;
+		auto& token = parser.tokens[parser.state.pos];
+		base->range.start = text_index_make(token.line, token.start);
+		base->range.end = base->range.start;
+
+		return result;
+	}
+
+
+
+	// Error reporting
+	// Start is inclusive token index, end is exclusive token index
+	void log_error_text_range(const char* msg, Text_Range range)
+	{
+		Error_Message err;
+		err.msg = msg;
+		err.range = range;
+		dynamic_array_push_back(&parser.unit->parser_errors, err);
+		parser.state.error_count = parser.unit->parser_errors.size;
+	}
+
+	void log_error(const char* msg, int start, int end)
+	{
+		auto& tokens = parser.tokens;
+		assert(start >= 0 && start < tokens.size, "I think this is a condition that should always be the case");
+		assert(end >= start, "");
+
+		Token& start_token = parser.tokens[start];
+		Text_Index text_start = text_index_make(start_token.line, start_token.start);
+
+		end = math_minimum(end, (int)tokens.size - 1);
+		Token end_token = tokens[end - 1]; // End is exclusive
+		Text_Index text_end = text_index_make(end_token.line, end_token.end);
+		if (end <= start) {
+			text_start = text_end;
+		}
+
+		log_error_text_range(msg, text_range_make(text_start, text_end));
+	}
+
+	void log_error_to_pos(const char* msg, int end_token) {
+		log_error(msg, parser.state.pos, end_token);
+	}
+
+	void log_error_range_offset(const char* msg, int token_count) {
+		log_error_to_pos(msg, parser.state.pos + token_count);
+	}
+
+
+
+	// Token functions
+	Token* get_token_by_index(int index)
+	{
+		if (index < 0 || index >= parser.tokens.size) {
+			return &parser.error_token;
+		}
+		return &parser.tokens[index];
+	}
+
+	Token* get_token(int offset = 0) {
+		return get_token_by_index(parser.state.pos + offset);
+	}
+
+	void advance_token() {
+		parser.state.pos += 1;
+	}
+
+	bool test_token(Token_Type type, int offset = 0) {
+		return get_token(offset)->type == type;
+	}
+
+	bool test_token(Token_Type t0, Token_Type t1, int offset = 0) {
+		return
+			test_token(t0, offset) &&
+			test_token(t1, offset + 1);
+	}
+
+	bool test_token(Token_Type t0, Token_Type t1, Token_Type t2, int offset = 0) {
+		return
+			test_token(t0, offset) &&
+			test_token(t1, offset + 1) &&
+			test_token(t2, offset + 2);
+	}
+
+	bool test_token(Token_Type t0, Token_Type t1, Token_Type t2, Token_Type t3, int offset = 0) {
+		return
+			test_token(t0, offset) &&
+			test_token(t1, offset + 1) &&
+			test_token(t2, offset + 2) &&
+			test_token(t3, offset + 3);
+	}
+
+	bool on_follow_block() {
+		return test_token(Token_Type::CURLY_BRACE_OPEN) || test_token(Token_Type::BLOCK_START) || test_token(Token_Type::EXPLICIT_BLOCK);
+	}
+
+
+	void node_calculate_bounding_range(AST::Node* node)
+	{
+		auto& bounding_range = node->bounding_range;
+		bounding_range = node->range;
+		int index = 0;
+		auto child = AST::base_get_child(node, index);
+		while (child != 0)
+		{
+			auto child_range = child->bounding_range;
+			if (!text_index_in_order(bounding_range.start, child_range.start)) {
+				bounding_range.start = child_range.start;
+			}
+			if (!text_index_in_order(child_range.end, bounding_range.end)) {
+				bounding_range.end = child_range.end;
+			}
+
+			index += 1;
+			child = AST::base_get_child(node, index);
+		}
+	}
+
+	void node_finalize_range(AST::Node* node)
+	{
+		// NOTE: This function did more in the past with hierarchical text-structure
+		// Now it does 3 things: 
+		//      * Sanity checks
+		//      * Sets the end of the node
+		//      * Calcualtes bounding-ranges (for editor) (Could also be done once at the end of parsing, maybe I do that?)
+		auto& range = node->range;
+
+		// Set end of node
+		Token& token = parser.tokens[parser.state.pos - 1];
+		range.end = text_index_make(token.line, token.end);
+		if (!text_index_in_order(range.start, range.end)) {
+			range.end = range.start;
+		}
+
+		// Calculate bounding range
+		node_calculate_bounding_range(node);
+
+		// Sanity-Check that start/end is in order
+		bool in_order = text_index_in_order(range.start, range.end);
+		assert(in_order, "Ranges must be in order");
+	}
+
+	void find_next_follow_block()
+	{
+		if (on_follow_block()) {
+			return;
+		}
+
+		DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.arena);
+		auto& pos = parser.state.pos;
+		int start = pos;
+		bool found = false;
+		while (true)
+		{
+			// Exit conditions
+			if (on_follow_block()) {
+				found = true;
+				break;
+			}
+			if (test_token(Token_Type::BLOCK_END) || test_token(Token_Type::LINE_END) || test_token(Token_Type::EXPLICIT_BLOCK) ||
+				(parenthesis_stack.size == 0 && test_token(Token_Type::CURLY_BRACE_CLOSED)))
+			{
+				found = false;
+				break;
+			}
+
+			// Parenthesis handling
+			Token_Type type = get_token()->type;
+			if (parenthesis_stack.size != 0 && token_type_get_partner(type) == parenthesis_stack.last()) {
+				parenthesis_stack.size -= 1;
+				pos += 1;
+				continue;
+			}
+
+			auto token_class = token_type_get_class(type);
+			if (token_class == Token_Class::LIST_START) {
+				parenthesis_stack.push_back(type);
+			}
+			pos += 1;
+		}
+
+		if (found) {
+			log_error("Could not parse tokens", start, pos);
+		}
+		else {
+			pos = start;
+		}
+	}
+
+	// Parsing Helpers
+	struct List_Iter
+	{
+		// Different list types: block_start, (), {}, []
+		Token_Type type;
+		bool is_valid;
+		int last_item_start;
+
+		static List_Iter create()
+		{
+			List_Iter iter;
+			iter.is_valid = false;
+			iter.type = get_token()->type;
+			iter.last_item_start = parser.state.pos;
+
+			switch (iter.type)
+			{
+			case Token_Type::PARENTHESIS_OPEN:
+			case Token_Type::CURLY_BRACE_OPEN:
+			case Token_Type::BRACKET_OPEN:
+			case Token_Type::BLOCK_START:
+			{
+				advance_token();
+				iter.is_valid = true;
+				break;
+			}
+			case Token_Type::EXPLICIT_BLOCK:
+			{
+				if (test_token(Token_Type::BLOCK_START, 1)) {
+					advance_token();
+					iter.is_valid = true;
+				}
+				else if (test_token(Token_Type::BLOCK_START, Token_Type::IDENTIFIER, 1)) {
+					advance_token();
+					advance_token();
+					iter.is_valid = true;
+				}
+				else {
+					iter.is_valid = false;
+				}
+				break;
+			}
+			default: {
+				iter.is_valid = false;
+				break;
+			}
+			}
+
+			iter.last_item_start = parser.state.pos;
+			return iter;
+		}
+
+		bool on_end_token()
+		{
+			if (!is_valid) {
+				return true;
+			}
+
+			Token* token = get_token();
+			if (type == Token_Type::BLOCK_START) {
+				return token->type == Token_Type::BLOCK_END;
+			}
+
+			return
+				token->type == token_type_get_partner(type) ||
+				token->type == Token_Type::LINE_END ||
+				token->type == Token_Type::BLOCK_END ||
+				token->type == Token_Type::BLOCK_START;
+		}
+
+		bool on_seperator()
+		{
+			if (!is_valid) {
+				return false;
+			}
+
+			Token_Type current_type = get_token()->type;
+			switch (type)
+			{
+			case Token_Type::BRACKET_OPEN:
+			case Token_Type::PARENTHESIS_OPEN: return current_type == Token_Type::COMMA;
+			case Token_Type::CURLY_BRACE_OPEN: return current_type == Token_Type::SEMI_COLON;
+			case Token_Type::BLOCK_START:      return current_type == Token_Type::SEMI_COLON || current_type == Token_Type::LINE_END;
+			default: panic("");
+			}
+			return false;
+		}
+
+		// This logs an error if we aren't on a seperator
+		void goto_next()
+		{
+			if (!is_valid) {
+				return;
+			}
+			SCOPE_EXIT(last_item_start = parser.state.pos);
+
+			if (on_seperator())
+			{
+				if (last_item_start == parser.state.pos) {
+					log_error("Expected item", last_item_start, last_item_start);
+				}
+				advance_token();
+				return;
+			}
+			else if (on_end_token()) {
+				if (last_item_start == parser.state.pos) {
+					log_error("Expected item", last_item_start, last_item_start);
+				}
+				return;
+			}
+
+			// Otherwise find continuation and log error (Either end of the parenthesis or next seperator)
+			int& pos = parser.state.pos;
+			int start_pos = pos;
+			// Special case handling
+			if (type == Token_Type::BLOCK_START && get_token()->type == Token_Type::BLOCK_START)
+			{
+				// If we have parsed an item and landed on block start, try to parse it first before skipping the block
+				if (pos != last_item_start) {
+					return;
+				}
+
+				int block_count = 1;
+				pos += 1;
+				while (block_count != 0)
+				{
+					Token_Type token_type = get_token()->type;
+					if (token_type == Token_Type::BLOCK_START) {
+						block_count += 1;
+					}
+					else if (token_type == Token_Type::BLOCK_END) {
+						block_count -= 1;
+					}
+					pos += 1;
+				}
+			}
+			else
+			{
+				auto checkpoint = parser.arena->make_checkpoint();
+				DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.arena);
+				parenthesis_stack.push_back(type);
+				SCOPE_EXIT(parser.arena->rewind_to_checkpoint(checkpoint));
+				while (true)
+				{
+					Token_Type token_type = get_token()->type;
+					if (token_type == Token_Type::BLOCK_START || token_type == Token_Type::BLOCK_END || token_type == Token_Type::LINE_END) {
+						break;
+					}
+
+					if (on_seperator()) {
+						break;
+					}
+					if (token_type == token_type_get_partner(type))
+					{
+						parenthesis_stack.size -= 1;
+						if (parenthesis_stack.size == 0) {
+							break;
+						}
+					}
+					else if (token_type_get_class(token_type) == Token_Class::LIST_START) {
+						parenthesis_stack.push_back(token_type);
+					}
+
+					pos += 1;
+				}
+			}
+
+			log_error("Could not parse tokens", start_pos, pos);
+
+			if (on_seperator()) {
+				advance_token();
+				return;
+			}
+		}
+
+		void finish()
+		{
+			int& pos = parser.state.pos;
+			int start_pos = pos;
+			while (!on_end_token()) {
+				pos += 1;
+			}
+			if (start_pos != pos) {
+				log_error("Could not parse tokens", start_pos, pos);
+			}
+
+			// Don't advance over block-ends/line-ends
+			if (get_token()->type == token_type_get_partner(type)) {
+				advance_token();
+			}
+			else {
+				log_error("Expected list-end token (Parenthesis)", pos, pos);
+			}
+		}
+	};
+
+	typedef bool (*stopper_fn)(Token_Type);
+	typedef Node* (*list_item_parse_fn)(Node* parent);
+	typedef void (*add_list_item_to_parent_fn)(Node* parent, Node* child);
+
+	void parse_list_items(Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn)
+	{
+		if (get_token()->type == Token_Type::EXPLICIT_BLOCK || token_type_get_class(get_token()->type) != Token_Class::LIST_START) {
+			return;
+		}
+
+		List_Iter iter = List_Iter::create();
+		while (!iter.on_end_token())
+		{
+			Node* parsed_item = parse_fn(parent);
+			if (parsed_item != nullptr) {
+				add_to_parent_fn(parent, parsed_item);
+			}
+			iter.goto_next();
+		}
+		iter.finish();
+	}
+
+	void parse_comma_seperated_list_items(Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, stopper_fn stopper_fn)
+	{
+		auto on_end_token = [&](bool in_parenthesis) -> bool 
+		{
+			auto t = get_token()->type;
+			if (!in_parenthesis) {
+				if (stopper_fn(t) || token_type_get_class(t) == Token_Class::LIST_END || t == Token_Type::SEMI_COLON) {
+					return true;
+				}
+			}
+
+			return
+				t == Token_Type::LINE_END ||
+				t == Token_Type::BLOCK_END ||
+				t == Token_Type::BLOCK_START ||
+				t == Token_Type::SEMI_COLON ||
+				t == Token_Type::EXPLICIT_BLOCK;
+		};
+
+		if (on_end_token(false)) {
+			return;
+		}
+
+		int pos = parser.state.pos;
+		while (true)
+		{
+			// Parse item
+			Node* node = parse_fn(parent);
+			if (node != nullptr) 
+			{
+				add_to_parent_fn(parent, node);
+				if (on_end_token(false)) {
+					return;
+				}
+			}
+			else {
+				log_error("Could not parse item", parser.state.pos, parser.state.pos + 1);
+			}
+
+			// Goto next comma or list end
+			int start_pos = pos;
+			bool found_end = false;
+			{
+				auto checkpoint = parser.arena->make_checkpoint();
+				SCOPE_EXIT(parser.arena->rewind_to_checkpoint(checkpoint));
+				DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.arena);
+
+				while (!test_token(Token_Type::COMMA))
+				{
+					if (on_end_token(parenthesis_stack.size > 0)) {
+						found_end = true;
+						break;
+					}
+
+					Token_Type type = get_token()->type;
+					Token_Class token_class = token_type_get_class(type);
+					if (token_class == Token_Class::LIST_START) {
+						parenthesis_stack.push_back(type);
+					}
+					else if (token_class == Token_Class::LIST_END) {
+						if (token_type_get_partner(parenthesis_stack.last()) == type) {
+							parenthesis_stack.size -= 1;
+						}
+					}
+					pos += 1;
+				}
+			}
+
+			if (start_pos > pos) {
+				log_error("Could not parse tokens", start_pos, pos);
+			}
+			if (found_end) {
+				return;
+			}
+
+			assert(test_token(Token_Type::COMMA), "");
+			advance_token();
+		}
+	}
+
+	void find_next_comma_item()
+	{
+		auto helper_on_goal = [&]() {
+			return
+				test_token(Token_Type::COMMA) ||
+				test_token(Token_Type::BLOCK_START) ||
+				test_token(Token_Type::EXPLICIT_BLOCK) ||
+				test_token(Token_Type::CURLY_BRACE_CLOSED) ||
+				test_token(Token_Type::PARENTHESIS_CLOSED) ||
+				test_token(Token_Type::BLOCK_END) ||
+				test_token(Token_Type::LINE_END) ||
+				test_token(Token_Type::SEMI_COLON);
+		};
+		DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.arena);
+		auto& pos = parser.state.pos;
+		int start = pos;
+		bool found = false;
+		while (true)
+		{
+			// Exit conditions
+			if (on_follow_block()) {
+				found = true;
+				break;
+			}
+			if (test_token(Token_Type::BLOCK_END) || test_token(Token_Type::LINE_END) || test_token(Token_Type::EXPLICIT_BLOCK) ||
+				(parenthesis_stack.size == 0 && test_token(Token_Type::CURLY_BRACE_CLOSED)))
+			{
+				found = false;
+				break;
+			}
+
+			// Parenthesis handling
+			Token_Type type = get_token()->type;
+			if (parenthesis_stack.size != 0 && token_type_get_partner(type) == parenthesis_stack.last()) {
+				parenthesis_stack.size -= 1;
+				pos += 1;
+				continue;
+			}
+
+			auto token_class = token_type_get_class(type);
+			if (token_class == Token_Class::LIST_START) {
+				parenthesis_stack.push_back(type);
+			}
+			pos += 1;
+		}
+
+		if (found) {
+			log_error("Could not parse tokens", start, pos);
+		}
+		else {
+			pos = start;
+		}
+	}
+
+
+
+	// MACROS
 #define CHECKPOINT_SETUP \
-        if (parser.state.pos.line >= parser.code->line_count) {return 0;}\
-        if (remaining_line_tokens() == 0 && !on_follow_block()) {return 0;}\
+        if (parser.state.pos >= parser.tokens.size) {return nullptr;}\
         auto checkpoint = parser.state;\
         bool _error_exit = false;\
-        SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint););
+        SCOPE_EXIT(if (_error_exit) parser_rollback(checkpoint);); 
 
-#define CHECKPOINT_EXIT {_error_exit = true; return 0;}
-#define SET_END_RANGE(val) {node_finalize_range(&val->base);}
+
+#define CHECKPOINT_EXIT {_error_exit = true; return nullptr;}
 #define PARSE_SUCCESS(val) { \
         node_finalize_range(&val->base); \
         return val; \
     }
 
-    int source_line_get_non_comment_token_count(Source_Line* line)
-    {
-        int token_count = line->tokens.size;
-        if (line->tokens.size > 0 && line->tokens[line->tokens.size - 1].type == Token_Type::COMMENT) {
-            token_count -= 1;
-        }
-        return token_count;
-    }
-
-    // Searches next eligible token, e.g. tokens that aren't in some other list, like () or {} or something
-    //      1. Searches for all tokens not in a list
-    //      2. Skips follow blocks if any are present
-    //      3. Does not handle starting inside parenthesis, if this is the case we just go out of parenthesis...
-    typedef bool(*token_predicate_fn)(Token* token, void* userdata);
-    Optional<Token_Index> search_token(Source_Code* code, Token_Index start, token_predicate_fn predicate, void* user_data)
-    {
-        // IDEA: Maybe I can move this whole function to source_code, since it could be used outside of parsing
-        // PERF: The parenthesis stack can be held in the parser, and just be resetted here
-        Dynamic_Array<Parenthesis> parenthesis_stack = dynamic_array_create<Parenthesis>();
-        SCOPE_EXIT(dynamic_array_destroy(&parenthesis_stack));
-
-        Token_Index pos = start;
-        Source_Line* line = source_code_get_line(code, pos.line);
-        int token_count = source_line_get_non_comment_token_count(line);
-        int start_indentation = line->indentation;
-
-        while (true)
-        {
-            // Normal token handling
-            if (pos.token < token_count) 
-            {
-                auto token = &line->tokens[pos.token];
-
-                // If we aren't in other parenthesis, check the token
-                if (parenthesis_stack.size == 0) {
-                    if (predicate(token, user_data)) {
-                        return optional_make_success(pos);
-                    }
-                }
-
-                // Otherwise check for parenthesis
-                if (token->type == Token_Type::PARENTHESIS)
-                {
-                    auto parenthesis = token->options.parenthesis;
-                    if (parenthesis.is_open) {
-                        dynamic_array_push_back(&parenthesis_stack, parenthesis);
-                    }
-                    else if (parenthesis_stack.size > 0) {
-                        auto last = dynamic_array_last(&parenthesis_stack);
-                        if (last.type == parenthesis.type) {
-                            dynamic_array_rollback_to_size(&parenthesis_stack, parenthesis_stack.size - 1);
-                        }
-                    }
-                }
-
-                pos.token += 1;
-                continue;
-            }
-
-            // Otherwise we are at the end of the line
-            // Check if the next line is a follow block
-            if (pos.line + 1 >= code->line_count) { // End of code
-                return optional_make_failure<Token_Index>();
-            }
-            Source_Line* next_line = source_code_get_line(code, pos.line + 1);
-            if (next_line->indentation <= start_indentation) {
-                return optional_make_failure<Token_Index>(); // No follow block
-            }
-
-            // If it is a follow block, we skip all lines until we hit the next valid line
-            pos.line = pos.line + 2;
-            while (true)
-            {
-                if (pos.line >= code->line_count) {
-                    return optional_make_failure<Token_Index>(); // Ran out of lines
-                }
-                next_line = source_code_get_line(code, pos.line);
-                if (next_line->indentation < start_indentation) {
-                    return optional_make_failure<Token_Index>(); // No follow block
-                }
-                else if (next_line->indentation == start_indentation) {
-                    break;
-                }
-
-                pos.line += 1;
-            }
-
-            line = next_line;
-            pos.token = 0;
-            token_count = source_line_get_non_comment_token_count(line);
-        }
-    }
-
-    typedef bool (*is_list_stop_token_fn)(Token& token, void* userdata);
-    typedef Node* (*list_item_parse_fn)(Node* parent);
-    typedef void (*add_list_item_to_parent_fn)(Node* parent, Node* child);
-
-    struct Stopper
-    {
-        bool found_stop;
-        is_list_stop_token_fn stop_fn;
-        void* stop_userdata;
-        Operator seperator;
-    };
-
-    // Parses seperated items until end of line or a stop-token is found
-    // Note: If parse_fn parses over a line, this function can also parse multiple lines...
-    void parse_list_single_line(
-        Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, 
-        is_list_stop_token_fn stop_fn, void* stop_userdata, Operator seperator)
-    {
-        // Parse Items
-        while (true)
-        {
-            auto line_before_item = parser.state.pos.line;
-            auto item = parse_fn(parent);
-            if (item != 0)
-            {
-                add_to_parent_fn(parent, item);
-                if (test_operator(seperator)) {
-                    advance_token();
-                    continue;
-                }
-
-                // Check if we are finished with item parsing
-                if (parser.state.pos.line >= parser.code->line_count) {
-                    return;
-                }
-                if (remaining_line_tokens() == 0) { // Reached end of line
-                    return;
-                }
-                if (stop_fn != 0) { // Reached stop
-                    if (stop_fn(*get_token(), stop_userdata)) {
-                        return;
-                    }
-                }
-
-                // If we are at the start of a new line, we also want to quit here (As this function only parses one line) (E.g. defining a struct)
-                auto& pos = parser.state.pos;
-                if (pos.token == 0 && pos.line != line_before_item) {
-                    return;
-                }
-            }
-            
-            // Otherwise try to find next seperator or stop
-            Stopper stopper;
-            stopper.found_stop = false;
-            stopper.stop_fn = stop_fn;
-            stopper.seperator = seperator;
-            stopper.stop_userdata = stop_userdata;
-            auto search_fn = [](Token* token, void* userdata) -> bool {
-                Stopper* stopper = (Stopper*)userdata;
-                auto stop_function = stopper->stop_fn;
-                if (stop_function != 0) {
-                    if (stop_function(*token, stopper->stop_userdata)) {
-                        stopper->found_stop = true;
-                        return true;
-                    }
-                }
-                return token->type == Token_Type::OPERATOR && token->options.op == stopper->seperator;
-            };
-            auto recovery_point_opt = search_token(parser.code, parser.state.pos, search_fn, &stopper);
-
-            // Check if we reached stop, found seperator or none of both
-            if (!recovery_point_opt.available) {
-                return;
-            }
-            log_error_to_pos("Couldn't parse item", recovery_point_opt.value);
-            parser.state.pos = recovery_point_opt.value;
-
-            if (stopper.found_stop) {
-                // Otherwise we found the stop point
-                return;
-            }
-
-            // Otherwise we found a comma, so we skip it and parse the next item
-            advance_token();
-        }
-    }
-
-    void code_block_add_child(AST::Node* parent, AST::Node* child);
-    Node* wrapper_parse_statement_or_context_change(AST::Node* parent);
-
-    // Expects to be on the starting line of this block
-    // Ends on the next line after the block
-    void parse_block_of_items(
-        Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, 
-        Operator seperator, int block_indent, bool anonymous_blocks_allowed)
-    {
-        auto& pos = parser.state.pos;
-        auto& code = parser.code;
-
-        Source_Line* line = parser.state.line;
-        while (true)
-        {
-            if (pos.line >= code->line_count) {
-                return;
-            }
-
-            line = parser.state.line;
-            // Break if we exit the block
-            if (line->is_comment) {
-                // Skip line if it's a comment...
-            }
-            else if (line->indentation < block_indent) {
-                assert(parser.state.pos.token == 0, "");
-                return;
-            }
-            else if (line->indentation > block_indent) 
-            {
-                if (anonymous_blocks_allowed) 
-                {
-                    auto statement = allocate_base<Statement>(parent, Node_Type::STATEMENT);
-                    statement->type = Statement_Type::BLOCK;
-
-                    auto& code_block = statement->options.block;
-                    code_block = allocate_base<Code_Block>(AST::upcast(statement), Node_Type::CODE_BLOCK);
-                    code_block->statements = dynamic_array_create<Statement*>();
-                    code_block->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
-                    code_block->block_id = optional_make_failure<String*>();
-
-                    int block_start_line = pos.line;
-                    parse_block_of_items(
-                        upcast(code_block), wrapper_parse_statement_or_context_change, code_block_add_child, Operator::SEMI_COLON,
-                        block_indent + 1, true
-                    );
-
-                    Token_Range range = token_range_make(token_index_make(block_start_line, 0), token_index_make_line_end(code, parser.state.pos.line-1));
-                    code_block->base.range = range;
-                    code_block->base.bounding_range = range;
-                    statement->base.range = range;
-                    statement->base.bounding_range = range;
-
-                    add_to_parent_fn(parent, upcast(statement));
-                    continue;
-                }
-                else {
-                    log_error_range_offset("Unexpected anonymous block", 0);
-                    // Skip all lines afterwards with same indent
-                    while (pos.line < code->line_count) {
-                        parser.state.line = source_code_get_line(code, pos.line);
-                        pos.token = 0;
-                        if (parser.state.line->indentation <= block_indent) {
-                            break;
-                        }
-                        pos.line += 1;
-                    }
-                    if (pos.line >= code->line_count) {
-                        parser.state.line = 0; // What does this do?
-                        return;
-                    }
-                    continue;
-                }
-            }
-            else // line->indentation == block_indent
-            {
-                // Otherwise parse line item if line isn't a comment or empty
-                if (line->tokens.size != 0)
-                {
-                    int line_before_index = pos.line;
-                    parse_list_single_line(parent, parse_fn, add_to_parent_fn, nullptr, nullptr, seperator);
-
-                    if (pos.line != line_before_index) {
-                        if (pos.line >= code->line_count) {
-                            parser.state.line = nullptr;
-                            return;
-                        }
-                        if (pos.token == 0) { // Don't advance line if it has already been done
-                            continue; 
-                        }
-                    }
-
-                    if (remaining_line_tokens() > 0) {
-                        log_error_to_pos("Cannot parse remaining line items", token_index_make(pos.line, line->tokens.size - 1));
-                        pos.token = line->tokens.size;
-                    }
-                }
-            }
-
-            // Advance line
-            if (pos.line + 1 >= code->line_count) {
-                pos.line = code->line_count;
-                parser.state.line = nullptr;
-                return;
-            }
-            pos.line += 1;
-            pos.token = 0;
-            parser.state.line = source_code_get_line(code, pos.line);
-        }
-    }
-
-    void parse_list_of_items(
-        Node* parent, list_item_parse_fn parse_fn, add_list_item_to_parent_fn add_to_parent_fn, 
-        Parenthesis_Type parenthesis, Operator seperator, bool valid_without_parenthesis, bool anonymous_blocks_allowed)
-    {
-        auto& pos = parser.state.pos;
-        auto& code = parser.code;
-
-        // Check list type, which could be with/without parenthesis and if multi lines are allowed...
-        bool multi_line_valid = false;
-        bool expecting_closing_parenthesis_after_block = false;
-        int block_indentation = parser.state.line->indentation + 1;
-
-        // Check for correct List-Start (Either on parenthesis, follow block or root?)
-        {
-            bool expecting_follow_block = false;
-            int remaining_tokens = remaining_line_tokens();
-            if (remaining_tokens == 0)
-            {
-                if (!valid_without_parenthesis) {
-                    return;
-                }
-                else {
-                    expecting_follow_block = true;
-                    multi_line_valid = true;
-                    expecting_closing_parenthesis_after_block = false;
-                }
-            }
-            else
-            {
-                // Check if we are on parenthesis
-                Parenthesis p;
-                p.type = parenthesis;
-                p.is_open = true;
-                if (!test_parenthesis_offset(parenthesis_to_char(p), 0)) return;
-                advance_token();
-
-                if (remaining_tokens == 1) { // In this case the parenthesis was the last token
-                    expecting_follow_block = true;
-                    multi_line_valid = true;
-                    expecting_closing_parenthesis_after_block = true;
-                }
-                else {
-                    expecting_follow_block = false;
-                    multi_line_valid = false;
-                    expecting_closing_parenthesis_after_block = false;
-                }
-            }
-
-            // Check if follow block is required
-            if (expecting_follow_block)
-            {
-                if (pos.line + 1 >= code->line_count) {
-                    log_error_range_offset("Expected follow block", 0);
-                    return;
-                }
-                Source_Line* next_line = source_code_get_line(code, pos.line + 1);
-                if (next_line->indentation < parser.state.line->indentation + 1) {
-                    log_error_range_offset("Expected follow block", 0);
-                    return;
-                }
-
-                parser.state.line = next_line;
-                pos.line += 1;
-                pos.token = 0;
-            }
-        }
-
-        // Handle single/multiple lines seperately
-        if (!multi_line_valid)
-        {
-            Parenthesis p;
-            p.type = parenthesis;
-            p.is_open = false;
-            char closing = parenthesis_to_char(p);
-            if (test_parenthesis(closing)) {
-                advance_token();
-                return;
-            }
-
-            auto stop_fn = [](Token& token, void* userdata) -> bool {
-                if (token.type != Token_Type::PARENTHESIS) return false;
-                if (token.options.parenthesis.is_open) return false;
-                Parenthesis_Type type = *(Parenthesis_Type*)userdata;
-                return token.options.parenthesis.type == type;
-            };
-            parse_list_single_line(parent, parse_fn, add_to_parent_fn, stop_fn, &parenthesis, seperator);
-
-            // Check that we are on closing parentheschis
-            if (test_parenthesis(closing)) {
-                advance_token();
-            }
-            else {
-                log_error_range_offset("Expected closing parenthesis on this line", 0);
-            }
-            return;
-        }
-        else
-        {
-            parse_block_of_items(parent, parse_fn, add_to_parent_fn, seperator, block_indentation, anonymous_blocks_allowed);
-
-            if (expecting_closing_parenthesis_after_block) {
-                Parenthesis p;
-                p.type = parenthesis;
-                p.is_open = false;
-                if (test_parenthesis(parenthesis_to_char(p))) {
-                    advance_token();
-                }
-                else {
-                    log_error_range_offset("Expected closing parenthesis", 0);
-                }
-            }
-        }
-    }
-
-
-    template<Parenthesis_Type type>
-    bool finish_parenthesis()
-    {
-        // Check if we are on the parenthesis exit
-        Parenthesis closing;
-        closing.type = type;
-        closing.is_open = false;
-        if (test_parenthesis(parenthesis_to_char(closing))) {
-            advance_token();
-            return true;
-        }
-
-        // Check if we can find the parenthesis exit
-        auto parenthesis_pos = search_token(
-            parser.code,
-            parser.state.pos,
-            [](Token* t, void* _unused) -> bool
-            { return t->type == Token_Type::PARENTHESIS &&
-            !t->options.parenthesis.is_open && t->options.parenthesis.type == type; }, nullptr
-        );
-        if (!parenthesis_pos.available) {
-            return false;
-        }
-        log_error_to_pos("Parenthesis context was already finished, unexpected tokens afterwards", parenthesis_pos.value);
-        parser.state.pos = parenthesis_pos.value;
-        advance_token();
-        return true;
-    }
-
-
-
-    // Prototypes
-    Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
-    Code_Block* parse_code_block(Node* parent, AST::Node* related_node);
-    Path_Lookup* parse_path_lookup(Node* parent);
-    Expression* parse_expression(Node* parent);
-    Expression* parse_expression_or_error_expr(Node* parent);
-    Expression* parse_single_expression(Node* parent);
-    Expression* parse_single_expression_or_error(Node* parent);
-    Argument* parse_argument(Node* parent);
-    Subtype_Initializer* parse_subtype_initializer(Node* parent);
-    Parameter* parse_parameter(Node* parent);
-
-    // Returns an error-expression if uninitialized
-    Node* parse_argument_or_subtype_initializer_or_uninitialzed(AST::Node* parent) 
-    {
-        if (test_operator(Operator::UNINITIALIZED)) {
-            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-            error_expr->type = Expression_Type::ERROR_EXPR;
-
-            advance_token();
-            node_finalize_range(upcast(error_expr));
-            return upcast(error_expr);
-        }
-
-        Node* result = upcast(parse_subtype_initializer(parent));
-        if (result != 0) return result;
-
-        return upcast(parse_argument(parent));
-    }
-
-    AST::Node* parse_overload_argument(AST::Node* parent) 
-    {
-        if (!test_token(Token_Type::IDENTIFIER)) {
-            return nullptr;
-        }
-
-        auto result = allocate_base<AST::Get_Overload_Argument>(parent, AST::Node_Type::GET_OVERLOAD_ARGUMENT);
-        result->id = get_token()->options.identifier;
-        result->type_expr = optional_make_failure<AST::Expression*>();
-        advance_token();
-        if (test_operator(Operator::ASSIGN)) {
-            advance_token();
-            result->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
-        }
-
-        node_finalize_range(upcast(result));
-        return upcast(result);
-    }
-
-    Path_Lookup* parse_path_lookup(Node* parent)
-    {
-        auto& ids = *parser.predefined_ids;
-
-        if (!test_token(Token_Type::IDENTIFIER) && !(test_operator(Operator::TILDE)))
-        {
-            return nullptr;
-        }
-
-        CHECKPOINT_SETUP;
-
-        Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
-        path->parts = dynamic_array_create<Symbol_Lookup*>(1);
-        path->is_dot_call_lookup = false;
-
-        if (test_operator(Operator::TILDE)) {
-            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-            dynamic_array_push_back(&path->parts, lookup);
-            lookup->is_root_module = true;
-            lookup->name = ids.root_module;
-            advance_token();
-            node_finalize_range(upcast(lookup));
-        }
-
-        while (true)
-        {
-            // Add symbol-lookup Node
-            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-            dynamic_array_push_back(&path->parts, lookup);
-
-            // Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
-            // INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
-            if (test_token(Token_Type::IDENTIFIER)) {
-                lookup->name = get_token()->options.identifier;
-                advance_token();
-            }
-            else {
-                log_error("Expected identifier", token_range_make_offset(parser.state.pos, -1)); // Put error on the ~
-                lookup->name = ids.empty_string;
-            }
-            SET_END_RANGE(lookup);
-
-            if (test_operator(Operator::TILDE)) {
-                advance_token();
-            }
-            else {
-                break;
-            }
-        }
-
-        path->last = path->parts[path->parts.size - 1];
-        PARSE_SUCCESS(path);
-    }
-
-    Path_Lookup* parse_path_lookup_or_error(Node* parent)
-    {
-        auto& ids = parser.predefined_ids;
-
-        if (!test_token(Token_Type::IDENTIFIER) && !test_operator(Operator::TILDE)) 
-        {
-            Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
-            path->parts = dynamic_array_create<Symbol_Lookup*>(1);
-            path->is_dot_call_lookup = false;
-            Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
-            dynamic_array_push_back(&path->parts, lookup);
-            path->last = lookup;
-            lookup->name = ids->empty_string;
-            SET_END_RANGE(lookup);
-            SET_END_RANGE(path);
-            return path;
-        }
-        return parse_path_lookup(parent);
-    }
-
-    // Always returns node, even if no arguments were found...
-    // So one should always test for ( or { before calling this...
-    Call_Node* parse_call_node(Node* parent, Parenthesis_Type parenthesis)
-    {
-        auto call_node = allocate_base<Call_Node>(parent, Node_Type::CALL_NODE);
-        call_node->arguments = dynamic_array_create<Argument*>();
-        call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
-        call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
-
-        {
-            Parenthesis p;
-            p.type = parenthesis;
-            p.is_open = true;
-            if (!test_parenthesis(parenthesis_to_char(p))) {
-                log_error_range_offset("Expected parenthesis for parameters", 0);
-                PARSE_SUCCESS(call_node);
-            }
-        }
-
-        auto add_to_arguments = [](Node* parent, Node* child) 
-        {
-            auto args = downcast<Call_Node>(parent);
-            if (child->type == Node_Type::ARGUMENT) {
-                dynamic_array_push_back(&args->arguments, downcast<Argument>(child));
-            }
-            else if (child->type == Node_Type::SUBTYPE_INITIALIZER) {
-                dynamic_array_push_back(&args->subtype_initializers, downcast<Subtype_Initializer>(child));
-            }
-            else if (child->type == Node_Type::EXPRESSION) {
-                auto expr = downcast<Expression>(child);
-                assert(expr->type == Expression_Type::ERROR_EXPR, "");
-                dynamic_array_push_back(&args->uninitialized_tokens, expr);
-            }
-            else {
-                panic("");
-            }
-        };
-        parse_list_of_items(
-            upcast(call_node), 
-            parse_argument_or_subtype_initializer_or_uninitialzed, 
-            add_to_arguments, parenthesis, Operator::COMMA, false, false
-        );
-
-        PARSE_SUCCESS(call_node);
-    }
-
-    namespace Block_Items
-    {
-        Node* parse_module_item(AST::Node* parent);
-        Enum_Member_Node* parse_enum_member(AST::Node* parent);
-        Switch_Case* parse_switch_case(AST::Node* parent);
-        Structure_Member_Node* parse_struct_member(AST::Node* parent);
-        Definition_Symbol* parse_definition_symbol(AST::Node* parent);
-        Node* parse_statement_or_context_change(AST::Node* parent);
-    };
-
-    Node* wrapper_parse_module_item(AST::Node* parent) { return Block_Items::parse_module_item(parent); }
-    Node* wrapper_parse_enum_member(AST::Node* parent) { return upcast(Block_Items::parse_enum_member(parent)); }
-    Node* wrapper_parse_switch_case(AST::Node* parent) { return upcast(Block_Items::parse_switch_case(parent)); }
-    Node* wrapper_parse_struct_member(AST::Node* parent) { return upcast(Block_Items::parse_struct_member(parent)); }
-    Node* wrapper_parse_definition_symbol(AST::Node* parent) { return upcast(Block_Items::parse_definition_symbol(parent)); }
-    Node* wrapper_parse_statement_or_context_change(AST::Node* parent) { return Block_Items::parse_statement_or_context_change(parent); }
-    Node* wrapper_parse_expression_or_error(AST::Node* parent) { return upcast(parse_expression_or_error_expr(parent)); }
-    Node* wrapper_parse_parameter(AST::Node* parent) { return upcast(parse_parameter(parent)); }
-
-    void code_block_add_child(AST::Node* parent, AST::Node* child) 
-    {
-        AST::Code_Block* block = downcast<AST::Code_Block>(parent);
-        if (child->type == AST::Node_Type::STATEMENT) {
-            dynamic_array_push_back(&block->statements, downcast<AST::Statement>(child));
-        }
-        else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
-            dynamic_array_push_back(&block->custom_operators, downcast<AST::Custom_Operator_Node>(child));
-        }
-        else {
-            panic("");
-        }
-    }
-
-    void module_add_child(AST::Node* parent, AST::Node* child) 
-    {
-        AST::Module* module = downcast<AST::Module>(parent);
-        if (child->type == AST::Node_Type::DEFINITION) {
-            dynamic_array_push_back(&module->definitions, downcast<AST::Definition>(child));
-        }
-        else if (child->type == AST::Node_Type::IMPORT) {
-            dynamic_array_push_back(&module->import_nodes, downcast<Import>(child));
-        }
-        else if (child->type == AST::Node_Type::EXTERN_IMPORT) {
-            dynamic_array_push_back(&module->extern_imports, downcast<Extern_Import>(child));
-        }
-        else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
-            dynamic_array_push_back(&module->custom_operators, downcast<Custom_Operator_Node>(child));
-        }
-        else {
-            panic("");
-        }
-    }
-
-    bool stop_at_semicolon(Token& token, void* unused) {
-        return token.type == Token_Type::OPERATOR && token.options.op == Operator::SEMI_COLON;
-    }
-    
-
-
-
-    // Block Parsing
-    namespace Block_Items
-    {
-        Definition_Symbol* parse_definition_symbol(Node* parent) {
-            if (!test_token(Token_Type::IDENTIFIER)) {
-                return 0;
-            }
-            auto node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-            node->name = get_token()->options.identifier;
-            advance_token();
-            PARSE_SUCCESS(node);
-        }
-
-        AST::Extern_Import* parse_extern_import(AST::Node* parent)
-        {
-            auto& ids = *parser.predefined_ids;
-
-            auto start = parser.state.pos;
-            if (!test_keyword(Keyword::EXTERN)) {
-                return 0;
-            }
-
-            CHECKPOINT_SETUP;
-            auto result = allocate_base<Extern_Import>(parent, Node_Type::EXTERN_IMPORT);
-            advance_token();
-
-            if (test_token(Token_Type::IDENTIFIER))
-            {
-                String* id = get_token()->options.identifier;
-                if (id == ids.function) {
-                    result->type = Extern_Type::FUNCTION;
-                }
-                else if (id == ids.global) {
-                    result->type = Extern_Type::GLOBAL;
-                }
-                else if (id == ids.lib) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::LIBRARY;
-                }
-                else if (id == ids.lib_dir) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::LIBRARY_DIRECTORY;
-                }
-                else if (id == ids.source) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::SOURCE_FILE;
-                }
-                else if (id == ids.header) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::HEADER_FILE;
-                }
-                else if (id == ids.header_dir) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::INCLUDE_DIRECTORY;
-                }
-                else if (id == ids.definition) {
-                    result->type = Extern_Type::COMPILER_SETTING;
-                    result->options.setting.type = Extern_Compiler_Setting::DEFINITION;
-                }
-                else {
-                    log_error_range_offset("Identifier after extern must be one of: function, global, source, lib, lib_dir", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-            }
-            else if (test_keyword(Keyword::STRUCT)) {
-                result->type = Extern_Type::STRUCT;
-            }
-            else {
-                log_error_range_offset_with_start("Expected extern-type after extern keyword!", start, 1);
-                result->type = Extern_Type::INVALID;
-                return result;
-            }
-            advance_token();
-
-            switch (result->type)
-            {
-            case Extern_Type::FUNCTION: 
-            case Extern_Type::GLOBAL: 
-            {
-                if (!test_token(Token_Type::IDENTIFIER)) {
-                    log_error_range_offset("Expected identifier", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                String* id = get_token()->options.identifier;
-                advance_token();
-
-                if (!test_operator(Operator::COLON)) {
-                    log_error_range_offset("Expected : after identifier", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                advance_token();
-
-                AST::Expression* expr = parse_expression_or_error_expr(upcast(result));
-
-                if (result->type == Extern_Type::FUNCTION) {
-                    result->options.function.id = id;
-                    result->options.function.type_expr = expr;
-                }
-                else {
-                    result->options.global.id = id;
-                    result->options.global.type_expr = expr;
-                }
-                break;
-            }
-            case Extern_Type::STRUCT: {
-                result->options.struct_type_expr = parse_expression_or_error_expr(upcast(result));
-                break;
-            }
-            case Extern_Type::COMPILER_SETTING:
-            {
-                if (!test_token(Token_Type::LITERAL)) {
-                    log_error_range_offset("Expected literal", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                if (get_token()->options.literal_value.type != Literal_Type::STRING) {
-                    log_error_range_offset("Expected string_literal", 1);
-                    result->type = Extern_Type::INVALID;
-                    return result;
-                }
-                String* path = get_token()->options.literal_value.options.string;
-                advance_token();
-                result->options.setting.value = path;
-                break;
-            }
-            default: panic("");
-            }
-
-            return result;
-        }
-
-        // Block Item functions
-        Import* parse_import(Node* parent)
-        {
-            auto& ids = *parser.predefined_ids;
-
-            CHECKPOINT_SETUP;
-            if (!test_keyword_offset(Keyword::IMPORT, 0)) {
-                CHECKPOINT_EXIT;
-                return 0;
-            }
-
-            auto result = allocate_base<Import>(parent, Node_Type::IMPORT);
-            result->alias_name = optional_make_failure<Definition_Symbol*>();
-            result->options.path = nullptr;
-            result->import_type = Import_Type::SYMBOLS;
-            result->operator_type = Import_Operator::SINGLE_SYMBOL;
-            advance_token();
-
-            if (test_token(Token_Type::IDENTIFIER)) 
-            {
-                auto id = get_token()->options.identifier;
-                if (id == ids.operators) {
-                    result->import_type = Import_Type::OPERATORS;
-                    advance_token();
-                }
-                else if (id == ids.dot_calls) {
-                    result->import_type = Import_Type::DOT_CALLS;
-                    advance_token();
-                }
-            }
-
-            // Special path for import ~* and import ~**, because they are custom tokens
-            if (test_operator(Operator::TILDE_STAR) || test_operator(Operator::TILDE_STAR_STAR)) 
-            {
-                result->operator_type = 
-                    test_operator(Operator::TILDE_STAR) ? Import_Operator::MODULE_IMPORT : Import_Operator::MODULE_IMPORT_TRANSITIVE;
-
-                Path_Lookup* path_lookup = allocate_base<Path_Lookup>(upcast(result), Node_Type::PATH_LOOKUP);
-                path_lookup->is_dot_call_lookup = false;
-                path_lookup->parts = dynamic_array_create<Symbol_Lookup*>(1);
-
-                Symbol_Lookup* symbol_lookup = allocate_base<Symbol_Lookup>(upcast(path_lookup), Node_Type::SYMBOL_LOOKUP);
-                symbol_lookup->is_root_module = true;
-                symbol_lookup->name = ids.root_module;
-                advance_token();
-
-                dynamic_array_push_back(&path_lookup->parts, symbol_lookup);
-                path_lookup->last = symbol_lookup;
-                node_finalize_range(upcast(symbol_lookup));
-                node_finalize_range(upcast(path_lookup));
-
-                result->options.path = path_lookup;
-                PARSE_SUCCESS(result);
-            }
-
-            // Check if it's a file import
-            if (test_token(Token_Type::LITERAL) && get_token()->options.literal_value.type == Literal_Type::STRING) {
-                result->operator_type = Import_Operator::FILE_IMPORT;
-                result->options.file_name = get_token()->options.literal_value.options.string;
-                advance_token();
-            }
-            else 
-            {
-                result->operator_type = Import_Operator::SINGLE_SYMBOL;
-                result->options.path = parse_path_lookup_or_error(upcast(result));
-                if (test_operator(Operator::TILDE_STAR)) {
-                    result->operator_type = Import_Operator::MODULE_IMPORT;
-                    advance_token();
-                }
-                else if (test_operator(Operator::TILDE_STAR_STAR)) {
-                    result->operator_type = Import_Operator::MODULE_IMPORT_TRANSITIVE;
-                    advance_token();
-                }
-            }
-
-            if (test_keyword(Keyword::AS) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
-                advance_token();
-                result->alias_name = optional_make_success(parse_definition_symbol(upcast(result)));
-            }
-            PARSE_SUCCESS(result);
-        }
-
-        Custom_Operator_Node* parse_context_change(Node* parent)
-        {
-            auto& ids = *parser.predefined_ids;
-
-            if (!test_token(Token_Type::KEYWORD)) {
-                return nullptr;
-            }
-            auto keyword = get_token()->options.keyword;
-            Custom_Operator_Type custom_op_type;
-            switch (keyword)
-            {
-            case Keyword::ADD_ARRAY_ACCESS: custom_op_type = Custom_Operator_Type::ARRAY_ACCESS; break;
-            case Keyword::ADD_CAST: custom_op_type = Custom_Operator_Type::CAST; break;
-            case Keyword::ADD_UNOP: custom_op_type = Custom_Operator_Type::UNOP; break;
-            case Keyword::ADD_BINOP: custom_op_type = Custom_Operator_Type::BINOP; break;
-            case Keyword::ADD_ITERATOR: custom_op_type = Custom_Operator_Type::ITERATOR; break;
-            default: return nullptr;
-            }
-
-		    CHECKPOINT_SETUP;
-            auto result = allocate_base<Custom_Operator_Node>(parent, Node_Type::CONTEXT_CHANGE);
-            advance_token();
-            result->type = custom_op_type;
-            result->call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
-            PARSE_SUCCESS(result);
-        }
-
-        Definition* parse_definition(Node* parent)
-        {
-            if (!test_token(Token_Type::IDENTIFIER)) {
-                return nullptr;
-            }
-                
-            CHECKPOINT_SETUP;
-
-            auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
-            result->is_comptime = false;
-            result->symbols = dynamic_array_create<Definition_Symbol*>(1);
-            result->types = dynamic_array_create<AST::Expression*>(1);
-            result->values = dynamic_array_create<AST::Expression*>(1);
-
-            // Parse comma seperated list of identifiers
-            auto found_definition_operator = [](Token& token, void* unused) -> bool {
-                return token.type == Token_Type::OPERATOR &&
-                    (token.options.op == Operator::COLON ||
-                        token.options.op == Operator::DEFINE_COMPTIME ||
-                        token.options.op == Operator::DEFINE_INFER ||
-                        token.options.op == Operator::SEMI_COLON);
-            };
-            auto definition_add_symbol = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Definition>(parent)->symbols, downcast<Definition_Symbol>(child));
-            };
-            auto definition_add_type = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Definition>(parent)->types, downcast<Expression>(child));
-            };
-            auto definition_add_value = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Definition>(parent)->values, downcast<Expression>(child));
-            };
-            parse_list_single_line(upcast(result), wrapper_parse_definition_symbol, definition_add_symbol, found_definition_operator, nullptr, Operator::COMMA);
-
-            // Check if there is a colon :, or a := or an :: or :=*
-            if (test_operator(Operator::COLON))
-            {
-                advance_token();
-
-                // Note: Parse types (At least one value is guaranteed by parse_expression or error)
-                auto found_value_start = [](Token& token, void* unused) -> bool {
-                    return token.type == Token_Type::OPERATOR &&
-                        (token.options.op == Operator::COLON ||
-                         token.options.op == Operator::ASSIGN ||
-                         token.options.op == Operator::SEMI_COLON);
-                };
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_type, found_value_start, nullptr, Operator::COMMA);
-
-                if (test_operator(Operator::ASSIGN)) { // : ... =
-                    result->is_comptime = false;
-                    advance_token();
-                }
-                else if (test_operator(Operator::COLON)) { // : ... :
-                    result->is_comptime = true;
-                    advance_token();
-                }
-                else {
-                    PARSE_SUCCESS(result);
-                }
-            }
-            else if (test_operator(Operator::DEFINE_COMPTIME)) { // x :: 
-                advance_token();
-                result->is_comptime = true;
-            }
-            else if (test_operator(Operator::DEFINE_INFER)) { // x :=
-                advance_token();
-                result->is_comptime = false;
-            }
-            else {
-                CHECKPOINT_EXIT;
-            }
-            
-            // Parse values (Or add at least one error expression) 
-            // Note: Not sure if I want to stop on semicolon, but I think I usually want to stop there
-            parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, definition_add_value, stop_at_semicolon, nullptr, Operator::COMMA);
-
-            PARSE_SUCCESS(result);
-        }
-
-        Structure_Member_Node* parse_struct_member(Node* parent)
-        {
-            CHECKPOINT_SETUP;
-            if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-
-            auto result = allocate_base<Structure_Member_Node>(parent, AST::Node_Type::STRUCT_MEMBER);
-            result->is_expression = true;
-            result->options.expression = nullptr;
-            result->name = get_token()->options.identifier;
-            advance_token();
-
-            if (!test_operator(Operator::COLON)) {
-                log_error_range_offset("Expected follow block or : after struct member name!", 0);
-                auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-                error_expr->type = Expression_Type::ERROR_EXPR;
-                node_finalize_range(upcast(error_expr));
-                result->options.expression = error_expr;
-                PARSE_SUCCESS(result);
-            }
-            advance_token();
-
-            if (on_follow_block()) {
-                result->is_expression = false;
-                result->options.subtype_members = dynamic_array_create<Structure_Member_Node*>();
-                auto add_to_subtype = [](Node* parent, Node* child) {
-                    dynamic_array_push_back(&downcast<Structure_Member_Node>(parent)->options.subtype_members, downcast<Structure_Member_Node>(child));
-                };
-                parse_list_of_items(upcast(result), wrapper_parse_struct_member, add_to_subtype, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false);
-                PARSE_SUCCESS(result);
-            }
-
-            result->options.expression = parse_expression_or_error_expr(upcast(result));
-            PARSE_SUCCESS(result);
-        }
-
-        AST::Node* parse_module_item(AST::Node* parent)
-        {
-            auto definition = parse_definition(parent);
-            if (definition != 0) {
-                return AST::upcast(definition);
-            }
-            auto import_node = parse_import(parent);
-            if (import_node != 0) {
-                return AST::upcast(import_node);
-            }
-            auto context_change = parse_context_change(parent);
-            if (context_change != 0) {
-                return AST::upcast(context_change);
-            }
-            auto extern_import = parse_extern_import(parent);
-            if (extern_import != 0) {
-                return AST::upcast(extern_import);
-            }
-            return nullptr;
-        }
-
-        Switch_Case* parse_switch_case(Node* parent)
-        {
-            auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
-            result->value = optional_make_failure<Expression*>();
-            result->variable_definition = optional_make_failure<AST::Definition_Symbol*>();
-
-            // Check for default case
-            if (test_keyword(Keyword::DEFAULT)) {
-                advance_token();
-            }
-            else
-            {
-                result->value.available = true;
-                result->value.value = parse_expression_or_error_expr(upcast(result));
-                if (test_operator(Operator::ARROW)) 
-                {
-                    advance_token();
-                    if (test_token(Token_Type::IDENTIFIER)) {
-                        result->variable_definition = optional_make_success(parse_definition_symbol(upcast(result)));
-                    }
-                    else {
-                        log_error_range_offset("Expected identifier after arrow", 0);
-                    }
-                }
-            }
-
-            result->block = parse_code_block(&result->base, 0);
-            // Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
-            assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
-            result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
-            PARSE_SUCCESS(result);
-        }
-
-        // This function exists because for loops only allow assignments (+ binop assign) + expression in their last part...
-        AST::Statement* parse_assignment_or_expression_statement(Node* parent)
-        {
-            auto& ids = *parser.predefined_ids;
-
-            CHECKPOINT_SETUP;
-            auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
-
-            auto expr = parse_expression(&result->base);
-            if (expr == 0) {
-                CHECKPOINT_EXIT;
-            }
-
-            auto add_to_left_side = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Statement>(parent)->options.assignment.left_side, downcast<Expression>(child));
-            };
-            auto add_to_right_side = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Statement>(parent)->options.assignment.right_side, downcast<Expression>(child));
-            };
-
-            if (test_operator(Operator::COMMA))
-            {
-                // Assume that it's a multi-assignment
-                result->type = Statement_Type::ASSIGNMENT;
-                result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
-                result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                dynamic_array_push_back(&result->options.assignment.left_side, expr);
-                advance_token();
-
-                // Parse remaining left_side expressions
-                auto is_assign = [](Token& token, void* userdata) -> bool {
-                    return token.type == Token_Type::OPERATOR && (token.options.op == Operator::ASSIGN || token.options.op == Operator::SEMI_COLON); 
-                };
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_left_side, is_assign, nullptr, Operator::COMMA);
-
-                // Check if assignment found, otherwise error
-                if (!test_operator(Operator::ASSIGN)) {
-                    CHECKPOINT_EXIT;
-                }
-                advance_token();
-
-                // Parse right side
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, stop_at_semicolon, nullptr, Operator::COMMA);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_operator(Operator::ASSIGN))
-            {
-                result->type = Statement_Type::ASSIGNMENT;
-                result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
-                result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
-                dynamic_array_push_back(&result->options.assignment.left_side, expr);
-                advance_token();
-
-                // Parse right side
-                parse_list_single_line(upcast(result), wrapper_parse_expression_or_error, add_to_right_side, stop_at_semicolon, nullptr, Operator::COMMA);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_operator(Operator::ASSIGN_ADD) || test_operator(Operator::ASSIGN_SUB) ||
-                test_operator(Operator::ASSIGN_MULT) || test_operator(Operator::ASSIGN_DIV) || test_operator(Operator::ASSIGN_MODULO))
-            {
-                result->type = Statement_Type::BINOP_ASSIGNMENT;
-                auto& assign = result->options.binop_assignment;
-                if (test_operator(Operator::ASSIGN_ADD)) {
-                    assign.binop = Binop::ADDITION;
-                }
-                else if (test_operator(Operator::ASSIGN_SUB)) {
-                    assign.binop = Binop::SUBTRACTION;
-                }
-                else if (test_operator(Operator::ASSIGN_MULT)) {
-                    assign.binop = Binop::MULTIPLICATION;
-                }
-                else if (test_operator(Operator::ASSIGN_DIV)) {
-                    assign.binop = Binop::DIVISION;
-                }
-                else if (test_operator(Operator::ASSIGN_MODULO)) {
-                    assign.binop = Binop::MODULO;
-                }
-                else {
-                    panic("");
-                }
-                advance_token();
-
-                assign.left_side = expr;
-                assign.right_side = parse_expression_or_error_expr(upcast(result));
-                PARSE_SUCCESS(result);
-            }
-
-            result->type = Statement_Type::EXPRESSION_STATEMENT;
-            result->options.expression = expr;
-            PARSE_SUCCESS(result);
-        }
-
-        AST::Statement* parse_statement(Node * parent)
-        {
-            auto& ids = *parser.predefined_ids;
-
-            CHECKPOINT_SETUP;
-            auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
-
-            // Check for import
-            if (test_keyword(Keyword::IMPORT)) {
-                auto import = parse_import(upcast(result));
-                if (import == 0) {
-                    CHECKPOINT_EXIT;
-                }
-                result->type = Statement_Type::IMPORT;
-                result->options.import_node = import;
-                PARSE_SUCCESS(result);
-            }
-
-            {
-                // Check for Anonymous Blocks with identifiers
-                // INFO: This needs to be done before definition
-                auto code = parser.code;
-                auto& pos = parser.state.pos;
-
-                bool next_line_has_indent = false;
-                if (pos.line + 1 < code->line_count) {
-                    if (source_code_get_line(code, pos.line + 1)->indentation > parser.state.line->indentation) {
-                        next_line_has_indent = true;
-                    }
-                }
-
-                if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::COLON, 1) && next_line_has_indent)
-                {
-                    auto block_id = optional_make_success(get_token()->options.identifier);
-                    Code_Block* block = nullptr;
-                    if (remaining_line_tokens() == 2) {
-                        block = parse_code_block(&result->base, 0);
-                    }
-                    else if (test_parenthesis_offset('{', 2)) {
-                        advance_token();
-                        advance_token();
-                        block = parse_code_block(&result->base, 0);
-                    }
-
-                    if (block != nullptr) {
-                        result->type = Statement_Type::BLOCK;
-                        result->options.block = block;
-                        result->options.block->block_id = block_id;
-                        PARSE_SUCCESS(result);
-                    }
-                }
-            }
-
-            {
-                auto definition = parse_definition(&result->base);
-                if (definition != 0) {
-                    result->type = Statement_Type::DEFINITION;
-                    result->options.definition = definition;
-                    PARSE_SUCCESS(result);
-                }
-            }
-
-            if (test_token(Token_Type::KEYWORD))
-            {
-                switch (get_token(0)->options.keyword)
-                {
-                case Keyword::IF:
-                {
-                    advance_token();
-                    result->type = Statement_Type::IF_STATEMENT;
-                    auto& if_stat = result->options.if_statement;
-                    if_stat.condition = parse_expression_or_error_expr(&result->base);
-                    if_stat.block = parse_code_block(&result->base, upcast(if_stat.condition));
-                    if_stat.else_block.available = false;
-
-                    auto last_if_stat = result;
-                    // Parse else-if chain
-                    while (test_keyword_offset(Keyword::ELSE, 0) && test_keyword_offset(Keyword::IF, 1))
-                    {
-                        auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
-                        implicit_else_block->statements = dynamic_array_create<Statement*>(1);
-                        implicit_else_block->block_id = optional_make_failure<String*>();
-
-                        auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
-                        advance_token();
-                        advance_token();
-                        new_if_stat->type = Statement_Type::IF_STATEMENT;
-                        auto& new_if = new_if_stat->options.if_statement;
-                        new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
-                        new_if.block = parse_code_block(&last_if_stat->base, upcast(new_if.condition));
-                        new_if.else_block.available = false;
-                        SET_END_RANGE(implicit_else_block);
-                        SET_END_RANGE(new_if_stat);
-
-                        dynamic_array_push_back(&implicit_else_block->statements, new_if_stat);
-                        last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
-                        last_if_stat = new_if_stat;
-
-                    }
-                    if (test_keyword_offset(Keyword::ELSE, 0))
-                    {
-                        advance_token();
-                        last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
-                    }
-                    // NOTE: Here we return result, not last if stat
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::WHILE:
-                {
-                    advance_token();
-                    result->type = Statement_Type::WHILE_STATEMENT;
-                    auto& loop = result->options.while_statement;
-                    loop.condition = parse_expression_or_error_expr(&result->base);
-                    loop.block = parse_code_block(&result->base, upcast(loop.condition));
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::FOR:
-                {
-                    advance_token();
-                    result->type = Statement_Type::FOR_LOOP;
-                    bool error_logged = false;
-
-                    // Parse variable name
-                    AST::Definition_Symbol* loop_variable = parse_definition_symbol(upcast(result));
-                    if (loop_variable == 0) {
-                        auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                        definition_node->name = ids.invalid_symbol_name;
-                        node_finalize_range(upcast(definition_node));
-                        loop_variable = definition_node;
-                        if (!error_logged) {
-                            log_error_range_offset("Expected loop variable identifier", 0);
-                            error_logged = true;
-                        }
-                    }
-
-                    // Seperate for-each and normal for loop
-                    if (test_operator(Operator::COMMA) || test_keyword(Keyword::IN_KEYWORD)) 
-                    {
-                        result->type = Statement_Type::FOREACH_LOOP;
-                        auto& loop = result->options.foreach_loop;
-                        loop.loop_variable_definition = loop_variable;
-
-                        // Parse index variable
-                        loop.index_variable_definition = optional_make_failure<AST::Definition_Symbol*>();
-                        if (test_operator(Operator::COMMA)) 
-                        {
-                            loop.index_variable_definition.available = true;
-                            advance_token();
-                            loop.index_variable_definition.value = parse_definition_symbol(upcast(result));
-                            if (loop.index_variable_definition.value == 0) {
-                                auto definition_node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
-                                definition_node->name = ids.invalid_symbol_name;
-                                node_finalize_range(upcast(definition_node));
-                                loop.index_variable_definition.value = definition_node;
-                                if (!error_logged) {
-                                    log_error_range_offset("Expected index variable identifier", 0);
-                                    error_logged = true;
-                                }
-                            }
-                        }
-
-                        if (test_keyword(Keyword::IN_KEYWORD)) {
-                            advance_token();
-                        }
-                        else {
-                            if (!error_logged) {
-                                log_error_range_offset("Expected in keyword for foreach loop", 0);
-                                error_logged = true;
-                            }
-                        }
-
-                        loop.expression = parse_expression_or_error_expr(upcast(result));
-
-                        // Parse body
-                        loop.body_block = parse_code_block(upcast(result), upcast(loop_variable));
-                        if (!loop.body_block->block_id.available) {
-                            loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
-                        }
-                        PARSE_SUCCESS(result);
-                    }
-                    else
-                    {
-                        auto& loop = result->options.for_loop;
-                        loop.loop_variable_definition = loop_variable;
-
-                        // Returns true if semicolon was found (Otherwise no semicolon until end of line...)
-                        auto to_next_semicolon = [&]()->bool {
-                            if (test_operator(Operator::SEMI_COLON)) {
-                                return true;
-                            }
-                            auto pos_opt = search_token(
-                                parser.code,
-                                parser.state.pos,
-                                [](Token* token, void* userdata) -> bool {
-                                    return token->type == Token_Type::OPERATOR && token->options.op == Operator::SEMI_COLON;
-                                },
-                                nullptr
-                            );
-                            if (!pos_opt.available) return false;
-                            log_error_to_pos("Un-parsable tokens until expected semicolon", pos_opt.value);
-                            error_logged = true;
-                            parser.state.pos = pos_opt.value;
-                            return true;
-                        };
-
-                        // Parse initial value
-                        if (test_operator(Operator::DEFINE_INFER)) {
-                            loop.loop_variable_type.available = false;
-                            advance_token();
-                            loop.initial_value = parse_expression_or_error_expr(upcast(result));
-                        }
-                        else if (test_operator(Operator::COLON)) {
-                            advance_token();
-                            loop.loop_variable_type.available = true;
-                            loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
-
-                            if (test_operator(Operator::ASSIGN)) {
-                                advance_token();
-                                loop.initial_value = parse_expression_or_error_expr(upcast(result));
-                            }
-                            else {
-                                if (!error_logged) {
-                                    log_error_range_offset("Expected initial value assignment (e.g. = 5) in for loop", 0);
-                                    error_logged = true;
-                                }
-                                auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                                error_expr->type = Expression_Type::ERROR_EXPR;
-                                node_finalize_range(upcast(error_expr));
-                                loop.initial_value = error_expr;
-                            }
-                        }
-                        else {
-                            // Set initial value to error-expr, find next semicolon or exit...
-                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                            error_expr->type = Expression_Type::ERROR_EXPR;
-                            node_finalize_range(upcast(error_expr));
-                            loop.loop_variable_type.available = false;
-                            loop.initial_value = error_expr;
-                        }
-
-                        // Parse loop condition
-                        if (to_next_semicolon()) {
-                            advance_token();
-                            loop.condition = parse_expression_or_error_expr(upcast(result));
-                        }
-                        else {
-                            if (!error_logged) {
-                                log_error_range_offset("Expected Semicolon", 0);
-                                error_logged = true;
-                            }
-                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                            error_expr->type = Expression_Type::ERROR_EXPR;
-                            node_finalize_range(upcast(error_expr));
-                            loop.condition = error_expr;
-                        }
-
-                        // Parse iteration step
-                        if (to_next_semicolon()) {
-                            advance_token();
-                            loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
-                        }
-                        else {
-                            loop.increment_statement = 0;
-                            if (!error_logged) {
-                                log_error_range_offset("Expected Semicolon", 0);
-                                error_logged = true;
-                            }
-                        }
-
-                        if (loop.increment_statement == 0) {
-                            if (!error_logged) {
-                                log_error_range_offset("Expected argument_expression or assignment as for-loop increment", 0);
-                                error_logged = true;
-                            }
-                            auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-                            error_expr->type = Expression_Type::ERROR_EXPR;
-                            node_finalize_range(upcast(error_expr));
-
-                            auto error_statement = allocate_base<AST::Statement>(parent, AST::Node_Type::STATEMENT);
-                            error_statement->type = Statement_Type::EXPRESSION_STATEMENT;
-                            error_statement->options.expression = error_expr;
-                            node_finalize_range(upcast(error_statement));
-
-                            loop.increment_statement = error_statement;
-                        }
-
-                        // Parse body
-                        loop.body_block = parse_code_block(upcast(result), upcast(loop_variable));
-                        if (!loop.body_block->block_id.available) {
-                            loop.body_block->block_id = optional_make_success(loop.loop_variable_definition->name);
-                        }
-                        PARSE_SUCCESS(result);
-                    }
-                    panic("");
-                    CHECKPOINT_EXIT;
-                }
-                case Keyword::DEFER:
-                {
-                    advance_token();
-                    result->type = Statement_Type::DEFER;
-
-                    // Check if single statement parsing is allowed
-                    bool parse_single_statement = false;
-                    int remaining_tokens = remaining_line_tokens();
-                    if (remaining_tokens != 0)
-                    {
-                        parse_single_statement = true;
-
-                        // Check if defer is followed by a block identifier + block, in which case we just parse a block
-                        if (!(test_token(Token_Type::IDENTIFIER) && 
-                            test_operator_offset(Operator::COLON, 1) &&
-                            remaining_tokens == 2))
-                        {
-                            auto& pos = parser.state.pos;
-                            auto& code = parser.unit->code;
-                            bool has_follow_block = false;
-                            if (pos.line + 1 >= code->line_count) {
-                                Source_Line* next_line = source_code_get_line(code, pos.line + 1);
-                                if (next_line->indentation > parser.state.line->indentation) {
-                                    has_follow_block = true;
-                                }
-                            }
-                            if (has_follow_block) {
-								parse_single_statement = false;
-                            }
-                        }
-                    }
-
-                    if (parse_single_statement)
-                    {
-                        AST::Statement* statement = parse_statement(upcast(result));
-                        if (statement != nullptr)
-                        {
-                            Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
-                            code_block->statements = dynamic_array_create<Statement*>(1);
-                            code_block->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
-                            code_block->block_id = optional_make_failure<String*>();
-
-                            dynamic_array_push_back(&code_block->statements, statement);
-                            statement->base.parent = upcast(code_block);
-                            code_block->base.range = statement->base.range;
-                            code_block->base.bounding_range = statement->base.bounding_range;
-
-                            // Generate new code block, set parent/child correctly, set ranges correctly
-                            result->options.defer_block = code_block;
-                            PARSE_SUCCESS(result);
-                        }
-                    }
-
-                    result->options.defer_block = parse_code_block(&result->base, 0);
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::DEFER_RESTORE:
-                {
-                    advance_token();
-                    result->type = Statement_Type::DEFER_RESTORE;
-                    result->options.defer_restore.left_side = parse_expression_or_error_expr(upcast(result));
-                    if (!test_operator(Operator::ASSIGN)) {
-                        auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-                        log_error_range_offset("Expected assignment after argument_expression", 0);
-                        error_expr->type = Expression_Type::ERROR_EXPR;
-                        node_finalize_range(upcast(error_expr));
-                        result->options.defer_restore.right_side = error_expr;
-                        PARSE_SUCCESS(result);
-                    }
-
-                    advance_token();
-                    result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::SWITCH:
-                {
-                    advance_token();
-                    result->type = Statement_Type::SWITCH_STATEMENT;
-                    auto& switch_stat = result->options.switch_statement;
-                    switch_stat.condition = parse_expression_or_error_expr(&result->base);
-                    switch_stat.cases = dynamic_array_create<Switch_Case*>(1);
-                    switch_stat.label = parse_block_label_or_use_related_node_id(upcast(switch_stat.condition));
-                    auto add_to_switch = [](Node* parent, Node* child) {
-                        dynamic_array_push_back(&downcast<Statement>(parent)->options.switch_statement.cases, downcast<Switch_Case>(child));
-                    };
-                    parse_list_of_items(upcast(result), wrapper_parse_switch_case, add_to_switch, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false);
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::DELETE_KEYWORD: {
-                    advance_token();
-                    result->type = Statement_Type::DELETE_STATEMENT;
-                    result->options.delete_expr = parse_expression_or_error_expr(&result->base);
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::RETURN: {
-                    advance_token();
-                    result->type = Statement_Type::RETURN_STATEMENT;
-                    auto expr = parse_expression(&result->base);
-                    result->options.return_value.available = false;
-                    if (expr != 0) {
-                        result->options.return_value = optional_make_success(expr);
-                    }
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::CONTINUE: {
-                    advance_token();
-                    result->type = Statement_Type::CONTINUE_STATEMENT;
-                    result->options.continue_name = optional_make_failure<String*>();
-                    if (test_token(Token_Type::IDENTIFIER)) {
-                        result->options.continue_name = optional_make_success(get_token(0)->options.identifier);
-                        advance_token();
-                    }
-                    PARSE_SUCCESS(result);
-                }
-                case Keyword::BREAK: {
-                    advance_token();
-                    result->type = Statement_Type::BREAK_STATEMENT;
-                    result->options.break_name = optional_make_failure<String*>();
-                    if (test_token(Token_Type::IDENTIFIER)) {
-                        result->options.break_name = optional_make_success(get_token(0)->options.identifier);
-                        advance_token();
-                    }
-                    PARSE_SUCCESS(result);
-                }
-                }
-            }
-
-            // Otherwise try to parse expression or assignment statement
-            {
-                // Delete result, which is an allocated statement node
-                result->type = Statement_Type::IMPORT; // So that rollback doesn't read uninitialized values
-                parser_rollback(checkpoint);
-
-                return parse_assignment_or_expression_statement(parent);
-            }
-        }
-
-        AST::Node* parse_statement_or_context_change(Node* parent)
-        {
-            // Check for context change
-            auto context_change = parse_context_change(parent);
-            if (context_change != 0) {
-                return upcast(context_change);
-            }
-
-            return upcast(parse_statement(parent));
-        }
-
-        Enum_Member_Node* parse_enum_member(Node* parent)
-        {
-            if (!test_token(Token_Type::IDENTIFIER)) {
-                return 0;
-            }
-
-            CHECKPOINT_SETUP;
-            auto result = allocate_base<Enum_Member_Node>(parent, Node_Type::ENUM_MEMBER);
-            result->name = get_token()->options.identifier;
-            advance_token();
-            if (test_operator(Operator::DEFINE_COMPTIME)) {
-                advance_token();
-                result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
-            }
-            PARSE_SUCCESS(result);
-        }
-    };
-
-    // Parsing
-    Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
-    {
-        Optional<String*> result = optional_make_failure<String*>();
-        if (test_token(Token_Type::IDENTIFIER), test_operator_offset(Operator::COLON, 1)) {
-            result = optional_make_success(get_token(0)->options.identifier);
-            advance_token();
-            advance_token();
-        }
-        else if (related_node != 0) 
-        {
-            if (related_node->type == AST::Node_Type::EXPRESSION) {
-                auto expr = downcast<AST::Expression>(related_node);
-                if (expr->type == AST::Expression_Type::PATH_LOOKUP) {
-                    result = optional_make_success<String*>(expr->options.path_lookup->last->name);
-                }
-            }
-            else if (related_node->type == AST::Node_Type::DEFINITION_SYMBOL) {
-                result = optional_make_success<String*>(downcast<AST::Definition_Symbol>(related_node)->name);
-            }
-        }
-        return result;
-    }
-
-    // Always returns success, but if there is no follow block, there are errors
-    Code_Block* parse_code_block(Node* parent, AST::Node* related_node)
-    {
-        auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
-        result->statements = dynamic_array_create<Statement*>();
-        result->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
-        result->block_id = parse_block_label_or_use_related_node_id(related_node);
-        parse_list_of_items(
-            upcast(result), wrapper_parse_statement_or_context_change, code_block_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, true
-        );
-        PARSE_SUCCESS(result);
-    }
-
-    Argument* parse_argument(Node* parent)
-    {
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Argument>(parent, Node_Type::ARGUMENT);
-        if (test_token(Token_Type::IDENTIFIER) && test_operator_offset(Operator::ASSIGN, 1)) {
-            result->name = optional_make_success(get_token()->options.identifier);
-            advance_token();
-            advance_token();
-            result->value = parse_expression_or_error_expr(&result->base);
-            PARSE_SUCCESS(result);
-        }
-        result->value = parse_expression_or_error_expr(&result->base);
-        // Note: This only works because parse arguments is only called in once in arguments node
-        // result->value = parse_expression(&result->base);
-        // if (result->value == 0) CHECKPOINT_EXIT;
-        PARSE_SUCCESS(result);
-    }
-
-    Subtype_Initializer* parse_subtype_initializer(Node* parent)
-    {
-        if (!(test_operator(Operator::DOT) &&
-            ((test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Operator::ASSIGN, 2)) ||
-             (test_operator_offset(Operator::ASSIGN, 1))))) 
-        {
-            return 0;
-        }
-
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Subtype_Initializer>(parent, Node_Type::SUBTYPE_INITIALIZER);
-        advance_token();
-
-        // Parser name if available
-        result->name.available = false;
-        if (test_token(Token_Type::IDENTIFIER)) {
-            result->name = optional_make_success(get_token(0)->options.identifier);
-            advance_token();
-        }
-
-        assert(test_operator(Operator::ASSIGN), "Should be true after previous if"); 
-        advance_token();  // Skip =
-
-        result->call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
-        PARSE_SUCCESS(result);
-    }
-
-    Parameter* parse_parameter(Node* parent)
-    {
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
-        result->is_comptime = false;
-        result->is_return_type = false;
-        result->default_value.available = false;
-        result->type = optional_make_failure<AST::Expression*>();
-        result->default_value = optional_make_failure<AST::Expression*>();
-
-        // Parse identifier and optional mutators
-        if (test_operator(Operator::DOLLAR)) {
-            result->is_comptime = true;
-            advance_token();
-        }
-        if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
-        result->name = get_token(0)->options.identifier;
-        advance_token();
-
-        if (!test_operator(Operator::COLON)) {
-            PARSE_SUCCESS(result);
-        }
-
-        advance_token(); // Skip :
-        result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
-
-        if (test_operator(Operator::ASSIGN)) {
-            advance_token();
-            result->default_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
-        }
-        PARSE_SUCCESS(result);
-    }
-
-    Expression* parse_single_expression_no_postop(Node* parent)
-    {
-        auto& ids = *parser.predefined_ids;
-
-        // DOCU: Parses Pre-Ops + Bases, but no postops
-        // --*x   -> is 3 pre-ops + base x
-        CHECKPOINT_SETUP;
-        auto result = allocate_base<Expression>(parent, Node_Type::EXPRESSION);
-
-        // Unops
-        if (test_token(Token_Type::OPERATOR))
-        {
-            Unop unop;
-            bool valid = true;
-            switch (get_token(0)->options.op)
-            {
-            case Operator::SUBTRACTION: unop = Unop::NEGATE; break;
-            case Operator::NOT: unop = Unop::NOT; break;
-            default: valid = false;
-            }
-
-            if (valid) {
-                advance_token();
-                result->type = Expression_Type::UNARY_OPERATION;
-                result->options.unop.type = unop;
-                result->options.unop.expr = parse_single_expression_or_error(&result->base);
-                PARSE_SUCCESS(result);
-            }
-        }
-
-        if (test_operator(Operator::MULTIPLY) || test_operator(Operator::OPTIONAL_POINTER)) {
-            result->type = Expression_Type::POINTER_TYPE;
-            result->options.pointer_type.is_optional = test_operator(Operator::OPTIONAL_POINTER);
-            advance_token();
-            result->options.pointer_type.child_type = parse_single_expression_or_error(&result->base);
-            PARSE_SUCCESS(result);
-        }
-
-        if (test_keyword_offset(Keyword::BAKE, 0))
-        {
-            result->type = Expression_Type::BAKE;
-            advance_token();
-            if (on_follow_block()) {
-                result->options.bake_body.is_expression = false;
-                result->options.bake_body.block = parse_code_block(&result->base, 0);
-            }
-            else {
-                result->options.bake_body.is_expression = true;
-                result->options.bake_body.expr = parse_single_expression_or_error(&result->base);
-            }
-            PARSE_SUCCESS(result);
-        }
-
-        if (test_keyword(Keyword::INSTANCIATE))
-        {
-            advance_token();
-            result->type = Expression_Type::INSTANCIATE;
-            auto& instanciate = result->options.instanciate;
-            instanciate.path_lookup = parse_path_lookup(upcast(result));
-            instanciate.return_type = optional_make_failure<AST::Expression*>();
-            if (instanciate.path_lookup == nullptr) {
-                CHECKPOINT_EXIT;
-            }
-            if (!test_parenthesis('(')) {
-                CHECKPOINT_EXIT;
-            }
-            instanciate.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
-            if (test_operator(Operator::ARROW)) {
-                advance_token();
-                instanciate.return_type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
-            }
-            PARSE_SUCCESS(result);
-        }
-
-        if (test_keyword(Keyword::GET_OVERLOAD) || test_keyword(Keyword::GET_OVERLOAD_POLY))
-        {
-            bool is_poly = test_keyword(Keyword::GET_OVERLOAD_POLY);
-            Token_Index start = parser.state.pos;
-
-            advance_token();
-            result->type = Expression_Type::GET_OVERLOAD;
-            result->options.get_overload.is_poly = is_poly;
-            result->options.get_overload.path = optional_make_failure<AST::Path_Lookup*>();
-            result->options.get_overload.arguments = dynamic_array_create<AST::Get_Overload_Argument*>();
-            
-            AST::Path_Lookup* path = parse_path_lookup(upcast(result));
-            if (path != 0) {
-                result->options.get_overload.path = optional_make_success(path);
-            }
-            else {
-                log_error("#get_overload expected a path_lookup", token_range_make_offset(start, 1));
-            }
-            if (!test_parenthesis('(')) {
-                log_error("#get_overload expected '(' after path_lookup", token_range_make_offset(start, 1));
-            }
-            auto add_to_expr = [](AST::Node* parent, AST::Node* child) {
-                AST::Expression* expr = downcast<AST::Expression>(parent);
-                AST::Get_Overload_Argument* arg = downcast<AST::Get_Overload_Argument>(child);
-                dynamic_array_push_back(&expr->options.get_overload.arguments, arg);
-            };
-            parse_list_of_items(upcast(result), parse_overload_argument, add_to_expr, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, true);
-
-            if (test_operator(Operator::ARROW)) {
-                AST::Get_Overload_Argument* return_type_argument = allocate_base<AST::Get_Overload_Argument>(upcast(result), AST::Node_Type::GET_OVERLOAD_ARGUMENT);
-                advance_token();
-                return_type_argument->id = ids.return_type_name;
-                return_type_argument->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(return_type_argument)));
-                node_finalize_range(upcast(return_type_argument));
-                dynamic_array_push_back(&result->options.get_overload.arguments, return_type_argument);
-            }
-
-            PARSE_SUCCESS(result);
-        }
-
-        // Casts
-        if (test_keyword(Keyword::CAST))
-        {
-            result->type = Expression_Type::CAST;
-            auto& cast = result->options.cast;
-            cast.is_dot_call = false;
-            advance_token();
-
-            if (test_parenthesis('(')) {
-                // cast(value, to, from, option)
-                cast.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
-            }
-            else 
-            {
-                // cast x
-                Call_Node* call_node = allocate_base<Call_Node>(upcast(result), Node_Type::CALL_NODE);
-                call_node->arguments = dynamic_array_create<Argument*>(1);
-                call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
-                call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
-                
-                Argument* argument = allocate_base<Argument>(upcast(call_node), Node_Type::ARGUMENT);;
-                argument->name.available = false;
-                argument->value = parse_single_expression_or_error(upcast(argument));
-                dynamic_array_push_back(&call_node->arguments, argument);
-
-                node_finalize_range(upcast(argument));
-                node_finalize_range(upcast(call_node));
-                cast.call_node = call_node;
-            }
-
-            PARSE_SUCCESS(result);
-        }
-
-        // Array/Slice
-        if (test_parenthesis_offset('[', 0))
-        {
-            advance_token();
-            if (test_parenthesis_offset(']', 0)) {
-                advance_token();
-                result->type = Expression_Type::SLICE_TYPE;
-                result->options.slice_type = parse_single_expression_or_error(&result->base);
-                PARSE_SUCCESS(result);
-            }
-
-            result->type = Expression_Type::ARRAY_TYPE;
-            result->options.array_type.size_expr = parse_expression_or_error_expr(&result->base);
-            if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
-            result->options.array_type.type_expr = parse_single_expression_or_error(&result->base);
-            PARSE_SUCCESS(result);
-        }
-
-        // Path/Identifier
-        if (test_token(Token_Type::IDENTIFIER) || (test_operator(Operator::TILDE) && test_token_offset(Token_Type::IDENTIFIER, 1)))
-        {
-            result->type = Expression_Type::PATH_LOOKUP;
-            result->options.path_lookup = parse_path_lookup_or_error(upcast(result));
-            PARSE_SUCCESS(result);
-        }
-
-        if (test_operator(Operator::DOLLAR) && test_token_offset(Token_Type::IDENTIFIER, 1)) {
-            result->type = Expression_Type::PATTERN_VARIABLE;
-            advance_token();
-            result->options.pattern_variable_name = get_token()->options.identifier;
-            advance_token();
-            PARSE_SUCCESS(result);
-        }
-
-        // Auto operators
-        if (test_operator(Operator::DOT))
-        {
-            advance_token();
-            if (test_parenthesis_offset('{', 0)) // Struct Initializer
-            {
-                result->type = Expression_Type::STRUCT_INITIALIZER;
-                auto& init = result->options.struct_initializer;
-                init.type_expr = optional_make_failure<Expression*>();
-                init.call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('[', 0)) // Array Initializer
-            {
-                result->type = Expression_Type::ARRAY_INITIALIZER;
-                auto& init = result->options.array_initializer;
-                init.type_expr = optional_make_failure<Expression*>();
-                init.values = dynamic_array_create<Expression*>(1);
-                auto add_to_values = [](Node* parent, Node* child) {
-                    dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
-                };
-                parse_list_of_items(upcast(result), wrapper_parse_expression_or_error, add_to_values, Parenthesis_Type::BRACKETS, Operator::COMMA, false, false);
-                PARSE_SUCCESS(result);
-            }
-            else
-            {
-                result->type = Expression_Type::AUTO_ENUM;
-                if (test_token(Token_Type::IDENTIFIER)) {
-                    result->options.auto_enum = get_token(0)->options.identifier;
-                    advance_token();
-                }
-                else {
-                    log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.auto_enum = ids.empty_string;
-                }
-                PARSE_SUCCESS(result);
-            }
-            CHECKPOINT_EXIT;
-        }
-
-        // Literals
-        if (test_token(Token_Type::LITERAL))
-        {
-            result->type = Expression_Type::LITERAL_READ;
-            result->options.literal_read = get_token(0)->options.literal_value;
-            advance_token();
-            PARSE_SUCCESS(result);
-        }
-
-        // Parse functions + signatures
-        if (test_parenthesis_offset('(', 0) && (
-            test_parenthesis_offset(')', 1) ||
-            (test_token_offset(Token_Type::IDENTIFIER, 1) && test_operator_offset(Operator::COLON, 2)) ||
-            (test_operator_offset(Operator::DOLLAR, 1) && test_token_offset(Token_Type::IDENTIFIER, 2))
-            ))
-        {
-            result->type = Expression_Type::FUNCTION_SIGNATURE;
-            auto& signature_parameters = result->options.signature_parameters;
-            signature_parameters = dynamic_array_create<Parameter*>();
-            auto add_parameter = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Expression>(parent)->options.signature_parameters, downcast<Parameter>(child));
-            };
-            parse_list_of_items(
-                upcast(result), wrapper_parse_parameter, add_parameter, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, false
-            );
-
-            // Parse Return value
-            if (test_operator(Operator::ARROW)) {
-                advance_token();
-                auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
-                return_param->default_value = optional_make_failure<AST::Expression*>();
-                return_param->is_comptime = false;
-                return_param->is_return_type = true;
-                return_param->name = ids.return_type_name;
-                return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
-                dynamic_array_push_back(&signature_parameters, return_param);
-            }
-
-            // Check if its a function or just a function signature
-            if (!on_follow_block()) {
-                PARSE_SUCCESS(result);
-            }
-
-            auto signature_expr = result;
-            SET_END_RANGE(signature_expr);
-
-            result = allocate_base<Expression>(parent, Node_Type::EXPRESSION);
-            result->base.range.start = signature_expr->base.range.start;
-            result->type = Expression_Type::FUNCTION;
-            auto& function = result->options.function;
-            function.signature = optional_make_success(signature_expr);
-            function.body.is_expression = false;
-            function.body.block = parse_code_block(&result->base, 0);
-            signature_expr->base.parent = (Node*)result;
-            PARSE_SUCCESS(result);
-        }
-
-        // Parse infered function things
-        if (test_operator(Operator::INFER_ARROW))
-        {
-            result->type = Expression_Type::FUNCTION;
-            result->options.function.signature = optional_make_failure<AST::Expression*>();
-            advance_token();
-
-            // .=> needs to be followed by either a new block or { for blocks
-            if (on_follow_block()) {
-                result->options.function.body.is_expression = false;
-                result->options.function.body.block = parse_code_block(&result->base, 0);
-                PARSE_SUCCESS(result);
-            }
-            result->options.function.body.is_expression = true;
-            result->options.function.body.expr = parse_expression_or_error_expr(upcast(result));
-            PARSE_SUCCESS(result);
-        }
-
-        if (test_parenthesis_offset('(', 0))
-        {
-            parser_rollback(checkpoint); // This is pretty stupid, but needed to reset result
-            advance_token();
-            result = parse_expression_or_error_expr(parent); // I guess we parse this like a function call without a expression...
-            if (!finish_parenthesis<Parenthesis_Type::PARENTHESIS>()) CHECKPOINT_EXIT;
-            PARSE_SUCCESS(result);
-        }
-
-        // Keyword expressions
-        if (test_keyword_offset(Keyword::NEW, 0))
-        {
-            result->type = Expression_Type::NEW_EXPR;
-            result->options.new_expr.count_expr.available = false;
-            advance_token();
-            if (test_parenthesis_offset('{', 0)) {
-                advance_token();
-                result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
-                if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
-            }
-            result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
-            PARSE_SUCCESS(result);
-        }
-        if (test_keyword(Keyword::STRUCT) || test_keyword(Keyword::UNION))
-        {
-            result->type = Expression_Type::STRUCTURE_TYPE;
-            result->options.structure.members = dynamic_array_create<Structure_Member_Node*>();
-            result->options.structure.parameters = dynamic_array_create<Parameter*>();
-            result->options.structure.is_union = test_keyword(Keyword::UNION);
-            advance_token();
-
-            // Parse struct parameters
-            if (test_parenthesis('(')) {
-                auto add_parameter = [](Node* parent, Node* child) {
-                    dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.parameters, downcast<Parameter>(child));
-                };
-                parse_list_of_items(
-                    upcast(result), wrapper_parse_parameter, add_parameter, Parenthesis_Type::PARENTHESIS, Operator::COMMA, false, false
-                );
-            }
-
-            auto add_member = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.members, downcast<Structure_Member_Node>(child));
-            };
-            parse_list_of_items(
-                upcast(result), wrapper_parse_struct_member, add_member, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
-            );
-            PARSE_SUCCESS(result);
-        }
-        if (test_keyword_offset(Keyword::ENUM, 0)) {
-            result->type = Expression_Type::ENUM_TYPE;
-            result->options.enum_members = dynamic_array_create<Enum_Member_Node*>();
-            advance_token();
-            auto add_member = [](Node* parent, Node* child) {
-                dynamic_array_push_back(&downcast<Expression>(parent)->options.enum_members, downcast<Enum_Member_Node>(child));
-            };
-            parse_list_of_items(
-                upcast(result), wrapper_parse_enum_member, add_member, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
-            );
-            PARSE_SUCCESS(result);
-        }
-        if (test_keyword_offset(Keyword::MODULE, 0)) 
-        {
-            auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
-            module->definitions = dynamic_array_create<Definition*>(1);
-            module->import_nodes = dynamic_array_create<Import*>(1);
-            module->custom_operators = dynamic_array_create<Custom_Operator_Node*>(1);
-            advance_token();
-            parse_list_of_items(
-                upcast(module), wrapper_parse_module_item, module_add_child, Parenthesis_Type::BRACES, Operator::SEMI_COLON, true, false
-            );
-            node_finalize_range(AST::upcast(module));
-
-            result->type = Expression_Type::MODULE;
-            result->options.module = module;
-            PARSE_SUCCESS(result);
-        }
-
-        CHECKPOINT_EXIT;
-    }
-
-    Expression* parse_post_operator_internal(Expression* child)
-    {
-        auto& ids = *parser.predefined_ids;
-
-        // DOCU: Internal means that we don't add the result of this expression to the parameter child,
-        //       but rather to the parent of the child
-        CHECKPOINT_SETUP;
-
-        // Post operators
-        auto result = allocate_base<Expression>(child->base.parent, Node_Type::EXPRESSION);
-        if (test_operator(Operator::DOT))
-        {
-            advance_token();
-            if (test_parenthesis_offset('{', 0)) // Struct Initializer
-            {
-                result->type = Expression_Type::STRUCT_INITIALIZER;
-                auto& init = result->options.struct_initializer;
-                init.type_expr = optional_make_success(child);
-                init.call_node = parse_call_node(upcast(result), Parenthesis_Type::BRACES);
-                PARSE_SUCCESS(result);
-            }
-            else if (test_parenthesis_offset('[', 0)) // Array Initializer
-            {
-                result->type = Expression_Type::ARRAY_INITIALIZER;
-                auto& init = result->options.array_initializer;
-                init.type_expr = optional_make_success(child);
-                init.values = dynamic_array_create<Expression*>(1);
-                auto add_to_values = [](Node* parent, Node* child) {
-                    dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
-                };
-                parse_list_of_items(upcast(result), wrapper_parse_expression_or_error, add_to_values, Parenthesis_Type::BRACKETS, Operator::COMMA, false, false);
-                PARSE_SUCCESS(result);
-            }
-            else
-            {
-                result->type = Expression_Type::MEMBER_ACCESS;
-                result->options.member_access.expr = child;
-                if (test_token(Token_Type::IDENTIFIER)) {
-                    result->options.member_access.name = get_token(0)->options.identifier;
-                    advance_token();
-                }
-                else {
-                    log_error("Missing member name", token_range_make_offset(parser.state.pos, -1));
-                    result->options.member_access.name = ids.empty_string;
-                }
-                PARSE_SUCCESS(result);
-            }
-            CHECKPOINT_EXIT;
-        }
-        else if (test_operator(Operator::DOT_CALL)) 
-        {
-            advance_token();
-
-            bool is_cast = false;
-            if (test_keyword(Keyword::CAST))
-            {
-                is_cast = true;
-                result->type = Expression_Type::CAST;
-                result->options.cast.is_dot_call = true;
-                result->options.cast.call_node = nullptr;
-                advance_token();
-            }
-            else
-            {
-                result->type = Expression_Type::FUNCTION_CALL;
-                auto& call = result->options.call;
-                call.is_dot_call = true;
-
-                Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-                call_expr->type = AST::Expression_Type::PATH_LOOKUP;
-                call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
-                call_expr->options.path_lookup->is_dot_call_lookup = true;
-                node_finalize_range(upcast(call_expr));
-
-                call.expr = call_expr;
-            }
-
-            // Parse arguments
-            AST::Call_Node* call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
-
-            // Add expr as first unnamed argument
-            AST::Argument* argument = allocate_base<Argument>(upcast(call_node), AST::Node_Type::ARGUMENT);
-            argument->name = optional_make_failure<String*>();
-            argument->value = child;
-            argument->base.range = child->base.range;
-            argument->base.bounding_range = child->base.bounding_range;
-            dynamic_array_insert_ordered(&call_node->arguments, argument, 0);
-
-            if (is_cast) {
-                result->options.cast.call_node = call_node;
-            }
-            else {
-                result->options.call.call_node = call_node;
-            }
-
-            PARSE_SUCCESS(result);
-        }
-        else if (test_parenthesis_offset('[', 0)) // Array access
-        {
-            advance_token();
-            result->type = Expression_Type::ARRAY_ACCESS;
-            result->options.array_access.array_expr = child;
-            result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
-            if (!finish_parenthesis<Parenthesis_Type::BRACKETS>()) CHECKPOINT_EXIT;
-            PARSE_SUCCESS(result);
-        }
-        else if (test_parenthesis_offset('(', 0)) // Function call
-        {
-            result->type = Expression_Type::FUNCTION_CALL;
-            auto& call = result->options.call;
-            call.is_dot_call = false;
-            call.expr = child;
-            call.call_node = parse_call_node(upcast(result), Parenthesis_Type::PARENTHESIS);
-            PARSE_SUCCESS(result);
-        }
-
-        // Test unops
-        Unop unop = (Unop)-1;
-        if (test_operator(Operator::ADDRESS_OF)) {
-            unop = Unop::ADDRESS_OF;
-        }
-        else if (test_operator(Operator::DEREFERENCE)) {
-            unop = Unop::DEREFERENCE;
-        }
-        else if (test_operator(Operator::OPTIONAL_DEREFERENCE)) {
-            unop = Unop::OPTIONAL_DEREFERENCE;
-        }
-        else if (test_operator(Operator::QUESTION_MARK)) {
-            unop = Unop::NULL_CHECK;
-        }
-        if ((int)unop != -1)
-        {
-            result->type = Expression_Type::UNARY_OPERATION;
-            result->options.unop.type = unop;
-            result->options.unop.expr = child;
-            advance_token();
-            PARSE_SUCCESS(result);
-        }
-
-        CHECKPOINT_EXIT;
-    }
-
-    // Does not parse binop-chains, 
-    Expression* parse_single_expression(Node* parent)
-    {
-        // DOCU: This function parses: Pre-Ops + Node + Post-Op
-        Expression* child = parse_single_expression_no_postop(parent);
-        if (child == 0) return child;
-        Expression* post_op = parse_post_operator_internal(child);
-        while (post_op != 0) {
-            child->base.parent = &post_op->base;
-            child = post_op;
-            post_op = parse_post_operator_internal(child);
-        }
-        return child;
-    }
-
-    Expression* parse_single_expression_or_error(Node* parent)
-    {
-        auto expr = parse_single_expression(parent);
-        if (expr != 0) {
-            return expr;
-        }
-        log_error_range_offset("Expected Single Expression", 0);
-        expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-        expr->type = Expression_Type::ERROR_EXPR;
-        PARSE_SUCCESS(expr);
-    }
-
-    Expression* parse_priority_level(Expression* expr, int priority_level, Dynamic_Array<Binop_Link>* links, int* index)
-    {
-        while (*index < links->size)
-        {
-            auto& link = (*links)[*index];
-            auto op_prio = binop_priority(link.binop);
-            if (op_prio > priority_level) {
-                expr = parse_priority_level(expr, priority_level + 1, links, index);
-            }
-            else if (op_prio == priority_level) {
-                *index = *index + 1;
-                Expression* result = allocate_base<Expression>(0, Node_Type::EXPRESSION);
-                result->type = Expression_Type::BINARY_OPERATION;
-                result->options.binop.type = link.binop;
-                result->options.binop.left = expr;
-                result->options.binop.right = parse_priority_level(link.expr, priority_level + 1, links, index);
-                result->options.binop.left->base.parent = &result->base;
-                result->options.binop.right->base.parent = &result->base;
-                expr = result;
-
-                auto& range = result->base.range;
-                range.start = link.token_index; 
-                range.end = link.token_index;
-                range.end.token += 1;
-                node_calculate_bounding_range(AST::upcast(result->options.binop.left));
-                node_calculate_bounding_range(AST::upcast(result));
-            }
-            else {
-                break;
-            }
-        }
-        return expr;
-    }
-
-    Expression* parse_expression(Node* parent)
-    {
-        CHECKPOINT_SETUP;
-        Expression* start_expr = parse_single_expression(parent);
-        if (start_expr == 0) return 0;
-
-        Dynamic_Array<Binop_Link> links = dynamic_array_create<Binop_Link>();
-        SCOPE_EXIT(dynamic_array_destroy(&links));
-        while (true)
-        {
-            Binop_Link link;
-            link.binop = Binop::INVALID;
-            link.token_index = parser.state.pos;
-            if (test_token(Token_Type::OPERATOR))
-            {
-                switch (get_token(0)->options.op)
-                {
-                case Operator::ADDITION: link.binop = Binop::ADDITION; break;
-                case Operator::SUBTRACTION: link.binop = Binop::SUBTRACTION; break;
-                case Operator::MULTIPLY:link.binop = Binop::MULTIPLICATION; break;
-                case Operator::DIVISON:link.binop = Binop::DIVISION; break;
-                case Operator::MODULO:link.binop = Binop::MODULO; break;
-                case Operator::AND:link.binop = Binop::AND; break;
-                case Operator::OR:link.binop = Binop::OR; break;
-                case Operator::GREATER_THAN:link.binop = Binop::GREATER; break;
-                case Operator::GREATER_EQUAL:link.binop = Binop::GREATER_OR_EQUAL; break;
-                case Operator::LESS_THAN:link.binop = Binop::LESS; break;
-                case Operator::LESS_EQUAL:link.binop = Binop::LESS_OR_EQUAL; break;
-                case Operator::EQUALS:link.binop = Binop::EQUAL; break;
-                case Operator::NOT_EQUALS:link.binop = Binop::NOT_EQUAL; break;
-                case Operator::POINTER_EQUALS:link.binop = Binop::POINTER_EQUAL; break;
-                case Operator::POINTER_NOT_EQUALS:link.binop = Binop::POINTER_NOT_EQUAL; break;
-                }
-                if (link.binop != Binop::INVALID) {
-                    advance_token();
-                }
-            }
-            if (link.binop == Binop::INVALID) {
-                break;
-            }
-            link.expr = parse_single_expression_or_error(parent);
-            dynamic_array_push_back(&links, link);
-        }
-
-        // Now build the overload tree
-        if (links.size == 0) PARSE_SUCCESS(start_expr);
-        int index = 0;
-        Expression* result = parse_priority_level(start_expr, 0, &links, &index);
-        result->base.parent = parent;
-        return result; // INFO: Don't use PARSE SUCCESS, since this would overwrite the token-ranges set by parse_priority_level
-    }
-
-    Expression* parse_expression_or_error_expr(Node* parent)
-    {
-        auto expr = parse_expression(parent);
-        if (expr != 0) {
-            return expr;
-        }
-        log_error_range_offset("Expected Expression", 0);
-        expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
-
-        expr->type = Expression_Type::ERROR_EXPR;
-        PARSE_SUCCESS(expr);
-    }
+
+
+	// Prototypes
+	Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node);
+	Code_Block* parse_code_block(Node* parent, AST::Node* related_node);
+	Path_Lookup* parse_path_lookup(Node* parent);
+	Expression* parse_expression(Node* parent);
+	Expression* parse_expression_or_error_expr(Node* parent);
+	Expression* parse_single_expression(Node* parent);
+	Expression* parse_single_expression_or_error(Node* parent);
+	Argument* parse_argument(Node* parent);
+	Subtype_Initializer* parse_subtype_initializer(Node* parent);
+	Parameter* parse_parameter(Node* parent);
+	void code_block_add_child(AST::Node* parent, AST::Node* child);
+	Node* wrapper_parse_statement_or_context_change(AST::Node* parent);
+
+	Expression* create_error_expression(Node* parent)
+	{
+		Expression* expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+		expr->type = Expression_Type::ERROR_EXPR;
+		node_finalize_range(upcast(expr));
+		return expr;
+	}
+
+	Statement* create_error_statement(Node* parent)
+	{
+		Statement* error_statement = allocate_base<AST::Statement>(parent, AST::Node_Type::STATEMENT);
+		error_statement->type = Statement_Type::EXPRESSION_STATEMENT;
+		error_statement->options.expression = create_error_expression(upcast(error_statement));
+		node_finalize_range(upcast(error_statement));
+		return error_statement;
+	}
+
+	// Returns an error-expression if uninitialized
+	Node* parse_argument_or_subtype_initializer_or_uninitialzed(AST::Node* parent)
+	{
+		if (test_token(Token_Type::UNINITIALIZED))
+		{
+			auto error_expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+			error_expr->type = Expression_Type::ERROR_EXPR;
+			advance_token();
+			node_finalize_range(upcast(error_expr));
+			return upcast(error_expr);
+		}
+
+		Node* result = upcast(parse_subtype_initializer(parent));
+		if (result != nullptr) return result;
+
+		return upcast(parse_argument(parent));
+	}
+
+	AST::Node* parse_overload_argument(AST::Node* parent)
+	{
+		if (!test_token(Token_Type::IDENTIFIER)) {
+			return nullptr;
+		}
+
+		auto result = allocate_base<AST::Get_Overload_Argument>(parent, AST::Node_Type::GET_OVERLOAD_ARGUMENT);
+		result->id = get_token()->options.string_value;
+		result->type_expr = optional_make_failure<AST::Expression*>();
+		advance_token();
+		if (test_token(Token_Type::ASSIGN)) {
+			advance_token();
+			result->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+		}
+
+		node_finalize_range(upcast(result));
+		return upcast(result);
+	}
+
+	Path_Lookup* parse_path_lookup(Node* parent)
+	{
+		auto& ids = *parser.predefined_ids;
+
+		if (!test_token(Token_Type::IDENTIFIER) && !test_token(Token_Type::TILDE))
+		{
+			return nullptr;
+		}
+
+		CHECKPOINT_SETUP;
+
+		Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+		path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+		path->is_dot_call_lookup = false;
+
+		if (test_token(Token_Type::TILDE)) {
+			Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+			dynamic_array_push_back(&path->parts, lookup);
+			lookup->is_root_module = true;
+			lookup->name = ids.root_module;
+			advance_token();
+			node_finalize_range(upcast(lookup));
+		}
+
+		while (true)
+		{
+			// Add symbol-lookup Node
+			Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+			dynamic_array_push_back(&path->parts, lookup);
+
+			// Check if we actually have an identifier, or if it's an 'empty' path, like "A~B~"
+			// INFO: We have this empty path so that the syntax editor is able to show that a node is missing here!
+			if (test_token(Token_Type::IDENTIFIER)) {
+				lookup->name = get_token()->options.string_value;
+				advance_token();
+			}
+			else {
+				log_error("Expected identifier", parser.state.pos - 1, parser.state.pos); // Put error on the ~
+				lookup->name = ids.empty_string;
+			}
+			node_finalize_range(upcast(lookup));
+
+			if (test_token(Token_Type::TILDE)) {
+				advance_token();
+			}
+			else {
+				break;
+			}
+		}
+
+		path->last = path->parts[path->parts.size - 1];
+		PARSE_SUCCESS(path);
+	}
+
+	Path_Lookup* parse_path_lookup_or_error(Node* parent)
+	{
+		auto& ids = parser.predefined_ids;
+
+		if (!test_token(Token_Type::IDENTIFIER) && !test_token(Token_Type::TILDE))
+		{
+			Path_Lookup* path = allocate_base<Path_Lookup>(parent, Node_Type::PATH_LOOKUP);
+			path->parts = dynamic_array_create<Symbol_Lookup*>(1);
+			path->is_dot_call_lookup = false;
+			Symbol_Lookup* lookup = allocate_base<Symbol_Lookup>(upcast(path), Node_Type::SYMBOL_LOOKUP);
+			dynamic_array_push_back(&path->parts, lookup);
+			path->last = lookup;
+			lookup->name = ids->empty_string;
+			node_finalize_range(upcast(lookup));
+			node_finalize_range(upcast(path));
+			return path;
+		}
+		return parse_path_lookup(parent);
+	}
+
+	// Always returns node, even if no arguments were found...
+	// So one should always test for ( or { before calling this...
+	Call_Node* parse_call_node(Node* parent)
+	{
+		auto call_node = allocate_base<Call_Node>(parent, Node_Type::CALL_NODE);
+		call_node->arguments = dynamic_array_create<Argument*>();
+		call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
+		call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
+
+		if (!test_token(Token_Type::PARENTHESIS_OPEN)) {
+			log_error_range_offset("Expected parenthesis for parameters", 0);
+			PARSE_SUCCESS(call_node);
+		}
+
+		auto add_to_arguments = [](Node* parent, Node* child)
+			{
+				auto args = downcast<Call_Node>(parent);
+				if (child->type == Node_Type::ARGUMENT) {
+					dynamic_array_push_back(&args->arguments, downcast<Argument>(child));
+				}
+				else if (child->type == Node_Type::SUBTYPE_INITIALIZER) {
+					dynamic_array_push_back(&args->subtype_initializers, downcast<Subtype_Initializer>(child));
+				}
+				else if (child->type == Node_Type::EXPRESSION) {
+					auto expr = downcast<Expression>(child);
+					assert(expr->type == Expression_Type::ERROR_EXPR, "");
+					dynamic_array_push_back(&args->uninitialized_tokens, expr);
+				}
+				else {
+					panic("");
+				}
+			};
+		parse_list_items(
+			upcast(call_node),
+			parse_argument_or_subtype_initializer_or_uninitialzed,
+			add_to_arguments
+		);
+
+		PARSE_SUCCESS(call_node);
+	}
+
+	namespace Block_Items
+	{
+		Node* parse_module_item(AST::Node* parent);
+		Enum_Member_Node* parse_enum_member(AST::Node* parent);
+		Switch_Case* parse_switch_case(AST::Node* parent);
+		Structure_Member_Node* parse_struct_member(AST::Node* parent);
+		Definition_Symbol* parse_definition_symbol(AST::Node* parent);
+		Node* parse_statement_or_context_change(AST::Node* parent);
+	};
+
+	// The wrappers are just type-less versions for use in parse_list
+	Node* wrapper_parse_module_item(AST::Node* parent) { return Block_Items::parse_module_item(parent); }
+	Node* wrapper_parse_enum_member(AST::Node* parent) { return upcast(Block_Items::parse_enum_member(parent)); }
+	Node* wrapper_parse_switch_case(AST::Node* parent) { return upcast(Block_Items::parse_switch_case(parent)); }
+	Node* wrapper_parse_struct_member(AST::Node* parent) { return upcast(Block_Items::parse_struct_member(parent)); }
+	Node* wrapper_parse_definition_symbol(AST::Node* parent) { return upcast(Block_Items::parse_definition_symbol(parent)); }
+	Node* wrapper_parse_statement_or_context_change(AST::Node* parent) { return Block_Items::parse_statement_or_context_change(parent); }
+	Node* wrapper_parse_expression_or_error(AST::Node* parent) { return upcast(parse_expression_or_error_expr(parent)); }
+	Node* wrapper_parse_parameter(AST::Node* parent) { return upcast(parse_parameter(parent)); }
+
+	void code_block_add_child(AST::Node* parent, AST::Node* child)
+	{
+		AST::Code_Block* block = downcast<AST::Code_Block>(parent);
+		if (child->type == AST::Node_Type::STATEMENT) {
+			dynamic_array_push_back(&block->statements, downcast<AST::Statement>(child));
+		}
+		else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
+			dynamic_array_push_back(&block->custom_operators, downcast<AST::Custom_Operator_Node>(child));
+		}
+		else {
+			panic("");
+		}
+	}
+
+	void module_add_child(AST::Node* parent, AST::Node* child)
+	{
+		AST::Module* module = downcast<AST::Module>(parent);
+		if (child->type == AST::Node_Type::DEFINITION) {
+			dynamic_array_push_back(&module->definitions, downcast<AST::Definition>(child));
+		}
+		else if (child->type == AST::Node_Type::IMPORT) {
+			dynamic_array_push_back(&module->import_nodes, downcast<Import>(child));
+		}
+		else if (child->type == AST::Node_Type::EXTERN_IMPORT) {
+			dynamic_array_push_back(&module->extern_imports, downcast<Extern_Import>(child));
+		}
+		else if (child->type == AST::Node_Type::CONTEXT_CHANGE) {
+			dynamic_array_push_back(&module->custom_operators, downcast<Custom_Operator_Node>(child));
+		}
+		else {
+			panic("");
+		}
+	}
+
+
+
+	// Block Parsing
+	namespace Block_Items
+	{
+		Definition_Symbol* parse_definition_symbol(Node* parent)
+		{
+			if (!test_token(Token_Type::IDENTIFIER)) {
+				return nullptr;
+			}
+			auto node = allocate_base<Definition_Symbol>(parent, Node_Type::DEFINITION_SYMBOL);
+			node->name = get_token()->options.string_value;
+			advance_token();
+			PARSE_SUCCESS(node);
+		}
+
+		AST::Extern_Import* parse_extern_import(AST::Node* parent)
+		{
+			auto& ids = *parser.predefined_ids;
+
+			auto start = parser.state.pos;
+			if (!test_token(Token_Type::EXTERN)) {
+				return 0;
+			}
+
+			CHECKPOINT_SETUP;
+			auto result = allocate_base<Extern_Import>(parent, Node_Type::EXTERN_IMPORT);
+			advance_token();
+
+			if (test_token(Token_Type::IDENTIFIER))
+			{
+				String* id = get_token()->options.string_value;
+				if (id == ids.function) {
+					result->type = Extern_Type::FUNCTION;
+				}
+				else if (id == ids.global) {
+					result->type = Extern_Type::GLOBAL;
+				}
+				else if (id == ids.lib) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::LIBRARY;
+				}
+				else if (id == ids.lib_dir) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::LIBRARY_DIRECTORY;
+				}
+				else if (id == ids.source) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::SOURCE_FILE;
+				}
+				else if (id == ids.header) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::HEADER_FILE;
+				}
+				else if (id == ids.header_dir) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::INCLUDE_DIRECTORY;
+				}
+				else if (id == ids.definition) {
+					result->type = Extern_Type::COMPILER_SETTING;
+					result->options.setting.type = Extern_Compiler_Setting::DEFINITION;
+				}
+				else {
+					log_error_range_offset("Identifier after extern must be one of: function, global, source, lib, lib_dir", 1);
+					result->type = Extern_Type::INVALID;
+					return result;
+				}
+			}
+			else if (test_token(Token_Type::STRUCT)) {
+				result->type = Extern_Type::STRUCT;
+			}
+			else {
+				log_error("Expected extern-type after extern keyword!", start, start + 1);
+				result->type = Extern_Type::INVALID;
+				return result;
+			}
+			advance_token();
+
+			switch (result->type)
+			{
+			case Extern_Type::FUNCTION:
+			case Extern_Type::GLOBAL:
+			{
+				if (!test_token(Token_Type::IDENTIFIER)) {
+					log_error_range_offset("Expected identifier", 1);
+					result->type = Extern_Type::INVALID;
+					return result;
+				}
+				String* id = get_token()->options.string_value;
+				advance_token();
+
+				if (!test_token(Token_Type::COLON)) {
+					log_error_range_offset("Expected : after identifier", 1);
+					result->type = Extern_Type::INVALID;
+					return result;
+				}
+				advance_token();
+
+				AST::Expression* expr = parse_expression_or_error_expr(upcast(result));
+
+				if (result->type == Extern_Type::FUNCTION) {
+					result->options.function.id = id;
+					result->options.function.type_expr = expr;
+				}
+				else {
+					result->options.global.id = id;
+					result->options.global.type_expr = expr;
+				}
+				break;
+			}
+			case Extern_Type::STRUCT: {
+				result->options.struct_type_expr = parse_expression_or_error_expr(upcast(result));
+				break;
+			}
+			case Extern_Type::COMPILER_SETTING:
+			{
+				if (!test_token(Token_Type::LITERAL_STRING)) {
+					log_error_range_offset("Expected string literal", 1);
+					result->type = Extern_Type::INVALID;
+					return result;
+				}
+
+				String* path = get_token()->options.string_value;
+				advance_token();
+				result->options.setting.value = path;
+				break;
+			}
+			default: panic("");
+			}
+
+			return result;
+		}
+
+		// Block Item functions
+		Import* parse_import(Node* parent)
+		{
+			auto& ids = *parser.predefined_ids;
+
+			CHECKPOINT_SETUP;
+			if (!test_token(Token_Type::IMPORT, 0)) {
+				CHECKPOINT_EXIT;
+				return 0;
+			}
+
+			auto result = allocate_base<Import>(parent, Node_Type::IMPORT);
+			result->alias_name = optional_make_failure<Definition_Symbol*>();
+			result->options.path = nullptr;
+			result->import_type = Import_Type::SYMBOLS;
+			result->operator_type = Import_Operator::SINGLE_SYMBOL;
+			advance_token();
+
+			if (test_token(Token_Type::IDENTIFIER))
+			{
+				auto id = get_token()->options.string_value;
+				if (id == ids.operators) {
+					result->import_type = Import_Type::OPERATORS;
+					advance_token();
+				}
+				else if (id == ids.dot_calls) {
+					result->import_type = Import_Type::DOT_CALLS;
+					advance_token();
+				}
+			}
+
+			// Special path for import ~* and import ~**, because they are custom tokens
+			if (test_token(Token_Type::TILDE_STAR) || test_token(Token_Type::TILDE_STAR_STAR))
+			{
+				result->operator_type =
+					test_token(Token_Type::TILDE_STAR) ? Import_Operator::MODULE_IMPORT : Import_Operator::MODULE_IMPORT_TRANSITIVE;
+
+				Path_Lookup* path_lookup = allocate_base<Path_Lookup>(upcast(result), Node_Type::PATH_LOOKUP);
+				path_lookup->is_dot_call_lookup = false;
+				path_lookup->parts = dynamic_array_create<Symbol_Lookup*>(1);
+
+				Symbol_Lookup* symbol_lookup = allocate_base<Symbol_Lookup>(upcast(path_lookup), Node_Type::SYMBOL_LOOKUP);
+				symbol_lookup->is_root_module = true;
+				symbol_lookup->name = ids.root_module;
+				advance_token();
+
+				dynamic_array_push_back(&path_lookup->parts, symbol_lookup);
+				path_lookup->last = symbol_lookup;
+				node_finalize_range(upcast(symbol_lookup));
+				node_finalize_range(upcast(path_lookup));
+
+				result->options.path = path_lookup;
+				PARSE_SUCCESS(result);
+			}
+
+			// Check if it's a file import
+			if (test_token(Token_Type::LITERAL_STRING)) {
+				result->operator_type = Import_Operator::FILE_IMPORT;
+				result->options.file_name = get_token()->options.string_value;
+				advance_token();
+			}
+			else
+			{
+				result->operator_type = Import_Operator::SINGLE_SYMBOL;
+				result->options.path = parse_path_lookup_or_error(upcast(result));
+				if (test_token(Token_Type::TILDE_STAR)) {
+					result->operator_type = Import_Operator::MODULE_IMPORT;
+					advance_token();
+				}
+				else if (test_token(Token_Type::TILDE_STAR_STAR)) {
+					result->operator_type = Import_Operator::MODULE_IMPORT_TRANSITIVE;
+					advance_token();
+				}
+			}
+
+			if (test_token(Token_Type::AS) && test_token(Token_Type::IDENTIFIER, 1)) {
+				advance_token();
+				result->alias_name = optional_make_success(parse_definition_symbol(upcast(result)));
+			}
+			PARSE_SUCCESS(result);
+		}
+
+		Custom_Operator_Node* parse_context_change(Node* parent)
+		{
+			auto& ids = *parser.predefined_ids;
+
+			Custom_Operator_Type custom_op_type;
+			switch (get_token()->type)
+			{
+			case Token_Type::ADD_ARRAY_ACCESS: custom_op_type = Custom_Operator_Type::ARRAY_ACCESS; break;
+			case Token_Type::ADD_CAST: custom_op_type = Custom_Operator_Type::CAST; break;
+			case Token_Type::ADD_UNOP: custom_op_type = Custom_Operator_Type::UNOP; break;
+			case Token_Type::ADD_BINOP: custom_op_type = Custom_Operator_Type::BINOP; break;
+			case Token_Type::ADD_ITERATOR: custom_op_type = Custom_Operator_Type::ITERATOR; break;
+			default: return nullptr;
+			}
+
+			CHECKPOINT_SETUP;
+			auto result = allocate_base<Custom_Operator_Node>(parent, Node_Type::CONTEXT_CHANGE);
+			advance_token();
+			result->type = custom_op_type;
+			result->call_node = parse_call_node(upcast(result));
+			PARSE_SUCCESS(result);
+		}
+
+		Definition* parse_definition(Node* parent)
+		{
+			if (!test_token(Token_Type::IDENTIFIER) && !test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER) && 
+				!test_token(Token_Type::DEFINE_COMPTIME) &&
+				!test_token(Token_Type::COLON) && ! test_token(Token_Type::DEFINE_INFER)) {
+				return nullptr;
+			}
+
+			CHECKPOINT_SETUP;
+
+			auto result = allocate_base<Definition>(parent, AST::Node_Type::DEFINITION);
+			result->is_comptime = false;
+			result->symbols = dynamic_array_create<Definition_Symbol*>();
+			result->types   = dynamic_array_create<AST::Expression*>();
+			result->values  = dynamic_array_create<AST::Expression*>();
+
+			auto add_to_symbols = [](Node* parent, Node* child) {
+				assert(parent->type == Node_Type::DEFINITION && child->type == Node_Type::DEFINITION_SYMBOL, "");
+				dynamic_array_push_back(&downcast<Definition>(parent)->symbols, downcast<Definition_Symbol>(child));
+			};
+			auto add_to_types = [](Node* parent, Node* child) {
+				assert(parent->type == Node_Type::DEFINITION && child->type == Node_Type::EXPRESSION, "");
+				dynamic_array_push_back(&downcast<Definition>(parent)->types, downcast<Expression>(child));
+			};
+			auto add_to_values = [](Node* parent, Node* child) {
+				assert(parent->type == Node_Type::DEFINITION && child->type == Node_Type::EXPRESSION, "");
+				dynamic_array_push_back(&downcast<Definition>(parent)->values, downcast<Expression>(child));
+			};
+
+			if (test_token(Token_Type::IDENTIFIER)) {
+				dynamic_array_push_back(&result->symbols, parse_definition_symbol(upcast(result)));
+			}
+			else if (test_token(Token_Type::PARENTHESIS_OPEN)) 
+			{
+				parse_list_items(upcast(result), wrapper_parse_definition_symbol, add_to_symbols);
+			}
+			else if (test_token(Token_Type::COLON) || test_token(Token_Type::DEFINE_COMPTIME) || test_token(Token_Type::DEFINE_COMPTIME)) {
+				Definition_Symbol* error_sym = allocate_base<Definition_Symbol>(parent, AST::Node_Type::DEFINITION_SYMBOL);
+				error_sym->name = parser.predefined_ids->invalid_symbol_name;
+				node_finalize_range(upcast(error_sym));
+				dynamic_array_push_back(&result->symbols, error_sym);
+			}
+
+			// Check if there is a colon :, or a := or an ::
+			if (test_token(Token_Type::COLON))
+			{
+				advance_token();
+				if (test_token(Token_Type::PARENTHESIS_OPEN)) {
+					parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_types);
+				}
+				else {
+					dynamic_array_push_back(&result->types, parse_expression_or_error_expr(upcast(result)));
+				}
+
+				if (test_token(Token_Type::ASSIGN)) { // : ... =
+					result->is_comptime = false;
+					advance_token();
+				}
+				else if (test_token(Token_Type::COLON)) { // : ... :
+					result->is_comptime = true;
+					advance_token();
+				}
+				else {
+					PARSE_SUCCESS(result);
+				}
+			}
+			else if (test_token(Token_Type::DEFINE_COMPTIME)) { // x :: 
+				advance_token();
+				result->is_comptime = true;
+			}
+			else if (test_token(Token_Type::DEFINE_INFER)) { // x :=
+				advance_token();
+				result->is_comptime = false;
+			}
+			else {
+				CHECKPOINT_EXIT;
+			}
+
+			if (test_token(Token_Type::PARENTHESIS_OPEN)) {
+				parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_values);
+			}
+			else {
+				dynamic_array_push_back(&result->values, parse_expression_or_error_expr(upcast(result)));
+			}
+
+			PARSE_SUCCESS(result);
+		}
+
+		Structure_Member_Node* parse_struct_member(Node* parent)
+		{
+			CHECKPOINT_SETUP;
+			if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+
+			auto result = allocate_base<Structure_Member_Node>(parent, AST::Node_Type::STRUCT_MEMBER);
+			result->is_expression = true;
+			result->options.expression = nullptr;
+			result->name = get_token()->options.string_value;
+			advance_token();
+
+			if (!test_token(Token_Type::COLON)) {
+				log_error_range_offset("Expected : after struct member name!", 0);
+				result->options.expression = create_error_expression(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+			advance_token();
+
+			if (on_follow_block())
+			{
+				result->is_expression = false;
+				result->options.subtype_members = dynamic_array_create<Structure_Member_Node*>();
+				auto add_to_subtype = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Structure_Member_Node>(parent)->options.subtype_members, downcast<Structure_Member_Node>(child));
+					};
+				parse_list_items(upcast(result), wrapper_parse_struct_member, add_to_subtype);
+				PARSE_SUCCESS(result);
+			}
+
+			result->options.expression = parse_expression_or_error_expr(upcast(result));
+			PARSE_SUCCESS(result);
+		}
+
+		AST::Node* parse_module_item(AST::Node* parent)
+		{
+			auto definition = parse_definition(parent);
+			if (definition != 0) {
+				return AST::upcast(definition);
+			}
+			auto import_node = parse_import(parent);
+			if (import_node != 0) {
+				return AST::upcast(import_node);
+			}
+			auto context_change = parse_context_change(parent);
+			if (context_change != 0) {
+				return AST::upcast(context_change);
+			}
+			auto extern_import = parse_extern_import(parent);
+			if (extern_import != 0) {
+				return AST::upcast(extern_import);
+			}
+			return nullptr;
+		}
+
+		Switch_Case* parse_switch_case(Node* parent)
+		{
+			auto result = allocate_base<Switch_Case>(parent, Node_Type::SWITCH_CASE);
+			result->value = optional_make_failure<Expression*>();
+			result->variable_definition = optional_make_failure<AST::Definition_Symbol*>();
+
+			// Check for default case
+			if (test_token(Token_Type::DEFAULT)) {
+				advance_token();
+			}
+			else
+			{
+				result->value.available = true;
+				result->value.value = parse_expression_or_error_expr(upcast(result));
+				if (test_token(Token_Type::ARROW))
+				{
+					advance_token();
+					if (test_token(Token_Type::IDENTIFIER)) {
+						result->variable_definition = optional_make_success(parse_definition_symbol(upcast(result)));
+					}
+					else {
+						log_error_range_offset("Expected identifier after arrow", 0);
+					}
+				}
+			}
+
+			result->block = parse_code_block(&result->base, 0);
+			// Set block label (Switch cases need special treatment because they 'Inherit' the label from the switch
+			assert(parent->type == Node_Type::STATEMENT && ((Statement*)parent)->type == Statement_Type::SWITCH_STATEMENT, "");
+			result->block->block_id = ((Statement*)parent)->options.switch_statement.label;
+			PARSE_SUCCESS(result);
+		}
+
+		// This function exists because for loops only allow assignments (+ binop assign) + expression in their last part...
+		AST::Statement* parse_assignment_or_expression_statement(Node* parent)
+		{
+			auto& ids = *parser.predefined_ids;
+
+			CHECKPOINT_SETUP;
+			auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
+
+			auto expr = parse_expression(&result->base);
+			if (expr == 0) {
+				CHECKPOINT_EXIT;
+			}
+
+			auto add_to_left_side = [](Node* parent, Node* child) {
+				dynamic_array_push_back(&downcast<Statement>(parent)->options.assignment.left_side, downcast<Expression>(child));
+			};
+			auto add_to_right_side = [](Node* parent, Node* child) {
+				dynamic_array_push_back(&downcast<Statement>(parent)->options.assignment.right_side, downcast<Expression>(child));
+			};
+
+			//if (test_token(Token_Type::COMMA))
+			//{
+			//	// Assume that it's a multi-assignment
+			//	result->type = Statement_Type::ASSIGNMENT;
+			//	result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
+			//	result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
+			//	dynamic_array_push_back(&result->options.assignment.left_side, expr);
+			//	advance_token();
+
+			//	// Parse remaining left_side expressions
+			//	parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_left_side);
+
+			//	// Check if assignment found, otherwise error
+			//	if (!test_token(Token_Type::ASSIGN)) {
+			//		CHECKPOINT_EXIT;
+			//	}
+			//	advance_token();
+
+			//	// Parse right side
+			//	parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_right_side);
+			//	PARSE_SUCCESS(result);
+			//}
+			if (test_token(Token_Type::ASSIGN))
+			{
+				result->type = Statement_Type::ASSIGNMENT;
+				result->options.assignment.left_side = dynamic_array_create<Expression*>(1);
+				result->options.assignment.right_side = dynamic_array_create<Expression*>(1);
+				dynamic_array_push_back(&result->options.assignment.left_side, expr);
+				advance_token();
+
+				// Parse right side
+				dynamic_array_push_back(&result->options.assignment.right_side, parse_expression_or_error_expr(upcast(result)));
+				// parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_right_side);
+				PARSE_SUCCESS(result);
+			}
+			else if (test_token(Token_Type::ASSIGN_ADD) || test_token(Token_Type::ASSIGN_SUB) ||
+				test_token(Token_Type::ASSIGN_MULT) || test_token(Token_Type::ASSIGN_DIV) || test_token(Token_Type::ASSIGN_MODULO))
+			{
+				result->type = Statement_Type::BINOP_ASSIGNMENT;
+				auto& assign = result->options.binop_assignment;
+				if (test_token(Token_Type::ASSIGN_ADD)) {
+					assign.binop = Binop::ADDITION;
+				}
+				else if (test_token(Token_Type::ASSIGN_SUB)) {
+					assign.binop = Binop::SUBTRACTION;
+				}
+				else if (test_token(Token_Type::ASSIGN_MULT)) {
+					assign.binop = Binop::MULTIPLICATION;
+				}
+				else if (test_token(Token_Type::ASSIGN_DIV)) {
+					assign.binop = Binop::DIVISION;
+				}
+				else if (test_token(Token_Type::ASSIGN_MODULO)) {
+					assign.binop = Binop::MODULO;
+				}
+				else {
+					panic("");
+				}
+				advance_token();
+
+				assign.left_side = expr;
+				assign.right_side = parse_expression_or_error_expr(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+
+			result->type = Statement_Type::EXPRESSION_STATEMENT;
+			result->options.expression = expr;
+			PARSE_SUCCESS(result);
+		}
+
+		AST::Statement* parse_statement(Node* parent)
+		{
+			auto& ids = *parser.predefined_ids;
+
+			CHECKPOINT_SETUP;
+			auto result = allocate_base<Statement>(parent, Node_Type::STATEMENT);
+
+			switch (get_token()->type)
+			{
+			case Token_Type::IMPORT:
+			{
+				auto import = parse_import(upcast(result));
+				if (import == 0) {
+					CHECKPOINT_EXIT;
+				}
+				result->type = Statement_Type::IMPORT;
+				result->options.import_node = import;
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::PARENTHESIS_OPEN:
+			case Token_Type::IDENTIFIER:
+			case Token_Type::DEFINE_INFER:
+			case Token_Type::DEFINE_COMPTIME:
+			case Token_Type::COLON:
+			{
+				auto definition = parse_definition(&result->base);
+				if (definition != 0) {
+					result->type = Statement_Type::DEFINITION;
+					result->options.definition = definition;
+					PARSE_SUCCESS(result);
+				}
+				break;
+			}
+			case Token_Type::IF:
+			{
+				advance_token();
+				result->type = Statement_Type::IF_STATEMENT;
+				auto& if_stat = result->options.if_statement;
+				if_stat.condition = parse_expression_or_error_expr(&result->base);
+				if_stat.block = parse_code_block(&result->base, upcast(if_stat.condition));
+				if_stat.else_block.available = false;
+
+				auto last_if_stat = result;
+				// Parse else-if chain
+				while (test_token(Token_Type::ELSE, 0) && test_token(Token_Type::IF, 1))
+				{
+					auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
+					implicit_else_block->statements = dynamic_array_create<Statement*>(1);
+					implicit_else_block->block_id = optional_make_failure<String*>();
+
+					auto new_if_stat = allocate_base<AST::Statement>(&last_if_stat->base, Node_Type::STATEMENT);
+					advance_token();
+					advance_token();
+					new_if_stat->type = Statement_Type::IF_STATEMENT;
+					auto& new_if = new_if_stat->options.if_statement;
+					new_if.condition = parse_expression_or_error_expr(&new_if_stat->base);
+					new_if.block = parse_code_block(&last_if_stat->base, upcast(new_if.condition));
+					new_if.else_block.available = false;
+					node_finalize_range(upcast(implicit_else_block));
+					node_finalize_range(upcast(new_if_stat));
+
+					dynamic_array_push_back(&implicit_else_block->statements, new_if_stat);
+					last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
+					last_if_stat = new_if_stat;
+
+				}
+				if (test_token(Token_Type::ELSE, 0))
+				{
+					advance_token();
+					last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
+				}
+				// NOTE: Here we return result, not last if stat
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::LOOP:
+			{
+				advance_token();
+				bool error_logged = false;
+
+				// Figure out loop type
+				result->type = Statement_Type::WHILE_STATEMENT;
+				if (test_token(Token_Type::IDENTIFIER, Token_Type::IN_KEYWORD) ||
+					test_token(Token_Type::IDENTIFIER, Token_Type::COMMA, Token_Type::IDENTIFIER, Token_Type::IN_KEYWORD)) {
+					result->type = Statement_Type::FOREACH_LOOP;
+				}
+				else if (test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER) && 
+					(test_token(Token_Type::COLON, 2) || test_token(Token_Type::DEFINE_INFER, 2))) 
+				{
+					result->type = Statement_Type::FOR_LOOP;
+				}
+
+				if (result->type == Statement_Type::WHILE_STATEMENT)
+				{
+					// Normal loop (Change for/while statems to just loop)
+					result->type = Statement_Type::WHILE_STATEMENT;
+					result->options.while_statement.condition.available = false;
+					AST::Expression* condition = nullptr;
+					if (!on_follow_block()) {
+						condition = parse_expression_or_error_expr(upcast(result));
+						result->options.while_statement.condition = optional_make_success(condition);
+					}
+					result->options.while_statement.block = parse_code_block(upcast(result), upcast(condition));
+				}
+				else if (result->type == Statement_Type::FOREACH_LOOP)
+				{
+					result->options.foreach_loop.loop_variable_definition = parse_definition_symbol(upcast(result));
+					if (test_token(Token_Type::COMMA)) {
+						advance_token();
+						result->options.foreach_loop.index_variable_definition.available = true;
+						result->options.foreach_loop.index_variable_definition.value = parse_definition_symbol(upcast(result));
+					}
+					assert(test_token(Token_Type::IN_KEYWORD), "");
+					advance_token();
+					result->options.foreach_loop.expression = parse_expression_or_error_expr(upcast(result));
+					result->options.foreach_loop.body_block = parse_code_block(upcast(result), upcast(result->options.foreach_loop.loop_variable_definition));
+				}
+				else // For loop
+				{
+					assert(test_token(Token_Type::PARENTHESIS_OPEN), "");
+					List_Iter iter = List_Iter::create();
+					assert(iter.is_valid && !iter.on_end_token(), "");
+
+					result->options.for_loop.loop_variable_definition = parse_definition_symbol(upcast(result));
+					if (test_token(Token_Type::COLON)) 
+					{
+						result->options.for_loop.loop_variable_type.available = true;
+						result->options.for_loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
+
+						if (test_token(Token_Type::ASSIGN)) {
+							advance_token();
+							result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
+						}
+						else {
+							log_error_range_offset("Expected = token", 0);
+							result->options.for_loop.initial_value = create_error_expression(upcast(result));
+						}
+					}
+					else 
+					{
+						assert(test_token(Token_Type::DEFINE_INFER), "");
+						advance_token();
+						result->options.for_loop.loop_variable_type.available = false;
+						result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
+					}
+
+					// Parse loop condition and increment
+					result->options.for_loop.increment_statement = nullptr;
+					result->options.for_loop.condition = nullptr;
+					iter.goto_next();
+					if (!iter.on_end_token()) 
+					{
+						result->options.for_loop.condition = parse_expression_or_error_expr(upcast(result));
+						iter.goto_next();
+						if (!iter.on_end_token()) {
+							result->options.for_loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
+						}
+					}
+					if (result->options.for_loop.condition == nullptr) {
+						result->options.for_loop.condition = create_error_expression(upcast(result));
+					}
+					if (result->options.for_loop.increment_statement == nullptr) {
+						result->options.for_loop.increment_statement = create_error_statement(upcast(result));
+					}
+					iter.finish();
+
+					result->options.for_loop.body_block = parse_code_block(upcast(result), upcast(result->options.for_loop.loop_variable_definition));
+				}
+
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::DEFER:
+			{
+				advance_token();
+				result->type = Statement_Type::DEFER;
+
+				if (on_follow_block()) {
+					result->options.defer_block = parse_code_block(upcast(result), nullptr);
+					PARSE_SUCCESS(result);
+				}
+
+				// Else we have single statement defer
+				AST::Statement* statement = parse_statement(upcast(result));
+				if (statement == nullptr) {
+					CHECKPOINT_EXIT;
+				}
+
+				// Generate new code block, set parent/child correctly, set ranges correctly
+				Code_Block* code_block = allocate_base<Code_Block>(upcast(result), Node_Type::CODE_BLOCK);
+				code_block->statements = dynamic_array_create<Statement*>(1);
+				code_block->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
+				code_block->block_id = optional_make_failure<String*>();
+
+				dynamic_array_push_back(&code_block->statements, statement);
+				statement->base.parent = upcast(code_block);
+				code_block->base.range = statement->base.range;
+				code_block->base.bounding_range = statement->base.bounding_range;
+
+				result->options.defer_block = code_block;
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::DEFER_RESTORE:
+			{
+				advance_token();
+				result->type = Statement_Type::DEFER_RESTORE;
+				result->options.defer_restore.left_side = parse_expression_or_error_expr(upcast(result));
+				if (!test_token(Token_Type::ASSIGN)) {
+					auto error_expr = allocate_base<AST::Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+					log_error_range_offset("Expected assignment after argument_expression", 0);
+					error_expr->type = Expression_Type::ERROR_EXPR;
+					node_finalize_range(upcast(error_expr));
+					result->options.defer_restore.right_side = error_expr;
+					PARSE_SUCCESS(result);
+				}
+
+				advance_token();
+				result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::SWITCH:
+			{
+				advance_token();
+				result->type = Statement_Type::SWITCH_STATEMENT;
+				auto& switch_stat = result->options.switch_statement;
+				switch_stat.condition = parse_expression_or_error_expr(&result->base);
+				switch_stat.cases = dynamic_array_create<Switch_Case*>(1);
+				find_next_follow_block();
+				switch_stat.label = parse_block_label_or_use_related_node_id(upcast(switch_stat.condition));
+				auto add_to_switch = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Statement>(parent)->options.switch_statement.cases, downcast<Switch_Case>(child));
+				};
+				parse_list_items(upcast(result), wrapper_parse_switch_case, add_to_switch);
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::DELETE_KEYWORD: {
+				advance_token();
+				result->type = Statement_Type::DELETE_STATEMENT;
+				result->options.delete_expr = parse_expression_or_error_expr(&result->base);
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::RETURN: {
+				advance_token();
+				result->type = Statement_Type::RETURN_STATEMENT;
+				auto expr = parse_expression(&result->base);
+				result->options.return_value.available = false;
+				if (expr != 0) {
+					result->options.return_value = optional_make_success(expr);
+				}
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::CONTINUE: {
+				advance_token();
+				result->type = Statement_Type::CONTINUE_STATEMENT;
+				result->options.continue_name = optional_make_failure<String*>();
+				if (test_token(Token_Type::IDENTIFIER)) {
+					result->options.continue_name = optional_make_success(get_token(0)->options.string_value);
+					advance_token();
+				}
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::BREAK: {
+				advance_token();
+				result->type = Statement_Type::BREAK_STATEMENT;
+				result->options.break_name = optional_make_failure<String*>();
+				if (test_token(Token_Type::IDENTIFIER)) {
+					result->options.break_name = optional_make_success(get_token(0)->options.string_value);
+					advance_token();
+				}
+				PARSE_SUCCESS(result);
+			}
+			}
+
+			if (on_follow_block())
+			{
+				result->type = Statement_Type::BLOCK;
+				result->options.block = parse_code_block(upcast(result), nullptr);
+				PARSE_SUCCESS(result);
+			}
+
+
+			// Otherwise try to parse expression or assignment statement
+			// Delete result, which is an allocated statement node
+			result->type = Statement_Type::IMPORT; // So that rollback doesn't read uninitialized values
+			parser_rollback(checkpoint);
+
+			return parse_assignment_or_expression_statement(parent);
+		}
+
+		AST::Node* parse_statement_or_context_change(Node* parent)
+		{
+			// Check for context change
+			auto context_change = parse_context_change(parent);
+			if (context_change != 0) {
+				return upcast(context_change);
+			}
+
+			return upcast(parse_statement(parent));
+		}
+
+		Enum_Member_Node* parse_enum_member(Node* parent)
+		{
+			if (!test_token(Token_Type::IDENTIFIER)) {
+				return 0;
+			}
+
+			CHECKPOINT_SETUP;
+			auto result = allocate_base<Enum_Member_Node>(parent, Node_Type::ENUM_MEMBER);
+			result->name = get_token()->options.string_value;
+			advance_token();
+			if (test_token(Token_Type::DEFINE_COMPTIME)) {
+				advance_token();
+				result->value = optional_make_success(parse_expression_or_error_expr(&result->base));
+			}
+			PARSE_SUCCESS(result);
+		}
+	};
+
+	// Used by code-block and switch statement
+	Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
+	{
+		Optional<String*> result = optional_make_failure<String*>();
+		if (test_token(Token_Type::EXPLICIT_BLOCK, Token_Type::IDENTIFIER)) {
+			result = optional_make_success(get_token(1)->options.string_value);
+		}
+		else if (related_node != nullptr)
+		{
+			if (related_node->type == AST::Node_Type::EXPRESSION) {
+				auto expr = downcast<AST::Expression>(related_node);
+				if (expr->type == AST::Expression_Type::PATH_LOOKUP) {
+					result = optional_make_success<String*>(expr->options.path_lookup->last->name);
+				}
+			}
+			else if (related_node->type == AST::Node_Type::DEFINITION_SYMBOL) {
+				result = optional_make_success<String*>(downcast<AST::Definition_Symbol>(related_node)->name);
+			}
+		}
+		return result;
+	}
+
+	// Always returns success, but if there is no follow block, there are errors
+	Code_Block* parse_code_block(Node* parent, AST::Node* related_node)
+	{
+		auto result = allocate_base<Code_Block>(parent, Node_Type::CODE_BLOCK);
+		result->statements = dynamic_array_create<Statement*>();
+		result->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
+
+		find_next_follow_block();
+		result->block_id = parse_block_label_or_use_related_node_id(related_node);
+		if (on_follow_block())
+		{
+			parse_list_items(
+				upcast(result), wrapper_parse_statement_or_context_change, code_block_add_child
+			);
+		}
+		else {
+			log_error_range_offset("Expected code block", 0);
+		}
+
+		PARSE_SUCCESS(result);
+	}
+
+	Argument* parse_argument(Node* parent)
+	{
+		CHECKPOINT_SETUP;
+		auto result = allocate_base<Argument>(parent, Node_Type::ARGUMENT);
+		if (test_token(Token_Type::IDENTIFIER) && test_token(Token_Type::ASSIGN, 1)) {
+			result->name = optional_make_success(get_token()->options.string_value);
+			advance_token();
+			advance_token();
+			result->value = parse_expression_or_error_expr(&result->base);
+			PARSE_SUCCESS(result);
+		}
+		result->value = parse_expression_or_error_expr(&result->base);
+		PARSE_SUCCESS(result);
+	}
+
+	Subtype_Initializer* parse_subtype_initializer(Node* parent)
+	{
+		if (!test_token(Token_Type::DOT, Token_Type::IDENTIFIER, Token_Type::ASSIGN) &&
+			!test_token(Token_Type::DOT, Token_Type::ASSIGN))
+		{
+			return 0;
+		}
+
+		CHECKPOINT_SETUP;
+		auto result = allocate_base<Subtype_Initializer>(parent, Node_Type::SUBTYPE_INITIALIZER);
+		advance_token();
+
+		// Parser name if available
+		result->name.available = false;
+		if (test_token(Token_Type::IDENTIFIER)) {
+			result->name = optional_make_success(get_token(0)->options.string_value);
+			advance_token();
+		}
+
+		assert(test_token(Token_Type::ASSIGN), "Should be true after previous if");
+		advance_token();  // Skip =
+
+		result->call_node = parse_call_node(upcast(result));
+		PARSE_SUCCESS(result);
+	}
+
+	Parameter* parse_parameter(Node* parent)
+	{
+		CHECKPOINT_SETUP;
+		auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
+		result->is_comptime = false;
+		result->is_return_type = false;
+		result->default_value.available = false;
+		result->type = optional_make_failure<AST::Expression*>();
+		result->default_value = optional_make_failure<AST::Expression*>();
+
+		// Parse identifier and optional mutators
+		if (test_token(Token_Type::DOLLAR)) {
+			result->is_comptime = true;
+			advance_token();
+		}
+		if (!test_token(Token_Type::IDENTIFIER)) CHECKPOINT_EXIT;
+		result->name = get_token(0)->options.string_value;
+		advance_token();
+
+		if (!test_token(Token_Type::COLON)) {
+			PARSE_SUCCESS(result);
+		}
+
+		advance_token(); // Skip :
+		result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
+
+		if (test_token(Token_Type::ASSIGN)) {
+			advance_token();
+			result->default_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
+		}
+		PARSE_SUCCESS(result);
+	}
+
+	Expression* parse_single_expression_no_postop(Node* parent)
+	{
+		auto& ids = *parser.predefined_ids;
+
+		// DOCU: Parses Pre-Ops + Bases, but no postops
+		CHECKPOINT_SETUP;
+		auto result = allocate_base<Expression>(parent, Node_Type::EXPRESSION);
+
+		switch (get_token()->type)
+		{
+			// Unops
+		case Token_Type::SUBTRACTION:
+		case Token_Type::NOT:
+		{
+			Unop unop = test_token(Token_Type::SUBTRACTION) ? Unop::NEGATE : Unop::NOT;
+			advance_token();
+			result->type = Expression_Type::UNARY_OPERATION;
+			result->options.unop.type = unop;
+			result->options.unop.expr = parse_single_expression_or_error(&result->base);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::MULTIPLY:
+		case Token_Type::OPTIONAL_POINTER:
+		{
+			result->type = Expression_Type::POINTER_TYPE;
+			result->options.pointer_type.is_optional = test_token(Token_Type::OPTIONAL_POINTER);
+			advance_token();
+			result->options.pointer_type.child_type = parse_single_expression_or_error(&result->base);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::BAKE:
+		{
+			result->type = Expression_Type::BAKE;
+			advance_token();
+			if (on_follow_block()) {
+				result->options.bake_body.is_expression = false;
+				result->options.bake_body.block = parse_code_block(&result->base, 0);
+			}
+			else {
+				result->options.bake_body.is_expression = true;
+				result->options.bake_body.expr = parse_single_expression_or_error(&result->base);
+			}
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::INSTANCIATE:
+		{
+			advance_token();
+			result->type = Expression_Type::INSTANCIATE;
+			auto& instanciate = result->options.instanciate;
+			instanciate.path_lookup = parse_path_lookup(upcast(result));
+			instanciate.return_type = optional_make_failure<AST::Expression*>();
+			if (instanciate.path_lookup == nullptr) {
+				CHECKPOINT_EXIT;
+			}
+			if (!test_token(Token_Type::PARENTHESIS_OPEN)) {
+				CHECKPOINT_EXIT;
+			}
+			instanciate.call_node = parse_call_node(upcast(result));
+			if (test_token(Token_Type::ARROW)) {
+				advance_token();
+				instanciate.return_type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+			}
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::GET_OVERLOAD:
+		case Token_Type::GET_OVERLOAD_POLY:
+		{
+			bool is_poly = test_token(Token_Type::GET_OVERLOAD_POLY);
+			int start = parser.state.pos;
+
+			advance_token();
+			result->type = Expression_Type::GET_OVERLOAD;
+			result->options.get_overload.is_poly = is_poly;
+			result->options.get_overload.path = optional_make_failure<AST::Path_Lookup*>();
+			result->options.get_overload.arguments = dynamic_array_create<AST::Get_Overload_Argument*>();
+
+			AST::Path_Lookup* path = parse_path_lookup(upcast(result));
+			if (path != 0) {
+				result->options.get_overload.path = optional_make_success(path);
+			}
+			else {
+				log_error("#get_overload expected a path_lookup", start, start + 1);
+			}
+
+			if (test_token(Token_Type::PARENTHESIS_OPEN))
+			{
+				auto add_to_expr = [](AST::Node* parent, AST::Node* child) {
+					AST::Expression* expr = downcast<AST::Expression>(parent);
+					AST::Get_Overload_Argument* arg = downcast<AST::Get_Overload_Argument>(child);
+					dynamic_array_push_back(&expr->options.get_overload.arguments, arg);
+					};
+				parse_list_items(upcast(result), parse_overload_argument, add_to_expr);
+			}
+			else {
+				log_error("#get_overload expected '(' after path_lookup", start, start + 1);
+			}
+
+			if (test_token(Token_Type::ARROW)) {
+				AST::Get_Overload_Argument* return_type_argument = allocate_base<AST::Get_Overload_Argument>(upcast(result), AST::Node_Type::GET_OVERLOAD_ARGUMENT);
+				advance_token();
+				return_type_argument->id = ids.return_type_name;
+				return_type_argument->type_expr = optional_make_success(parse_expression_or_error_expr(upcast(return_type_argument)));
+				node_finalize_range(upcast(return_type_argument));
+				dynamic_array_push_back(&result->options.get_overload.arguments, return_type_argument);
+			}
+
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::CAST:
+		{
+			result->type = Expression_Type::CAST;
+			auto& cast = result->options.cast;
+			cast.is_dot_call = false;
+			advance_token();
+
+			if (test_token(Token_Type::PARENTHESIS_OPEN)) {
+				// cast(value, to, from, option)
+				cast.call_node = parse_call_node(upcast(result));
+			}
+			else
+			{
+				// cast x
+				Call_Node* call_node = allocate_base<Call_Node>(upcast(result), Node_Type::CALL_NODE);
+				call_node->arguments = dynamic_array_create<Argument*>(1);
+				call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
+				call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
+
+				Argument* argument = allocate_base<Argument>(upcast(call_node), Node_Type::ARGUMENT);;
+				argument->name.available = false;
+				argument->value = parse_single_expression_or_error(upcast(argument));
+				dynamic_array_push_back(&call_node->arguments, argument);
+
+				node_finalize_range(upcast(argument));
+				node_finalize_range(upcast(call_node));
+				cast.call_node = call_node;
+			}
+
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::BRACKET_OPEN:
+		{
+			if (test_token(Token_Type::BRACKET_CLOSED, 1)) {
+				result->type = Expression_Type::SLICE_TYPE;
+				advance_token();
+				advance_token();
+				result->options.slice_type = parse_single_expression_or_error(&result->base);
+				PARSE_SUCCESS(result);
+			}
+
+			result->type = Expression_Type::ARRAY_TYPE;
+			List_Iter list = List_Iter::create();
+			result->options.array_type.size_expr = parse_expression_or_error_expr(&result->base);
+			list.finish();
+			result->options.array_type.type_expr = parse_single_expression_or_error(&result->base);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::DOLLAR:
+		{
+			if (!test_token(Token_Type::IDENTIFIER, 1)) {
+				CHECKPOINT_EXIT;
+			}
+
+			result->type = Expression_Type::PATTERN_VARIABLE;
+			advance_token();
+			result->options.pattern_variable_name = get_token()->options.string_value;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::DOT:
+		{
+			advance_token();
+			if (test_token(Token_Type::FUNCTION_KEYWORD))
+			{
+				result->type = Expression_Type::FUNCTION;
+				result->options.function.signature = optional_make_failure<AST::Expression*>();
+				advance_token();
+
+				if (on_follow_block()) {
+					result->options.function.body.is_expression = false;
+					result->options.function.body.block = parse_code_block(&result->base, 0);
+					PARSE_SUCCESS(result);
+				}
+				result->options.function.body.is_expression = true;
+				result->options.function.body.expr = parse_expression_or_error_expr(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+			else if (test_token(Token_Type::PARENTHESIS_OPEN)) // Struct Initializer
+			{
+				result->type = Expression_Type::STRUCT_INITIALIZER;
+				auto& init = result->options.struct_initializer;
+				init.type_expr = optional_make_failure<Expression*>();
+				init.call_node = parse_call_node(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+			else if (test_token(Token_Type::BRACKET_OPEN)) // Array Initializer
+			{
+				result->type = Expression_Type::ARRAY_INITIALIZER;
+				auto& init = result->options.array_initializer;
+				init.type_expr = optional_make_failure<Expression*>();
+				init.values = dynamic_array_create<Expression*>(1);
+				auto add_to_values = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
+					};
+				parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_values);
+				PARSE_SUCCESS(result);
+			}
+			else
+			{
+				result->type = Expression_Type::AUTO_ENUM;
+				if (test_token(Token_Type::IDENTIFIER)) {
+					result->options.auto_enum = get_token(0)->options.string_value;
+					advance_token();
+				}
+				else {
+					log_error("Missing member name", parser.state.pos - 1, parser.state.pos);
+					result->options.auto_enum = ids.empty_string;
+				}
+				PARSE_SUCCESS(result);
+			}
+			CHECKPOINT_EXIT;
+		}
+		case Token_Type::LITERAL_STRING:
+		{
+			result->type = Expression_Type::LITERAL_READ;
+			result->options.literal_read.type = Literal_Type::STRING;
+			result->options.literal_read.options.string = get_token()->options.string_value;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::LITERAL_INTEGER:
+		{
+			result->type = Expression_Type::LITERAL_READ;
+			result->options.literal_read.type = Literal_Type::INTEGER;
+			result->options.literal_read.options.int_val = get_token()->options.integer_value;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::LITERAL_FLOAT:
+		{
+			result->type = Expression_Type::LITERAL_READ;
+			result->options.literal_read.type = Literal_Type::FLOAT_VAL;
+			result->options.literal_read.options.float_val = get_token()->options.float_value;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::LITERAL_FALSE:
+		case Token_Type::LITERAL_TRUE:
+		{
+			result->type = Expression_Type::LITERAL_READ;
+			result->options.literal_read.type = Literal_Type::BOOLEAN;
+			result->options.literal_read.options.boolean = test_token(Token_Type::LITERAL_TRUE);
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::LITERAL_NULL:
+		{
+			result->type = Expression_Type::LITERAL_READ;
+			result->options.literal_read.type = Literal_Type::NULL_VAL;
+			result->options.literal_read.options.null_ptr = nullptr;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::NEW:
+		{
+			result->type = Expression_Type::NEW_EXPR;
+			result->options.new_expr.count_expr.available = false;
+			advance_token();
+			// Note: count expression currently not supported for new
+			// if (test_parenthesis_offset('{', 0)) {
+			// 	advance_token();
+			// 	result->options.new_expr.count_expr = optional_make_success(parse_expression_or_error_expr(&result->base));
+			// 	if (!finish_parenthesis<Parenthesis_Type::BRACES>()) CHECKPOINT_EXIT;
+			// }
+			result->options.new_expr.type_expr = parse_expression_or_error_expr(&result->base);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::STRUCT:
+		case Token_Type::UNION:
+		{
+			result->type = Expression_Type::STRUCTURE_TYPE;
+			result->options.structure.members = dynamic_array_create<Structure_Member_Node*>();
+			result->options.structure.parameters = dynamic_array_create<Parameter*>();
+			result->options.structure.is_union = test_token(Token_Type::UNION);
+			advance_token();
+
+			// Parse struct parameters
+			if (test_token(Token_Type::PARENTHESIS_OPEN))
+			{
+				auto add_parameter = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.parameters, downcast<Parameter>(child));
+					};
+				parse_list_items(upcast(result), wrapper_parse_parameter, add_parameter);
+			}
+
+			if (!on_follow_block()) {
+				log_error_range_offset("Expected follow block", 0);
+				PARSE_SUCCESS(result);
+			}
+
+			auto add_member = [](Node* parent, Node* child) {
+				dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.members, downcast<Structure_Member_Node>(child));
+				};
+			parse_list_items(upcast(result), wrapper_parse_struct_member, add_member);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::ENUM:
+		{
+			result->type = Expression_Type::ENUM_TYPE;
+			result->options.enum_members = dynamic_array_create<Enum_Member_Node*>();
+			advance_token();
+
+			if (!on_follow_block()) {
+				log_error_range_offset("Expected follow block", 0);
+				PARSE_SUCCESS(result);
+			}
+
+			auto add_member = [](Node* parent, Node* child) {
+				dynamic_array_push_back(&downcast<Expression>(parent)->options.enum_members, downcast<Enum_Member_Node>(child));
+				};
+			parse_list_items(upcast(result), wrapper_parse_enum_member, add_member);
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::MODULE:
+		{
+			auto module = allocate_base<Module>(&result->base, Node_Type::MODULE);
+			module->definitions = dynamic_array_create<Definition*>(1);
+			module->import_nodes = dynamic_array_create<Import*>(1);
+			module->custom_operators = dynamic_array_create<Custom_Operator_Node*>(1);
+			advance_token();
+
+			result->type = Expression_Type::MODULE;
+			result->options.module = module;
+
+			find_next_follow_block();
+			if (!on_follow_block()) {
+				log_error_range_offset("Expected follow block", 0);
+			}
+			else {
+				parse_list_items(upcast(module), wrapper_parse_module_item, module_add_child);
+			}
+
+			node_finalize_range(upcast(module));
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::FUNCTION_POINTER_KEYWORD:
+		case Token_Type::FUNCTION_KEYWORD:
+		{
+			AST::Expression* signature = result;
+			if (test_token(Token_Type::FUNCTION_KEYWORD)) {
+				result->type = Expression_Type::FUNCTION;
+				signature = allocate_base<AST::Expression>(upcast(result), Node_Type::EXPRESSION);
+				result->options.function.signature = optional_make_success(signature);
+			}
+			else {
+				signature = result;
+			}
+
+			// Parse signature
+			advance_token();
+			signature->type = Expression_Type::FUNCTION_SIGNATURE;
+			signature->options.signature_parameters = dynamic_array_create<Parameter*>();
+			if (test_token(Token_Type::PARENTHESIS_OPEN))
+			{
+				auto add_parameter = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Expression>(parent)->options.signature_parameters, downcast<Parameter>(child));
+					};
+				parse_list_items(upcast(signature), wrapper_parse_parameter, add_parameter);
+
+				if (test_token(Token_Type::ARROW))
+				{
+					advance_token();
+					auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
+					return_param->default_value = optional_make_failure<AST::Expression*>();
+					return_param->is_comptime = false;
+					return_param->is_return_type = true;
+					return_param->name = ids.return_type_name;
+					return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+					dynamic_array_push_back(&signature->options.signature_parameters, return_param);
+				}
+			}
+			node_finalize_range(upcast(signature));
+
+			// Parse function body if the expression is not just a type
+			if (result->type == Expression_Type::FUNCTION) {
+				result->options.function.body.is_expression = false;
+				result->options.function.body.block = parse_code_block(upcast(result), nullptr);
+			}
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::IDENTIFIER:
+		case Token_Type::TILDE: {
+			result->type = Expression_Type::PATH_LOOKUP;
+			result->options.path_lookup = parse_path_lookup_or_error(upcast(result));
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::PARENTHESIS_OPEN: {
+			List_Iter list_iter = List_Iter::create();
+			result = parse_expression_or_error_expr(parent);
+			list_iter.finish();
+			PARSE_SUCCESS(result);
+		}
+		}
+
+		CHECKPOINT_EXIT;
+	}
+
+	Expression* parse_post_operator_internal(Expression* child)
+	{
+		auto& ids = *parser.predefined_ids;
+
+		// DOCU: Internal means that we don't add the result of this expression to the parameter child,
+		//       but rather to the parent of the child
+		CHECKPOINT_SETUP;
+
+		auto result = allocate_base<Expression>(child->base.parent, Node_Type::EXPRESSION);
+		switch (get_token()->type)
+		{
+		case Token_Type::DOT:
+		{
+			advance_token();
+			if (test_token(Token_Type::PARENTHESIS_OPEN)) // Struct Initializer
+			{
+				result->type = Expression_Type::STRUCT_INITIALIZER;
+				auto& init = result->options.struct_initializer;
+				init.type_expr = optional_make_success(child);
+				init.call_node = parse_call_node(upcast(result));
+				PARSE_SUCCESS(result);
+			}
+			if (test_token(Token_Type::BRACKET_OPEN)) // Array Initializer
+			{
+				result->type = Expression_Type::ARRAY_INITIALIZER;
+				auto& init = result->options.array_initializer;
+				init.type_expr = optional_make_success(child);
+				init.values = dynamic_array_create<Expression*>(1);
+				auto add_to_values = [](Node* parent, Node* child) {
+					dynamic_array_push_back(&downcast<Expression>(parent)->options.array_initializer.values, downcast<Expression>(child));
+					};
+				parse_list_items(upcast(result), wrapper_parse_expression_or_error, add_to_values);
+				PARSE_SUCCESS(result);
+			}
+			else
+			{
+				result->type = Expression_Type::MEMBER_ACCESS;
+				result->options.member_access.expr = child;
+				if (test_token(Token_Type::IDENTIFIER)) {
+					result->options.member_access.name = get_token(0)->options.string_value;
+					advance_token();
+				}
+				else {
+					log_error("Missing member name", parser.state.pos - 1, parser.state.pos);
+					result->options.member_access.name = ids.empty_string;
+				}
+				PARSE_SUCCESS(result);
+			}
+			CHECKPOINT_EXIT;
+		}
+		case Token_Type::DOT_CALL:
+		{
+			advance_token();
+
+			bool is_cast = false;
+			AST::Call_Node* call_node = nullptr;
+			if (test_token(Token_Type::CAST))
+			{
+				is_cast = true;
+				result->type = Expression_Type::CAST;
+				result->options.cast.is_dot_call = true;
+				result->options.cast.call_node = nullptr;
+				advance_token();
+				if (!test_token(Token_Type::PARENTHESIS_OPEN)) {
+					call_node = allocate_base<Call_Node>(upcast(result), Node_Type::CALL_NODE);
+					call_node->arguments = dynamic_array_create<Argument*>();
+					call_node->subtype_initializers = dynamic_array_create<Subtype_Initializer*>();
+					call_node->uninitialized_tokens = dynamic_array_create<Expression*>();
+				}
+			}
+			else
+			{
+				result->type = Expression_Type::FUNCTION_CALL;
+				auto& call = result->options.call;
+				call.is_dot_call = true;
+
+				Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+				call_expr->type = AST::Expression_Type::PATH_LOOKUP;
+				call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
+				call_expr->options.path_lookup->is_dot_call_lookup = true;
+				node_finalize_range(upcast(call_expr));
+
+				call.expr = call_expr;
+			}
+
+			// Parse arguments (If not cast without parenthesis)
+			if (call_node == nullptr) {
+				call_node = parse_call_node(upcast(result));
+			}
+
+			// Add expr as first unnamed argument
+			AST::Argument* argument = allocate_base<Argument>(upcast(call_node), AST::Node_Type::ARGUMENT);
+			argument->name = optional_make_failure<String*>();
+			argument->value = child;
+			argument->base.range = child->base.range;
+			argument->base.bounding_range = child->base.bounding_range;
+			dynamic_array_insert_ordered(&call_node->arguments, argument, 0);
+			node_finalize_range(upcast(call_node)); // For bounding range, as the call node now also includes the first argument (Not sure if I want this)
+
+			if (is_cast) {
+				result->options.cast.call_node = call_node;
+			}
+			else {
+				result->options.call.call_node = call_node;
+			}
+
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::BRACKET_OPEN:
+		{
+			List_Iter iter = List_Iter::create();
+			result->type = Expression_Type::ARRAY_ACCESS;
+			result->options.array_access.array_expr = child;
+			result->options.array_access.index_expr = parse_expression_or_error_expr(&result->base);
+			iter.finish();
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::PARENTHESIS_OPEN:
+		{
+			result->type = Expression_Type::FUNCTION_CALL;
+			auto& call = result->options.call;
+			call.is_dot_call = false;
+			call.expr = child;
+			call.call_node = parse_call_node(upcast(result));
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::ADDRESS_OF:
+		case Token_Type::DEREFERENCE:
+		case Token_Type::OPTIONAL_DEREFERENCE:
+		case Token_Type::QUESTION_MARK:
+		{
+			Unop unop = (Unop)-1;
+			if (test_token(Token_Type::ADDRESS_OF)) {
+				unop = Unop::ADDRESS_OF;
+			}
+			else if (test_token(Token_Type::DEREFERENCE)) {
+				unop = Unop::DEREFERENCE;
+			}
+			else if (test_token(Token_Type::OPTIONAL_DEREFERENCE)) {
+				unop = Unop::OPTIONAL_DEREFERENCE;
+			}
+			else if (test_token(Token_Type::QUESTION_MARK)) {
+				unop = Unop::NULL_CHECK;
+			}
+			else {
+				panic("");
+			}
+
+			result->type = Expression_Type::UNARY_OPERATION;
+			result->options.unop.type = unop;
+			result->options.unop.expr = child;
+			advance_token();
+			PARSE_SUCCESS(result);
+		}
+		}
+
+		CHECKPOINT_EXIT;
+	}
+
+	// Does not parse binop-chains, 
+	Expression* parse_single_expression(Node* parent)
+	{
+		// DOCU: This function parses: Pre-Ops + Node + Post-Op
+		Expression* child = parse_single_expression_no_postop(parent);
+		if (child == 0) return child;
+		Expression* post_op = parse_post_operator_internal(child);
+		while (post_op != 0) {
+			child->base.parent = &post_op->base;
+			child = post_op;
+			post_op = parse_post_operator_internal(child);
+		}
+		return child;
+	}
+
+	Expression* parse_single_expression_or_error(Node* parent)
+	{
+		auto expr = parse_single_expression(parent);
+		if (expr != 0) {
+			return expr;
+		}
+		log_error_range_offset("Expected Single Expression", 0);
+		expr = allocate_base<AST::Expression>(parent, AST::Node_Type::EXPRESSION);
+		expr->type = Expression_Type::ERROR_EXPR;
+		PARSE_SUCCESS(expr);
+	}
+
+	Expression* parse_priority_level(Expression* expr, int priority_level, Dynamic_Array<Binop_Link>* links, int* index)
+	{
+		while (*index < links->size)
+		{
+			auto& link = (*links)[*index];
+			auto op_prio = binop_priority(link.binop);
+			if (op_prio > priority_level) {
+				expr = parse_priority_level(expr, priority_level + 1, links, index);
+			}
+			else if (op_prio == priority_level)
+			{
+				*index = *index + 1;
+				Expression* result = allocate_base<Expression>(0, Node_Type::EXPRESSION);
+				result->type = Expression_Type::BINARY_OPERATION;
+				result->options.binop.type = link.binop;
+				result->options.binop.left = expr;
+				result->options.binop.right = parse_priority_level(link.expr, priority_level + 1, links, index);
+				result->options.binop.left->base.parent = &result->base;
+				result->options.binop.right->base.parent = &result->base;
+				expr = result;
+
+				Token* token = get_token_by_index(link.token_index);
+				auto& range = result->base.range;
+				range.start = text_index_make(token->line, token->start);
+				range.end = text_index_make(token->line, token->end);
+				node_calculate_bounding_range(AST::upcast(result->options.binop.left));
+				node_calculate_bounding_range(AST::upcast(result));
+			}
+			else {
+				break;
+			}
+		}
+		return expr;
+	}
+
+	Expression* parse_expression(Node* parent)
+	{
+		CHECKPOINT_SETUP;
+		Expression* start_expr = parse_single_expression(parent);
+		if (start_expr == 0) return 0;
+
+		Dynamic_Array<Binop_Link> links = dynamic_array_create<Binop_Link>();
+		SCOPE_EXIT(dynamic_array_destroy(&links));
+		while (true)
+		{
+			Binop_Link link;
+			link.binop = Binop::INVALID;
+			link.token_index = parser.state.pos;
+			switch (get_token()->type)
+			{
+			case Token_Type::ADDITION: link.binop = Binop::ADDITION; break;
+			case Token_Type::SUBTRACTION: link.binop = Binop::SUBTRACTION; break;
+			case Token_Type::MULTIPLY:link.binop = Binop::MULTIPLICATION; break;
+			case Token_Type::DIVISON:link.binop = Binop::DIVISION; break;
+			case Token_Type::MODULO:link.binop = Binop::MODULO; break;
+			case Token_Type::AND:link.binop = Binop::AND; break;
+			case Token_Type::OR:link.binop = Binop::OR; break;
+			case Token_Type::GREATER_THAN:link.binop = Binop::GREATER; break;
+			case Token_Type::GREATER_EQUAL:link.binop = Binop::GREATER_OR_EQUAL; break;
+			case Token_Type::LESS_THAN:link.binop = Binop::LESS; break;
+			case Token_Type::LESS_EQUAL:link.binop = Binop::LESS_OR_EQUAL; break;
+			case Token_Type::EQUALS:link.binop = Binop::EQUAL; break;
+			case Token_Type::NOT_EQUALS:link.binop = Binop::NOT_EQUAL; break;
+			case Token_Type::POINTER_EQUALS:link.binop = Binop::POINTER_EQUAL; break;
+			case Token_Type::POINTER_NOT_EQUALS:link.binop = Binop::POINTER_NOT_EQUAL; break;
+			}
+			if (link.binop == Binop::INVALID) {
+				break;
+			}
+			advance_token();
+			link.expr = parse_single_expression_or_error(parent);
+			dynamic_array_push_back(&links, link);
+		}
+
+		// Now build the overload tree
+		if (links.size == 0) PARSE_SUCCESS(start_expr);
+		int index = 0;
+		Expression* result = parse_priority_level(start_expr, 0, &links, &index);
+		result->base.parent = parent;
+		return result; // INFO: Don't use PARSE SUCCESS, since this would overwrite the token-ranges set by parse_priority_level
+	}
+
+	Expression* parse_expression_or_error_expr(Node* parent)
+	{
+		auto expr = parse_expression(parent);
+		if (expr != 0) {
+			return expr;
+		}
+		log_error_range_offset("Expected Expression", 0);
+		return create_error_expression(parent);
+	}
 
 #undef CHECKPOINT_EXIT
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
-#undef SET_END_RANGE
 
-    void parse_root()
-    {
-        auto code = parser.code;
+	void execute_clean(Compilation_Unit* unit, Identifier_Pool* identifier_pool, Arena* arena)
+	{
+		auto checkpoint = arena->make_checkpoint();
+		SCOPE_EXIT(arena->rewind_to_checkpoint(checkpoint));
 
-        // Create root
-        auto root = allocate_base<Module>(0, Node_Type::MODULE);
-        parser.unit->root = root;
-        root->definitions = dynamic_array_create<Definition*>();
-        root->import_nodes = dynamic_array_create<Import*>();
-        root->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
+		// Reset allocation data
+		{
+			for (int i = 0; i < unit->allocated_nodes.size; i++) {
+				AST::base_destroy(unit->allocated_nodes[i]);
+			}
+			dynamic_array_reset(&unit->allocated_nodes);
+			dynamic_array_reset(&unit->parser_errors);
+			unit->root = 0;
+		}
 
-        // Initialize state
-        parser.state.pos = token_index_make(0, 0);
-        parser.state.line = source_code_get_line(parser.code, 0);
-        parser.state.allocated_count = parser.unit->allocated_nodes.size;
-        parser.state.error_count = parser.unit->parser_errors.size;
+		// Initialize parser
+		parser.arena = arena;
+		parser.unit = unit;
+		parser.error_token = token_make(Token_Type::INVALID, 0, 0, 0);
+		parser.predefined_ids = &identifier_pool->predefined_ids;
 
-        // Parse root
-        parse_block_of_items(upcast(root), wrapper_parse_module_item, module_add_child, Operator::SEMI_COLON, 0, false);
+		// Tokenize code
+		{
+			Identifier_Pool_Lock pool_lock = identifier_pool_lock_aquire(identifier_pool);
+			SCOPE_EXIT(identifier_pool_lock_release(pool_lock));
+			parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, arena, &pool_lock);
+			print_tokens(parser.tokens);
+		}
 
-        // Set range
-        Token_Range range = token_range_make(token_index_make(0, 0), token_index_make_line_end(code, code->line_count-1));
-        root->base.range = range;
-        root->base.bounding_range = range;
-    }
+		// Initialize state
+		parser.state.pos = 0;
+		parser.state.allocated_count = parser.unit->allocated_nodes.size;
+		parser.state.error_count = parser.unit->parser_errors.size;
 
-    void execute_clean(Compilation_Unit* unit, Predefined_IDs* predefined_ids)
-    {
-        for (int i = 0; i < unit->allocated_nodes.size; i++) {
-            AST::base_destroy(unit->allocated_nodes[i]);
-        }
-        dynamic_array_reset(&unit->allocated_nodes);
-        dynamic_array_reset(&unit->parser_errors);
-        unit->root = 0;
+		// Parse root
+		auto root = allocate_base<Module>(0, Node_Type::MODULE);
+		parser.unit->root = root;
+		root->definitions = dynamic_array_create<Definition*>();
+		root->import_nodes = dynamic_array_create<Import*>();
+		root->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
+		parse_list_items(upcast(root), wrapper_parse_module_item, module_add_child);
 
-        parser.predefined_ids = predefined_ids;
-        parser.code = unit->code;
-        parser.unit = unit;
-        parser.state.allocated_count = 0;
-        parser.state.error_count = 0;
-        parser.state.pos = token_index_make(0, 0);
-        parser.state.line = source_code_get_line(unit->code, 0);
-        parse_root();
-    }
+		unit->root = root;
+	}
 
-    // AST queries based on Token-Indices
-    void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Token_Range>* ranges)
-    {
-        auto range = base->range;
-        switch (section)
-        {
-        case Node_Section::NONE: break;
-        case Node_Section::WHOLE:
-        {
-            if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
-                dynamic_array_push_back(ranges, base->bounding_range);
-                break;
-            }
-            dynamic_array_push_back(ranges, range);
-            break;
-        }
-        case Node_Section::WHOLE_NO_CHILDREN:
-        {
-            Token_Range sub_range;
-            sub_range.start = range.start;
-            int index = 0;
-            // Note: This operates under the assumption that base_get_child returns children in the correct order
-            //       which e.g. isn't true for things like modules or code-block with multiple child types
-            auto child = AST::base_get_child(base, index);
-            while (child != 0)
-            {
-                auto child_range = child->range;
-                if (token_index_compare(sub_range.start, child_range.start) == 0) {
-                    sub_range.end = child_range.start;
-                    // Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
-                    if (token_index_compare(sub_range.start, sub_range.end) == 1) {
-                        dynamic_array_push_back(ranges, sub_range);
-                    }
-                }
-                sub_range.start = child_range.end;
+	// AST queries based on Token-Indices
+	void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Text_Range>* ranges)
+	{
+		auto range = base->range;
 
-                index += 1;
-                child = AST::base_get_child(base, index);
-            }
-            if (token_index_compare(sub_range.start, range.end) != 0) {
-                sub_range.end = range.end;
-                // Extra check, as bounding range may differ from normal range
-                if (token_index_compare(sub_range.start, sub_range.end) == 1) {
-                    dynamic_array_push_back(ranges, sub_range);
-                }
-            }
-            if (ranges->size == 0) {
-                dynamic_array_push_back(ranges, range);
-            }
-            break;
-        }
-        case Node_Section::IDENTIFIER:
-        {
-            auto result = search_token(code, range.start, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, nullptr);
-            if (!result.available) {
-                break;
-            }
-            
-            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
-            break;
-        }
-        case Node_Section::ENCLOSURE:
-        {
-            // Find next (), {} or [], and add the tokens to the ranges
-            auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
-            if (!result.available) {
-                break;
-            }
-            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
+		// TODO: THIS NEEDS TO CHANGE ANYWAY, so for now it doesn't work...
+		if (section != Node_Section::WHOLE) {
+			section = Node_Section::WHOLE_NO_CHILDREN;
+		}
 
-            // Find closing parenthesis
-            auto par_type = source_code_get_line(code, result.value.line)->tokens[result.value.token].options.parenthesis.type;
-            advance_token();
-            auto end_found_fn = [](Token* t, void* type) -> bool { 
-                return t->type == Token_Type::PARENTHESIS && 
-                    !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); 
-            };
-            Token_Index start = result.value;
-            start.token += 1;
-            auto end_token = search_token(code, start, end_found_fn, (void*)(&par_type));
-            if (!end_token.available) {
-                break;
-            }
+		switch (section)
+		{
+		case Node_Section::NONE: break;
+		case Node_Section::WHOLE:
+		{
+			if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
+				dynamic_array_push_back(ranges, base->bounding_range);
+				break;
+			}
+			dynamic_array_push_back(ranges, range);
+			break;
+		}
+		case Node_Section::WHOLE_NO_CHILDREN:
+		{
+			Text_Range sub_range;
+			sub_range.start = range.start;
+			int index = 0;
+			// Note: This operates under the assumption that base_get_child returns children in the correct order
+			//       which e.g. isn't true for things like modules or code-block with multiple child types
+			auto child = AST::base_get_child(base, index);
+			while (child != 0)
+			{
+				auto child_range = child->range;
+				if (text_index_equal(sub_range.start, child_range.start))
+				{
+					sub_range.end = child_range.start;
+					// Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
+					if (text_index_in_order(sub_range.start, sub_range.end) == 1) {
+						dynamic_array_push_back(ranges, sub_range);
+					}
+				}
+				sub_range.start = child_range.end;
 
-            dynamic_array_push_back(ranges, token_range_make_offset(end_token.value, 1));
-            break;
-        }
-        case Node_Section::KEYWORD:
-        {
-            auto result = search_token(code, range.start, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0);
-            if (!result.available) {
-                break;
-            }
-            dynamic_array_push_back(ranges, token_range_make_offset(result.value, 1));
-            break;
-        }
-        case Node_Section::FIRST_TOKEN: {
-            dynamic_array_push_back(ranges, token_range_make_offset(range.start, 1));
-            break;
-        }
-        case Node_Section::END_TOKEN: {
-            Token_Range end_token_range = token_range_make_offset(range.end, -1);
-            end_token_range.start.token = math_maximum(0, end_token_range.start.token);
-            dynamic_array_push_back(ranges, end_token_range);
-            break;
-        }
-        default: panic("");
-        }
-    
-        // For handling empty enclosures
-        if (ranges->size == 0) {
-            Token_Range range;
-            range.start = base->range.start;
-            range.end = base->range.start;
-            dynamic_array_push_back(ranges, range);
-        }
-    }
+				index += 1;
+				child = AST::base_get_child(base, index);
+			}
+			if (text_index_equal(sub_range.start, range.end))
+			{
+				sub_range.end = range.end;
+				// Extra check, as bounding range may differ from normal range
+				if (text_index_in_order(sub_range.start, sub_range.end)) {
+					dynamic_array_push_back(ranges, sub_range);
+				}
+			}
+			if (ranges->size == 0) {
+				dynamic_array_push_back(ranges, range);
+			}
+			break;
+		}
+		case Node_Section::IDENTIFIER:
+		{
+			// auto result = search_token(code, start_token_index, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, nullptr);
+			// if (!result.available) {
+			//     break;
+			// }
+			// 
+			// Token_Range range = token_range_make_offset(result.value, 1);
+			// dynamic_array_push_back(ranges, token_range_to_text_range(range, code));
+			break;
+		}
+		case Node_Section::ENCLOSURE:
+		{
+			// // Find next (), {} or [], and add the tokens to the ranges
+			// auto result = search_token(code, start_token_index, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
+			// if (!result.available) {
+			//     break;
+			// }
+			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(result.value, 1), code));
+
+			// // Find closing parenthesis
+			// auto par_type = source_code_get_line(code, result.value.line)->tokens[result.value.token].options.parenthesis.type;
+			// advance_token();
+			// auto end_found_fn = [](Token* t, void* type) -> bool { 
+			//     return t->type == Token_Type::PARENTHESIS && 
+			//         !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); 
+			// };
+			// Token_Index start = result.value;
+			// start.token += 1;
+			// auto end_token = search_token(code, start, end_found_fn, (void*)(&par_type));
+			// if (!end_token.available) {
+			//     break;
+			// }
+
+			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(end_token.value, 1), code));
+			break;
+		}
+		case Node_Section::KEYWORD:
+		{
+			// auto result = search_token(code, start_token_index, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0);
+			// if (!result.available) {
+			//     break;
+			// }
+			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(result.value, 1), code));
+			break;
+		}
+		case Node_Section::FIRST_TOKEN: {
+			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(start_token_index, 1), code));
+			break;
+		}
+		case Node_Section::END_TOKEN: {
+			// Token_Range end_token_range = token_range_make_offset(range.end, -1);
+			// end_token_range.start.token = math_maximum(0, end_token_range.start.token);
+			// dynamic_array_push_back(ranges, end_token_range);
+			break;
+		}
+		default: panic("");
+		}
+
+		// For handling empty enclosures
+		if (ranges->size == 0) {
+			Text_Range range;
+			range.start = base->range.start;
+			range.end = base->range.start;
+			dynamic_array_push_back(ranges, range);
+		}
+	}
 }

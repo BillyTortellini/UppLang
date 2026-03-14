@@ -6,6 +6,7 @@
 #include "ast.hpp"
 #include "constant_pool.hpp"
 #include "memory_source.hpp"
+#include "syntax_colors.hpp"
 
 struct Compilation_Data;
 struct Symbol;
@@ -22,11 +23,6 @@ struct Analysis_Pass;
 struct Pattern_Variable;
 struct Poly_Instance;
 struct Call_Signature;
-
-namespace Rich_Text
-{
-    struct Rich_Text;
-};
 
 namespace AST
 {
@@ -234,13 +230,12 @@ struct Datatype_Struct_Pattern
 struct Datatype_Format
 {
     int highlight_parameter_index; // -1 If invalid
-    vec3 highlight_color;
+    Syntax_Color highlight_color;
     bool append_struct_poly_parameter_values;
 };
 Datatype_Format datatype_format_make_default();
 
-void datatype_append_to_rich_text(Datatype* type, Type_System* type_system, Rich_Text::Rich_Text* text, Datatype_Format format = datatype_format_make_default());
-void datatype_append_to_string(String* string, Type_System* type_system, Datatype* signature, Datatype_Format format = datatype_format_make_default());
+void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format = datatype_format_make_default());
 
 struct Datatype_Value_Format
 {
@@ -259,8 +254,8 @@ Datatype_Value_Format datatype_value_format_single_line();
 
 // We have both local and pointer memory sources, to facilitate all use-cases
 void datatype_append_value_to_string(
-    Datatype* type, Type_System* type_system, byte* value_ptr, String* string, Datatype_Value_Format format,
-    int indentation, Memory_Source local_memory, Memory_Source pointer_memory
+    Datatype* type, String* string, byte* value_ptr, Datatype_Value_Format format,
+    int indentation, Memory_Source local_memory, Memory_Source pointer_memory, Type_System* type_system
 );
 
 

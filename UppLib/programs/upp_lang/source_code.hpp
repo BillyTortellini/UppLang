@@ -3,7 +3,6 @@
 #include "../../math/vectors.hpp"
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/string.hpp"
-#include "lexer.hpp"
 #include "compiler_misc.hpp"
 
 struct Source_Code;
@@ -47,28 +46,6 @@ bool text_index_equal(const Text_Index& a, const Text_Index& b);
 bool text_index_in_order(const Text_Index& a, const Text_Index& b);
 Text_Range text_range_make(Text_Index start, Text_Index end);
 bool text_range_contains(Text_Range range, Text_Index index);
-
-struct Token_Index
-{
-    int line;
-    int token;
-};
-
-struct Token_Range
-{
-    Token_Index start;
-    Token_Index end;
-};
-
-Token_Index token_index_make(int line, int token);
-Token_Index token_index_make_line_end(Source_Code* code, int line_index);
-Token_Range token_range_make(Token_Index start, Token_Index end);
-Token_Range token_range_make_offset(Token_Index start, int offset);
-
-bool token_index_valid(Token_Index index, Source_Code* code);
-bool token_index_equal(Token_Index a, Token_Index b);
-int token_index_compare(Token_Index a, Token_Index b);
-bool token_range_contains(Token_Range range, Token_Index index);
 
 
 
@@ -116,20 +93,7 @@ struct Source_Line
     int indentation;
 
     // Analysis Info
-    Dynamic_Array<Token> tokens;
     Dynamic_Array<Editor_Info_Reference> item_infos;
-
-    // Comment/Lexing info
-    bool is_comment; // True if we are inside a comment block or if the line starts with //
-    // If it is a line of a comment block, the indention of the block, -1 if not a comment block line
-    // If this line is the start of the comment block, then -1 (Except in hierarchical comment stacks)
-    // Also for stacked/hierarchical comment blocks, this is the lowest indentation (And always > 0)
-    int comment_block_indentation;  
-
-    // Fold information
-    bool is_folded;
-    int fold_index;
-    int visible_index; // Index including folds
 };
 
 struct Line_Bundle
@@ -141,7 +105,7 @@ struct Line_Bundle
 struct Error_Message
 {
     const char* msg;
-    Token_Range range;
+    Text_Range range;
 };
 
 struct Source_Code
@@ -170,21 +134,9 @@ void source_code_remove_line(Source_Code* code, int line_index);
 void source_code_fill_from_string(Source_Code* code, String text);
 void source_code_append_to_string(Source_Code* code, String* text);
 
-void update_line_block_comment_information(Source_Code* code, int line_index);
-void source_code_tokenize(Source_Code* code, Identifier_Pool_Lock* pool_lock);
-void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock);
-
-void source_code_sanity_check(Source_Code* code);
-bool source_line_is_comment(Source_Line* line);
-bool source_line_is_multi_line_comment_start(Source_Line* line);
-
 // Index Functions
 int source_code_get_line_bundle_index(Source_Code* code, int line_index);
 Source_Line* source_code_get_line(Source_Code* code, int line_index);
-
-Text_Range token_range_to_text_range(Token_Range range, Source_Code* code);
-Token_Range text_range_to_token_range(Text_Range range, Source_Code* code);
-Text_Index token_index_to_text_index(Token_Index index, Source_Code* code, bool token_start);
 
 
 

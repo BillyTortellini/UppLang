@@ -4622,9 +4622,10 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				SCOPE_EXIT(string_destroy(&str));
 				// TODO: This needs to be able to read memory for e.g. arrays, or simple integer data
                 datatype_append_value_to_string(
-                    value_read.result_type, debugger->compilation_data->type_system, byte_buffer.data, &str,
-                    datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source
+                    value_read.result_type, &str, byte_buffer.data,
+                    datatype_value_format_multi_line(8, 5), 0, Memory_Source(nullptr), debugger->memory_source, debugger->compilation_data->type_system
                 );
+                string_style_remove_codes(&str);
 				printf("Variable-value: \"%s\"\n", str.characters);
 
 			}

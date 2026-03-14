@@ -283,6 +283,7 @@ struct Predefined_Objects
     Vertex_Attribute<vec3>* bitangent;
     Vertex_Attribute<vec3>* color3;
     Vertex_Attribute<vec4>* color4;
+    Vertex_Attribute<u32>*  rgba_int;
     // NOTE: This is an important predefined value because this is used to distinguish between
     //       normal vertex buffers and index buffer!
     Vertex_Attribute<uint32>* index; 

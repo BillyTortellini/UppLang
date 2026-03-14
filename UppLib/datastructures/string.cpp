@@ -575,3 +575,33 @@ String string_create_filename_from_path_static(String* filepath)
     int last_seperator = math_maximum(backslash_pos, slash_pos);
     return string_create_substring_static(filepath, last_seperator + 1, filepath->size);
 }
+
+void String::append(const char* text) {
+    string_append(this, text);
+}
+
+void String::append(String str) {
+    string_append_string(this, &str);
+}
+
+void String::append(String* str) {
+    string_append_string(this, str);
+}
+
+void String::append(char c) {
+    string_append_character(this, c);
+}
+
+void String::append_formated(const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    int message_length = vsnprintf(0, 0, format, args);
+    string_reserve(this, size + message_length + 1);
+    int ret_val = vsnprintf(characters + size, capacity - size, format, args);
+    if (ret_val < 0) {
+        panic("Shouldn't happen");
+    }
+    size = size + message_length;
+    va_end(args);
+}

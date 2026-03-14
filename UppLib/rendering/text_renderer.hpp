@@ -31,6 +31,7 @@ void text_renderer_add_text(
     vec3 color,
     Optional<Bounding_Box2> clip_box = optional_make_failure<Bounding_Box2>()
 );
+void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_left, ivec2 char_size, vec3 color);
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);
 
 float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer);

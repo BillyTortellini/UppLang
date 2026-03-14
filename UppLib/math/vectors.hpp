@@ -294,3 +294,85 @@ float vector_get_maximum_axis(const vec4& v);
 vec4 vec4_color_from_rgb(u8 r, u8 g, u8 b);
 vec4 vec4_color_from_code(const char* c_str);
 vec3 vec3_color_from_code(const char* c_str);
+
+
+struct ivec2
+{
+    ivec2() {}
+    explicit ivec2(int val) : x(val), y(val) {}
+    explicit ivec2(int x, int y) : x(x), y(y) {}
+
+    ivec2 operator+(ivec2& other) { return ivec2(this->x + other.x, this->y + other.y); }
+    ivec2 operator-(ivec2& other) { return ivec2(this->x - other.x, this->y - other.y); }
+    ivec2 operator*(ivec2& other) { return ivec2(this->x * other.x, this->y * other.y); }
+    ivec2 operator/(ivec2& other) { return ivec2(this->x / other.x, this->y / other.y); }
+    ivec2 operator+(int value) { return ivec2(this->x + value, this->y + value); }
+    ivec2 operator-(int value) { return ivec2(this->x - value, this->y - value); }
+    ivec2 operator*(int value) { return ivec2(this->x * value, this->y * value); }
+    ivec2 operator/(int value) { return ivec2(this->x / value, this->y / value); }
+
+    int x;
+    int y;
+};
+
+ivec2 operator-(const ivec2& v); 
+// Regular arithmetic operations
+ivec2 operator+(const ivec2& v1, const ivec2& v2); 
+ivec2 operator-(const ivec2& v1, const ivec2& v2); 
+ivec2 operator*(const ivec2& v1, const ivec2& v2); 
+ivec2 operator/(const ivec2& v1, const ivec2& v2); 
+
+ivec2 operator+(const ivec2& v, int s); 
+ivec2 operator-(const ivec2& v, int s); 
+ivec2 operator*(const ivec2& v, int s); 
+ivec2 operator/(const ivec2& v, int s); 
+
+ivec2 operator+(int s, const ivec2& v); 
+ivec2 operator-(int s, const ivec2& v); 
+ivec2 operator*(int s, const ivec2& v); 
+ivec2 operator/(int s, const ivec2& v); 
+
+enum class Anchor
+{
+    TOP_LEFT,
+    TOP_CENTER,
+    TOP_RIGHT,
+
+    CENTER_LEFT,
+    CENTER_CENTER,
+    CENTER_RIGHT,
+    
+    BOTTOM_LEFT,
+    BOTTOM_CENTER,
+    BOTTOM_RIGHT
+};
+
+ivec2 anchor_to_ivec2(Anchor anchor);
+vec2 anchor_to_direction(Anchor anchor);
+vec2 anchor_switch(vec2 position, vec2 size, Anchor from, Anchor to);
+
+enum class Corner
+{
+    TOP_LEFT,
+    TOP_RIGHT,
+    BOTTOM_LEFT,
+    BOTTOM_RIGHT
+};
+
+struct ibox2
+{
+    ivec2 min;
+    ivec2 max; // Note: Exclusive
+
+    ibox2() {}
+    ibox2(ivec2 min, ivec2 max);
+    ibox2(ivec2 pos, ivec2 size, Corner corner);
+    ibox2(ibox2& other, Corner other_corner, ivec2 size, Corner corner);
+
+    ibox2 intersect(ibox2 other);
+    ibox2 inflate(int thickness);
+    ivec2 get_corner(Corner corner);
+    bool is_empty() {
+        return min.x >= max.x || min.y >= max.y;
+    }
+};

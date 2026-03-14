@@ -12,6 +12,12 @@ struct String
     char& operator[](int index) {
         return characters[index];
     }
+
+    void append(const char* text);
+    void append(String str);
+    void append(String* str);
+    void append(char c);
+    void append_formated(const char* format, ...);
 };
 
 void string_destroy(String* string);

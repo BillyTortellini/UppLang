@@ -79,6 +79,8 @@ void Arena::reset(bool keep_largest_buffer)
 
 	if (keep_largest_buffer) {
 		curr = *(Arena_Buffer*)curr.data; // Skip deallocation of current
+		((Arena_Buffer*)buffer.data)->data = nullptr;
+		((Arena_Buffer*)buffer.data)->capacity = 0;
 	}
 	else {
 		buffer.data = nullptr;
@@ -97,21 +99,30 @@ Arena_Checkpoint Arena::make_checkpoint()
 {
 	Arena_Checkpoint checkpoint;
 	checkpoint.data = next;
+	checkpoint.arena = this;
 	return checkpoint;
 }
 
 // Note: This never deallocates memory
-void Arena::rewind_to_checkpoint(Arena_Checkpoint checkpoint)
+void Arena::rewind_to_address(void* pointer)
 {
-	usize address = (usize)checkpoint.data;
-	if (address >= (usize)buffer.data && address <= (usize)buffer.data + buffer.capacity) {
-		next = checkpoint.data;
+	usize address = (usize)pointer;
+	usize buffer_start = ((usize)buffer.data + sizeof(Arena_Buffer));
+	if (address >= buffer_start && address <= buffer_start + buffer.capacity) {
+		next = pointer;
 	}
 	else {
-		next = (void*)((usize)buffer.data + sizeof(Arena_Buffer));
+		next = (void*)buffer_start;
 	}
 }
 
+void Arena::rewind_to_checkpoint(Arena_Checkpoint checkpoint) {
+	checkpoint.arena->rewind_to_address(checkpoint.data);
+}
+
+void Arena_Checkpoint::rewind() {
+	arena->rewind_to_checkpoint(*this);
+}
 
 
 // FREE LIST
@@ -191,3 +202,4 @@ u64 find_next_suitable_prime_hashset_size(u64 value)
 	panic("should not happen");
 	return 0;
 }
+

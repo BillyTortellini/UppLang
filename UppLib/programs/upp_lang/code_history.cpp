@@ -56,7 +56,6 @@ void code_history_destroy(Code_History* history)
 
 void code_history_sanity_check(Code_History* history)
 {
-    source_code_sanity_check(history->code);
     bool inside_complex = false;
     int complex_start = -1;
     for (int i = 0; i < history->nodes.size; i++) 
@@ -113,7 +112,6 @@ void code_history_sanity_check(Code_History* history)
     }
 }
 
-
 // Code Changes
 void code_change_apply(Source_Code* code, Code_Change* change, bool forwards)
 {
@@ -147,33 +145,72 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards)
         else {
             line->indentation = indent.old_indentation;
         }
-        update_line_block_comment_information(code, indent.line_index);
         break;
     }
     case Code_Change_Type::CHAR_INSERT:
-    {
-        auto& insert = change->options.char_insert;
-        Source_Line* line = source_code_get_line(code, insert.index.line);
-        if (apply_change_forward) {
-            string_insert_character_before(&line->text, insert.c, insert.index.character);
-        }
-        else {
-            string_remove_character(&line->text, insert.index.character);
-        }
-        update_line_block_comment_information(code, insert.index.line);
-        break;
-    }
     case Code_Change_Type::TEXT_INSERT:
     {
-        auto& insert = change->options.text_insert;
-        Source_Line* line = source_code_get_line(code, insert.index.line);
-        if (apply_change_forward) {
-            string_insert_string(&line->text, &insert.text, insert.index.character);
-        }
+        char char_buffer[] = { 0, 0 };
+        Text_Index pos;
+        String str;
+        if (change->type == Code_Change_Type::TEXT_INSERT) {
+            pos = change->options.text_insert.index;
+            str = change->options.text_insert.text;
+        } 
         else {
-            string_remove_substring(&line->text, insert.index.character, insert.index.character + insert.text.size);
+            pos = change->options.char_insert.index;
+            char_buffer[0] = change->options.char_insert.c;
+            str = string_create_static(char_buffer);
         }
-        update_line_block_comment_information(code, insert.index.line);
+
+        // Update text and line-items
+        Source_Line* line = source_code_get_line(code, pos.line);
+        if (apply_change_forward) 
+        {
+            string_insert_string(&line->text, &str, pos.character);
+
+            // Update line-item ranges
+		    for (int i = 0; i < line->item_infos.size; i++) 
+		    {
+		    	auto& item = line->item_infos[i];
+		    	if (item.end_char <= pos.character) continue;
+		    	if (item.start_char > pos.character) {
+		    		item.start_char += str.size;
+		    	}
+		    	item.end_char += str.size;
+		    }
+        }
+        else 
+        {
+            string_remove_substring(&line->text, pos.character, pos.character + str.size);
+
+            // Update line-item ranges
+            int start = pos.character;
+            int end = start + str.size;
+		    for (int i = 0; i < line->item_infos.size; i++) 
+		    {
+		    	auto& item = line->item_infos[i];
+
+		    	int intersect_start = math_maximum(pos.character, item.start_char);
+		    	int intersect_end   = math_maximum(intersect_start, math_minimum(end, item.end_char));
+		    	int intersect_length = intersect_end - intersect_start;
+		    	int item_length = item.end_char - item.start_char;
+		    	if (intersect_length >= item_length) {
+		    		dynamic_array_swap_remove(&line->item_infos, i);
+		    		i -= 1;
+		    		continue;
+		    	}
+
+		    	// Figure out new start
+		    	if (end <= item.start_char) {
+		    		item.start_char -= end - start;
+		    	}
+		    	else if (start <= item.start_char) {
+		    		item.start_char = start;
+		    	}
+		    	item.end_char = item.start_char + item_length - intersect_length;
+		    }
+        }
         break;
     }
     default: panic("");

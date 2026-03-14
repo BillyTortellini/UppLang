@@ -1,4 +1,5 @@
 #pragma once
+
 #include "../datastructures/string.hpp"
 
 String characters_get_valid_identifier_characters();
@@ -6,9 +7,11 @@ String characters_get_non_identifier_non_whitespace();
 String characters_get_whitespaces();
 String characters_get_all_letters();
 
-
 typedef bool (*char_test_fn)(char c, void* userdata);
 
+bool char_is_space_critical(char c);
+bool char_is_parenthesis(char c);
+int char_get_hexadecimal_value(char c); // Returns -1 if not hexadecimal
 bool char_is_digit(char c, void* _unused = nullptr);
 int char_digit_value(char c);
 bool char_is_whitespace(char c, void* unused = nullptr);

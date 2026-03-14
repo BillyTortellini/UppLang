@@ -52,6 +52,7 @@ void rendering_core_initialize(int backbuffer_width, int backbuffer_height, floa
         predef.bitangent = vertex_attribute_make<vec3>("Bitangent");
         predef.color3 = vertex_attribute_make<vec3>("Color3");
         predef.color4 = vertex_attribute_make<vec4>("Color4");
+        predef.rgba_int = vertex_attribute_make<u32>("RGBA_Int");
         predef.index = vertex_attribute_make<uint32>("IndexBuffer");
 
         // Meshes
@@ -420,7 +421,7 @@ void rendering_core_render(Camera_3D* camera, Framebuffer_Clear_Type clear_type)
 
             // Set opengl state
             rendering_core_update_pipeline_state(pass->pipeline_state);
-            if (pass->output_buffer != 0) {
+            if (pass->output_buffer != nullptr) {
                 opengl_state_bind_framebuffer(pass->output_buffer->framebuffer_id);
                 glViewport(0, 0, pass->output_buffer->width, pass->output_buffer->height);
             }
@@ -679,14 +680,27 @@ Mesh* rendering_core_query_mesh(const char* name, Vertex_Description* descriptio
             {
                 glEnableVertexAttribArray(attrib->binding_location + i);
                 int64 offset = i * 16;
-                glVertexAttribPointer(
-                    attrib->binding_location,
-                    info.byte_size / 4, // WARNING: This only works for 4 byte values like float, integers, vectors of floats and matrices!!!
-                    info.vertexAttribType,
-                    GL_FALSE,
-                    info.byte_size,
-                    (void*)offset
-                );
+                assert(attrib->type != Shader_Datatype::TEXTURE_2D_BINDING, "attrib cannot be shader thing");
+                if (attrib->type == Shader_Datatype::UINT32) {
+                    glVertexAttribIPointer(
+                        attrib->binding_location,
+                        info.byte_size / 4,
+                        info.vertexAttribType,
+                        info.byte_size,
+                        (void*)offset
+                    );
+
+                }
+                else {
+                    glVertexAttribPointer(
+                        attrib->binding_location,
+                        info.byte_size / 4, // WARNING: This only works for 4 byte values like float, integers, vectors of floats and matrices!!!
+                        info.vertexAttribType,
+                        GL_FALSE,
+                        info.byte_size,
+                        (void*)offset
+                    );
+                }
             }
         }
     }

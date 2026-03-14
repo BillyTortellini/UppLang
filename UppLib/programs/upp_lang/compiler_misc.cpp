@@ -219,6 +219,7 @@ Identifier_Pool identifier_pool_create()
 		ids.cast = add_id("cast");
 		ids.defer = add_id("defer");
 		ids.from = add_id("from");
+		ids.to = add_id("to");
 
 		ids.function = add_id("function");
 		ids.create_fn = add_id("create_fn");

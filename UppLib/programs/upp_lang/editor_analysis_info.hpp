@@ -15,10 +15,6 @@ namespace AST
     struct Call_Node;
     struct Code_Block;
 };
-namespace Rich_Text
-{
-    struct Rich_Text;
-};
 
 struct Call_Signature;
 struct Source_Code;
@@ -95,7 +91,7 @@ union Editor_Info_Option
     Editor_Info_Symbol symbol_info;
     Editor_Info_Argument argument_info;
     Editor_Info_Call call_info;
-    vec3 markup_color;
+    Syntax_Color markup_color;
     int error_index;
 };
 
@@ -195,8 +191,7 @@ Call_Parameter* call_signature_add_parameter(
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype, Compilation_Data* compilation_data);
 // Takes ownership of signature, returns deduplicated signature
 Call_Signature* call_signature_register(Call_Signature* signature, Compilation_Data* compilation_data); 
-void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system);
-void call_signature_append_to_string(String* string, Type_System* type_system, Call_Signature* signature, Datatype_Format format);
+void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format);
 
 Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identifier_pool);
 

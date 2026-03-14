@@ -1,55 +1,64 @@
 #include "syntax_colors.hpp"
 #include "symbol_table.hpp"
 
-namespace Colors
+vec3 syntax_color_to_vec3(Syntax_Color color)
 {
-    const vec3 WHITE = vec3(1);
-    const vec3 BLACK = vec3(0);
-    const vec3 RED = vec3(1, 0, 0);
-    const vec3 GREEN = vec3(0, 1, 0);
-    const vec3 BLUE = vec3(0, 0, 1);
-    const vec3 YELLOW = vec3(1, 1, 0);
-    const vec3 MAGENTA = vec3(1, 0, 1);
-    const vec3 CYAN = vec3(0, 1, 1);
+    switch (color)
+    {
+    case Syntax_Color::NONE: return vec3(0.0f);
+    case Syntax_Color::SEPERATOR_LINE: return vec3(0.0f);
 
-    const vec3 PURPLE = vec3(0.65f, 0.4f, 0.8f);
-    const vec3 ORANGE = vec3(0.85f, 0.65f, 0.0f);
+    case Syntax_Color::WHITE: return vec3(1.0f);
+    case Syntax_Color::BLACK: return vec3(0.0f);
+    case Syntax_Color::RED: return vec3(1, 0, 0);
+    case Syntax_Color::GREEN: return vec3(0, 1, 0);
+    case Syntax_Color::BLUE: return vec3(0, 0, 1);
+    case Syntax_Color::YELLOW: return vec3(1, 1, 0);
+    case Syntax_Color::MAGENTA: return vec3(1, 0, 1);
+    case Syntax_Color::CYAN: return vec3(0, 1, 1);
+    case Syntax_Color::PURPLE: return vec3(.65f, .4f, .8f);
+    case Syntax_Color::ORANGE: return vec3(.85f, .65f, .0f);
+
+    case Syntax_Color::TEXT:     return vec3(1.0f);
+    case Syntax_Color::LITERAL_NUMBER: return vec3(.6f);
+    case Syntax_Color::VARIABLE: return vec3(.7f, .7f, 1.0f);
+    case Syntax_Color::DATATYPE: return vec3_color_from_code("#4874DB");//vec3_color_from_code("#28C6D9");
+    case Syntax_Color::VALUE_DEFINITION: return vec3_color_from_code("#81D4FA");
+    case Syntax_Color::PRIMITIVE: return vec3_color_from_code("#4874DB");
+    case Syntax_Color::STRING: return vec3(.85f, .65f, .0f);
+    case Syntax_Color::SUBTYPE: return vec3_color_from_code("#0489C9");
+    case Syntax_Color::MEMBER: return vec3_color_from_code("#E6EE9C");
+    case Syntax_Color::ENUM_MEMBER: return vec3_color_from_code("#0489C9");
+    case Syntax_Color::KEYWORD: return vec3_color_from_code("#B867C5"); // Purple
+    case Syntax_Color::COMMENT: return vec3(0.0f, 0.85f, 0.0f);
+    case Syntax_Color::FUNCTION: return vec3_color_from_code("#D6B93A");
+    case Syntax_Color::MODULE: return vec3_color_from_code("#388E3C");
+    case Syntax_Color::INVALID_TOKEN: return vec3(1.0f, 0.8f, 0.8f);
+    case Syntax_Color::BOOLEAN_LITERAL: return vec3(0.5f, 0.5f, 1.0f); 
+    case Syntax_Color::FOLD_ERROR_BG: return vec3(0.75f, 0.15f, 0.15f);
+    case Syntax_Color::FOLD_BG: return vec3(0.4f);
+    case Syntax_Color::SEARCH_HIGHLIGHT_BG: return vec3(0.3f);
+    case Syntax_Color::VISUAL_BLOCK_BG: return vec3(0.4f);
+    case Syntax_Color::CURSOR_BG: return vec3(0.25f);
+    case Syntax_Color::SUGGESTION_BG: return vec3(0.3f);
+    case Syntax_Color::FILE_DIRECTORY: return vec3(0.1f, 0.1f, 0.9f);
+    case Syntax_Color::ERROR_DISPLAY_TEXT: return vec3(1.0f, 0.5f, 0.5f);
+
+    case Syntax_Color::BG_NORMAL: return vec3(0.0f);
+    case Syntax_Color::BG_ERROR: return vec3(.7f, 0, 0);
+    case Syntax_Color::BG_HIGHLIGHT: return vec3(.3f, .3f, .1f);
+
+    case Syntax_Color::CONTEXT_BG: return vec3(0.2f);
+    case Syntax_Color::CONTEXT_TEXT: return vec3(1.0f);
+    case Syntax_Color::CONTEXT_ERROR_TEXT: return vec3(1.0f, 0.5f, 0.5f);
+    case Syntax_Color::CONTEXT_BORDER: return vec3(0.5f, 0.0f, 1.0f);
+
+    default: panic("");
+    }
 }
 
-namespace Syntax_Color
-{
-    // White/Grey/Light-Blue tones
-    vec3 TEXT =                Colors::WHITE; // Not quite sure if this is ever used...
-    vec3 LITERAL_NUMBER =      Colors::WHITE * 0.6f;
-    vec3 VARIABLE =            vec3(0.7f, 0.7f, 1.0f);
-    vec3 VALUE_DEFINITION =    vec3_color_from_code("#81D4FA");
-    vec3 MEMBER =              vec3_color_from_code("#E6EE9C");
 
-    // Hard accents
-    vec3 KEYWORD =             vec3_color_from_code("#B867C5"); // Purple
-    vec3 MODULE =              vec3_color_from_code("#388E3C");
-    vec3 COMMENT =             vec3(0.0f, 0.85f, 0.0f);
-    vec3 FUNCTION =            vec3_color_from_code("#D6B93A");
-    vec3 STRING =              Colors::ORANGE;
-
-    // Dark-Blue/Light blue for Types
-    // vec3 PRIMITIVE =           vec3_color_from_code("#1764BB");
-    // vec3 DATATYPE =                vec3_color_from_code("#1764BB");//vec3_color_from_code("#28C6D9");
-    // vec3 SUBTYPE =             vec3_color_from_code("#616161");
-    // vec3 ENUM_MEMBER = vec3(0 / 255.0f, 153 / 255.0f, 204 / 255.0f);
-
-    vec3 PRIMITIVE   = vec3_color_from_code("#4874DB");
-    vec3 DATATYPE        = vec3_color_from_code("#4874DB");//vec3_color_from_code("#28C6D9");
-    vec3 SUBTYPE     = vec3_color_from_code("#0489C9");
-    vec3 ENUM_MEMBER = vec3_color_from_code("#0489C9");
-
-    // Other
-    vec4 BG_NORMAL = vec4(0);
-    vec4 BG_ERROR = vec4(0.7f, 0.0f, 0.0f, 1.0f);
-    vec3 BG_HIGHLIGHT = vec3(1.0f, 1.0f, 0.3f) * 0.3f;
-};
-
-vec3 symbol_type_to_color(Symbol_Type type)
+Syntax_Color symbol_type_to_color(Symbol_Type type)
 {
     switch (type)
     {
@@ -73,7 +82,7 @@ vec3 symbol_type_to_color(Symbol_Type type)
     return Syntax_Color::TEXT;
 }
 
-vec3 symbol_to_color(Symbol* symbol, bool is_definition)
+Syntax_Color symbol_to_color(Symbol* symbol, bool is_definition)
 {
     int i = 0;
     switch (symbol->type)

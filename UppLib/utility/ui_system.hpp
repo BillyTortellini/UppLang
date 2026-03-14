@@ -37,25 +37,6 @@ struct UI_Icon
 
 UI_Icon ui_icon_make(Icon_Type type, Icon_Rotation rotation, vec3 color);
 
-struct ivec2
-{
-    ivec2() {}
-    explicit ivec2(int val) : x(val), y(val) {}
-    explicit ivec2(int x, int y) : x(x), y(y) {}
-
-    ivec2 operator+(ivec2& other) { return ivec2(this->x + other.x, this->y + other.y); }
-    ivec2 operator-(ivec2& other) { return ivec2(this->x - other.x, this->y - other.y); }
-    ivec2 operator*(ivec2& other) { return ivec2(this->x * other.x, this->y * other.y); }
-    ivec2 operator/(ivec2& other) { return ivec2(this->x / other.x, this->y / other.y); }
-    ivec2 operator+(int value) { return ivec2(this->x + value, this->y + value); }
-    ivec2 operator-(int value) { return ivec2(this->x - value, this->y - value); }
-    ivec2 operator*(int value) { return ivec2(this->x * value, this->y * value); }
-    ivec2 operator/(int value) { return ivec2(this->x / value, this->y / value); }
-
-    int x;
-    int y;
-};
-
 struct Container_Handle
 {
 	int container_index;

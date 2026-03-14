@@ -161,24 +161,24 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         auto const_index = access->option.constant_index;
         Upp_Constant* constant = &compilation_data->constant_pool->constants[const_index];
         string_append_formated(string, "Constant #%d ", const_index);
-        datatype_append_to_string(string, type_system, constant->type);
+        datatype_append_to_string(constant->type, string, type_system);
         string_append_formated(string, " ");
         datatype_append_value_to_string(
-            constant->type, type_system, constant->memory, string, datatype_value_format_single_line(),
-            0, Memory_Source(nullptr), Memory_Source(nullptr)
+            constant->type, string, constant->memory, datatype_value_format_single_line(),
+            0, Memory_Source(nullptr), Memory_Source(nullptr), type_system
         );
         break;
     }
     case IR_Data_Access_Type::GLOBAL_DATA: {
         string_append_formated(string, "Global #%d, type: ", access->option.global_index);
-        datatype_append_to_string(string, type_system, access->datatype);
+        datatype_append_to_string(access->datatype, string, type_system);
         break;
     }
     case IR_Data_Access_Type::PARAMETER: {
         auto& param_info = access->option.parameter;
         auto& param = param_info.function->signature->parameters[param_info.index];
         string_append_formated(string, "Param \"%s\", type: ", param.name->characters);
-        datatype_append_to_string(string, type_system, param.datatype);
+        datatype_append_to_string(param.datatype, string, type_system);
         break;
     }
     case IR_Data_Access_Type::REGISTER: {
@@ -190,7 +190,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         else {
             string_append_formated(string, "Register #%d, type: ", reg_access.index);
         }
-        datatype_append_to_string(string, type_system, reg.type);
+        datatype_append_to_string(reg.type, string, type_system);
         if (reg_access.definition_block != current_block) {
             string_append_formated(string, " (Non local)");
         }
@@ -547,7 +547,7 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, i
         else {
             string_append_formated(string, "#%d: ", i);
         }
-        datatype_append_to_string(string, type_system, reg.type);
+        datatype_append_to_string(reg.type, string, type_system);
         string_append_formated(string, "\n");
     }
     indent_string(string, indentation);
@@ -564,7 +564,7 @@ void ir_function_append_to_string(IR_Function* function, String* string, int ind
 
     indent_string(string, indentation);
     string_append_formated(string, "Function-Type:");
-    call_signature_append_to_string(string, type_system, function->signature, datatype_format_make_default());
+    call_signature_append_to_string(function->signature, string, type_system, datatype_format_make_default());
     string_append_formated(string, "\n");
     ir_code_block_append_to_string(function->code, string, indentation, compilation_data);
 }
@@ -2455,9 +2455,14 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         instr.type = IR_Instruction_Type::WHILE;
         instr.options.while_instr.condition_code = ir_code_block_create(ir_block->function);
         instr.options.while_instr.code = ir_code_block_create(ir_block->function);
-        instr.options.while_instr.condition_access = ir_generator_generate_expression_in_block(
-            instr.options.while_instr.condition_code, statement->options.if_statement.condition
-        );
+        if (statement->options.while_statement.condition.available) {
+            instr.options.while_instr.condition_access = ir_generator_generate_expression_in_block(
+                instr.options.while_instr.condition_code, statement->options.while_statement.condition.value
+            );
+        }
+        else {
+            instr.options.while_instr.condition_access = ir_data_access_create_constant_bool(true);
+        }
         ir_generator_generate_block(instr.options.while_instr.code, statement->options.while_statement.block);
         add_instruction(instr);
 

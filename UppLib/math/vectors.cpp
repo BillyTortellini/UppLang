@@ -355,3 +355,136 @@ vec3 vec3_color_from_code(const char* c_str)
     return vec3(v.x, v.y, v.z);
 }
 
+
+ivec2 operator-(const ivec2& v) {
+    return ivec2(-v.x, -v.y);
+}
+ivec2 operator+(const ivec2& v1, const ivec2& v2) {
+    return ivec2(v1.x+v2.x, v1.y+v2.y);
+}
+ivec2 operator-(const ivec2& v1, const ivec2& v2) {
+    return ivec2(v1.x-v2.x, v1.y-v2.y);
+}
+ivec2 operator*(const ivec2& v1, const ivec2& v2) {
+    return ivec2(v1.x*v2.x, v1.y*v2.y);
+}
+ivec2 operator/(const ivec2& v1, const ivec2& v2) {
+    return ivec2(v1.x/v2.x, v1.y/v2.y);
+}
+
+ivec2 operator+(const ivec2& v, int s) {
+    return ivec2(v.x+s, v.y+s);
+}
+ivec2 operator-(const ivec2& v, int s) {
+    return ivec2(v.x-s, v.y-s);
+}
+ivec2 operator*(const ivec2& v, int s) {
+    return ivec2(v.x*s, v.y*s);
+}
+ivec2 operator/(const ivec2& v, int s) {
+    return ivec2(v.x/s, v.y/s);
+}
+
+ivec2 operator+(int s, const ivec2& v) {
+    return ivec2(v.x+s, v.y+s);
+}
+ivec2 operator-(int s, const ivec2& v) {
+    return ivec2(v.x-s, v.y-s);
+}
+ivec2 operator*(int s, const ivec2& v) {
+    return ivec2(v.x*s, v.y*s);
+}
+ivec2 operator/(int s, const ivec2& v) {
+    return ivec2(v.x/s, v.y/s);
+}
+
+ivec2 anchor_to_ivec2(Anchor anchor)
+{
+    switch (anchor) {
+    case Anchor::TOP_LEFT:       return ivec2(-1,  1);
+    case Anchor::TOP_CENTER:     return ivec2( 0,  1);
+    case Anchor::TOP_RIGHT:      return ivec2( 1,  1);
+    case Anchor::CENTER_LEFT:    return ivec2(-1,  0);
+    case Anchor::CENTER_CENTER:  return ivec2( 0,  0);
+    case Anchor::CENTER_RIGHT:   return ivec2( 1,  0);
+    case Anchor::BOTTOM_LEFT:    return ivec2(-1, -1);
+    case Anchor::BOTTOM_CENTER:  return ivec2( 0, -1);
+    case Anchor::BOTTOM_RIGHT:   return ivec2( 1, -1);
+    }
+    panic("Shouldn't happen");
+    return ivec2(0);
+}
+
+vec2 anchor_to_dir(Anchor anchor)
+{
+    ivec2 v = anchor_to_ivec2(anchor);
+    return vec2(v.x, v.y);
+}
+
+vec2 anchor_to_direction(Anchor anchor)
+{
+    switch (anchor) {
+    case Anchor::TOP_LEFT:       return vec2(-1.0f,  1.0f);
+    case Anchor::TOP_CENTER:     return vec2( 0.0f,  1.0f);
+    case Anchor::TOP_RIGHT:      return vec2( 1.0f,  1.0f);
+    case Anchor::CENTER_LEFT:    return vec2(-1.0f,  0.0f);
+    case Anchor::CENTER_CENTER:  return vec2( 0.0f,  0.0f);
+    case Anchor::CENTER_RIGHT:   return vec2( 1.0f,  0.0f);
+    case Anchor::BOTTOM_LEFT:    return vec2(-1.0f, -1.0f);
+    case Anchor::BOTTOM_CENTER:  return vec2( 0.0f, -1.0f);
+    case Anchor::BOTTOM_RIGHT:   return vec2( 1.0f, -1.0f);
+    }
+    panic("Shouldn't happen");
+    return vec2(0.0f);
+}
+
+vec2 anchor_switch(vec2 position, vec2 size, Anchor from, Anchor to) {
+    return position + size * (anchor_to_direction(to) - anchor_to_direction(from)) / 2.0f;
+}
+
+ibox2::ibox2(ivec2 min, ivec2 max)
+{
+    this->min = min;
+    this->max = max;
+}
+
+ivec2 corner_to_vec(Corner corner)
+{
+    switch (corner)
+    {
+    case Corner::TOP_LEFT:     return ivec2(0, 1);
+    case Corner::TOP_RIGHT:    return ivec2(1, 1);
+    case Corner::BOTTOM_LEFT:  return ivec2(0, 0);
+    case Corner::BOTTOM_RIGHT: return ivec2(1, 0);
+    default: panic("");
+    }
+    return ivec2(0, 0);
+}
+
+ibox2::ibox2(ivec2 pos, ivec2 size, Corner corner) {
+    min = pos - corner_to_vec(corner) * size;
+    max = min + size;
+}
+
+ibox2::ibox2(ibox2& other, Corner other_corner, ivec2 size, Corner corner) {
+    min = other.get_corner(other_corner) - corner_to_vec(corner) * size;
+    max = min + size;
+}
+
+ivec2 ibox2::get_corner(Corner corner) {
+    return min + corner_to_vec(corner) * (max - min);
+}
+
+ibox2 ibox2::intersect(ibox2 other)
+{
+   return ibox2(
+       ivec2(math_maximum(min.x, other.min.x), math_maximum(min.y, other.min.y)),
+       ivec2(math_minimum(max.x, other.max.x), math_minimum(max.y, other.max.y))
+   );
+}
+
+ibox2 ibox2::inflate(int thickness) {
+    return ibox2(min - ivec2(thickness), max + ivec2(thickness));
+}
+
+

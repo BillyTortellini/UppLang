@@ -11,7 +11,6 @@
 #include "c_backend.hpp"
 #include "parser.hpp"
 #include "ast.hpp"
-#include "lexer.hpp"
 #include "symbol_table.hpp"
 #include "editor_analysis_info.hpp"
 
@@ -26,7 +25,7 @@ bool enable_c_compilation = true;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = false;
+bool output_ast = true;
 bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = true;
@@ -56,9 +55,6 @@ Compiler* compiler_create()
     Compiler* compiler = new Compiler;
     compiler->identifier_pool = identifier_pool_create();
     compiler->fiber_pool = fiber_pool_create();
-
-    tokenizer_initialize();
-
     return compiler;
 }
 
@@ -79,10 +75,8 @@ void compilation_unit_destroy(Compilation_Unit* unit)
 
 void compiler_destroy(Compiler* compiler)
 {
-    tokenizer_shutdown();
     fiber_pool_destroy(compiler->fiber_pool);
     compiler->fiber_pool = 0;
-
     identifier_pool_destroy(&compiler->identifier_pool);
 }
 
@@ -108,7 +102,9 @@ void compiler_parse_unit(Compilation_Unit* unit, Compilation_Data* compilation_d
 
     // Parse code
     compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
-    Parser::execute_clean(unit, &compilation_data->compiler->identifier_pool.predefined_ids);
+    Arena arena = Arena::create(256);
+    SCOPE_EXIT(arena.destroy());
+    Parser::execute_clean(unit, &compilation_data->compiler->identifier_pool, &arena);
 }
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type)
@@ -175,6 +171,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
     }
 
     // Output
+    do_output = true;
     {
         compilation_data_switch_timing_task(compilation_data, Timing_Task::OUTPUT);
         if (do_output && output_ast) {
@@ -207,6 +204,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                     String tmp = string_create_empty(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
                     ir_program_append_to_string(compilation_data->ir_generator->program, &tmp, false, compilation_data);
+                    string_style_remove_codes(&tmp);
                     logg("%s", tmp.characters);
                 }
 
@@ -536,6 +534,7 @@ void compiler_run_testcases(bool force_run)
         }
     }
 
+    string_style_remove_codes(&result);
     logg(result.characters);
     if (errors_occured) {
         logg("-------------------------------\nSummary: There were errors!\n-----------------------------\n");

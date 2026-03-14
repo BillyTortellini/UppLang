@@ -836,12 +836,8 @@ struct Semantic_Error
 
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section = Node_Section::WHOLE);
 void semantic_analyser_set_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
-void error_information_append_to_string(
-    const Error_Information& info, Compilation_Data* compilation_data, 
-    String* string, Datatype_Format format = datatype_format_make_default()
-);
-void error_information_append_to_rich_text(
-    const Error_Information& info, Compilation_Data* compilation_data, Rich_Text::Rich_Text* text, 
+void error_information_append_to_rich_string(
+    const Error_Information& info, Compilation_Data* compilation_data, String* text, 
     Datatype_Format format = datatype_format_make_default()
 );
 void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);

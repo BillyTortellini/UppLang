@@ -1,13 +1,132 @@
 
-Okk, what do I want to work on next?
- * TOKENS/PARSER/IDENTIFIER_POOL upgrade...
- * Don't store tokens per line, Update parser with new tokens...
- * Upp_Function/Upp_Program: 
-    Merge ModTree_Function, Function_Slot, IR_Function, Bytecode-Function, C-Function...
- * Remove workload clustering
+Since everything is now in a styled-string, I need some rules how this string is generated:
+ - Newlines
+    Either push a new-line before each item, or after each item
+        I think I want this after each item, and trim if necessary
+    append should probably never push new-lines, because you may want in-line things
+ - When Style-Codes are added, when are they removed?
+    Maybe push-style and pop-style should be used after each styled thing?
+    Otherwise you cannot really control a lot of things, like underlining a whole line...
+    --> I think push and pop is the way to go
+ - Seperator-Line once I have it
+
+Tasks:
+- Editor overlays (Suggestion, Error, search, code-completion)
+- Particles are currently ignored
+- Block indentation rendering
+- Remove indentation from source-code
+- Pull more tasks out of ass
+- Error-Section display 
+
+Architecture thoughts:
+----------------------
+ * Differentiate Color-Scheme and Syntax_Color, e.g. Distribute some basic colors among 0-256, and Syntax_Color = Element + color
+ * String with arena
+ * Rendering-Core meshes shouldn't have this amount of buffers...
+    --> Think about something here...
+
+Notes:
+------
+Things that use styled strings:
+    - Error-information append to string
+    - Datatype append to string
+    - Datatype_Value append to string
+    - Call_Signature append to rich-text
+    - Append semantic error
+
+
+Rough Plan:
+ - Fix Editor
+    * Fix Error-Section display
+    * Fix Testcases
+ - Improve Code 
+    * Remove Compiler (Identifier-Pool and Fiber-Pool)
+    * Upp_Function, remove ir-function, c-function, bytecode-function
+        - Generate function dependencies in bytecode-interpreter
+        - Remove cluster dependencies
+    * Struct and subtype rework
+        - Struct should have same information as functions, and types should only reference them
+        - Struct-Template-Instance could just be struct with some values not filled out...
+ - Language Features?
+    * Subtype-Initializer for Hierarchy
+        - Also maybe new syntax for subtype accesses, .> and .<
+    * break statement with if, loop, switch, block
+        break if, break else, break loop
+    * Operator_Context
+        - Fix things that worked before
+    * Default value update/rework
+    * Macros
+    * String-Handling
+    * Access to normal math functions/built-ins
+    * Allocator rework, remove new/delete
+ - Incremental compilation
+    * Incremental parsing
+    * Incremental semantic-analysis
+    * Incremental code-generation
+ - Editor Features
+    * Multiple files in one buffer
+    * Quickscope
+    * Generally better buffer handling and rendering
+ - GUI Rewrite/from scratch (again)
+ - Debugger Features
+    * Generally bug fixes 
+    * Better views
+ - Base-Library writing
+    * Allocators
+        - Arena
+        - System-Allocator
+        - Free-List
+        - Generic size allocator (Or maybe just skip this one)
+    * Datastructures (Just with arenas, other allocators not needed)
+        - Dynamic_Array
+        - Hashtable/Hashmap
+        - String_Builder
+        - String-List?
+
+TODO:
+ - Fix editor block display
+ - Remove indentation, replace with 4 spaces
+ - Change struct initializer shit (Generally)
+    New syntax for subtype-access, and other schtuff
+ - Error_Section (parse_section to text-ranges not working correctly)
+ - Remove compiler (identifer-pool and fiber pool)
 
 DONE:
- * Compilation_Units (Remove, and just have loaded files or something)
+ - Auto-Formating
+ - Syntax highlighting
+ - Multi-definition with parenthesis
+ - For-loop with parenthesis
+
+ - Add fn and fn_ptr for functions
+ - switch/module should also look for blocks?
+ - Struct initializer with .()
+ - Explicit block #block identifier
+ - line continuation with \
+ - loops with loop keyword
+ - for loop with semi-colon...
+ - loop without condition
+ - Fixed cast and some error ranges
+
+NOTES:
+------
+ * Motions and line-movements probably should be moved out of syntax_editor, and be part of source-code
+ * Editor_Analysis_Info file is kinda dumb, as most of it is compilation-unit things
+
+Struct-Subtypes and subtype-initializer needs reworks...
+    Node :: struct
+        x: int
+        y: float
+        Expression:
+            something
+        Statement:
+            something
+    
+    x.>Expression.something
+    x.< // Base access
+    x.>Subtype // Subtype access
+    x:*Node.>Expression // subtype
+    
+    x: Node.Expression
 
 
 
@@ -80,18 +199,6 @@ How does operator context work:
     * If we found a match, create instance of the operator context and add it to current workload
     * At the end of the workload (Or where appropriate), instanciate the operation with given types
  3. Maybe store a list of instances
-
-
-TODO:
- * New Syntax for block-id:
-    #block_id what
-    for while if switch anon-block
-    #block Foo
-    #block_id Foo
-    if i
-        test_smth
-        break i;
-
 
 
 
@@ -169,6 +276,7 @@ FEATURE IMPLEMENTATION PLAN:
     Rework dependencies
     Redesign primitive operations maybe
     Update dot-call lookup maybe?
+ * Default-value update for polymorphic "traits"
  * ModTree-Function/Upp-Function rework
     IR-Code/Bytecode now waits if functions are not ready
     Remove Cluster compile
@@ -184,14 +292,17 @@ FEATURE IMPLEMENTATION PLAN:
     enum size
     ? auto pointer handling, remove * and &
     Maybe variable shadowing...
+        Maybe only for parameter, as these are passed as constants?
     remove new/delete, think about context vs arena
-    loop keyword instead of for, while
+        Probably just arena, and allocators have one big function for everything
  ? Modules, files, directories Rework
     I don't think I really wanna do this, as I will just work with large files and editor "zoom" feature
     Do something similar to Odin, where we import "packages", which are just directories of code.
     Code editor does not work on files, but rather on packages (or whatever)
  * Incremental parser
  * Incremental compiler
+ * Macros? Would be nice before coding schtuff...
+    Can be kept relatively simple at the start
 
 
 

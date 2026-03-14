@@ -50,7 +50,7 @@
     <ClInclude Include="programs\upp_lang\debugger.hpp" />
     <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp" />
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
-    <ClInclude Include="programs\upp_lang\lexer.hpp" />
+    <ClInclude Include="programs\upp_lang\tokenizer.hpp" />
     <ClInclude Include="programs\upp_lang\memory_source.hpp" />
     <ClInclude Include="programs\upp_lang\parser.hpp" />
     <ClInclude Include="programs\upp_lang\semantic_analyser.hpp" />
@@ -63,6 +63,7 @@
     <ClInclude Include="rendering\basic2D.hpp" />
     <ClInclude Include="rendering\cameras.hpp" />
     <ClInclude Include="rendering\camera_controllers.hpp" />
+    <ClInclude Include="rendering\font_renderer.hpp" />
     <ClInclude Include="rendering\framebuffer.hpp" />
     <ClInclude Include="rendering\glyph_atlas.hpp" />
     <ClInclude Include="rendering\gpu_buffers.hpp" />
@@ -127,7 +128,7 @@
     <ClCompile Include="programs\upp_lang\debugger.cpp" />
     <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp" />
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
-    <ClCompile Include="programs\upp_lang\lexer.cpp" />
+    <ClCompile Include="programs\upp_lang\tokenizer.cpp" />
     <ClCompile Include="programs\upp_lang\memory_source.cpp" />
     <ClCompile Include="programs\upp_lang\parser.cpp" />
     <ClCompile Include="programs\upp_lang\semantic_analyser.cpp" />
@@ -140,6 +141,7 @@
     <ClCompile Include="rendering\basic2D.cpp" />
     <ClCompile Include="rendering\cameras.cpp" />
     <ClCompile Include="rendering\camera_controllers.cpp" />
+    <ClCompile Include="rendering\font_renderer.cpp" />
     <ClCompile Include="rendering\framebuffer.cpp" />
     <ClCompile Include="rendering\glyph_atlas.cpp" />
     <ClCompile Include="rendering\gpu_buffers.cpp" />
@@ -183,6 +185,7 @@
     <None Include="..\resources\shaders\core\font_bitmap.glsl" />
     <None Include="..\resources\shaders\core\font_sdf.glsl" />
     <None Include="..\resources\shaders\core\geometry_2d.glsl" />
+    <None Include="..\resources\shaders\core\raster_font_new.glsl" />
     <None Include="..\resources\shaders\core\uniform_blocks.glsl" />
     <None Include="..\resources\shaders\gui_rect.glsl" />
     <None Include="..\resources\shaders\mono_texture.glsl" />

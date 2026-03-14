@@ -13,6 +13,7 @@
 #include "ir_code.hpp"
 #include "c_backend.hpp"
 #include "../../utility/file_io.hpp"
+#include "../../utility/character_info.hpp"
 
 
 
@@ -21,29 +22,6 @@ u64 hash_call_signature(Call_Signature** callable_p);
 bool equals_call_signature(Call_Signature** app, Call_Signature** bpp);
 
 
-
-Token_Range token_range_last_token(Token_Range range, Source_Code* code) 
-{
-    if (token_index_equal(range.start, range.end)) return range;
-    if (range.end.token > 0) {
-        range.start = range.end;
-        range.start.token -= 1;
-        return range;
-    }
-    return token_range_make(range.end, range.end);
-}
-
-Token_Range token_range_first_token(Token_Range range, Source_Code* code) 
-{
-    if (token_index_equal(range.start, range.end)) return range;
-    auto line = source_code_get_line(code, range.start.line);
-    if (range.start.token + 1 <= line->tokens.size) {
-        range.end = range.start;
-        range.end.token = range.start.token + 1;
-        return range;
-    }
-    return token_range_make(range.start, range.start);
-}
 
 void add_semantic_info(
 	int analysis_item_index, Editor_Info_Type type, Editor_Info_Option option, Analysis_Pass* pass, Compilation_Data* compilation_data)
@@ -57,12 +35,11 @@ void add_semantic_info(
 	dynamic_array_push_back(&compilation_data->semantic_infos, info);
 }
 
-int add_code_analysis_item(Token_Range token_range, Source_Code* code, int tree_depth, Compilation_Data* compilation_data)
+int add_code_analysis_item(Text_Range range, Source_Code* code, int tree_depth, Compilation_Data* compilation_data)
 {
 	int analysis_item_index = compilation_data->next_analysis_item_index;
 	compilation_data->next_analysis_item_index += 1;
 
-    Text_Range range = token_range_to_text_range(token_range, code);
     for (int i = range.start.line; i <= range.end.line; i++)
     {
         auto line = source_code_get_line(code, i);
@@ -89,12 +66,45 @@ int add_code_analysis_item(Token_Range token_range, Source_Code* code, int tree_
 	return analysis_item_index;
 };
 
-void add_markup(Token_Range range, Source_Code* code, int tree_depth, vec3 color, Compilation_Data* compilation_data)
+void add_markup(Text_Range range, Source_Code* code, int tree_depth, Syntax_Color color, Compilation_Data* compilation_data)
 {
 	int analysis_item_index = add_code_analysis_item(range, code, tree_depth, compilation_data);
 	Editor_Info_Option option;
 	option.markup_color = color;
 	add_semantic_info(analysis_item_index, Editor_Info_Type::MARKUP, option, nullptr, compilation_data);
+}
+
+Text_Range text_index_to_word_range(Text_Index pos, Source_Code* code)
+{
+    auto line = source_code_get_line(code, pos.line);
+	Text_Range error_range = text_range_make(pos, pos);
+	if (line == nullptr) return error_range;
+    auto text = line->text;
+	if (pos.character >= text.size) return error_range;
+	if (!char_is_valid_identifier(text[pos.character])) return error_range;
+
+	int start_index = pos.character;
+	int end_index = pos.character;
+
+	while (start_index > 0)
+	{
+		char prev = text[start_index - 1];
+		if (!char_is_valid_identifier(prev)) {
+			break;
+		}
+		start_index -= 1;
+	}
+
+	while (end_index < text.size)
+	{
+		char curr = text[end_index];
+		if (!char_is_valid_identifier(curr)) {
+			break;
+		}
+		end_index += 1;
+	}
+
+	return text_range_make(text_index_make(pos.line, start_index), text_index_make(pos.line, end_index));
 }
 
 
@@ -125,7 +135,7 @@ void find_editor_infos_recursive(
 			auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(node), Info_Query::TRY_READ, compilation_data);
 			if (info == 0) { break; }
 			Symbol_Table_Range table_range;
-			table_range.range = token_range_to_text_range(node->bounding_range, code);
+			table_range.range = node->bounding_range;
 			table_range.symbol_table = info->upp_module->symbol_table;
 			table_range.tree_depth = tree_depth;
 			table_range.pass = pass;
@@ -138,7 +148,7 @@ void find_editor_infos_recursive(
 		auto block_node = AST::downcast<AST::Code_Block>(node);
 		if (block_node->block_id.available) {
 			Block_ID_Range id_range;
-			id_range.range = token_range_to_text_range(node->bounding_range, code);
+			id_range.range = node->bounding_range;
 			id_range.block_id = block_node->block_id.value;
 			dynamic_array_push_back(&code->block_id_range, id_range);
 		}
@@ -149,7 +159,7 @@ void find_editor_infos_recursive(
 			auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ, compilation_data);
 			if (block == 0) { continue; }
 			Symbol_Table_Range table_range;
-			table_range.range = token_range_to_text_range(node->bounding_range, code);
+			table_range.range = node->bounding_range;
 			table_range.symbol_table = block->symbol_table;
 			table_range.tree_depth = tree_depth;
 			table_range.pass = pass;
@@ -161,7 +171,7 @@ void find_editor_infos_recursive(
 	{
 		auto expr = downcast<AST::Expression>(node);
 		if (expr->type == AST::Expression_Type::AUTO_ENUM) {
-			add_markup(token_range_last_token(node->range, code), code, tree_depth, Syntax_Color::ENUM_MEMBER, compilation_data);
+			add_markup(node->range, code, tree_depth, Syntax_Color::ENUM_MEMBER, compilation_data);
 		}
 		if (active_passes.size == 0) break;
 
@@ -174,7 +184,7 @@ void find_editor_infos_recursive(
 				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
 					Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->parameter_table;
 					Symbol_Table_Range table_range;
-					table_range.range = token_range_to_text_range(node->bounding_range, code);
+					table_range.range = node->bounding_range;
 					table_range.symbol_table = table;
 					table_range.tree_depth = tree_depth;
 					table_range.pass = pass;
@@ -210,9 +220,7 @@ void find_editor_infos_recursive(
 						option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(
 							compilation_data, enum_type->definition_node
 						);
-						option.expression.member_access_info.definition_index = token_index_to_text_index(
-							enum_type->definition_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
-						);
+						option.expression.member_access_info.definition_index = enum_type->definition_node->range.start;
 					}
 				}
 			}
@@ -261,9 +269,7 @@ void find_editor_infos_recursive(
 				{
 					option.expression.member_access_info.has_definition = true;
 					option.expression.member_access_info.member_definition_unit = compiler_find_ast_compilation_unit(compilation_data, goto_node);
-					option.expression.member_access_info.definition_index = token_index_to_text_index(
-						goto_node->range.start, option.expression.member_access_info.member_definition_unit->code, true
-					);
+					option.expression.member_access_info.definition_index = goto_node->range.start;
 				}
 			}
 
@@ -276,14 +282,14 @@ void find_editor_infos_recursive(
 	case AST::Node_Type::STRUCT_MEMBER: {
 		auto member = downcast<AST::Structure_Member_Node>(node);
 		add_markup(
-			token_range_first_token(node->range, code), code, tree_depth, 
+			node->range, code, tree_depth, 
 			member->is_expression ? Syntax_Color::MEMBER : Syntax_Color::SUBTYPE, 
 			compilation_data
 		);
 		break;
 	}
 	case AST::Node_Type::ENUM_MEMBER: {
-		add_markup(token_range_first_token(node->range, code), code, tree_depth, Syntax_Color::ENUM_MEMBER, compilation_data);
+		add_markup(text_index_to_word_range(node->range.start, code), code, tree_depth, Syntax_Color::ENUM_MEMBER, compilation_data);
 		break;
 	}
 	case AST::Node_Type::CALL_NODE:
@@ -310,7 +316,7 @@ void find_editor_infos_recursive(
 		// Add named argument highlighting
 		auto arg = downcast<AST::Argument>(node);
 		if (arg->name.available) {
-			add_markup(token_range_first_token(node->range, code), code, tree_depth, Syntax_Color::VARIABLE, compilation_data);
+			add_markup(text_index_to_word_range(node->range.start, code), code, tree_depth, Syntax_Color::VARIABLE, compilation_data);
 		}
 
 		// Find argument index
@@ -333,14 +339,16 @@ void find_editor_infos_recursive(
 	case AST::Node_Type::CONTEXT_CHANGE:
 	{
 		auto line = source_code_get_line(code, node->range.start.line);
-		if (node->range.start.token + 1 < line->tokens.size) {
-			if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
-				Token_Range range = token_range_make(node->range.start, node->range.start);
-				range.start.token += 1;
-				range.end.token += 2;
-				add_markup(range, code, tree_depth, Syntax_Color::VARIABLE, compilation_data);
-			}
-		}
+		// Not sure what I was doing here
+
+		// if (node->range.start.token + 1 < line->tokens.size) {
+		// 	if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
+		// 		Token_Range range = token_range_make(node->range.start, node->range.start);
+		// 		range.start.token += 1;
+		// 		range.end.token += 2;
+		// 		add_markup(range, code, tree_depth, Syntax_Color::VARIABLE, compilation_data);
+		// 	}
+		// }
 		break;
 	}
 	case AST::Node_Type::DEFINITION_SYMBOL:
@@ -348,17 +356,17 @@ void find_editor_infos_recursive(
 	case AST::Node_Type::PARAMETER:
 	{
 		bool is_definition = false;
-		Token_Range range = token_range_first_token(node->range, code);
+		Text_Range range = text_index_to_word_range(node->range.start, code);
 		if (node->type == AST::Node_Type::PARAMETER) 
 		{
 			auto param = downcast<AST::Parameter>(node);
 			int offset = 0;
 			if (param->is_return_type) break;
-			if (param->is_comptime) offset += 1;
+			if (param->is_comptime) {
+				range.start.character += 1;
+			}
+			range = text_index_to_word_range(range.start, code);
 			
-			auto& tokens = source_code_get_line(code, range.start.line)->tokens;
-			range.start.token = math_minimum(range.start.token + offset, tokens.size);
-			range.end.token = math_minimum(range.start.token + offset + 1, tokens.size);
 			is_definition = true;
 
 			add_markup(range, code, tree_depth, Syntax_Color::VALUE_DEFINITION, compilation_data);
@@ -490,7 +498,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		for (int i = 0; i < unit->parser_errors.size; i++)
 		{
 			const auto& error = unit->parser_errors[i];
-			Text_Range range = token_range_to_text_range(error.range, unit->code);
+			Text_Range range = error.range;
 
 			Compiler_Error_Info error_info;
 			error_info.message = error.msg;
@@ -499,7 +507,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 			error_info.text_index = range.start;
 			dynamic_array_push_back(&errors, error_info);
 
-			int analysis_item_index = add_code_analysis_item(error.range, unit->code, 0, compilation_data);
+			int analysis_item_index = add_code_analysis_item(range, unit->code, 0, compilation_data);
 			Editor_Info_Option option;
 			option.error_index = errors.size - 1;
 			add_semantic_info(analysis_item_index, Editor_Info_Type::ERROR_ITEM, option, nullptr, compilation_data);
@@ -507,7 +515,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	}
 
 	// Add semantic errors
-	Dynamic_Array<Token_Range> ranges = dynamic_array_create<Token_Range>();
+	Dynamic_Array<Text_Range> ranges = dynamic_array_create<Text_Range>();
 	SCOPE_EXIT(dynamic_array_destroy(&ranges));
 	for (int i = 0; i < compilation_data->semantic_errors.size; i++)
 	{
@@ -523,7 +531,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		error_info.message = error.msg;
 		error_info.unit = unit;
 		error_info.semantic_error_index = i;
-		error_info.text_index = token_range_to_text_range(ranges[0], unit->code).start;
+		error_info.text_index = ranges[0].start;
 		dynamic_array_push_back(&errors, error_info);
 
 		// Add visible ranges
@@ -1008,7 +1016,6 @@ Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identi
 	source_code_fill_from_string(source_code, file_content.value);
 	auto lock = identifier_pool_lock_aquire(identifier_pool);
 	SCOPE_EXIT(identifier_pool_lock_release(lock));
-	source_code_tokenize(source_code, &lock);
 	return source_code;
 }
 
@@ -1329,13 +1336,13 @@ Call_Signature* call_signature_register(Call_Signature* signature, Compilation_D
 	return signature;
 }
 
-void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Rich_Text* text, Datatype_Format* format, Type_System* type_system)
+void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format)
 {
 	auto& parameters = signature->parameters;
-	Rich_Text::append_formated(text, "(");
+	string->append("(");
 
-	int highlight_index = format->highlight_parameter_index;
-	format->highlight_parameter_index = 0;
+	int highlight_index = format.highlight_parameter_index;
+	format.highlight_parameter_index = -1;
 	bool require_colon = false;
 	for (int i = 0; i < parameters.size; i++)
 	{
@@ -1346,47 +1353,40 @@ void call_signature_append_to_rich_text(Call_Signature* signature, Rich_Text::Ri
 		if (param.must_not_be_set) continue;
 
 		if (require_colon) {
-			Rich_Text::append_formated(text, ", ");
+			string->append(", ");
 		}
 		require_colon = true;
 
 		// Print param name + type with possible highlight
 		if (highlight_index == i) {
-			Rich_Text::set_bg(text, format->highlight_color);
+			string_style_add_code(string, Style_Code::BACKGROUND_COLOR, format.highlight_color);
 		}
 		if (param.comptime_variable_index != -1) {
-			Rich_Text::append_character(text, '$');
+			string->append('$');
 		}
-		Rich_Text::set_text_color(text, Syntax_Color::VALUE_DEFINITION);
-		Rich_Text::append_formated(text, "%s: ", param.name->characters);
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::VALUE_DEFINITION);
+		string->append(param.name);
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
+		string->append(": ");
 
 		auto param_type = param.datatype;
-		datatype_append_to_rich_text(param_type, type_system, text, *format);
-		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
+		datatype_append_to_string(param_type, string, type_system, format);
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
 
 		if (highlight_index == i) {
-			Rich_Text::stop_bg(text);
+			string_style_add_code(string, Style_Code::BACKGROUND_COLOR, Syntax_Color::NONE);
 		}
 		if (param.default_value_exists) {
-			Rich_Text::append_formated(text, " = ...");
+			string->append(" = ...");
 		}
 	}
-	Rich_Text::append_formated(text, ")");
+	string->append(")");
 
 	if (signature->return_type_index != -1) {
-		Rich_Text::append(text, " => ");
-		datatype_append_to_rich_text(signature->parameters[signature->return_type_index].datatype, type_system, text, *format);
-		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
+		string->append(" => ");
+		datatype_append_to_string(signature->parameters[signature->return_type_index].datatype, string, type_system, format);
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
 	}
-}
-
-void call_signature_append_to_string(String* string, Type_System* type_system, Call_Signature* signature, Datatype_Format format)
-{
-	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
-	SCOPE_EXIT(Rich_Text::destroy(&text));
-	Rich_Text::add_line(&text);
-	call_signature_append_to_rich_text(signature, &text, &format, type_system);
-	Rich_Text::append_to_string(&text, string, 2);
 }
 
 Optional<Datatype*> Call_Signature::return_type()

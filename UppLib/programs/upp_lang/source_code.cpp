@@ -3,7 +3,6 @@
 #include "../../datastructures/hashtable.hpp"
 #include "compiler.hpp"
 #include "../../utility/character_info.hpp"
-#include "lexer.hpp"
 #include "ast.hpp"
 #include <string>
 
@@ -22,11 +21,7 @@ void add_first_bundle_and_line(Source_Code* code)
     Source_Line first_line;
     first_line.indentation = 0;
     first_line.text = string_create();
-    first_line.tokens = dynamic_array_create<Token>();
     first_line.item_infos = dynamic_array_create<Editor_Info_Reference>();
-    first_line.is_comment = false;
-    first_line.comment_block_indentation = -1;
-    first_line.is_folded = false;
 
     dynamic_array_push_back(&first_bundle.lines, first_line);
     dynamic_array_push_back(&code->bundles, first_bundle);
@@ -58,7 +53,6 @@ Source_Code* source_code_copy(Source_Code* copy_from)
         for (int j = 0; j < bundle.lines.size; j++) {
             auto& line = bundle.lines[j];
             line.text = string_copy(line.text);
-            line.tokens = dynamic_array_create_copy<Token>(line.tokens.data, line.tokens.size);
             line.item_infos = dynamic_array_create_copy(line.item_infos.data, line.item_infos.size);
         }
     }
@@ -71,7 +65,6 @@ Source_Code* source_code_copy(Source_Code* copy_from)
 
 void source_line_destroy(Source_Line* line)
 {
-    dynamic_array_destroy(&line->tokens);
     dynamic_array_destroy(&line->item_infos);
     string_destroy(&line->text);
 }
@@ -138,98 +131,6 @@ Source_Line* source_code_get_line(Source_Code* code, int line_index)
     return &bundle.lines[line_index - bundle.first_line_index];
 }
 
-bool source_line_is_comment(Source_Line* line)
-{
-    if (line->text.size < 2) return false;
-    return line->text.characters[0] == '/' && line->text.characters[1] == '/';
-}
-
-bool source_line_is_multi_line_comment_start(Source_Line* line)
-{
-    if (line->text.size < 3) return false;
-    return line->text.characters[0] == '/' && line->text.characters[1] == '/' && line->text.characters[2] == '/';
-}
-
-// Checks if the comment information is up-to date on the given line by checking the previous line.
-// If it is not up-to-date, it will update all following lines until the information is correct again
-void update_line_block_comment_information(Source_Code* code, int line_index)
-{
-    int bundle_index = source_code_get_line_bundle_index(code, line_index);
-    Line_Bundle* bundle = &code->bundles[bundle_index];
-    Source_Line* line = &bundle->lines[line_index - bundle->first_line_index];
-
-    // Check if previous line is in comment block
-    int comment_indentation = -1;
-    if (line_index > 0) {
-        Source_Line* prev_line = source_code_get_line(code, line_index - 1);
-        if (prev_line->comment_block_indentation != -1) {
-            comment_indentation = prev_line->comment_block_indentation;
-        }
-        else if (source_line_is_multi_line_comment_start(prev_line)) {
-            comment_indentation = prev_line->indentation + 1;
-        }
-    }
-
-    // Update following lines if they are wrong...
-    for (int i = line_index; i < code->line_count; i++)
-    {
-        // Check if we step over bundle boundary
-        while (i >= bundle->first_line_index + bundle->lines.size) {
-            bundle_index += 1;
-            bundle = &code->bundles[bundle_index];
-        }
-        line = &bundle->lines[i - bundle->first_line_index];
-
-        // Figure out expected indentation and is comment
-        int expected_comment_indentation = -1;
-        bool expected_is_comment = false;
-        if (comment_indentation == -1)
-        {
-            expected_comment_indentation = -1;
-            if (source_line_is_multi_line_comment_start(line)) {
-                expected_is_comment = true;
-                comment_indentation = line->indentation + 1;
-            }
-            else {
-                expected_is_comment = source_line_is_comment(line);
-            }
-        }
-        else 
-        {
-            // Check if indentation ended
-            if (line->indentation < comment_indentation) 
-            {
-                expected_comment_indentation = -1;
-                if (source_line_is_multi_line_comment_start(line)) {
-                    expected_is_comment = true;
-                    comment_indentation = line->indentation + 1;
-                }
-                else {
-                    comment_indentation = -1;
-                    expected_is_comment = source_line_is_comment(line);
-                }
-            }
-            else { // Line is inside comment-block
-                expected_is_comment = true;
-                expected_comment_indentation = comment_indentation;
-            }
-        }
-
-        // Stop this loop if next line is correct
-        if (line->is_comment == expected_is_comment && line->comment_block_indentation == expected_comment_indentation) {
-            if (i == line_index) { // Only exit if we have checked one line after first line
-                continue;
-            }
-            break;
-        }
-        else {
-            line->is_comment = expected_is_comment;
-            line->comment_block_indentation = expected_comment_indentation;
-        }
-    }
-}
-
-
 Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int indentation)
 {
     int bundle_index = source_code_get_line_bundle_index(code, new_line_index);
@@ -271,11 +172,7 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         Source_Line line;
         line.indentation = indentation;
         line.text = string_create();
-        line.tokens = dynamic_array_create<Token>();
         line.item_infos = dynamic_array_create<Editor_Info_Reference>();
-        line.is_comment = false;
-        line.is_folded = false;
-        line.comment_block_indentation = -1;
         dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
     }
 
@@ -284,9 +181,6 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         code->bundles[i].first_line_index += 1;
     }
     code->line_count += 1;
-
-    // Update comment block infos
-    update_line_block_comment_information(code, new_line_index);
 
     return &bundle->lines[new_line_index - bundle->first_line_index];
 }
@@ -315,11 +209,6 @@ void source_code_remove_line(Source_Code* code, int line_index)
         code->bundles[i].first_line_index -= 1;
     }
     code->line_count -= 1;
-
-    // Update block comment infos
-    if (line_index < code->line_count) {
-        update_line_block_comment_information(code, line_index);
-    }
 
     if (bundle->lines.size == 0)
     {
@@ -402,40 +291,12 @@ void source_code_fill_from_string(Source_Code* code, String text)
         String substring = string_create_substring_static(&text, line_start_index, line_end_index);
         string_append_string(&line->text, &substring);
         source_text_remove_invalid_whitespaces(line->text);
-
-        // Handle comment info
-        if (comment_indent == -1)
-        {
-            line->comment_block_indentation = -1;
-            if (source_line_is_multi_line_comment_start(line))
-            {
-                line->is_comment = true;
-                comment_indent = line_indent + 1;
-            }
-            else {
-                line->is_comment = source_line_is_comment(line);
-            }
-        }
-        else
-        {
-            if (line_indent < comment_indent) {
-                comment_indent = -1;
-                line->comment_block_indentation = -1;
-                line->is_comment = source_line_is_comment(line);
-            }
-            else {
-                line->comment_block_indentation = comment_indent;
-                line->is_comment = true;
-            }
-        }
     }
 
     // Because we always start with an empty line after reset, we want to remove it if other lines were added
     if (code->line_count > 0) {
         source_code_remove_line(code, 0);
     }
-
-    source_code_sanity_check(code);
 }
 
 void source_code_append_to_string(Source_Code* code, String* text) 
@@ -473,70 +334,6 @@ void source_text_remove_invalid_whitespaces(String& text)
     }
 }
 
-void source_code_tokenize_line(Source_Line* line, Identifier_Pool_Lock* pool_lock) {
-    tokenizer_tokenize_line(line->text, &line->tokens, pool_lock);
-}
-
-void source_code_tokenize(Source_Code* code, Identifier_Pool_Lock* pool_lock)
-{
-    for (int i = 0; i < code->bundles.size; i++) {
-        auto& bundle = code->bundles[i];
-        for (int j = 0; j < bundle.lines.size; j++) {
-            source_code_tokenize_line(&bundle.lines[j], pool_lock);
-        }
-    }
-}
-
-void source_code_sanity_check(Source_Code* code)
-{
-    int line_count = 0;
-    int comment_indentation = -1;
-
-    for (int i = 0; i < code->bundles.size; i++)
-    {
-        auto& bundle = code->bundles[i];
-        for (int j = 0; j < bundle.lines.size; j++)
-        {
-            Source_Line* line = &bundle.lines[j];
-            line_count += 1;
-
-            // Check comment info
-            if (comment_indentation == -1)
-            {
-                if (source_line_is_multi_line_comment_start(line))
-                {
-                    assert(line->is_comment, "");
-                    comment_indentation = line->indentation + 1;
-                }
-                else {
-                    assert(line->is_comment == source_line_is_comment(line), "");
-                }
-            }
-            else
-            {
-                if (line->indentation < comment_indentation) 
-                {
-                    assert(line->comment_block_indentation == -1, "");
-                    if (source_line_is_multi_line_comment_start(line))
-                    {
-                        assert(line->is_comment, "");
-                        comment_indentation = line->indentation + 1;
-                    }
-                    else {
-                        assert(line->is_comment == source_line_is_comment(line), "");
-                        comment_indentation = -1;
-                    }
-                }
-                else
-                {
-                    assert(line->is_comment, "");
-                }
-            }
-        }
-    }
-}
-
-
 
 
 // Indices
@@ -569,181 +366,4 @@ bool text_range_contains(Text_Range range, Text_Index index) {
     return text_index_in_order(range.start, index) && text_index_in_order(index, range.end);
 }
 
-// Token Indices
-Token_Index token_index_make(int line, int token)
-{
-    Token_Index index;
-    index.line = line;
-    index.token = token;
-    return index;
-}
 
-Token_Index token_index_make_line_end(Source_Code* code, int line_index)
-{
-    Token_Index index;
-    index.line = line_index;
-    auto line = source_code_get_line(code, line_index);
-    index.token = line->tokens.size;
-    return index;
-}
-
-bool token_index_valid(Token_Index index, Source_Code* code)
-{
-    if (index.line < 0 || index.line >= code->line_count) return false;
-    auto line = source_code_get_line(code, index.line);
-    return index.token >= 0 && index.token < line->tokens.size;
-}
-
-Token_Range token_range_make(Token_Index start, Token_Index end) {
-    Token_Range range;
-    range.start = start;
-    range.end = end;
-    return range;
-}
-
-Token_Range token_range_make_offset(Token_Index start, int offset) {
-    Token_Range range;
-    range.start = start;
-    range.end = start;
-    if (offset >= 0) {
-        range.end.token += offset;
-    }
-    else {
-        range.start.token += offset;
-    }
-    return range;
-}
-
-bool token_index_equal(Token_Index a, Token_Index b) {
-    return a.line == b.line && a.token == b.token;
-}
-
-// 1 == sorted, 0 == equal, -1 = not sorted
-int token_index_compare(Token_Index a, Token_Index b)
-{
-    if (a.line != b.line) {
-        if (a.line < b.line) return 1;
-        else if (a.line == b.line) return 0;
-        else return -1;
-    }
-
-    if (a.token < b.token) return 1;
-    else if (a.token == b.token) return 0;
-    else return -1;
-}
-
-bool token_range_contains(Token_Range range, Token_Index index)
-{
-    int cmp_start = token_index_compare(range.start, index);
-    int cmp_end = token_index_compare(index, range.end);
-    return cmp_start != -1 && cmp_end == 1; // End is not inclusive
-}
-
-
-
-// Conversion functions
-Text_Range token_range_to_text_range(Token_Range range, Source_Code* code)
-{
-    Text_Range result;
-    result.start.line = range.start.line;
-    result.end.line = range.end.line;
-    auto start_line = source_code_get_line(code, range.start.line);
-    auto end_line = source_code_get_line(code, range.end.line);
-    if (range.start.token < start_line->tokens.size) {
-        result.start.character = start_line->tokens[range.start.token].start_index;
-    }
-    else {
-        if (range.start.token == 0) {
-            result.start.character = 0;
-        }
-        else {
-            result.start.character = start_line->text.size;
-        }
-    }
-
-    if (range.end.token >= end_line->tokens.size) {
-        result.end.character = end_line->text.size;
-    }
-    else if (range.end.token == range.start.token && range.end.line == range.start.line) {
-        result.end.character = end_line->tokens[range.end.token].end_index;
-    }
-    else if (range.end.token - 1 >= 0) {
-        result.end.character = end_line->tokens[range.end.token - 1].end_index;
-    }
-    else {
-        result.end.character = 0;
-    }
-    return result;
-}
-
-Token_Range text_range_to_token_range(Text_Range range, Source_Code* code)
-{
-    Token_Range result;
-    result.start.line = range.start.line;
-    result.end.line = range.end.line;
-
-    auto start_line = source_code_get_line(code, range.start.line);
-    if (range.start.character == 0) {
-        result.start.token = 0;
-    }
-    else if (range.start.character >= start_line->text.size) {
-        result.start.token = math_maximum(0, start_line->tokens.size - 1);
-    }
-    else {
-        auto& tokens = start_line->tokens;
-        result.start.token = 0;
-        for (int i = 0; i < tokens.size; i++) {
-            auto& token = tokens[i];
-            if (token.start_index <= range.start.character) {
-                result.start.token = i;
-            }
-            else {
-                break;
-            }
-        }
-    }
-
-    auto end_line = source_code_get_line(code, range.end.line);
-    if (range.end.character == 0) {
-        result.end.token = 0;
-    }
-    else if (range.end.character >= end_line->text.size) {
-        result.end.token = math_maximum(0, end_line->tokens.size);
-    }
-    else {
-        auto& tokens = end_line->tokens;
-        result.end.token = 0;
-        for (int i = 0; i < tokens.size; i++) {
-            auto& token = tokens[i];
-            if (token.start_index < range.end.character) {
-                result.end.token = i;
-            }
-            else {
-                break;
-            }
-        }
-    }
-
-    return result;
-}
-
-Text_Index token_index_to_text_index(Token_Index index, Source_Code* code, bool token_start)
-{
-    if (index.line >= code->line_count) {
-        return text_index_make_line_end(code, code->line_count - 1);
-    }
-
-    auto line = source_code_get_line(code, index.line);
-    if (line->tokens.size == 0) {
-        return text_index_make(index.line, 0);
-    }
-    else if (index.token >= line->tokens.size) {
-        return text_index_make(index.line, line->text.size);
-    }
-
-    auto& token = line->tokens[index.token];
-    if (token_start) {
-        return text_index_make(index.line, token.start_index);
-    }
-    return text_index_make(index.line, token.end_index);
-}

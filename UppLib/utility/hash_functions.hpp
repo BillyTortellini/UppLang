@@ -17,5 +17,6 @@ u64 hash_bool(u64 a, bool value);
 
 bool equals_i32(i32* a, i32* b);
 bool equals_i64(i64* a, i64* b);
+bool equals_u32(u32* a, u32* b);
 bool equals_u64(u64* a, u64* b);
 bool equals_pointer(void** a, void** b);

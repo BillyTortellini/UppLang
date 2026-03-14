@@ -98,27 +98,6 @@ vec2 convertPoint(vec2 value, Unit unit) {
     return convertPointFromTo(value, unit, GLOBAL_INTERNAL_UNIT);
 }
 
-vec2 anchor_to_direction(Anchor anchor)
-{
-    switch (anchor) {
-    case Anchor::TOP_LEFT:       return vec2(-1.0f,  1.0f);
-    case Anchor::TOP_CENTER:     return vec2( 0.0f,  1.0f);
-    case Anchor::TOP_RIGHT:      return vec2( 1.0f,  1.0f);
-    case Anchor::CENTER_LEFT:    return vec2(-1.0f,  0.0f);
-    case Anchor::CENTER_CENTER:  return vec2( 0.0f,  0.0f);
-    case Anchor::CENTER_RIGHT:   return vec2( 1.0f,  0.0f);
-    case Anchor::BOTTOM_LEFT:    return vec2(-1.0f, -1.0f);
-    case Anchor::BOTTOM_CENTER:  return vec2( 0.0f, -1.0f);
-    case Anchor::BOTTOM_RIGHT:   return vec2( 1.0f, -1.0f);
-    }
-    panic("Shouldn't happen");
-    return vec2(0.0f);
-}
-
-vec2 anchor_switch(vec2 position, vec2 size, Anchor from, Anchor to) {
-    return position + size * (anchor_to_direction(to) - anchor_to_direction(from)) / 2.0f;
-}
-
 
 
 Bounding_Box2 bounding_box_2_make_min_max(vec2 min, vec2 max)

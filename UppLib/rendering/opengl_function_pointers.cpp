@@ -61,6 +61,7 @@ bool opengl_load_all_functions()
     glBufferSubData = (PFNGLBUFFERSUBDATAPROC) opengl_get_function_address("glBufferSubData");
     glDrawBuffers = (PFNGLDRAWBUFFERSPROC) opengl_get_function_address("glDrawBuffers");
     glVertexAttribPointer = (PFNGLVERTEXATTRIBPOINTERPROC) opengl_get_function_address("glVertexAttribPointer");
+    glVertexAttribIPointer = (PFNGLVERTEXATTRIBIPOINTERPROC) opengl_get_function_address("glVertexAttribIPointer");
     glEnableVertexAttribArray = (PFNGLENABLEVERTEXATTRIBARRAYPROC) opengl_get_function_address("glEnableVertexAttribArray");
     glVertexAttribDivisor = (PFNGLVERTEXATTRIBDIVISORPROC) opengl_get_function_address("glVertexAttribDivisor");
     glDrawElementsInstanced = (PFNGLDRAWELEMENTSINSTANCEDPROC) opengl_get_function_address("glDrawElementsInstanced");
@@ -267,6 +268,7 @@ PFNGLBUFFERSUBDATAPROC glBufferSubData;
 PFNGLBINDBUFFERBASEPROC glBindBufferBase;
 PFNGLBINDBUFFERRANGEPROC glBindBufferRange;
 PFNGLVERTEXATTRIBPOINTERPROC glVertexAttribPointer;
+PFNGLVERTEXATTRIBIPOINTERPROC glVertexAttribIPointer;
 PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray;
 PFNGLVERTEXATTRIBDIVISORPROC glVertexAttribDivisor;
 PFNGLUSEPROGRAMPROC glUseProgram;

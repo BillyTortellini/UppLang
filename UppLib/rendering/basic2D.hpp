@@ -28,26 +28,6 @@ constexpr Unit GLOBAL_INTERNAL_UNIT = Unit::PIXELS;
 
 
 
-enum class Anchor
-{
-    TOP_LEFT,
-    TOP_CENTER,
-    TOP_RIGHT,
-
-    CENTER_LEFT,
-    CENTER_CENTER,
-    CENTER_RIGHT,
-    
-    BOTTOM_LEFT,
-    BOTTOM_CENTER,
-    BOTTOM_RIGHT
-};
-
-vec2 anchor_to_direction(Anchor anchor);
-vec2 anchor_switch(vec2 position, vec2 size, Anchor from, Anchor to); // Returns a point that results in the same rectangle with the new anchor
-
-
-
 struct Bounding_Box2
 {
     vec2 min;
@@ -62,3 +42,4 @@ Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2);
 Optional<Bounding_Box2> bounding_box_2_union(const Bounding_Box2& a, const Bounding_Box2& b);
 bool bounding_box_2_overlap(const Bounding_Box2& a, const Bounding_Box2& b);
 Bounding_Box2 bounding_box_2_convert(const Bounding_Box2& bb, Unit unit);
+

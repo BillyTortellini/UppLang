@@ -25,8 +25,8 @@ void type_base_destroy(Datatype* base)
 }
 
 void datatype_append_value_to_string(
-    Datatype* type, Type_System* type_system, byte* value_ptr, String* string, Datatype_Value_Format format, 
-    int indentation, Memory_Source local_memory, Memory_Source pointer_memory)
+    Datatype* type, String* string, byte* value_ptr, Datatype_Value_Format format, 
+    int indentation, Memory_Source local_memory, Memory_Source pointer_memory, Type_System* type_system)
 {
     // Add indentation
     bool single_line = indentation >= format.max_indentation_before_single_line || format.single_line;
@@ -41,7 +41,7 @@ void datatype_append_value_to_string(
     // Check for errors
     if (!type->memory_info.available) {
         string_append_formated(string, "TYPE_SIZE_NOT_FINISHED(");
-        datatype_append_to_string(string, type_system, type, format.datatype_format);
+        datatype_append_to_string(type, string, type_system, format.datatype_format);
         string_append(string, ")");
         return;
     }
@@ -64,7 +64,7 @@ void datatype_append_value_to_string(
         Datatype* type = nullptr;
         if (any_value.type.index < (u32) type_system->types.size) {
             type = type_system->types[any_value.type.index];
-            datatype_append_to_string(string, type_system, type, format.datatype_format);
+            datatype_append_to_string(type, string, type_system, format.datatype_format);
         }
         else {
             string_append_formated(string, "Any_With_Invalid_Type_Handle(#%d)", any_value.type.index);
@@ -80,7 +80,7 @@ void datatype_append_value_to_string(
             append_indentation(1);
         }
 
-        datatype_append_value_to_string(type, type_system, (byte*)any_value.data, string, format, indentation + 1, pointer_memory, pointer_memory);
+        datatype_append_value_to_string(type, string, (byte*)any_value.data, format, indentation + 1, pointer_memory, pointer_memory, type_system);
 
         if (single_line) {
             string_append(string, " }");
@@ -213,7 +213,7 @@ void datatype_append_value_to_string(
         }
 
         if (format.show_datatype) {
-            datatype_append_to_string(string, type_system, element_type, format.datatype_format);
+            datatype_append_to_string(element_type, string, type_system, format.datatype_format);
             string_append_formated(string, ".");
         }
 
@@ -242,7 +242,7 @@ void datatype_append_value_to_string(
                 append_indentation(1);
             }
             byte* data = array_data + i * element_type->memory_info.value.size;
-            datatype_append_value_to_string(element_type, type_system, data, string, format, indentation + 1, local_memory, pointer_memory);
+            datatype_append_value_to_string(element_type, string, data, format, indentation + 1, local_memory, pointer_memory, type_system);
         }
 
         // Append ... if we did not display all elements
@@ -286,7 +286,7 @@ void datatype_append_value_to_string(
             string_append(string, "\n");
             append_indentation(indentation + 1);
         }
-        datatype_append_value_to_string(pointer->element_type, type_system, data, string, format, indentation + 1, local_memory, pointer_memory);
+        datatype_append_value_to_string(pointer->element_type, string, data, format, indentation + 1, local_memory, pointer_memory, type_system);
         if (!single_line) {
             string_append(string, "\n");
             append_indentation(0);
@@ -302,7 +302,7 @@ void datatype_append_value_to_string(
         auto structure = downcast<Datatype_Struct>(type);
 
         if (format.show_datatype) {
-			datatype_append_to_string(string, type_system, type, format.datatype_format);
+			datatype_append_to_string(type, string, type_system, format.datatype_format);
             string_append(string, ".");
         }
         string_append(string, "{ ");
@@ -330,7 +330,7 @@ void datatype_append_value_to_string(
                     string_append_string(string, mem->id);
                     string_append(string, " = ");
                 }
-                datatype_append_value_to_string(mem->type, type_system, mem_ptr, string, format, indentation + 1, local_memory, pointer_memory);
+                datatype_append_value_to_string(mem->type, string, mem_ptr, format, indentation + 1, local_memory, pointer_memory, type_system);
             }
 
             // Check if subtype exist
@@ -429,7 +429,7 @@ void datatype_append_value_to_string(
             }
             if (handle.index < (u32) type_system->types.size) {
                 Datatype* type = type_system->types[handle.index];
-                datatype_append_to_string(string, type_system, type, format.datatype_format);
+                datatype_append_to_string(type, string, type_system, format.datatype_format);
             }
             else {
                 string_append_formated(string, "Invalid_Type_Handle(#%d)", handle.index);
@@ -516,7 +516,7 @@ Datatype_Format datatype_format_make_default()
     Datatype_Format format;
     format.append_struct_poly_parameter_values = true;
     format.highlight_parameter_index = -1;
-    format.highlight_color = vec3(0.3f);
+	format.highlight_color = Syntax_Color::SEARCH_HIGHLIGHT_BG;
     return format;
 }
 
@@ -547,107 +547,105 @@ Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int
     return format;
 }
 
-void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system, Rich_Text::Rich_Text* text, Datatype_Format format)
+void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format)
 {
-    Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-
-    switch (signature->type)
+    switch (datatype->type)
     {
     case Datatype_Type::PATTERN_VARIABLE: 
 	{
-        Datatype_Pattern_Variable* polymorphic = downcast<Datatype_Pattern_Variable>(signature);
+        Datatype_Pattern_Variable* polymorphic = downcast<Datatype_Pattern_Variable>(datatype);
 		if (polymorphic->variable == nullptr) {
-            Rich_Text::append_formated(text, "$?");
+            string->append("$?");
 			break;
 		}
 
         if (!polymorphic->is_reference) {
-            Rich_Text::append_formated(text, "$");
+            string->append("$");
         }
-        Rich_Text::set_text_color(text, Syntax_Color::TEXT);
-        Rich_Text::append_formated(text, "%s", polymorphic->variable->name->characters);
+		string->append(*polymorphic->variable->name);
         break;
     }
     case Datatype_Type::ARRAY: {
-        auto array_type = downcast<Datatype_Array>(signature);
+        auto array_type = downcast<Datatype_Array>(datatype);
         if (array_type->count_known) {
-            Rich_Text::append_formated(text, "[%d]", array_type->element_count);
+            string->append_formated("[%d]", array_type->element_count);
         }
         else {
-            Rich_Text::append_formated(text, "[Unknown]");
+			string->append("[Unknown]");
         }
-        datatype_append_to_rich_text(array_type->element_type, type_system, text, format);
+        datatype_append_to_string(array_type->element_type, string, type_system, format);
         break;
     }
     case Datatype_Type::SLICE: {
-        auto slice_type = downcast<Datatype_Slice>(signature);
-        Rich_Text::append_formated(text, "[]");
-        datatype_append_to_rich_text(slice_type->element_type, type_system, text, format);
+        auto slice_type = downcast<Datatype_Slice>(datatype);
+        string->append("[]");
+        datatype_append_to_string(slice_type->element_type, string, type_system, format);
         break;
     }
     case Datatype_Type::UNKNOWN_TYPE:
-        Rich_Text::append_formated(text, "Unknown-Type");
+        string->append("Unknown-Type");
         break;
     case Datatype_Type::INVALID_TYPE:
-        Rich_Text::append_formated(text, "Invalid-Type");
+        string->append("Invalid-Type");
         break;
     case Datatype_Type::POINTER: {
-        auto pointer_type = downcast<Datatype_Pointer>(signature);
+        auto pointer_type = downcast<Datatype_Pointer>(datatype);
         if (pointer_type->is_optional) {
-            Rich_Text::append_character(text, '?');
+            string->append('?');
         }
-        Rich_Text::append_formated(text, "*");
-        datatype_append_to_rich_text(pointer_type->element_type, type_system, text, format);
+        string->append("*");
+        datatype_append_to_string(pointer_type->element_type, string, type_system, format);
         break;
     }
     case Datatype_Type::PRIMITIVE: 
     {
-        Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-        auto primitive = downcast<Datatype_Primitive>(signature);
+		string_style_add_code(string, Style_Code::PUSH_STYLE);
+		SCOPE_EXIT(string_style_add_code(string, Style_Code::POP_STYLE));
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+
+        auto primitive = downcast<Datatype_Primitive>(datatype);
         auto memory = primitive->base.memory_info.value;
         switch (primitive->primitive_class)
         {
         case Primitive_Class::ADDRESS: 
         {
-            Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-            Rich_Text::append_formated(text, "address");
+            string->append("address");
             break;
         }
         case Primitive_Class::TYPE_HANDLE: {
-            Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-            Rich_Text::append_formated(text, "Type_Handle");
+            string->append("Type_Handle");
             break;
         }
-        case Primitive_Class::BOOLEAN: Rich_Text::append_formated(text, "bool"); break;
+        case Primitive_Class::BOOLEAN: string->append("bool"); break;
         case Primitive_Class::INTEGER: {
             if (memory.size == 4 && primitive->is_signed) {
-                Rich_Text::append(text, "int");
+                string->append("int");
             }
             else if (primitive->primitive_type == Primitive_Type::C_CHAR) {
-                Rich_Text::append(text, "c_char"); break;
+                string->append("c_char"); break;
             }
             else if (primitive->primitive_type == Primitive_Type::ISIZE) {
-                Rich_Text::append(text, "isize"); break;
+                string->append("isize"); break;
             }
             else if (primitive->primitive_type == Primitive_Type::USIZE) {
-                Rich_Text::append(text, "usize"); break;
+                string->append("usize"); break;
             }
             else {
-                Rich_Text::append_formated(text, "%s%d", (primitive->is_signed ? "i" : "u"), memory.size * 8); break;
+                string->append_formated("%s%d", (primitive->is_signed ? "i" : "u"), memory.size * 8); break;
             }
             break;
         }
         case Primitive_Class::FLOAT: {
             if (memory.size == 4) {
-                Rich_Text::append(text, "float");
+                string->append("float");
             }
             else {
-                Rich_Text::append_formated(text, "f%d", memory.size * 8);
+                string->append_formated("f%d", memory.size * 8);
             }
             break;
         }
 		case Primitive_Class::C_STRING: {
-            Rich_Text::append(text, "c_string");
+            string->append("c_string");
             break;
 		}
         default: panic("Heyo");
@@ -656,23 +654,25 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
     }
     case Datatype_Type::ENUM:
     {
-        Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-        auto enum_type = downcast<Datatype_Enum>(signature);
+		string_style_add_code(string, Style_Code::PUSH_STYLE);
+		SCOPE_EXIT(string_style_add_code(string, Style_Code::POP_STYLE));
+		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+        auto enum_type = downcast<Datatype_Enum>(datatype);
         if (enum_type->name != 0) {
-            Rich_Text::append_formated(text, enum_type->name->characters);
+            string->append(enum_type->name->characters);
         }
         break;
     }
     case Datatype_Type::STRUCT_PATTERN: 
     {
-        auto pattern_struct = downcast<Datatype_Struct_Pattern>(signature);
+        auto pattern_struct = downcast<Datatype_Struct_Pattern>(datatype);
 		auto poly_header = pattern_struct->instance->header;
-		Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-        Rich_Text::append(text, *poly_header->name);
-		Rich_Text::set_text_color(text);
+		string_style_add_code(string, Style_Code::PUSH_STYLE);
+        string->append(poly_header->name);
+		string_style_add_code(string, Style_Code::POP_STYLE);
         if (format.append_struct_poly_parameter_values) 
 		{
-			Rich_Text::append(text, "(");
+			string->append("(");
 			auto variable_states = pattern_struct->instance->variable_states;
 			for (int i = 0; i < poly_header->pattern_variables.size; i++)
 			{
@@ -682,42 +682,42 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 				case Pattern_Variable_State_Type::SET: 
 				{
 					auto& constant = variable_state.options.value;
-					auto string = Rich_Text::start_line_manipulation(text);
 					datatype_append_value_to_string(
-						constant.type, type_system, constant.memory, string, datatype_value_format_single_line(),
-						0, Memory_Source(nullptr), Memory_Source(nullptr));
-					Rich_Text::stop_line_manipulation(text);
+						constant.type, string, constant.memory, datatype_value_format_single_line(),
+						0, Memory_Source(nullptr), Memory_Source(nullptr), type_system);
 					break;
 				}
 				case Pattern_Variable_State_Type::UNSET: {
-					Rich_Text::append_formated(text, "_");
+					string->append("_");
 					break;
 				}
 				case Pattern_Variable_State_Type::PATTERN: {
-					datatype_append_to_rich_text(variable_state.options.pattern_type, type_system, text, format);
+					datatype_append_to_string(variable_state.options.pattern_type, string, type_system, format);
 					break;
 				}
 				default: panic("");
 				}
 				if (i != poly_header->pattern_variables.size - 1) {
-					Rich_Text::append_formated(text, ", ");
+					string->append(", ");
 				}
 			}
-			Rich_Text::append(text, ")");
+			string->append(")");
 		}
 		else {
-			Rich_Text::append(text, "(..)");
+			string->append("(..)");
 		}
 		break;
 	}
 	case Datatype_Type::STRUCT:
 	{
-		auto struct_type = downcast<Datatype_Struct>(signature);
+		auto struct_type = downcast<Datatype_Struct>(datatype);
 		auto& members = struct_type->members;
 		if (struct_type->parent_struct == nullptr)
 		{
-			Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-			Rich_Text::append_formated(text, struct_type->name->characters);
+			string_style_add_code(string, Style_Code::PUSH_STYLE);
+			string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+			string->append(struct_type->name);
+			string_style_add_code(string, Style_Code::POP_STYLE);
 		}
 		else
 		{
@@ -729,22 +729,23 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 				iter = iter->parent_struct;
 			}
 			for (int i = parents.size - 1; i >= 0; i -= 1) {
-				Rich_Text::set_text_color(text, Syntax_Color::DATATYPE);
-				Rich_Text::append_formated(text, parents[i]->name->characters);
+				string_style_add_code(string, Style_Code::PUSH_STYLE);
+				string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+				string->append(parents[i]->name);
+				string_style_add_code(string, Style_Code::POP_STYLE);
 				if (i != 0) {
-					Rich_Text::append_character(text, '.');
+					string->append('.');
 				}
 			}
 		}
 
 		// Append polymorphic instance values
-		Rich_Text::set_text_color(text, Syntax_Color::TEXT);
 		if (struct_type->workload != 0 && format.append_struct_poly_parameter_values) 
 		{
 			if (struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) 
 			{
-				Rich_Text::append_formated(text, "(");
-				SCOPE_EXIT(Rich_Text::append_formated(text, ")"));
+				string->append("(");
+				SCOPE_EXIT(string->append(")"));
 
 				auto& instance = struct_type->workload->polymorphic.instance.poly_instance;
 				auto poly_header = instance->header;
@@ -755,14 +756,13 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 					assert(variable_state.type == Pattern_Variable_State_Type::SET, "True for instances");
 
 					auto& constant = variable_state.options.value;
-					auto string = Rich_Text::start_line_manipulation(text);
 					datatype_append_value_to_string(
-						constant.type, type_system, constant.memory, string, datatype_value_format_single_line(),
-						0, Memory_Source(nullptr), Memory_Source(nullptr));
-					Rich_Text::stop_line_manipulation(text);
+						constant.type, string, constant.memory, datatype_value_format_single_line(),
+						0, Memory_Source(nullptr), Memory_Source(nullptr), type_system
+					);
 
 					if (i != poly_header->pattern_variables.size - 1) {
-						Rich_Text::append_formated(text, ", ");
+						string->append(", ");
 					}
 				}
 			}
@@ -771,21 +771,12 @@ void datatype_append_to_rich_text(Datatype* signature, Type_System* type_system,
 	}
 	case Datatype_Type::FUNCTION_POINTER:
 	{
-		auto function_pointer = downcast<Datatype_Function_Pointer>(signature);
-		call_signature_append_to_rich_text(function_pointer->signature, text, &format, type_system);
+		auto function_pointer = downcast<Datatype_Function_Pointer>(datatype);
+		call_signature_append_to_string(function_pointer->signature, string, type_system, format);
 		break;
 	}
 	default: panic("Fugg");
 	}
-}
-
-void datatype_append_to_string(String* string, Type_System* type_system, Datatype* signature, Datatype_Format format)
-{
-	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
-	SCOPE_EXIT(Rich_Text::destroy(&text));
-	Rich_Text::add_line(&text);
-	datatype_append_to_rich_text(signature, type_system, &text, format);
-	Rich_Text::append_to_string(&text, string, 2);
 }
 
 
@@ -1902,12 +1893,13 @@ void type_system_print(Type_System* system)
 	{
 		Datatype* type = system->types[i];
 		string_append_formated(&msg, "\n\t%d: ", i);
-		datatype_append_to_string(&msg, system, type);
+		datatype_append_to_string(type, &msg, system);
 		if (type->memory_info.available) {
 			string_append_formated(&msg, " size: %d, alignment: %d", type->memory_info.value.size, type->memory_info.value.alignment);
 		}
 	}
 	string_append_formated(&msg, "\n");
+	string_style_remove_codes(&msg);
 	logg("%s", msg.characters);
 }
 

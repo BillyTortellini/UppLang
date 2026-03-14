@@ -6321,7 +6321,6 @@ Upp_Module* analyse_module_node(
 void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Module_Content* module_content, Semantic_Context* semantic_context)
 {
 	Symbol_Table* symbol_table = semantic_context->current_symbol_table;
-	assert(!(definition->values.size == 0 && definition->types.size == 0), "Cannot have values and types be 0");
 	assert(definition->symbols.size != 0, "Parser shouldn't allow this");
 	assert(!(module_content == nullptr && definition->is_comptime), "");
 
@@ -7696,19 +7695,23 @@ bool expression_is_auto_expression(AST::Expression* expression, Compilation_Data
 		auto args = expression->options.cast.call_node->arguments;
 		// Check if from is specified
 		bool named_args_started = false;
-		for (int i = 0; i < args.size; i++) {
+		bool to_specified = false;
+		for (int i = 0; i < args.size; i++) 
+		{
 			auto arg = args[i];
+			if (!named_args_started && i == 1) {
+				to_specified = true;
+			}
 			if (arg->name.available) 
 			{
 				named_args_started = true;
-				if (arg->name.value == ids.from) {
-					return false;
+				if (arg->name.value == ids.to) {
+					to_specified = true;
 				}
 			}
-			if (!named_args_started && i == 2) {
-				return false;
-			}
 		}
+
+		return !to_specified;
 	}
 
 	return type == AST::Expression_Type::AUTO_ENUM ||
@@ -7888,7 +7891,7 @@ void analyse_index_accept_all_ints_as_usize(AST::Expression* expr, Semantic_Cont
 		return;
 	}
 
-	Datatype* result_type = semantic_analyser_analyse_expression_value(expr, expression_context_make_unspecified(), false, allow_poly_pattern);
+	Datatype* result_type = semantic_analyser_analyse_expression_value(expr, expression_context_make_unspecified(), semantic_context, false, allow_poly_pattern);
 	if (allow_poly_pattern) {
 		auto info = get_info(expr, semantic_context);
 		if (info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN) {
@@ -8557,7 +8560,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "We are in cast expression");
 
 			auto& arg = call_info->argument_infos[param_value.options.argument_index];
-			return semantic_analyser_analyse_expression_type(arg.expression, false);
+			return semantic_analyser_analyse_expression_type(arg.expression, semantic_context, false);
 		};
 
 		Datatype* datatype_to     = helper_analyse_type_param(param_to);
@@ -11662,9 +11665,11 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 	case AST::Statement_Type::WHILE_STATEMENT:
 	{
 		auto& while_node = statement->options.while_statement;
-		semantic_analyser_analyse_expression_value(
-			while_node.condition, expression_context_make_specific_type(upcast(types.bool_type)), semantic_context
-		);
+		if (while_node.condition.available) {
+			semantic_analyser_analyse_expression_value(
+				while_node.condition.value, expression_context_make_specific_type(upcast(types.bool_type)), semantic_context
+			);
+		}
 
 		semantic_analyser_analyse_block(while_node.block, semantic_context);
 		EXIT(Control_Flow::SEQUENTIAL); // Loops are always sequential, since the condition may not be met before the first iteration
@@ -12394,120 +12399,102 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, Semantic_Co
 
 
 // ERRORS
-void error_information_append_to_rich_text(
-	const Error_Information& info, Compilation_Data* compilation_data, Rich_Text::Rich_Text * text, Datatype_Format format
+void error_information_append_to_rich_string(
+	const Error_Information& info, Compilation_Data* compilation_data, String* string, Datatype_Format format
 )
 {
 	auto type_system = compilation_data->type_system;
-	Rich_Text::set_text_color(text, Syntax_Color::TEXT);
 	switch (info.type)
 	{
 	case Error_Information_Type::CYCLE_WORKLOAD: {
-		auto string = Rich_Text::start_line_manipulation(text);
 		analysis_workload_append_to_string(info.options.cycle_workload, string);
-		Rich_Text::stop_line_manipulation(text);
 		break;
 	}
 	case Error_Information_Type::COMPTIME_MESSAGE:
-		Rich_Text::append_formated(text, "Comptime msg: %s", info.options.comptime_message);
+		string->append_formated("Comptime msg: %s", info.options.comptime_message);
 		break;
 	case Error_Information_Type::ARGUMENT_COUNT:
-		Rich_Text::append_formated(text, "Given argument count: %d, required: %d",
+		string->append_formated("Given argument count: %d, required: %d",
 			info.options.invalid_argument_count.given, info.options.invalid_argument_count.expected);
 		break;
 	case Error_Information_Type::ID:
-		Rich_Text::append_formated(text, "ID: %s", info.options.id->characters);
+		string->append_formated("ID: %s", info.options.id->characters);
 		break;
 	case Error_Information_Type::SYMBOL: {
-		Rich_Text::append_formated(text, "Symbol: ");
-		Rich_Text::set_text_color(text, symbol_to_color(info.options.symbol, true));
-		auto string = Rich_Text::start_line_manipulation(text);
+		string->append_formated("Symbol: ");
+		string_style_add_code(string, Style_Code::PUSH_STYLE);
+		string_style_add_code(string, Style_Code::TEXT_COLOR, symbol_to_color(info.options.symbol, true));
 		symbol_append_to_string(info.options.symbol, string);
-		Rich_Text::stop_line_manipulation(text);
+		string_style_add_code(string, Style_Code::POP_STYLE);
 		break;
 	}
 	case Error_Information_Type::EXIT_CODE: {
-		Rich_Text::append_formated(text, "Exit_Code: ");
-		auto string = Rich_Text::start_line_manipulation(text);
+		string->append_formated("Exit_Code: ");
 		exit_code_append_to_string(string, info.options.exit_code);
-		Rich_Text::stop_line_manipulation(text);
 		break;
 	}
 	case Error_Information_Type::GIVEN_TYPE:
-		Rich_Text::append_formated(text, "Given Type:    ");
-		datatype_append_to_rich_text(info.options.type, type_system, text, format);
+		string->append_formated("Given Type:    ");
+		datatype_append_to_string(info.options.type, string, type_system, format);
 		break;
 	case Error_Information_Type::EXPECTED_TYPE:
-		Rich_Text::append_formated(text, "Expected Type: ");
-		datatype_append_to_rich_text(info.options.type, type_system, text, format);
+		string->append_formated("Expected Type: ");
+		datatype_append_to_string(info.options.type, string, type_system, format);
 		break;
 	case Error_Information_Type::FUNCTION_TYPE:
-		Rich_Text::append_formated(text, "Function Type: ");
-		datatype_append_to_rich_text(info.options.type, type_system, text, format);
+		string->append_formated("Function Type: ");
+		datatype_append_to_string(info.options.type, string, type_system, format);
 		break;
 	case Error_Information_Type::BINARY_OP_TYPES:
-		Rich_Text::append_formated(text, "Left: ");
-		datatype_append_to_rich_text(info.options.binary_op_types.left_type, type_system, text, format);
-		Rich_Text::set_text_color(text);
-		Rich_Text::append_formated(text, ", Right: ");
-		datatype_append_to_rich_text(info.options.binary_op_types.right_type, type_system, text, format);
+		string->append_formated("Left: ");
+		datatype_append_to_string(info.options.binary_op_types.left_type, string, type_system, format);
+		string->append_formated(", Right: ");
+		datatype_append_to_string(info.options.binary_op_types.right_type, string, type_system, format);
 		break;
 	case Error_Information_Type::EXPRESSION_RESULT_TYPE:
 	{
-		Rich_Text::append(text, "Given: ");
+		string->append("Given: ");
 		switch (info.options.expression_type)
 		{
 		case Expression_Result_Type::NOTHING:
-			Rich_Text::append(text, "Nothing/void");
+			string->append_formated("Nothing/void");
 			break;
 		case Expression_Result_Type::POLYMORPHIC_PATTERN:
-			Rich_Text::append(text, "Polymorphic Pattern");
+			string->append_formated("Polymorphic Pattern");
 			break;
 		case Expression_Result_Type::HARDCODED_FUNCTION:
-			Rich_Text::append(text, "Hardcoded function");
+			string->append_formated("Hardcoded function");
 			break;
 		case Expression_Result_Type::POLYMORPHIC_FUNCTION:
-			Rich_Text::append(text, "Polymorphic function");
+			string->append_formated("Polymorphic function");
 			break;
 		case Expression_Result_Type::POLYMORPHIC_STRUCT:
-			Rich_Text::append(text, "Polymorphic struct");
+			string->append_formated("Polymorphic struct");
 			break;
 		case Expression_Result_Type::CONSTANT:
-			Rich_Text::append(text, "Constant");
+			string->append_formated("Constant");
 			break;
 		case Expression_Result_Type::VALUE:
-			Rich_Text::append(text, "Value");
+			string->append_formated("Value");
 			break;
 		case Expression_Result_Type::FUNCTION:
-			Rich_Text::append(text, "Function");
+			string->append_formated("Function");
 			break;
 		case Expression_Result_Type::DATATYPE:
-			Rich_Text::append(text, "Type");
+			string->append_formated("Type");
 			break;
 		default: panic("");
 		}
 		break;
 	}
 	case Error_Information_Type::CONSTANT_STATUS:
-		Rich_Text::append_formated(text, "Couldn't serialize constant: %s", info.options.constant_message);
+		string->append_formated("Couldn't serialize constant: %s", info.options.constant_message);
 		break;
 	default: panic("");
 	}
 }
 
-void error_information_append_to_string(
-	const Error_Information& info, Compilation_Data* compilation_data,
-	String* string, Datatype_Format format
-)
-{
-	Rich_Text::Rich_Text text = Rich_Text::create(vec3(1.0f));
-	SCOPE_EXIT(Rich_Text::destroy(&text));
-	Rich_Text::add_line(&text);
-	error_information_append_to_rich_text(info, compilation_data, &text, format);
-	Rich_Text::append_to_string(&text, string, 2);
-}
-
-void semantic_analyser_append_semantic_errors_to_string(Compilation_Data * compilation_data, String * string, int indentation)
+void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
 {
 	auto& errors = compilation_data->semantic_errors;
 	for (int i = 0; i < errors.size; i++)
@@ -12525,7 +12512,7 @@ void semantic_analyser_append_semantic_errors_to_string(Compilation_Data * compi
 			for (int k = 0; k < indentation + 1; k++) {
 				string_append(string, "    ");
 			}
-			error_information_append_to_string(info, compilation_data, string);
+			error_information_append_to_rich_string(info, compilation_data, string);
 			string_append(string, "\t");
 		}
 	}

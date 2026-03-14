@@ -61,6 +61,24 @@ void renderer_2D_add_rectangle(Renderer_2D* renderer, Bounding_Box2 box, vec3 co
     renderer->batch_size += 6;
 }
 
+void renderer_2D_add_ibox2(Renderer_2D* renderer, ibox2 box, vec3 color) 
+{
+    renderer_2D_add_rectangle(renderer, bounding_box_2_make_min_max(vec2(box.min.x, box.min.y), vec2(box.max.x, box.max.y)), color);
+}
+
+void renderer_2D_add_ibox2_outline(Renderer_2D* renderer, ibox2 box, int thickness, vec3 color)
+{
+    if (thickness <= 0) return;
+
+    ivec2 size = box.max - box.min;
+    ibox2 bot_border_box = ibox2(box, Corner::BOTTOM_LEFT, ivec2(size.x, thickness), Corner::TOP_LEFT);
+    ibox2 top_border_box = ibox2(box, Corner::TOP_LEFT, ivec2(size.x, thickness), Corner::BOTTOM_LEFT);
+    renderer_2D_add_ibox2(renderer, top_border_box, color);
+    renderer_2D_add_ibox2(renderer, bot_border_box, color);
+    renderer_2D_add_ibox2(renderer, ibox2(bot_border_box, Corner::BOTTOM_LEFT, ivec2(thickness, size.y + thickness * 2), Corner::BOTTOM_RIGHT), color);
+    renderer_2D_add_ibox2(renderer, ibox2(bot_border_box, Corner::BOTTOM_RIGHT, ivec2(thickness, size.y + thickness * 2), Corner::BOTTOM_LEFT), color);
+}
+
 void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness)
 {
     vec2 a_to_b = vector_normalize_safe(end - start);

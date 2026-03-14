@@ -270,7 +270,7 @@
     <ClInclude Include="programs\c_importer\c_importer.hpp">
       <Filter>Header Files\Programs\C_Importer</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\lexer.hpp">
+    <ClInclude Include="programs\upp_lang\tokenizer.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
     <ClInclude Include="programs\upp_lang\code_history.hpp">
@@ -341,6 +341,9 @@
     </ClInclude>
     <ClInclude Include="datastructures\allocators.hpp">
       <Filter>Header Files\Datastructures</Filter>
+    </ClInclude>
+    <ClInclude Include="rendering\font_renderer.hpp">
+      <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -500,7 +503,7 @@
     <ClCompile Include="programs\c_importer\c_lexer.cpp">
       <Filter>Source Files\Programs\C_Importer</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\lexer.cpp">
+    <ClCompile Include="programs\upp_lang\tokenizer.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\code_history.cpp">
@@ -563,6 +566,9 @@
     <ClCompile Include="datastructures\allocators.cpp">
       <Filter>Source Files\Datastructures</Filter>
     </ClCompile>
+    <ClCompile Include="rendering\font_renderer.cpp">
+      <Filter>Source Files\Rendering\2D</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\TODO.txt">
@@ -617,6 +623,9 @@
     </None>
     <None Include="..\resources\shaders\mono_texture.glsl">
       <Filter>Resource Files\Shaders</Filter>
+    </None>
+    <None Include="..\resources\shaders\core\raster_font_new.glsl">
+      <Filter>Resource Files\Shaders\Core</Filter>
     </None>
   </ItemGroup>
 </Project>
