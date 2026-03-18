@@ -135,7 +135,8 @@ Raster_Font* Font_Renderer::add_raster_font(const char* filename, int line_heigh
         else {
             glyph_index = FT_Get_Char_Index(face, current_character);
             if (glyph_index == 0) {
-                logg("Glyph %c (#%d) does not exist\n", current_character, i);
+                result->char_to_glyph_index[i] = 0;
+                // logg("Glyph %c (#%d) does not exist\n", current_character, i);
                 continue;
             }
         }

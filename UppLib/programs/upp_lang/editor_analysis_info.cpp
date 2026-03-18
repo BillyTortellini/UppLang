@@ -1359,22 +1359,21 @@ void call_signature_append_to_string(Call_Signature* signature, String* string, 
 
 		// Print param name + type with possible highlight
 		if (highlight_index == i) {
-			string_style_add_code(string, Style_Code::BACKGROUND_COLOR, format.highlight_color);
+			string_style_push(string, Mark_Type::BACKGROUND_COLOR, format.highlight_color);
 		}
 		if (param.comptime_variable_index != -1) {
 			string->append('$');
 		}
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::VALUE_DEFINITION);
+		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::VALUE_DEFINITION);
 		string->append(param.name);
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
+		string_style_pop(string);
 		string->append(": ");
 
 		auto param_type = param.datatype;
 		datatype_append_to_string(param_type, string, type_system, format);
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
 
 		if (highlight_index == i) {
-			string_style_add_code(string, Style_Code::BACKGROUND_COLOR, Syntax_Color::NONE);
+			string_style_pop(string);
 		}
 		if (param.default_value_exists) {
 			string->append(" = ...");
@@ -1385,7 +1384,6 @@ void call_signature_append_to_string(Call_Signature* signature, String* string, 
 	if (signature->return_type_index != -1) {
 		string->append(" => ");
 		datatype_append_to_string(signature->parameters[signature->return_type_index].datatype, string, type_system, format);
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::TEXT);
 	}
 }
 

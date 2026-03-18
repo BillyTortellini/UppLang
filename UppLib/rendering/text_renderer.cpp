@@ -70,7 +70,7 @@ float text_renderer_get_char_width_to_height_ratio(Text_Renderer* renderer) {
     return atlas.cursor_advance / (float)(atlas.ascender - atlas.descender);
 }
 
-void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<Bounding_Box2> clip_box)
+void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position, Anchor anchor, vec2 char_size, vec3 color, Optional<box2> clip_box)
 {
     if (text.size == 0) {
         return;
@@ -95,11 +95,11 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
     bool clipping = false;
     if (clip_box.available) {
         auto clip = clip_box.value;
-        Bounding_Box2 text_box = bounding_box_2_make_anchor(position, vec2(char_size.x * text.size, text_height), anchor);
-        if (!bounding_box_2_overlap(clip, text_box)) { // Return if everything is clipped
+        box2 text_box = box2_make_anchor(position, vec2(char_size.x * text.size, text_height), anchor);
+        if (!box2_overlap(clip, text_box)) { // Return if everything is clipped
             return;
         }
-        clipping = !bounding_box_2_is_other_box_inside(clip, text_box);
+        clipping = !box2_is_other_box_inside(clip, text_box);
     }
 
     // Clip text, so that we don't produce too many vertices
@@ -125,7 +125,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         char character = text.characters[i];
         Glyph_Information* glyph_info = &atlas->glyph_informations[atlas->character_to_glyph_map[character]];;
 
-        Bounding_Box2 char_box;
+        box2 char_box;
         char_box.min.x = i * char_size_normalized.x + glyph_info->bearing_x * font_scaling.x;
         char_box.min.y = (-atlas->descender + glyph_info->bearing_y - glyph_info->glyph_height) * font_scaling.y;
         char_box.max.x = char_box.min.x + glyph_info->glyph_width * font_scaling.x;
@@ -133,7 +133,7 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
         char_box.min += offset;
         char_box.max += offset;
 
-        Bounding_Box2 uv_box = bounding_box_2_make_min_max(
+        box2 uv_box = box2_make_min_max(
             vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom),
             vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top)
         );
@@ -144,8 +144,8 @@ void text_renderer_add_text(Text_Renderer* renderer, String text, vec2 position,
             clip.min = convertPointFromTo(clip.min, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
             clip.max = convertPointFromTo(clip.max, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
 
-            Bounding_Box2 clipped_pos = char_box;
-            Bounding_Box2 clipped_uvs = uv_box;
+            box2 clipped_pos = char_box;
+            box2 clipped_uvs = uv_box;
             if (char_box.min.y > clip.max.y || char_box.max.y < clip.min.y ||
                 char_box.min.x > clip.max.x || char_box.max.x < clip.min.x) {
                 /*
@@ -260,7 +260,7 @@ void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_
         char_box.max.x = char_box.min.x + glyph_to_pixel(glyph_info->glyph_width);
         char_box.max.y = char_box.min.y + glyph_to_pixel(glyph_info->glyph_height);
 
-        Bounding_Box2 uv_box = bounding_box_2_make_min_max(
+        box2 uv_box = box2_make_min_max(
             vec2(glyph_info->atlas_fragcoords_left, glyph_info->atlas_fragcoords_bottom),
             vec2(glyph_info->atlas_fragcoords_right, glyph_info->atlas_fragcoords_top)
         );

@@ -249,7 +249,7 @@ Optional<Font_Information> glyph_atlas_create_from_atlas_file(const char* atlas_
 
 void glyph_atlas_print_glyph_information(Font_Information* atlas)
 {
-    String message = string_create_empty(4096);
+    String message = string_create(4096);
     SCOPE_EXIT(string_destroy(&message));
     string_append(&message, "\nGlyphAtlas Informations:\n");
     string_append_formated(&message, "\tAscender:         %d\n", atlas->ascender);

@@ -1149,7 +1149,7 @@ namespace PDB_Analysis
         {
             Hashset<u64> visited = hashset_create_empty<u64>(512, hash_u64, equals_u64);
             SCOPE_EXIT(hashset_destroy(&visited));
-            String tmp = string_create_empty(2048);
+            String tmp = string_create(2048);
             SCOPE_EXIT(string_destroy(&tmp));
             symbol_tree_append_to_string_recursive(&tmp, global_scope, 0, session, &visited);
             file_io_write_file("backend/build/pdb_info_tree.txt", array_create_static<byte>((byte*)tmp.characters, tmp.size));
@@ -2478,7 +2478,7 @@ bool debugger_disassemble_bytes(Debugger* debugger, u64 virtual_address, u32 rea
 
 void debugger_print_last_disassembly(Debugger* debugger, u64 address, int indentation_spaces, bool print_addresses = true, bool print_raw_bytes = true)
 {
-    String str = string_create_empty(256);
+    String str = string_create(256);
     SCOPE_EXIT(string_destroy(&str));
 
     auto& instructions = debugger->disassembly_buffer;

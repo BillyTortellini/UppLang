@@ -16,7 +16,7 @@
 
 void syntax_renaming()
 {
-    String input_line = string_create_empty(1024);
+    String input_line = string_create(1024);
     SCOPE_EXIT(string_destroy(&input_line));
 
     Directory_Crawler* crawler = directory_crawler_create();
@@ -34,7 +34,7 @@ void syntax_renaming()
 
     directory_crawler_set_path(crawler, input_line);
     Array<File_Info> files = directory_crawler_get_content(crawler);
-    String filepath = string_create_empty(0);
+    String filepath = string_create(0);
     SCOPE_EXIT(string_destroy(&filepath));
     for (int i = 0; i < files.size; i++)
     {

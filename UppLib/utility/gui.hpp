@@ -91,7 +91,7 @@ bool gui_node_has_focus(GUI_Handle handle);
 void gui_node_hide(GUI_Handle handle);
 void gui_node_keep_children_even_if_not_referenced(GUI_Handle handle);
 void gui_node_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_destroy_fn destroy_fn);
-Bounding_Box2 gui_node_get_previous_frame_box(GUI_Handle handle);
+box2 gui_node_get_previous_frame_box(GUI_Handle handle);
 vec2 gui_node_get_previous_frame_min_child_size(GUI_Handle handle);
 
 

@@ -358,7 +358,7 @@ bool header_parser_next_is_identifier(Header_Parser* parser, String* id)
 void print_tokens_till_newline_token_style(Dynamic_Array<C_Token> tokens, String source, int token_index, C_Lexer* lexer)
 {
     C_Token* start_tok = &tokens[token_index];
-    String str = string_create_empty(256);
+    String str = string_create(256);
     SCOPE_EXIT(string_destroy(&str));
     for (int i = token_index; i < tokens.size; i++) 
     {
@@ -402,13 +402,13 @@ void print_tokens_till_newline(Dynamic_Array<C_Token> tokens, String source, int
         }
     }
     String t2_content = string_create_substring(&source, token->source_code_index, end_pos + 1);
+    SCOPE_EXIT(string_destroy(&t2_content));
     for (int i = 0; i < t2_content.size; i++) {
         if (t2_content.characters[i] == '\n' || t2_content.characters[i] == '\r') {
             t2_content.characters[i] = '\0';
             t2_content.size = i;
         }
     }
-    SCOPE_EXIT(string_destroy(&t2_content));
     printf("%s", t2_content.characters);
 }
 
@@ -669,7 +669,7 @@ Optional<C_Import_Type*> header_parser_parse_structure(Header_Parser* parser, C_
 
                 /*
                 {
-                    String str = string_create_empty(256);
+                    String str = string_create(256);
                     SCOPE_EXIT(string_destroy(&str));
                     string_append_formated(&str, "Structure def: ");
                     c_import_type_append_to_string(def_sym.data_type, &str, 0, parser, true);
@@ -1500,7 +1500,7 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
 
             {
                 /*
-                String str = string_create_empty(256);
+                String str = string_create(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "function ");
                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, var_def.instances[0].id).characters);
@@ -1531,7 +1531,7 @@ bool header_parser_parse_known_structure(Header_Parser* parser)
 
             {
                 /*
-                String str = string_create_empty(256);
+                String str = string_create(256);
                 SCOPE_EXIT(string_destroy(&str));
                 string_append_formated(&str, "%s: ", is_typedef ? "typedef " : "global: ");
                 string_append_formated(&str, "%s = ", identifier_pool_index_to_string(parser->code_source, instance->id).characters);
@@ -1734,8 +1734,8 @@ Optional<C_Import_Package> c_importer_parse_header(
 
     // Get alignment and size of each file
     {
-        String found_symbols = string_create_empty(4096);
-        String output_program = string_create_empty(4096);
+        String found_symbols = string_create(4096);
+        String output_program = string_create(4096);
         SCOPE_EXIT(string_destroy(&found_symbols));
         SCOPE_EXIT(string_destroy(&output_program));
 

@@ -1214,7 +1214,7 @@ namespace AST
 
 	void base_print(Node* node)
 	{
-		String text = string_create_empty(1024);
+		String text = string_create(1024);
 		SCOPE_EXIT(string_destroy(&text));
 		base_append_to_string_recursive(node, &text, 0);
 		logg("AST:\n------------------------\n%s\n", text.characters);

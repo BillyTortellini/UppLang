@@ -20,7 +20,7 @@ bool opengl_utils_check_shader_compilation_status(GLuint shader_id)
         GLint maxLength = 0;
         glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        String error_message = string_create_empty(maxLength);
+        String error_message = string_create(maxLength);
         SCOPE_EXIT(string_destroy(&error_message));
 
         glGetShaderInfoLog(shader_id, maxLength, &maxLength, error_message.characters);
@@ -94,7 +94,7 @@ bool opengl_utils_link_program_and_check_errors(GLuint program_id)
         GLint maxLength = 0;
         glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &maxLength);
 
-        String error_message = string_create_empty(maxLength);
+        String error_message = string_create(maxLength);
         SCOPE_EXIT(string_destroy(&error_message));
         glGetProgramInfoLog(program_id, maxLength, &maxLength, (GLchar*)error_message.characters);
         logg("PROGRAM LINKING FAILED!\n");

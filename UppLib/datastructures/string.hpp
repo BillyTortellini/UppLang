@@ -3,11 +3,14 @@
 #include "../utility/utils.hpp"
 #include "../datastructures/array.hpp"
 
+struct Arena;
+
 struct String
 {
     char* characters;
     int size;
     int capacity;
+    Arena* arena;
     
     char& operator[](int index) {
         return characters[index];
@@ -22,12 +25,12 @@ struct String
 
 void string_destroy(String* string);
 
-String string_create(int capacity = 0);
-String string_create(const char* content);
-String string_create_empty(int capacity);
-String string_copy(String other);
+String string_create(int capacity = 0, Arena* arena = nullptr);
+String string_create(Arena* arena, int capacity = 0);
+String string_create(const char* content, Arena* arena = nullptr);
+String string_copy(String other, Arena* arena = nullptr);
+
 String string_create_from_string_with_extra_capacity(String* other, int extra_capacity);
-String string_create_formated(const char* format, ...);
 String string_create_substring(String* string, int start_index, int end_index);
 void string_create_from_filepath_to_path_and_filename(String* path, String* filename, const char* filepath);
 
@@ -62,6 +65,7 @@ void string_insert_string(String* string, String* insertion, int position);
 bool string_contains_character(String string, char character);
 bool string_contains_only_characters_in_set(String* string, String set, bool use_set_complement);
 bool string_test_char(String str, int char_index, char c);
+void string_add_null_terminator(String* string);
 Optional<int> string_find_character_index(String* string, char c, int start_position);
 Optional<int> string_find_character_index_reverse(String* string, char character, int startpos);
 Optional<float> string_parse_float(String* string);
@@ -72,3 +76,4 @@ Array<String> string_split(String string, char c);
 void string_split_destroy(Array<String> parts);
 bool string_fill_from_line(String* to_fill);
 String string_create_filename_from_path_static(String* filepath);
+void string_remove_trailing_whitespace(String* str);

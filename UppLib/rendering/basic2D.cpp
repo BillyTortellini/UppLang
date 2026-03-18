@@ -100,75 +100,8 @@ vec2 convertPoint(vec2 value, Unit unit) {
 
 
 
-Bounding_Box2 bounding_box_2_make_min_max(vec2 min, vec2 max)
-{
-    Bounding_Box2 bb;
-    bb.min = min;
-    bb.max = max;
-    return bb;
-}
-
-Bounding_Box2 bounding_box_2_make_anchor(vec2 pos, vec2 size, Anchor anchor) {
-    Bounding_Box2 bb;
-    bb.min = anchor_switch(pos, size, anchor, Anchor::BOTTOM_LEFT);
-    bb.max = bb.min + size;
-    return bb;
-}
-
-Bounding_Box2 bounding_box_2_make_center_size(vec2 center, vec2 size)
-{
-    Bounding_Box2 bb;
-    bb.min = center - size / 2;
-    bb.max = center + size / 2;
-    return bb;
-}
-
-bool bounding_box_2_is_point_inside(const Bounding_Box2& bb, const vec2& p) {
-    return p.x >= bb.min.x && p.y >= bb.min.y && p.x <= bb.max.x && p.y <= bb.max.y;
-}
-
-bool bounding_box_2_is_other_box_inside(const Bounding_Box2& bb, const Bounding_Box2& inside) {
-    return bounding_box_2_is_point_inside(bb, inside.min) && bounding_box_2_is_point_inside(bb, inside.max);
-}
-
-bool bounding_box_2_overlap(const Bounding_Box2& a, const Bounding_Box2& b) {
-    // Both axes must overlap for real overlap
-    return !((a.max.x < b.min.x || a.min.x > b.max.x) || (a.max.y < b.min.y || a.min.y > b.max.y));
-}
-
-Bounding_Box2 bounding_box_2_combine(Bounding_Box2 bb1, Bounding_Box2 bb2) 
-{
-    Bounding_Box2 result;
-    result.min = vec2(
-        math_minimum(bb1.min.x, bb2.min.x),
-        math_minimum(bb1.min.y, bb2.min.y)
-    );
-    result.max = vec2(
-        math_maximum(bb1.max.x, bb2.max.x),
-        math_maximum(bb1.max.y, bb2.max.y)
-    );
-    return result;
-}
-
-Optional<Bounding_Box2> bounding_box_2_union(const Bounding_Box2& a, const Bounding_Box2& b)
-{
-    Bounding_Box2 result;
-    result.min = vec2(
-        math_maximum(a.min.x, b.min.x),
-        math_maximum(a.min.y, b.min.y)
-    );
-    result.max = vec2(
-        math_minimum(a.max.x, b.max.x),
-        math_minimum(a.max.y, b.max.y)
-    );
-    if (result.min.x < result.max.x && result.min.y < result.max.y) {
-        return optional_make_success(result);
-    }
-    return optional_make_failure<Bounding_Box2>();
-}
-
-Bounding_Box2 bounding_box_2_convert(const Bounding_Box2& bb, Unit unit) {
-    Bounding_Box2 result;
+box2 box2_convert(const box2& bb, Unit unit) {
+    box2 result;
     result.min = convertPoint(bb.min, unit);
     result.max = convertPoint(bb.max, unit);
     return result;

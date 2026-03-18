@@ -2458,7 +2458,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 		// Print workloads and dependencies
 		if (PRINT_DEPENDENCIES)
 		{
-			String tmp = string_create_empty(256);
+			String tmp = string_create(256);
 			SCOPE_EXIT(string_destroy(&tmp));
 			string_append_formated(&tmp, "\n\n--------------------\nWorkload Execution Round %d\n---------------------\n", round_no);
 			for (int i = 0; i < executer->runnable_workloads.size; i++)
@@ -2541,7 +2541,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			executer->progress_was_made = true;
 
 			if (PRINT_DEPENDENCIES) {
-				String tmp = string_create_empty(128);
+				String tmp = string_create(128);
 				analysis_workload_append_to_string(workload, &tmp);
 				logg("Executing workload: %s\n", tmp.characters);
 				string_destroy(&tmp);
@@ -2824,7 +2824,7 @@ bool workload_executer_switch_to_workload(Workload_Executer* executer, Workload_
 	bool result = fiber_pool_switch_to_handel(workload->fiber_handle);
 
 	if (PRINT_DEPENDENCIES) {
-		auto tmp = string_create_empty(1);
+		auto tmp = string_create(1);
 		analysis_workload_append_to_string(workload, &tmp);
 		if (workload->dependencies.count == 0) {
 			SCOPE_EXIT(string_destroy(&tmp));
@@ -12422,10 +12422,9 @@ void error_information_append_to_rich_string(
 		break;
 	case Error_Information_Type::SYMBOL: {
 		string->append_formated("Symbol: ");
-		string_style_add_code(string, Style_Code::PUSH_STYLE);
-		string_style_add_code(string, Style_Code::TEXT_COLOR, symbol_to_color(info.options.symbol, true));
+		string_style_push(string, Mark_Type::TEXT_COLOR, symbol_to_color(info.options.symbol, true));
 		symbol_append_to_string(info.options.symbol, string);
-		string_style_add_code(string, Style_Code::POP_STYLE);
+		string_style_pop(string);
 		break;
 	}
 	case Error_Information_Type::EXIT_CODE: {

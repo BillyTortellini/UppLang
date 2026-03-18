@@ -388,7 +388,7 @@ void APIENTRY opengl_debug_callback(GLenum source, GLenum type, GLuint id, GLenu
     // Ignore performance warnings and unnecessary stuff
     // if (id == 131169 || id == 131185 || id == 131218 || id == 131204) return;
     // if (id == 131185 || id == 131218) return;
-    String formatted_message = string_create_empty(1024);
+    String formatted_message = string_create(1024);
 
     switch (source)
     {
@@ -1208,7 +1208,7 @@ void window_initialize_dxgi_output()
                 DXGI_OUTPUT_DESC desc;
                 output->GetDesc(&desc);
                 int len = lstrlenW(desc.DeviceName);
-                auto tmp = string_create_empty(64);
+                auto tmp = string_create(64);
                 SCOPE_EXIT(string_destroy(&tmp));
                 size_t converted_size;
                 wcstombs_s(&converted_size, tmp.characters, 32, desc.DeviceName, 64);
@@ -1250,7 +1250,7 @@ void window_calculate_vsynch_beat(double& vsync_start, double& time_between_vsyn
     ///         DXGI_OUTPUT_DESC desc;
     ///         output->GetDesc(&desc);
     ///         int len = lstrlenW(desc.DeviceName);
-    ///         auto tmp = string_create_empty(32);
+    ///         auto tmp = string_create(32);
     ///         SCOPE_EXIT(string_destroy(&tmp));
     ///         wcstombs(tmp.characters, desc.DeviceName, 32);
     ///         tmp.size = strlen(tmp.characters);

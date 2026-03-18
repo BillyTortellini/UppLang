@@ -838,7 +838,7 @@ bool shader_compile(Shader* shader)
 
         int longest_uniform_name_length;
         glGetProgramiv(shader->program_id, GL_ACTIVE_UNIFORM_MAX_LENGTH, &longest_uniform_name_length);
-        String buffer = string_create_empty(longest_uniform_name_length);
+        String buffer = string_create(longest_uniform_name_length);
         SCOPE_EXIT(string_destroy(&buffer));
 
         // Loop over all uniforms
@@ -927,7 +927,7 @@ void hotreload_shader(void* userdata, const char* filename)
         };
 
         // Split input into lines
-        String buffer = string_create_empty(256);
+        String buffer = string_create(256);
         SCOPE_EXIT(string_destroy(&buffer));
         string_append_formated(&buffer, "#version 430 core\n\n");
         Array<String> lines = string_split(shader_code_opt.value, '\n');
@@ -1103,6 +1103,7 @@ Shader* rendering_core_query_shader(const char* filename)
     String full_path = string_create("resources/shaders/");
     SCOPE_EXIT(string_destroy(&full_path));
     string_append(&full_path, filename);
+    string_add_null_terminator(&full_path);
     hotreload.watched_file = file_listener_add_file(core.file_listener, full_path.characters, hotreload_shader, hotreload.shader);
     assert(hotreload.watched_file != 0, "");
     hashtable_insert_element(&core.shaders, string_create_static(filename), hotreload);

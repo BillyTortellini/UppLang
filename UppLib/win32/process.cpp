@@ -86,7 +86,7 @@ Optional<Process_Result> process_start(String command)
 
     // Read from child
     Process_Result result;
-    result.output = string_create_empty(1024);
+    result.output = string_create(1024);
     char buffer[1024];
     DWORD read_bytes = 0;
     while (true)

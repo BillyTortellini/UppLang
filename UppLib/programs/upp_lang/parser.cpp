@@ -67,7 +67,7 @@ Text_Range token_get_text_range(Token& token) {
 
 DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Arena* arena, Identifier_Pool_Lock* pool_lock)
 {
-	String string_buffer = string_create_empty(256);
+	String string_buffer = string_create(256);
 	SCOPE_EXIT(string_destroy(&string_buffer));
 
 	DynArray<Token> tokens = DynArray<Token>::create(arena, 256);
@@ -2679,7 +2679,7 @@ namespace Parser
 			Identifier_Pool_Lock pool_lock = identifier_pool_lock_aquire(identifier_pool);
 			SCOPE_EXIT(identifier_pool_lock_release(pool_lock));
 			parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, arena, &pool_lock);
-			print_tokens(parser.tokens);
+			// print_tokens(parser.tokens);
 		}
 
 		// Initialize state

@@ -29,7 +29,7 @@ void text_renderer_add_text(
     Anchor anchor, 
     vec2 char_size,
     vec3 color,
-    Optional<Bounding_Box2> clip_box = optional_make_failure<Bounding_Box2>()
+    Optional<box2> clip_box = optional_make_failure<box2>()
 );
 void text_renderer_add_text_int(Text_Renderer* renderer, String text, ivec2 top_left, ivec2 char_size, vec3 color);
 void text_renderer_draw(Text_Renderer* renderer, Render_Pass* render_pass);

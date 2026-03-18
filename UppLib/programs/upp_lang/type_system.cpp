@@ -599,9 +599,8 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
     }
     case Datatype_Type::PRIMITIVE: 
     {
-		string_style_add_code(string, Style_Code::PUSH_STYLE);
-		SCOPE_EXIT(string_style_add_code(string, Style_Code::POP_STYLE));
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
+		SCOPE_EXIT(string_style_pop(string));
 
         auto primitive = downcast<Datatype_Primitive>(datatype);
         auto memory = primitive->base.memory_info.value;
@@ -654,9 +653,8 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
     }
     case Datatype_Type::ENUM:
     {
-		string_style_add_code(string, Style_Code::PUSH_STYLE);
-		SCOPE_EXIT(string_style_add_code(string, Style_Code::POP_STYLE));
-		string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
+		SCOPE_EXIT(string_style_pop(string));
         auto enum_type = downcast<Datatype_Enum>(datatype);
         if (enum_type->name != 0) {
             string->append(enum_type->name->characters);
@@ -667,9 +665,9 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
     {
         auto pattern_struct = downcast<Datatype_Struct_Pattern>(datatype);
 		auto poly_header = pattern_struct->instance->header;
-		string_style_add_code(string, Style_Code::PUSH_STYLE);
+		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
         string->append(poly_header->name);
-		string_style_add_code(string, Style_Code::POP_STYLE);
+		string_style_pop(string);
         if (format.append_struct_poly_parameter_values) 
 		{
 			string->append("(");
@@ -714,10 +712,9 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 		auto& members = struct_type->members;
 		if (struct_type->parent_struct == nullptr)
 		{
-			string_style_add_code(string, Style_Code::PUSH_STYLE);
-			string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+			string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
 			string->append(struct_type->name);
-			string_style_add_code(string, Style_Code::POP_STYLE);
+			string_style_pop(string);
 		}
 		else
 		{
@@ -729,10 +726,9 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 				iter = iter->parent_struct;
 			}
 			for (int i = parents.size - 1; i >= 0; i -= 1) {
-				string_style_add_code(string, Style_Code::PUSH_STYLE);
-				string_style_add_code(string, Style_Code::TEXT_COLOR, Syntax_Color::DATATYPE);
+				string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::DATATYPE);
 				string->append(parents[i]->name);
-				string_style_add_code(string, Style_Code::POP_STYLE);
+				string_style_pop(string);
 				if (i != 0) {
 					string->append('.');
 				}
@@ -1886,7 +1882,7 @@ void type_system_add_predefined_types(Type_System* type_system, Compilation_Data
 
 void type_system_print(Type_System* system)
 {
-	String msg = string_create_empty(256);
+	String msg = string_create(256);
 	SCOPE_EXIT(string_destroy(&msg));
 	string_append_formated(&msg, "Type_System: ");
 	for (int i = 0; i < system->types.size; i++)

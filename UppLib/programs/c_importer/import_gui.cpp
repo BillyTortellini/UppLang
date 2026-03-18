@@ -61,9 +61,9 @@ void importer_initialize()
     importer.type_translations = hashtable_create_pointer_empty<C_Import_Type*, String>(32);
     importer.text = 0;
     importer.package = 0;
-    importer.struct_definitions = string_create_empty(16);
+    importer.struct_definitions = string_create(16);
     importer.name_counter = 0;
-    importer.header_filepath = string_create_empty(16);
+    importer.header_filepath = string_create(16);
 
     for (int i = 0; i < LIST_COUNT; i++) {
         importer.lists[i] = dynamic_array_create<String>();
@@ -89,7 +89,7 @@ void output_c_import_type(C_Import_Type* type, bool decay_array_type)
     String* backup = importer.text;
     SCOPE_EXIT(importer.text = backup);
 
-    String access_name = string_create_empty(8);
+    String access_name = string_create(8);
     importer.text = &access_name;
 
     bool is_const = ((int)type->qualifiers & (int)C_Type_Qualifiers::CONST_QUAL) != 0;
@@ -262,7 +262,7 @@ void output_c_import_type(C_Import_Type* type, bool decay_array_type)
         hashtable_insert_element(&importer.type_translations, type, access_name);
 
         // Note: Since this function is called recursively, we cannot just append to struct_definitions here, but we have to write to intermediate string
-        String definition = string_create_empty(8);
+        String definition = string_create(8);
         SCOPE_EXIT(string_destroy(&definition));
         string_append_formated(&definition, "%s :: %s\n", access_name.characters, structure.is_union ? "union" : "struct");
 
@@ -312,7 +312,7 @@ void output_import_interface(String* output_filename)
     importer.text = 0;
     importer.name_counter = 0;
 
-    String result = string_create_empty(256);
+    String result = string_create(256);
     SCOPE_EXIT(string_destroy(&result));
 
     // Append sources
@@ -336,7 +336,7 @@ void output_import_interface(String* output_filename)
         string_append(&result, "\n");
     }
 
-    String tmp = string_create_empty(16);
+    String tmp = string_create(16);
     SCOPE_EXIT(string_destroy(&tmp));
     for (int i = 0; i < importer.symbols_to_import.size; i++)
     {
@@ -582,7 +582,7 @@ int run_import_gui()
                     }
                     
                     if (gui_push_button(window, string_create_static("Add Entry"))) {
-                        String new_string = string_create_empty(8);
+                        String new_string = string_create(8);
                         dynamic_array_push_back(active_list, new_string);
                     }
 
@@ -628,7 +628,7 @@ int run_import_gui()
 
             if (import_package.available)
             {
-                String tmp = string_create_empty(128);
+                String tmp = string_create(128);
                 SCOPE_EXIT(string_destroy(&tmp));
                 auto gui_push_import_symbol = [&](int index) 
                 {

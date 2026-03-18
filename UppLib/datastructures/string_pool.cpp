@@ -8,7 +8,7 @@ String_Pool string_pool_create(int expected_string_count, int expected_capacity)
     result.pool = dynamic_array_create<String*>(expected_string_count);
     for (int i = 0; i < expected_string_count; i++) {
         result.pool[i] = new String();
-        *result.pool[i] = string_create_empty(expected_capacity);
+        *result.pool[i] = string_create(expected_capacity);
     }
     result.in_use_count = 0;
     return result;
@@ -28,7 +28,7 @@ String* string_pool_get_string(String_Pool* pool) {
     }
     else {
         String* string = new String();
-        *string = string_create_empty(pool->expected_capacity);
+        *string = string_create(pool->expected_capacity);
         dynamic_array_push_back(&pool->pool, string);
         return string;
     }

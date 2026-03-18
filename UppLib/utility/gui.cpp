@@ -19,7 +19,7 @@ struct GUI_Interval {
 
 struct GUI_Box {
     GUI_Box() {}
-    GUI_Box(Bounding_Box2 bb) {
+    GUI_Box(box2 bb) {
         intervals[0].min = float_to_nearest_int(bb.min.x);
         intervals[0].max = float_to_nearest_int(bb.max.x);
         intervals[1].min = float_to_nearest_int(bb.min.y);
@@ -33,8 +33,8 @@ struct GUI_Box {
         return intervals[index];
     }
 
-    Bounding_Box2 as_bounding_box() {
-        return bounding_box_2_make_min_max(vec2(intervals[0].min, intervals[1].min), vec2(intervals[0].max, intervals[1].max));
+    box2 as_bounding_box() {
+        return box2_make_min_max(vec2(intervals[0].min, intervals[1].min), vec2(intervals[0].max, intervals[1].max));
     }
 
     Optional<GUI_Box> intersect(const GUI_Box& other) {
@@ -211,7 +211,7 @@ void gui_initialize(Text_Renderer* text_renderer, Window* window)
 
     // Push root node
     GUI_Node root;
-    root.bounding_box = bounding_box_2_convert(bounding_box_2_make_anchor(vec2(0.0f), vec2(2.0f), Anchor::CENTER_CENTER), Unit::NORMALIZED_SCREEN);
+    root.bounding_box = box2_convert(box2_make_anchor(vec2(0.0f), vec2(2.0f), Anchor::CENTER_CENTER), Unit::NORMALIZED_SCREEN);
     root.referenced_this_frame = true;
     root.index_first_child = -1;
     root.index_last_child = -1;
@@ -1301,7 +1301,7 @@ void gui_update_and_render(Render_Pass* render_pass)
 
     // Print UI if requested
     // if (input->key_pressed[(int)Key_Code::P]) {
-    //     String str = string_create_empty(1);
+    //     String str = string_create(1);
     //     SCOPE_EXIT(string_destroy(&str));
     //     gui_append_to_string(&str, 0, 0);
     //     logg("%s\n\n", str.characters);
@@ -1476,9 +1476,9 @@ void gui_node_set_userdata(GUI_Handle& handle, void* userdata, gui_userdata_dest
     handle.userdata = userdata;
 }
 
-Bounding_Box2 gui_node_get_previous_frame_box(GUI_Handle handle) {
+box2 gui_node_get_previous_frame_box(GUI_Handle handle) {
     if (handle.first_time_created) {
-        return bounding_box_2_make_min_max(vec2(0), vec2(0));
+        return box2_make_min_max(vec2(0), vec2(0));
     }
     return gui.nodes[handle.index].bounding_box.as_bounding_box();
 }
@@ -1801,7 +1801,7 @@ GUI_Handle gui_push_scroll_area(GUI_Handle parent_handle, GUI_Size size_x, GUI_S
 
     // Calculate sizes from previous frame
     const vec2 child_min_size = gui_node_get_previous_frame_min_child_size(client_area);
-    Bounding_Box2 bb = gui_node_get_previous_frame_box(scroll_area);
+    box2 bb = gui_node_get_previous_frame_box(scroll_area);
     const int available = bb.max.y - bb.min.y;
     const int required = child_min_size.y;
     if (available >= required) {
@@ -2256,8 +2256,9 @@ void gui_push_example_gui()
                 if (pressed) {
                     *value += 1;
                 }
-                String tmp = string_create_formated("%d", *value);
+                String tmp = string_create();
                 SCOPE_EXIT(string_destroy(&tmp));
+                tmp.append_formated("%d", *value);
                 gui_push_text(toggle_area, tmp);
             }
         }

@@ -1,38 +1,21 @@
 
-Since everything is now in a styled-string, I need some rules how this string is generated:
- - Newlines
-    Either push a new-line before each item, or after each item
-        I think I want this after each item, and trim if necessary
-    append should probably never push new-lines, because you may want in-line things
- - When Style-Codes are added, when are they removed?
-    Maybe push-style and pop-style should be used after each styled thing?
-    Otherwise you cannot really control a lot of things, like underlining a whole line...
-    --> I think push and pop is the way to go
- - Seperator-Line once I have it
-
 Tasks:
-- Editor overlays (Suggestion, Error, search, code-completion)
-- Particles are currently ignored
-- Block indentation rendering
-- Remove indentation from source-code
-- Pull more tasks out of ass
-- Error-Section display 
-
-Architecture thoughts:
-----------------------
- * Differentiate Color-Scheme and Syntax_Color, e.g. Distribute some basic colors among 0-256, and Syntax_Color = Element + color
- * String with arena
- * Rendering-Core meshes shouldn't have this amount of buffers...
-    --> Think about something here...
-
-Notes:
 ------
-Things that use styled strings:
-    - Error-information append to string
-    - Datatype append to string
-    - Datatype_Value append to string
-    - Call_Signature append to rich-text
-    - Append semantic error
+- Line-number colors/indent
+- Fix folds...
+- Test cam-start offset when more lines
+- Remove indentation from source-code
+- Error-Section display 
+- In-line folds
+- Pull more tasks out of ass
+
+DONE:
+- Fixed block-motions
+- Block indentation rendering
+- Rename bounding-box to box2
+- String with arena
+- Particle rendering
+- Fix parenthesis motions
 
 
 Rough Plan:
@@ -53,7 +36,7 @@ Rough Plan:
     * break statement with if, loop, switch, block
         break if, break else, break loop
     * Operator_Context
-        - Fix things that worked before
+        - Fix things that worked before, (casting and auto-pointering)
     * Default value update/rework
     * Macros
     * String-Handling

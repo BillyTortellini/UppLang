@@ -300,7 +300,7 @@ String* identifier_pool_add(Identifier_Pool_Lock* lock, String identifier)
 	}
 	else {
 		String* copy = new String;
-		*copy = string_create_empty(identifier.size);
+		*copy = string_create(identifier.size);
 		string_append_string(copy, &identifier);
 		hashtable_insert_element(&pool->identifier_lookup_table, *copy, copy);
 		return copy;
@@ -316,7 +316,7 @@ String* identifier_pool_lock_and_add(Identifier_Pool* pool, String identifier) {
 
 void identifier_pool_print(Identifier_Pool* pool)
 {
-	String msg = string_create_empty(256);
+	String msg = string_create(256);
 	SCOPE_EXIT(string_destroy(&msg));
 	string_append_formated(&msg, "Identifiers: ");
 

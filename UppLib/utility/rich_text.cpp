@@ -16,18 +16,27 @@
 bool style_code_has_color(Style_Code code)
 {
     return 
-        code == Style_Code::TEXT_COLOR ||
-        code == Style_Code::BACKGROUND_COLOR ||
-        code == Style_Code::UNDERLINE;
+        code == Style_Code::PUSH_TEXT_COLOR ||
+        code == Style_Code::PUSH_BACKGROUND_COLOR ||
+        code == Style_Code::PUSH_UNDERLINE;
 }
 
-void string_style_add_code(String* str, Style_Code code, Syntax_Color color)
+void string_style_push(String* str, Mark_Type type, Palette_Color color)
 {
     string_append_character(str, '\0');
-    string_append_character(str, (char)code);
-    if (style_code_has_color(code)) {
-        string_append_character(str, (char)color);
-    }
+    string_append_character(str, (char)type);
+    string_append_character(str, (char)color);
+}
+
+void string_style_push(String* str, Mark_Type type, Syntax_Color color)
+{
+    string_style_push(str, type, syntax_color_to_palette_color(color));
+}
+
+void string_style_pop(String* str)
+{
+    string_append_character(str, '\0');
+    string_append_character(str, (char)Style_Code::POP);
 }
 
 void string_style_remove_codes(String* str)
@@ -77,7 +86,7 @@ ivec2 string_style_calculated_2D_size(String string)
 
 // RICH TEXT AREA
 Rich_Char rich_char_make(
-    char c, Syntax_Color text_color = Syntax_Color::TEXT, Syntax_Color bg_color = Syntax_Color::NONE, Syntax_Color underline_color = Syntax_Color::NONE)
+    char c, Palette_Color text_color = Palette_Color::WHITE, Palette_Color bg_color = Palette_Color::NONE, Palette_Color underline_color = Palette_Color::NONE)
 {
     Rich_Char result;
     result.character = c;
@@ -97,14 +106,27 @@ Rich_Text_Area Rich_Text_Area::create(Arena* arena, ivec2 size)
     return result;
 }
 
-struct Text_Style
+struct Style_Change
 {
-    Syntax_Color text;
-    Syntax_Color background;
-    Syntax_Color underline;
+    Mark_Type type;
+    Palette_Color color;
 };
 
-Text_Style text_style_make(Syntax_Color text, Syntax_Color background, Syntax_Color underline) {
+Style_Change style_change_make(Mark_Type type, Palette_Color color) {
+    Style_Change result;
+    result.type = type;
+    result.color = color;
+    return result;
+}
+
+struct Text_Style
+{
+    Palette_Color text;
+    Palette_Color background;
+    Palette_Color underline;
+};
+
+Text_Style text_style_make(Palette_Color text, Palette_Color background, Palette_Color underline) {
     Text_Style result;
     result.text = text;
     result.background = background;
@@ -112,12 +134,12 @@ Text_Style text_style_make(Syntax_Color text, Syntax_Color background, Syntax_Co
     return result;
 }
 
-void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, Syntax_Color default_bg, Syntax_Color default_underline)
+void Rich_Text_Area::fill_from_string(String string, Palette_Color default_text, Palette_Color default_bg, Palette_Color default_underline)
 {
     auto checkpoint = arena->make_checkpoint();
     SCOPE_EXIT(checkpoint.rewind());
 
-    DynArray<Text_Style> style_stack = DynArray<Text_Style>::create(arena);
+    DynArray<Style_Change> style_stack = DynArray<Style_Change>::create(arena);
     Text_Style style = text_style_make(default_text, default_bg, default_underline);
     ivec2 pos = ivec2(0, 0);
 
@@ -136,25 +158,38 @@ void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, 
         if (c == '\0' && i + 1 < string.size) 
         {
             Style_Code code = (Style_Code)string[i + 1];
-            Syntax_Color* target = nullptr;
+            Palette_Color* target = nullptr;
             switch (code)
             {
-            case Style_Code::TEXT_COLOR: target = &style.text; break;
-            case Style_Code::UNDERLINE:  target = &style.underline; break;
-            case Style_Code::BACKGROUND_COLOR: target = &style.background; break;
-            case Style_Code::PUSH_STYLE: {
-                style_stack.push_back(style);
+            case Style_Code::PUSH_TEXT_COLOR: {
+                style_stack.push_back(style_change_make(Mark_Type::TEXT_COLOR, style.text));
+                target = &style.text;
                 break;
             }
-            case Style_Code::POP_STYLE: 
+            case Style_Code::PUSH_BACKGROUND_COLOR: {
+                style_stack.push_back(style_change_make(Mark_Type::BACKGROUND_COLOR, style.background));
+                target = &style.background;
+                break;
+            }
+            case Style_Code::PUSH_UNDERLINE: {
+                style_stack.push_back(style_change_make(Mark_Type::UNDERLINE, style.underline));
+                target = &style.underline;
+                break;
+            }
+            case Style_Code::POP: 
             {
-                if (style_stack.size > 0) {
-                    style = style_stack.last();
-                    style_stack.size -= 1;
+                if (style_stack.size == 0) {
+                    break;
                 }
-                else {
-                    // Shouldn't happen, but we reset to default style for now
-                    style = text_style_make(default_text, default_bg, default_underline);
+
+                auto change = style_stack.last();
+                style_stack.size -= 1;
+                switch (change.type)
+                {
+                case Mark_Type::TEXT_COLOR: style.text = change.color; break;
+                case Mark_Type::BACKGROUND_COLOR: style.background = change.color; break;
+                case Mark_Type::UNDERLINE: style.underline = change.color; break;
+                default: panic("");
                 }
                 break;
             }
@@ -162,7 +197,7 @@ void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, 
             }
 
             if (target != nullptr && i + 2 < string.size) {
-                *target = (Syntax_Color)string[i + 2];
+                *target = (Palette_Color)string[i + 2];
                 i += 1;
             }
             i += 1;
@@ -175,6 +210,16 @@ void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, 
         *get_char(pos) = rich_char_make(c, style.text, style.background, style.underline);
         pos.x += 1;
     }
+}
+
+void Rich_Text_Area::fill_from_string(String string, Syntax_Color default_text, Syntax_Color default_bg, Syntax_Color default_underline)
+{
+    fill_from_string(
+        string, 
+        syntax_color_to_palette_color(default_text), 
+        syntax_color_to_palette_color(default_bg), 
+        syntax_color_to_palette_color(default_underline)
+    );
 }
 
 Rich_Char* Rich_Text_Area::get_char(ivec2 pos)
@@ -190,7 +235,7 @@ void Rich_Text_Area::set_text(ivec2 pos, String string)
     }
 }
 
-void Rich_Text_Area::mark(ivec2 pos, int length, Mark_Type type, Syntax_Color color)
+void Rich_Text_Area::mark(ivec2 pos, int length, Mark_Type type, Palette_Color color)
 {
     for (int i = 0; i < length; i += 1)
     {
@@ -205,60 +250,13 @@ void Rich_Text_Area::mark(ivec2 pos, int length, Mark_Type type, Syntax_Color co
     }
 }
 
-
-
-// void draw_block_outline(int line_start, int line_end, int indentation, Text_Display* display, Renderer_2D* renderer_2D)
-// {
-//     if (indentation == 0) return;
-//     if (display->block_outline_thickness <= 0) return;
-//     int t = display->block_outline_thickness;
-//     vec2 start = display->get_char_position(ivec2(line_start display, line_start, 0, Anchor::TOP_LEFT, false);
-//     vec2 end = get_char_position(display, line_end, 0, Anchor::BOTTOM_LEFT, false);
-// 
-//     int min_x = start.x + (((indentation - 1) * display->indentation_spaces) * display->char_size.x);
-//     min_x += 4;
-//     // min_x -= (display->indentation_spaces * display->char_size.x) / 2.0f - display->block_outline_thickness;
-//     int max_y = start.y - display->char_size.y * 0.1f;
-//     int min_y = end.y   + display->char_size.y * 0.1f;
-//     int stub_length = (display->char_size.x * 2) / 3;
-// 
-//     // Vertical line
-//     renderer_2D_add_rectangle(display->renderer_2D, bounding_box_2_make_min_max(vec2(min_x, min_y + t), vec2(min_x + t, max_y)), display->outline_color);
-//     // Stub
-//     renderer_2D_add_rectangle(display->renderer_2D, bounding_box_2_make_min_max(vec2(min_x, min_y), vec2(min_x + t + stub_length, min_y + t)), display->outline_color);
-// }
-// 
-// // Returns position after this block has ended (Or on final line?)
-// int draw_block_outlines_recursive(Text_Display* display, int line_index, int indentation)
-// {
-//     auto& lines = display->text->lines;
-//     int block_start = line_index;
-// 
-//     // Find end of block
-//     int block_end = lines.size - 1;
-//     while (line_index < lines.size)
-//     {
-//         auto& line = lines[line_index];
-//         if (line.indentation > indentation) {
-//             line_index = draw_block_outlines_recursive(display, line_index, indentation + 1) + 1;
-//         }
-//         else if (line.indentation == indentation) {
-//             line_index += 1;
-//         }
-//         else { // line->indentation < indentation
-//             block_end = line_index - 1;
-//             break;
-//         }
-//     }
-// 
-//     draw_block_outline(display, block_start, block_end, indentation);
-//     return block_end;
-// }
-
+void Rich_Text_Area::mark(ivec2 pos, int length, Mark_Type type, Syntax_Color color) {
+    mark(pos, length, type, syntax_color_to_palette_color(color));
+}
 
 void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_2D, Render_Pass* render_pass)
 {
-    String text_buffer = string_create_empty(64);
+    String text_buffer = string_create(64);
     SCOPE_EXIT(string_destroy(&text_buffer));
 
     ivec2 char_size = font->char_size;
@@ -278,31 +276,31 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
 
         // Draw background
         Rich_Char& rich_char = buffer[line * size.x + start];
-        if (rich_char.background_color != Syntax_Color::NONE) {
+        if (rich_char.background_color != Palette_Color::NONE) {
             ibox2 bg_box = rect_box;
-            if (rich_char.underline_color != Syntax_Color::NONE) {
+            if (rich_char.underline_color != Palette_Color::NONE) {
                 bg_box.min.y += UNDERLINE_THICKNESS;
             }
             bg_box = bg_box.intersect(box);
             if (!bg_box.is_empty()) {
                 renderer_2D_add_rectangle(
                     renderer_2D, 
-                    bounding_box_2_make_min_max(vec2(bg_box.min.x, bg_box.min.y), vec2(bg_box.max.x, bg_box.max.y)), 
-                    syntax_color_to_vec3(rich_char.background_color)
+                    box2_make_min_max(vec2(bg_box.min.x, bg_box.min.y), vec2(bg_box.max.x, bg_box.max.y)), 
+                    palette_color_to_vec3(rich_char.background_color)
                 );
             }
         }
 
         // Draw underline
-        if (rich_char.underline_color != Syntax_Color::NONE) {
+        if (rich_char.underline_color != Palette_Color::NONE) {
             ibox2 underline_box = rect_box;
             underline_box.max.y = underline_box.min.y + UNDERLINE_THICKNESS;
             underline_box = underline_box.intersect(box);
             if (!underline_box.is_empty()) {
                 renderer_2D_add_rectangle(
                     renderer_2D,
-                    bounding_box_2_make_min_max(vec2(underline_box.min.x, underline_box.min.y), vec2(underline_box.max.x, underline_box.max.y)), 
-                    syntax_color_to_vec3(rich_char.underline_color)
+                    box2_make_min_max(vec2(underline_box.min.x, underline_box.min.y), vec2(underline_box.max.x, underline_box.max.y)), 
+                    palette_color_to_vec3(rich_char.underline_color)
                 );
             }
         }
@@ -323,14 +321,14 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
 
         ivec2 min = ivec2(box.min.x, box.max.y) + char_size * ivec2(start, -line - 1);
         Rich_Char& rich_char = buffer[line * size.x + start];
-        font->push_line(min, text_buffer, syntax_color_to_vec3(rich_char.text_color));
+        font->push_line(min, text_buffer, palette_color_to_vec3(rich_char.text_color));
     };
 
     for (int line = 0; line < size.y; line += 1)
     {
         Rich_Char& start_char = buffer[line * size.x];
-        Syntax_Color background_color = start_char.background_color;
-        Syntax_Color underline_color = start_char.underline_color;
+        Palette_Color background_color = start_char.background_color;
+        Palette_Color underline_color = start_char.underline_color;
 
         // Draw background
         int x = 0;
@@ -349,7 +347,7 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
         helper_draw_background(line, same_style_start, size.x);
 
         // Draw text
-        Syntax_Color text_color = start_char.text_color;
+        Palette_Color text_color = start_char.text_color;
         x = 0;
         same_style_start = -1;
         string_reset(&text_buffer);
@@ -359,7 +357,7 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
             Rich_Char& current = buffer[line * size.x + x];
             bool is_whitespace = 
                 current.character == '\0' || current.character == '\t' || current.character == ' ' ||
-                current.text_color == Syntax_Color::NONE;
+                current.text_color == Palette_Color::NONE;
             
             if (same_style_start == -1)
             {
@@ -391,3 +389,4 @@ void Rich_Text_Area::render(ibox2 box, Raster_Font* font, Renderer_2D* renderer_
     renderer_2D_draw(renderer_2D, render_pass);
     font->add_draw_call(render_pass);
 }
+

@@ -385,7 +385,7 @@ bool number_base_is_valid_character(Number_Base base, int character)
 void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool_Lock* pool_lock)
 {
     lexer->pool_lock = pool_lock;
-    String identifier_string = string_create_empty(256);
+    String identifier_string = string_create(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
     dynamic_array_reset(&lexer->tokens);
@@ -912,7 +912,7 @@ void c_lexer_destroy(C_Lexer* lexer)
 
 void c_lexer_print(C_Lexer* lexer)
 {
-    String msg = string_create_empty(256);
+    String msg = string_create(256);
     SCOPE_EXIT(string_destroy(&msg));
     string_append_formated(&msg, "Tokens: \n");
     for (int i = 0; i < lexer->tokens_with_decoration.size; i++)

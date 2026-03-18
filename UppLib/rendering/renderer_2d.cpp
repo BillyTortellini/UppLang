@@ -7,7 +7,7 @@ Renderer_2D* renderer_2D_create(Text_Renderer* text_renderer)
 {
     Renderer_2D* result = new Renderer_2D();
     result->text_renderer = text_renderer;
-    result->string_buffer = string_create_empty(256);
+    result->string_buffer = string_create(256);
 
     auto& predef = rendering_core.predefined;
     result->mesh = rendering_core_query_mesh(
@@ -49,7 +49,7 @@ void renderer_2D_draw(Renderer_2D* renderer, Render_Pass* render_pass) {
     renderer->batch_size = 0;
 }
 
-void renderer_2D_add_rectangle(Renderer_2D* renderer, Bounding_Box2 box, vec3 color) 
+void renderer_2D_add_rectangle(Renderer_2D* renderer, box2 box, vec3 color) 
 {
     box.min = convertPointFromTo(box.min, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
     box.max = convertPointFromTo(box.max, Unit::PIXELS, Unit::NORMALIZED_SCREEN);
@@ -63,7 +63,7 @@ void renderer_2D_add_rectangle(Renderer_2D* renderer, Bounding_Box2 box, vec3 co
 
 void renderer_2D_add_ibox2(Renderer_2D* renderer, ibox2 box, vec3 color) 
 {
-    renderer_2D_add_rectangle(renderer, bounding_box_2_make_min_max(vec2(box.min.x, box.min.y), vec2(box.max.x, box.max.y)), color);
+    renderer_2D_add_rectangle(renderer, box2_make_min_max(vec2(box.min.x, box.min.y), vec2(box.max.x, box.max.y)), color);
 }
 
 void renderer_2D_add_ibox2_outline(Renderer_2D* renderer, ibox2 box, int thickness, vec3 color)

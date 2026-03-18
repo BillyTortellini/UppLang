@@ -47,7 +47,7 @@ void renderer_2D_destroy(Renderer_2D* renderer);
 void renderer_2D_draw(Renderer_2D* renderer, Render_Pass* render_pass);
 void renderer_2D_reset(Renderer_2D* renderer);
 
-void renderer_2D_add_rectangle(Renderer_2D* renderer, Bounding_Box2 box, vec3 color);
+void renderer_2D_add_rectangle(Renderer_2D* renderer, box2 box, vec3 color);
 void renderer_2D_add_ibox2(Renderer_2D* renderer, ibox2 box, vec3 color);
 void renderer_2D_add_ibox2_outline(Renderer_2D* renderer, ibox2 box, int thickness, vec3 color); // Renders outline around box
 void renderer_2D_add_line(Renderer_2D* renderer, vec2 start, vec2 end, vec3 color, float thickness);

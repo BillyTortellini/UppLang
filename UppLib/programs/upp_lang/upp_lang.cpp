@@ -289,7 +289,7 @@ void upp_lang_main()
             //shader_program_draw_mesh(background_shader, &mesh_quad, &core, {});
 
             // Text editor
-            Bounding_Box2 region = bounding_box_2_make_min_max(vec2(-1, -1), vec2(1, 1));
+            box2 region = box2_make_min_max(vec2(-1, -1), vec2(1, 1));
             //code_editor_render(&code_editor, &core, region);
 
             // Syntax editor

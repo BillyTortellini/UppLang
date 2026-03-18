@@ -471,6 +471,11 @@ ibox2::ibox2(ibox2& other, Corner other_corner, ivec2 size, Corner corner) {
     max = min + size;
 }
 
+ibox2::ibox2(box2 bbox) {
+    min = ivec2(bbox.min.x + 0.5f, bbox.min.y + 0.5f);
+    max = ivec2(bbox.max.x + 0.5f, bbox.max.y + 0.5f);
+}
+
 ivec2 ibox2::get_corner(Corner corner) {
     return min + corner_to_vec(corner) * (max - min);
 }
@@ -485,6 +490,75 @@ ibox2 ibox2::intersect(ibox2 other)
 
 ibox2 ibox2::inflate(int thickness) {
     return ibox2(min - ivec2(thickness), max + ivec2(thickness));
+}
+
+
+
+box2 box2_make_min_max(vec2 min, vec2 max)
+{
+    box2 bb;
+    bb.min = min;
+    bb.max = max;
+    return bb;
+}
+
+box2 box2_make_anchor(vec2 pos, vec2 size, Anchor anchor) {
+    box2 bb;
+    bb.min = anchor_switch(pos, size, anchor, Anchor::BOTTOM_LEFT);
+    bb.max = bb.min + size;
+    return bb;
+}
+
+box2 bounding_box_2_make_center_size(vec2 center, vec2 size)
+{
+    box2 bb;
+    bb.min = center - size / 2;
+    bb.max = center + size / 2;
+    return bb;
+}
+
+bool box2_is_point_inside(const box2& bb, const vec2& p) {
+    return p.x >= bb.min.x && p.y >= bb.min.y && p.x <= bb.max.x && p.y <= bb.max.y;
+}
+
+bool box2_is_other_box_inside(const box2& bb, const box2& inside) {
+    return box2_is_point_inside(bb, inside.min) && box2_is_point_inside(bb, inside.max);
+}
+
+bool box2_overlap(const box2& a, const box2& b) {
+    // Both axes must overlap for real overlap
+    return !((a.max.x < b.min.x || a.min.x > b.max.x) || (a.max.y < b.min.y || a.min.y > b.max.y));
+}
+
+box2 box2_combine(box2 bb1, box2 bb2) 
+{
+    box2 result;
+    result.min = vec2(
+        math_minimum(bb1.min.x, bb2.min.x),
+        math_minimum(bb1.min.y, bb2.min.y)
+    );
+    result.max = vec2(
+        math_maximum(bb1.max.x, bb2.max.x),
+        math_maximum(bb1.max.y, bb2.max.y)
+    );
+    return result;
+}
+
+Optional<box2> box2_union(const box2& a, const box2& b)
+{
+    box2 result;
+    result.min = vec2(
+        math_maximum(a.min.x, b.min.x),
+        math_maximum(a.min.y, b.min.y)
+    );
+    result.max = vec2(
+        math_minimum(a.max.x, b.max.x),
+        math_minimum(a.max.y, b.max.y)
+    );
+    if (result.min.x < result.max.x && result.min.y < result.max.y) {
+        return optional_make_success(result);
+    }
+    return optional_make_failure<box2>();
 }
 
 

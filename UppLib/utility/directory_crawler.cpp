@@ -60,7 +60,7 @@ void directory_crawler_set_path_to_file_dir(Directory_Crawler* crawler, String f
 
 void directory_crawler_set_to_working_directory(Directory_Crawler* crawler) {
     int path_length = GetCurrentDirectory(0, 0);
-    String path = string_create_empty(path_length);
+    String path = string_create(path_length);
     SCOPE_EXIT(string_destroy(&path));
     int written_string_length = GetCurrentDirectory(path.capacity, path.characters);
     string_replace_character(&path, '\\', '/');

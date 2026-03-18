@@ -8,6 +8,7 @@
 // Vectors are mutable
 
 #include "../utility/datatypes.hpp"
+#include "../utility/utils.hpp"
 #define NORMALIZE_SAFE_MIN 0.000001f
 
 // VEC 2
@@ -351,6 +352,20 @@ ivec2 anchor_to_ivec2(Anchor anchor);
 vec2 anchor_to_direction(Anchor anchor);
 vec2 anchor_switch(vec2 position, vec2 size, Anchor from, Anchor to);
 
+struct box2
+{
+    vec2 min;
+    vec2 max;
+};
+
+box2 box2_make_min_max(vec2 min, vec2 max);
+box2 box2_make_anchor(vec2 pos, vec2 size, Anchor anchor);
+bool box2_is_point_inside(const box2& bb, const vec2& p);
+bool box2_is_other_box_inside(const box2& bb, const box2& inside);
+box2 box2_combine(box2 bb1, box2 bb2);
+Optional<box2> box2_union(const box2& a, const box2& b);
+bool box2_overlap(const box2& a, const box2& b);
+
 enum class Corner
 {
     TOP_LEFT,
@@ -368,6 +383,7 @@ struct ibox2
     ibox2(ivec2 min, ivec2 max);
     ibox2(ivec2 pos, ivec2 size, Corner corner);
     ibox2(ibox2& other, Corner other_corner, ivec2 size, Corner corner);
+    ibox2(box2 bbox);
 
     ibox2 intersect(ibox2 other);
     ibox2 inflate(int thickness);

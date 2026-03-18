@@ -25,10 +25,10 @@ bool enable_c_compilation = true;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
+bool output_ir = false;
 bool output_bytecode = false;
 bool output_timing = true;
 
@@ -190,7 +190,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
             if (do_analysis && output_root_table)
             {
                 logg("\n--------ROOT TABLE RESULT---------\n");
-                String root_table = string_create_empty(1024);
+                String root_table = string_create(1024);
                 SCOPE_EXIT(string_destroy(&root_table));
                 symbol_table_append_to_string(&root_table, compilation_data->root_symbol_table, false);
                 logg("%s", root_table.characters);
@@ -201,7 +201,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                 if (do_ir_gen && output_ir)
                 {
                     logg("\n--------IR_PROGRAM---------\n");
-                    String tmp = string_create_empty(1024);
+                    String tmp = string_create(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
                     ir_program_append_to_string(compilation_data->ir_generator->program, &tmp, false, compilation_data);
                     string_style_remove_codes(&tmp);
@@ -210,7 +210,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
 
                 if (do_bytecode_gen && output_bytecode)
                 {
-                    String result_str = string_create_empty(32);
+                    String result_str = string_create(32);
                     SCOPE_EXIT(string_destroy(&result_str));
                     if (do_bytecode_gen && output_bytecode) {
                         bytecode_generator_append_bytecode_to_string(compilation_data->bytecode_generator, &result_str);
@@ -471,7 +471,7 @@ void compiler_run_testcases(bool force_run)
 
     bool errors_occured = false;
     int test_case_count = 0;
-    String result = string_create_empty(256);
+    String result = string_create(256);
     SCOPE_EXIT(string_destroy(&result));
     for (int i = 0; i < files.size; i++)
     {
@@ -491,7 +491,8 @@ void compiler_run_testcases(bool force_run)
         Compilation_Data* compilation_data = compilation_data_create(compiler);
         SCOPE_EXIT(compilation_data_destroy(compilation_data));
 
-        String path = string_create_formated("upp_code/testcases/%s", name.characters);
+        String path = string_create();
+        path.append_formated("upp_code/testcases/%s", name.characters);
         SCOPE_EXIT(string_destroy(&path));
         Compilation_Unit* main_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true);
         if (main_unit == nullptr) {
@@ -562,7 +563,7 @@ void compiler_run_testcases(bool force_run)
     String code = text.value;
     for (int i = 0; i < code.size; i++)
     {
-        String cut_code = string_create_empty(i + 10);
+        String cut_code = string_create(i + 10);
         for (int j = 0; j < i; j++) {
             char c = code.characters[j];
             string_append_character(&cut_code, c);
@@ -581,7 +582,7 @@ void compiler_run_testcases(bool force_run)
     for (int i = 0; i < code.size; i++)
     {
         dynamic_array_reset(&stack_parenthesis);
-        String cut_code = string_create_empty(i + 10);
+        String cut_code = string_create(i + 10);
         for (int j = 0; j < i; j++)
         {
             char c = code.characters[j];

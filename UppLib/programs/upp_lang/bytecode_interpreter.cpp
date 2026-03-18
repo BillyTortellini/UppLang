@@ -1109,7 +1109,7 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
     logg("Current Stack offset: %d\n", thread->stack.data - thread->stack_pointer);
     logg("Instruction Index: %d\n", current_instruction_index);
     {
-        String tmp = string_create_empty(64);
+        String tmp = string_create(64);
         SCOPE_EXIT(string_destroy(&tmp));
         bytecode_instruction_append_to_string(&tmp, thread->generator->instructions[current_instruction_index]);
         logg("Instruction: %s\n", tmp.characters);

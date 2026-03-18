@@ -55,8 +55,8 @@ void c_compiler_initialize()
         return;
     }
 
-    String env_var = string_create_empty(64);
-    String var_value = string_create_empty(64);
+    String env_var = string_create(64);
+    String var_value = string_create(64);
     SCOPE_EXIT(string_destroy(&env_var));
     SCOPE_EXIT(string_destroy(&var_value));
 
@@ -104,7 +104,7 @@ void c_compiler_compile(Compilation_Data* compilation_data)
     }
 
     // Create compilation command
-    String command = string_create_empty(128);
+    String command = string_create(128);
     SCOPE_EXIT(string_destroy(&command));
     {
         /*
@@ -339,12 +339,12 @@ C_Generator* c_generator_create(Compilation_Data* compilation_data)
     C_Generator* c_generator = new C_Generator;
     C_Generator& result = *c_generator;
     for (int i = 0; i < (int)Generator_Section::MAX_ENUM_VALUE; i++) {
-        result.sections[i] = string_create_empty(256);
+        result.sections[i] = string_create(256);
     }
     result.compilation_data = compilation_data;
     result.program_translation.line_infos = dynamic_array_create<C_Line_Info>(32);
     result.program_translation.name_mapping = hashtable_create_empty<C_Translation, String>(64, c_translation_hash, c_translation_is_equal);
-    result.program_translation.source_code = string_create_empty(2048);
+    result.program_translation.source_code = string_create(2048);
     result.type_dependencies = dynamic_array_create<C_Type_Dependency*>();
     result.type_to_dependency_mapping = hashtable_create_pointer_empty<Datatype*, C_Type_Dependency*>(32);
     result.translation_characters = dynamic_array_create<Translation_Char_Info>(32);
@@ -463,7 +463,7 @@ C_Type_Dependency* get_type_dependency(C_Generator* generator, Datatype* datatyp
     dep->depends_on = dynamic_array_create<C_Type_Dependency*>();
     dep->dependency_count = 0;
     dep->signature = datatype;
-    dep->type_definition = string_create_empty(32);
+    dep->type_definition = string_create(32);
 
     dynamic_array_push_back(&gen.type_dependencies, dep);
     hashtable_insert_element(&gen.type_to_dependency_mapping, datatype, dep);
@@ -496,7 +496,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     constant_string.capacity = 0;
     SCOPE_EXIT(if (constant_string.capacity != 0) string_destroy(&constant_string));
 
-    String access_name = string_create_empty(32);
+    String access_name = string_create(32);
     String* backup_text = gen.text;
     SCOPE_EXIT(gen.text = backup_text);
 
@@ -568,7 +568,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         string_append_formated(section_prototypes, "struct %s;\n", access_name.characters);
 
         // Temporary c_string is required when calling this function recursively
-        String tmp = string_create_empty(32);
+        String tmp = string_create(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
         gen.text = &tmp;
@@ -590,7 +590,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         gen.name_counter++;
 
         // Temporary c_string is required when calling this function recursively
-        String tmp = string_create_empty(32);
+        String tmp = string_create(32);
         SCOPE_EXIT(string_destroy(&tmp));
 
         gen.text = &tmp;
@@ -1417,7 +1417,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
     }
 
     // Create access
-    String access_name = string_create_empty(12);
+    String access_name = string_create(12);
     gen.text = &access_name;
     {
         String* backup_text = gen.text;
@@ -1433,7 +1433,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
 
         if (requires_memory_address)
         {
-            constant_string = string_create_empty(32);
+            constant_string = string_create(32);
             gen.text = &constant_string;
 
             c_generator_output_type_reference(generator, base_type);
@@ -1591,7 +1591,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 string_append_formated(gen.text, "{.data = (void*) \"");
 
                 // Note: I need to escape escape sequences, so this is what i'm doing now...
-                String escaped = string_create_empty(16);
+                String escaped = string_create(16);
                 SCOPE_EXIT(string_destroy(&escaped));
                 for (int i = 0; i < string.size; i++) {
                     char c = ((const char*)string.data)[i];
@@ -1669,7 +1669,7 @@ void c_generator_output_parameter_access(C_Generator* generator, IR_Function* fu
         }
     }
 
-    String new_name = string_create_empty(16);
+    String new_name = string_create(16);
     auto& param = function->signature->parameters[parameter_index];
     string_append_formated(&new_name, "%s_%d", param.name->characters, gen.name_counter);
     gen.name_counter++;
@@ -1696,7 +1696,7 @@ void c_generator_output_global_access(C_Generator* generator, int global_index)
         }
     }
 
-    String new_name = string_create_empty(16);
+    String new_name = string_create(16);
     if (global->is_extern) {
         string_append(&new_name, global->symbol->id->characters);
     }
@@ -1736,7 +1736,7 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
         }
 
         auto& reg = access->option.register_access.definition_block->registers[access->option.register_access.index];
-        String new_name = string_create_empty(16);
+        String new_name = string_create(16);
         if (reg.name.available) {
             string_append(&new_name, reg.name.value->characters);
         }
