@@ -1,15 +1,17 @@
 
 Tasks:
 ------
-- Line-number colors/indent
-- Fix folds...
-- Test cam-start offset when more lines
 - Remove indentation from source-code
-- Error-Section display 
 - In-line folds
-- Pull more tasks out of ass
+- compile in release mode
+
+- Error-Section display 
+- fix all warnings
 
 DONE:
+- Test cam-start offset when more lines
+- Fix folds...
+- Line-number colors/indent
 - Fixed block-motions
 - Block indentation rendering
 - Rename bounding-box to box2
@@ -20,7 +22,6 @@ DONE:
 
 Rough Plan:
  - Fix Editor
-    * Fix Error-Section display
     * Fix Testcases
  - Improve Code 
     * Remove Compiler (Identifier-Pool and Fiber-Pool)

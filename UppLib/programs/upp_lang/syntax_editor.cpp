@@ -35,7 +35,7 @@
 #include "../../utility/line_edit.hpp"
 #include "../../utility/ui_system.hpp"
 
-const int MIN_CURSOR_DISTANCE = 3;
+const int MIN_CURSOR_DISTANCE = 2;
 
 // Structures/Enums
 struct Error_Display
@@ -5588,7 +5588,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
 		Line_Iter iter = Line_Iter::create(tab.cam_start);
-		iter.move(editor.visible_line_count - MIN_CURSOR_DISTANCE - 1, true);
+		iter.move(editor.visible_line_count - MIN_CURSOR_DISTANCE, true);
 		cursor.line = iter.line_index;
 		cursor.character = 0;
 		syntax_editor_sanitize_cursor();
@@ -5731,7 +5731,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (range.start.line == range.end.line) break;
 		logg("Fold from %d to %d\n", range.start.line, range.end.line);
 		int indent = math_maximum(0, line->indentation - math_maximum(0, command.repeat_count - 1));
-		syntax_editor_add_fold(range.start.line, range.end.line, indent);
+		syntax_editor_add_fold(range.start.line, range.end.line + 1, indent);
 
 		break;
 	}
@@ -5741,35 +5741,30 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (Folds::get_fold_info(cursor.line).inside_fold) {
 			break;
 		}
-		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, command.repeat_count, false), cursor);
-		int indent = math_maximum(0, line->indentation - math_maximum(0, command.repeat_count - 1));
+
+		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, 1, false), cursor);
+		int target_indent = line_get_logical_indentation_ignore_folds(cursor.line);
+		Line_Iter iter = Line_Iter::create(range.start.line);
 
 		int last_start = -1;
 		for (int i = range.start.line; i <= range.end.line; i++)
 		{
-			auto line = source_code_get_line(code, i);
-			if (last_start == -1) {
-				if (line->indentation > indent) {
+			Source_Line* line = source_code_get_line(code, i);
+			int line_indent = line_get_logical_indentation_ignore_folds(i);
+			if (last_start == -1) 
+			{
+				if (line_indent > target_indent) {
 					last_start = i;
 				}
 			}
-			else {
-				if (line->indentation <= indent || i == code->line_count - 1) {
-					int start = last_start;
-					int end = i - 1;
-					if (i == code->line_count - 1) {
-						end = code->line_count - 1;
-					}
-					last_start = -1;
-
-					if (end != start) {
-						syntax_editor_add_fold(start, end, indent + 1);
-					}
-				}
+			else if (line_indent <= target_indent) 
+			{
+				syntax_editor_add_fold(last_start, i, target_indent + 1);
+				last_start = -1;
 			}
 		}
 		if (last_start != -1 && last_start != range.end.line) {
-			syntax_editor_add_fold(last_start, range.end.line, indent + 1);
+			syntax_editor_add_fold(last_start, range.end.line + 1, target_indent + 1);
 		}
 
 		break;
@@ -7820,6 +7815,7 @@ void syntax_editor_render()
 		Line_Iter start = Line_Iter::create(tab.cam_start);
 		start.move_to_fold_boundary(-1, false);
 		int max_line_count = ceilf((float)(main_box.max.y - main_box.min.y) / char_size.y);
+		editor.visible_line_count = max_line_count;
 
 		// Clamp camera to cursor if cursor moved or text changed
 		History_Timestamp timestamp = history_get_timestamp(&tab.history);
@@ -7829,8 +7825,8 @@ void syntax_editor_render()
 			tab.last_render_timestamp = timestamp;
 
 			int to_cursor_dist = start.visible_distance_to(cursor.line);
-			if (to_cursor_dist < -MIN_CURSOR_DISTANCE) { // Cursor before cam-start
-				start.move(to_cursor_dist + MIN_CURSOR_DISTANCE, true);
+			if (to_cursor_dist < MIN_CURSOR_DISTANCE) { // Cursor before cam-start
+				start.move(to_cursor_dist - MIN_CURSOR_DISTANCE, true);
 			}
 			else if (to_cursor_dist >= max_line_count - MIN_CURSOR_DISTANCE) {
 				start.move(to_cursor_dist - (max_line_count - MIN_CURSOR_DISTANCE), true);
@@ -7970,8 +7966,8 @@ void syntax_editor_render()
 			}
 			return digits;
 		};
-		const int max_line_num_digits = math_maximum(get_digits(tab.code->line_count), 4);
-		const int line_info_char_count = max_line_num_digits + 2; // Number of line-digits + 2 for breakpoints/current instr
+		const int max_line_num_digits = get_digits(tab.code->line_count);
+		const int line_info_char_count = max_line_num_digits + 3; // Number of line-digits + 1 for offset of current line + 2 for breakpoints/current instr
 
 		// Note: this is signed, e.g. first lines may be negative, but we only display positive
 		int first_line_number =
@@ -7989,17 +7985,21 @@ void syntax_editor_render()
 			// line_info_area.mark(ivec2(0, i), line_info_char_count, Mark_Type::BACKGROUND_COLOR, Syntax_Color::BLUE);
 			line_info_area.mark(ivec2(0, i), line_info_char_count, Mark_Type::TEXT_COLOR, syntax_color_to_palette_color(Syntax_Color::TEXT));
 
-			// Push line number
+			// Push line number (Current line is left-aligned, others are right aligned)
+			int end = max_line_num_digits + 1;
 			int display_number = math_absolute(first_line_number + i);
-			if (display_number == 0) {
+			Palette_Color num_color = Palette_Color::DARK_CYAN;
+			if (display_number == 0) 
+			{
 				display_number = tab.cursor.line;
+				end = get_digits(tab.cursor.line);
+				num_color = Palette_Color::CYAN;
 			}
-			int start = 0;
-			int end = max_line_num_digits;
-			for (int j = end - 1; j >= start; j -= 1) {
+			for (int j = end - 1; j >= 0; j -= 1) {
 				char c = '0' + (display_number % 10);
 				display_number = display_number / 10;
 				line_info_area.set_text(ivec2(j, i), string_create_static_with_size(&c, 1));
+				line_info_area.mark(ivec2(j, i), 1, Mark_Type::TEXT_COLOR, num_color);
 				if (display_number == 0) {
 					break;
 				}
@@ -8014,8 +8014,8 @@ void syntax_editor_render()
 
 			// Add breakpoint
 			if (is_breakpoint) {
-				line_info_area.set_text(ivec2(max_line_num_digits, i), string_create_static("o"));
-				line_info_area.mark(ivec2(max_line_num_digits, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::RED);
+				line_info_area.set_text(ivec2(max_line_num_digits + 1, i), string_create_static("o"));
+				line_info_area.mark(ivec2(max_line_num_digits + 1, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::RED);
 			}
 
 			// Find symbol by priority
@@ -8032,9 +8032,9 @@ void syntax_editor_render()
 			// Add symbol
 			if (c != '\0') 
 			{
-				line_info_area.set_text(ivec2(max_line_num_digits + 1, i), string_create_static_with_size(&c, 1));
+				line_info_area.set_text(ivec2(max_line_num_digits + 2, i), string_create_static_with_size(&c, 1));
 				if (in_selected_frame) {
-					line_info_area.mark(ivec2(max_line_num_digits + 1, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::GREEN);
+					line_info_area.mark(ivec2(max_line_num_digits + 2, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::GREEN);
 				}
 			}
 		}
@@ -8081,7 +8081,9 @@ void syntax_editor_render()
 					}
 
 					main_area.set_text(pos, string_create_static("|...|"));
+					main_area.mark(pos, 5, Mark_Type::TEXT_COLOR, Syntax_Color::TEXT);
 					main_area.mark(pos, 5, Mark_Type::BACKGROUND_COLOR, contains_errors ? Syntax_Color::FOLD_ERROR_BG : Syntax_Color::FOLD_BG);
+					continue;
 				}
 
 				main_area.set_text(pos, source_line->text);
@@ -8218,7 +8220,7 @@ void syntax_editor_render()
 				// Set cursor text-background
 				if (editor.mode == Editor_Mode::NORMAL && !cursor_is_on_fold && cursor.line == display_line.line_index) {
 					auto cursor_line = source_code_get_line(code, cursor.line);
-					main_area.mark(ivec2(cursor.character + line->indentation * 4, cursor.line), 1, Mark_Type::BACKGROUND_COLOR, Syntax_Color::CURSOR_BG);
+					main_area.mark(ivec2(cursor.character + line->indentation * 4, i), 1, Mark_Type::BACKGROUND_COLOR, Syntax_Color::CURSOR_BG);
 				}
 			}
 		}
