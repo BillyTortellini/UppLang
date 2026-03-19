@@ -6321,7 +6321,7 @@ Upp_Module* analyse_module_node(
 void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Module_Content* module_content, Semantic_Context* semantic_context)
 {
 	Symbol_Table* symbol_table = semantic_context->current_symbol_table;
-	assert(definition->symbols.size != 0, "Parser shouldn't allow this");
+	// assert(definition->symbols.size != 0, "Parser shouldn't allow this");
 	assert(!(module_content == nullptr && definition->is_comptime), "");
 
 	// Define all symbols
@@ -6357,6 +6357,10 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 
 	// Report errors
 	bool error_occured = false;
+	if (definition->symbols.size == 0) {
+		log_semantic_error(semantic_context, "At least one symbol must be defined", upcast(definition));
+		error_occured = true;
+	}
 	for (int i = 1; i < definition->symbols.size; i++) {
 		log_semantic_error(semantic_context, "Multiple Symbols not allowed for global/comptime definition, e.g. '::'", upcast(definition->symbols[i]));
 		error_occured = true;

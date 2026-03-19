@@ -19,7 +19,6 @@ void add_first_bundle_and_line(Source_Code* code)
     first_bundle.lines = dynamic_array_create<Source_Line>();
 
     Source_Line first_line;
-    first_line.indentation = 0;
     first_line.text = string_create();
     first_line.item_infos = dynamic_array_create<Editor_Info_Reference>();
 
@@ -131,7 +130,7 @@ Source_Line* source_code_get_line(Source_Code* code, int line_index)
     return &bundle.lines[line_index - bundle.first_line_index];
 }
 
-Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int indentation)
+Source_Line* source_code_insert_line(Source_Code* code, int new_line_index)
 {
     int bundle_index = source_code_get_line_bundle_index(code, new_line_index);
     Line_Bundle* bundle = &code->bundles[bundle_index];
@@ -170,7 +169,6 @@ Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int 
         assert(index_in_bundle <= bundle->lines.size, "");
 
         Source_Line line;
-        line.indentation = indentation;
         line.text = string_create();
         line.item_infos = dynamic_array_create<Editor_Info_Reference>();
         dynamic_array_insert_ordered(&bundle->lines, line, index_in_bundle);
@@ -254,29 +252,6 @@ void source_code_fill_from_string(Source_Code* code, String text)
     int comment_indent = -1;
     while (index < text.size)
     {
-        // Find indentation level
-        int indent_start_index = index;
-        int line_indent = 0;
-        while (index < text.size && text.characters[index] == '\t') 
-        {
-            if (text.characters[index] == '\t') {
-                line_indent += 1;
-                index += 1;
-            }
-            else if (index + 3 < text.size &&
-                text.characters[index] == ' ' &&
-                text.characters[index + 1] == ' ' &&
-                text.characters[index + 2] == ' ' &&
-                text.characters[index + 3] == ' ') 
-            {
-                line_indent += 1;
-                index += 4;
-            }
-            else {
-                break;
-            }
-        }
-
         // Find line end
         int line_start_index = index;
         while (index < text.size && text.characters[index] != '\n') {
@@ -287,8 +262,15 @@ void source_code_fill_from_string(Source_Code* code, String text)
             index += 1; // Skip \n
         }
 
-        Source_Line* line = source_code_insert_line(code, code->line_count, line_indent);
+        Source_Line* line = source_code_insert_line(code, code->line_count);
         String substring = string_create_substring_static(&text, line_start_index, line_end_index);
+        int sub_index = 0;
+        while (sub_index < substring.size && substring[sub_index] == '\t') {
+            line->text.append("    ");
+            sub_index += 1;
+        }
+        substring = string_create_substring_static(&substring, sub_index, substring.size);
+        
         string_append_string(&line->text, &substring);
         source_text_remove_invalid_whitespaces(line->text);
     }
@@ -306,9 +288,6 @@ void source_code_append_to_string(Source_Code* code, String* text)
         auto& bundle = code->bundles[i];
         for (int j = 0; j < bundle.lines.size; j++) {
             Source_Line& line = bundle.lines[j];
-            for (int k = 0; k < line.indentation; k++) {
-                string_append_formated(text, "\t");
-            }
             string_append_string(text, &line.text);
             string_append_formated(text, "\n");
         }

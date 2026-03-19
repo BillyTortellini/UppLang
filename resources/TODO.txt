@@ -1,14 +1,20 @@
 
 Tasks:
 ------
-- Remove indentation from source-code
-- In-line folds
+- cursor on folds is handling stupidly
+- inline-folds should open if we move on them
 - compile in release mode
 
-- Error-Section display 
+- Error_Display thing... 
 - fix all warnings
 
 DONE:
+- In-line folds
+- Backspace with auto-format does something smarter
+- Yank and put lines with correct indentation?
+- Disallow backspace to remove tabs...
+- Insert-Command Ctrl-W
+- Remove indentation from source-code
 - Test cam-start offset when more lines
 - Fix folds...
 - Line-number colors/indent
@@ -39,7 +45,7 @@ Rough Plan:
     * Operator_Context
         - Fix things that worked before, (casting and auto-pointering)
     * Default value update/rework
-    * Macros
+    * Simple Macros (Design not final)
     * String-Handling
     * Access to normal math functions/built-ins
     * Allocator rework, remove new/delete
@@ -48,6 +54,7 @@ Rough Plan:
     * Incremental semantic-analysis
     * Incremental code-generation
  - Editor Features
+    * Auto-formating aligns := or other tokens in lines
     * Multiple files in one buffer
     * Quickscope
     * Generally better buffer handling and rendering
@@ -66,30 +73,6 @@ Rough Plan:
         - Hashtable/Hashmap
         - String_Builder
         - String-List?
-
-TODO:
- - Fix editor block display
- - Remove indentation, replace with 4 spaces
- - Change struct initializer shit (Generally)
-    New syntax for subtype-access, and other schtuff
- - Error_Section (parse_section to text-ranges not working correctly)
- - Remove compiler (identifer-pool and fiber pool)
-
-DONE:
- - Auto-Formating
- - Syntax highlighting
- - Multi-definition with parenthesis
- - For-loop with parenthesis
-
- - Add fn and fn_ptr for functions
- - switch/module should also look for blocks?
- - Struct initializer with .()
- - Explicit block #block identifier
- - line continuation with \
- - loops with loop keyword
- - for loop with semi-colon...
- - loop without condition
- - Fixed cast and some error ranges
 
 NOTES:
 ------

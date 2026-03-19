@@ -88,18 +88,26 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 			bool next_concatenate = false;
 			SCOPE_EXIT(concatenate_to_last_line = next_concatenate);
 			bool line_is_empty = true;
+			int line_indentation = 0;
 			{
-				for (int i = 0; i < line.text.size; i += 1) {
+				int leading_whitespace_count = 0;
+				for (int i = 0; i < line.text.size; i += 1) 
+				{
 					char c = line.text[i];
 					if (c == '/' && i + 1 < line.text.size && line.text[i + 1] == '/') {
 						line_is_empty = true;
 						break;
 					}
-					if (c != ' ' && c != '\t') {
+
+					if (c == ' ') {
+						leading_whitespace_count += 1;
+					}
+					else {
 						line_is_empty = false;
 						break;
 					}
 				}
+				line_indentation = leading_whitespace_count / 4;
 			}
 			if (line_is_empty) {
 				continue;
@@ -107,13 +115,13 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 
 			// Insert Block-Start/End tokens
 			bool added_block_end = false;
-			while (indentation != line.indentation && !concatenate_to_last_line)
+			while (indentation != line_indentation && !concatenate_to_last_line)
 			{
 				while (tokens.last().type == Token_Type::LINE_END) {
 					tokens.size -= 1;
 				}
 				
-				if (line.indentation > indentation) {
+				if (line_indentation > indentation) {
 					tokens.push_back(token_make(Token_Type::BLOCK_START, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 					indentation += 1;
 				}

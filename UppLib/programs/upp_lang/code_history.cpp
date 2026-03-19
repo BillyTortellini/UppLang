@@ -127,23 +127,11 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards)
         auto& insert = change->options.line_insert;
         if (apply_change_forward) {
             assert(insert.line_index >= 0 && insert.line_index <= code->line_count, "");
-            source_code_insert_line(code, insert.line_index, insert.indentation);
+            source_code_insert_line(code, insert.line_index);
         }
         else {
             assert(insert.line_index >= 0 && insert.line_index < code->line_count, "");
             source_code_remove_line(code, insert.line_index);
-        }
-        break;
-    }
-    case Code_Change_Type::LINE_INDENTATION_CHANGE:
-    {
-        auto& indent = change->options.indentation_change;
-        Source_Line* line = source_code_get_line(code, indent.line_index);
-        if (apply_change_forward) {
-            line->indentation = indent.new_indentation;
-        }
-        else {
-            line->indentation = indent.old_indentation;
         }
         break;
     }
@@ -436,20 +424,19 @@ void history_delete_char(Code_History* history, Text_Index index)
 
 
 // LINES
-void history_insert_line(Code_History* history, int line_index, int indentation)
+void history_insert_line(Code_History* history, int line_index)
 {
-    assert(line_index >= 0 && line_index <= history->code->line_count && indentation >= 0, "");
+    assert(line_index >= 0 && line_index <= history->code->line_count, "");
     auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, true);
     change.options.line_insert.line_index = line_index;
-    change.options.line_insert.indentation = indentation;
     history_insert_and_apply_change(history, change);
 }
 
-void history_insert_line_with_text(Code_History* history, int line_index, int indentation, String string)
+void history_insert_line_with_text(Code_History* history, int line_index, String string)
 {
     history_start_complex_command(history);
     SCOPE_EXIT(history_stop_complex_command(history));
-    history_insert_line(history, line_index, indentation);
+    history_insert_line(history, line_index);
     history_insert_text(history, text_index_make(line_index, 0), string);
 }
 
@@ -470,7 +457,6 @@ void history_remove_line(Code_History* history, int line_index)
     // Do simple line-removal if line is empty
     if (line->text.size == 0) {
         auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
-        change.options.line_insert.indentation = line->indentation;
         change.options.line_insert.line_index = line_index;
         history_insert_and_apply_change(history, change);
         return;
@@ -483,22 +469,7 @@ void history_remove_line(Code_History* history, int line_index)
 
     // Remove line
     auto change = code_change_create_empty(Code_Change_Type::LINE_INSERT, false);
-    change.options.line_insert.indentation = line->indentation;
     change.options.line_insert.line_index = line_index;
-    history_insert_and_apply_change(history, change);
-}
-
-void history_change_indent(Code_History* history, int line_index, int new_indent)
-{
-    assert(new_indent >= 0, "");
-
-    Source_Line* line = source_code_get_line(history->code, line_index);
-    if (line->indentation == new_indent) return;
-
-    auto change = code_change_create_empty(Code_Change_Type::LINE_INDENTATION_CHANGE, true);
-    change.options.indentation_change.line_index = line_index;
-    change.options.indentation_change.new_indentation = new_indent;
-    change.options.indentation_change.old_indentation = line->indentation;
     history_insert_and_apply_change(history, change);
 }
 

@@ -15,7 +15,6 @@ enum class Code_Change_Type
     LINE_INSERT,
     CHAR_INSERT,
     TEXT_INSERT, // Note: Text insert on a single line, so no \n
-    LINE_INDENTATION_CHANGE,
 };
 
 struct Code_Change
@@ -26,13 +25,7 @@ struct Code_Change
     {
         struct {
             int line_index;
-            int indentation;
         } line_insert;
-        struct {
-            int line_index;
-            int old_indentation;
-            int new_indentation;
-        } indentation_change;
         struct {
             Text_Index index;
             char c;
@@ -99,10 +92,9 @@ void history_delete_text(Code_History* history, Text_Index index, int char_end);
 void history_insert_char(Code_History* history, Text_Index index, char c);
 void history_delete_char(Code_History* history, Text_Index index);
 
-void history_insert_line(Code_History* history, int line_index, int indentation);
-void history_insert_line_with_text(Code_History* history, int line_index, int indentation, String string);
+void history_insert_line(Code_History* history, int line_index);
+void history_insert_line_with_text(Code_History* history, int line_index, String string);
 void history_remove_line(Code_History* history, int line_index);
-void history_change_indent(Code_History* history, int line_index, int new_indent);
 
 
 

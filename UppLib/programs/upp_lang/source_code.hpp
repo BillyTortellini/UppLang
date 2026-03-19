@@ -88,11 +88,7 @@ struct Block_ID_Range
 // Source Code
 struct Source_Line
 {
-    // Content
     String text;
-    int indentation;
-
-    // Analysis Info
     Dynamic_Array<Editor_Info_Reference> item_infos;
 };
 
@@ -127,7 +123,7 @@ void source_code_reset(Source_Code* code);
 void source_code_print_bundles(Source_Code* code);
 
 // Manipulation Helpers
-Source_Line* source_code_insert_line(Source_Code* code, int new_line_index, int indentation);
+Source_Line* source_code_insert_line(Source_Code* code, int new_line_index);
 void source_code_remove_line(Source_Code* code, int line_index);
 
 // Utility
