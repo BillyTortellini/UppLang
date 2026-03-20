@@ -1,14 +1,13 @@
 
 Tasks:
 ------
-- cursor on folds is handling stupidly
-- inline-folds should open if we move on them
-- compile in release mode
-
 - Error_Display thing... 
-- fix all warnings
 
 DONE:
+- Tab on non-empty creates indentation + Shift-Enter
+- compile in release mode
+- inline-folds should open if we move on them
+- cursor on folds is handling stupidly
 - In-line folds
 - Backspace with auto-format does something smarter
 - Yank and put lines with correct indentation?

@@ -472,6 +472,7 @@ int line_get_whitespace_indentation(int line_index);
 int line_is_empty_or_comment(int line_index);
 int line_count_leading_spaces(Source_Line* line);
 int line_count_leading_spaces(int line_index);
+void remove_folds_on_line(int line_index);
 
 
 
@@ -701,7 +702,7 @@ struct Line_Iter
 				else 
 				{
 					line_index = fold_info.start - 1;
-					if (inline_folds && fold_info.start != 0) {
+					if (!inline_folds || fold_info.start == 0) {
 						steps -= 1;
 					}
 				}
@@ -726,7 +727,7 @@ struct Line_Iter
 					line_index = line_index - steps;
 					break;
 				}
-				steps -= line_index - fold_info.start;
+				steps -= line_index - fold_info.start + 1;
 				line_index = fold_info.start - 1;
 			}
 		}
@@ -5471,19 +5472,17 @@ void normal_command_execute(Normal_Mode_Command & command)
 		auto movement = command.options.movement;
 
 		// Handle moving into fold
-		if (Folds::get_fold_info(cursor.line).inside_fold && (movement.type == Movement_Type::MOVE_LEFT || movement.type == Movement_Type::MOVE_RIGHT)) {
-			// Delete this fold
-			auto& folds = tab.folds;
-			for (int i = 0; i < folds.size; i++) {
-				auto fold = folds[i];
-				if (cursor.line >= fold.start && cursor.line < fold.end) {
-					cursor.line = fold.start;
-					cursor.character = 0;
-					dynamic_array_remove_ordered(&folds, i);
-					i -= 1;
+		if (movement.type == Movement_Type::MOVE_LEFT || movement.type == Movement_Type::MOVE_RIGHT) 
+		{
+			if (Folds::get_fold_info(cursor.line).inside_fold) {
+				remove_folds_on_line(cursor.line);
+				break;
+			}
+			if (movement.type == Movement_Type::MOVE_RIGHT && cursor.character == line->text.size - 1) {
+				if (editor.show_folds_inline && Folds::get_fold_info(cursor.line + 1).inside_fold) {
+					remove_folds_on_line(cursor.line + 1);
 				}
 			}
-			break;
 		}
 
 		cursor = movement_evaluate(movement, cursor);
@@ -6005,11 +6004,24 @@ void insert_command_execute(Insert_Command input)
 	}
 	case Insert_Command_Type::ENTER_REMOVE_ONE_INDENT: // Since spaces are used for indentation shift-enter is normal command
 	case Insert_Command_Type::ENTER: {
-		editor_split_line_at_cursor(0);
+		editor_split_line_at_cursor(input.type == Insert_Command_Type::ENTER ? 0 : -1);
 		break;
 	}
 	case Insert_Command_Type::ADD_INDENTATION: 
 	{
+		bool chars_before = false;
+		for (int i = 0; i < cursor.character; i++) {
+			if (text[i] != ' ') {
+				chars_before = true;
+				break;
+			}
+		}
+
+		if (chars_before) {
+			editor_split_line_at_cursor(1);
+			break;
+		}
+
 		int space_count = 4 - (pos % 4);
 		String space_str = string_create(tmp_arena);
 		for (int i = 0; i < space_count; i++) {
@@ -6090,6 +6102,15 @@ void insert_command_execute(Insert_Command input)
      // Letters
 	case Insert_Command_Type::DELIMITER_LETTER:
 	{
+		char next_non_space = '\0';
+		int skip_auto_input_count = 0;
+		while (pos + skip_auto_input_count < text.size && text[pos + skip_auto_input_count] == ' ') {
+			skip_auto_input_count += 1;
+		}
+		if (pos + skip_auto_input_count < text.size) {
+			next_non_space = text[pos + skip_auto_input_count];
+		}
+
 		bool insert_double_after = false;
 		bool skip_auto_input = false;
 		char double_char = ' ';
@@ -6128,14 +6149,16 @@ void insert_command_execute(Insert_Command input)
 					double_char = other;
 				}
 			}
-			else {
-				skip_auto_input = pos < text.size && text[pos] == input.letter;
+			else if (next_non_space == input.letter){
+				skip_auto_input = true;
+				skip_auto_input_count += 1;
 			}
 		}
 		if (input.letter == '"')
 		{
 			if (pos < text.size && text[pos] == '"') {
 				skip_auto_input = true;
+				skip_auto_input_count = 1;
 			}
 			else {
 				int count = 0;
@@ -6150,7 +6173,7 @@ void insert_command_execute(Insert_Command input)
 		}
 
 		if (skip_auto_input) {
-			pos += 1;
+			pos += skip_auto_input_count;
 			break;
 		}
 		if (insert_double_after) {
@@ -6261,7 +6284,7 @@ void insert_command_execute(Insert_Command input)
 	}
 }
 
-void remove_folds_on_cursor()
+void remove_folds_on_line(int line_index)
 {
 	auto& editor = syntax_editor;
 	auto& tab = editor.tabs[editor.open_tab_index];
@@ -6271,7 +6294,7 @@ void remove_folds_on_cursor()
 	auto& folds = tab.folds;
 	for (int i = 0; i < folds.size; i++) {
 		auto& fold = folds[i];
-		if (fold.start <= cursor.line && fold.end > cursor.line) {
+		if (fold.start <= line_index && fold.end > line_index) {
 			dynamic_array_remove_ordered(&folds, i);
 			i -= 1;
 		}
@@ -6464,7 +6487,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 		// Otherwise go through lines from start and try to find occurance
 		tab.cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), editor.search_start_pos);
-		remove_folds_on_cursor();
+		remove_folds_on_line(tab.cursor.line);
 		break;
 	}
 	case Editor_Mode::FUZZY_FIND_DEFINITION:
@@ -6504,7 +6527,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				syntax_editor_switch_tab(tab_index);
 			}
 			syntax_editor_add_position_to_jump_list();
-			remove_folds_on_cursor();
+			remove_folds_on_line(editor.tabs[editor.open_tab_index].cursor.line);
 			return;
 		}
 
@@ -6962,7 +6985,7 @@ void cursor_goto_selected_stack_frame()
 	syntax_editor_sanitize_cursor();
 
 	tab.last_render_cursor_pos.line = -1; // So that camera moves to cursor
-	remove_folds_on_cursor();
+	remove_folds_on_line(tab.cursor.line);
 }
 
 void syntax_editor_update(bool& animations_running)
@@ -8467,6 +8490,7 @@ void syntax_editor_render()
 		if (cursor_display_line != -1)
 		{
 			Source_Line* cursor_line = source_code_get_line(code, cursor.line);
+			Display_Line& display_line = display_lines[cursor_display_line];
 
 			Text_Index pos = cursor;
 			if (cursor_is_on_fold) {
@@ -8478,12 +8502,25 @@ void syntax_editor_render()
 				main_box.get_corner(Corner::TOP_LEFT) +
 				char_size * ivec2(cursor.character, -cursor_display_line - 1);
 
+			if (display_line.fold_info.inside_fold && cursor.line >= display_line.fold_info.start && cursor.line < display_line.fold_info.end) {
+				cursor_box.min.x = tab.folds[display_line.fold_info.fold_index].indentation * 4 * char_size.x + main_box.min.x;
+			}
+			else if (display_line.inline_fold_index != -1)
+			{
+				Code_Fold& fold = tab.folds[display_line.inline_fold_index];
+				if (cursor.line >= fold.start && cursor.line < fold.end) {
+					cursor_box.min.x = (source_code_get_line(code, display_line.line_index)->text.size + 1) * char_size.x + main_box.min.x;
+				}
+			}
+
 			const int CURSOR_SIZE = 2;
 			cursor_box.max = cursor_box.min + ivec2(CURSOR_SIZE, char_size.y);
 			if (editor.mode != Editor_Mode::INSERT) {
 				cursor_box.min.x -= CURSOR_SIZE;
 				cursor_box.max.x -= CURSOR_SIZE;
 			}
+
+
 
 			vec3 cursor_color = syntax_color_to_vec3(Syntax_Color::COMMENT);
 			renderer_2D_add_ibox2(syntax_editor.renderer_2D, cursor_box, cursor_color); // First line before character

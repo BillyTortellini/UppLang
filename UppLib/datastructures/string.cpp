@@ -168,7 +168,7 @@ void string_reserve(String* string, int new_capacity)
 
     char* buffer = nullptr;
     if (string->arena != nullptr) {
-        if (string->arena->resize(string->characters, string->capacity, new_capacity)) {
+        if (string->capacity != 0 && string->arena->resize(string->characters, string->capacity, new_capacity)) {
             return;
         }
         buffer = (char*) string->arena->allocate_raw(new_capacity, 1);
