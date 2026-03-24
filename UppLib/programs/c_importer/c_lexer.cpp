@@ -382,9 +382,9 @@ bool number_base_is_valid_character(Number_Base base, int character)
     return false;
 }
 
-void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool_Lock* pool_lock)
+void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* id_pool)
 {
-    lexer->pool_lock = pool_lock;
+    lexer->id_pool = id_pool;
     String identifier_string = string_create(256);
     SCOPE_EXIT(string_destroy(&identifier_string));
 
@@ -697,7 +697,7 @@ void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool_Lock* pool_lock)
 
             // Add Token
             Token_Attribute attribute;
-            attribute.id = identifier_pool_add(lexer->pool_lock, identifier_string);
+            attribute.id = identifier_pool_add(lexer->id_pool, identifier_string);
             dynamic_array_push_back(&lexer->tokens, token_make_with_slice(C_Token_Type::STRING_LITERAL, attribute,
                 token_slice, index - string_literal_start_index, string_literal_start_index));
             continue;
@@ -880,7 +880,7 @@ void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool_Lock* pool_lock)
             }
             else {
                 Token_Attribute attribute;
-                attribute.id = identifier_pool_add(lexer->pool_lock, identifier_string);
+                attribute.id = identifier_pool_add(lexer->id_pool, identifier_string);
                 dynamic_array_push_back(&lexer->tokens,
                     token_make(C_Token_Type::IDENTIFIER_NAME, attribute, line_number, character_pos, identifier_string_length, index));
             }

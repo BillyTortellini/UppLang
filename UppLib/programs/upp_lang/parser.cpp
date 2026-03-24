@@ -65,7 +65,7 @@ Text_Range token_get_text_range(Token& token) {
 	return text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end));
 }
 
-DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Arena* arena, Identifier_Pool_Lock* pool_lock)
+DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Arena* arena, Identifier_Pool* id_pool)
 {
 	String string_buffer = string_create(256);
 	SCOPE_EXIT(string_destroy(&string_buffer));
@@ -137,7 +137,7 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 
 			// Tokenize line
 			int token_count_before = tokens.size;
-			tokenizer_tokenize_line(line.text, &tokens, line_index, true);
+			tokenizer_tokenize_single_line(line.text, &tokens, line_index, true);
 			if (tokens.last().type == Token_Type::CONCATENATE_LINES) {
 				tokens.size -= 1;
 				next_concatenate = true;
@@ -154,14 +154,14 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 				Token& token = tokens[i];
 
 				if (token.type == Token_Type::IDENTIFIER) {
-					token.options.string_value = identifier_pool_add(pool_lock, string_create_substring_static(&line.text, token.start, token.end));
+					token.options.string_value = identifier_pool_add(id_pool, string_create_substring_static(&line.text, token.start, token.end));
 					continue;
 				}
 				else if (token.type == Token_Type::LITERAL_STRING) {
 					auto substring = string_create_substring_static(&line.text, token.start, token.end);
 					string_reset(&string_buffer);
 					tokenizer_parse_string_literal(substring, &string_buffer);
-					token.options.string_value = identifier_pool_add(pool_lock, string_buffer);
+					token.options.string_value = identifier_pool_add(id_pool, string_buffer);
 					continue;
 				}
 			}
@@ -2683,12 +2683,8 @@ namespace Parser
 		parser.predefined_ids = &identifier_pool->predefined_ids;
 
 		// Tokenize code
-		{
-			Identifier_Pool_Lock pool_lock = identifier_pool_lock_aquire(identifier_pool);
-			SCOPE_EXIT(identifier_pool_lock_release(pool_lock));
-			parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, arena, &pool_lock);
-			// print_tokens(parser.tokens);
-		}
+		parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, arena, identifier_pool);
+		// print_tokens(parser.tokens);
 
 		// Initialize state
 		parser.state.pos = 0;
@@ -2702,19 +2698,17 @@ namespace Parser
 		root->import_nodes = dynamic_array_create<Import*>();
 		root->custom_operators = dynamic_array_create<Custom_Operator_Node*>();
 		parse_list_items(upcast(root), wrapper_parse_module_item, module_add_child);
+		root->base.range = text_range_make(text_index_make(0, 0), text_index_make_line_end(unit->code, unit->code->line_count - 1));
+		root->base.bounding_range = root->base.range;
 
 		unit->root = root;
 	}
 
 	// AST queries based on Token-Indices
-	void ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Dynamic_Array<Text_Range>* ranges)
+	DynArray<Text_Range> ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Arena* arena)
 	{
 		auto range = base->range;
-
-		// TODO: THIS NEEDS TO CHANGE ANYWAY, so for now it doesn't work...
-		if (section != Node_Section::WHOLE) {
-			section = Node_Section::WHOLE_NO_CHILDREN;
-		}
+		DynArray<Text_Range> ranges = DynArray<Text_Range>::create(arena);
 
 		switch (section)
 		{
@@ -2722,10 +2716,10 @@ namespace Parser
 		case Node_Section::WHOLE:
 		{
 			if (base->type == AST::Node_Type::EXPRESSION && downcast<AST::Expression>(base)->type == AST::Expression_Type::FUNCTION_CALL) {
-				dynamic_array_push_back(ranges, base->bounding_range);
+				ranges.push_back(base->bounding_range);
 				break;
 			}
-			dynamic_array_push_back(ranges, range);
+			ranges.push_back( range);
 			break;
 		}
 		case Node_Section::WHOLE_NO_CHILDREN:
@@ -2744,7 +2738,7 @@ namespace Parser
 					sub_range.end = child_range.start;
 					// Extra check, as bounding range may differ from normal range (E.g. child starts before parent range)
 					if (text_index_in_order(sub_range.start, sub_range.end) == 1) {
-						dynamic_array_push_back(ranges, sub_range);
+						ranges.push_back(sub_range);
 					}
 				}
 				sub_range.start = child_range.end;
@@ -2757,79 +2751,110 @@ namespace Parser
 				sub_range.end = range.end;
 				// Extra check, as bounding range may differ from normal range
 				if (text_index_in_order(sub_range.start, sub_range.end)) {
-					dynamic_array_push_back(ranges, sub_range);
+					ranges.push_back(sub_range);
 				}
 			}
-			if (ranges->size == 0) {
-				dynamic_array_push_back(ranges, range);
+			if (ranges.size == 0) {
+				ranges.push_back(range);
 			}
 			break;
 		}
 		case Node_Section::IDENTIFIER:
 		{
-			// auto result = search_token(code, start_token_index, [](Token* t, void* _unused) -> bool {return t->type == Token_Type::IDENTIFIER; }, nullptr);
-			// if (!result.available) {
-			//     break;
-			// }
-			// 
-			// Token_Range range = token_range_make_offset(result.value, 1);
-			// dynamic_array_push_back(ranges, token_range_to_text_range(range, code));
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			for (int i = token_index; i < tokens.size; i++) {
+				Token& token = tokens[i];
+				if (token.type == Token_Type::IDENTIFIER) {
+					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					break;
+				}
+			}
 			break;
 		}
 		case Node_Section::ENCLOSURE:
 		{
-			// // Find next (), {} or [], and add the tokens to the ranges
-			// auto result = search_token(code, start_token_index, [](Token* t, void* type) -> bool {return t->type == Token_Type::PARENTHESIS; }, nullptr);
-			// if (!result.available) {
-			//     break;
-			// }
-			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(result.value, 1), code));
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
 
-			// // Find closing parenthesis
-			// auto par_type = source_code_get_line(code, result.value.line)->tokens[result.value.token].options.parenthesis.type;
-			// advance_token();
-			// auto end_found_fn = [](Token* t, void* type) -> bool { 
-			//     return t->type == Token_Type::PARENTHESIS && 
-			//         !t->options.parenthesis.is_open && t->options.parenthesis.type == *((Parenthesis_Type*)type); 
-			// };
-			// Token_Index start = result.value;
-			// start.token += 1;
-			// auto end_token = search_token(code, start, end_found_fn, (void*)(&par_type));
-			// if (!end_token.available) {
-			//     break;
-			// }
+			int start_index = -1;
+			for (int i = token_index; i < tokens.size; i++) {
+				Token& token = tokens[i];
+				auto token_class = token_type_get_class(token.type);
+				if (token_class == Token_Class::LIST_START || token_class == Token_Class::LIST_END) {
+					start_index = i;
+					break;
+				}
+			}
+			if (start_index == -1) {
+				break;
+			}
 
-			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(end_token.value, 1), code));
+			// Find start/end parenthesis
+			ivec2 start_end = tokens_get_parenthesis_range(tokens, start_index, tokens[start_index].type, arena);
+
+			// Convert to text-ranges
+			if (start_end.x != -1) {
+				Token& t = tokens[start_end.x];
+				ranges.push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
+			}
+			if (start_end.y != -1) {
+				Token& t = tokens[start_end.y];
+				ranges.push_back(text_range_make(text_index_make(t.line, t.start), text_index_make(t.line, t.end)));
+			}
+
 			break;
 		}
 		case Node_Section::KEYWORD:
 		{
-			// auto result = search_token(code, start_token_index, [](Token* t, void* type) -> bool {return t->type == Token_Type::KEYWORD; }, 0);
-			// if (!result.available) {
-			//     break;
-			// }
-			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(result.value, 1), code));
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			for (int i = token_index; i < tokens.size; i++) {
+				Token& token = tokens[i];
+				if (token_type_is_keyword(token.type)) {
+					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					break;
+				}
+			}
 			break;
 		}
-		case Node_Section::FIRST_TOKEN: {
-			// dynamic_array_push_back(ranges, token_range_to_text_range(token_range_make_offset(start_token_index, 1), code));
+		case Node_Section::FIRST_TOKEN: 
+		{
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
+			if (token_index < tokens.size) {
+				Token& token = tokens[token_index];
+				ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+			}
 			break;
 		}
 		case Node_Section::END_TOKEN: {
-			// Token_Range end_token_range = token_range_make_offset(range.end, -1);
-			// end_token_range.start.token = math_maximum(0, end_token_range.start.token);
-			// dynamic_array_push_back(ranges, end_token_range);
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(code, base->range.end, arena, token_index, true, false);
+			if (token_index < tokens.size) {
+				Token& token = tokens[token_index];
+				if (!(token.line == base->range.end.line && token.start == base->range.end.character)) {
+					ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+					break;
+				}
+			}
+			if (token_index -1 > 0 && token_index - 1 < tokens.size) {
+				Token& token = tokens[token_index - 1];
+				ranges.push_back(text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end)));
+			}
 			break;
 		}
 		default: panic("");
 		}
 
-		// For handling empty enclosures
-		if (ranges->size == 0) {
+		// For handling empty ranges
+		if (ranges.size == 0) {
 			Text_Range range;
 			range.start = base->range.start;
 			range.end = base->range.start;
-			dynamic_array_push_back(ranges, range);
+			ranges.push_back(range);
 		}
+
+		return ranges;
 	}
 }

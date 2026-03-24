@@ -166,8 +166,16 @@ void process_result_destroy(Optional<Process_Result>* result)
 }
 
 
+static thread_local bool converted_to_fiber = false;
+
 bool fiber_initialize() {
-    return ConvertThreadToFiber(0) != 0;
+    if (converted_to_fiber) return true;
+    if (ConvertThreadToFiber(0) == 0) {
+        helper_print_last_error();
+        return false;
+    }
+    converted_to_fiber = true;
+    return true;
 }
 
 Fiber_Handle fiber_get_current() {

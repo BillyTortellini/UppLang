@@ -274,7 +274,7 @@
       <SDLCheck>false</SDLCheck>
       <ConformanceMode>false</ConformanceMode>
       <LanguageStandard>stdcpp14</LanguageStandard>
-      <DisableSpecificWarnings>26495;4464;4514;4668;26451;4244;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4244;4267;26495</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;diaguids.lib;zlibstatic.lib;DXGI.lib;bddisasmd.lib;%(AdditionalDependencies)</AdditionalDependencies>

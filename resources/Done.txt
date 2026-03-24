@@ -1,6 +1,41 @@
 
 Done:
 -----
+23.03.26:
+ - Upp-Function 
+ - Remove workload clusters/dependencies
+ - Remove ir-function, add to upp-function
+ - Only compile functions if needed (bake needs them or we compile with build...)
+ - Single bake workload
+ - Moved Function_Progress into Upp_Function
+
+ - Remove Compiler, Identifier_Pool_Lock completely
+ - Remove semaphore from identifier-pool
+ - Move identifier pool to compilation-data
+ - Moved Fiber-Pool out of Compiler
+
+xx.03.26:
+- Error_Display thing... 
+- Tab on non-empty creates indentation + Shift-Enter
+- compile in release mode
+- inline-folds should open if we move on them
+- cursor on folds is handling stupidly
+- In-line folds
+- Backspace with auto-format does something smarter
+- Yank and put lines with correct indentation?
+- Disallow backspace to remove tabs...
+- Insert-Command Ctrl-W
+- Remove indentation from source-code
+- Test cam-start offset when more lines
+- Fix folds...
+- Line-number colors/indent
+- Fixed block-motions
+- Block indentation rendering
+- Rename bounding-box to box2
+- String with arena
+- Particle rendering
+- Fix parenthesis motions
+
 17.10:
  * More built-in functions
     Upp~return_type() --> returns comptime return type of current function, if not in function error

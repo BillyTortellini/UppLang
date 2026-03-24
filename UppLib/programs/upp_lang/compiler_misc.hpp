@@ -4,19 +4,17 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 #include "../../win32/process.hpp"
-#include "../../win32/thread.hpp"
 #include "constant_pool.hpp"
 
 struct Datatype;
 struct String;
 struct Type_System;
-struct ModTree_Function;
 struct Datatype_Struct;
 struct Datatype_Primitive;
 struct Datatype_Struct_Pattern;
 struct Datatype_Slice;
 struct Poly_Header;
-struct Function_Progress;
+struct Upp_Function;
 struct Source_Code;
 struct Analysis_Pass;
 struct Workload_Structure_Polymorphic;
@@ -105,8 +103,8 @@ enum class Node_Section
     WHOLE,             // Every character, including child text
     WHOLE_NO_CHILDREN, // Every character without child text
     IDENTIFIER,        // Highlight Identifier if the node has any
-    KEYWORD,           // Highlight keyword if the node contains one
-    ENCLOSURE,         // Highlight enclosures, e.g. (), {}, []
+    KEYWORD,           // Highlight first keyword if the node contains one
+    ENCLOSURE,         // Highlight first-encountered enclosures, e.g. (), {}, []
     NONE,              // Not quite sure if this is usefull at all
     FIRST_TOKEN,       // To display error that isn't specific to all internal tokens
     END_TOKEN,         // To display that something is missing
@@ -194,6 +192,7 @@ enum class Exit_Code_Type
 	EXECUTION_ERROR, // Stack overflow, return value overflow, instruction limit reached
 	INSTRUCTION_LIMIT_REACHED,
 	TYPE_INFO_WAITING_FOR_TYPE_FINISHED,
+	CALL_TO_UNFINISHED_FUNCTION,
 
 	MAX_ENUM_VALUE
 };
@@ -211,7 +210,7 @@ void exit_code_append_to_string(String* string, Exit_Code code);
 struct Poly_Function
 {
 	Poly_Header* poly_header;
-	Function_Progress* base_progress;
+	Upp_Function* function;
 };
 
 
@@ -259,7 +258,7 @@ struct Call_Signature
 // Extern Sources
 struct Extern_Sources
 {
-	Dynamic_Array<ModTree_Function*> extern_functions;
+	Dynamic_Array<Upp_Function*> extern_functions;
 	Dynamic_Array<String*> compiler_settings[(int)Extern_Compiler_Setting::MAX_ENUM_VALUE];
 };
 
@@ -344,27 +343,15 @@ struct Predefined_IDs
 	String* cast_type_enum_values[(int)Cast_Type::MAX_ENUM_VALUE];
 };
 
-struct Identifier_Pool;
-struct Identifier_Pool_Lock
-{
-	Identifier_Pool* pool;
-};
-
 struct Identifier_Pool
 {
 	Hashtable<String, String*> identifier_lookup_table;
 	Predefined_IDs predefined_ids;
-	Semaphore add_identifier_semaphore;
 };
 
 Identifier_Pool identifier_pool_create();
 void identifier_pool_destroy(Identifier_Pool* pool);
-
-Identifier_Pool_Lock identifier_pool_lock_aquire(Identifier_Pool* pool);
-void identifier_pool_lock_release(Identifier_Pool_Lock& lock);
-String* identifier_pool_add(Identifier_Pool_Lock* lock, String identifier);
-String* identifier_pool_lock_and_add(Identifier_Pool* pool, String identifier);
-
+String* identifier_pool_add(Identifier_Pool* pool, String identifier);
 void identifier_pool_print(Identifier_Pool* pool);
 
 

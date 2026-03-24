@@ -7,7 +7,6 @@
 #include "../upp_lang/compiler_misc.hpp"
 
 struct Datatype;
-struct Identifier_Pool_Lock;
 
 enum class C_Import_Primitive
 {
@@ -143,7 +142,6 @@ struct C_Import_Package
 struct C_Importer
 {
     Identifier_Pool identifier_pool;
-    Identifier_Pool_Lock pool_lock;
     Hashtable<String, C_Import_Package> cache;
 };
 

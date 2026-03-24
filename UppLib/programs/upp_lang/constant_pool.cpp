@@ -155,9 +155,8 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     }
     case Datatype_Type::FUNCTION_POINTER: {
         // Check if function index is correct
-        auto& slots = compilation_data->function_slots;
         i64 function_index = (*(i64*)memory) - 1;
-        if (function_index < -1 || function_index >= slots.size) { // Note: -1 would mean nullptr in this context
+        if (function_index < -1 || function_index >= compilation_data->functions.size) { // Note: -1 would mean nullptr in this context
             result = constant_pool_result_make_error("Found function pointer with invalid value");
             return;
         }
@@ -226,7 +225,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
             }
 
             // Create c_string value pointing to identifier pool (Always null terminated)
-            auto id = identifier_pool_lock_and_add(&compilation_data->compiler->identifier_pool, string_create_static((const char*)string.data));
+            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_create_static((const char*)string.data));
             memory_set_bytes(&string, sizeof(Upp_String), 0);
             *(Upp_String*)memory = upp_string_from_id(id);;
             return;

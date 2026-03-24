@@ -4,13 +4,14 @@
 #include "../../datastructures/hashtable.hpp"
 #include "semantic_analyser.hpp"
 
-struct Compiler;
-struct IR_Function;
 struct IR_Data_Access;
 struct IR_Code_Block;
-struct IR_Program;
 struct Datatype;
 struct Analysis_Pass;
+struct Type_System;
+struct Upp_Function;
+struct Upp_Global;
+
 
 enum class IR_Data_Access_Type
 {
@@ -38,7 +39,7 @@ struct IR_Data_Access
         int global_index;
         int constant_index;
         struct {
-            IR_Function* function; // For parameters
+            Upp_Function* function; // For parameters
             int index;
         } parameter;
         struct {
@@ -89,13 +90,12 @@ enum class IR_Instruction_Call_Type
     HARDCODED_FUNCTION_CALL,
 };
 
-struct IR_Function;
 struct IR_Instruction_Call
 {
     IR_Instruction_Call_Type call_type;
     union
     {
-        ModTree_Function* function;
+        Upp_Function* function;
         IR_Data_Access* pointer_access;
         Hardcoded_Type hardcoded;
     } options;
@@ -191,7 +191,7 @@ struct IR_Instruction_Cast
 struct IR_Instruction_Function_Address
 {
     IR_Data_Access* destination;
-    int function_slot_index;
+    Upp_Function* function;
 };
 
 struct IR_Instruction;
@@ -205,7 +205,7 @@ struct IR_Register
 
 struct IR_Code_Block
 {
-    IR_Function* function;
+    Upp_Function* function;
     IR_Code_Block* parent_block; // May be null if function
     int parent_instruction_index;
     Dynamic_Array<IR_Register> registers;
@@ -281,27 +281,6 @@ struct IR_Instruction
     Analysis_Pass* associated_pass;
 };
 
-struct IR_Program;
-struct IR_Function
-{
-    IR_Program* program;
-    Call_Signature* signature;
-    IR_Code_Block* code;
-    int function_slot_index; // Note: not + 1 
-};
-
-struct IR_Program
-{
-    Dynamic_Array<IR_Function*> functions;
-    IR_Function* entry_function;
-};
-
-struct Type_System;
-struct ModTree_Program;
-struct ModTree_Function;
-struct ModTree_Global;
-struct Compiler;
-
 struct Unresolved_Goto
 {
     IR_Code_Block* block;
@@ -329,7 +308,7 @@ struct Loop_Increment
             bool is_custom_iterator;
             // Only valid for custom iterators
             IR_Data_Access* iterator_access;
-            ModTree_Function* next_function;
+            Upp_Function* next_function;
             int iterator_deref_value;
         } foreach_loop;
     } options;
@@ -355,11 +334,6 @@ struct IR_Instruction_Reference
 
 struct IR_Generator
 {
-    IR_Program* program;
-    IR_Function* default_allocate_function;
-    IR_Function* default_free_function;
-    IR_Function* default_reallocate_function;
-
     // Stuff needed for compilation
     Compilation_Data* compilation_data;
     Dynamic_Array<IR_Data_Access*> data_accesses;
@@ -367,8 +341,6 @@ struct IR_Generator
 
     Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping;
     Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
-
-    Dynamic_Array<int> queued_function_slot_indices;
 
     Dynamic_Array<Defer_Item> defer_stack;
     Dynamic_Array<Unresolved_Goto> fill_out_continues;
@@ -387,12 +359,12 @@ struct IR_Generator
 
 IR_Generator* ir_generator_create(Compilation_Data* compilation_data);
 void ir_generator_destroy(IR_Generator* ir_generator);
+void ir_code_block_destroy(IR_Code_Block* block);
 
-void ir_generator_queue_function(Compilation_Data* compilation_data, ModTree_Function* function);
-void ir_generator_generate_queued_items(Compilation_Data* compilation_data, bool gen_bytecode);
-void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode);
+void ir_generator_finish(Compilation_Data* compilation_data);
+void ir_generator_generate_function(Upp_Function* function, Compilation_Data* compilation_data);
 
-void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions, Compilation_Data* compilation_data);
+void ir_program_append_to_string(String* string, bool print_generated_functions, Compilation_Data* compilation_data);
 void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
 IR_Binop ast_binop_to_ir_binop(AST::Binop binop);
 

@@ -646,7 +646,7 @@ void interpreter_safe_memcopy(Bytecode_Thread* thread, void* dst, void* src, int
 bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
 {
     auto compilation_data = thread->compilation_data;
-    auto& globals = compilation_data->program->globals;
+    auto& globals = compilation_data->globals;
     auto& constant_pool = compilation_data->constant_pool;
     auto& generator = compilation_data->bytecode_generator;
     auto& instructions = generator->instructions;
@@ -726,53 +726,61 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         }
         break;
     }
-    case Instruction_Type::CALL_FUNCTION: {
-        if (&thread->stack[INTERPRETER_STACK_SIZE - 1] - thread->stack_pointer <= generator->maximum_function_stack_depth) {
+    case Instruction_Type::CALL_FUNCTION_POINTER: 
+    case Instruction_Type::CALL_FUNCTION: 
+    {
+        int function_index = 0;
+        {
+            if (i->instruction_type == Instruction_Type::CALL_FUNCTION) {
+                function_index = i->op1 - 1;
+            }
+            else {
+                function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
+            }
+            if (function_index < 0 || function_index >= compilation_data->functions.size) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function call failed call-instruction has invalid function index");
+                return true;
+            }
+        }
+
+        Upp_Function* function = nullptr;
+        {
+            function = compilation_data->functions[function_index];
+            if (function->function_type == Upp_Function_Type::EXTERN) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to extern function not possible in bytecode");
+                return true;
+            }
+            else if (function->function_type == Upp_Function_Type::BAKE) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Error, trying to call bake-function from bake");
+                return true;
+            }
+            else if (function->contains_errors) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to function with errors");
+                return true;
+            }
+            else if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to poly-base");
+                return true;
+            }
+            else if (function->bytecode_start_instruction == -1) {
+                thread->waiting_for_function = function;
+                thread->exit_code = exit_code_make(Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION, "Waiting for function");
+                return true;
+            }
+        }
+
+        // Check for stack-overflow
+        int remaining_stack_size = &thread->stack[INTERPRETER_STACK_SIZE - 1] - thread->stack_pointer;
+        if (remaining_stack_size <= generator->maximum_stack_offset) {
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Stack overflow on normal function call");
             return true;
         }
+
         byte* base_pointer = thread->stack_pointer;
         thread->stack_pointer = thread->stack_pointer + i->op2; 
         *((int*)thread->stack_pointer) = thread->instruction_index + 1; // Push return address
         *(byte**)(thread->stack_pointer + 8) = base_pointer; // Push current stack_pointer
-        thread->instruction_index = i->op1; // Jump to function
-
-        return false;
-    }
-    case Instruction_Type::CALL_FUNCTION_POINTER: {
-        if (&thread->stack[INTERPRETER_STACK_SIZE - 1] - thread->stack_pointer < generator->maximum_function_stack_depth) {
-            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Stack overflow on function pointer call");
-            return true;
-        }
-
-        // Check if function pointer is 0 and other things
-        int jmp_to_instr_index;
-        {
-            int function_index = (int)(*(i64*)(thread->stack_pointer + i->op1)) - 1;
-            auto& slots = thread->compilation_data->function_slots;
-            if (function_index < 0 || function_index >= slots.size) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, pointer does not point to valid function");
-                return true;
-            }
-            auto& slot = slots[function_index];
-            if (slot.ir_function == nullptr) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call to modtree-only function? (Polymorphic/Extern?)");
-                return true;
-            }
-
-            jmp_to_instr_index = slot.bytecode_start_instruction;
-        }
-
-        if (jmp_to_instr_index < 0 || jmp_to_instr_index > instructions.size) {
-            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function pointer call failed, jump_to_instruction index invalid");
-            return true;
-        }
-
-        byte* base_pointer = thread->stack_pointer;
-        thread->stack_pointer = thread->stack_pointer + i->op2;
-        *((int*)thread->stack_pointer) = thread->instruction_index + 1; // Push return address
-        *(byte**)(thread->stack_pointer + 8) = base_pointer; // Push current stack_pointer
-        thread->instruction_index = jmp_to_instr_index; // Jump to function
+        thread->instruction_index = function->bytecode_start_instruction; // Jump to function
 
         return false;
     }
@@ -1141,13 +1149,14 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
     */
 }
 
-void bytecode_thread_set_initial_state(Bytecode_Thread* thread, int function_start_index)
+void bytecode_thread_set_initial_state(Bytecode_Thread* thread, Upp_Function* entry_function)
 {
     // Reset/Zero out previous runs
     memory_set_bytes(&thread->return_register, 256, 0);
     memory_set_bytes(&thread->stack[0], 16, 0); // Sets return address and old stack pointer to 0
     thread->stack_pointer = &thread->stack[0];
-    thread->instruction_index = function_start_index;
+    thread->instruction_index = entry_function->bytecode_start_instruction;
+    assert(entry_function->signature->parameters.size + (entry_function->signature->return_type().available ? -1 : 0) == 0, "Entry function cannot have params");
 
     // Reset heap allocations
     auto iter = hashtable_iterator_create(&thread->heap_allocations);

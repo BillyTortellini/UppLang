@@ -898,7 +898,7 @@ Type_System* type_system_create(Compilation_Data* compilation_data)
 	result->types = dynamic_array_create<Datatype*>(256);
 	result->internal_type_infos = dynamic_array_create<Internal_Type_Information*>(256);
 	result->register_time = 0;
-	result->identifier_pool = &compilation_data->compiler->identifier_pool;
+	result->identifier_pool = &compilation_data->identifier_pool;
 
 	type_system_add_predefined_types(result, compilation_data);
 
@@ -1456,7 +1456,7 @@ void struct_size_finish_recursive(Type_System* type_system, Datatype_Struct* str
 		{
 			String name = string_copy(*structure->name);
 			string_append_formated(&name, "_tag");
-			String* tag_enum_name = identifier_pool_lock_and_add(type_system->identifier_pool, name);
+			String* tag_enum_name = identifier_pool_add(type_system->identifier_pool, name);
 			string_destroy(&name);
 			tag_type = type_system_make_enum_empty(type_system, tag_enum_name);
 		}
@@ -1634,7 +1634,7 @@ void test_type_similarity(Datatype* signature) {
 
 void type_system_add_predefined_types(Type_System* type_system, Compilation_Data* compilation_data)
 {
-	Identifier_Pool* identifier_pool = &compilation_data->compiler->identifier_pool;
+	Identifier_Pool* identifier_pool = &compilation_data->identifier_pool;
 	auto& ids = identifier_pool->predefined_ids;
 	Predefined_Types* types = &type_system->predefined_types;
 
@@ -1678,18 +1678,18 @@ void type_system_add_predefined_types(Type_System* type_system, Compilation_Data
 		types->empty_pattern_variable = upcast(type_system_make_pattern_variable_type(type_system, nullptr));
 	}
 
-	auto make_id = [&](const char* name) -> String* { return identifier_pool_lock_and_add(identifier_pool, string_create_static(name)); };
+	auto make_id = [&](const char* name) -> String* { return identifier_pool_add(identifier_pool, string_create_static(name)); };
 	auto add_member_cstr = [&](Datatype_Struct* structure, const char* member_name, Datatype* member_type) {
-		String* id = identifier_pool_lock_and_add(identifier_pool, string_create_static(member_name));
+		String* id = identifier_pool_add(identifier_pool, string_create_static(member_name));
 		struct_add_member(structure, id, member_type);
 	};
 	auto add_struct_subtype = [&](Datatype_Struct* structure, const char* member_name) -> Datatype_Struct* {
-		String* id = identifier_pool_lock_and_add(identifier_pool, string_create_static(member_name));
+		String* id = identifier_pool_add(identifier_pool, string_create_static(member_name));
 		return type_system_make_struct_empty(type_system, id, false, structure, nullptr);
 	};
 	auto make_single_member_struct = [&](const char* struct_name, const char* member_name, Datatype* type) -> Datatype_Struct*
 	{
-		String* name_id = identifier_pool_lock_and_add(identifier_pool, string_create_static(struct_name));
+		String* name_id = identifier_pool_add(identifier_pool, string_create_static(struct_name));
 		auto result = type_system_make_struct_empty(type_system, name_id, false);
 		add_member_cstr(result, member_name, type);
 		type_system_finish_struct(type_system, result);
@@ -1792,11 +1792,11 @@ void type_system_add_predefined_types(Type_System* type_system, Compilation_Data
 			// Primitive
 			{
 				types->primitive_type_enum = type_system_make_enum_empty(
-					type_system, identifier_pool_lock_and_add(identifier_pool, string_create_static("Primitive_Type"))
+					type_system, identifier_pool_add(identifier_pool, string_create_static("Primitive_Type"))
 				);
 				auto add_enum_member = [&](Datatype_Enum* enum_type, const char* name, int value) {
 					Enum_Member item;
-					item.name = identifier_pool_lock_and_add(identifier_pool, string_create_static(name));
+					item.name = identifier_pool_add(identifier_pool, string_create_static(name));
 					item.value = value;
 					dynamic_array_push_back(&enum_type->members, item);
 					};

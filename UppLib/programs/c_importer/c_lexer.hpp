@@ -4,7 +4,7 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 
-struct Identifier_Pool_Lock;
+struct Identifier_Pool;
 
 enum class C_Token_Type
 {
@@ -118,7 +118,7 @@ struct C_Token
 struct Identifier_Pool;
 struct C_Lexer
 {
-    Identifier_Pool_Lock* pool_lock;
+    Identifier_Pool* id_pool;
     Hashtable<String, C_Token_Type> keywords;
     Dynamic_Array<C_Token> tokens;
     Dynamic_Array<C_Token> tokens_with_decoration; // Includes comments and whitespaces
@@ -129,5 +129,5 @@ const char* token_type_to_string(C_Token_Type type);
 
 C_Lexer c_lexer_create();
 void c_lexer_destroy(C_Lexer* result);
-void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool_Lock* pool_lock);
+void c_lexer_lex(C_Lexer* lexer, String* code, Identifier_Pool* pool);
 void c_lexer_print(C_Lexer* result);

@@ -9,7 +9,7 @@ struct Debugger;
 struct Compilation_Unit;
 struct Compilation_Data;
 struct IR_Code_Block;
-struct IR_Function;
+struct Upp_Function;
 struct Datatype;
 namespace AST {
     struct Statement;
@@ -113,7 +113,7 @@ struct Closest_Symbol_Info
 
 struct Assembly_Source_Information
 {
-    IR_Function* ir_function; // From which upp-function this assembly comes from
+    Upp_Function* upp_function;
     u64 function_start_address;
     u64 function_end_address;
 

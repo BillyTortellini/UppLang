@@ -2,6 +2,10 @@
 
 #include "../../datastructures/string.hpp"
 #include "../../datastructures/allocators.hpp"
+#include "source_code.hpp"
+#include "../../math/vectors.hpp"
+
+struct Arena;
 
 enum class Token_Class
 {
@@ -147,7 +151,12 @@ struct Token
 
 Token token_make(Token_Type type, int start, int end, int line);
 
-void tokenizer_tokenize_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments);
+void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments);
+DynArray<Token> tokenize_partial_code(
+    Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments);
+
+// Returns start/end index (Inclusive), -1 if not found
+ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type, Arena* arena);
 void tokenizer_parse_string_literal(String literal, String* append_to);
 
 Token_Class token_type_get_class(Token_Type type);

@@ -11,7 +11,7 @@ struct C_Compiler;
 struct IR_Code_Block;
 struct Datatype;
 struct String;
-struct IR_Function;
+struct Upp_Function;
 
 
 // C_COMPILER
@@ -36,10 +36,10 @@ struct C_Translation
 {
     C_Translation_Type type;
     union {
-        int function_slot_index;
+        Upp_Function* function;
         int global_index;
         struct {
-            IR_Function* function;
+            Upp_Function* function;
             int index;
         } parameter;
         struct {

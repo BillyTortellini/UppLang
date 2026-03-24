@@ -182,7 +182,7 @@ void find_editor_infos_recursive(
 
 			if (expr->type == AST::Expression_Type::FUNCTION) {
 				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-					Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->progress->parameter_table;
+					Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->function->parameter_table;
 					Symbol_Table_Range table_range;
 					table_range.range = node->bounding_range;
 					table_range.symbol_table = table;
@@ -468,7 +468,6 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	compilation_data->next_analysis_item_index = 0;
 	auto& errors = compilation_data->compiler_errors;
 	dynamic_array_reset(&errors);
-	Compiler* compiler = compilation_data->compiler;
 
 	for (int i = 0; i < compilation_data->compilation_units.size; i++)
 	{
@@ -515,16 +514,16 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	}
 
 	// Add semantic errors
-	Dynamic_Array<Text_Range> ranges = dynamic_array_create<Text_Range>();
-	SCOPE_EXIT(dynamic_array_destroy(&ranges));
+	Arena temp_arena = Arena::create();
+	SCOPE_EXIT(temp_arena.destroy());
 	for (int i = 0; i < compilation_data->semantic_errors.size; i++)
 	{
 		const auto& error = compilation_data->semantic_errors[i];
 
 		auto unit = compiler_find_ast_compilation_unit(compilation_data, error.error_node);
 
-		dynamic_array_reset(&ranges);
-		Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &ranges);
+		temp_arena.reset(true);
+		DynArray<Text_Range> ranges = Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &temp_arena);
 		assert(ranges.size != 0, "");
 
 		Compiler_Error_Info error_info;
@@ -602,17 +601,17 @@ bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
 	return a->base == b->base && a->pass == b->pass;
 }
 
-Compilation_Data* compilation_data_create(Compiler* compiler)
+Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 {
 	Compilation_Data* result = new Compilation_Data;
+	result->fiber_pool = fiber_pool;
 
 	// Create datastructures
 	{
-		result->compiler = compiler;
 		result->compiler_errors = dynamic_array_create<Compiler_Error_Info>(); // List of parser and semantic errors
+		result->identifier_pool = identifier_pool_create();
 
 		// Initialize Data
-		result->function_slots = dynamic_array_create<Function_Slot>();
 		result->semantic_errors = dynamic_array_create<Semantic_Error>();
 
 		result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
@@ -623,6 +622,8 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 		result->global_allocator = nullptr;
 		result->system_allocator = nullptr;
 		result->code_block_comptimes = hashtable_create_pointer_empty<AST::Code_Block*, Symbol_Table*>(1);
+		result->functions = dynamic_array_create<Upp_Function*>();
+		result->globals = dynamic_array_create<Upp_Global*>();
 
 		// Allocations
 		result->compilation_units = dynamic_array_create<Compilation_Unit*>();
@@ -642,9 +643,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 		result->constant_pool = constant_pool_create(result);
 		result->type_system = type_system_create(result);
 		result->extern_sources = extern_sources_create();
-		result->program = modtree_program_create();
-		result->workload_executer = workload_executer_create(compiler->fiber_pool, result);
-		// result->ir_generator = ir_generator_create(result); HAD TO MOVE
+		result->workload_executer = workload_executer_create(result);
 		result->bytecode_generator = bytecode_generator_create(result);
 		result->c_generator = c_generator_create(result);
 		c_compiler_initialize(); // Initializiation is cached, so calling this multiple times doesn't matter
@@ -655,12 +654,10 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 		Compilation_Data* compilation_data = result;
 		auto& type_system = compilation_data->type_system;
 		auto& types = type_system->predefined_types;
-		auto identifier_pool = &compiler->identifier_pool;
+		auto identifier_pool = &compilation_data->identifier_pool;
+		Identifier_Pool* id_pool = identifier_pool;
 
 		// Create root tables and predefined Symbols 
-		auto pool_lock_value = identifier_pool_lock_aquire(identifier_pool);
-		SCOPE_EXIT(identifier_pool_lock_release(pool_lock_value));
-		Identifier_Pool_Lock* pool_lock = &pool_lock_value;
 		{
 			// Create root table and root table symbols
 			{
@@ -669,25 +666,25 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 
 				// Define int, float, bool, string
 				Symbol* result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(pool_lock, string_create_static("int")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_create_static("int")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
 				result->options.datatype = upcast(types.i32_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(pool_lock, string_create_static("float")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_create_static("float")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
 				result->options.datatype = upcast(types.f32_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(pool_lock, string_create_static("bool")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_create_static("bool")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
 				result->options.datatype = upcast(types.bool_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(pool_lock, string_create_static("string")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
+					root_table, identifier_pool_add(id_pool, string_create_static("string")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
 				result->options.datatype = upcast(types.string);
@@ -697,7 +694,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 			{
 				Symbol_Table* builtin_table = symbol_table_create(compilation_data);
 				Symbol* builtin_symbol = symbol_table_define_symbol(
-					builtin_table, identifier_pool_add(pool_lock, string_create_static("_BUILTIN_MODULE_")), 
+					builtin_table, identifier_pool_add(id_pool, string_create_static("_BUILTIN_MODULE_")), 
 					Symbol_Type::MODULE, nullptr, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
@@ -717,7 +714,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 			auto define_type_symbol = [&](const char* name, Datatype* type) -> Symbol* {
 				Symbol* result = symbol_table_define_symbol(
 					builtin_table, 
-					identifier_pool_add(pool_lock, string_create_static(name)), 
+					identifier_pool_add(id_pool, string_create_static(name)), 
 					Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL, compilation_data
 				);
 				result->options.datatype = type;
@@ -749,7 +746,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 
 			auto define_hardcoded_symbol = [&](const char* name, Hardcoded_Type type) -> Symbol* {
 				Symbol* result = symbol_table_define_symbol(
-					builtin_table, identifier_pool_add(pool_lock, string_create_static(name)), 
+					builtin_table, identifier_pool_add(id_pool, string_create_static(name)), 
 					Symbol_Type::HARDCODED_FUNCTION, 0, Symbol_Access_Level::GLOBAL,
 					compilation_data
 				);
@@ -796,11 +793,11 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 			// Add global allocator symbol
 			auto global_allocator_symbol = symbol_table_define_symbol(
 				builtin_table,
-				identifier_pool_add(pool_lock, string_create_static("global_allocator")),
+				identifier_pool_add(id_pool, string_create_static("global_allocator")),
 				Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL,
 				compilation_data
 			);
-			compilation_data->global_allocator = modtree_program_add_global_assert_type_finished(
+			compilation_data->global_allocator = compilation_data_add_global_assert_type_finished(
 				compilation_data,
 				upcast(type_system_make_pointer(type_system, upcast(types.allocator))), global_allocator_symbol, false
 			);
@@ -809,10 +806,10 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 			// Add system allocator
 			auto default_allocator_symbol = symbol_table_define_symbol(
 				builtin_table,
-				identifier_pool_add(pool_lock, string_create_static("system_allocator")),
+				identifier_pool_add(id_pool, string_create_static("system_allocator")),
 				Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL, compilation_data
 			);
-			compilation_data->system_allocator = modtree_program_add_global_assert_type_finished(
+			compilation_data->system_allocator = compilation_data_add_global_assert_type_finished(
 				compilation_data, upcast(types.allocator), default_allocator_symbol, false
 			);
 			default_allocator_symbol->options.global = compilation_data->system_allocator;
@@ -824,7 +821,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 			auto& context_signatures   = compilation_data->context_change_type_signatures;
 			auto& ids = identifier_pool->predefined_ids;
 			auto make_id = [&](const char* name) -> String* {
-				return identifier_pool_add(&pool_lock_value, string_create_static(name));
+				return identifier_pool_add(id_pool, string_create_static(name));
 			};
 
 			Call_Signature* call_signature = call_signature_create_empty();
@@ -1004,7 +1001,7 @@ Compilation_Data* compilation_data_create(Compiler* compiler)
 	return result;
 }
 
-Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identifier_pool)
+Source_Code* source_code_load_from_file(String filepath)
 {
 	Optional<String> file_content = file_io_load_text_file(filepath.characters);
 	SCOPE_EXIT(file_io_unload_text_file(&file_content));
@@ -1014,8 +1011,6 @@ Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identi
 
 	Source_Code* source_code = source_code_create();
 	source_code_fill_from_string(source_code, file_content.value);
-	auto lock = identifier_pool_lock_aquire(identifier_pool);
-	SCOPE_EXIT(identifier_pool_lock_release(lock));
 	return source_code;
 }
 
@@ -1036,7 +1031,7 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 	Source_Code* source_code = nullptr;
 	if (load_file_if_new)
 	{
-		source_code = source_code_load_from_file(full_file_path, &compilation_data->compiler->identifier_pool);
+		source_code = source_code_load_from_file(full_file_path);
 		if (source_code == nullptr) {
 		    return nullptr;
 		}
@@ -1061,8 +1056,7 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_data)
 {
 	auto& type_system = compilation_data->type_system;
-	auto& ids = compilation_data->compiler->identifier_pool.predefined_ids;
-	auto program = compilation_data->program;
+	auto& ids = compilation_data->identifier_pool.predefined_ids;
 
 	Arena arena = Arena::create();
 	SCOPE_EXIT(arena.destroy());
@@ -1074,7 +1068,6 @@ void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_dat
 	Semantic_Context* semantic_context = &error_context;
 
 	// Check if main is defined
-	program->main_function = 0;
 	DynArray<Symbol*> main_symbols = symbol_table_query_id(
 		compilation_unit_to_module(compilation_data->main_unit, compilation_data)->symbol_table, ids.main, 
 		symbol_query_info_make(Symbol_Access_Level::GLOBAL, Import_Type::NONE, false), &arena
@@ -1102,10 +1095,10 @@ void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_dat
 		log_error_info_symbol(semantic_context, main_symbol);
 		return;
 	}
-	program->main_function = main_symbol->options.function;
+	compilation_data->main_function = main_symbol->options.function;
 
 	if (!compilation_data_errors_occured(compilation_data)) {
-		assert(program->main_function->is_runnable, "");
+		assert(!compilation_data->main_function->contains_errors, "");
 	}
 }
 
@@ -1122,8 +1115,15 @@ void compilation_data_destroy(Compilation_Data* data)
 	extern_sources_destroy(&data->extern_sources);
 	c_generator_destroy(data->c_generator);
 
-	modtree_program_destroy(data->program);
-	dynamic_array_destroy(&data->function_slots);
+	for (int i = 0; i < data->functions.size; i++) {
+		Upp_Function* function = data->functions[i];
+		if (function->ir_block != nullptr) {
+			ir_code_block_destroy(function->ir_block);
+			function->ir_block = nullptr;
+		}
+	}
+	dynamic_array_destroy(&data->functions);
+	dynamic_array_destroy(&data->globals);
 
 	dynamic_array_destroy(&data->semantic_infos);
 	hashtable_destroy(&data->custom_operator_deduplication);
@@ -1313,7 +1313,7 @@ Call_Parameter* call_signature_add_parameter(
 
 Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Datatype* datatype, Compilation_Data* compilation_data)
 {
-	auto& ids = compilation_data->compiler->identifier_pool.predefined_ids;
+	auto& ids = compilation_data->identifier_pool.predefined_ids;
 	call_signature_add_parameter(signature, ids.return_type_name, datatype, false, false, true);
 	assert(signature->return_type_index == -1, "");
 	signature->return_type_index = signature->parameters.size - 1;

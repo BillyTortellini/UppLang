@@ -13,7 +13,6 @@ struct Compilation_Unit;
 struct Datatype;
 struct Analysis_Pass;
 struct Datatype_Enum;
-struct Identifier_Pool_Lock;
 struct Expression_Info;
 
 namespace AST

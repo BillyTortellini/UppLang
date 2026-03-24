@@ -176,7 +176,7 @@ Header_Parser header_parser_create(C_Lexer* lexer, String source_code)
     result.index = 0;
     result.source_code = source_code;
     auto add_id = [&](const char* name) -> String* {
-        return identifier_pool_add(lexer->pool_lock, string_create_static(name));
+        return identifier_pool_add(lexer->id_pool, string_create_static(name));
     };
     result.identifier_typedef = add_id("typedef");
     result.identifier_unaligned = add_id("__unaligned");
@@ -1559,8 +1559,8 @@ void header_parser_parse(Header_Parser* parser)
     printf("\n");
     */
 
-    String* identifier_extern_c = identifier_pool_add(parser->lexer->pool_lock, string_create_static("C"));
-    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->pool_lock, string_create_static("C++"));
+    String* identifier_extern_c = identifier_pool_add(parser->lexer->id_pool, string_create_static("C"));
+    String* identifier_extern_cpp = identifier_pool_add(parser->lexer->id_pool, string_create_static("C++"));
     while (parser->index + 2 < parser->tokens.size)
     {
         C_Token* t1 = &parser->tokens[parser->index];
@@ -1670,7 +1670,7 @@ Print_Destination print_destination_make(bool is_sizeof, bool is_alignof, bool i
 }
 
 Optional<C_Import_Package> c_importer_parse_header(
-    const char* file_name, Identifier_Pool_Lock* pool_lock, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
+    const char* file_name, Identifier_Pool* id_pool, Dynamic_Array<String> include_dirs, Dynamic_Array<String> defines
 )
 {
     logg("Parsing header file: %s\n---------------------\n", file_name);
@@ -1718,7 +1718,7 @@ Optional<C_Import_Package> c_importer_parse_header(
     // Run lexer over file
     C_Lexer lexer = c_lexer_create();
     SCOPE_EXIT(c_lexer_destroy(&lexer));
-    c_lexer_lex(&lexer, &source_code, pool_lock);
+    c_lexer_lex(&lexer, &source_code, id_pool);
 
     //logg("Lexing finished, Stats:\nIdentifier Count: #%d\nToken Count: #%d\n Whitespace-Token Count: %d\n",
         //code_source.identifiers.size, code_source.tokens.size, code_source.tokens_with_decoration.size - code_source.tokens.size);
@@ -1895,7 +1895,7 @@ Optional<C_Import_Package> c_importer_import_header(
     // }
 
     // Parse header if not in cache
-    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, &importer->pool_lock, include_directories, defines);
+    Optional<C_Import_Package> parsed_package = c_importer_parse_header(header_name.characters, &importer->identifier_pool, include_directories, defines);
     if (parsed_package.available)
     {
         String cache_file_name = string_create(header_name.characters);
@@ -1912,7 +1912,6 @@ C_Importer* c_importer_create()
     C_Importer* importer = new C_Importer;
     importer->cache = hashtable_create_empty<String, C_Import_Package>(64, hash_string, string_equals);
     importer->identifier_pool = identifier_pool_create();
-    importer->pool_lock = identifier_pool_lock_aquire(&importer->identifier_pool);
     return importer;
 
     /*
@@ -1949,7 +1948,6 @@ void c_importer_destroy(C_Importer* importer)
 
     hashtable_for_each(&importer->cache, c_package_cache_destroy);
     hashtable_destroy(&importer->cache);
-    identifier_pool_lock_release(importer->pool_lock);
     identifier_pool_destroy(&importer->identifier_pool);
     delete importer;
 }

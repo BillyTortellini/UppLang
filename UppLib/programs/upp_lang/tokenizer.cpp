@@ -2,6 +2,7 @@
 
 #include "../../datastructures/hashtable.hpp"
 #include "../../utility/character_info.hpp"
+#include "source_code.hpp"
 
 // Tokenizer
 struct Tokenizer
@@ -236,7 +237,7 @@ Token token_make(Token_Type type, int start, int end, int line) {
 }
 
 
-void tokenizer_tokenize_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments)
+void tokenizer_tokenize_single_line(String text, DynArray<Token>* tokens, int line_index, bool remove_comments)
 {
     int index = 0;
     while (index < text.size)
@@ -452,3 +453,127 @@ void tokenizer_parse_string_literal(String literal, String* append_to)
 		string_append_character(append_to, c);
 	}
 }
+
+DynArray<Token> tokenize_partial_code(
+    Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments)
+{
+	DynArray<Token> tokens = DynArray<Token>::create(arena);
+	token_index = 0;
+	if (index.line < 0 || index.line >= code->line_count) return tokens;
+
+	auto helper_has_continuation = [&]() -> bool {
+			if (tokens.size > 0 && tokens[tokens.size - 1].type == Token_Type::CONCATENATE_LINES) return true;
+			if (tokens.size > 1 &&
+				tokens[tokens.size - 1].type == Token_Type::COMMENT &&
+				tokens[tokens.size - 2].type == Token_Type::CONCATENATE_LINES) 
+			{
+				return true;
+			}
+			return false;
+		};
+
+	// Check for continuations in previous lines
+	if (handle_line_continuations)
+	{
+		int start_line = index.line;
+		while (start_line > 0)
+		{
+			Source_Line* prev = source_code_get_line(code, start_line - 1);
+			tokens.reset();
+			tokenizer_tokenize_single_line(prev->text, &tokens, start_line - 1, remove_comments);
+			if (helper_has_continuation()) {
+				start_line = start_line - 1;
+				continue;
+			}
+			break;
+		}
+
+		// Tokenize previous lines with continuations
+		tokens.reset();
+		for (int i = start_line; i < index.line; i += 1) {
+			tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, i, remove_comments);
+		}
+	}
+
+	// Tokenize current line
+	token_index = math_maximum(0, (int)tokens.size - 1);
+	int line_token_start = tokens.size;
+	tokenizer_tokenize_single_line(source_code_get_line(code, index.line)->text, &tokens, index.line, remove_comments);
+
+	// Find closest token
+	for (int i = line_token_start; i < tokens.size; i++) {
+		Token& token = tokens[i];
+		if (token.start <= index.character) {
+			token_index = i;
+		}
+		else {
+			break;
+		}
+	}
+
+	if (handle_line_continuations)
+	{
+		int line = index.line + 1;
+		while (helper_has_continuation() && line < code->line_count) 
+		{
+			int prev_size = tokens.size;
+			tokenizer_tokenize_single_line(source_code_get_line(code, line)->text, &tokens, line, remove_comments);
+			if (tokens.size == prev_size) break; // Empty lines stop continuations
+			line += 1;
+		}
+	}
+
+	return tokens;
+}
+
+// Returns start/end index (Inclusive), -1 if not found
+ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type, Arena* arena)
+{
+	auto checkpoint = arena->make_checkpoint();
+	SCOPE_EXIT(checkpoint.rewind());
+
+	Token_Class token_class = token_type_get_class(type);
+	assert(token_class == Token_Class::LIST_START || token_class == Token_Class::LIST_END, "");
+	if (token_class == Token_Class::LIST_END) {
+		type = token_type_get_partner(type);
+	}
+
+	// Find parenthesis start
+	while (start > 0 && start < tokens.size)
+	{
+		if (tokens[start].type == type) {
+			break;
+		}
+		start -= 1;
+	}
+	if (start < 0) { // Exit if no start could be found
+		return ivec2(-1, -1);
+	}
+
+	// Find end parenthesis
+	DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(arena);
+	parenthesis_stack.push_back(type);
+	int end = start + 1;
+	while (end < tokens.size) 
+	{
+		Token& token = tokens[end];
+		Token_Class token_class = token_type_get_class(token.type);
+		if (token_class == Token_Class::LIST_START) {
+			parenthesis_stack.push_back(token.type);
+		}
+		else if (token_type_get_partner(token.type) == parenthesis_stack.last()) {
+			parenthesis_stack.size -= 1;
+			if (parenthesis_stack.size == 0) {
+				break;
+			}
+		}
+		end += 1;
+	}
+	if (end >= tokens.size) {
+		end = -1;
+	}
+
+	return ivec2(start, end);
+}
+
+

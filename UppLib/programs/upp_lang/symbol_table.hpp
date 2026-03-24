@@ -11,8 +11,8 @@
 
 struct Compilation_Data;
 struct Semantic_Context;
-struct ModTree_Global;
-struct ModTree_Function;
+struct Upp_Global;
+struct Upp_Function;
 struct Datatype;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
@@ -25,7 +25,6 @@ struct Datatype_Pattern_Variable;
 struct Workload_Base;
 struct Upp_Module;
 
-struct Function_Progress;
 struct Poly_Function;
 struct Function_Parameter;
 struct Poly_Header;
@@ -68,7 +67,7 @@ struct Custom_Operator
     {
         struct
         {
-            Function_Progress* function;
+            Upp_Function* function;
             bool call_by_reference;
             bool return_by_reference;
             bool auto_cast;
@@ -77,7 +76,7 @@ struct Custom_Operator
         {
             Datatype* left_type;
             Datatype* right_type;
-            Function_Progress* function;
+            Upp_Function* function;
             bool switch_left_and_right;
             bool take_pointer_left;
             bool take_pointer_right;
@@ -85,14 +84,14 @@ struct Custom_Operator
         struct
         {
             Datatype* datatype;
-            Function_Progress* function;
+            Upp_Function* function;
             bool take_pointer;
         } unop;
         struct
         {
             Datatype* container_type;
             Datatype* index_type;
-            Function_Progress* function;
+            Upp_Function* function;
             bool take_pointer_for_container;
             bool take_pointer_for_index;
         } array_access;
@@ -100,10 +99,10 @@ struct Custom_Operator
         {
             Datatype* iterable_type;
             Datatype* iterator_type;
-            Function_Progress* create;
-            Function_Progress* has_next;
-            Function_Progress* next;
-            Function_Progress* get_value;
+            Upp_Function* create;
+            Upp_Function* has_next;
+            Upp_Function* next;
+            Upp_Function* get_value;
             bool take_pointer_for_iterable;
             bool take_pointer_for_iterator;
         } iterator;
@@ -167,17 +166,17 @@ struct Symbol
     union
     {
         Datatype* variable_type;
-        ModTree_Function* function;
+        Upp_Function* function;
         Poly_Function poly_function;
         Workload_Definition* definition_workload;
         Symbol* alias_for;
         int unfinished_alias_index;
         Hardcoded_Type hardcoded;
         Datatype* datatype;
-        ModTree_Global* global;
+        Upp_Global* global;
         Upp_Module* upp_module;
         struct {
-            Function_Progress* function;
+            Upp_Function* function;
             int index_in_polymorphic_signature;
             int index_in_non_polymorphic_signature;
         } parameter;

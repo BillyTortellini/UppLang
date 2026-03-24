@@ -39,6 +39,7 @@ String string_create_static_with_size(const char* content, int length);
 String string_create_substring_static(String* string, int start_pos, int end_pos);
 
 bool string_equals(String* s1, String* s2);
+bool string_equals(String s1, String s2);
 bool string_equals_cstring(String* string, const char* compare);
 bool string_in_order(String* s1, String* s2);
 void string_clear(String* string);

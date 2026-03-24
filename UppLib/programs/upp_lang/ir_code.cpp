@@ -65,7 +65,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
 }
 
 // Note: We assume that the next instruction in the current block will be associated with this block
-IR_Code_Block* ir_code_block_create(IR_Function* function = nullptr)
+IR_Code_Block* ir_code_block_create(Upp_Function* function = nullptr)
 {
     if (function == nullptr) {
         assert(ir_generator->current_block != nullptr, "");
@@ -97,58 +97,6 @@ void ir_code_block_destroy(IR_Code_Block* block)
     dynamic_array_destroy(&block->registers);
     delete block;
 }
-
-IR_Function* ir_function_create(Compilation_Data* compilation_data, Call_Signature* signature, int slot_index = -1)
-{
-    IR_Function* function = new IR_Function();
-    function->code = ir_code_block_create(function);
-    function->signature = signature;
-    function->program = ir_generator->program;
-    dynamic_array_push_back(&ir_generator->program->functions, function);
-
-    auto& slots = compilation_data->function_slots;
-    if (slot_index == -1) {
-        Function_Slot slot;
-        slot.modtree_function = nullptr;
-        slot.ir_function = nullptr;
-        slot.index = slots.size;
-        slot.bytecode_start_instruction = -1;
-        slot.bytecode_end_instruction = -1;
-        dynamic_array_push_back(&slots, slot);
-        slot_index = slot.index;
-    }
-    function->function_slot_index = slot_index;
-
-    auto& slot = slots[slot_index];
-    slot.ir_function = function;
-    dynamic_array_push_back(&ir_generator->queued_function_slot_indices, slot_index);
-    return function;
-}
-
-void ir_function_destroy(IR_Function* function)
-{
-    ir_code_block_destroy(function->code);
-    delete function;
-}
-
-IR_Program* ir_program_create()
-{
-    IR_Program* result = new IR_Program;
-    result->entry_function = 0;
-    result->functions = dynamic_array_create<IR_Function*>(32);
-    return result;
-}
-
-void ir_program_destroy(IR_Program* program)
-{
-    for (int i = 0; i < program->functions.size; i++) {
-        auto function = program->functions[i];
-        ir_function_destroy(function);
-    }
-    dynamic_array_destroy(&program->functions);
-    delete program;
-}
-
 
 
 // To_String
@@ -246,13 +194,9 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     case IR_Instruction_Type::FUNCTION_ADDRESS:
     {
         IR_Instruction_Function_Address* function_address = &instruction->options.function_address;
-        const char* name = "predefined_function";
-        auto& modtree = compilation_data->function_slots[function_address->function_slot_index].modtree_function;
-        if (modtree != nullptr) {
-            name = modtree->name->characters;
-        }
+        auto& function = function_address->function;
 
-        string_append_formated(string, "FUNCTION_ADDRESS of %s\n", name);
+        string_append_formated(string, "FUNCTION_ADDRESS of %s\n", function->name->characters);
         string_append_formated(string, "dst: ");
         ir_data_access_append_to_string(function_address->destination, string, code_block, compilation_data);
         break;
@@ -558,7 +502,7 @@ void ir_code_block_append_to_string(IR_Code_Block* code_block, String* string, i
     }
 }
 
-void ir_function_append_to_string(IR_Function* function, String* string, int indentation, Compilation_Data* compilation_data)
+void function_ir_append_to_string(Upp_Function* function, String* string, int indentation, Compilation_Data* compilation_data)
 {
     auto type_system = compilation_data->type_system;
 
@@ -566,22 +510,24 @@ void ir_function_append_to_string(IR_Function* function, String* string, int ind
     string_append_formated(string, "Function-Type:");
     call_signature_append_to_string(function->signature, string, type_system, datatype_format_make_default());
     string_append_formated(string, "\n");
-    ir_code_block_append_to_string(function->code, string, indentation, compilation_data);
+    ir_code_block_append_to_string(function->ir_block, string, indentation, compilation_data);
 }
 
-void ir_program_append_to_string(IR_Program* program, String* string, bool print_generated_functions, Compilation_Data* compilation_data)
+void ir_program_append_to_string(String* string, bool print_generated_functions, Compilation_Data* compilation_data)
 {
     string_append_formated(string, "Program Dump:\n-----------------\n");
-    for (int i = 0; i < program->functions.size; i++)
+    for (int i = 0; i < compilation_data->functions.size; i++)
     {
-        auto function = program->functions[i];
-        const auto& slot = compilation_data->function_slots[function->function_slot_index];
-        if (slot.modtree_function == nullptr && !print_generated_functions) {
+        auto function = compilation_data->functions[i];
+        if (function->ir_block == nullptr) {
+            continue;
+        }
+        if (function->symbol == nullptr && !print_generated_functions) { // This is not correct
             continue;
         }
 
         string_append_formated(string, "Function #%d ", i);
-        ir_function_append_to_string(program->functions[i], string, 0, compilation_data);
+        function_ir_append_to_string(function, string, 0, compilation_data);
         string_append_formated(string, "\n");
     }
 }
@@ -607,7 +553,7 @@ IR_Data_Access* ir_data_access_create_nothing() {
     return &ir_generator->nothing_access;
 }
 
-IR_Data_Access* ir_data_access_create_global(ModTree_Global* global)
+IR_Data_Access* ir_data_access_create_global(Upp_Global* global)
 {
     IR_Data_Access* access = new IR_Data_Access;
     access->datatype = global->type;
@@ -617,7 +563,7 @@ IR_Data_Access* ir_data_access_create_global(ModTree_Global* global)
     return access;
 }
 
-IR_Data_Access* ir_data_access_create_parameter(IR_Function* function, int parameter_index)
+IR_Data_Access* ir_data_access_create_parameter(Upp_Function* function, int parameter_index)
 {
     IR_Data_Access* access = new IR_Data_Access;
     access->datatype = function->signature->parameters[parameter_index].datatype;
@@ -1170,7 +1116,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     auto type_system = ir_generator->compilation_data->type_system;
     auto& types = type_system->predefined_types;
     auto& gen = *ir_generator;
-    auto& ids = gen.compilation_data->compiler->identifier_pool.predefined_ids;
+    auto& ids = gen.compilation_data->identifier_pool.predefined_ids;
     auto ir_block = gen.current_block;
 
     auto backup_expr = gen.current_expr;
@@ -1214,7 +1160,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         // Function pointer read
         IR_Instruction load_instr;
         load_instr.type = IR_Instruction_Type::FUNCTION_ADDRESS;
-        load_instr.options.function_address.function_slot_index = info->options.function->function_slot_index;
+        load_instr.options.function_address.function = info->options.function;
         load_instr.options.function_address.destination = make_destination_access_on_demand(result_type);
         add_instruction(load_instr);
         return destination;
@@ -2710,139 +2656,98 @@ void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_b
     gen.current_block = backup;
 }
 
-
-
-// Queueing
-void ir_generator_generate_queued_items(Compilation_Data* compilation_data, bool gen_bytecode)
+void ir_generator_generate_function(Upp_Function* function, Compilation_Data* compilation_data)
 {
     Timing_Task before_task = compilation_data->task_current;
     SCOPE_EXIT(compilation_data_switch_timing_task(compilation_data, before_task));
     compilation_data_switch_timing_task(compilation_data, Timing_Task::CODE_GEN);
 
-    // Generate Blocks
-    for (int i = 0; i < ir_generator->queued_function_slot_indices.size; i++)
-    {
-        auto& slot = compilation_data->function_slots[ir_generator->queued_function_slot_indices[i]];
-        ModTree_Function* mod_func = slot.modtree_function;
-        IR_Function* ir_func = slot.ir_function;
-        if (mod_func == 0) { // This means this is a predefined ir-function
-            if (gen_bytecode) {
-                bytecode_generator_compile_function(compilation_data->bytecode_generator, ir_func);
-            }
-            continue;
-        }
-
-        // Generate function code
-        AST::Body_Node body;
-        if (mod_func->function_type == ModTree_Function_Type::NORMAL)
-        {
-            auto body_workload = mod_func->options.normal.progress->body_workload;
-            ir_generator->current_pass = body_workload->body_pass;
-            body = body_workload->progress->function_node->options.function.body;
-        }
-        else if (mod_func->function_type == ModTree_Function_Type::BAKE)
-        {
-            ir_generator->current_pass = mod_func->options.bake->analysis_pass;
-            body = mod_func->options.bake->bake_node->options.bake_body;
-        }
-        else {
-            panic("Extern functions should have been filtered out by here");
-        }
-
-        if (body.is_expression)
-        {
-            IR_Instruction return_instr;
-            return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = 
-                ir_generator_generate_expression_in_block(ir_func->code, body.expr);
-            add_instruction(return_instr, ir_func->code);
-        }
-        else {
-            ir_generator_generate_block(ir_func->code, body.block);
-        }
-
-        // Add empty return
-        if (!ir_func->signature->return_type().available) {
-            IR_Instruction return_instr;
-            return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-            add_instruction(return_instr, ir_func->code);
-        }
-
-        // Fill out breaks and continues
-        for (int j = 0; j < ir_generator->fill_out_breaks.size; j++) {
-            Unresolved_Goto fill_out = ir_generator->fill_out_breaks[j];
-            int label_index = *hashtable_find_element(&ir_generator->labels_break, fill_out.break_block);
-            assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
-            fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
-        }
-        for (int j = 0; j < ir_generator->fill_out_continues.size; j++) {
-            Unresolved_Goto fill_out = ir_generator->fill_out_continues[j];
-            int label_index = *hashtable_find_element(&ir_generator->labels_continue, fill_out.break_block);
-            assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
-            fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
-        }
-        dynamic_array_reset(&ir_generator->fill_out_breaks);
-        dynamic_array_reset(&ir_generator->fill_out_continues);
-        hashtable_reset(&ir_generator->variable_mapping);
-        hashtable_reset(&ir_generator->labels_break);
-        hashtable_reset(&ir_generator->labels_continue);
-        hashtable_reset(&ir_generator->block_defer_depths);
-        hashtable_reset(&ir_generator->loop_increment_instructions);
-
-        if (gen_bytecode) {
-            bytecode_generator_compile_function(compilation_data->bytecode_generator, ir_func);
-        }
-    }
-    dynamic_array_reset(&ir_generator->queued_function_slot_indices);
-
-    // Do bytecode stuff
-    if (gen_bytecode) {
-        bytecode_generator_update_references(compilation_data->bytecode_generator);
-    }
-}
-
-void ir_generator_queue_function(Compilation_Data* compilation_data, ModTree_Function* function)
-{
     ir_generator = compilation_data->ir_generator;
 
-    if (!function->is_runnable) {
+    if (function->ir_block != nullptr) { // Function already generated
+        return;
+    }
+    if (function->contains_errors || function->function_type == Upp_Function_Type::EXTERN) {
+        return;
+    }
+    if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
         return;
     }
 
-    if (function->function_type == ModTree_Function_Type::EXTERN) {
-        return;
+    // Generate function code
+    function->ir_block = ir_code_block_create(function);
+    AST::Body_Node body;
+    if (function->function_type == Upp_Function_Type::NORMAL)
+    {
+        auto body_workload = function->body_workload;
+        assert(body_workload != nullptr, "");
+        ir_generator->current_pass = body_workload->body_pass;
+        body = body_workload->function->function_node->options.function.body;
     }
-    else if (function->function_type == ModTree_Function_Type::NORMAL) {
-        assert((function->options.normal.progress->type != Polymorphic_Analysis_Type::POLYMORPHIC_BASE), "Function cannot be polymorhic here!");
+    else
+    {
+        ir_generator->current_pass = function->options.bake->analysis_pass;
+        body = function->options.bake->bake_node->options.bake_body;
     }
 
-    auto& slots = compilation_data->function_slots;
-    auto& slot = slots[function->function_slot_index];
-    if (slot.ir_function != nullptr) return; // Already queued
-    ir_function_create(compilation_data, function->signature, function->function_slot_index);
+    if (body.is_expression)
+    {
+        IR_Instruction return_instr;
+        return_instr.type = IR_Instruction_Type::RETURN;
+        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+        return_instr.options.return_instr.options.return_value = 
+            ir_generator_generate_expression_in_block(function->ir_block, body.expr);
+        add_instruction(return_instr, function->ir_block);
+    }
+    else {
+        ir_generator_generate_block(function->ir_block, body.block);
+    }
+
+    // Add empty return
+    if (!function->signature->return_type().available) {
+        IR_Instruction return_instr;
+        return_instr.type = IR_Instruction_Type::RETURN;
+        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
+        add_instruction(return_instr, function->ir_block);
+    }
+
+    // Fill out breaks and continues
+    for (int j = 0; j < ir_generator->fill_out_breaks.size; j++) {
+        Unresolved_Goto fill_out = ir_generator->fill_out_breaks[j];
+        int label_index = *hashtable_find_element(&ir_generator->labels_break, fill_out.break_block);
+        assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
+        fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
+    }
+    for (int j = 0; j < ir_generator->fill_out_continues.size; j++) {
+        Unresolved_Goto fill_out = ir_generator->fill_out_continues[j];
+        int label_index = *hashtable_find_element(&ir_generator->labels_continue, fill_out.break_block);
+        assert(fill_out.block->instructions[fill_out.instruction_index].type == IR_Instruction_Type::GOTO, "");
+        fill_out.block->instructions[fill_out.instruction_index].options.label_index = label_index;
+    }
+    dynamic_array_reset(&ir_generator->fill_out_breaks);
+    dynamic_array_reset(&ir_generator->fill_out_continues);
+    hashtable_reset(&ir_generator->variable_mapping);
+    hashtable_reset(&ir_generator->labels_break);
+    hashtable_reset(&ir_generator->labels_continue);
+    hashtable_reset(&ir_generator->block_defer_depths);
+    hashtable_reset(&ir_generator->loop_increment_instructions);
 }
 
-void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode)
+void ir_generator_finish(Compilation_Data* compilation_data)
 {
     Type_System& type_system = *compilation_data->type_system;
     auto& types = type_system.predefined_types;
-    auto& slots = compilation_data->function_slots;
-
     ir_generator = compilation_data->ir_generator;
-
-    // Queue and generate all functions
-    for (int i = 0; i < compilation_data->program->functions.size; i++) {
-        ir_generator_queue_function(compilation_data, compilation_data->program->functions[i]);
-    }
-    ir_generator_generate_queued_items(compilation_data, gen_bytecode);
 
     // Generate entry function
     {
-        auto entry_function = ir_function_create(compilation_data, compilation_data->empty_call_signature, -1);
-        ir_generator->program->entry_function = entry_function;
-        ir_generator->current_block = entry_function->code;
+        auto entry_function = upp_function_create_empty(
+            compilation_data->empty_call_signature,
+            identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_entry_function_")), compilation_data
+        );
+        entry_function->ir_block = ir_code_block_create(entry_function);
+        compilation_data->entry_function = entry_function;
+        ir_generator->current_block = entry_function->ir_block;
 
         // Initialize system allocator
         {
@@ -2851,15 +2756,15 @@ void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode)
             IR_Instruction address_instr;
             address_instr.type = IR_Instruction_Type::FUNCTION_ADDRESS;
 
-            address_instr.options.function_address.function_slot_index = ir_generator->default_allocate_function->function_slot_index;
+            address_instr.options.function_address.function = compilation_data->default_allocate_function;
             address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[0]);
             add_instruction(address_instr);
 
-            address_instr.options.function_address.function_slot_index = ir_generator->default_free_function->function_slot_index;
+            address_instr.options.function_address.function = compilation_data->default_free_function;
             address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[1]);
             add_instruction(address_instr);
 
-            address_instr.options.function_address.function_slot_index = ir_generator->default_reallocate_function->function_slot_index;
+            address_instr.options.function_address.function = compilation_data->default_reallocate_function;
             address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[2]);
             add_instruction(address_instr);
 
@@ -2872,7 +2777,7 @@ void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode)
         }
 
         // Initialize all globals
-        auto& globals = compilation_data->program->globals;
+        auto& globals = compilation_data->globals;
         for (int i = 0; i < globals.size; i++)
         {
             auto global = globals[i];
@@ -2893,7 +2798,7 @@ void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode)
             call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
             call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            call_instr.options.call.options.function = compilation_data->program->main_function;
+            call_instr.options.call.options.function = compilation_data->main_function;
             add_instruction(call_instr);
             assert(call_instr.options.call.options.function != nullptr, "");
         }
@@ -2906,9 +2811,6 @@ void ir_generator_finish(Compilation_Data* compilation_data, bool gen_bytecode)
             exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::SUCCESS);
             add_instruction(exit_instr);
         }
-
-        // Generate entry + default allocator functions
-        ir_generator_generate_queued_items(compilation_data, gen_bytecode);
     }
 }
 
@@ -2919,8 +2821,6 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
 
     // Create datastructures
     {
-        generator->program = ir_program_create();
-
         generator->data_accesses = dynamic_array_create<IR_Data_Access*>();
         generator->loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, Loop_Increment>(8);
         generator->variable_mapping = hashtable_create_pointer_empty<AST::Definition_Symbol*, IR_Data_Access*>(8);
@@ -2928,7 +2828,6 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
         generator->labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
         generator->block_defer_depths = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
 
-        generator->queued_function_slot_indices = dynamic_array_create<int>();
         generator->defer_stack = dynamic_array_create<Defer_Item>();
         generator->fill_out_breaks = dynamic_array_create<Unresolved_Goto>();
         generator->fill_out_continues = dynamic_array_create<Unresolved_Goto>();
@@ -2941,7 +2840,6 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
 
         auto& type_system = compilation_data->type_system;
         auto& types = type_system->predefined_types;
-        auto& slots = compilation_data->function_slots;
 
         generator->nothing_access.datatype = types.unknown_type;
 
@@ -2951,10 +2849,17 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
         generator->current_statement = nullptr;
 
         // Create default alloc function
-        IR_Function* default_alloc_function = ir_function_create(compilation_data, types.allocate_function->signature, -1);
         {
-            auto fn = default_alloc_function;
-            generator->current_block = fn->code;
+            Upp_Function* function = upp_function_create_empty(
+                types.allocate_function->signature, 
+                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_alloc_fn_")),
+                compilation_data
+            );
+            function->ir_block = ir_code_block_create(function);
+            compilation_data->default_allocate_function = function;
+
+            auto fn = function;
+            generator->current_block = fn->ir_block;
             IR_Data_Access* address_access = ir_data_access_create_intermediate(upcast(types.address));
             IR_Data_Access* size_param_u64 = ir_data_access_create_parameter(fn, 1);
 
@@ -2975,10 +2880,17 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
         }
 
         // Default free function
-        IR_Function* default_free_function = ir_function_create(compilation_data, types.free_function->signature, -1);
         {
-            auto fn = default_free_function;
-            ir_generator->current_block = fn->code;
+            Upp_Function* function = upp_function_create_empty(
+                types.free_function->signature, 
+                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_free_fn_")),
+                compilation_data
+            );
+            function->ir_block = ir_code_block_create(function);
+            compilation_data->default_free_function = function;
+
+            auto fn = function;
+            ir_generator->current_block = fn->ir_block;
             IR_Data_Access* pointer_value = ir_data_access_create_parameter(fn, 1);
 
             IR_Instruction call_instr;
@@ -2997,10 +2909,17 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
         }
 
         // Default resize function
-        IR_Function* default_reallocate_function = ir_function_create(compilation_data, types.resize_function->signature, -1);
         {
-            auto fn = default_reallocate_function;
-            ir_generator->current_block = fn->code;
+            Upp_Function* function = upp_function_create_empty(
+                types.resize_function->signature, 
+                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_reallocate_fn_")),
+                compilation_data
+            );
+            function->ir_block = ir_code_block_create(function);
+            compilation_data->default_reallocate_function = function;
+
+            auto fn = function;
+            ir_generator->current_block = fn->ir_block;
 
             // System allocator currently never resizes
             IR_Instruction return_instr;
@@ -3010,14 +2929,10 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
             add_instruction(return_instr);
         }
 
-        ir_generator->default_allocate_function = default_alloc_function;
-        ir_generator->default_free_function = default_free_function;
-        ir_generator->default_reallocate_function = default_reallocate_function;
-
         Upp_Allocator allocator;
-        allocator.allocate_fn_index_plus_one = default_alloc_function->function_slot_index + 1;
-        allocator.free_fn_index_plus_one = default_free_function->function_slot_index + 1;
-        allocator.resize_fn_index_plus_one = default_reallocate_function->function_slot_index + 1;
+        allocator.allocate_fn_index_plus_one = compilation_data->default_allocate_function->function_index + 1;
+        allocator.free_fn_index_plus_one     = compilation_data->default_free_function->function_index + 1;
+        allocator.resize_fn_index_plus_one   = compilation_data->default_reallocate_function->function_index + 1;
 
         *(Upp_Allocator*)compilation_data->system_allocator->memory = allocator;
         *(Upp_Allocator**)compilation_data->global_allocator->memory = (Upp_Allocator*) compilation_data->system_allocator->memory;
@@ -3034,7 +2949,6 @@ void ir_data_access_delete(IR_Data_Access** access) {
 
 void ir_generator_destroy(IR_Generator* generator)
 {
-    ir_program_destroy(generator->program);
     hashtable_destroy(&generator->variable_mapping);
     hashtable_destroy(&generator->labels_break);
     hashtable_destroy(&generator->labels_continue);
@@ -3044,7 +2958,6 @@ void ir_generator_destroy(IR_Generator* generator)
     dynamic_array_for_each(generator->data_accesses, ir_data_access_delete);
     dynamic_array_destroy(&generator->data_accesses);
     dynamic_array_destroy(&generator->defer_stack);
-    dynamic_array_destroy(&generator->queued_function_slot_indices);
     dynamic_array_destroy(&generator->fill_out_breaks);
     dynamic_array_destroy(&generator->fill_out_continues);
     dynamic_array_destroy(&generator->label_positions);

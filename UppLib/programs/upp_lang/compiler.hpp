@@ -10,7 +10,6 @@
 #include "constant_pool.hpp"
 #include "../../win32/thread.hpp"
 
-struct Compiler;
 struct AST_Parser;
 struct Intermediate_Generator;
 struct Bytecode_Generator;
@@ -43,17 +42,6 @@ struct Compilation_Unit
     Dynamic_Array<AST::Node*> allocated_nodes;
     Dynamic_Array<Error_Message> parser_errors;
 };
-
-// Compiler
-struct Compiler
-{
-    // Permanent data (Stays across compiles)
-    Identifier_Pool identifier_pool;
-    Fiber_Pool* fiber_pool;
-};
-
-Compiler* compiler_create();
-void compiler_destroy(Compiler* compiler);
 
 // Expects file_path to be a full path (For deduplication)
 // If source_code is null, and we haven't loaded the file previously, the file is loaded

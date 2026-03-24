@@ -29,14 +29,13 @@ Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data
     generator->instructions = dynamic_array_create<Bytecode_Instruction>(64);
 
     // Code Information
-    generator->function_parameter_stack_offset_index = hashtable_create_pointer_empty<IR_Function*, int>(64);
+    generator->function_parameter_stack_offset_index = hashtable_create_pointer_empty<Upp_Function*, int>(64);
     generator->code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
     generator->stack_offsets = dynamic_array_create<Array<int>>(32);
 
     // Fill outs
     generator->fill_out_gotos = dynamic_array_create<Goto_Label>(64);
     generator->label_locations = dynamic_array_create<int>(64);
-    generator->fill_out_calls = dynamic_array_create<Function_Reference>(64);
 
     return generator;
 }
@@ -57,7 +56,6 @@ void bytecode_generator_destroy(Bytecode_Generator* generator)
     // Fill outs
     dynamic_array_destroy(&generator->fill_out_gotos);
     dynamic_array_destroy(&generator->label_locations);
-    dynamic_array_destroy(&generator->fill_out_calls);
 } 
 
 
@@ -593,11 +591,14 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
     // Generate Stack offsets
     int rewind_stack_offset = generator->current_stack_offset;
-    SCOPE_EXIT(generator->current_stack_offset = rewind_stack_offset);
+    SCOPE_EXIT(
+        generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
+        generator->current_stack_offset = rewind_stack_offset;
+    );
     {
         // Calcuate offsets for each register
         Array<int> register_stack_offsets = array_create<int>(code_block->registers.size);
-        int stack_offset = generator->current_stack_offset;
+        int& stack_offset = generator->current_stack_offset;
         for (int i = 0; i < code_block->registers.size; i++)
         {
             Datatype* signature = code_block->registers[i].type;
@@ -610,7 +611,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         }
 
         // Store offset info
-        generator->current_stack_offset = stack_offset;
         dynamic_array_push_back(&generator->stack_offsets, register_stack_offsets);
         hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
     }
@@ -625,7 +625,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         // as "communication" between instructions can only happen through data-accesses,
         // and not through temporary values
         int rewind_stack_offset = generator->current_stack_offset;
-        SCOPE_EXIT(generator->current_stack_offset = rewind_stack_offset);
+        SCOPE_EXIT(
+            generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
+            generator->current_stack_offset = rewind_stack_offset;
+        );
 
         switch (instr->type)
         {
@@ -674,22 +677,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL: 
             {
-                // Handle extern functions
-                if (call->options.function->function_type == ModTree_Function_Type::EXTERN) {
-                    push_exit_instruction(generator, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot call extern functions in bytecode"));
-                    break;
-                }
-
-                auto& slots = compilation_data->function_slots;
-                auto ir_function = slots[call->options.function->function_slot_index].ir_function;
-                assert(ir_function != nullptr, "");
-                
-                Function_Reference call_ref;
-                call_ref.function = ir_function;
-                call_ref.instruction_index = bytecode_generator_add_instruction(generator,
-                    instruction_make_2(Instruction_Type::CALL_FUNCTION, 0, stack_frame_start_offset)
+                bytecode_generator_add_instruction(generator,
+                    instruction_make_2(Instruction_Type::CALL_FUNCTION, call->options.function->function_index + 1, stack_frame_start_offset)
                 );
-                dynamic_array_push_back(&generator->fill_out_calls, call_ref);
                 break;
             }
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL: {
@@ -924,17 +914,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
             IR_Instruction_Function_Address* function_address = &instr->options.function_address;
-            auto& slots = compilation_data->function_slots;
-            auto& slot = slots[function_address->function_slot_index];
-
-            if (slot.modtree_function != nullptr && slot.modtree_function->function_type == ModTree_Function_Type::EXTERN) {
-                push_exit_instruction(generator, exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot take address of extern function"));
-                break;
-            }
-
             bytecode_generator_add_instruction_and_set_destination(generator,
                 function_address->destination, instruction_make_2(
-                    Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, (int)function_address->function_slot_index)
+                    Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, function_address->function->function_index + 1)
             );
             break;
         }
@@ -1007,10 +989,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
     }
 }
 
-void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function)
+void bytecode_generator_compile_function(Bytecode_Generator* generator, Upp_Function* function)
 {
-    auto& slot = generator->compilation_data->function_slots[function->function_slot_index];
-    assert(slot.bytecode_start_instruction == -1, "Function must not be generated yet!\n");
+    if (function->bytecode_start_instruction != -1) return; // Function already generated
+    assert(function->ir_block != nullptr, "ir-block must exist");
 
     // Generate parameter offsets
     {
@@ -1035,27 +1017,11 @@ void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Funct
     }
 
     // Register function
-    slot.bytecode_start_instruction = generator->instructions.size;
+    function->bytecode_start_instruction = generator->instructions.size;
 
     // Generate code
-    bytecode_generator_generate_code_block(generator, function->code);
-    if (generator->current_stack_offset > generator->maximum_function_stack_depth) {
-        generator->maximum_function_stack_depth = generator->current_stack_offset;
-    }
-
-    slot.bytecode_end_instruction = generator->instructions.size;
-}
-
-void bytecode_generator_update_references(Bytecode_Generator* generator)
-{
-    // Fill out all function calls
-    for (int i = 0; i < generator->fill_out_calls.size; i++) {
-        Function_Reference& call_loc = generator->fill_out_calls[i];
-        int location = generator->compilation_data->function_slots[call_loc.function->function_slot_index].bytecode_start_instruction;
-        assert(location != -1, "Function should have already been compiled!");
-        generator->instructions[call_loc.instruction_index].op1 = location;
-    }
-    dynamic_array_reset(&generator->fill_out_calls);
+    bytecode_generator_generate_code_block(generator, function->ir_block);
+    generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
 
     // Fill out all open gotos
     for (int i = 0; i < generator->fill_out_gotos.size; i++) {
@@ -1063,17 +1029,9 @@ void bytecode_generator_update_references(Bytecode_Generator* generator)
         generator->instructions[fill_out.jmp_instruction].op1 = generator->label_locations[fill_out.label_index];
     }
     dynamic_array_reset(&generator->fill_out_gotos);
+
+    function->bytecode_end_instruction = generator->instructions.size;
 }
-
-void bytecode_generator_set_entry_function(Bytecode_Generator* generator)
-{
-    int entry_index = generator->compilation_data->function_slots[generator->compilation_data->ir_generator->program->entry_function->function_slot_index].bytecode_start_instruction;
-    assert(entry_index != -1, "");
-    generator->entry_point_index = entry_index;
-    assert(generator->entry_point_index >= 0 && generator->entry_point_index < generator->instructions.size, "");
-}
-
-
 
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
 {
@@ -1289,45 +1247,16 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
 {
-    auto& slots = generator->compilation_data->function_slots;
-
-    for (int i = 0; i < slots.size; i++)
+    for (int i = 0; i < generator->compilation_data->functions.size; i++)
     {
-        auto& slot = slots[i];
-        string_append_formated(string, "Function Slot #%d: ", i);
-        if (slot.modtree_function != nullptr) 
-        {
-            string_append_string(string, slot.modtree_function->name);
-        }
-        else if (slot.ir_function != nullptr) 
-        {
-            auto ir_gen = generator->compilation_data->ir_generator;
-            if (slot.ir_function == ir_gen->default_allocate_function) {
-                string_append_formated(string, "System-Allocate fn");
-            }
-            else if (slot.ir_function == ir_gen->default_free_function) {
-                string_append_formated(string, "System-Free fn");
-            }
-            else if (slot.ir_function == ir_gen->default_reallocate_function) {
-                string_append_formated(string, "System-Reallocate fn");
-            }
-            else if (slot.ir_function == ir_gen->program->entry_function) {
-                string_append_formated(string, "Entry-Function");
-            }
-            else {
-                string_append_formated(string, "Anonymous IR-Function");
-            }
-        }
-        else {
-            string_append(string, "Neither ir function nor modtree-function available?");
-        }
-        string_append_character(string, '\n');
-        if (slot.bytecode_start_instruction == -1) {
+        Upp_Function* function = generator->compilation_data->functions[i];
+        string_append_formated(string, "Function Slot #%d: \"%s\" \n", i, function->name->characters);
+        if (function->bytecode_start_instruction == -1) {
             string_append(string, "NO instructions generated!\n");
             continue;
         }
 
-        for (int i = slot.bytecode_start_instruction; i < slot.bytecode_end_instruction; i++)
+        for (int i = function->bytecode_start_instruction; i < function->bytecode_end_instruction; i++)
         {
             Bytecode_Instruction& instruction = generator->instructions[i];
             string_append_formated(string, "%4d: ", i);

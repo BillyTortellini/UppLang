@@ -50,14 +50,6 @@ bool do_output;
 
 
 // COMPILER
-Compiler* compiler_create()
-{
-    Compiler* compiler = new Compiler;
-    compiler->identifier_pool = identifier_pool_create();
-    compiler->fiber_pool = fiber_pool_create();
-    return compiler;
-}
-
 void compilation_unit_destroy(Compilation_Unit* unit)
 {
     if (unit->code != nullptr) {
@@ -71,13 +63,6 @@ void compilation_unit_destroy(Compilation_Unit* unit)
     dynamic_array_destroy(&unit->allocated_nodes);
     string_destroy(&unit->filepath);
     delete unit;
-}
-
-void compiler_destroy(Compiler* compiler)
-{
-    fiber_pool_destroy(compiler->fiber_pool);
-    compiler->fiber_pool = 0;
-    identifier_pool_destroy(&compiler->identifier_pool);
 }
 
 
@@ -104,14 +89,13 @@ void compiler_parse_unit(Compilation_Unit* unit, Compilation_Data* compilation_d
     compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
     Arena arena = Arena::create(256);
     SCOPE_EXIT(arena.destroy());
-    Parser::execute_clean(unit, &compilation_data->compiler->identifier_pool, &arena);
+    Parser::execute_clean(unit, &compilation_data->identifier_pool, &arena);
 }
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type)
 {
-    Compiler* compiler = compilation_data->compiler;
-    fiber_pool_set_current_fiber_to_main(compiler->fiber_pool);
-    fiber_pool_check_all_handles_completed(compiler->fiber_pool);
+    fiber_pool_set_current_fiber_to_main(compilation_data->fiber_pool);
+    fiber_pool_check_all_handles_completed(compilation_data->fiber_pool);
 
     compilation_data->main_unit = main_unit;
     compilation_data->compile_type = compile_type;
@@ -155,12 +139,22 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
     bool do_c_compilation = do_c_generation && enable_c_compilation && generate_code && error_free;
     {
         compilation_data_switch_timing_task(compilation_data, Timing_Task::CODE_GEN);
-        if (do_ir_gen) {
-            ir_generator_finish(compilation_data, do_bytecode_gen);
+        if (do_ir_gen) 
+        {
+            for (int i = 0; i < compilation_data->functions.size; i++) {
+                Upp_Function* function = compilation_data->functions[i];
+                ir_generator_generate_function(function, compilation_data);
+            }
+            ir_generator_finish(compilation_data);
         }
-        if (do_bytecode_gen) {
-            // INFO: Bytecode Gen is currently controlled by ir-generator
-            bytecode_generator_set_entry_function(compilation_data->bytecode_generator);
+        if (do_bytecode_gen) 
+        {
+            for (int i = 0; i < compilation_data->functions.size; i++) {
+                Upp_Function* function = compilation_data->functions[i];
+                if (function->ir_block != nullptr) {
+                    bytecode_generator_compile_function(compilation_data->bytecode_generator, function);
+                }
+            }
         }
         if (do_c_generation) {
             c_generator_generate(compilation_data->c_generator);
@@ -203,7 +197,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                     logg("\n--------IR_PROGRAM---------\n");
                     String tmp = string_create(1024);
                     SCOPE_EXIT(string_destroy(&tmp));
-                    ir_program_append_to_string(compilation_data->ir_generator->program, &tmp, false, compilation_data);
+                    ir_program_append_to_string(&tmp, false, compilation_data);
                     string_style_remove_codes(&tmp);
                     logg("%s", tmp.characters);
                 }
@@ -313,7 +307,7 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
         {
             Bytecode_Thread* thread = bytecode_thread_create(compilation_data, 10000);
             SCOPE_EXIT(bytecode_thread_destroy(thread));
-            bytecode_thread_set_initial_state(thread, compilation_data->bytecode_generator->entry_point_index);
+            bytecode_thread_set_initial_state(thread, compilation_data->entry_function);
             bytecode_thread_execute(thread);
             return thread->exit_code;
         }
@@ -460,8 +454,8 @@ void compiler_run_testcases(bool force_run)
 
     logg("STARTING ALL TESTS:\n-----------------------------\n");
 
-    Compiler* compiler = compiler_create();
-    SCOPE_EXIT(compiler_destroy(compiler));
+    Fiber_Pool* fiber_pool = fiber_pool_create();
+    SCOPE_EXIT(fiber_pool_destroy(fiber_pool));
 
     // Create testcases with expected result
     Directory_Crawler* crawler = directory_crawler_create();
@@ -488,7 +482,7 @@ void compiler_run_testcases(bool force_run)
         logg("Testcase #%4d: %s\n", test_case_count, name.characters);
         test_case_count += 1;
 
-        Compilation_Data* compilation_data = compilation_data_create(compiler);
+        Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
         SCOPE_EXIT(compilation_data_destroy(compilation_data));
 
         String path = string_create();

@@ -1,39 +1,10 @@
 
-Tasks:
-------
-- Error_Display thing... 
-
 DONE:
-- Tab on non-empty creates indentation + Shift-Enter
-- compile in release mode
-- inline-folds should open if we move on them
-- cursor on folds is handling stupidly
-- In-line folds
-- Backspace with auto-format does something smarter
-- Yank and put lines with correct indentation?
-- Disallow backspace to remove tabs...
-- Insert-Command Ctrl-W
-- Remove indentation from source-code
-- Test cam-start offset when more lines
-- Fix folds...
-- Line-number colors/indent
-- Fixed block-motions
-- Block indentation rendering
-- Rename bounding-box to box2
-- String with arena
-- Particle rendering
-- Fix parenthesis motions
-
+-----
 
 Rough Plan:
- - Fix Editor
-    * Fix Testcases
  - Improve Code 
-    * Remove Compiler (Identifier-Pool and Fiber-Pool)
-    * Upp_Function, remove ir-function, c-function, bytecode-function
-        - Generate function dependencies in bytecode-interpreter
-        - Remove cluster dependencies
-    * Struct and subtype rework
+    * Struct and subtype rework (Design required)
         - Struct should have same information as functions, and types should only reference them
         - Struct-Template-Instance could just be struct with some values not filled out...
  - Language Features?
@@ -47,7 +18,10 @@ Rough Plan:
     * Simple Macros (Design not final)
     * String-Handling
     * Access to normal math functions/built-ins
+        sin, cos, tan, sind, cosd, tand, pow, exp, atan2, and all the others
     * Allocator rework, remove new/delete
+ - Fix Editor
+    * Fix Testcases
  - Incremental compilation
     * Incremental parsing
     * Incremental semantic-analysis
@@ -72,6 +46,16 @@ Rough Plan:
         - Hashtable/Hashmap
         - String_Builder
         - String-List?
+
+
+Language Open-Design Problems:
+------------------------------
+Struct Subtypes
+Auto-pointering is now always enabled?
+Default-Values
+Macros
+Incremental Compilation
+
 
 NOTES:
 ------
@@ -104,23 +88,6 @@ Note: Different compilation stages have different properties:
 
 Architecture Upgrades:
 ----------------------
- - Compiler/Compilation_Units + Identifier pool stuff sucks ass (Syntax-Editor)
-    Compilation_Units are kinda a data-race, and we could remove the whole Compiler thing completely
-        if we could get it out of the way...
- - Source_Code should not store tokenization, should be done by parser... 
-    Problems: 
-        * Inside String/Comment/Multi-Line comments
-        * Token-Ranges/Error ranges?
-    Advantages: 
-        * Don't need to store tokens anymore! (Also no token updating, beeing not up-to-date)
-        * Removal of Token-Indices (Only text indices)
-        * Parser can insert special tokens for new blocks and stuff, 
-            so we don't need special handling for lines and other things
- - Upp_Function/Upp_Program:
-    Currently we have Upp_Function, Function_Progress, Function_Slot, IR_Function, C-Function...
-        All of this could be combined into one big structure, which would make a lot more sense for me...
-    Also IR-Program and all the associated sheet...
- - IR-Function should check which functions are called, and remove workload clustering
  - Replace main loop in workload executer by just having other threads yield?
     Syntax editor could just be another fiber that generates/waits for things to finish when calling some functions like
     analyse_node or whatever
@@ -243,22 +210,11 @@ FEATURE IMPLEMENTATION PLAN:
     Redesign primitive operations maybe
     Update dot-call lookup maybe?
  * Default-value update for polymorphic "traits"
- * ModTree-Function/Upp-Function rework
-    IR-Code/Bytecode now waits if functions are not ready
-    Remove Cluster compile
- * Remove semantic analyser, add semantic_context, split semantic_analyser file 
-    Remove cluster-compile dependency
  * Default-value rework
  * Misc smaller features
     null-initializiation ? // Values are explicitly initialized to null, except if = --- is used? 
-    Const values vs readonly
-        string handling with const
-        function parameters
-        const inferred
     enum size
     ? auto pointer handling, remove * and &
-    Maybe variable shadowing...
-        Maybe only for parameter, as these are passed as constants?
     remove new/delete, think about context vs arena
         Probably just arena, and allocators have one big function for everything
  ? Modules, files, directories Rework
@@ -276,16 +232,6 @@ FEATURE IMPLEMENTATION PLAN:
 
 Notes and Improvements (Reading through all code again and thinking about the design problems:)
 -----------------------------------------------------------------------------------------------
-Make use of Dot-Call -> syntax instead of .
-    Expression_Result_Type::Dot_Call not needed
-    Argument-Infos with dynamic array not needed
-
-Upp_Function/Upp_Program and removal of Cluster-Workloads:
-    Combine Modtree_Function, Function_Progress, IR_Function, Bytecode_Function, C_Function
-        into one thing.
-    Struct-Dependencies can be handled by IR-Code
-    Removal of cluster-dependencies by having the bytecode-interpreter have different functions
-
 Operator-Context:
     If we add more parameters instead of getting everything out of the passed function,
             like add_dot_call(name, type, function)

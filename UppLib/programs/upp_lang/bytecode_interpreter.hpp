@@ -9,6 +9,7 @@
 struct Bytecode_Generator;
 struct Bytecode_Instruction;
 struct Compilation_Data;
+struct Upp_Function;
 
 const int INTERPRETER_STACK_SIZE = 8192;
 
@@ -25,6 +26,7 @@ struct Bytecode_Thread
     // Result infos
     Exit_Code exit_code;
     Datatype* waiting_for_type_finish_type;
+    Upp_Function* waiting_for_function;
     bool error_occured;
 
     // General settings
@@ -34,7 +36,7 @@ struct Bytecode_Thread
 Bytecode_Thread* bytecode_thread_create(Compilation_Data* compilation_data, int instruction_limit = -1);
 void bytecode_thread_destroy(Bytecode_Thread* thread);
 
-void bytecode_thread_set_initial_state(Bytecode_Thread* thread, int function_start_index);
+void bytecode_thread_set_initial_state(Bytecode_Thread* thread, Upp_Function* entry_function);
 void bytecode_thread_execute(Bytecode_Thread* thread);
 bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread);
 

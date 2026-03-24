@@ -17,11 +17,11 @@ namespace AST
 };
 
 struct Call_Signature;
+struct Fiber_Pool;
 struct Source_Code;
 struct Upp_Module;
 struct Workload_Root;
-struct Compiler;
-struct ModTree_Global;
+struct Upp_Global;
 struct Symbol_Table;
 struct Pattern_Variable;
 struct Datatype_Format;
@@ -106,12 +106,25 @@ struct Editor_Info
 struct Compilation_Data
 {
     // Compiler data
-    Compiler* compiler;
     Compile_Type compile_type;
     Compilation_Unit* main_unit;
-
     Dynamic_Array<Compilation_Unit*> compilation_units;
     Dynamic_Array<Compiler_Error_Info> compiler_errors; // List of parser and semantic errors
+
+    // Program
+    Dynamic_Array<Upp_Function*> functions;
+    Dynamic_Array<Upp_Global*> globals;
+
+    // Known functions
+    Upp_Function* main_function;
+    Upp_Function* entry_function;
+    Upp_Function* default_allocate_function;
+    Upp_Function* default_free_function;
+    Upp_Function* default_reallocate_function;
+
+    // Resources
+    Fiber_Pool* fiber_pool; 
+    Identifier_Pool identifier_pool;
     Constant_Pool* constant_pool;
     Type_System* type_system;
     Extern_Sources extern_sources;
@@ -124,10 +137,8 @@ struct Compilation_Data
 
     // Semantic-Analysis information
     Workload_Root* root_workload;
-    ModTree_Program* program;
     Symbol_Table* root_symbol_table;
     Upp_Module* builtin_module;
-    Dynamic_Array<Function_Slot> function_slots;
     Dynamic_Array<Semantic_Error> semantic_errors;
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
@@ -136,8 +147,8 @@ struct Compilation_Data
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of comptime-definitions in code-blocks
 
     Symbol* error_symbol;
-    ModTree_Global* global_allocator; // Datatype: Allocator
-    ModTree_Global* system_allocator; // Datatype: Allocator
+    Upp_Global* global_allocator; // Datatype: Allocator
+    Upp_Global* system_allocator; // Datatype: Allocator
 
     // Editor_Info
     Dynamic_Array<Editor_Info> semantic_infos;
@@ -172,7 +183,7 @@ struct Compilation_Data
     double time_reset;
 };
 
-Compilation_Data* compilation_data_create(Compiler* compiler);
+Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool);
 Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new);
 void compilation_data_destroy(Compilation_Data* data);
 void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_data);
@@ -193,7 +204,7 @@ Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Dataty
 Call_Signature* call_signature_register(Call_Signature* signature, Compilation_Data* compilation_data); 
 void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format);
 
-Source_Code* source_code_load_from_file(String filepath, Identifier_Pool* identifier_pool);
+Source_Code* source_code_load_from_file(String filepath);
 
 
 

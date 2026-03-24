@@ -203,6 +203,11 @@ bool string_equals(String* s1, String* s2)
     return memcmp(s1->characters, s2->characters, s1->size) == 0;
 }
 
+bool string_equals(String s1, String s2) {
+    if (s1.size != s2.size) { return false; }
+    return memcmp(s1.characters, s2.characters, s1.size) == 0;
+}
+
 bool string_in_order(String* s1, String* s2)
 {
     int res = strncmp(s1->characters, s2->characters, math_minimum(s1->size, s2->size));

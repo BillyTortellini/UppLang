@@ -15,20 +15,22 @@
 
 struct Symbol;
 struct Symbol_Table;
-struct Compiler;
-struct ModTree_Function;
+struct Upp_Function;
 struct Semantic_Error;
 struct Error_Information;
 struct Expression_Info;
 struct Analysis_Pass;
+struct IR_Code_Block;
 
 struct Workload_Definition;
 struct Workload_Base;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Polymorphic;
 struct Workload_Structure_Body;
+struct Workload_Bake;
+struct Workload_Function_Header;
+struct Workload_Function_Body;
 
-struct Function_Progress;
 struct Datatype_Struct;
 struct Bake_Progress;
 struct Datatype_Pattern_Variable;
@@ -64,38 +66,54 @@ struct Upp_Module
     } options;
 };
 
-enum class ModTree_Function_Type
+enum class Upp_Function_Type
 {
     NORMAL,
     BAKE,
     EXTERN
 };
 
-// Modtree TODO: Rename this into something more sensible, like Upp-Function
-struct ModTree_Function
+enum class Polymorphic_Analysis_Type
 {
-    Call_Signature* signature;
-    int function_slot_index; // Index in functions slots array
-    String* name; // Symbol name, or "bake_function"/"lambda_function"
+    NON_POLYMORPHIC,
+    POLYMORPHIC_BASE,
+    POLYMORPHIC_INSTANCE
+};
 
-    ModTree_Function_Type function_type;
-    union {
-        struct {
-            Symbol* symbol; // May be 0 if function is anonymous
-            Function_Progress* progress;
-        } normal;
-        Bake_Progress* bake;
+struct Upp_Function
+{
+    Call_Signature* signature; // Note: Signature is nullptr until function-header is analysed
+    int function_index; // Index in functions array
+    String* name; // Symbol name, or "bake_function"/"lambda_function"
+    Symbol* symbol; // May be nullptr if function is anonymous
+
+    // Infos from function-progress
+    Symbol_Table* parameter_table; 
+    AST::Expression* function_node;
+
+    Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
+    Workload_Function_Body* body_workload;
+
+    Polymorphic_Analysis_Type poly_type;
+    Poly_Function poly_function; // If instance, this points to base progress, otherwise it points to itself
+
+    Upp_Function_Type function_type;
+    union 
+    {
+        Workload_Bake* bake;
         Workload_Definition* extern_definition;
     } options;
 
     // Infos
     bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
-    bool is_runnable;
-    Dynamic_Array<ModTree_Function*> called_from;
-    Dynamic_Array<ModTree_Function*> calls;
+
+    // Code-Generation
+    IR_Code_Block* ir_block;
+    int bytecode_start_instruction;
+    int bytecode_end_instruction;
 };
 
-struct ModTree_Global
+struct Upp_Global
 {
     Datatype* type;
     int index;
@@ -112,13 +130,6 @@ struct ModTree_Global
     void* memory;
 };
 
-struct ModTree_Program
-{
-    Dynamic_Array<ModTree_Function*> functions;
-    Dynamic_Array<ModTree_Global*> globals;
-    ModTree_Function* main_function;
-};
-
 
 
 // WORKLOADS
@@ -133,20 +144,13 @@ struct Semantic_Context
     Analysis_Pass* current_pass;
 
     // Current position info's
-    ModTree_Function* current_function;
+    Upp_Function* current_function;
     Expression_Info* current_expression;
     bool statement_reachable;
 
     // Scratch data during analysis
     DynArray<AST::Code_Block*> block_stack;
     Arena* scratch_arena;
-};
-
-enum class Polymorphic_Analysis_Type
-{
-    NON_POLYMORPHIC,
-    POLYMORPHIC_BASE,
-    POLYMORPHIC_INSTANCE
 };
 
 // The pattern_values define what happens when a pattern expression is analysed.
@@ -175,13 +179,11 @@ enum class Analysis_Workload_Type
 
     FUNCTION_HEADER,
     FUNCTION_BODY,
-    FUNCTION_CLUSTER_COMPILE,
 
     STRUCT_POLYMORPHIC,
     STRUCT_BODY,
 
     BAKE_ANALYSIS,
-    BAKE_EXECUTION,
 
     DEFINITION,
 };
@@ -196,11 +198,6 @@ struct Workload_Base
     // Dependencies
     List<Workload_Base*> dependencies;
     List<Workload_Base*> dependents;
-
-    // Note: Clustering is required for Workloads where cyclic dependencies on the same workload-type are allowed,
-    //       like recursive functions or structs containing pointers to themselves
-    Workload_Base* cluster;
-    Dynamic_Array<Workload_Base*> reachable_clusters;
 
     // Errors
     int real_error_count;
@@ -244,7 +241,7 @@ struct Workload_Module_Analysis
 struct Workload_Function_Header
 {
     Workload_Base base;
-    Function_Progress* progress;
+    Upp_Function* function;
     // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
     //      But it may be null for instanciated functions, or inferred functions
     Poly_Header* poly_header;
@@ -253,15 +250,8 @@ struct Workload_Function_Header
 struct Workload_Function_Body
 {
     Workload_Base base;
-    Function_Progress* progress;
+    Upp_Function* function;
     Analysis_Pass* body_pass; // Used later in ir-generator
-};
-
-struct Workload_Function_Cluster_Compile
-{
-    Workload_Base base;
-    Function_Progress* progress;
-    Dynamic_Array<ModTree_Function*> functions;
 };
 
 struct Workload_Definition
@@ -281,17 +271,19 @@ struct Workload_Definition
     } options;
 };
 
-struct Workload_Bake_Analysis
+struct Workload_Bake
 {
     Workload_Base base;
-    Bake_Progress* progress;
+
+    Symbol_Table* symbol_table;
+    AST::Expression* bake_node;
+    Analysis_Pass* analysis_pass;
+
+    Upp_Function* bake_function;
+    Datatype* result_type;
+    Optional<Upp_Constant> result;
 };
 
-struct Workload_Bake_Execution
-{
-    Workload_Base base;
-    Bake_Progress* progress;
-};
 
 
 
@@ -330,7 +322,7 @@ struct Poly_Header
     bool is_function;
     union {
         Workload_Structure_Polymorphic* struct_workload;
-        Function_Progress* function_progress;
+        Upp_Function* function;
     } origin;
 };
 
@@ -352,7 +344,7 @@ struct Poly_Instance
     Array<Datatype*> partial_pattern_instances;
     Poly_Instance_Type type;
     union {
-        Function_Progress* function_instance;
+        Upp_Function* function_instance;
         Workload_Structure_Body* struct_instance;
         Datatype_Struct_Pattern* struct_pattern;
     } options;
@@ -390,40 +382,6 @@ struct Workload_Structure_Polymorphic
 
 
 
-// ANALYSIS_PROGRESS
-
-// Note: This type is only used so we can have pointers to a polymorphic-function
-struct Function_Progress
-{
-    ModTree_Function* function;
-
-    Symbol_Table* parameter_table; 
-    AST::Expression* function_node;
-
-    Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
-    Workload_Function_Body* body_workload;
-    Workload_Function_Cluster_Compile* compile_workload;
-
-    Polymorphic_Analysis_Type type;
-    Poly_Function poly_function; // If instance, this points to base progress, otherwise it points to itself
-};
-
-struct Bake_Progress
-{
-    Symbol_Table* symbol_table;
-    AST::Expression* bake_node;
-    Analysis_Pass* analysis_pass;
-
-    ModTree_Function* bake_function;
-    Datatype* result_type;
-    Optional<Upp_Constant> result;
-
-    Workload_Bake_Analysis* analysis_workload;
-    Workload_Bake_Execution* execute_workload;
-};
-
-
-
 // WORKLOAD EXECUTER
 struct Workload_Pair
 {
@@ -448,7 +406,6 @@ struct Dependency_Information
 
 struct Workload_Executer
 {
-    Fiber_Pool* fiber_pool;
     Compilation_Data* compilation_data;
     Dynamic_Array<Workload_Base*> all_workloads; // Owning array
     Dynamic_Array<Workload_Base*> runnable_workloads;
@@ -457,7 +414,7 @@ struct Workload_Executer
     Hashtable<Workload_Pair, Dependency_Information> workload_dependencies;
 };
 
-Workload_Executer* workload_executer_create(Fiber_Pool* fiber_pool, Compilation_Data* compilation_data);
+Workload_Executer* workload_executer_create(Compilation_Data* compilation_data);
 void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
 Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data);
@@ -494,7 +451,7 @@ struct Argument_Info
 struct Cast_Info
 {
     Cast_Type cast_type;
-    ModTree_Function* custom_cast_function; // Optional
+    Upp_Function* custom_cast_function; // Optional
     Datatype* result_type;
 };
 
@@ -526,7 +483,7 @@ struct Call_Origin
 	Call_Signature* signature;
     Call_Origin_Type type;
     union {
-		ModTree_Function* function;
+		Upp_Function* function;
 		Poly_Function poly_function;
 		Workload_Structure_Polymorphic* poly_struct;
 		Hardcoded_Type hardcoded;
@@ -552,7 +509,7 @@ struct Call_Info
 	bool instanciated;
     union 
 	{
-        ModTree_Function* function;
+        Upp_Function* function;
 		Datatype_Struct* struct_instance;
 		Datatype_Struct_Pattern* struct_pattern;
 		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
@@ -608,7 +565,7 @@ struct Expression_Info
         Datatype* datatype;
         Datatype* polymorphic_pattern; 
         Workload_Structure_Polymorphic* polymorphic_struct;
-        ModTree_Function* function;
+        Upp_Function* function;
         Poly_Function poly_function;
         Hardcoded_Type hardcoded;
         Symbol_Table* module_table;
@@ -619,7 +576,8 @@ struct Expression_Info
     union 
     {
         Call_Info* call_info; // Same as get_info(arguments)
-        struct {
+        struct 
+        {
             Member_Access_Type type;
             union {
                 struct {
@@ -629,8 +587,9 @@ struct Expression_Info
                 Struct_Member member;
             } options;
         } member_access;
-        struct {
-            ModTree_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
+        struct 
+        {
+            Upp_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
             bool switch_left_and_right;
         } overload;
     } specifics;
@@ -656,7 +615,7 @@ struct Statement_Info
     struct {
         AST::Code_Block* block; // Continue/break
         struct {
-            ModTree_Function* function;
+            Upp_Function* function;
             bool switch_arguments;
         } overload; // Binop assignments (function is null if no overload)
         struct {
@@ -670,10 +629,10 @@ struct Statement_Info
 
             bool is_custom_op;
             struct {
-                ModTree_Function* fn_create;
-                ModTree_Function* fn_has_next;
-                ModTree_Function* fn_next;
-                ModTree_Function* fn_get_value;
+                Upp_Function* fn_create;
+                Upp_Function* fn_has_next;
+                Upp_Function* fn_next;
+                Upp_Function* fn_get_value;
                 int has_next_pointer_diff;
                 int next_pointer_diff;
                 int get_value_pointer_diff;
@@ -844,38 +803,21 @@ void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compil
 
 
 
-
-struct IR_Function;
-struct Modtree_Function;
-struct Function_Slot
-{
-    int index; // Not plus one !
-    ModTree_Function* modtree_function; // May be null
-    IR_Function* ir_function; // May be null
-    int bytecode_start_instruction; // -1 if not generate yet
-    int bytecode_end_instruction;
-};
-
-
-
 // ANALYSER (Does not really exist anymore)
 Semantic_Context semantic_context_make(
     Compilation_Data* compilation_data, Workload_Base* workload,
     Symbol_Table* symbol_table, Symbol_Access_Level symbol_access_level,
     Analysis_Pass* analysis_pass, Arena* scratch_arena
 );
-Function_Progress* analysis_workload_try_get_function_progress(Workload_Base* workload);
+Upp_Function* analysis_workload_try_get_upp_function(Workload_Base* workload);
 
+Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
+Upp_Global* compilation_data_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern);
+Upp_Global* compilation_data_add_global_assert_type_finished(Compilation_Data* compilation_data, Datatype* datatype, Symbol* symbol, bool is_extern);
 
-ModTree_Global* modtree_program_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern);
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
-
-
-ModTree_Program* modtree_program_create();
-void modtree_program_destroy(ModTree_Program* program);
 void analysis_workload_destroy(Workload_Base* workload);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
-ModTree_Global* modtree_program_add_global_assert_type_finished(Compilation_Data* compilation_data, Datatype* datatype, Symbol* symbol, bool is_extern);
 
 Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
 Cast_Info check_if_cast_possible(

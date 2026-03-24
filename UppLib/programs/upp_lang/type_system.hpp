@@ -11,7 +11,6 @@
 struct Compilation_Data;
 struct Symbol;
 struct Datatype;
-struct Datatype_Struct;
 struct String;
 struct Workload_Structure_Body;
 struct Workload_Structure_Polymorphic;

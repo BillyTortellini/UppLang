@@ -204,8 +204,148 @@ void next_test()
     arena.destroy();
 }
 
+struct File_Line_Info
+{
+    String filename;
+    int line_count;
+};
+
+File_Line_Info file_line_info_make(String full_path, int line_count) 
+{
+    File_Line_Info result;
+    result.line_count = line_count;
+    result.filename = full_path;
+
+    int dir_index = -1;
+    for (int i = full_path.size - 1; i >= 0; i -= 1) {
+        if (full_path[i] == '/') {
+            dir_index = i;
+            break;
+        }
+    }
+    if (dir_index != -1) {
+        result.filename = string_create_substring_static(&result.filename, dir_index + 1, result.filename.size);
+    }
+    return result;
+}
+
+struct Comparator_File_Line
+{
+	bool operator()(const File_Line_Info& a, const File_Line_Info& b) {
+        return a.line_count > b.line_count;
+	}
+};
+
+
+
+int count_lines_of_code()
+{
+    Arena arena = arena.create();
+    SCOPE_EXIT(arena.destroy());
+    DynArray<String> filenames = DynArray<String>::create(&arena);
+
+    // Find all files
+    {
+        DynArray<String> directory_queue = DynArray<String>::create(&arena);
+        directory_queue.push_back(string_create("D:/Projects/UppLang/UppLib", &arena));
+        Directory_Crawler* crawler = directory_crawler_create();
+        SCOPE_EXIT(directory_crawler_destroy(crawler));
+
+        while (directory_queue.size > 0)
+        {
+            String dir = directory_queue.last();
+            directory_queue.size -= 1;
+
+            directory_crawler_set_path(crawler, dir);
+            Array<File_Info> infos = directory_crawler_get_content(crawler);
+            for (int i = 0; i < infos.size; i++)
+            {
+                File_Info& file_info = infos[i];
+                if (string_equals(file_info.name, string_create_static("..")) || string_equals(file_info.name, string_create_static("."))) {
+                    continue;
+                }
+
+                String path = string_create(&arena);
+                path.append(dir);
+                if (path.size > 0 && path.characters[path.size - 1] != '/') {
+                    path.append('/');
+                }
+                path.append(file_info.name);
+                file_io_relative_to_full_path(&path);
+
+                if (file_info.is_directory) {
+                    directory_queue.push_back(path);
+                }
+                else 
+                {
+                    int dot_index = -1;
+                    for (int i = path.size - 1; i >= 0; i -= 1) {
+                        if (path.characters[i] == '.') {
+                            dot_index = i;
+                            break;
+                        }
+                        else if (path.characters[i] == '/') {
+                            break;
+                        }
+                    }
+
+                    if (dot_index == -1) continue;
+                    String filetype = string_create_substring_static(&path, dot_index + 1, path.size);
+                    if (!(string_equals_cstring(&filetype, "cpp") || string_equals_cstring(&filetype, "hpp"))) {
+                        continue;
+                    }
+                    
+                    filenames.push_back(path);
+                }
+            }
+        }
+    }
+
+    DynArray<File_Line_Info> line_infos = DynArray<File_Line_Info>::create(&arena);
+    int line_count_total = 0;
+    for (int i = 0; i < filenames.size; i++)
+    {
+        String& filename = filenames[i];
+        string_add_null_terminator(&filename);
+
+        int line_count = -1;
+        auto file_opt = file_io_load_text_file(filename.characters);
+        SCOPE_EXIT(file_io_unload_text_file(&file_opt));
+        if (file_opt.available) {
+            String text = file_opt.value;
+            for (int j = 0; j < text.size; j++) {
+                if (text[j] == '\n') {
+                    line_count += 1;
+                }
+            }
+        }
+
+        line_count_total += math_maximum(0, line_count);
+        line_infos.push_back(file_line_info_make(filename, line_count));
+    }
+
+    Array<File_Line_Info> slice = array_create_static<File_Line_Info>(line_infos.buffer.data, line_infos.size);
+    array_sort(slice, Comparator_File_Line());
+    
+    printf("Files: #%d\n", (int)filenames.size);
+    printf("-------------\n");
+    for (int i = 0; i < line_infos.size; i++)
+    {
+        File_Line_Info& info = line_infos[i];
+        printf("%5d %s\n", info.line_count, info.filename.characters);
+    }
+    printf("-------------\n");
+    printf("Total: #%d\n\n", line_count_total);
+
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    // count_lines_of_code();
+    // std::cin.ignore();
+    // return 0 ;
+
     // next_test();
     // arena_test();
     // syntax_renaming();

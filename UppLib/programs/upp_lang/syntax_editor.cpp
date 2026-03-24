@@ -342,7 +342,6 @@ struct Pass_Filter
 struct Compiler_Thread_Data
 {
     Thread compiler_thread;
-	Compiler* compiler;
 
     Compilation_Unit* compiler_main_unit;
 	Compilation_Data* compilation_data; // Is created by compilation thread
@@ -431,8 +430,8 @@ struct Syntax_Editor
     Random random;
 
 	// Compiler stuff
+	Fiber_Pool* fiber_pool;
     int compile_count;
-	Compiler* compiler;
     bool last_compile_was_with_code_gen;
 	int last_compile_main_tab_index;
 
@@ -1013,57 +1012,6 @@ namespace Motions
 
         return text_range_make(pos, pos);
 	}
-
-	// Returns start/end index (Inclusive), -1 if not found
-    ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type type)
-    {
-		Arena& arena = syntax_editor.arena;
-		auto checkpoint = arena.make_checkpoint();
-		SCOPE_EXIT(checkpoint.rewind());
-
-		Token_Class token_class = token_type_get_class(type);
-		assert(token_class == Token_Class::LIST_START || token_class == Token_Class::LIST_END, "");
-		if (token_class == Token_Class::LIST_END) {
-			type = token_type_get_partner(type);
-		}
-
-		// Find parenthesis start
-		while (start > 0 && start < tokens.size)
-		{
-			if (tokens[start].type == type) {
-				break;
-			}
-			start -= 1;
-		}
-		if (start < 0) { // Exit if no start could be found
-			return ivec2(-1, -1);
-		}
-
-		// Find end parenthesis
-		DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(&arena);
-		parenthesis_stack.push_back(type);
-		int end = start + 1;
-		while (end < tokens.size) 
-		{
-			Token& token = tokens[end];
-			Token_Class token_class = token_type_get_class(token.type);
-			if (token_class == Token_Class::LIST_START) {
-				parenthesis_stack.push_back(token.type);
-			}
-			else if (token_type_get_partner(token.type) == parenthesis_stack.last()) {
-				parenthesis_stack.size -= 1;
-				if (parenthesis_stack.size == 0) {
-					break;
-				}
-			}
-			end += 1;
-		}
-		if (end >= tokens.size) {
-			end = -1;
-		}
-
-		return ivec2(start, end);
-    }
 
 	Text_Range token_range_to_text_range(Text_Index pos, ivec2 token_range, DynArray<Token> tokens)
 	{
@@ -2248,7 +2196,7 @@ namespace Text_Editing
 
 		// 2. Tokenize trimmed-string
 		DynArray<Token> tokens = DynArray<Token>::create(tmp_arena);
-		tokenizer_tokenize_line(trimmed_text, &tokens, line_index, false);
+		tokenizer_tokenize_single_line(trimmed_text, &tokens, line_index, false);
 
 		// 3. Re-create line-text from tokens with formating spaces
 		String formated_string = string_create(tmp_arena);
@@ -2342,78 +2290,6 @@ namespace Text_Editing
 
 
 // LINE INFOS
-DynArray<Token> tokenize_line(Text_Index index, int& token_index, Arena* arena, bool handle_line_continuations, bool remove_comments)
-{
-	Source_Code* code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
-	DynArray<Token> tokens = DynArray<Token>::create(arena);
-	token_index = 0;
-	if (index.line < 0 || index.line >= code->line_count) return tokens;
-
-	auto helper_has_continuation = [&]() -> bool {
-			if (tokens.size > 0 && tokens[tokens.size - 1].type == Token_Type::CONCATENATE_LINES) return true;
-			if (tokens.size > 1 &&
-				tokens[tokens.size - 1].type == Token_Type::COMMENT &&
-				tokens[tokens.size - 2].type == Token_Type::CONCATENATE_LINES) 
-			{
-				return true;
-			}
-			return false;
-		};
-
-	// Check for continuations in previous lines
-	if (handle_line_continuations)
-	{
-		int start_line = index.line;
-		while (start_line > 0)
-		{
-			Source_Line* prev = source_code_get_line(code, start_line - 1);
-			tokens.reset();
-			tokenizer_tokenize_line(prev->text, &tokens, start_line - 1, remove_comments);
-			if (helper_has_continuation()) {
-				start_line = start_line - 1;
-				continue;
-			}
-			break;
-		}
-
-		// Tokenize previous lines with continuations
-		tokens.reset();
-		for (int i = start_line; i < index.line; i += 1) {
-			tokenizer_tokenize_line(source_code_get_line(code, i)->text, &tokens, i, remove_comments);
-		}
-	}
-
-	// Tokenize current line
-	token_index = math_maximum(0, (int)tokens.size - 1);
-	int line_token_start = tokens.size;
-	tokenizer_tokenize_line(source_code_get_line(code, index.line)->text, &tokens, index.line, remove_comments);
-
-	// Find closest token
-	for (int i = line_token_start; i < tokens.size; i++) {
-		Token& token = tokens[i];
-		if (token.start <= index.character) {
-			token_index = i;
-		}
-		else {
-			break;
-		}
-	}
-
-	if (handle_line_continuations)
-	{
-		int line = index.line + 1;
-		while (helper_has_continuation() && line < code->line_count) 
-		{
-			int prev_size = tokens.size;
-			tokenizer_tokenize_line(source_code_get_line(code, line)->text, &tokens, line, remove_comments);
-			if (tokens.size == prev_size) break; // Empty lines stop continuations
-			line += 1;
-		}
-	}
-
-	return tokens;
-}
-
 bool line_is_empty_or_comment(Source_Line* line)
 {
 	for (int i = 0; i < line->text.size; i++) {
@@ -2644,7 +2520,7 @@ int syntax_editor_add_tab(String file_path)
 	// Create new tab
 	Editor_Tab tab;
 	tab.filepath = string_copy(file_path);
-	tab.code = source_code_load_from_file(tab.filepath, &editor.compiler->identifier_pool);
+	tab.code = source_code_load_from_file(tab.filepath);
 
 	tab.requires_recompile = true;
 	tab.history = code_history_create(tab.code);
@@ -2784,8 +2660,8 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	gui_initialize(text_renderer, window);
 	ui_system_initialize();
 
-	syntax_editor.compiler = compiler_create();
 	syntax_editor.debugger = debugger_create();
+	syntax_editor.fiber_pool = fiber_pool_create();
 	syntax_editor.last_code_completion_tab = -1;
 	syntax_editor.compile_count = 0;
 	syntax_editor.last_insert_was_shift_enter = false;
@@ -2846,10 +2722,9 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.prefer_base_pass = false;
 
 	// Init compiler thread info
-	syntax_editor.editor_compilation_data = compilation_data_create(syntax_editor.compiler);
+	syntax_editor.editor_compilation_data = compilation_data_create(syntax_editor.fiber_pool);
 	auto& compiler_thread_data = syntax_editor.compiler_thread_data;
-	compiler_thread_data.compiler = syntax_editor.compiler;
-	compiler_thread_data.compilation_data = compilation_data_create(syntax_editor.compiler);
+	compiler_thread_data.compilation_data = compilation_data_create(syntax_editor.fiber_pool);
 	compiler_thread_data.build_code = false;
 	compiler_thread_data.compiler_main_unit = nullptr;
 	compiler_thread_data.work_started = false;
@@ -2870,7 +2745,14 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 void syntax_editor_destroy()
 {
 	auto& editor = syntax_editor;
-	compiler_destroy(editor.compiler);
+
+	// Synchronize with compiler thread
+	if (syntax_editor.compiler_thread_data.work_started) {
+		semaphore_wait(syntax_editor.compiler_thread_data.compilation_finish_semaphore);
+		syntax_editor.compiler_thread_data.thread_should_exit = true;
+		semaphore_increment(syntax_editor.compiler_thread_data.compiler_wait_semaphore, 1);
+	}
+
 	ui_system_shutdown();
 	debugger_destroy(editor.debugger);
 	directory_crawler_destroy(editor.directory_crawler);
@@ -2901,6 +2783,8 @@ void syntax_editor_destroy()
 	}
 	dynamic_array_destroy(&editor.poly_pass_filters);
 	hashtable_destroy(&editor.filtered_passes);
+
+	fiber_pool_destroy(editor.fiber_pool);
 }
 
 void syntax_editor_save_text_file()
@@ -3011,7 +2895,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 	{
 		compilation_data_destroy(editor.editor_compilation_data);
 		editor.editor_compilation_data = compiler_thread_data.compilation_data;
-		compiler_thread_data.compilation_data = compilation_data_create(editor.compiler);
+		compiler_thread_data.compilation_data = compilation_data_create(editor.fiber_pool);
 
 		// Move compilation-units from old data to new data
 		for (int i = 0; i < editor.editor_compilation_data->compilation_units.size; i++)
@@ -3053,8 +2937,6 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			if (unit->code == nullptr) 
 			{
 				unit->code = source_code_copy(tab.code);
-				auto lock = identifier_pool_lock_aquire(&editor.compiler->identifier_pool);
-				SCOPE_EXIT(identifier_pool_lock_release(lock));
 				if (got_compiler_update) {
 					auto swap = tab.code;
 					tab.code = unit->code;
@@ -4072,7 +3954,7 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 	{
 		String part = path_parts[i];
 
-		String* id = identifier_pool_lock_and_add(&syntax_editor.compiler->identifier_pool, part);
+		String* id = identifier_pool_add(&syntax_editor.editor_compilation_data->identifier_pool, part);
 		DynArray<Symbol*> symbols = symbol_table_query_id(symbol_table, id, query_info, arena);
 
 		// After first lookup the query-type changes
@@ -4176,7 +4058,7 @@ void code_completion_find_suggestions()
 
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
-	auto& ids = syntax_editor.compiler->identifier_pool.predefined_ids;
+	auto& ids = syntax_editor.editor_compilation_data->identifier_pool.predefined_ids;
 
 	// Get partially typed word
 	String fuzzy_search_string = string_create_static("");
@@ -4334,7 +4216,7 @@ void code_completion_find_suggestions()
 				}
 				case Symbol_Type::PARAMETER: {
 					auto& param = symbol->options.parameter;
-					value_type = param.function->function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+					value_type = param.function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
 					break;
 				}
 				case Symbol_Type::PATTERN_VARIABLE:
@@ -4863,8 +4745,8 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			if (type != Token_Type::INVALID) 
 			{
 				int token_index = 0;
-				DynArray<Token> tokens = tokenize_line(pos, token_index, arena, true, false);
-				ivec2 token_range = Motions::tokens_get_parenthesis_range(tokens, token_index, type);
+				DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
+				ivec2 token_range = tokens_get_parenthesis_range(tokens, token_index, type, arena);
 				range = Motions::token_range_to_text_range(pos, token_range, tokens);
 			}
 
@@ -5030,7 +4912,7 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 	auto checkpoint = arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
-	Text_Range result;
+	Text_Range result = text_range_make(text_index_make(0, 0), text_index_make(0, 0));
 	switch (motion.motion_type)
 	{
 	case Motion_Type::MOVEMENT:
@@ -5114,11 +4996,11 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 		}
 
 		int token_index = 0;
-		DynArray<Token> tokens = tokenize_line(pos, token_index, arena, true, false);
+		DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
 		ivec2 token_range = ivec2(-1);
 		for (int i = 0; i < motion.repeat_count; i++)
 		{
-			ivec2 new_range = Motions::tokens_get_parenthesis_range(tokens, token_index, type);
+			ivec2 new_range = tokens_get_parenthesis_range(tokens, token_index, type, arena);
 			if (new_range.x == -1) {
 				break;
 			}
@@ -5322,7 +5204,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 		for (int i = 0; i < yank_lines.size; i++) {
 			auto& yank_line = yank_lines[i];
 			int total_indent = cursor_line_indent + yank_line.indentation;
-			Text_Editing::add_lines(line_insert_index + 1, 1, total_indent);
+			Text_Editing::add_lines(line_insert_index + i, 1, total_indent);
 			Text_Editing::insert_text_in_line(text_index_make(line_insert_index + i, total_indent * 4), yank_line.text, false);
 			auto range = text_range_make(text_index_make(line_insert_index + i, 0), text_index_make(line_insert_index + i, yank_line.text.size + total_indent * 4));
 			Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.5f, 0.2f));
@@ -6587,8 +6469,6 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		if (changed)
 		{
 			auto& tab = editor.tabs[editor.open_tab_index];
-			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
-			if (symbol_table == nullptr) break;
 
 			// Special code path for file search
 			String search_text = editor.fuzzy_search_text;
@@ -6597,6 +6477,9 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				suggestions_fill_with_file_directory(search_text);
 				break;
 			}
+
+			Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(tab.cursor);
+			if (symbol_table == nullptr) break;
 
 			// Do path-lookup from string
 			Arena arena = Arena::create(512);
@@ -7283,12 +7166,9 @@ void syntax_editor_update(bool& animations_running)
 
 					bool found_info = false;
 					Assembly_Source_Information info = debugger_get_assembly_source_information(editor.debugger, frame.instruction_pointer);
-					if (info.ir_function != 0) {
-						auto slot = editor.editor_compilation_data->function_slots[info.ir_function->function_slot_index];
-						if (slot.modtree_function != 0) {
-							string_append_string(&str, slot.modtree_function->name);
-							found_info = true;
-						}
+					if (info.upp_function != nullptr) {
+						string_append_string(&str, info.upp_function->name);
+						found_info = true;
 					}
 
 					if (!found_info) {
@@ -7758,19 +7638,19 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 		auto& param_info = symbol->options.parameter;
 		if (pass != nullptr)
 		{
-			auto progress = analysis_workload_try_get_function_progress(pass->origin_workload);
-			if (progress != nullptr)
+			Upp_Function* function = analysis_workload_try_get_upp_function(pass->origin_workload);
+			if (function != nullptr)
 			{
-				if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-					type = progress->poly_function.poly_header->signature->parameters[param_info.index_in_polymorphic_signature].datatype;
+				if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+					type = function->poly_function.poly_header->signature->parameters[param_info.index_in_polymorphic_signature].datatype;
 				}
-				else if (progress->type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					type = progress->function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
+				else if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+					type = function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
 				}
 			}
 		}
 		if (type == nullptr) {
-			type = param_info.function->function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
+			type = param_info.function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
 		}
 		break;
 	}
@@ -8139,7 +8019,7 @@ void syntax_editor_render()
 					upp_line_index = info.upp_line_index;
 					unit = info.unit;
 				}
-				else if (info.ir_function != nullptr)
+				else if (info.upp_function != nullptr)
 				{
 					// Here we don't know the exact line, but we know the function
 					int distance_to_start = math_absolute((i64)frame.instruction_pointer - (i64)info.function_start_address);
@@ -8148,25 +8028,25 @@ void syntax_editor_render()
 						leaving_function = true;
 					}
 
-					auto modtree_fn = editor.editor_compilation_data->function_slots[info.ir_function->function_slot_index].modtree_function;
+					Upp_Function* upp_function = info.upp_function;
 					AST::Node* function_origin_node = nullptr;
-					if (modtree_fn != nullptr)
+					if (upp_function != nullptr)
 					{
-						switch (modtree_fn->function_type)
+						switch (upp_function->function_type)
 						{
-						case ModTree_Function_Type::BAKE: {
-							function_origin_node = upcast(modtree_fn->options.bake->bake_node);
+						case Upp_Function_Type::BAKE: {
+							function_origin_node = upcast(upp_function->options.bake->bake_node);
 							break;
 						}
-						case ModTree_Function_Type::EXTERN: {
-							auto symbol = modtree_fn->options.extern_definition->symbol;
+						case Upp_Function_Type::EXTERN: {
+							auto symbol = upp_function->options.extern_definition->symbol;
 							if (symbol != 0) {
 								function_origin_node = symbol->definition_node;
 							}
 							break;
 						}
-						case ModTree_Function_Type::NORMAL: {
-							function_origin_node = upcast(modtree_fn->options.normal.progress->function_node->options.function.body);
+						case Upp_Function_Type::NORMAL: {
+							function_origin_node = upcast(upp_function->function_node->options.function.body);
 							break;
 						}
 						default: panic("");
@@ -8380,7 +8260,7 @@ void syntax_editor_render()
 				auto checkpoint = arena.make_checkpoint();
 				SCOPE_EXIT(checkpoint.rewind());
 				DynArray<Token> tokens = DynArray<Token>::create(&arena);
-				tokenizer_tokenize_line(line->text, &tokens, display_line.line_index, false);
+				tokenizer_tokenize_single_line(line->text, &tokens, display_line.line_index, false);
 				for (int j = 0; j < tokens.size; j++)
 				{
 					auto& token = tokens[j];
@@ -8466,7 +8346,7 @@ void syntax_editor_render()
 						// Special handling, as errors may appear at the end of the line
 						int end_char = analysis_item.end_char;
 						if (analysis_item.start_char == analysis_item.end_char) {
-							end_char += 1;
+							length += 1;
 						}
 						main_area.mark(mark_pos, length, Mark_Type::UNDERLINE, Palette_Color::RED);
 						break;
@@ -9000,7 +8880,13 @@ void syntax_editor_render()
 				);
 				ivec2 context_char_size = editor.font_smaller->char_size;
 				ivec2 context_size = context_text_area.size * context_char_size + BORDER_SIZE * 2;
+				if (context_text.size == 0) {
+					context_size.y = 0;
+				}
 				ivec2 call_info_size = call_info_text_area.size * context_char_size + BORDER_SIZE * 2;;
+				if (call_info_text.size == 0) {
+					call_info_size.y = 0;
+				}
 
 				// Check if box should be placed above or below cursor line
 				int box_height = context_size.y + call_info_size.y;

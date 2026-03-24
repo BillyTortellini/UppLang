@@ -1934,9 +1934,9 @@ struct C_Line_Mapping
     int c_line_index; // Global line-index
 };
 
-struct IR_Function_Mapping
+struct C_Function_Mapping
 {
-    IR_Function* ir_function;
+    Upp_Function* function;
     Dynamic_Array<C_Line_Mapping*> c_lines; // All C-Lines for which machine instructions exist?
     u64 virtual_address_start;
     u64 virtual_address_end;
@@ -2011,7 +2011,7 @@ struct Debugger
     Dynamic_Array<Statement_Mapping> statement_mapping;
     Dynamic_Array<IR_Instruction_Mapping> ir_instruction_mapping;
     Dynamic_Array<C_Line_Mapping> c_line_mapping;
-    Dynamic_Array<IR_Function_Mapping> ir_function_mapping;
+    Dynamic_Array<C_Function_Mapping> ir_function_mapping;
 
     Hashtable<IR_Code_Block*, int> ir_block_to_ir_instruction_mapping_start_index;
     Hashtable<String, PDB_Analysis::PDB_Location> c_name_to_location_map; // Stores local-variables, parameters and globals
@@ -2054,7 +2054,7 @@ Debugger* debugger_create()
     result->statement_mapping = dynamic_array_create<Statement_Mapping>();
     result->ir_instruction_mapping = dynamic_array_create<IR_Instruction_Mapping>();
     result->c_line_mapping = dynamic_array_create<C_Line_Mapping>();
-    result->ir_function_mapping = dynamic_array_create<IR_Function_Mapping>();
+    result->ir_function_mapping = dynamic_array_create<C_Function_Mapping>();
     result->ir_block_to_ir_instruction_mapping_start_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
     result->c_name_to_location_map = hashtable_create_empty<String, PDB_Analysis::PDB_Location>(64, hash_string, string_equals);
     hashtable_reset(&result->c_name_to_location_map);
@@ -2954,7 +2954,7 @@ struct Machine_Code_Segment
 {
 	u64 virtual_address_start;
 	u64 virtual_address_end;
-	int function_slot_index;
+	Upp_Function* function;
 	int c_line_index_with_offset;
 };
 
@@ -2962,8 +2962,8 @@ struct Segment_Comparator
 {
 	bool operator()(const Machine_Code_Segment& a, const Machine_Code_Segment& b)
 	{
-		if (a.function_slot_index != b.function_slot_index) {
-			return a.function_slot_index < b.function_slot_index;
+		if (a.function != b.function) {
+			return a.function->function_index < b.function->function_index;
 		}
 		return a.virtual_address_start < b.virtual_address_start;
 	}
@@ -2995,7 +2995,7 @@ void source_mapping_upp_line_to_machine_code_segments(
 			{
 				auto c_line_info = ir_instr_map->c_lines[k];
 				Machine_Code_Segment segment;
-				segment.function_slot_index = ir_instr_map->code_block->function->function_slot_index;
+				segment.function = ir_instr_map->code_block->function;
 				segment.virtual_address_start = c_line_info->range.start_virtual_address;
 				segment.virtual_address_end = c_line_info->range.end_virtual_address;
 				segment.c_line_index_with_offset = c_line_info->c_line_index;
@@ -3013,7 +3013,7 @@ void source_mapping_upp_line_to_machine_code_segments(
 		auto& current = out_machine_code_segments->data[i];
 		auto& next = out_machine_code_segments->data[i + 1];
 
-		if (current.function_slot_index != next.function_slot_index) continue;
+		if (current.function != next.function) continue;
 		if (current.virtual_address_end == next.virtual_address_start) {
 			current.virtual_address_end = next.virtual_address_end;
 			dynamic_array_remove_ordered(out_machine_code_segments, i + 1);
@@ -3025,7 +3025,7 @@ void source_mapping_upp_line_to_machine_code_segments(
 Assembly_Source_Information debugger_get_assembly_source_information(Debugger* debugger, u64 virtual_address)
 {
 	Assembly_Source_Information result;
-	result.ir_function = 0;
+	result.upp_function = nullptr;
 	result.function_start_address = 0;
 	result.function_end_address = 0;
 	result.c_line_index = -1;
@@ -3035,12 +3035,12 @@ Assembly_Source_Information debugger_get_assembly_source_information(Debugger* d
 	result.unit = nullptr;
 	result.upp_line_index = -1;
 
-	IR_Function_Mapping* function_mapping = nullptr;
+	C_Function_Mapping* function_mapping = nullptr;
 	for (int i = 0; i < debugger->ir_function_mapping.size; i++) {
-		auto& function = debugger->ir_function_mapping[i];
-		if (virtual_address >= function.virtual_address_start && virtual_address < function.virtual_address_end) {
-			function_mapping = &function;
-			result.ir_function = function.ir_function;
+		auto& mapping = debugger->ir_function_mapping[i];
+		if (virtual_address >= mapping.virtual_address_start && virtual_address < mapping.virtual_address_end) {
+			function_mapping = &mapping;
+			result.upp_function = mapping.function;
 			break;
 		}
 	}
@@ -3720,8 +3720,6 @@ void debugger_resume_until_next_halt_or_exit(Debugger* debugger)
 bool debugger_start_process(
 	Debugger* debugger, const char* exe_filepath, const char* pdb_filepath, const char* main_obj_filepath, Compilation_Data* compilation_data)
 {
-    Compiler* compiler = compilation_data->compiler;
-
 	debugger_reset(debugger);
 	debugger->compilation_data = compilation_data;
 
@@ -3906,10 +3904,10 @@ bool debugger_start_process(
 		}
 
 		// Add IR-Instruction to Statement mapping
-        IR_Program* ir_program = compilation_data->ir_generator->program;
-		for (int i = 0; i < ir_program->functions.size; i++) {
-			auto ir_fn = ir_program->functions[i];
-			source_mapping_generate_ir_instruction_mapping_recursive(ir_fn->code, debugger); // Note: This only enumerates/finds all IR-Instructions
+		for (int i = 0; i < compilation_data->functions.size; i++) {
+			auto function = compilation_data->functions[i];
+            if (function->ir_block == nullptr) continue;
+			source_mapping_generate_ir_instruction_mapping_recursive(function->ir_block, debugger); // Note: This only enumerates/finds all IR-Instructions
 		}
 		for (int i = 0; i < debugger->ir_instruction_mapping.size; i++)
 		{
@@ -3957,42 +3955,42 @@ bool debugger_start_process(
 
 		// Add IR_Function-Mapping
 		dynamic_array_reset(&debugger->ir_function_mapping);
-		dynamic_array_reserve(&debugger->ir_function_mapping, ir_program->functions.size);
-		for (int i = 0; i < ir_program->functions.size; i++) {
-			IR_Function* ir_function = ir_program->functions[i];
-			IR_Function_Mapping mapping;
+		dynamic_array_reserve(&debugger->ir_function_mapping, compilation_data->functions.size);
+		for (int i = 0; i < compilation_data->functions.size; i++) {
+			Upp_Function* function = compilation_data->functions[i];
+			C_Function_Mapping mapping;
 			mapping.c_lines = dynamic_array_create<C_Line_Mapping*>();
 			mapping.name = string_create_static("");
 			mapping.virtual_address_start = 0;
 			mapping.virtual_address_end = 0;
-			mapping.ir_function = ir_function;
+			mapping.function = function;
 			dynamic_array_push_back(&debugger->ir_function_mapping, mapping);
 		}
-		Hashtable<String, IR_Function_Mapping*> c_function_name_to_ir_function_map =
-			hashtable_create_empty<String, IR_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
+		Hashtable<String, C_Function_Mapping*> c_function_name_to_ir_function_map =
+			hashtable_create_empty<String, C_Function_Mapping*>(debugger->ir_function_mapping.size, hash_string, string_equals);
 		SCOPE_EXIT(hashtable_destroy(&c_function_name_to_ir_function_map));
 		for (int i = 0; i < debugger->ir_function_mapping.size; i++)
 		{
-			IR_Function_Mapping* function = &debugger->ir_function_mapping[i];;
+			C_Function_Mapping* function_mapping = &debugger->ir_function_mapping[i];;
 			C_Translation translation;
 			translation.type = C_Translation_Type::FUNCTION;
-			translation.options.function_slot_index = function->ir_function->function_slot_index;
+			translation.options.function = function_mapping->function;
 			String* c_function_name_opt = hashtable_find_element(&c_translation->name_mapping, translation);
 			if (c_function_name_opt != nullptr) {
-				bool success = hashtable_insert_element(&c_function_name_to_ir_function_map, *c_function_name_opt, function);
+				bool success = hashtable_insert_element(&c_function_name_to_ir_function_map, *c_function_name_opt, function_mapping);
 				assert(success, "Functions names should be guaranteed to be unique");
 			}
 		}
 
-		// Store Assembly_Ranges for C-Lines and IR_Function_Mapping
+		// Store Assembly_Ranges for C-Lines and C_Function_Mapping
 		for (int i = 0; i < pdb_info->source_infos.size; i++)
 		{
 			auto& src_info = pdb_info->source_infos[i];
 			auto& fn_info = pdb_info->functions[src_info.function_index];
 
-			IR_Function_Mapping** function_mapping_opt = hashtable_find_element(&c_function_name_to_ir_function_map, fn_info.name);
+			C_Function_Mapping** function_mapping_opt = hashtable_find_element(&c_function_name_to_ir_function_map, fn_info.name);
 			if (function_mapping_opt == nullptr) continue;
-			IR_Function_Mapping* function_mapping = *function_mapping_opt;
+			C_Function_Mapping* function_mapping = *function_mapping_opt;
 			function_mapping->name = fn_info.name;
 			function_mapping->virtual_address_start = static_location_to_virtual_address(debugger, fn_info.location);
 			function_mapping->virtual_address_end = function_mapping->virtual_address_start + fn_info.length;
@@ -4094,7 +4092,7 @@ void debugger_step_over_statement(Debugger* debugger, bool step_into)
 	//        and if this one changes we know if we went inside another function (stack grows down) or if we went up a function (returned)
 
 	Assembly_Source_Information assembly_info = debugger_get_assembly_source_information(debugger, current_rip);
-	if (assembly_info.ir_function == nullptr) { // E.g. currently not inside upp-function
+	if (assembly_info.upp_function == nullptr) { // E.g. currently not inside upp-function
 		debugger_step_out(debugger);
 		return;
 	}
@@ -4123,15 +4121,12 @@ void debugger_step_over_statement(Debugger* debugger, bool step_into)
 
 		u64 current_stack_frame_address = stack_frames[0].stack_frame_start_address;
 		Assembly_Source_Information source_info = debugger_get_assembly_source_information(debugger, stack_frames[0].instruction_pointer);
-		ModTree_Function* current_function = nullptr;
-		if (source_info.ir_function != nullptr) {
-			current_function = debugger->compilation_data->function_slots[source_info.ir_function->function_slot_index].modtree_function;
-			if (current_function == nullptr) {
-				steps_in_unknown_function_count += 1;
-			}
-			else {
-				steps_in_unknown_function_count = 0;
-			}
+		Upp_Function* current_function = source_info.upp_function;
+		if (current_function == nullptr) {
+			steps_in_unknown_function_count += 1;
+		}
+		else {
+			steps_in_unknown_function_count = 0;
 		}
 
 		if (current_stack_frame_address < initial_stack_frame) {
@@ -4177,15 +4172,15 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 	*out_datatype = nullptr;
 
 	// Try to find local Variable (Register in IR-Block)
-	if (source_info.ir_function != nullptr)
+	if (source_info.upp_function != nullptr)
 	{
 		// Find IR_Block and register_index
 		int register_index = -1;
 		IR_Code_Block* block = source_info.ir_block;
 
 		// Use Function-Body as backup-block if no ir_block was found at address
-		if (block == nullptr && source_info.ir_function != nullptr) {
-			block = source_info.ir_function->code;
+		if (block == nullptr && source_info.upp_function != nullptr) {
+			block = source_info.upp_function->ir_block;
 		}
 
 		// Find register by going up blocks
@@ -4213,15 +4208,15 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 	}
 
 	// If not found try to find parameter with same name 
-	if ((int)translation.type == -1 && source_info.ir_function != nullptr)
+	if ((int)translation.type == -1 && source_info.upp_function != nullptr)
 	{
-		auto& params = source_info.ir_function->signature->parameters;
+		auto& params = source_info.upp_function->signature->parameters;
 		for (int i = 0; i < params.size; i++)
 		{
 			auto& param = params[i];
 			if (string_equals(param.name, &variable_name)) {
 				translation.type = C_Translation_Type::PARAMETER;
-				translation.options.parameter.function = source_info.ir_function;
+				translation.options.parameter.function = source_info.upp_function;
 				translation.options.parameter.index = i;
 				*out_datatype = param.datatype;
 				break;
@@ -4232,9 +4227,9 @@ Optional<PDB_Analysis::PDB_Location> debugger_query_named_upp_value(
 	// If not found try to find global with same name
 	if ((int)translation.type == -1)
 	{
-		for (int i = 0; i < debugger->compilation_data->program->globals.size; i++)
+		for (int i = 0; i < debugger->compilation_data->globals.size; i++)
 		{
-			auto& global = debugger->compilation_data->program->globals[i];
+			auto& global = debugger->compilation_data->globals[i];
 			if (global->symbol == 0) continue;
 			if (string_equals(global->symbol->id, &variable_name)) {
 				translation.type = C_Translation_Type::GLOBAL;

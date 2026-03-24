@@ -5,10 +5,8 @@
 #include "../../datastructures/hashtable.hpp"
 #include "semantic_analyser.hpp"
 
-struct Compiler;
-struct IR_Function;
+struct Upp_Function;
 struct IR_Code_Block;
-struct IR_Program;
 
 /*
     Runtime system has:
@@ -53,7 +51,7 @@ enum class Instruction_Type
     JUMP_ON_TRUE, // op1 = instruction_index, op2 = cnd_reg
     JUMP_ON_FALSE, // op1 = instruction_index, op2 = cnd_reg
     JUMP_ON_INT_EQUAL, // op1 = instruction_index, op2 = cnd_reg, op3 = int_value
-    CALL_FUNCTION, // Pushes return address, op1 = goto_instruction_index, op2 = stack_offset for new frame
+    CALL_FUNCTION, // Pushes return address, op1 = function_index+1, op2 = stack_offset for new frame
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
     RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
@@ -106,12 +104,6 @@ struct Bytecode_Instruction
     int op4;
 };
 
-struct Function_Reference
-{
-    IR_Function* function;
-    int instruction_index;
-};
-
 struct Goto_Label
 {
     int jmp_instruction;
@@ -128,39 +120,21 @@ struct Bytecode_Generator
 
     Dynamic_Array<Array<int>> stack_offsets; // For both registers and functions
     Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
-    Hashtable<IR_Function*, int> function_parameter_stack_offset_index;
-
-    int entry_point_index;
-    int maximum_function_stack_depth;
+    Hashtable<Upp_Function*, int> function_parameter_stack_offset_index;
 
     // Data required for generation
     Hashtable<IR_Code_Block*, int> continue_location;
     Hashtable<IR_Code_Block*, int> break_location;
-    Dynamic_Array<Function_Reference> fill_out_calls;
     Dynamic_Array<Goto_Label> fill_out_gotos;
     Dynamic_Array<int> label_locations;
 
     int current_stack_offset;
+    int maximum_stack_offset;
 };
 
 Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data);
 void bytecode_generator_destroy(Bytecode_Generator* generator);
-
-/*
-    Scheme for partial compilation:
-        1. Add all globals, call update_globals
-            This is required because function compilation needs to know the global offsets
-            of used globals.
-        2. Call compile_function for each function
-            Will compile all functions, but references (function calls, ptr-load, gotos)
-            aren't valid until update references is called
-        3. Call update references
-            This fills out the references in the instruction code, maybe this could be done
-            by interpreter before a function run...
-*/
-void bytecode_generator_compile_function(Bytecode_Generator* generator, IR_Function* function);
-void bytecode_generator_update_references(Bytecode_Generator* generator);
-void bytecode_generator_set_entry_function(Bytecode_Generator* generator);
+void bytecode_generator_compile_function(Bytecode_Generator* generator, Upp_Function* function);
 
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
