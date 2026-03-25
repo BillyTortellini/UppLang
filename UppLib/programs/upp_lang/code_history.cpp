@@ -161,7 +161,7 @@ void code_change_apply(Source_Code* code, Code_Change* change, bool forwards)
 		    for (int i = 0; i < line->item_infos.size; i++) 
 		    {
 		    	auto& item = line->item_infos[i];
-		    	if (item.end_char <= pos.character) continue;
+		    	if (item.end_char < pos.character) continue; // Note: we would rather grow some items wrongly instead of the other way around
 		    	if (item.start_char > pos.character) {
 		    		item.start_char += str.size;
 		    	}

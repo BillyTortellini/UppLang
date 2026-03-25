@@ -1048,6 +1048,22 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	case AST::Expression_Type::POINTER_TYPE:
 	case AST::Expression_Type::MODULE:
 		panic("Should be handled above!");
+	case AST::Expression_Type::BASETYPE_ACCESS: 
+	{
+		Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.basetype_access_expr, semantic_context);
+		if (result.type != Comptime_Result_Type::AVAILABLE) {
+			return result;
+		}
+		return comptime_result_make_available(result.data, result_datatype);
+	}
+	case AST::Expression_Type::SUBTYPE_ACCESS: 
+	{
+		Comptime_Result result = expression_calculate_comptime_value_internal(expr->options.subtype_access.expr, semantic_context);
+		if (result.type != Comptime_Result_Type::AVAILABLE) {
+			return result;
+		}
+		return comptime_result_make_available(result.data, result_datatype);
+	}
 	case AST::Expression_Type::ERROR_EXPR: {
 		return comptime_result_make_unavailable(types.unknown_type, "Analysis contained errors");
 	}
@@ -1249,17 +1265,6 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 				"In instance this should already be constant"
 			);
 			return comptime_result_make_unavailable(result_datatype, "Cannot access polymorphic parameter value in base analysis");
-		}
-		case Member_Access_Type::STRUCT_SUBTYPE: {
-			panic("Should be handled by type_type!");
-			return comptime_result_make_unavailable(result_datatype, "Invalid code-path!");
-		}
-		case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: {
-			Comptime_Result value_struct = expression_calculate_comptime_value_internal(expr->options.member_access.expr, semantic_context);
-			if (value_struct.type != Comptime_Result_Type::AVAILABLE) {
-				return value_struct;
-			}
-			return comptime_result_make_available(value_struct.data, result_datatype);
 		}
 		case Member_Access_Type::ENUM_MEMBER_ACCESS: {
 			panic("Should be handled by type_type!");
@@ -3560,7 +3565,7 @@ Call_Origin call_origin_make(Custom_Operator_Type context_change_type, Compilati
 Call_Origin call_origin_make(Datatype_Struct* structure, Semantic_Context* semantic_context) 
 {
 	Call_Origin origin;
-	origin.type = structure->is_union ? Call_Origin_Type::STRUCT_INITIALIZER : Call_Origin_Type::UNION_INITIALIZER;
+	origin.type = structure->is_union ? Call_Origin_Type::UNION_INITIALIZER : Call_Origin_Type::STRUCT_INITIALIZER;
 	origin.options.structure = structure;
 
 	// Create initializer signature if not already done (FUTURE: May cause problems with multithreading)
@@ -7401,7 +7406,7 @@ Datatype_Struct* analyse_member_initializer_recursive(
 
 	// Match arguments to struct members
 	arguments_match_to_parameters(*call_info, semantic_context);
-	call_info_analyse_all_arguments(call_info, semantic_context, false, false);
+	call_info_analyse_all_arguments(call_info, false, semantic_context, false);
 
 	auto helper_analyse_subtype_init_unknown = [&](AST::Subtype_Initializer* subtype_init)
 	{
@@ -7530,7 +7535,6 @@ Datatype_Struct* analyse_member_initializer_recursive(
 		}
 	}
 
-	call_info->origin.options.structure = return_value; // Return value should point to final subtype, as ir-code generates the tags with this
 	return return_value;
 }
 
@@ -8711,6 +8715,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			if (!struct_type->is_union)
 			{
 				Datatype_Struct* final_type = analyse_member_initializer_recursive(init_node.call_node, struct_type, 0, semantic_context);
+				info->specifics.struct_init_lowest_subtype = final_type;
+				if (init_node.type_expr.available) {
+					EXIT_VALUE(type_for_init, true); // If type is explicitly given, we always return this type, e.g. Node.() -> returns node
+				}
 				EXIT_VALUE(upcast(final_type), true);
 			}
 			else
@@ -8923,6 +8931,120 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		log_error_info_given_type(semantic_context, array_type);
 		EXIT_ERROR(types.unknown_type);
 	}
+	case AST::Expression_Type::BASETYPE_ACCESS:
+	case AST::Expression_Type::SUBTYPE_ACCESS:
+	{
+		bool is_base_access = expr->type == AST::Expression_Type::BASETYPE_ACCESS;
+		AST::Expression* child_expr = is_base_access ? expr->options.basetype_access_expr : expr->options.subtype_access.expr;
+		auto child_info = semantic_analyser_analyse_expression_any(
+			child_expr, expression_context_make_unspecified(), semantic_context
+		);
+
+		switch (child_info->result_type)
+		{
+		case Expression_Result_Type::DATATYPE:
+		{
+			Datatype* datatype = child_info->options.datatype;
+			if (datatype->type != Datatype_Type::STRUCT) {
+				log_semantic_error(semantic_context, "Sub/basetype-access only works on structs", expr, Node_Section::FIRST_TOKEN);
+				log_error_info_given_type(semantic_context, datatype);
+				EXIT_ERROR(types.unknown_type);
+			}
+
+			Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
+			Datatype* result_type = nullptr;
+			if (is_base_access) 
+			{
+				if (structure->parent_struct == nullptr || structure->parent_struct == structure) {
+					log_semantic_error(semantic_context, "Given structure is already root-struct", expr, Node_Section::FIRST_TOKEN);
+					log_error_info_given_type(semantic_context, datatype);
+					EXIT_ERROR(upcast(structure));
+				}
+				result_type = upcast(structure->parent_struct);
+			}
+			else
+			{
+				// Search subtype
+				int subtype_index = -1;
+				for (int i = 0; i < structure->subtypes.size; i++) {
+					if (structure->subtypes[i]->name == expr->options.subtype_access.name) {
+						subtype_index = i;
+						break;
+					}
+				}
+				if (subtype_index == -1) {
+					log_semantic_error(semantic_context, "Structure does not have a subtype with this name", expr, Node_Section::FIRST_TOKEN);
+					log_error_info_given_type(semantic_context, datatype);
+					EXIT_ERROR(types.unknown_type);
+				}
+				result_type = upcast(structure->subtypes[subtype_index]);
+			}
+
+			EXIT_TYPE(result_type);
+		}
+		case Expression_Result_Type::CONSTANT:
+		case Expression_Result_Type::VALUE: 
+		{
+			assert(child_info->cast_info.cast_type == Cast_Type::NO_CAST, "");
+			Datatype* value_type = child_info->cast_info.result_type;
+			bool is_temporary = false;
+			if (child_info->result_type == Expression_Result_Type::VALUE) {
+				is_temporary = child_info->options.value.is_temporary;
+			}
+			else {
+				is_temporary = true;
+			}
+
+			Type_Modifier_Info mods = datatype_get_modifier_info(value_type);
+			if (mods.base_type->type != Datatype_Type::STRUCT) {
+				log_semantic_error(semantic_context, "Base/subtype-access only works on structs", expr, Node_Section::FIRST_TOKEN);
+				log_error_info_given_type(semantic_context, value_type);
+				EXIT_ERROR(types.unknown_type);
+			}
+
+			// Search subtype
+			Datatype_Struct* structure = mods.struct_subtype;
+			Datatype_Struct* result_struct = nullptr;
+			if (is_base_access)
+			{
+				if (structure->parent_struct == nullptr || structure->parent_struct == structure) {
+					log_semantic_error(semantic_context, "Given structure is already root-struct", expr, Node_Section::FIRST_TOKEN);
+					log_error_info_given_type(semantic_context, value_type);
+					EXIT_ERROR(upcast(structure));
+				}
+				result_struct = structure->parent_struct;
+			}
+			else
+			{
+				int subtype_index = -1;
+				for (int i = 0; i < structure->subtypes.size; i++) {
+					if (structure->subtypes[i]->name == expr->options.subtype_access.name) {
+						subtype_index = i;
+						break;
+					}
+				}
+				if (subtype_index == -1) {
+					log_semantic_error(semantic_context, "Structure does not have a subtype with this name", expr, Node_Section::FIRST_TOKEN);
+					log_error_info_given_type(semantic_context, mods.base_type);
+					EXIT_ERROR(types.unknown_type);
+				}
+				result_struct = structure->subtypes[subtype_index];
+			}
+
+			Datatype* result_type = type_system_make_type_with_modifiers(
+				type_system, upcast(result_struct), mods.pointer_level, mods.optional_flags
+			);
+			EXIT_VALUE(result_type, is_temporary);
+		}
+		default: {
+			log_semantic_error(semantic_context, "Subtype-access requires a either a value- or type-expression.", expr, Node_Section::FIRST_TOKEN);
+			EXIT_ERROR(types.unknown_type);
+		}
+		}
+
+		panic("Invalid code path");
+		EXIT_ERROR(types.unknown_type);
+	}
 	case AST::Expression_Type::MEMBER_ACCESS:
 	{
 		auto& member_node = expr->options.member_access;
@@ -8988,7 +9110,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				EXIT_ERROR(types.unknown_type);
 			}
 
-			// Handle Struct-Subtypes and polymorphic value access, e.g. Node.Expression / Node(int).T
+			// Handle Poly-value access, e.g. Node(int).T
 			if (datatype->type == Datatype_Type::STRUCT)
 			{
 				Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
@@ -8998,22 +9120,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (poly_parameter_access.available) {
 					expression_info_set_constant(info, poly_parameter_access.value);
 					return info;
-				}
-
-				// Check if it's a valid subtype
-				Datatype_Struct* subtype = nullptr;
-				for (int i = 0; i < structure->subtypes.size; i++) {
-					if (structure->subtypes[i]->name == member_node.name) {
-						subtype = structure->subtypes[i];
-						break;
-					}
-				}
-
-				if (subtype != nullptr) 
-				{
-					Datatype* result = upcast(subtype);
-					info->specifics.member_access.type = Member_Access_Type::STRUCT_SUBTYPE;
-					EXIT_TYPE(result);
 				}
 			}
 
@@ -9108,26 +9214,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 						access_info.options.member = member;
 						EXIT_VALUE(access_info.options.member.type, result_is_temporary);
 					}
-				}
-
-				// Check subtype access
-				for (int i = 0; i < structure->subtypes.size; i++)
-				{
-					auto subtype = structure->subtypes[i];
-					if (subtype->name == member_node.name)
-					{
-						access_info.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
-						Datatype* result_type = upcast(structure->subtypes[i]);
-						EXIT_VALUE(result_type, result_is_temporary);
-					}
-				}
-
-				// Check parenttype (upcast) access
-				if (structure->parent_struct != nullptr && structure->parent_struct->name == member_node.name)
-				{
-					access_info.type = Member_Access_Type::STRUCT_UP_OR_DOWNCAST;
-					auto result_type = upcast(structure->parent_struct);
-					EXIT_VALUE(result_type, result_is_temporary);
 				}
 			}
 

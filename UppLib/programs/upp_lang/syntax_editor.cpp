@@ -3999,6 +3999,9 @@ void code_completion_find_suggestions()
 	tab.last_code_completion_query_pos = cursor;
 	editor.last_code_completion_tab = editor.open_tab_index;
 
+	Arena tmp_arena = Arena::create();
+	SCOPE_EXIT(tmp_arena.destroy());
+
 	dynamic_array_reset(&suggestions);
 
 	// Early exit if we aren't in completion context
@@ -4065,6 +4068,7 @@ void code_completion_find_suggestions()
 	bool is_member_access = false;
 	bool is_dot_call_access = false;
 	bool is_path_lookup = false;
+	bool is_subtype_access = false;
 	bool is_hashtag = false;
 	int word_start = cursor.character;
 	{
@@ -4117,6 +4121,9 @@ void code_completion_find_suggestions()
 		if (test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) {
 			is_dot_call_access = true;
 		}
+		else if (test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) {
+			is_subtype_access = true;
+		}
 	}
 	fuzzy_search_start_search(fuzzy_search_string, 10);
 
@@ -4149,181 +4156,224 @@ void code_completion_find_suggestions()
 			ids.hashtag_add_array_access
 			});
 	}
-	else if (symbol_table != nullptr && (is_path_lookup || is_dot_call_access)) // Both path-lookup and dot-call access can be true
+	else if (symbol_table != nullptr && is_dot_call_access)
 	{
-		Arena arena = Arena::create(256);
-		SCOPE_EXIT(arena.destroy());
+		// Find call value type, should be info before ->, so op_index - 1
+		Datatype* call_value_type = nullptr;
+		Analysis_Pass* call_value_pass = nullptr;
+		if (word_start - 3 >= 0)
+		{
+			Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
+			Editor_Info_Expression* expr_info = dot_call_position_info.expression_info;
+			if (expr_info != nullptr) {
+				call_value_type = expr_info->info->cast_info.result_type;
+				call_value_pass = expr_info->analysis_pass;
+			}
+		}
 
+		DynArray<Symbol*> symbols = symbol_table_query_all_symbols(
+			symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::DOT_CALLS, true), &tmp_arena
+		);
+		// Filter symbols that match the first argument given
+		for (int i = 0; i < symbols.size; i++)
+		{
+			auto symbol = symbols[i];
+
+			bool remove_symbol = true;
+			SCOPE_EXIT(if (remove_symbol) {
+				symbols.swap_remove(i);
+				i -= 1;
+			});
+
+			// Handle aliases
+			String* original_id = symbol->id;
+			while (symbol->type == Symbol_Type::ALIAS) {
+				symbol = symbol->options.alias_for;
+			}
+
+			// Check if symbol is callable
+			Datatype* value_type = nullptr;
+			Call_Signature* call_signature = nullptr;
+			switch (symbol->type)
+			{
+			case Symbol_Type::COMPTIME_VALUE: {
+				value_type = symbol->options.constant.type;
+				break;
+			}
+			case Symbol_Type::GLOBAL: {
+				value_type = symbol->options.global->type;
+				break;
+			}
+			case Symbol_Type::FUNCTION: {
+				call_signature = symbol->options.function->signature;
+				break;
+			}
+			case Symbol_Type::PARAMETER: {
+				auto& param = symbol->options.parameter;
+				value_type = param.function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+				break;
+			}
+			case Symbol_Type::PATTERN_VARIABLE:
+			{
+				Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
+				if (call_value_pass == nullptr) {
+					remove_symbol = false;
+					continue;
+				}
+				value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, call_value_pass, state);
+				break;
+			}
+			case Symbol_Type::VARIABLE: {
+				value_type = symbol->options.variable_type;
+				break;
+			}
+			case Symbol_Type::POLYMORPHIC_FUNCTION: {
+				call_signature = symbol->options.poly_function.poly_header->signature;
+				break;
+			}
+			case Symbol_Type::HARDCODED_FUNCTION: {
+				call_signature = editor.editor_compilation_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
+				break;
+			}
+			}
+
+			// Check if value is callable
+			if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
+				call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
+			}
+
+			// Check if dot-call expr type matches function first parameter
+			if (call_signature == nullptr) continue;
+			if (call_signature->parameters.size == 0 || call_signature->return_type_index == 0) continue;
+			auto param = call_signature->parameters[0];
+			if (param.requires_named_addressing) continue;
+
+			// Keep symbol if editor does not have type-infos on call-value
+			if (call_value_type == nullptr) {
+				remove_symbol = false;
+				continue;
+			}
+
+			// Check if types can be cast are compatible (Does not check for casts...)
+			Datatype* param_type = param.datatype;
+			Datatype* arg_type = call_value_type;
+			bool types_are_compatible = false;
+			if (param_type->contains_pattern)
+			{
+				// Try updating type-modifiers
+				Type_Modifier_Info src_mods = datatype_get_modifier_info(arg_type);
+				Type_Modifier_Info dst_mods = datatype_get_modifier_info(param_type);
+				Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
+				if (cast_type == Cast_Type::INVALID) {
+					remove_symbol = true;
+					continue;
+				}
+
+				// Check if patterns match (simple version for editor)
+				Datatype* src = src_mods.base_type;
+				Datatype* dst = dst_mods.base_type;
+				if (dst->type == Datatype_Type::PATTERN_VARIABLE) {
+					remove_symbol = false;
+					continue;
+				}
+				if (dst->type == Datatype_Type::STRUCT_PATTERN) 
+				{
+					if (src->type != Datatype_Type::STRUCT) {
+						remove_symbol = true;
+						continue;
+					}
+					Datatype_Struct* structure = downcast<Datatype_Struct>(src);
+					if (structure->workload == nullptr) {
+						remove_symbol = true;
+						continue;
+					}
+					if (structure->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+						remove_symbol = true;
+						continue;
+					}
+					Workload_Structure_Polymorphic* arg_parent = structure->workload->polymorphic.instance.parent;
+					Workload_Structure_Polymorphic* param_parent = downcast<Datatype_Struct_Pattern>(dst)->instance->header->origin.struct_workload;
+					if (arg_parent != param_parent) {
+						remove_symbol = true;
+						continue;
+					}
+
+					remove_symbol = false;
+					continue;
+				}
+				if (src->type != dst->type) {
+					remove_symbol = true;
+					continue;
+				}
+
+				remove_symbol = false;
+				continue;
+			}
+			else
+			{
+				remove_symbol = true;
+				// remove_symbol = check_if_cast_possible(
+				// 	arg_type, param_type, false, true, true, &editor.editor_compilation_data->type_system
+				// ).cast_type == Cast_Type::INVALID;
+			}
+		}
+
+		// Add symbols to results 
+		for (int i = 0; i < symbols.size; i++) {
+			Symbol* symbol = symbols[i];
+			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
+		}
+	}
+	else if (symbol_table != nullptr && is_subtype_access && word_start - 3 >= 0)
+	{
+		// Find call value type, should be info before .>, so word_start - 3
+		Position_Info subtype_pos_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
+		Editor_Info_Expression* expr_info = subtype_pos_info.expression_info;
+
+		Datatype_Struct* parent_struct = nullptr;
+		if (expr_info != nullptr) 
+		{
+			switch (expr_info->info->result_type)
+			{
+			case Expression_Result_Type::VALUE:
+			case Expression_Result_Type::CONSTANT:
+			{
+				Datatype* value_type = expr_info->info->cast_info.result_type;
+				Type_Modifier_Info mods = datatype_get_modifier_info(value_type);
+				if (mods.base_type->type == Datatype_Type::STRUCT) {
+					parent_struct = mods.struct_subtype;
+				}
+				break;
+			}
+			case Expression_Result_Type::DATATYPE:
+			{
+				Datatype* datatype = expr_info->info->options.datatype;
+				if (datatype->type == Datatype_Type::STRUCT) {
+					parent_struct = downcast<Datatype_Struct>(datatype);
+				}
+				break;
+			}
+			default: break;
+			}
+		}
+
+		if (parent_struct != nullptr) 
+		{
+			for (int i = 0; i < parent_struct->subtypes.size; i++) {
+				Datatype_Struct* subtype = parent_struct->subtypes[i];
+				fuzzy_search_add_item(*subtype->name, unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(subtype->name, Syntax_Color::SUBTYPE));
+			}
+		}
+	}
+	else if (symbol_table != nullptr && is_path_lookup) // Both path-lookup and dot-call access can be true
+	{
 		// First resolve path
 		DynArray<Symbol*> symbols;
-		{
-			Import_Type import_type = Import_Type::SYMBOLS;
-			String path_string = string_create_substring_static(&line->text, word_start, cursor.character);
-			symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &arena).symbols;
-		}
-
-		// Filter symbols if it's dot-call
-		if (is_dot_call_access) // On dot-call access we filter symbols based on previous type
-		{
-			// Find call value type, should be info before ->, so op_index - 1
-			Datatype* call_value_type = nullptr;
-			Analysis_Pass* call_value_pass = nullptr;
-			if (word_start - 3 >= 0)
-			{
-				Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
-				Editor_Info_Expression* expr_info = dot_call_position_info.expression_info;
-				if (expr_info != nullptr) {
-					call_value_type = expr_info->info->cast_info.result_type;
-					call_value_pass = expr_info->analysis_pass;
-				}
-			}
-
-			symbols = symbol_table_query_all_symbols(
-				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::DOT_CALLS, true), &arena
-			);
-			for (int i = 0; i < symbols.size; i++)
-			{
-				auto symbol = symbols[i];
-
-				bool remove_symbol = true;
-				SCOPE_EXIT(if (remove_symbol) {
-					symbols.swap_remove(i);
-					i -= 1;
-				});
-
-				// Handle aliases
-				String* original_id = symbol->id;
-				while (symbol->type == Symbol_Type::ALIAS) {
-					symbol = symbol->options.alias_for;
-				}
-
-				// Check if symbol is callable
-				Datatype* value_type = nullptr;
-				Call_Signature* call_signature = nullptr;
-				switch (symbol->type)
-				{
-				case Symbol_Type::COMPTIME_VALUE: {
-					value_type = symbol->options.constant.type;
-					break;
-				}
-				case Symbol_Type::GLOBAL: {
-					value_type = symbol->options.global->type;
-					break;
-				}
-				case Symbol_Type::FUNCTION: {
-					call_signature = symbol->options.function->signature;
-					break;
-				}
-				case Symbol_Type::PARAMETER: {
-					auto& param = symbol->options.parameter;
-					value_type = param.function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
-					break;
-				}
-				case Symbol_Type::PATTERN_VARIABLE:
-				{
-					Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
-					if (call_value_pass == nullptr) {
-						remove_symbol = false;
-						continue;
-					}
-					value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, call_value_pass, state);
-					break;
-				}
-				case Symbol_Type::VARIABLE: {
-					value_type = symbol->options.variable_type;
-					break;
-				}
-				case Symbol_Type::POLYMORPHIC_FUNCTION: {
-					call_signature = symbol->options.poly_function.poly_header->signature;
-					break;
-				}
-				case Symbol_Type::HARDCODED_FUNCTION: {
-					call_signature = editor.editor_compilation_data->hardcoded_function_signatures[(int)symbol->options.hardcoded];
-					break;
-				}
-				}
-
-				// Check if value is callable
-				if (value_type != nullptr && value_type->type == Datatype_Type::FUNCTION_POINTER) {
-					call_signature = downcast<Datatype_Function_Pointer>(value_type)->signature;
-				}
-
-				// Check if dot-call expr type matches function first parameter
-				if (call_signature == nullptr) continue;
-				if (call_signature->parameters.size == 0 || call_signature->return_type_index == 0) continue;
-				auto param = call_signature->parameters[0];
-				if (param.requires_named_addressing) continue;
-
-				// Keep symbol if editor does not have type-infos on call-value
-				if (call_value_type == nullptr) {
-					remove_symbol = false;
-					continue;
-				}
-
-				// Check if types can be cast are compatible (Does not check for casts...)
-				Datatype* param_type = param.datatype;
-				Datatype* arg_type = call_value_type;
-				bool types_are_compatible = false;
-				if (param_type->contains_pattern)
-				{
-					// Try updating type-modifiers
-					Type_Modifier_Info src_mods = datatype_get_modifier_info(arg_type);
-					Type_Modifier_Info dst_mods = datatype_get_modifier_info(param_type);
-					Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
-					if (cast_type == Cast_Type::INVALID) {
-						remove_symbol = true;
-						continue;
-					}
-
-					// Check if patterns match (simple version for editor)
-					Datatype* src = src_mods.base_type;
-					Datatype* dst = dst_mods.base_type;
-					if (dst->type == Datatype_Type::PATTERN_VARIABLE) {
-						remove_symbol = false;
-						continue;
-					}
-					if (dst->type == Datatype_Type::STRUCT_PATTERN) 
-					{
-						if (src->type != Datatype_Type::STRUCT) {
-							remove_symbol = true;
-							continue;
-						}
-						Datatype_Struct* structure = downcast<Datatype_Struct>(src);
-						if (structure->workload == nullptr) {
-							remove_symbol = true;
-							continue;
-						}
-						if (structure->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-							remove_symbol = true;
-							continue;
-						}
-						Workload_Structure_Polymorphic* arg_parent = structure->workload->polymorphic.instance.parent;
-						Workload_Structure_Polymorphic* param_parent = downcast<Datatype_Struct_Pattern>(dst)->instance->header->origin.struct_workload;
-						if (arg_parent != param_parent) {
-							remove_symbol = true;
-							continue;
-						}
-
-						remove_symbol = false;
-						continue;
-					}
-					if (src->type != dst->type) {
-						remove_symbol = true;
-						continue;
-					}
-
-					remove_symbol = false;
-					continue;
-				}
-				else
-				{
-					remove_symbol = true;
-					// remove_symbol = check_if_cast_possible(
-					// 	arg_type, param_type, false, true, true, &editor.editor_compilation_data->type_system
-					// ).cast_type == Cast_Type::INVALID;
-				}
-			}
-		}
+		Import_Type import_type = Import_Type::SYMBOLS;
+		String path_string = string_create_substring_static(&line->text, word_start, cursor.character);
+		symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
 
 		// Add symbols to results 
 		for (int i = 0; i < symbols.size; i++) {
@@ -4374,17 +4424,6 @@ void code_completion_find_suggestions()
 					auto& mem = members[i];
 					fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
 					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
-				}
-				for (int i = 0; i < structure->subtypes.size; i++) {
-					auto sub = structure->subtypes[i];
-					fuzzy_search_add_item(*sub->name, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(sub->name));
-				}
-				// Add base name if available
-				if (structure->parent_struct != nullptr) {
-					String* parent_name = structure->parent_struct->name;
-					fuzzy_search_add_item(*parent_name, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(parent_name));
 				}
 				break;
 			}
@@ -4527,6 +4566,7 @@ void editor_leave_insert_mode()
 	if (syntax_editor.mode != Editor_Mode::INSERT) {
 		return;
 	}
+	tab.last_line_x_pos = tab.cursor.character;
 	syntax_editor.mode = Editor_Mode::NORMAL;
 	history_stop_complex_command(&tab.history);
 	history_set_cursor_pos(&tab.history, tab.cursor);
@@ -5008,6 +5048,12 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 			token_index = new_range.x - 1;
 		}
 		result = Motions::token_range_to_text_range(pos, token_range, tokens);
+		if (!motion.contains_edges && !text_index_equal(result.start, result.end)) 
+		{
+			Motions::move(result.start, 1);
+			Source_Line* end_line = source_code_get_line(code, result.end.line);
+			Motions::move(result.end, -1);
+		}
 
 		break;
 	}
@@ -5485,6 +5531,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		auto cursor_history = history_get_cursor_pos(history);
 		if (cursor_history.available) {
 			cursor = cursor_history.value;
+			tab.last_line_x_pos = cursor.character;
 		}
 		break;
 	}
@@ -5493,6 +5540,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		auto cursor_history = history_get_cursor_pos(history);
 		if (cursor_history.available) {
 			cursor = cursor_history.value;
+			tab.last_line_x_pos = cursor.character;
 		}
 		break;
 	}
@@ -7747,6 +7795,9 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::DOLLAR, -1)) {
 		return Syntax_Color::VALUE_DEFINITION;
 	}
+	else if (test_token(Token_Type::SUBTYPE_ACCESS, -1)) {
+		return Syntax_Color::SUBTYPE;
+	}
 
 	// Test next token
 	if (test_token(Token_Type::TILDE, 1) || test_token(Token_Type::TILDE_STAR, 1) || test_token(Token_Type::TILDE_STAR_STAR, 1)) {
@@ -8313,8 +8364,6 @@ void syntax_editor_render()
 						{
 						case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
 						case Member_Access_Type::STRUCT_MEMBER_ACCESS: color = Syntax_Color::MEMBER; break;
-						case Member_Access_Type::STRUCT_SUBTYPE:
-						case Member_Access_Type::STRUCT_UP_OR_DOWNCAST: color = Syntax_Color::SUBTYPE; break;
 						case Member_Access_Type::ENUM_MEMBER_ACCESS: color = Syntax_Color::ENUM_MEMBER; break;
 						default: panic("");
 						}

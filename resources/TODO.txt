@@ -1,6 +1,15 @@
 
+TODO:
+-----
+ - Struct storage rework
+ - Struct-instance-templates rework
+
+
 DONE:
 -----
+ - Syntax-editor should show subtypes on .>
+ - Fixed problems with struct-initializer
+ - Struct Subtype Syntax rework
 
 Rough Plan:
  - Improve Code 
@@ -8,6 +17,7 @@ Rough Plan:
         - Struct should have same information as functions, and types should only reference them
         - Struct-Template-Instance could just be struct with some values not filled out...
  - Language Features?
+    * Remove optional pointers (maybe)
     * Subtype-Initializer for Hierarchy
         - Also maybe new syntax for subtype accesses, .> and .<
     * break statement with if, loop, switch, block

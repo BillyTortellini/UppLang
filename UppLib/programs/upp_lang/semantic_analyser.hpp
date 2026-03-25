@@ -576,6 +576,7 @@ struct Expression_Info
     union 
     {
         Call_Info* call_info; // Same as get_info(arguments)
+        Datatype_Struct* struct_init_lowest_subtype; // Used by ir-code to set tags
         struct 
         {
             Member_Access_Type type;

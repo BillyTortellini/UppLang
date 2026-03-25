@@ -72,6 +72,8 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::QUESTION_MARK: return "?";
     case Token_Type::OPTIONAL_POINTER: return "?*";
     case Token_Type::DOT_CALL: return "->";
+    case Token_Type::SUBTYPE_ACCESS: return ".>";
+    case Token_Type::BASETYPE_ACCESS: return ".<";
     case Token_Type::ADDRESS_OF: return "-*";
     case Token_Type::DEREFERENCE: return "-&";
     case Token_Type::OPTIONAL_DEREFERENCE: return "-?&";

@@ -77,6 +77,8 @@ enum class Token_Type
     QUESTION_MARK,        // ?
     OPTIONAL_POINTER,     // ?*
     DOT_CALL,             // ->
+    SUBTYPE_ACCESS,       // .>
+    BASETYPE_ACCESS,      // .<
     ADDRESS_OF,           // -*
     DEREFERENCE,          // -&
     OPTIONAL_DEREFERENCE, // -?&

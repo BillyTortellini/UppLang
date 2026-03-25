@@ -796,7 +796,7 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
 {
     auto call_info = get_info(call_node);
     assert(call_info->origin.type == Call_Origin_Type::STRUCT_INITIALIZER || call_info->origin.type == Call_Origin_Type::UNION_INITIALIZER, "");
-    auto& structure = call_info->origin.options.structure;
+    Datatype_Struct* structure = call_info->origin.options.structure;
 
     for (int i = 0; i < call_info->parameter_values.size; i++)
     {
@@ -821,7 +821,8 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
         move_instr.options.move.source = value_access;
         add_instruction(move_instr);
     }
-    for (int i = 0; i < call_node->subtype_initializers.size; i++) {
+    for (int i = 0; i < call_node->subtype_initializers.size; i++) 
+    {
         auto initializer = call_node->subtype_initializers[i];
         generate_member_initalizers(struct_access, initializer->call_node);
     }
@@ -1596,9 +1597,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         IR_Data_Access* struct_access = make_destination_access_on_demand(result_type);
         assert(call_info->origin.type == Call_Origin_Type::STRUCT_INITIALIZER ||
             call_info->origin.type == Call_Origin_Type::UNION_INITIALIZER, "");
-        Datatype_Struct* structure = call_info->origin.options.structure;
 
         // First, set all tags to correct values
+        Datatype_Struct* structure = info->specifics.struct_init_lowest_subtype;
         while (structure->parent_struct != nullptr)
         {
             Datatype_Struct* parent = structure->parent_struct;
@@ -1682,51 +1683,61 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             true
         ));
     }
+    case AST::Expression_Type::SUBTYPE_ACCESS:
+    case AST::Expression_Type::BASETYPE_ACCESS:
+    {
+		bool is_base_access = expression->type == AST::Expression_Type::BASETYPE_ACCESS;
+		AST::Expression* child_expr = is_base_access ? expression->options.basetype_access_expr : expression->options.subtype_access.expr;
+        auto source = ir_generator_generate_expression(child_expr, destination);
+        auto result_access = ir_data_access_create_non_destructive_cast(
+            source, result_type, is_base_access ? Cast_Type::TO_BASE_TYPE : Cast_Type::TO_SUB_TYPE
+        );
+
+        // If only pointers were cast, then we don't do any tag-check (Pointer could be null, not sure what we wanna do then)
+        if (result_type->type == Datatype_Type::POINTER) {
+            assert(source->datatype->type == Datatype_Type::POINTER, "");
+            return result_access;
+        }
+
+        // Tag-check on downcast
+        auto dst_type = result_type;
+        Datatype_Struct* src_struct = downcast<Datatype_Struct>(source->datatype);
+        Datatype_Struct* dst_struct = downcast<Datatype_Struct>(result_access->datatype);
+        if (!is_base_access)
+        {
+            int child_tag_value = dst_struct->subtype_index + 1;
+
+            IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
+            IR_Instruction condition_instr;
+            condition_instr.type = IR_Instruction_Type::BINARY_OP;
+            condition_instr.options.binary_op.destination = condition_access;
+            condition_instr.options.binary_op.operand_left = ir_data_access_create_member(source, src_struct->tag_member);
+            condition_instr.options.binary_op.operand_right =
+                ir_data_access_create_constant(src_struct->tag_member.type, array_create_static_as_bytes<int>(&child_tag_value, 1));
+            condition_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
+            add_instruction(condition_instr);
+
+            IR_Instruction if_instr;
+            if_instr.type = IR_Instruction_Type::IF;
+            if_instr.options.if_instr.condition = condition_access;
+            if_instr.options.if_instr.true_branch = ir_code_block_create();
+            if_instr.options.if_instr.false_branch = ir_code_block_create();
+            add_instruction(if_instr);
+
+            IR_Instruction exit_instr;
+            exit_instr.type = IR_Instruction_Type::RETURN;
+            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+            exit_instr.options.return_instr.options.exit_code = exit_code_make(
+                Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
+            add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
+        }
+
+        return result_access;
+    }
     case AST::Expression_Type::MEMBER_ACCESS:
     {
         auto mem_access = expression->options.member_access;
         auto src_type = expression_info_get_type(get_info(mem_access.expr), false, type_system);
-
-        // Handle custom member accesses
-        if (info->specifics.member_access.type == Member_Access_Type::STRUCT_UP_OR_DOWNCAST)
-        {
-            auto source = ir_generator_generate_expression(mem_access.expr, destination);
-
-            // Tag-check on downcast
-            auto dst_type = result_type;
-            Datatype_Struct* src_struct = downcast<Datatype_Struct>(src_type);
-            Datatype_Struct* dst_struct = downcast<Datatype_Struct>(dst_type);
-            if (dst_struct->parent_struct == src_struct)
-            {
-                int child_tag_value = dst_struct->subtype_index + 1;
-
-                IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
-                IR_Instruction condition_instr;
-                condition_instr.type = IR_Instruction_Type::BINARY_OP;
-                condition_instr.options.binary_op.destination = condition_access;
-                condition_instr.options.binary_op.operand_left = ir_data_access_create_member(source, src_struct->tag_member);
-                condition_instr.options.binary_op.operand_right =
-                    ir_data_access_create_constant(src_struct->tag_member.type, array_create_static_as_bytes<int>(&child_tag_value, 1));
-                condition_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-                add_instruction(condition_instr);
-
-                IR_Instruction if_instr;
-                if_instr.type = IR_Instruction_Type::IF;
-                if_instr.options.if_instr.condition = condition_access;
-                if_instr.options.if_instr.true_branch = ir_code_block_create();
-                if_instr.options.if_instr.false_branch = ir_code_block_create();
-                add_instruction(if_instr);
-
-                IR_Instruction exit_instr;
-                exit_instr.type = IR_Instruction_Type::RETURN;
-                exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-                exit_instr.options.return_instr.options.exit_code = exit_code_make(
-                    Exit_Code_Type::CODE_ERROR, "Struct subtype downcast failed, tag value did not match downcast type");
-                add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
-            }
-
-            return source;
-        }
 
         // Handle special case of array.data, which basically becomes an address of, but has the type of element pointer
         auto source = ir_generator_generate_expression(mem_access.expr);

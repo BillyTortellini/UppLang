@@ -1916,22 +1916,21 @@ namespace Parser
 
 	Subtype_Initializer* parse_subtype_initializer(Node* parent)
 	{
-		if (!test_token(Token_Type::DOT, Token_Type::IDENTIFIER, Token_Type::ASSIGN) &&
-			!test_token(Token_Type::DOT, Token_Type::ASSIGN))
+		if (!test_token(Token_Type::SUBTYPE_ACCESS, Token_Type::IDENTIFIER, Token_Type::ASSIGN) &&
+			!test_token(Token_Type::BASETYPE_ACCESS, Token_Type::ASSIGN))
 		{
 			return 0;
 		}
 
 		CHECKPOINT_SETUP;
 		auto result = allocate_base<Subtype_Initializer>(parent, Node_Type::SUBTYPE_INITIALIZER);
-		advance_token();
-
-		// Parser name if available
 		result->name.available = false;
-		if (test_token(Token_Type::IDENTIFIER)) {
-			result->name = optional_make_success(get_token(0)->options.string_value);
+
+		if (test_token(Token_Type::SUBTYPE_ACCESS)) {
 			advance_token();
+			result->name = optional_make_success(get_token(0)->options.string_value);
 		}
+		advance_token();
 
 		assert(test_token(Token_Type::ASSIGN), "Should be true after previous if");
 		advance_token();  // Skip =
@@ -2428,6 +2427,28 @@ namespace Parser
 				PARSE_SUCCESS(result);
 			}
 			CHECKPOINT_EXIT;
+		}
+		case Token_Type::SUBTYPE_ACCESS: 
+		{
+			result->type = Expression_Type::SUBTYPE_ACCESS;
+			result->options.subtype_access.expr = child;
+			advance_token();
+			if (test_token(Token_Type::IDENTIFIER)) {
+				result->options.subtype_access.name = get_token(0)->options.string_value;
+				advance_token();
+			}
+			else {
+				log_error("Missing member name", parser.state.pos - 1, parser.state.pos);
+				result->options.subtype_access.name = ids.empty_string;
+			}
+			PARSE_SUCCESS(result);
+		}
+		case Token_Type::BASETYPE_ACCESS: 
+		{
+			result->type = Expression_Type::BASETYPE_ACCESS;
+			result->options.basetype_access_expr = child;
+			advance_token();
+			PARSE_SUCCESS(result);
 		}
 		case Token_Type::DOT_CALL:
 		{

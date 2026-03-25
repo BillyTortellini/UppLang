@@ -300,6 +300,8 @@ namespace AST
         LITERAL_READ,
         ARRAY_ACCESS,
         MEMBER_ACCESS,
+        SUBTYPE_ACCESS,   // .>identifier
+        BASETYPE_ACCESS, // .<
 
         // Types/Definitions
         MODULE,
@@ -350,6 +352,11 @@ namespace AST
                 Call_Node* call_node;
                 bool is_dot_call;
             } cast;
+            struct {
+                Expression* expr;
+                String* name;
+            } subtype_access;
+            Expression* basetype_access_expr;
             Path_Lookup* path_lookup;
             String* auto_enum;
             Literal_Value literal_read;

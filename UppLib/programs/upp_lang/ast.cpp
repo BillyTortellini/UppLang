@@ -310,6 +310,14 @@ namespace AST
 				FILL(access.expr);
 				break;
 			}
+			case Expression_Type::BASETYPE_ACCESS: {
+				FILL(expr->options.basetype_access_expr);
+				break;
+			}
+			case Expression_Type::SUBTYPE_ACCESS: {
+				FILL(expr->options.subtype_access.expr);
+				break;
+			}
 			case Expression_Type::MODULE: {
 				auto& module = expr->options.module;
 				FILL(module);
@@ -687,6 +695,14 @@ namespace AST
 				FILL(access.index_expr);
 				break;
 			}
+			case Expression_Type::BASETYPE_ACCESS: {
+				FILL(expr->options.basetype_access_expr);
+				break;
+			}
+			case Expression_Type::SUBTYPE_ACCESS: {
+				FILL(expr->options.subtype_access.expr);
+				break;
+			}
 			case Expression_Type::MEMBER_ACCESS: {
 				auto& access = expr->options.member_access;
 				FILL(access.expr);
@@ -954,6 +970,8 @@ namespace AST
 		}
 		case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "Array_Access"); break;
 		case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "Member_Access"); break;
+		case Expression_Type::SUBTYPE_ACCESS: string_append_formated(str, "Subtype_Access"); break;
+		case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "Basetype_Access"); break;
 		case Expression_Type::MODULE: string_append_formated(str, "Module"); break;
 		case Expression_Type::FUNCTION: string_append_formated(str, "Function"); break;
 		case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "Function_Signature"); break;
@@ -1127,6 +1145,12 @@ namespace AST
 			}
 			case Expression_Type::ARRAY_ACCESS: string_append_formated(str, "ARRAY_ACCESS"); break;
 			case Expression_Type::MEMBER_ACCESS: string_append_formated(str, "MEMBER_ACCESS"); break;
+			case Expression_Type::SUBTYPE_ACCESS: {
+				string_append_formated(str, "SUBTYPE_ACCESS"); 
+				string_append_string(str, expr->options.subtype_access.name);
+				break;
+			}
+			case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "BASETYPE_ACCESS"); break;
 			case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
 			case Expression_Type::FUNCTION: {
 				string_append_formated(str, "FUNCTION");

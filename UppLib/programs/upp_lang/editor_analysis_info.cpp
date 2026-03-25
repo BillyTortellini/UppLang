@@ -244,8 +244,6 @@ void find_editor_infos_recursive(
 				AST::Node* goto_node = nullptr;
 				switch (access_info.type)
 				{
-				case Member_Access_Type::STRUCT_SUBTYPE:
-				case Member_Access_Type::STRUCT_UP_OR_DOWNCAST:
 				case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS:
 					break;
 				case Member_Access_Type::STRUCT_MEMBER_ACCESS:
