@@ -16,7 +16,7 @@ struct Upp_Function;
 struct Datatype;
 struct Workload_Definition;
 struct Workload_Import_Resolve;
-struct Workload_Structure_Polymorphic;
+struct Workload_Structure_Header;
 
 struct Symbol;
 struct Symbol_Table;
@@ -177,10 +177,9 @@ struct Symbol
         Upp_Module* upp_module;
         struct {
             Upp_Function* function;
-            int index_in_polymorphic_signature;
-            int index_in_non_polymorphic_signature;
+            int index;
         } parameter;
-        Pattern_Variable* pattern_variable;
+        Datatype_Pattern_Variable* pattern_variable_type;
         Upp_Constant constant;
     } options;
 

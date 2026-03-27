@@ -1,21 +1,18 @@
 
 TODO:
 -----
- - Struct storage rework
- - Struct-instance-templates rework
+ - Create base-analysis for poly-header and poly-struct as instance, so we have something to analyse!
+    --> Probably want to add to semantic-context that we cannot spawn new workloads (functions, structs, bakes, whatever)
+ - Syntax-Editor pass-fitler should traverse all passes
+
+ - In function call we could add the parameter names to code-completion
+ - Think about differnece between comptime-value and datatype
+ - Rename constant to comptime-value
 
 
 DONE:
 -----
- - Syntax-editor should show subtypes on .>
- - Fixed problems with struct-initializer
- - Struct Subtype Syntax rework
-
 Rough Plan:
- - Improve Code 
-    * Struct and subtype rework (Design required)
-        - Struct should have same information as functions, and types should only reference them
-        - Struct-Template-Instance could just be struct with some values not filled out...
  - Language Features?
     * Remove optional pointers (maybe)
     * Subtype-Initializer for Hierarchy

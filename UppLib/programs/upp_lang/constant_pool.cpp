@@ -73,10 +73,10 @@ void struct_memory_set_padding_to_zero_recursive(
             assert(member->offset > next_member_offset, "");
             memory_set_bytes(struct_memory_start + next_member_offset, member->offset - next_member_offset, 0);
         }
-        next_member_offset = member->offset + member->type->memory_info.value.size;
+        next_member_offset = member->offset + member->datatype->memory_info.value.size;
 
         // Handle member types
-        datatype_memory_check_correctness_and_set_padding_bytes_zero(member->type, struct_memory_start + member->offset, result, compilation_data);
+        datatype_memory_check_correctness_and_set_padding_bytes_zero(member->datatype, struct_memory_start + member->offset, result, compilation_data);
         if (!result.success) return;
     }
 
@@ -110,7 +110,7 @@ void struct_memory_set_padding_to_zero_recursive(
 
         struct_memory_set_padding_to_zero_recursive(
             subtype, struct_memory_start, subtype_depth + 1, expected_subtypes, next_member_offset, 
-            structure->tag_member.offset + structure->tag_member.type->memory_info.value.size, result, compilation_data
+            structure->tag_member.offset + structure->tag_member.datatype->memory_info.value.size, result, compilation_data
         );
     }
     return;
@@ -127,7 +127,6 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     switch (signature->type)
     {
     case Datatype_Type::PATTERN_VARIABLE:
-    case Datatype_Type::STRUCT_PATTERN:
     case Datatype_Type::UNKNOWN_TYPE: {
         panic("Shouldn't happen");
         return;
@@ -232,16 +231,16 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
         }
 
         Datatype_Struct* structure = downcast<Datatype_Struct>(signature);
-        if (structure->is_union) {
+        if (structure->upp_struct->is_union) {
             result = constant_pool_result_make_error("Found Union");
             return;
         }
 
         Dynamic_Array<Datatype_Struct*> expected_subtypes = dynamic_array_create<Datatype_Struct*>();
         SCOPE_EXIT(dynamic_array_destroy(&expected_subtypes));
-        while (structure->parent_struct != nullptr) {
+        while (structure->parent != nullptr) {
             dynamic_array_push_back(&expected_subtypes, structure);
-            structure = structure->parent_struct;
+            structure = structure->parent;
         }
         dynamic_array_reverse_order(&expected_subtypes);
 

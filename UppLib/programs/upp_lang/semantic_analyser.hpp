@@ -21,11 +21,12 @@ struct Error_Information;
 struct Expression_Info;
 struct Analysis_Pass;
 struct IR_Code_Block;
+struct Upp_Struct;
 
 struct Workload_Definition;
 struct Workload_Base;
 struct Workload_Import_Resolve;
-struct Workload_Structure_Polymorphic;
+struct Workload_Structure_Header;
 struct Workload_Structure_Body;
 struct Workload_Bake;
 struct Workload_Function_Header;
@@ -34,8 +35,10 @@ struct Workload_Function_Body;
 struct Datatype_Struct;
 struct Bake_Progress;
 struct Datatype_Pattern_Variable;
+struct Datatype_Array;
 struct Pattern_Variable_State;
 struct Poly_Header;
+struct Poly_Instance;
 struct Compilation_Data;
 struct Compilation_Unit;
 
@@ -66,18 +69,12 @@ struct Upp_Module
     } options;
 };
 
-enum class Upp_Function_Type
+enum class Poly_Type
 {
-    NORMAL,
-    BAKE,
-    EXTERN
-};
-
-enum class Polymorphic_Analysis_Type
-{
-    NON_POLYMORPHIC,
-    POLYMORPHIC_BASE,
-    POLYMORPHIC_INSTANCE
+    NORMAL, // Non-polymorphic
+    BASE,
+    PARTIAL, // Only some values are filled out
+    INSTANCE
 };
 
 struct Upp_Function
@@ -86,31 +83,47 @@ struct Upp_Function
     int function_index; // Index in functions array
     String* name; // Symbol name, or "bake_function"/"lambda_function"
     Symbol* symbol; // May be nullptr if function is anonymous
-
-    // Infos from function-progress
-    Symbol_Table* parameter_table; 
     AST::Expression* function_node;
 
     Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
     Workload_Function_Body* body_workload;
+    Workload_Bake* bake_workload;
+    Workload_Definition* extern_definition_workload;
+    Analysis_Pass* body_pass; // Used later in ir-generator
 
-    Polymorphic_Analysis_Type poly_type;
-    Poly_Function poly_function; // If instance, this points to base progress, otherwise it points to itself
-
-    Upp_Function_Type function_type;
-    union 
-    {
-        Workload_Bake* bake;
-        Workload_Definition* extern_definition;
+    Poly_Type poly_type;
+    struct {
+        Poly_Header* poly_header;
+        Poly_Instance* instance;
     } options;
 
-    // Infos
+    bool is_extern;
     bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
 
     // Code-Generation
     IR_Code_Block* ir_block;
     int bytecode_start_instruction;
     int bytecode_end_instruction;
+};
+
+struct Upp_Struct
+{
+    Datatype_Struct* datatype;
+    Symbol* symbol;
+    AST::Expression* struct_node;
+
+    Workload_Structure_Header* header_workload; 
+    Workload_Structure_Body*   body_workload;  
+
+    Poly_Type poly_type;
+    struct {
+        Poly_Header* header;
+        Poly_Instance* instance;
+    } options;
+
+    bool is_union;
+    bool is_extern_struct; // C-Generator needs to know if the type is already defined in a header
+    DynArray<Datatype_Array*> types_waiting_for_size_finish; 
 };
 
 struct Upp_Global
@@ -180,7 +193,7 @@ enum class Analysis_Workload_Type
     FUNCTION_HEADER,
     FUNCTION_BODY,
 
-    STRUCT_POLYMORPHIC,
+    STRUCT_HEADER,
     STRUCT_BODY,
 
     BAKE_ANALYSIS,
@@ -204,16 +217,9 @@ struct Workload_Base
     int errors_due_to_unknown_count;
     int error_checkpoint_count; // If error_checkpoint_count > 0, then errors aren't logged...
 
-    // Polymorphic value access is rather complicated, here are some points to consider:
-    //  * Multiple sets of polymorphic values can be active at once (Poly-Function defined in Poly-Function)
-    //      Update: Don't think poly in poly works, but anonymous structs, lambdas and #bake have access to the values...
-    //  * Child-Workloads inherit the polymorphic-values of their parents, so we need to store a parent-child relation
-    //  * Polymorphic-Instances define their own poly-values
-    Workload_Base* poly_parent_workload; // Note: This is a logical parent workload, e.g. function_body -> function_header -> module_analysis
+    // Polymorphic info
     int polymorphic_instanciation_depth; 
-
-    Array<Pattern_Variable_State> active_pattern_variable_states; // Non-owning
-    Poly_Header* active_pattern_variable_states_origin;
+    Workload_Base* parent_workload;
 };
 
 struct Workload_Root
@@ -242,16 +248,14 @@ struct Workload_Function_Header
 {
     Workload_Base base;
     Upp_Function* function;
-    // Note: this is an owning pointer, and it is always set, even if the function is not polymorphic
-    //      But it may be null for instanciated functions, or inferred functions
-    Poly_Header* poly_header;
+    Symbol_Table* symbol_table;
 };
 
 struct Workload_Function_Body
 {
     Workload_Base base;
     Upp_Function* function;
-    Analysis_Pass* body_pass; // Used later in ir-generator
+    Symbol_Table* parameter_table;
 };
 
 struct Workload_Definition
@@ -277,7 +281,6 @@ struct Workload_Bake
 
     Symbol_Table* symbol_table;
     AST::Expression* bake_node;
-    Analysis_Pass* analysis_pass;
 
     Upp_Function* bake_function;
     Datatype* result_type;
@@ -290,8 +293,9 @@ struct Workload_Bake
 // Polymorphism
 struct Pattern_Variable
 {
-    int value_access_index; // Used to access values, index in pattern_variables array
     Datatype_Pattern_Variable* pattern_variable_type;
+    int index; // Used to access values, index in pattern_variables array
+    DynArray<int> dependent_params;
 
     // Origin infos
     Poly_Header* origin;
@@ -302,51 +306,39 @@ struct Pattern_Variable
     int defined_in_parameter_index;
 };
 
-struct Poly_Instance;
+struct Poly_Parameter_Info
+{
+    int parameter_index;
+	DynArray<int> depends_on_variables;
+};
 
 struct Poly_Header
 {
-    // Note: pattern_variables and parameter_nodes arrays may all have different sizes
-    Call_Signature* signature;
-    Dynamic_Array<Pattern_Variable> pattern_variables;
-    Hashset<Poly_Instance*> instances;
-    Array<Pattern_Variable_State> base_analysis_states;
-
-    // For convenience
-    Dynamic_Array<AST::Parameter*> parameter_nodes;
-    Symbol_Table* parameter_table;
+    Call_Signature* signature; // Contains all parameters + return-type + implicit parameters
+    DynArray<Pattern_Variable> pattern_variables; // Contains all pattern-variables, e.g. comptime and implicit parameters
+    DynArray<Poly_Parameter_Info> param_infos; // More information for each call-signature parameter
+    DynSet<Poly_Instance*> instances;
 
     // Origin infos
-    String* name; // Either struct or function name, for dot-calls auto id
-    int partial_pattern_count;
+    Dynamic_Array<AST::Parameter*> parameter_nodes;
+    Symbol_Table* base_parameter_table;
+    String* name; // Either struct or function name, used for dot-calls auto id
     bool is_function;
     union {
-        Workload_Structure_Polymorphic* struct_workload;
+        Upp_Struct*   upp_struct;
         Upp_Function* function;
     } origin;
 };
 
-enum class Poly_Instance_Type
-{
-	FUNCTION,
-	STRUCTURE,
-	STRUCT_PATTERN,
-};
-
 struct Poly_Instance
 {
+    // Note: Because of implicit polymorphism all parameter-types need to be stored for differentiation
     Poly_Header* header;
     Array<Pattern_Variable_State> variable_states;
-    // Note: we need all pattern instances because of "implicit" polymorphism, e.g.
-    //      foo :: (a: Node(_)) 
-    // Because in such cases no variables are available to differentiate instances
-    // Also for convenience struct-pattern instances have these set to {nullptr, 0}
-    Array<Datatype*> partial_pattern_instances;
-    Poly_Instance_Type type;
+    Array<Datatype*> parameter_types;
     union {
         Upp_Function* function_instance;
-        Workload_Structure_Body* struct_instance;
-        Datatype_Struct_Pattern* struct_pattern;
+        Upp_Struct*   struct_instance;
     } options;
 };
 
@@ -356,28 +348,16 @@ struct Poly_Instance
 struct Workload_Structure_Body
 {
     Workload_Base base;
-
-    Symbol_Table* symbol_table;
+    Upp_Struct* upp_struct;
+    Symbol_Table* symbol_table; // May be parameter-table in instance
     Symbol_Access_Level symbol_access_level;
-    Analysis_Pass* analysis_pass;
-    Datatype_Struct* struct_type;
-    AST::Expression* struct_node;
-
-    Polymorphic_Analysis_Type polymorphic_type;
-    union {
-        Workload_Structure_Polymorphic* base;
-        struct {
-            Workload_Structure_Polymorphic* parent;
-            Poly_Instance* poly_instance;
-        } instance;
-    } polymorphic;
 };
 
-struct Workload_Structure_Polymorphic
+struct Workload_Structure_Header
 {
     Workload_Base base;
-    Workload_Structure_Body* body_workload;
-    Poly_Header* poly_header;
+    Upp_Struct* upp_struct;
+    Symbol_Table* symbol_table;
 };
 
 
@@ -485,7 +465,7 @@ struct Call_Origin
     union {
 		Upp_Function* function;
 		Poly_Function poly_function;
-		Workload_Structure_Polymorphic* poly_struct;
+		Workload_Structure_Header* poly_struct;
 		Hardcoded_Type hardcoded;
 		Datatype_Slice* slice_type;
 		Datatype_Function_Pointer* function_pointer;
@@ -510,7 +490,7 @@ struct Call_Info
     union 
 	{
         Upp_Function* function;
-		Datatype_Struct* struct_instance;
+		Upp_Struct* struct_instance;
 		Datatype_Struct_Pattern* struct_pattern;
 		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
         Cast_Info cast_info;
@@ -564,7 +544,7 @@ struct Expression_Info
         } value;
         Datatype* datatype;
         Datatype* polymorphic_pattern; 
-        Workload_Structure_Polymorphic* polymorphic_struct;
+        Workload_Structure_Header* polymorphic_struct;
         Upp_Function* function;
         Poly_Function poly_function;
         Hardcoded_Type hardcoded;
@@ -582,8 +562,8 @@ struct Expression_Info
             Member_Access_Type type;
             union {
                 struct {
-                    Workload_Structure_Body* struct_workload;
-                    int index; // Either normal member index, or polymorphic parameter index
+                    Upp_Struct* upp_struct;
+                    int index;
                 } poly_access;
                 Struct_Member member;
             } options;
@@ -737,6 +717,25 @@ struct Node_Passes
     AST::Node* base;
 };
 
+struct Matching_Constraint
+{
+	Datatype_Pattern_Variable* pattern_variable;
+	Upp_Constant value;
+};
+
+struct Pattern_Matcher
+{
+    Compilation_Data* compilation_data;
+	DynArray<Matching_Constraint> constraints;
+	int max_match_depth;
+};
+Pattern_Matcher pattern_matcher_make(Compilation_Data* compilation_data, Arena* arena);
+bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Datatype* type_b, int match_depth = 0);
+bool pattern_matcher_match_type_and_value(
+    Pattern_Matcher& result, Datatype* datatype, Upp_Constant& value, int match_depth = 0 
+);
+bool pattern_match_result_check_constraints_pairwise(Pattern_Matcher& results);
+
 
 // ERRORS
 enum class Error_Information_Type
@@ -823,9 +822,4 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
 Cast_Info check_if_cast_possible(
     Datatype* from_type, Datatype* to_type, bool value_is_temporary, bool is_auto_cast, Semantic_Context* semantic_context
-);
-// If search_start_workload == nullptr, we start from semantic_analyser.current_workload
-Workload_Base* pattern_variable_find_instance_workload(
-    Pattern_Variable* variable,
-    Workload_Base* search_start_workload
 );

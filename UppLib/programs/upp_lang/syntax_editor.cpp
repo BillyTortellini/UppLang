@@ -3475,41 +3475,62 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 
 	// Generate pass-string
 	Workload_Base* workload = pass->origin_workload;
-
-	int polymorphic_depth = 0;
-	int set_poly_value_count = 0;
-	while (workload != nullptr)
+	Upp_Function* function = nullptr;
+	Upp_Struct* structure = nullptr;
+	switch (workload->type)
 	{
-		SCOPE_EXIT(workload = workload->poly_parent_workload);
+	case Analysis_Workload_Type::FUNCTION_BODY:   function = ((Workload_Function_Body*)workload)->function; break;
+	case Analysis_Workload_Type::FUNCTION_HEADER: function = ((Workload_Function_Header*)workload)->function; break;
+	case Analysis_Workload_Type::BAKE_ANALYSIS:   function = ((Workload_Bake*)workload)->bake_function; break;
+	case Analysis_Workload_Type::STRUCT_BODY:     structure = ((Workload_Structure_Body*)workload)->upp_struct; break;
+	case Analysis_Workload_Type::STRUCT_HEADER:   structure = ((Workload_Structure_Header*)workload)->upp_struct; break;
+	}
 
-		Array<Pattern_Variable_State> active_pattern_values = workload->active_pattern_variable_states;
-		if (active_pattern_values.size > 0) {
-			polymorphic_depth += 1;
-			if (polymorphic_depth > 1) {
-				string_append(string, "\n");
-			}
-		}
-		for (int i = 0; i < active_pattern_values.size; i++)
+	Poly_Header* poly_header = nullptr;
+	Poly_Instance* instance = nullptr;
+	if (function != nullptr) 
+	{
+		switch (function->poly_type)
 		{
-			auto poly_value = active_pattern_values[i];
+		case Poly_Type::BASE: poly_header = function->options.poly_header; break;
+		case Poly_Type::INSTANCE:
+		case Poly_Type::PARTIAL: instance = function->options.instance; break;
+		}
+	}
+	if (structure != nullptr)
+	{
+		switch (structure->poly_type)
+		{
+		case Poly_Type::BASE: poly_header = structure->options.header; break;
+		case Poly_Type::INSTANCE:
+		case Poly_Type::PARTIAL: instance = structure->options.instance; break;
+		}
+	}
 
-			String* name = workload->active_pattern_variable_states_origin->pattern_variables[i].name;
-			assert(name != nullptr, "");
-			if (name == nullptr) {
-				panic("Should not happen");
-				continue;
+	if (poly_header != nullptr)
+	{
+		for (int i = 0; i < poly_header->pattern_variables.size; i++)
+		{
+			Pattern_Variable& variable = poly_header->pattern_variables[i];
+			Pattern_Variable_State state;
+			if (instance != nullptr) {
+				state = instance->variable_states[variable.index];
 			}
-			for (int i = 0; i < polymorphic_depth - 1; i++) {
-				string_append(string, "  ");
+			else {
+				state.type = Pattern_Variable_State_Type::UNSET;
 			}
+
+			String* name = variable.name;
+			// for (int i = 0; i < polymorphic_depth - 1; i++) {
+			// 	string_append(string, "  ");
+			// }
 			string_append_string(string, name);
 			string_append(string, "=");
 
-			if (poly_value.type != Pattern_Variable_State_Type::SET) {
+			if (state.type != Pattern_Variable_State_Type::SET) {
 				string_append(string, "Not Set\n");
 				continue;
 			}
-			set_poly_value_count += 1;
 
 			// Otherwise append name and value
 			auto format = datatype_value_format_single_line();
@@ -3517,20 +3538,15 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			format.datatype_format = datatype_format_make_default();
 			format.datatype_format.append_struct_poly_parameter_values = true;
 			datatype_append_value_to_string(
-				poly_value.options.value.type, string, poly_value.options.value.memory,
+				state.options.value.type, string, state.options.value.memory,
 				format, 0, Memory_Source(nullptr), Memory_Source(nullptr), syntax_editor.editor_compilation_data->type_system
 			);
 
-			if (i != active_pattern_values.size - 1) {
+			if (i != poly_header->pattern_variables.size - 1) {
 				string_append(string, "\n");
 			}
 		}
 	}
-
-	if (polymorphic_depth > 0) {
-		out_is_poly = true;
-	}
-	out_is_base = set_poly_value_count == 0;
 }
 
 bool analysis_pass_passes_filters(Analysis_Pass* pass)
@@ -3889,29 +3905,6 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 	return false;
 }
 
-Datatype* editor_pattern_variable_get_type(Pattern_Variable* pattern_variable, Analysis_Pass* pass, Pattern_Variable_State_Type& out_state)
-{
-	out_state = Pattern_Variable_State_Type::UNSET;
-	if (pass == nullptr) return nullptr;
-
-	Workload_Base* lookup_workload = pass->origin_workload;
-	auto active_pattern_values = 
-		pattern_variable_find_instance_workload(pattern_variable, lookup_workload)->active_pattern_variable_states;
-	assert(active_pattern_values.data != nullptr, "");
-
-	const auto& value = active_pattern_values[pattern_variable->value_access_index];
-	out_state = value.type;
-	switch (value.type)
-	{
-	case Pattern_Variable_State_Type::SET: return value.options.value.type;
-	case Pattern_Variable_State_Type::PATTERN: return value.options.pattern_type;
-	case Pattern_Variable_State_Type::UNSET: return upcast(pattern_variable->pattern_variable_type);
-	default: panic("");
-	}
-
-	return nullptr;
-}
-
 struct String_Path_Lookup_Info
 {
 	DynArray<Symbol*> symbols;
@@ -4210,17 +4203,13 @@ void code_completion_find_suggestions()
 			}
 			case Symbol_Type::PARAMETER: {
 				auto& param = symbol->options.parameter;
-				value_type = param.function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
+				value_type = param.function->signature->parameters[param.index].datatype;
 				break;
 			}
 			case Symbol_Type::PATTERN_VARIABLE:
 			{
 				Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
-				if (call_value_pass == nullptr) {
-					remove_symbol = false;
-					continue;
-				}
-				value_type = editor_pattern_variable_get_type(symbol->options.pattern_variable, call_value_pass, state);
+				remove_symbol = true;
 				break;
 			}
 			case Symbol_Type::VARIABLE: {
@@ -4272,41 +4261,11 @@ void code_completion_find_suggestions()
 				// Check if patterns match (simple version for editor)
 				Datatype* src = src_mods.base_type;
 				Datatype* dst = dst_mods.base_type;
-				if (dst->type == Datatype_Type::PATTERN_VARIABLE) {
-					remove_symbol = false;
-					continue;
-				}
-				if (dst->type == Datatype_Type::STRUCT_PATTERN) 
-				{
-					if (src->type != Datatype_Type::STRUCT) {
-						remove_symbol = true;
-						continue;
-					}
-					Datatype_Struct* structure = downcast<Datatype_Struct>(src);
-					if (structure->workload == nullptr) {
-						remove_symbol = true;
-						continue;
-					}
-					if (structure->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-						remove_symbol = true;
-						continue;
-					}
-					Workload_Structure_Polymorphic* arg_parent = structure->workload->polymorphic.instance.parent;
-					Workload_Structure_Polymorphic* param_parent = downcast<Datatype_Struct_Pattern>(dst)->instance->header->origin.struct_workload;
-					if (arg_parent != param_parent) {
-						remove_symbol = true;
-						continue;
-					}
-
-					remove_symbol = false;
-					continue;
-				}
-				if (src->type != dst->type) {
+				Pattern_Matcher pattern_matcher = pattern_matcher_make(editor.editor_compilation_data, &tmp_arena);
+				remove_symbol = pattern_matcher_match_types(pattern_matcher, src, dst);
+				if (!pattern_match_result_check_constraints_pairwise(pattern_matcher)) {
 					remove_symbol = true;
-					continue;
 				}
-
-				remove_symbol = false;
 				continue;
 			}
 			else
@@ -4408,22 +4367,14 @@ void code_completion_find_suggestions()
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
 				break;
 			}
-			case Datatype_Type::STRUCT_PATTERN:
 			case Datatype_Type::STRUCT:
 			{
-				Datatype_Struct* structure = 0;
-				if (type->type == Datatype_Type::STRUCT) {
-					structure = downcast<Datatype_Struct>(type);
-				}
-				else if (type->type == Datatype_Type::STRUCT_PATTERN) {
-					structure = downcast<Datatype_Struct_Pattern>(type)->instance->header->origin.struct_workload->body_workload->struct_type;
-				}
-
+				Datatype_Struct* structure = downcast<Datatype_Struct>(type);
 				auto& members = structure->members;
 				for (int i = 0; i < members.size; i++) {
 					auto& mem = members[i];
-					fuzzy_search_add_item(*mem.id, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.type, mem.id));
+					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.datatype, mem.name));
 				}
 				break;
 			}
@@ -6790,7 +6741,7 @@ void watch_values_update()
 				int member_index = -1;
 				for (int i = 0; i < structure->members.size; i++) {
 					auto member = structure->members[i];
-					if (string_equals(member.id, &post_op.member_name)) {
+					if (string_equals(member.name, &post_op.member_name)) {
 						member_index = i;
 						break;
 					}
@@ -6804,7 +6755,7 @@ void watch_values_update()
 
 				Struct_Member& member = structure->members[member_index];
 				value_ptr = value_ptr + member.offset;
-				type = member.type;
+				type = member.datatype;
 			}
 			else
 			{
@@ -7684,32 +7635,13 @@ void symbol_get_infos(Symbol* symbol, Analysis_Pass* pass, Datatype** out_type, 
 	{
 		after_text = "Parameter";
 		auto& param_info = symbol->options.parameter;
-		if (pass != nullptr)
-		{
-			Upp_Function* function = analysis_workload_try_get_upp_function(pass->origin_workload);
-			if (function != nullptr)
-			{
-				if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-					type = function->poly_function.poly_header->signature->parameters[param_info.index_in_polymorphic_signature].datatype;
-				}
-				else if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					type = function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
-				}
-			}
-		}
-		if (type == nullptr) {
-			type = param_info.function->signature->parameters[param_info.index_in_non_polymorphic_signature].datatype;
-		}
+		type = param_info.function->signature->parameters[param_info.index].datatype;
 		break;
 	}
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
 		after_text = "Pattern Variable";
-		Pattern_Variable_State_Type state = Pattern_Variable_State_Type::UNSET;
-		type = editor_pattern_variable_get_type(symbol->options.pattern_variable, pass, state);
-		if (state == Pattern_Variable_State_Type::UNSET) {
-			after_text = "Pattern Variable (UNSET)";
-		}
+		type = upcast(symbol->options.pattern_variable_type);
 		break;
 	}
 	case Symbol_Type::DATATYPE:
@@ -8081,26 +8013,14 @@ void syntax_editor_render()
 
 					Upp_Function* upp_function = info.upp_function;
 					AST::Node* function_origin_node = nullptr;
-					if (upp_function != nullptr)
-					{
-						switch (upp_function->function_type)
-						{
-						case Upp_Function_Type::BAKE: {
-							function_origin_node = upcast(upp_function->options.bake->bake_node);
-							break;
-						}
-						case Upp_Function_Type::EXTERN: {
-							auto symbol = upp_function->options.extern_definition->symbol;
-							if (symbol != 0) {
-								function_origin_node = symbol->definition_node;
-							}
-							break;
-						}
-						case Upp_Function_Type::NORMAL: {
-							function_origin_node = upcast(upp_function->function_node->options.function.body);
-							break;
-						}
-						default: panic("");
+					function_origin_node = upcast(upp_function->function_node);
+					if (function_origin_node == nullptr && upp_function->bake_workload != nullptr) {
+						function_origin_node = upcast(upp_function->bake_workload->bake_node);
+					}
+					if (function_origin_node == nullptr && upp_function->extern_definition_workload != nullptr) {
+						auto symbol = upp_function->extern_definition_workload->symbol;
+						if (symbol != nullptr) {
+							function_origin_node = symbol->definition_node;
 						}
 					}
 

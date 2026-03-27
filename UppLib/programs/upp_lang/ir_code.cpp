@@ -167,7 +167,7 @@ void ir_data_access_append_to_string(IR_Data_Access* access, String* string, IR_
         break;
     }
     case IR_Data_Access_Type::MEMBER_ACCESS: {
-        string_append_formated(string, "Member \"%s\" of: ", access->option.member_access.member.id->characters);
+        string_append_formated(string, "Member \"%s\" of: ", access->option.member_access.member.name->characters);
         ir_data_access_append_to_string(access->option.member_access.struct_access, string, current_block, compilation_data);
         break;
     }
@@ -392,7 +392,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         Datatype* value_type = instruction->options.switch_instr.condition_access->datatype;
         Datatype_Enum* enum_type = 0;
         if (value_type->type == Datatype_Type::STRUCT) {
-            enum_type = downcast<Datatype_Enum>(downcast<Datatype_Struct>(value_type)->tag_member.type);
+            enum_type = downcast<Datatype_Enum>(downcast<Datatype_Struct>(value_type)->tag_member.datatype);
         }
         else
         {
@@ -656,7 +656,7 @@ IR_Data_Access* ir_data_access_create_address_of(IR_Data_Access* value_access)
 IR_Data_Access* ir_data_access_create_member(IR_Data_Access* struct_access, Struct_Member member)
 {
     IR_Data_Access* access = new IR_Data_Access;
-    access->datatype = member.type;
+    access->datatype = member.datatype;
     access->type = IR_Data_Access_Type::MEMBER_ACCESS;
     access->option.member_access.struct_access = struct_access;
     access->option.member_access.member = member;
@@ -1524,11 +1524,11 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         for (int i = 0; i < call_info->parameter_values.size && i != call_info->origin.signature->return_type_index; i++)
         {
             auto& param_info = call_info->origin.signature->parameters[i];
-            if (param_info.comptime_variable_index != -1) continue;
+            if (param_info.pattern_variable_index != -1) continue;
             auto& param_value = call_info->parameter_values[i];
 
             // All parameters must be set, or use default value
-            IR_Data_Access* argument_access;
+            IR_Data_Access* argument_access = nullptr;
             if (param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION) 
             {
                 auto& arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
@@ -1540,10 +1540,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             }
             else 
             {
-                assert(!param_info.required && param_info.default_value_exists, "");
-                assert(param_info.default_value_expr != 0 && param_info.default_value_pass != 0, "Must be, otherwise we shouldn't get to this point");
-                RESTORE_ON_SCOPE_EXIT(ir_generator->current_pass, param_info.default_value_pass);
-                argument_access = ir_generator_generate_expression(param_info.default_value_expr);
+                panic("We don't have default arguments anymore, so this shouldn't happen");
             }
             dynamic_array_push_back(&call_instr.options.call.arguments, argument_access);
         }
@@ -1566,7 +1563,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             break;
         }
         case Symbol_Type::PARAMETER: {
-            result_access = ir_data_access_create_parameter(ir_block->function, symbol->options.parameter.index_in_non_polymorphic_signature);
+            result_access = ir_data_access_create_parameter(ir_block->function, symbol->options.parameter.index);
             break;
         }
         default: panic("Other Symbol-cases must be handled by analyser or in this function above!");
@@ -1600,9 +1597,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         // First, set all tags to correct values
         Datatype_Struct* structure = info->specifics.struct_init_lowest_subtype;
-        while (structure->parent_struct != nullptr)
+        while (structure->parent != nullptr)
         {
-            Datatype_Struct* parent = structure->parent_struct;
+            Datatype_Struct* parent = structure->parent;
             assert(parent->subtypes.size > 0 && structure->subtype_index < parent->subtypes.size, "");
             int tag_value = structure->subtype_index + 1;
 
@@ -1610,10 +1607,10 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             move_instr.type = IR_Instruction_Type::MOVE;
             move_instr.options.move.destination = ir_data_access_create_member(struct_access, parent->tag_member);
             move_instr.options.move.source =
-                ir_data_access_create_constant(parent->tag_member.type, array_create_static_as_bytes<int>(&tag_value, 1));
+                ir_data_access_create_constant(parent->tag_member.datatype, array_create_static_as_bytes<int>(&tag_value, 1));
             add_instruction(move_instr);
 
-            structure = structure->parent_struct;
+            structure = structure->parent;
         }
 
         // Generate initializers for members
@@ -1713,7 +1710,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             condition_instr.options.binary_op.destination = condition_access;
             condition_instr.options.binary_op.operand_left = ir_data_access_create_member(source, src_struct->tag_member);
             condition_instr.options.binary_op.operand_right =
-                ir_data_access_create_constant(src_struct->tag_member.type, array_create_static_as_bytes<int>(&child_tag_value, 1));
+                ir_data_access_create_constant(src_struct->tag_member.datatype, array_create_static_as_bytes<int>(&child_tag_value, 1));
             condition_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
             add_instruction(condition_instr);
 
@@ -2130,7 +2127,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         // Check for subtype access
         auto cond_type = instr.options.switch_instr.condition_access->datatype;
         if (switch_info.structure != nullptr) {
-            cond_type = switch_info.structure->tag_member.type;
+            cond_type = switch_info.structure->tag_member.datatype;
             instr.options.switch_instr.condition_access = ir_data_access_create_member(condition_access, switch_info.structure->tag_member);
         }
 
@@ -2678,27 +2675,22 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
     if (function->ir_block != nullptr) { // Function already generated
         return;
     }
-    if (function->contains_errors || function->function_type == Upp_Function_Type::EXTERN) {
+    if (function->contains_errors || function->is_extern) {
         return;
     }
-    if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+    if (function->poly_type == Poly_Type::BASE) {
         return;
     }
 
     // Generate function code
     function->ir_block = ir_code_block_create(function);
+    ir_generator->current_pass = function->body_pass;
     AST::Body_Node body;
-    if (function->function_type == Upp_Function_Type::NORMAL)
-    {
-        auto body_workload = function->body_workload;
-        assert(body_workload != nullptr, "");
-        ir_generator->current_pass = body_workload->body_pass;
-        body = body_workload->function->function_node->options.function.body;
+    if (function->function_node->type == AST::Expression_Type::FUNCTION) {
+        body = function->function_node->options.function.body;
     }
-    else
-    {
-        ir_generator->current_pass = function->options.bake->analysis_pass;
-        body = function->options.bake->bake_node->options.bake_body;
+    else {
+        body = function->function_node->options.bake_body;
     }
 
     if (body.is_expression)

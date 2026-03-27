@@ -245,8 +245,7 @@ namespace AST
     {
         Node base;
         String* name; // name of parameter, or "!return_type" (See identifier pool)
-        Optional<Expression*> type;
-        Optional<Expression*> default_value;
+        Optional<Expression*> type; // Comptime parameters may not have a type...
         bool is_comptime;    // $ at the start
         bool is_return_type;
     };
@@ -307,6 +306,7 @@ namespace AST
         MODULE,
         FUNCTION,
         FUNCTION_SIGNATURE,
+        INFERRED_FUNCTION, // .=> return x or smth
         PATTERN_VARIABLE, // $T
 
         STRUCTURE_TYPE, // Struct, union, c_union
@@ -369,8 +369,9 @@ namespace AST
                 Expression* expr;
             } member_access;
             Module* module;
+            Body_Node inferred_function_body;
             struct {
-                Optional<Expression*> signature; // If not given, then signature is inferred
+                Expression* signature;
                 Body_Node body;
             } function;
             // If we have a return type, it's the last in this array, and the is_return_type bool is set

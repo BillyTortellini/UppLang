@@ -77,7 +77,7 @@ Palette_Color syntax_color_to_palette_color(Syntax_Color color)
     case Syntax_Color::KEYWORD: return Palette_Color::PASTEL_PURPLE; // Purple
     case Syntax_Color::FUNCTION: return Palette_Color::LIGHT_ORANGE;
     case Syntax_Color::MODULE: return Palette_Color::SLIGHT_LIGHT_GREEN;
-    case Syntax_Color::BOOLEAN_LITERAL: Palette_Color::SLIGHT_LIGHT_BLUE;
+    case Syntax_Color::BOOLEAN_LITERAL: return Palette_Color::SLIGHT_LIGHT_BLUE;
 
     case Syntax_Color::FOLD_ERROR_BG: return Palette_Color::SLIGHT_LIGHT_RED;
     case Syntax_Color::FOLD_BG: return Palette_Color::GREY4;

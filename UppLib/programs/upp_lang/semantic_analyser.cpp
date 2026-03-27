@@ -56,7 +56,6 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(
 	Semantic_Context* context,
 	Dependency_Failure_Info failure_info = dependency_failure_info_make_none()
 );
-void poly_header_destroy(Poly_Header* info);
 Custom_Operator_Table* symbol_table_install_custom_operator_table(
 	Symbol_Table* symbol_table, Dynamic_Array<AST::Custom_Operator_Node*> custom_operators, bool create_workload, Semantic_Context* semantic_context
 );
@@ -80,7 +79,7 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
     Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
     Analysis_Workload_Type get_workload_type(Workload_Structure_Body* workload) { return Analysis_Workload_Type::STRUCT_BODY; };
-    Analysis_Workload_Type get_workload_type(Workload_Structure_Polymorphic* workload) { return Analysis_Workload_Type::STRUCT_POLYMORPHIC; };
+    Analysis_Workload_Type get_workload_type(Workload_Structure_Header* workload) { return Analysis_Workload_Type::STRUCT_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Custom_Operator* workload) { return Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE; };
@@ -93,7 +92,7 @@ Workload_Base* upcast(Workload_Module_Analysis* workload) { return &workload->ba
 Workload_Base* upcast(Workload_Function_Header* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Function_Body* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Structure_Body* workload) { return &workload->base; }
-Workload_Base* upcast(Workload_Structure_Polymorphic* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Structure_Header* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Definition* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Bake* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Custom_Operator* workload) { return &workload->base; }
@@ -512,21 +511,12 @@ void log_error_info_cycle_workload(Semantic_Context* context, Workload_Base* wor
 Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data)
 {
 	Upp_Function* function = compilation_data->arena.allocate<Upp_Function>();
+	memory_zero(function);
 	function->function_index = compilation_data->functions.size;
 	function->signature = signature;
 	function->name = name;
-	function->symbol = nullptr;
-
-	function->parameter_table = nullptr;
-	function->function_node = nullptr;
-	function->header_workload = nullptr;
-	function->body_workload = nullptr;
-	function->poly_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
-	function->poly_function.function = function;
-	function->poly_function.poly_header = nullptr;
-
-	function->function_type = Upp_Function_Type::NORMAL;
-
+	function->poly_type = Poly_Type::NORMAL;
+	function->is_extern = false;
 	function->contains_errors = false;
 	function->ir_block = nullptr;
 	function->bytecode_start_instruction = -1;
@@ -564,11 +554,9 @@ T* workload_executer_allocate_workload(Workload_Base* parent_workload, Compilati
     workload->errors_due_to_unknown_count = 0;
     workload->error_checkpoint_count = 0;
 
-    workload->poly_parent_workload = parent_workload;
-	workload->active_pattern_variable_states = array_create_static<Pattern_Variable_State>(nullptr, 0);
-	workload->active_pattern_variable_states_origin = nullptr;
 	// Only root has parent_workload == nullptr
 	workload->polymorphic_instanciation_depth = parent_workload == nullptr ? 0 : parent_workload->polymorphic_instanciation_depth;
+	workload->parent_workload = parent_workload;
 
     // Add to workload queue
     dynamic_array_push_back(&executer.all_workloads, workload);
@@ -578,69 +566,10 @@ T* workload_executer_allocate_workload(Workload_Base* parent_workload, Compilati
     return result;
 }
 
-// Note: If base progress != 0, then instance information (Progress-Type + instanciation depth) will not be set by this function
-Upp_Function* upp_function_create_with_workloads(
-    Symbol* symbol, AST::Expression* function_node, Call_Signature* signature, Semantic_Context* semantic_context,
-    Upp_Function* base_function = 0, Symbol_Access_Level symbol_access_level = Symbol_Access_Level::GLOBAL)
-{
-	auto compilation_data = semantic_context->compilation_data;
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
-	Workload_Executer* executer = compilation_data->workload_executer;
-    assert(function_node->type == AST::Expression_Type::FUNCTION, "Has to be function!");
-
-    // Create function
-	Upp_Function* function = upp_function_create_empty(signature, (symbol == nullptr ? ids.lambda_function : symbol->id), compilation_data);
-	function->symbol = symbol;
-	function->function_node = function_node;
-    if (base_function == nullptr) {
-        function->parameter_table = symbol_table_create_with_parent(semantic_context->current_symbol_table, symbol_access_level, compilation_data);
-    }
-    else {
-        assert(base_function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, "");
-		function->parameter_table = base_function->parameter_table;
-    }
-
-    // Set Symbol info
-    if (symbol != nullptr) {
-        symbol->type = Symbol_Type::FUNCTION;
-        symbol->options.function = function;
-    }
-    else if (base_function != nullptr){
-		function->name = base_function->name;
-    }
-
-    // Add workloads
-    if (base_function == nullptr) 
-	{
-        function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context->current_workload, compilation_data);
-        auto header_workload = function->header_workload;
-        header_workload->function = function;
-		header_workload->poly_header = nullptr;
-    }
-    else {
-		function->header_workload = nullptr;
-    }
-
-    function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context->current_workload, compilation_data);
-    function->body_workload->function = function;
-
-    // Add dependencies between workloads
-    if (base_function == nullptr) {
-        analysis_workload_add_dependency_internal(executer, upcast(function->body_workload), upcast(function->header_workload));
-    }
-    else {
-        // Note: We run the body workload only after the base-analysis completely succeeded
-		// Actually, this could currently be removed, but we'll keep it in for now
-        analysis_workload_add_dependency_internal(executer, upcast(function->body_workload), upcast(base_function->body_workload));
-    }
-
-    return function;
-}
-
 // Creates member-types and sub-types, and also checks if the member names are valid...
 // Note: We want to know the subtypes so that subtype creation can check the subtypes of a non-analysed struct...
 void add_struct_members_empty_recursive(
-    Datatype_Struct* structure, Workload_Structure_Body* workload, Dynamic_Array<AST::Structure_Member_Node*> member_nodes, bool report_errors, 
+    Datatype_Struct* structure, Dynamic_Array<AST::Structure_Member_Node*> member_nodes, bool report_errors, 
     Dynamic_Array<AST::Parameter*> struct_params, Semantic_Context* semantic_context)
 {
 	auto type_system = semantic_context->compilation_data->type_system;
@@ -656,8 +585,8 @@ void add_struct_members_empty_recursive(
             struct_add_member(structure, member_node->name, types.unknown_type, upcast(member_node));
         }
         else {
-			auto subtype = type_system_make_struct_empty(type_system, member_node->name, false, structure, workload);
-            add_struct_members_empty_recursive(subtype, workload, member_node->options.subtype_members, report_errors, struct_params, semantic_context);
+			auto subtype = type_system_make_struct_empty(type_system, member_node->name, false, structure);
+            add_struct_members_empty_recursive(subtype, member_node->options.subtype_members, report_errors, struct_params, semantic_context);
         }
 
         // Check if this name is already defined on the same level
@@ -685,72 +614,41 @@ void add_struct_members_empty_recursive(
 					);
                 }
             }
-
-            // Check parent_name
-			if (structure->parent_struct != nullptr && member_node->name == structure->parent_struct->name) {
-                log_semantic_error(
-					semantic_context, 
-					"Struct member name has the same name as struct/subtype name", 
-					upcast(member_node), Node_Section::IDENTIFIER
-				);
-            }
         }
     }
 }
 
-Workload_Structure_Body* workload_structure_create(AST::Expression* struct_node, Symbol* symbol,
-    bool is_polymorphic_instance, Semantic_Context* semantic_context, Symbol_Access_Level access_level = Symbol_Access_Level::GLOBAL)
+void datatype_struct_set_poly_infos(Datatype_Struct* structure, bool contains_pattern, bool contains_partial_type)
+{
+	structure->base.contains_partial_pattern = contains_partial_type;
+	structure->base.contains_pattern = contains_pattern;
+	for (int i = 0; i < structure->subtypes.size; i++) {
+		datatype_struct_set_poly_infos(structure->subtypes[i], contains_pattern, contains_partial_type);
+	}
+}
+
+Upp_Struct* upp_struct_create_empty(AST::Expression* struct_node, Semantic_Context* semantic_context, bool log_hierarchy_errors)
 {
     assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
-    auto& struct_info = struct_node->options.structure;
+    auto& struct_expr = struct_node->options.structure;
 	auto compilation_data = semantic_context->compilation_data;
 	auto& ids = compilation_data->identifier_pool.predefined_ids;
 	auto type_system = compilation_data->type_system;
 
-    // Create body workload
-    auto body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context->current_workload, compilation_data);
-	body_workload->analysis_pass = nullptr;
-    body_workload->struct_node = struct_node;
-    body_workload->struct_type = type_system_make_struct_empty(
-		type_system, (symbol == 0 ? ids.anon_struct : symbol->id), struct_info.is_union, nullptr, body_workload
+	Datatype_Struct* structure = type_system_make_struct_empty(
+		type_system, ids.anon_struct, struct_expr.is_union, nullptr
 	);
-    add_struct_members_empty_recursive(
-        body_workload->struct_type, body_workload, struct_info.members, !is_polymorphic_instance, struct_info.parameters, semantic_context
+	Upp_Struct* upp_struct = structure->upp_struct;
+	upp_struct->struct_node = struct_node;
+	upp_struct->is_extern_struct = false;
+	upp_struct->poly_type = Poly_Type::NORMAL;
+	upp_struct->datatype = structure;
+
+	add_struct_members_empty_recursive(
+        structure, struct_expr.members, log_hierarchy_errors, struct_expr.parameters, semantic_context
     );
-    if (struct_info.is_union && body_workload->struct_type->subtypes.size > 0 && !is_polymorphic_instance) {
-        log_semantic_error(semantic_context, "Union must not contain subtypes", upcast(struct_node), Node_Section::KEYWORD);
-    }
-    body_workload->polymorphic_type = Polymorphic_Analysis_Type::NON_POLYMORPHIC;
-	body_workload->symbol_table = semantic_context->current_symbol_table;
-	body_workload->symbol_access_level = access_level;
 
-    if (is_polymorphic_instance) {
-        body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-        body_workload->symbol_table = nullptr; // This has to be set to base-analysis symbol table at some point
-        // Note: Polymorphic instance infos aren't filled out here!
-        return body_workload;
-    }
-
-    // Set Symbol
-    if (symbol != 0) {
-        symbol->type = Symbol_Type::DATATYPE;
-        symbol->options.datatype = upcast(body_workload->struct_type);
-    }
-
-    // Check for polymorphism
-    if (struct_info.parameters.size != 0) 
-	{
-        auto poly_workload = workload_executer_allocate_workload<Workload_Structure_Polymorphic>(semantic_context->current_workload, compilation_data);
-        poly_workload->body_workload = body_workload;
-
-        body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
-        body_workload->polymorphic.base = poly_workload;
-
-        // Polymorphic base info get's initilaized in header workload
-        analysis_workload_add_dependency_internal(semantic_context->compilation_data->workload_executer, upcast(body_workload), upcast(poly_workload));
-    }
-
-    return body_workload;
+	return upp_struct;
 }
 
 Workload_Bake* workload_bake_create(AST::Expression* bake_expr, Datatype* expected_type, Semantic_Context* semantic_context)
@@ -762,13 +660,13 @@ Workload_Bake* workload_bake_create(AST::Expression* bake_expr, Datatype* expect
 	Workload_Bake* bake = workload_executer_allocate_workload<Workload_Bake>(semantic_context->current_workload, compilation_data);
 
     bake->bake_function = upp_function_create_empty(compilation_data->empty_call_signature, ids.bake_function, compilation_data);
-    bake->bake_function->function_type = Upp_Function_Type::BAKE;
-    bake->bake_function->options.bake = bake;
+    bake->bake_function->bake_workload = bake;
+	bake->bake_function->body_pass = analysis_pass_allocate(upcast(bake), upcast(bake_expr), compilation_data);
+	bake->bake_function->function_node = bake_expr;
 	bake->bake_node = bake_expr;
     bake->result = optional_make_failure<Upp_Constant>();
     bake->result_type = expected_type;
 	bake->symbol_table = semantic_context->current_symbol_table;
-	bake->analysis_pass = analysis_pass_allocate(upcast(bake), upcast(bake_expr), compilation_data);
 
     return bake;
 }
@@ -967,7 +865,7 @@ Comptime_Result calculate_struct_initializer_comptime_recursive(
 		}
 
 		auto& member = call_info->origin.options.structure->members[i];
-		memcpy(((byte*)struct_buffer) + member.offset, member_memory, member.type->memory_info.value.size);
+		memcpy(((byte*)struct_buffer) + member.offset, member_memory, member.datatype->memory_info.value.size);
 	}
 
 	for (int i = 0; i < call_node->subtype_initializers.size; i++) {
@@ -1074,17 +972,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	case AST::Expression_Type::PATH_LOOKUP:
 	{
 		auto symbol = get_info(expr->options.path_lookup, semantic_context)->symbol;
-		if (symbol->type == Symbol_Type::PATTERN_VARIABLE)
-		{
-			Array<Pattern_Variable_State> active_pattern_values =
-				pattern_variable_find_instance_workload(
-					symbol->options.pattern_variable, semantic_context->current_workload
-				)->active_pattern_variable_states;
-			assert(active_pattern_values.data != 0,
-				"In normal analysis we shouldn't be able to access this and in instance this would be already set");
-			return comptime_result_make_unavailable(result_datatype, "Cannot access polymorphic parameter value in base analysis");
-		}
-		else if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+		if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
 			return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-type");
 		}
 		return comptime_result_make_not_comptime("Encountered non-comptime symbol");
@@ -1261,7 +1149,7 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		}
 		case Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS: {
 			assert(
-				access_info.options.poly_access.struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE, 
+				access_info.options.poly_access.upp_struct->poly_type == Poly_Type::BASE, 
 				"In instance this should already be constant"
 			);
 			return comptime_result_make_unavailable(result_datatype, "Cannot access polymorphic parameter value in base analysis");
@@ -1361,12 +1249,12 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 
 		// First, set all tags to correct values
 		Datatype_Struct* structure = downcast<Datatype_Struct>(result_datatype);
-		while (structure->parent_struct != nullptr)
+		while (structure->parent != nullptr)
 		{
 			int tag_value = structure->subtype_index + 1;
-			int* tag_pointer = (int*)(((byte*)result_buffer) + structure->parent_struct->tag_member.offset);
+			int* tag_pointer = (int*)(((byte*)result_buffer) + structure->parent->tag_member.offset);
 			*tag_pointer = tag_value;
-			structure = structure->parent_struct;
+			structure = structure->parent;
 		}
 
 		Comptime_Result result = calculate_struct_initializer_comptime_recursive(
@@ -1589,7 +1477,7 @@ void expression_info_set_function(Expression_Info* info, Upp_Function* function,
 	info->result_type = Expression_Result_Type::FUNCTION;
 	info->is_valid = true;
 	info->options.function = function;
-	if (function->function_type == Upp_Function_Type::NORMAL && function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+	if (function->poly_type == Poly_Type::BASE) {
 		info->cast_info = cast_info_make_simple(types.invalid_type);
 	}
 	else {
@@ -1638,7 +1526,7 @@ void expression_info_set_polymorphic_function(Expression_Info* info, Poly_Functi
 	info->options.poly_function = poly_function;
 }
 
-void expression_info_set_polymorphic_struct(Expression_Info* info, Workload_Structure_Polymorphic* poly_struct_workload)
+void expression_info_set_polymorphic_struct(Expression_Info* info, Workload_Structure_Header* poly_struct_workload)
 {
 	info->result_type = Expression_Result_Type::POLYMORPHIC_STRUCT;
 	info->is_valid = true;
@@ -2054,23 +1942,6 @@ void workload_executer_destroy(Workload_Executer* executer)
 
 void analysis_workload_destroy(Workload_Base* workload)
 {
-	switch (workload->type)
-	{
-	case Analysis_Workload_Type::FUNCTION_HEADER: {
-		auto function_header = downcast<Workload_Function_Header>(workload);
-		if (function_header->poly_header != nullptr) {
-			poly_header_destroy(function_header->poly_header);
-		}
-		break;
-	}
-	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-		auto poly = downcast<Workload_Structure_Polymorphic>(workload);
-		poly_header_destroy(poly->poly_header);
-		break;
-	}
-	default: break;
-	}
-
 	list_destroy(&workload->dependencies);
 	list_destroy(&workload->dependents);
 }
@@ -2548,7 +2419,7 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
 			case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
 			case Analysis_Workload_Type::STRUCT_BODY: str = "Struct Body Analysis "; break;
-			case Analysis_Workload_Type::STRUCT_POLYMORPHIC: str = "Struct Polymorphic Header "; break;
+			case Analysis_Workload_Type::STRUCT_HEADER: str = "Struct Polymorphic Header "; break;
 			default: panic("hey");
 			}
 			logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
@@ -2658,12 +2529,12 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_BODY: {
-		auto struct_id = downcast<Workload_Structure_Body>(workload)->struct_type->name->characters;
+		auto struct_id = downcast<Workload_Structure_Body>(workload)->upp_struct->datatype->name->characters;
 		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
 		break;
 	}
-	case Analysis_Workload_Type::STRUCT_POLYMORPHIC: {
-		auto struct_id = downcast<Workload_Structure_Polymorphic>(workload)->body_workload->struct_type->name->characters;
+	case Analysis_Workload_Type::STRUCT_HEADER: {
+		auto struct_id = downcast<Workload_Structure_Header>(workload)->upp_struct->datatype->name->characters;
 		string_append_formated(string, "Struct-Analysis \"%s\"", struct_id);
 		break;
 	}
@@ -2701,9 +2572,10 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Semantic
 	}
 	assert(waiting_for_type->type == Datatype_Type::STRUCT, "");
 	auto structure = downcast<Datatype_Struct>(waiting_for_type);
+	assert(structure->upp_struct->body_workload != nullptr, "");
 
 	analysis_workload_add_dependency_internal(
-		executer, semantic_context->current_workload, upcast(structure->workload), failure_info
+		executer, semantic_context->current_workload, upcast(structure->upp_struct->body_workload), failure_info
 	);
 	workload_executer_wait_for_dependency_resolution(semantic_context);
 
@@ -2716,154 +2588,217 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Semantic
 
 
 // CASTING/PATTERN_TYPES/EXPRESSION CONTEXT
-struct Matching_Constraint
+Pattern_Matcher pattern_matcher_make(Compilation_Data* compilation_data, Arena* arena)
 {
-	Datatype_Pattern_Variable* pattern_variable;
-	Upp_Constant value;
-};
-
-struct Pattern_Match_Result
-{
-	DynArray<Matching_Constraint> constraints;
-	int max_match_depth;
-};
-
-Pattern_Match_Result pattern_match_result_make_empty(Arena* arena)
-{
-	Pattern_Match_Result result;
+	Pattern_Matcher result;
 	result.constraints = DynArray<Matching_Constraint>::create(arena);
 	result.max_match_depth = 0;
+	result.compilation_data = compilation_data;
 	return result;
 }
 
-bool pattern_type_match_against(
-	Pattern_Match_Result& result, int match_depth, Datatype* pattern_type, Datatype* match_against, Semantic_Context* semantic_context)
+bool pattern_matcher_match_type_and_value(Pattern_Matcher& result, Datatype* datatype, Upp_Constant& value, int match_depth)
 {
-	auto compilation_data = semantic_context->compilation_data;
-	auto& type_system = semantic_context->compilation_data->type_system;
+	auto type_system = result.compilation_data->type_system;
+	auto types = result.compilation_data->type_system->predefined_types;
+
+	if (datatype->type == Datatype_Type::PATTERN_VARIABLE)
+	{
+		Matching_Constraint constraint;
+		constraint.pattern_variable = downcast<Datatype_Pattern_Variable>(datatype);
+		constraint.value = value;
+		result.constraints.push_back(constraint);
+	}
+	else if (types_are_equal(value.type, types.type_handle))
+	{
+		// Otherwise the match-with-value should be a type-handle
+		Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(value);
+		assert((int)handle.index < type_system->types.size, "Instanciated struct should have valid type-handle");
+		Datatype* match_against = type_system->types[handle.index];
+		assert(!datatype_is_unknown(match_against), "Instanciated struct should be unknown before instanciated with unknown i guess");
+		assert(!match_against->contains_pattern, "Instanciated struct has pattern type, meaning that value should have been set to pattern");
+		bool success = pattern_matcher_match_types(result, datatype, match_against, match_depth);
+		if (!success) {
+			return false; 
+		}
+	}
+	else {
+		return false; // Trying to match a non-typehandle value, e.g. 2 with a type-tree
+	}
+
+	return true;
+}
+
+bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Datatype* type_b, int match_depth)
+{
+	auto compilation_data = result.compilation_data;
+	auto& type_system = compilation_data->type_system;
 	auto& types = type_system->predefined_types;
 
-	if (!pattern_type->contains_pattern && !match_against->contains_pattern) {
-		return types_are_equal(pattern_type, match_against);
+	if (!type_a->contains_pattern && !type_b->contains_pattern) {
+		return types_are_equal(type_a, type_b);
 	}
-	assert(!match_against->contains_pattern, "This cannot happen, because we test for this in previous code-path");
 
 	result.max_match_depth = math_maximum(result.max_match_depth, match_depth);
 	match_depth += 1;
 
 	// Check if we found match
-	if (pattern_type->type == Datatype_Type::PATTERN_VARIABLE)
-	{
-		auto pool_result = constant_pool_add_constant(
-			compilation_data->constant_pool, types.type_handle, array_create_static_as_bytes(&match_against->type_handle, 1)
-		);
-		assert(pool_result.success, "Type handle must work as constant!");
-
-		Matching_Constraint constraint;
-		constraint.pattern_variable = downcast<Datatype_Pattern_Variable>(pattern_type);
-		constraint.value = pool_result.options.constant;
-		result.constraints.push_back(constraint);
-
-		return true;
+	if (type_b->type == Datatype_Type::PATTERN_VARIABLE) {
+		Datatype* swap = type_a;
+		type_a = type_b;
+		type_b = swap;
 	}
-	else if (pattern_type->type == Datatype_Type::STRUCT_PATTERN)
+	if (type_a->type == Datatype_Type::PATTERN_VARIABLE)
 	{
-		// Check for errors
-		auto struct_pattern = downcast<Datatype_Struct_Pattern>(pattern_type);
-		Datatype_Struct* match_against_struct = nullptr;
-		if (match_against->type == Datatype_Type::STRUCT) {
-			match_against_struct = downcast<Datatype_Struct>(match_against);
-		}
-		else {
-			return false;
-		}
-
-		if (match_against_struct->workload == 0) {
-			return false;
-		}
-		if (match_against_struct->workload->polymorphic_type != Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-			return false;
-		}
-		auto& match_against_instance = match_against_struct->workload->polymorphic.instance;
-		if (match_against_instance.poly_instance->header != struct_pattern->instance->header) {
-			return false;
-		}
-
-		auto& set_variable_states = match_against_instance.poly_instance->variable_states;
-		auto& pattern_variable_states = struct_pattern->instance->variable_states;
-		assert(set_variable_states.size == pattern_variable_states.size, "");
-		for (int i = 0; i < set_variable_states.size; i++)
+		if (!type_b->contains_pattern) 
 		{
-			auto& pattern_state = pattern_variable_states[i];
-			auto& set_state = set_variable_states[i];
-			assert(set_state.type == Pattern_Variable_State_Type::SET, "Otherwise this wouldn't be a normal struct");
-			auto& match_with_value = set_state.options.value;
-			switch (pattern_state.type)
-			{
-			case Pattern_Variable_State_Type::SET: {
-				if (!upp_constant_is_equal(pattern_state.options.value, match_with_value)) {
-					return false;
-				}
-				break;
-			}
-			case Pattern_Variable_State_Type::UNSET: { // Nothing to do if unset
-				break;
-			}
-			case Pattern_Variable_State_Type::PATTERN:
-			{
-				Datatype* pattern_type = pattern_state.options.pattern_type;
-				if (pattern_type->type == Datatype_Type::PATTERN_VARIABLE)
-				{
-					Matching_Constraint constraint;
-					constraint.pattern_variable = downcast<Datatype_Pattern_Variable>(pattern_type);
-					constraint.value = match_with_value;
-					result.constraints.push_back(constraint);
-				}
-				else if (types_are_equal(match_with_value.type, types.type_handle))
-				{
-					// Otherwise the match-with-value should be a type-handle
-					Upp_Type_Handle handle = upp_constant_to_value<Upp_Type_Handle>(match_with_value);
-					assert((int)handle.index < type_system->types.size, "Instanciated struct should have valid type-handle");
-					Datatype* match_against = type_system->types[handle.index];
-					assert(!datatype_is_unknown(match_against), "Instanciated struct should be unknown before instanciated with unknown i guess");
-					assert(!match_against->contains_pattern, "Instanciated struct has pattern type, seems weird, check this if this happens");
-					bool success = pattern_type_match_against(result, match_depth, pattern_type, match_against, semantic_context);
-					if (!success) return false;
-				}
-				else {
-					return false; // Trying to match a non-typehandle value, e.g. 2 with a type-tree
-				}
+			auto pool_result = constant_pool_add_constant(
+				compilation_data->constant_pool, types.type_handle, array_create_static_as_bytes(&type_b->type_handle, 1)
+			);
+			assert(pool_result.success, "Type handle must work as constant!");
 
-				break;
-			}
-			default: panic("");
-			}
+			Matching_Constraint constraint;
+			constraint.pattern_variable = downcast<Datatype_Pattern_Variable>(type_a);
+			constraint.value = pool_result.options.constant;
+			result.constraints.push_back(constraint);
 		}
 
+		// If we have two pattern types, like $T matching with *$K, we assume that it works here,
+		//		and if it does not work the errors will be reported during instanciation with real values
 		return true;
 	}
 
 	// Exit early if expected types don't match
-	if (pattern_type->type != match_against->type) {
+	if (type_a->type != type_b->type) {
 		return false;
 	}
 
-	switch (pattern_type->type)
+	switch (type_a->type)
 	{
-	case Datatype_Type::ARRAY: 
+	case Datatype_Type::STRUCT: 
 	{
-		auto other_array = downcast<Datatype_Array>(match_against);
-		auto this_array = downcast<Datatype_Array>(pattern_type);
+		Upp_Struct* structure_a = downcast<Datatype_Struct>(type_a)->upp_struct;
+		Upp_Struct* structure_b = downcast<Datatype_Struct>(type_b)->upp_struct;
+		assert(structure_a->poly_type != Poly_Type::NORMAL || structure_b->poly_type != Poly_Type::NORMAL, "otherwise none contain pattern");
 
-		if (!other_array->count_known) {
-			return false; // Something has to be unknown/wrong for this to be true
+		// If one struct is normal, we don't have a match because it's two different structs
+		if (structure_a->poly_type == Poly_Type::NORMAL || structure_b->poly_type == Poly_Type::NORMAL) {
+			return false;
 		}
 
-		// Check if we can match array size
-		if (this_array->count_variable_type != 0)
+		// Check if both are from same header
+		Poly_Header* header_a = structure_a->poly_type == Poly_Type::BASE ? structure_a->options.header : structure_a->options.instance->header;
+		Poly_Header* header_b = structure_b->poly_type == Poly_Type::BASE ? structure_b->options.header : structure_b->options.instance->header;
+		if (header_a != header_b) {
+			return false;
+		}
+
+		// Check that subtypes match
+		Datatype_Struct* subtype_a = downcast<Datatype_Struct>(type_a);
+		Datatype_Struct* subtype_b = downcast<Datatype_Struct>(type_a);
+		while (subtype_a != nullptr) 
 		{
+			if (subtype_a->hierarchy_depth != subtype_b->hierarchy_depth || subtype_a->subtype_index != subtype_b->subtype_index) {
+				return false;
+			}
+			subtype_a = subtype_a->parent;
+			subtype_b = subtype_b->parent;
+		}
+
+		// Base always matches any instance/partial instance
+		if (structure_a->poly_type == Poly_Type::BASE || structure_b->poly_type == Poly_Type::BASE) {
+			return true;
+		}
+
+		// Match all variables to each other
+		auto& variables_a = structure_a->options.instance->variable_states;
+		auto& variables_b = structure_b->options.instance->variable_states;
+		assert(variables_a.size == variables_b.size, "");
+		for (int i = 0; i < variables_a.size; i++)
+		{
+			Pattern_Variable_State state_a = variables_a[i];
+			Pattern_Variable_State state_b = variables_b[i];
+
+			// Unset always matches with anything else
+			if (state_a.type == Pattern_Variable_State_Type::UNSET || state_b.type == Pattern_Variable_State_Type::UNSET) {
+				continue;
+			}
+
+			if (state_a.type == Pattern_Variable_State_Type::SET && state_b.type == Pattern_Variable_State_Type::SET)
+			{
+				if (!upp_constant_is_equal(state_a.options.value, state_b.options.value)) {
+					return false;
+				}
+			}
+			else if (state_a.type == Pattern_Variable_State_Type::PATTERN && state_b.type == Pattern_Variable_State_Type::PATTERN) 
+			{
+				// I hope that this never causes an infinite loop in super weird cases...
+				bool success = pattern_matcher_match_types(
+					result, state_a.options.pattern_type, state_b.options.pattern_type, match_depth + 1
+				);
+				if (!success) {
+					return false;
+				}
+			}
+			else
+			{
+				// One set, one pattern
+				if (state_b.type == Pattern_Variable_State_Type::SET) {
+					Pattern_Variable_State swap = state_a;
+					state_a = state_b;
+					state_b = swap;
+				}
+				assert(state_a.type == Pattern_Variable_State_Type::SET, "");
+				assert(state_b.type == Pattern_Variable_State_Type::PATTERN, "");
+				bool success = pattern_matcher_match_type_and_value(
+					result, state_b.options.pattern_type, state_a.options.value, match_depth + 1
+				);
+				if (!success) {
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+	case Datatype_Type::ARRAY: 
+	{
+		auto array_a = downcast<Datatype_Array>(type_a);
+		auto array_b = downcast<Datatype_Array>(type_b);
+
+		// Either we have two variables, two values, or variable + value 
+		if (array_a->count_variable_type != nullptr && array_b->count_variable_type != nullptr)
+		{
+			bool success = pattern_matcher_match_types(
+				result, upcast(array_a->count_variable_type), upcast(array_b->count_variable_type), match_depth
+			);
+			if (!success) {
+				return false;
+			}
+		}
+		else if (array_a->count_variable_type == nullptr && array_b->count_variable_type == nullptr)
+		{
+			if (array_a->count_known != array_b->count_known) {
+				return false; // Something has to be unknown/wrong for this to be true
+			}
+			if (array_a->count_known && array_a->element_count != array_b->element_count) {
+				return false;
+			}
+		}
+		else
+		{
+			if (array_a->count_variable_type == nullptr) {
+				Datatype_Array* swap = array_a;
+				array_a = array_b;
+				array_b = swap;
+			}
+
+			if (!array_b->count_known) {
+				return false; // Something has to be unknown/wrong for this to be true, but maybe returning success would be fine
+			}
+
 			// Match implicit parameter to element count
-			usize size = other_array->element_count;
+			usize size = array_b->element_count;
 			auto pool_result = constant_pool_add_constant(
 				compilation_data->constant_pool,
 				upcast(types.usize),
@@ -2872,50 +2807,31 @@ bool pattern_type_match_against(
 			assert(pool_result.success, "U64 type must work as constant");
 
 			Matching_Constraint constraint;
-			constraint.pattern_variable = this_array->count_variable_type;
+			constraint.pattern_variable = array_a->count_variable_type;
 			constraint.value = pool_result.options.constant;
 			result.constraints.push_back(constraint);
 		}
-		else 
-		{
-			if (!this_array->count_known) { // We should know our own size
-				return false;
-			}
-			if (this_array->element_count != other_array->element_count) {
-				return false;
-			}
-		}
 
 		// Continue matching element type
-		return pattern_type_match_against(
-			result, match_depth, downcast<Datatype_Array>(pattern_type)->element_type, downcast<Datatype_Array>(match_against)->element_type,
-			semantic_context
+		return pattern_matcher_match_types(
+			result, array_a->element_type, array_b->element_type, match_depth + 1
 		);
 	}
 	case Datatype_Type::SLICE: {
-		return pattern_type_match_against(
-			result, match_depth, downcast<Datatype_Slice>(pattern_type)->element_type, downcast<Datatype_Slice>(match_against)->element_type,
-			semantic_context
+		return pattern_matcher_match_types(
+			result, downcast<Datatype_Slice>(type_a)->element_type, downcast<Datatype_Slice>(type_b)->element_type, match_depth + 1
 		);
 	}
 	case Datatype_Type::POINTER: {
-		auto pattern_pointer = downcast<Datatype_Pointer>(pattern_type);
-		auto match_pointer = downcast<Datatype_Pointer>(match_against);
+		auto pattern_pointer = downcast<Datatype_Pointer>(type_a);
+		auto match_pointer = downcast<Datatype_Pointer>(type_b);
 		if (pattern_pointer->is_optional != match_pointer->is_optional) return false;
-		return pattern_type_match_against(result, match_depth, pattern_pointer->element_type, match_pointer->element_type, semantic_context);
-	}
-	case Datatype_Type::STRUCT: {
-		auto a = downcast<Datatype_Struct>(pattern_type);
-		auto b = downcast<Datatype_Struct>(match_against);
-		// Here we have two different struct types, so they shouldn't be matchable.
-		// Not even sure when this case happens, maybe with anonymous structs?
-		// I don't quite understand when this case should happen, but in my mind this is always false
-		return false;
+		return pattern_matcher_match_types(result, pattern_pointer->element_type, match_pointer->element_type, match_depth + 1);
 	}
 	case Datatype_Type::FUNCTION_POINTER:
 	{
-		auto af = downcast<Datatype_Function_Pointer>(pattern_type);
-		auto bf = downcast<Datatype_Function_Pointer>(match_against);
+		auto af = downcast<Datatype_Function_Pointer>(type_a);
+		auto bf = downcast<Datatype_Function_Pointer>(type_b);
 		auto a = af->signature;
 		auto b = bf->signature;
 		if (a->parameters.size != b->parameters.size || a->return_type_index != b->return_type_index) return false;
@@ -2923,7 +2839,7 @@ bool pattern_type_match_against(
 			auto& ap = a->parameters[i];
 			auto& bp = b->parameters[i];
 			if (ap.name != bp.name) return false;
-			if (!pattern_type_match_against(result, match_depth, ap.datatype, bp.datatype, semantic_context)) {
+			if (!pattern_matcher_match_types(result, ap.datatype, bp.datatype, match_depth + 1)) {
 				return false;
 			}
 		}
@@ -2932,7 +2848,6 @@ bool pattern_type_match_against(
 	case Datatype_Type::ENUM:
 	case Datatype_Type::UNKNOWN_TYPE:
 	case Datatype_Type::PRIMITIVE: panic("Should be handled by previous code-path (E.g. non polymorphic!)"); break;
-	case Datatype_Type::STRUCT_PATTERN:
 	case Datatype_Type::PATTERN_VARIABLE: panic("Previous code path should have handled this!");
 	default: panic("");
 	}
@@ -2942,7 +2857,7 @@ bool pattern_type_match_against(
 }
 
 // Returns false if constraints don't match
-bool pattern_match_result_check_constraints_pairwise(Pattern_Match_Result& results)
+bool pattern_match_result_check_constraints_pairwise(Pattern_Matcher& results)
 {
 	for (int i = 0; i < results.constraints.size; i++)
 	{
@@ -2959,13 +2874,13 @@ bool pattern_match_result_check_constraints_pairwise(Pattern_Match_Result& resul
 	return true;
 }
 
-bool pattern_match_result_check_constraints_with_states(Pattern_Match_Result& results, Array<Pattern_Variable_State> states)
+bool pattern_match_result_check_constraints_with_states(Pattern_Matcher& results, Array<Pattern_Variable_State> states)
 {
 	for (int i = 0; i < results.constraints.size; i++)
 	{
 		Matching_Constraint& constraint = results.constraints[i];
 		Pattern_Variable* variable = constraint.pattern_variable->variable;
-		auto& state = states[variable->value_access_index];
+		auto& state = states[variable->index];
 
 		if (state.type != Pattern_Variable_State_Type::SET) continue;
 		if (!upp_constant_is_equal(constraint.value, state.options.value)) {
@@ -3218,7 +3133,7 @@ Cast_Info check_if_cast_possible(
 			auto src_struct = downcast<Datatype_Struct>(src);
 			auto dst_struct = downcast<Datatype_Struct>(dst);
 			while (dst_struct != nullptr && dst_struct != src_struct) {
-				dst_struct = dst_struct->parent_struct;
+				dst_struct = dst_struct->parent;
 			}
 			if (dst_struct == src_struct)
 			{
@@ -3295,7 +3210,7 @@ Cast_Info check_if_cast_possible(
 			{
 				Datatype_Struct* subtype = src_info.struct_subtype;
 				while (subtype != nullptr && subtype != dst_info.struct_subtype) {
-					subtype = subtype->parent_struct;
+					subtype = subtype->parent;
 				}
 				update_possible = subtype == dst_info.struct_subtype;
 				if (src_info.pointer_level == 0 && dst_info.pointer_level == 0) {
@@ -3401,8 +3316,8 @@ Cast_Info check_if_cast_possible(
 			if (arg_type->contains_pattern)
 			{
 				scratch_arena->rewind_to_checkpoint(pattern_checkpoint);
-				Pattern_Match_Result result = pattern_match_result_make_empty(scratch_arena);
-				bool match_success = pattern_type_match_against(result, 0, arg_type, src, semantic_context);
+				Pattern_Matcher result = pattern_matcher_make(semantic_context->compilation_data, scratch_arena);
+				bool match_success = pattern_matcher_match_types(result, arg_type, src);
 				if (!match_success) {
 					remove = true;
 				}
@@ -3421,8 +3336,8 @@ Cast_Info check_if_cast_possible(
 			if (return_type->contains_pattern)
 			{
 				scratch_arena->rewind_to_checkpoint(pattern_checkpoint);
-				Pattern_Match_Result result = pattern_match_result_make_empty(scratch_arena);
-				bool match_success = pattern_type_match_against(result, 0, return_type, dst, semantic_context);
+				Pattern_Matcher result = pattern_matcher_make(semantic_context->compilation_data, scratch_arena);
+				bool match_success = pattern_matcher_match_types(result, return_type, dst);
 				if (!match_success) {
 					remove = true;
 				}
@@ -3459,9 +3374,9 @@ Cast_Info check_if_cast_possible(
 		return result;
 	}
 
-	if (op->options.custom_cast.function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) 
+	if (op->options.custom_cast.function->poly_type == Poly_Type::BASE) 
 	{
-		Poly_Header* header = op->options.custom_cast.function->poly_function.poly_header;
+		Poly_Header* header = op->options.custom_cast.function->options.poly_header;
 		Call_Info call_info = call_info_make_with_empty_arguments(call_origin_make(header), &semantic_context->compilation_data->arena);
 		call_info.parameter_values[0] = parameter_value_make_datatype_known(src);
 		Poly_Instance* instance = poly_header_instanciate(&call_info, upcast(operators[0].node), Node_Section::FIRST_TOKEN, semantic_context);
@@ -3516,11 +3431,12 @@ Call_Origin call_origin_make(Poly_Header* poly_header)
 	origin.type = poly_header->is_function ? Call_Origin_Type::POLY_FUNCTION : Call_Origin_Type::POLY_STRUCT;
 	if (poly_header->is_function) {
 		origin.type = Call_Origin_Type::POLY_FUNCTION;
-		origin.options.poly_function = poly_header->origin.function->poly_function;
+		origin.options.poly_function.function = poly_header->origin.function;
+		origin.options.poly_function.poly_header = poly_header;
 	}
 	else {
 		origin.type = Call_Origin_Type::POLY_STRUCT;
-		origin.options.poly_struct = poly_header->origin.struct_workload;
+		origin.options.poly_struct = poly_header->origin.upp_struct->header_workload;
 	}
 	origin.signature = poly_header->signature;
 	return origin;
@@ -3565,29 +3481,26 @@ Call_Origin call_origin_make(Custom_Operator_Type context_change_type, Compilati
 Call_Origin call_origin_make(Datatype_Struct* structure, Semantic_Context* semantic_context) 
 {
 	Call_Origin origin;
-	origin.type = structure->is_union ? Call_Origin_Type::UNION_INITIALIZER : Call_Origin_Type::STRUCT_INITIALIZER;
+	bool is_union_initializer = structure->upp_struct->is_union;
+	origin.type = is_union_initializer ? Call_Origin_Type::UNION_INITIALIZER : Call_Origin_Type::STRUCT_INITIALIZER;
 	origin.options.structure = structure;
 
 	// Create initializer signature if not already done (FUTURE: May cause problems with multithreading)
 	if (structure->initializer_signature_cached == nullptr) 
 	{
 		// Wait for struct-workload so members are analysed
-		if (semantic_context->current_workload == nullptr) {
-			assert(structure->workload == nullptr || structure->workload->base.is_finished, "");
-		}
-		if (structure->workload != nullptr) {
+		if (structure->upp_struct->body_workload != nullptr) {
 			auto executer = semantic_context->compilation_data->workload_executer;
-			analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(structure->workload));
+			analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(structure->upp_struct->body_workload));
 			workload_executer_wait_for_dependency_resolution(semantic_context);
 		}
 		assert(structure->base.memory_info.available, "");
 
 		// Create new signature
-		bool is_union_initializer = structure->is_union;
 		Call_Signature* signature = call_signature_create_empty();
 		for (int i = 0; i < structure->members.size; i++) {
 			auto& member = structure->members[i];
-			call_signature_add_parameter(signature, member.id, member.type, !is_union_initializer, is_union_initializer, false);
+			call_signature_add_parameter(signature, member.name, member.datatype, !is_union_initializer, is_union_initializer, false);
 		}
 		signature = call_signature_register(signature, semantic_context->compilation_data);
 
@@ -3605,8 +3518,8 @@ Call_Origin call_origin_make(Datatype_Slice* slice_type, Compilation_Data* compi
 	{
 		auto& ids = compilation_data->identifier_pool.predefined_ids;
 		Call_Signature* signature = call_signature_create_empty();
-		call_signature_add_parameter(signature, ids.data, slice_type->data_member.type, true, false, false);
-		call_signature_add_parameter(signature, ids.size, slice_type->size_member.type, true, false, false);
+		call_signature_add_parameter(signature, ids.data, slice_type->data_member.datatype, true, false, false);
+		call_signature_add_parameter(signature, ids.size, slice_type->size_member.datatype, true, false, false);
 		signature = call_signature_register(signature, compilation_data);
 		slice_type->slice_initializer_signature_cached = signature;
 	}
@@ -3688,7 +3601,7 @@ Call_Origin call_origin_from_expression_info(Expression_Info& info, Compilation_
 	case Expression_Result_Type::POLYMORPHIC_PATTERN:
 	case Expression_Result_Type::NOTHING:
 	case Expression_Result_Type::DATATYPE: return call_origin_make_error(compilation_data);
-	case Expression_Result_Type::POLYMORPHIC_STRUCT: return call_origin_make(info.options.polymorphic_struct->poly_header);
+	case Expression_Result_Type::POLYMORPHIC_STRUCT: return call_origin_make(info.options.polymorphic_struct->upp_struct->options.header);
 	case Expression_Result_Type::POLYMORPHIC_FUNCTION: return call_origin_make(info.options.poly_function.poly_header);
 	case Expression_Result_Type::FUNCTION: return call_origin_make(info.options.function);
 	case Expression_Result_Type::HARDCODED_FUNCTION: return call_origin_make(info.options.hardcoded, compilation_data);
@@ -3706,7 +3619,7 @@ Call_Origin call_origin_from_expression_info(Expression_Info& info, Compilation_
 		}
 
 		Upp_Function* function = compilation_data->functions[function_index];
-		if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE || function == compilation_data->entry_function) {
+		if (function->poly_type == Poly_Type::BASE || function == compilation_data->entry_function) {
 			return call_origin_make_error(compilation_data);
 		}
 
@@ -4177,15 +4090,15 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 						}
 
 						// Check if patterns match
-						Pattern_Match_Result match_result = pattern_match_result_make_empty(&scratch_arena);
-						bool can_match = pattern_type_match_against(match_result, 0, match_to_type, given_type, semantic_context);
+						Pattern_Matcher pattern_matcher = pattern_matcher_make(compilation_data, &scratch_arena);
+						bool can_match = pattern_matcher_match_types(pattern_matcher, match_to_type, given_type);
 						if (can_match) {
-							if (pattern_match_result_check_constraints_pairwise(match_result)) {
+							if (pattern_match_result_check_constraints_pairwise(pattern_matcher)) {
 								candidate.poly_type_matches = true;
 							}
 						}
 						if (candidate.poly_type_matches) {
-							max_poly_depth = math_maximum(max_poly_depth, match_result.max_match_depth);
+							max_poly_depth = math_maximum(max_poly_depth, pattern_matcher.max_match_depth);
 						}
 
 						if (!candidate.poly_type_requires_modifier_update) {
@@ -4254,11 +4167,11 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 			for (int j = 0; j < candidates.size; j++)
 			{
 				auto& candidate = candidates[j];
-				auto& param_info = candidate.call_info.origin.signature->parameters[candidate.call_info.argument_infos[i].parameter_index];
+				Call_Parameter& param_info = candidate.call_info.origin.signature->parameters[candidate.call_info.argument_infos[i].parameter_index];
 				candidate.active_type = param_info.datatype;
 
 				// For #instanciate we can only compare the comptime variables
-				if (is_instanciate && param_info.comptime_variable_index != -1) {
+				if (is_instanciate && param_info.pattern_variable_index != -1) {
 					types_are_different = false;
 					break;
 				}
@@ -4418,10 +4331,9 @@ u64 hash_poly_instance(Poly_Instance** instance_ptr)
 	for (int i = 0; i < instance->variable_states.size; i++) {
 		hash = hash_combine(hash, hash_pattern_variable_state(&instance->variable_states[i]));
 	}
-	hash = hash_combine(hash, hash_i32(&instance->partial_pattern_instances.size));
-	for (int i = 0; i < instance->partial_pattern_instances.size; i++) {
-		Datatype* partial_type = instance->partial_pattern_instances[i];
-		hash = hash_combine(hash, hash_pointer(partial_type));
+	hash = hash_combine(hash, hash_i32(&instance->parameter_types.size));
+	for (int i = 0; i < instance->parameter_types.size; i++) {
+		hash = hash_combine(hash, hash_pointer(instance->parameter_types[i]));
 	}
 	return hash;
 }
@@ -4430,17 +4342,17 @@ bool equals_poly_instance(Poly_Instance** ap, Poly_Instance** bp)
 {
 	auto a = *ap;
 	auto b = *bp;
-	if (a->header != b->header ||
-		a->type == Poly_Instance_Type::STRUCT_PATTERN || b->type == Poly_Instance_Type::STRUCT_PATTERN ||
-		a->variable_states.size != b->variable_states.size ||
-		a->partial_pattern_instances.size != b->partial_pattern_instances.size) return false;
-	for (int i = 0; i < a->variable_states.size; i++)
-	{
+
+	// Note: Previously we always returned false if one of the types is a struct-pattern
+	if (a->header != b->header) return false;
+
+	assert(a->variable_states.size == b->variable_states.size, "Must be same if same header");
+	assert(a->parameter_types.size == b->parameter_types.size, "Must be same if same header");
+	for (int i = 0; i < a->variable_states.size; i++) {
 		if (!equals_pattern_variable_state(&a->variable_states[i], &b->variable_states[i])) return false;
 	}
-	for (int i = 0; i < a->partial_pattern_instances.size; i++)
-	{
-		if (!types_are_equal(a->partial_pattern_instances[i], b->partial_pattern_instances[i])) return false;
+	for (int i = 0; i < a->parameter_types.size; i++) {
+		if (!types_are_equal(a->parameter_types[i], b->parameter_types[i])) return false;
 	}
 	return true;
 }
@@ -4452,36 +4364,18 @@ struct Parameter_Symbol_Lookup
 	AST::Symbol_Lookup* node;
 };
 
-void expression_search_for_symbol_lookups_and_pattern_variables(
-	int parameter_index, AST::Expression* expression,
-	Dynamic_Array<Parameter_Symbol_Lookup>& symbol_lookups,
-	Dynamic_Array<Pattern_Variable>& pattern_variables)
+void expression_search_for_pattern_variables_recursive(
+	int parameter_index, AST::Expression* expression, DynArray<Pattern_Variable>& pattern_variables)
 {
-	if (expression->type == AST::Expression_Type::PATH_LOOKUP) {
-		auto path = expression->options.path_lookup;
-		if (path->parts.size == 1) { // Skip path lookups, as we are only interested in parameter names usually
-			Parameter_Symbol_Lookup lookup;
-			lookup.parameter_index = parameter_index;
-			lookup.lookup_id = path->last->name;
-			lookup.node = path->last;
-			dynamic_array_push_back(&symbol_lookups, lookup);
-		}
-		return;
-	}
-	else if (expression->type == AST::Expression_Type::PATTERN_VARIABLE)
+	if (expression->type == AST::Expression_Type::PATTERN_VARIABLE)
 	{
 		Pattern_Variable variable;
+		memory_zero(&variable); // Note: most values are filled out later
 		variable.definition_node = upcast(expression);
 		variable.is_comptime_parameter = false;
-		variable.value_access_index = pattern_variables.size;
 		variable.defined_in_parameter_index = parameter_index;
 		variable.name = expression->options.pattern_variable_name;
-
-		// Values that are set later
-		variable.symbol = nullptr; // Will be defined later
-		variable.origin = nullptr;
-		variable.pattern_variable_type = nullptr;
-		dynamic_array_push_back(&pattern_variables, variable);
+		pattern_variables.push_back(variable);
 		return;
 	}
 
@@ -4497,31 +4391,96 @@ void expression_search_for_symbol_lookups_and_pattern_variables(
 	// Otherwise search all children of the node for further polymorphic_function parameters
 	int child_index = 0;
 	auto child_node = AST::base_get_child(upcast(expression), child_index);
-	while (child_node != 0) {
-		if (child_node->type == AST::Node_Type::EXPRESSION) {
-			expression_search_for_symbol_lookups_and_pattern_variables(
-				parameter_index, downcast<AST::Expression>(child_node), symbol_lookups, pattern_variables);
+	while (child_node != 0) 
+	{
+		if (child_node->type == AST::Node_Type::EXPRESSION) 
+		{
+			expression_search_for_pattern_variables_recursive(
+				parameter_index, downcast<AST::Expression>(child_node), pattern_variables
+			);
 		}
-		else if (child_node->type == AST::Node_Type::CALL_NODE) {
+		else if (child_node->type == AST::Node_Type::CALL_NODE) 
+		{
 			auto args = downcast<AST::Call_Node>(child_node);
 			for (int i = 0; i < args->arguments.size; i++) {
-				expression_search_for_symbol_lookups_and_pattern_variables(
-					parameter_index, args->arguments[i]->value, symbol_lookups, pattern_variables);
+				expression_search_for_pattern_variables_recursive(
+					parameter_index, args->arguments[i]->value, pattern_variables
+				);
 			}
 		}
-		else if (child_node->type == AST::Node_Type::ARGUMENT) {
+		else if (child_node->type == AST::Node_Type::ARGUMENT) 
+		{
 			auto argument_node = downcast<AST::Argument>(child_node);
-			expression_search_for_symbol_lookups_and_pattern_variables(
-				parameter_index, argument_node->value, symbol_lookups, pattern_variables);
+			expression_search_for_pattern_variables_recursive(
+				parameter_index, argument_node->value, pattern_variables
+			);
 		}
-		else if (child_node->type == AST::Node_Type::PARAMETER) {
+		else if (child_node->type == AST::Node_Type::PARAMETER) 
+		{
 			auto parameter_node = downcast<AST::Parameter>(child_node);
 			if (!parameter_node->type.available) continue;
-			expression_search_for_symbol_lookups_and_pattern_variables(
-				parameter_index, parameter_node->type.value, symbol_lookups, pattern_variables);
+			expression_search_for_pattern_variables_recursive(
+				parameter_index, parameter_node->type.value, pattern_variables
+			);
 		}
 		child_index += 1;
 		child_node = AST::base_get_child(upcast(expression), child_index);
+	}
+}
+
+void datatype_search_for_pattern_variable_dependency(Datatype* datatype, Poly_Header* header, int parameter_index)
+{
+	switch (datatype->type)
+	{
+	case Datatype_Type::PATTERN_VARIABLE:
+	{
+		Pattern_Variable* pattern_var = downcast<Datatype_Pattern_Variable>(datatype)->variable;
+		pattern_var->dependent_params.push_back(parameter_index);
+		header->param_infos[parameter_index].depends_on_variables.push_back(pattern_var->index);
+		break;
+	}
+	case Datatype_Type::ARRAY: 
+	{
+		Datatype_Array* array = downcast<Datatype_Array>(datatype);
+		datatype_search_for_pattern_variable_dependency(array->element_type, header, parameter_index);
+		if (array->count_variable_type != nullptr) {
+			datatype_search_for_pattern_variable_dependency(upcast(array->count_variable_type), header, parameter_index);
+		}
+		break;
+	}
+	case Datatype_Type::FUNCTION_POINTER: 
+	{
+		Call_Signature* signature = downcast<Datatype_Function_Pointer>(datatype)->signature;
+		for (int i = 0; i < signature->parameters.size; i++) {
+			auto& param = signature->parameters[i];
+			datatype_search_for_pattern_variable_dependency(param.datatype, header, parameter_index);
+		}
+		break;
+	}
+	case Datatype_Type::STRUCT: 
+	{
+		Upp_Struct* upp_struct = downcast<Datatype_Struct>(datatype)->upp_struct;
+		if (upp_struct->poly_type == Poly_Type::PARTIAL) 
+		{
+			auto& states = upp_struct->options.instance->variable_states;
+			for (int i = 0; i < states.size; i++) {
+				auto& variable_state = states[i];
+				if (variable_state.type == Pattern_Variable_State_Type::PATTERN) {
+					datatype_search_for_pattern_variable_dependency(variable_state.options.pattern_type, header, parameter_index);
+				}
+			}
+		}
+		break;
+	}
+	case Datatype_Type::POINTER: {
+		datatype_search_for_pattern_variable_dependency(downcast<Datatype_Pointer>(datatype)->element_type, header, parameter_index);
+		break;
+	}
+	case Datatype_Type::SLICE: {
+		datatype_search_for_pattern_variable_dependency(downcast<Datatype_Slice>(datatype)->element_type, header, parameter_index);
+		break;
+	}
+	default: break;
 	}
 }
 
@@ -4538,7 +4497,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 	// Analyse type
 	parameter.name = parameter_node->name;
 	if (parameter_node->type.available) {
-		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, semantic_context);
+		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, semantic_context, allow_pattern_type);
 	}
 	else
 	{
@@ -4550,43 +4509,20 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 		}
 		parameter.datatype = types.type_handle;
 	}
-
-	// Check if default value exists
-	parameter.default_value_exists = parameter_node->default_value.available;
-	if (!parameter.default_value_exists) {
-		parameter.default_value_expr = nullptr;
-		parameter.default_value_pass = nullptr;
-		return;
-	}
-	else if (parameter.datatype->contains_pattern) {
-		log_semantic_error(semantic_context, "Parameters with Poly-Patterns cannot have default values currently", upcast(parameter_node->default_value.value));
-		parameter.default_value_exists = false;
-		return;
-	}
-	else if (parameter_node->is_comptime) {
-		log_semantic_error(semantic_context, "Comptime parameters cannot have default values", upcast(parameter_node->default_value.value));
-		parameter.default_value_exists = false;
-		return;
-	}
-
-	// Analyse default value (With global symbol access)
-	parameter.required = false;
-	parameter.default_value_expr = parameter_node->default_value.value;
-	parameter.default_value_pass = semantic_context->current_pass;
-	RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::GLOBAL);
-	semantic_analyser_analyse_expression_value(
-		parameter_node->default_value.value, expression_context_make_specific_type(parameter.datatype), semantic_context
-	);
 }
 
 // Defines all necessary symbols in symbol-table, and looks for polymorphism
 Poly_Header* poly_header_analyse(
-	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* parameter_table, String* name, Semantic_Context* semantic_context,
-	Upp_Function* upp_function = nullptr, Workload_Structure_Polymorphic* poly_struct = nullptr)
+	Dynamic_Array<AST::Parameter*> parameter_nodes, Symbol_Table* symbol_table, String* name, Semantic_Context* semantic_context,
+	Upp_Function* upp_function = nullptr, Workload_Structure_Header* poly_struct = nullptr)
 {
 	auto type_system = semantic_context->compilation_data->type_system;
 	auto& types = type_system->predefined_types;
 	auto compilation_data = semantic_context->compilation_data;
+	Arena* arena = &compilation_data->arena;
+	Arena* tmp_arena = semantic_context->scratch_arena;
+	auto checkpoint = tmp_arena->make_checkpoint();
+	SCOPE_EXIT(checkpoint.rewind());
 
 	int return_type_index = -1;
 	if (parameter_nodes.size > 0 && parameter_nodes[parameter_nodes.size - 1]->is_return_type) {
@@ -4594,337 +4530,164 @@ Poly_Header* poly_header_analyse(
 	}
 
 	// Poly_Header structure is always generated
-	Poly_Header* result_header = new Poly_Header;
+	Poly_Header* result_header = arena->allocate<Poly_Header>();
 	Poly_Header& header = *result_header;
-	header.name = name;
 	header.parameter_nodes = parameter_nodes;
-	header.parameter_table = parameter_table;
+	header.name = name;
 	header.is_function = upp_function != nullptr;
-	header.partial_pattern_count = 0;
-
+	header.param_infos = DynArray<Poly_Parameter_Info>::create(arena);
+	header.instances = DynSet<Poly_Instance*>::create(arena, hash_poly_instance, equals_poly_instance);
+	header.pattern_variables = DynArray<Pattern_Variable>::create(arena);
+	header.param_infos = DynArray<Poly_Parameter_Info>::create(arena);
+	header.signature = call_signature_create_empty();
+	header.signature->return_type_index = return_type_index;
 	assert(name != nullptr, "Name should be available for polymorhphic functions/structs");
 	if (poly_struct != nullptr) {
 		header.is_function = false;
-		header.origin.struct_workload = poly_struct;
+		header.origin.upp_struct = poly_struct->upp_struct;
 	}
 	else if (upp_function != nullptr) {
 		header.is_function = true;
 		header.origin.function = upp_function;
-		header.origin.function->header_workload->poly_header = result_header;
 	}
 	else {
 		panic("Poly-Header must be either from function or from struct");
 	}
 
-	header.instances = hashset_create_empty<Poly_Instance*>(0, hash_poly_instance, equals_poly_instance);
-	header.pattern_variables = dynamic_array_create<Pattern_Variable>();
-	header.base_analysis_states = array_create_static<Pattern_Variable_State>(nullptr, 0);
-	header.signature = call_signature_create_empty();
-	header.signature->return_type_index = return_type_index;
-
-	// Define parameter symbols and search for symbol-lookups and pattern values
-	Dynamic_Array<Parameter_Symbol_Lookup> symbol_lookups = dynamic_array_create<Parameter_Symbol_Lookup>();
-	SCOPE_EXIT(dynamic_array_destroy(&symbol_lookups));
-	int comptime_param_count = 0;
+	// Define patter-variable symbols in parameter table (Needed for type-analysis)
+	header.base_parameter_table = symbol_table_create_with_parent(symbol_table, Symbol_Access_Level::GLOBAL, compilation_data);
+	RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, header.base_parameter_table);
+	RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::POLYMORPHIC);
 	for (int i = 0; i < parameter_nodes.size; i++)
 	{
 		auto parameter_node = parameter_nodes[i];
 		Call_Parameter* parameter_info = call_signature_add_parameter(
 			header.signature, parameter_node->name, nullptr, false, false, i == return_type_index);
 
-		// Define symbol (Note: return_type can still be defined as symbol, because id is unique, e.g. "!return_type")
-		bool is_comptime = parameter_node->is_comptime || !header.is_function; // In poly-struct all parameters are comptime
-		Symbol* symbol = symbol_table_define_symbol(
-			parameter_table, parameter_node->name, (is_comptime ? Symbol_Type::PATTERN_VARIABLE : Symbol_Type::PARAMETER), AST::upcast(parameter_node),
-			(is_comptime ? Symbol_Access_Level::POLYMORPHIC : Symbol_Access_Level::INTERNAL), semantic_context->compilation_data
-		);
-		get_info(parameter_node, semantic_context, true)->symbol = symbol;
+		Poly_Parameter_Info param_info;
+		param_info.parameter_index = i;
+		param_info.depends_on_variables = DynArray<int>::create(arena);
+		header.param_infos.push_back(param_info);
 
 		if (upp_function == nullptr && !parameter_node->is_comptime) {
 			log_semantic_error(semantic_context, "Parameters of struct header must be comptime, e.g. use $", upcast(parameter_node), Node_Section::IDENTIFIER);
 		}
 
-		// Set symbol/param infos
-		if (is_comptime)
+		// Define symbol (Note: return_type can still be defined as symbol, because id is unique, e.g. "!return_type")
+		bool is_comptime = parameter_node->is_comptime || !header.is_function; // In poly-struct all parameters are comptime
+		if (is_comptime) 
 		{
-			parameter_info->comptime_variable_index = header.pattern_variables.size;
-			comptime_param_count += 1;
+			Symbol* symbol = symbol_table_define_symbol(
+				header.base_parameter_table, parameter_node->name, Symbol_Type::PATTERN_VARIABLE, AST::upcast(parameter_node),
+				Symbol_Access_Level::POLYMORPHIC, semantic_context->compilation_data
+			);
+			get_info(parameter_node, semantic_context, true)->symbol = symbol;
 
 			Pattern_Variable variable;
+			memory_zero(&variable);
 			variable.defined_in_parameter_index = i;
 			variable.definition_node = upcast(parameter_node);
 			variable.is_comptime_parameter = true;
-			variable.origin = &header;
-			variable.pattern_variable_type = nullptr; // Filled out later
-			variable.symbol = symbol;
 			variable.name = parameter_node->name;
-			variable.value_access_index = header.pattern_variables.size;
-			dynamic_array_push_back(&header.pattern_variables, variable);
+			variable.symbol = symbol;
+			header.pattern_variables.push_back(variable);
 		}
-		else
+		else if (!parameter_node->is_return_type) 
 		{
-			assert(upp_function != nullptr, "");
-
-			parameter_info->comptime_variable_index = -1;
+			// We also define normal parameter symbols because we want to figure out naming conflicts during header analysis
+			Symbol* symbol = symbol_table_define_symbol(
+				header.base_parameter_table, parameter_node->name, Symbol_Type::PARAMETER, AST::upcast(parameter_node),
+				Symbol_Access_Level::INTERNAL, semantic_context->compilation_data
+			);
+			get_info(parameter_node, semantic_context, true)->symbol = symbol;
 			symbol->options.parameter.function = upp_function;
-			symbol->options.parameter.index_in_polymorphic_signature = i;
-			symbol->options.parameter.index_in_non_polymorphic_signature = i - comptime_param_count;
-			assert(symbol->options.parameter.index_in_non_polymorphic_signature >= 0, "");
+			symbol->options.parameter.index = i;
 		}
 
 		// Find implicit parameters/lookups
 		int before_count = header.pattern_variables.size;
 		if (parameter_node->type.available) {
-			expression_search_for_symbol_lookups_and_pattern_variables(i, parameter_node->type.value, symbol_lookups, header.pattern_variables);
-		}
-
-		// Add self-dependencies
-		for (int i = before_count; i < header.pattern_variables.size; i++) {
-			dynamic_array_push_back(&parameter_info->dependencies, i);
+			expression_search_for_pattern_variables_recursive(i, parameter_node->type.value, header.pattern_variables);
 		}
 	}
 
-	// Initialize Pattern-Variables (Create symbols + Corresponding Datatype)
+	// Finish Pattern-Variable initialization (Create missing symbols + Corresponding Datatype)
 	for (int i = 0; i < header.pattern_variables.size; i++)
 	{
 		auto& pattern_variable = header.pattern_variables[i];
 		pattern_variable.origin = &header;
-		pattern_variable.value_access_index = i;
-
-		// Update misc data
-		if (!pattern_variable.is_comptime_parameter)
-		{
-			header.signature->parameters[pattern_variable.defined_in_parameter_index].contains_pattern_variable_definition = true;
-			hashtable_insert_element(
-				&compilation_data->pattern_variable_expression_mapping,
-				downcast<AST::Expression>(pattern_variable.definition_node),
-				&pattern_variable
-			);
-		}
-
-		// Finish symbol
-		if (pattern_variable.symbol == nullptr) {
-			pattern_variable.symbol = symbol_table_define_symbol(
-				parameter_table, pattern_variable.name, Symbol_Type::PATTERN_VARIABLE,
-				pattern_variable.definition_node, Symbol_Access_Level::POLYMORPHIC, compilation_data
-			);
-		}
-		pattern_variable.symbol->options.pattern_variable = &pattern_variable;
+		pattern_variable.index = i;
 
 		// Create type
 		pattern_variable.pattern_variable_type = type_system_make_pattern_variable_type(type_system, &pattern_variable);
 
-		// Add implicit parameters
-		auto param = call_signature_add_parameter(
-			header.signature, pattern_variable.name, upcast(pattern_variable.pattern_variable_type), false, true, false);
-		param->comptime_variable_index = i;
+		// Finish symbol
+		if (pattern_variable.symbol == nullptr) 
+		{
+			pattern_variable.symbol = symbol_table_define_symbol(
+				header.base_parameter_table, pattern_variable.name, Symbol_Type::PATTERN_VARIABLE,
+				pattern_variable.definition_node, Symbol_Access_Level::POLYMORPHIC, compilation_data
+			);
+		}
+		pattern_variable.symbol->options.pattern_variable_type = pattern_variable.pattern_variable_type->mirrored_type;
+
+		// Add implicit parameters to call-signature
+		if (pattern_variable.is_comptime_parameter) {
+			header.signature->parameters[pattern_variable.defined_in_parameter_index].pattern_variable_index = i;
+		}
+		else
+		{
+			auto param = call_signature_add_parameter(
+				header.signature, pattern_variable.name, upcast(pattern_variable.pattern_variable_type), false, true, false
+			);
+			param->pattern_variable_index = i;
+			Poly_Parameter_Info info;
+			info.depends_on_variables = DynArray<int>::create(arena);
+			info.parameter_index = header.param_infos.size;
+			header.param_infos.push_back(info);
+		}
 	}
 
-	// Create pattern values for base analysis
-	header.base_analysis_states = array_create<Pattern_Variable_State>(header.pattern_variables.size);
-	for (int i = 0; i < header.base_analysis_states.size; i++) {
-		header.base_analysis_states[i] = pattern_variable_state_make_pattern(upcast(header.pattern_variables[i].pattern_variable_type));
-	}
-
-	// Find dependencies between parameters using the found symbol-lookups
-	Symbol_Query_Info symbol_query_info = symbol_query_info_make(Symbol_Access_Level::POLYMORPHIC, Import_Type::NONE, false);
-	for (int i = 0; i < symbol_lookups.size; i++)
+	// Analyse all parameter types and find dependencies
+	for (int i = 0; i < parameter_nodes.size; i++) 
 	{
-		auto& lookup = symbol_lookups[i];
-
-		Arena* scratch_arena = semantic_context->scratch_arena;
-		Arena_Checkpoint checkpoint = scratch_arena->make_checkpoint();
-		SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
-		DynArray<Symbol*> symbols = symbol_table_query_id(
-			parameter_table, lookup.lookup_id, symbol_query_info, scratch_arena
-		);
-		if (symbols.size == 0) {
-			continue;
-		}
-
-		assert(symbols.size == 1, "> 2 symbols in parameter table shouldn't be possible (No overloading for parameters, see define symbol)");
-		assert(symbols[0]->type == Symbol_Type::PATTERN_VARIABLE, "Symbol lookup is only in parameter table, so we shouln't have other values!");
-		auto depends_on_var = symbols[0]->options.pattern_variable;
-		if (depends_on_var->is_comptime_parameter && depends_on_var->defined_in_parameter_index == lookup.parameter_index) {
-			log_semantic_error(semantic_context, "Comptime parameter type cannot depend on value of itself", upcast(lookup.node));
-		}
-		dynamic_array_push_back(
-			&header.signature->parameters[lookup.parameter_index].dependencies,
-			symbols[0]->options.pattern_variable->value_access_index
-		);
-	}
-
-	// Analyse all parameter types
-	auto workload = semantic_context->current_workload;
-	assert(
-		workload->active_pattern_variable_states.data == nullptr,
-		"Function-Header/Poly-Struct-Header should not have values set, only bakes/lambdas/anonymous structs"
-	);
-	semantic_context->current_symbol_table = parameter_table;
-	semantic_context->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-	workload->active_pattern_variable_states = header.base_analysis_states;
-	workload->active_pattern_variable_states_origin = result_header;
-	for (int i = 0; i < parameter_nodes.size; i++) {
 		auto& param = header.signature->parameters[i];
 		analyse_parameter_type_and_value(param, parameter_nodes[i], true, semantic_context);
-		if (param.datatype->contains_partial_pattern) {
-			param.partial_pattern_index = header.partial_pattern_count;
-			header.partial_pattern_count += 1;
+		if (param.datatype->contains_pattern) {
+			datatype_search_for_pattern_variable_dependency(param.datatype, &header, i);
 		}
 	}
-
 	header.signature = call_signature_register(header.signature, compilation_data);
 
-	// Set all parameter-states to unset, as base-analysis shouldn't be able to use them
-	for (int i = 0; i < header.pattern_variables.size; i++) {
-		header.base_analysis_states[i] = pattern_variable_state_make_unset();
-	}
-
-	// Reset poly-values if caller does other work
-	workload->active_pattern_variable_states = array_create_static<Pattern_Variable_State>(nullptr, 0);
-	workload->active_pattern_variable_states_origin = nullptr;
-
 	return result_header;
-}
-
-void poly_header_destroy(Poly_Header* header)
-{
-	array_destroy(&header->base_analysis_states);
-	dynamic_array_destroy(&header->pattern_variables);
-	for (auto iter = header->instances.make_iter(); iter.has_next(); iter.next())
-	{
-		Poly_Instance* instance = *iter.value;
-		array_destroy(&instance->variable_states);
-		array_destroy(&instance->partial_pattern_instances);
-		delete instance;
-	}
-	hashset_destroy(&header->instances);
-	delete header;
-}
-
-// Checks if any of the poly_parent workloads of this workload has the corresponding active_pattner_values set to active
-Workload_Base* pattern_variable_find_instance_workload(
-	Pattern_Variable* variable,
-	Workload_Base* search_start_workload)
-{
-	auto workload = search_start_workload;
-	int counter = 0;
-	while (workload != nullptr)
-	{
-		if (workload->active_pattern_variable_states_origin == variable->origin) {
-			return workload;
-		}
-
-		workload = workload->poly_parent_workload;
-		assert(workload == nullptr || workload != workload->poly_parent_workload, "Should be terminated with nullptr");
-		counter += 1;
-		assert(counter < 1000, "I don't think we should hit this limit, this seems like an endless loop");
-	}
-
-	return nullptr;
-}
-
-void expression_info_set_to_pattern_variable(
-	Expression_Info* result_info, Pattern_Variable* variable, bool is_symbol_lookup, Semantic_Context* semantic_context)
-{
-	auto type_system = semantic_context->compilation_data->type_system;
-	auto& types = type_system->predefined_types;
-
-	auto instance_workload = pattern_variable_find_instance_workload(variable, semantic_context->current_workload);
-	Array<Pattern_Variable_State> active_pattern_values = instance_workload->active_pattern_variable_states;
-	assert(
-		active_pattern_values.data != 0,
-		"If the symbol was found (e.g. correct symbol-table lookup 'permissions'), then we should be able to access it"
-	);
-
-	auto& value = active_pattern_values[variable->value_access_index];
-	switch (value.type)
-	{
-	case Pattern_Variable_State_Type::SET: {
-		expression_info_set_constant(result_info, value.options.value);
-		break;
-	}
-	case Pattern_Variable_State_Type::UNSET:
-	{
-		semantic_analyser_set_error_flag(true, semantic_context);
-		// Assert that we are in a function-body (BASE) analysis, otherwise panic
-		auto workload = semantic_context->current_workload;
-		assert(
-			!((workload->type == Analysis_Workload_Type::FUNCTION_HEADER || workload->type == Analysis_Workload_Type::STRUCT_POLYMORPHIC) &&
-				instance_workload == workload),
-			"Header analysis must not encounter unset values"
-		);
-		expression_info_set_value(result_info, types.unknown_type, false);
-		break;
-	}
-	case Pattern_Variable_State_Type::PATTERN:
-	{
-		Datatype* pattern = value.options.pattern_type;
-		assert(pattern->contains_pattern, "");
-		expression_info_set_polymorphic_pattern(result_info, value.options.pattern_type, type_system);
-		if (pattern->type == Datatype_Type::PATTERN_VARIABLE)
-		{
-			auto var_type = downcast<Datatype_Pattern_Variable>(pattern);
-			if (is_symbol_lookup && !var_type->is_reference) {
-				expression_info_set_polymorphic_pattern(result_info, upcast(var_type->mirrored_type), type_system);
-			}
-		}
-		break;
-	}
-	default: panic("");
-	}
 }
 
 
 
 // POLYMORPHIC INSTANCIATION
-struct Variable_Dependents
-{
-	DynArray<int> dependents;
-};
-
 struct Parameter_Run_Info
 {
-	int dependency_count;          // Count of variable-dependencies
-	int dependency_on_self_definition_count; // How many variables are defined in this parameter (e.g. a: Node($C, $T) --> 2)
-	int index_in_waiting_array; // tracks position in to_run array, if -1 it's already queue (Or doesn't need analysis)
-	bool has_dependency_on_pattern_state;
+	int dependency_count;              // Count of variable-dependencies
+	int index_in_waiting_array;        // tracks position in to_run array, if -1 it's already queue (Used so swap_remove can be used)
 };
 
 struct Parameter_Dependency_Graph
 {
-	Array<Variable_Dependents> variable_dependents;
 	Array<Parameter_Run_Info> run_infos;
 	DynArray<int> waiting_indices; // Note: does not contain parameters that were not set
 	DynArray<int> runnable_indices;
-
-	// Helper data (references?)
-	Array<Pattern_Variable_State> variable_states;
-	DynArray<Matching_Constraint>* matching_constraints;
+	Poly_Instance* instance;
+	Pattern_Matcher* pattern_matcher;
+	Semantic_Context* semantic_context;
+	bool success;
 };
-
-Parameter_Dependency_Graph parameter_dependency_graph_create_empty(
-	Poly_Header* poly_header, Arena* arena, Array<Pattern_Variable_State> variable_states, DynArray<Matching_Constraint>* matching_constraints)
-{
-	Parameter_Dependency_Graph result;
-	result.waiting_indices = DynArray<int>::create(arena, poly_header->signature->parameters.size);
-	result.runnable_indices = DynArray<int>::create(arena, poly_header->signature->parameters.size);
-	result.variable_dependents = arena->allocate_array<Variable_Dependents>(poly_header->pattern_variables.size);
-	for (int i = 0; i < result.variable_dependents.size; i++) {
-		result.variable_dependents[i].dependents = DynArray<int>::create(arena);
-	}
-	result.run_infos = arena->allocate_array<Parameter_Run_Info>(poly_header->signature->parameters.size);
-	result.variable_states = variable_states;
-	result.matching_constraints = matching_constraints;
-	return result;
-}
 
 void parameter_dependency_graph_set_parameter_runnable(Parameter_Dependency_Graph* graph, int param_index, bool check_dependency_count)
 {
 	auto& run_info = graph->run_infos[param_index];
 	if (run_info.index_in_waiting_array == -1) return; // Is already queued
 
-	if (check_dependency_count && run_info.dependency_count - run_info.dependency_on_self_definition_count > 0) return;
+	if (check_dependency_count && run_info.dependency_count > 0) return;
 
 	graph->runnable_indices.push_back(param_index);
 	graph->waiting_indices.swap_remove(run_info.index_in_waiting_array);
@@ -4940,18 +4703,45 @@ void parameter_dependency_graph_set_variable_to_pattern(
 {
 	assert(pattern_type->contains_pattern, "");
 
-	auto& variable_states = graph->variable_states;
-	auto& state = variable_states[variable->value_access_index];
-	assert(state.type == Pattern_Variable_State_Type::UNSET, "Can other stuff happen here?");
-	state = pattern_variable_state_make_pattern(pattern_type);
-	auto dependents = graph->variable_dependents[variable->value_access_index].dependents;
-	for (int i = 0; i < dependents.size; i++)
+	auto& variable_states = graph->instance->variable_states;
+	auto& state = variable_states[variable->index];
+
+	switch (state.type)
 	{
-		auto param_index = dependents[i];
-		auto& run_info = graph->run_infos[param_index];
-		run_info.dependency_count -= 1;
-		run_info.has_dependency_on_pattern_state = true;
-		parameter_dependency_graph_set_parameter_runnable(graph, param_index, true);
+	case Pattern_Variable_State_Type::UNSET: 
+	{
+		state = pattern_variable_state_make_pattern(pattern_type);
+		auto& dependents = variable->dependent_params;
+		for (int i = 0; i < dependents.size; i++)
+		{
+			auto param_index = dependents[i];
+			auto& run_info = graph->run_infos[param_index];
+			run_info.dependency_count -= 1;
+			parameter_dependency_graph_set_parameter_runnable(graph, param_index, true);
+		}
+		break;
+	}
+	case Pattern_Variable_State_Type::SET: 
+	{
+		bool success = pattern_matcher_match_type_and_value(
+			*graph->pattern_matcher, pattern_type, state.options.value
+		);
+		if (!success) {
+			graph->success = false;
+		}
+		break;
+	}
+	case Pattern_Variable_State_Type::PATTERN:
+	{
+		bool success = pattern_matcher_match_types(
+			*graph->pattern_matcher, pattern_type, state.options.pattern_type
+		);
+		if (!success) {
+			graph->success = false;
+		}
+		break;
+	}
+	default: panic("");
 	}
 }
 
@@ -4960,7 +4750,7 @@ void parameter_dependency_graph_set_variable_value(
 {
 	auto type_system = compilation_data->type_system;
 	auto& types = type_system->predefined_types;
-	auto& variable_states = graph->variable_states;
+	auto& variable_states = graph->instance->variable_states;
 	
 	// Check for edge case where we set a pattern-type (Not sure if this ever happens)
 	if (value.type == types.type_handle)
@@ -4972,20 +4762,22 @@ void parameter_dependency_graph_set_variable_value(
 		}
 	}
 
-	auto& state = variable_states[variable->value_access_index];
+	auto& state = variable_states[variable->index];
 	switch (state.type)
 	{
-	case Pattern_Variable_State_Type::SET: { // Already set (Happens when set explicitly)
+	case Pattern_Variable_State_Type::SET: 
+	{ 
+		// Already set (Happens when set explicitly)
 		Matching_Constraint constraint;
 		constraint.pattern_variable = variable->pattern_variable_type;
 		constraint.value = value;
-		graph->matching_constraints->push_back(constraint);
+		graph->pattern_matcher->constraints.push_back(constraint);
 		break;
 	}
 	case Pattern_Variable_State_Type::UNSET:
 	{
 		state = pattern_variable_state_make_set(value);
-		auto dependents = graph->variable_dependents[variable->value_access_index].dependents;
+		auto dependents = variable->dependent_params;
 		for (int i = 0; i < dependents.size; i++)
 		{
 			auto param_index = dependents[i];
@@ -4997,208 +4789,17 @@ void parameter_dependency_graph_set_variable_value(
 	}
 	case Pattern_Variable_State_Type::PATTERN:
 	{
-		// Not sure this can even happen currently because we don't match types if we have struct-pattern
-		panic("Just have a panic to see if this happens");
+		bool success = pattern_matcher_match_type_and_value(
+			*graph->pattern_matcher, state.options.pattern_type, value
+		);
+		state = pattern_variable_state_make_set(value); // Set overwrites pattern, but not sure if this ever happens or is usefull
+		if (!success) {
+			graph->success = false;
+		}
 		break;
 	}
 	default: panic("");
 	}
-}
-
-Poly_Instance* poly_header_instanciate_with_variable_states(
-	Poly_Header* poly_header, Array<Pattern_Variable_State> states,
-	Array<Datatype*> partial_pattern_instances, Array<Datatype*> parameter_types_instanciated,
-	Call_Info* call_info, AST::Node* error_report_node, Node_Section error_report_section, Semantic_Context* semantic_context)
-{
-	auto type_system = semantic_context->compilation_data->type_system;
-
-	bool create_struct_pattern = false;
-	bool is_partial_struct_pattern = false;
-	bool struct_pattern_contains_pattern_variable_definition = false;
-	for (int i = 0; i < states.size; i++)
-	{
-		auto& state_type = states[i].type;
-		if (state_type == Pattern_Variable_State_Type::UNSET) {
-			create_struct_pattern = true;
-			is_partial_struct_pattern = true;
-		}
-		else if (state_type == Pattern_Variable_State_Type::PATTERN) {
-			create_struct_pattern = true;
-			if (states[i].options.pattern_type->contains_pattern_variable_definition) {
-				struct_pattern_contains_pattern_variable_definition = true;
-			}
-		}
-	}
-
-	bool all_partial_patterns_set = true;
-	for (int i = 0; i < partial_pattern_instances.size; i++) {
-		if (partial_pattern_instances[i] == nullptr) {
-			all_partial_patterns_set = false;
-		}
-	}
-
-	// Check if instanciation failed
-	// Note entirely sure about these checks yet...
-	if (poly_header->is_function && create_struct_pattern) {
-		log_semantic_error(semantic_context, "Not all polymorphic parameters could be deduced in instanciation", error_report_node, error_report_section);
-		return nullptr;
-	}
-	if (!create_struct_pattern && !all_partial_patterns_set) {
-		log_semantic_error(semantic_context, "Not all partial-pattern types could be deduced in instanciation", error_report_node, error_report_section);
-		return nullptr;
-	}
-
-	// Deduplicate instance if it isn't a struct pattern
-	if (create_struct_pattern)
-	{
-		// Because struct-patterns aren't deduplicated, we don't need to store the partial patterns
-		array_destroy(&partial_pattern_instances);
-		partial_pattern_instances = array_create_static<Datatype*>(nullptr, 0);
-	}
-	else
-	{
-		// Deduplicate instance
-		Poly_Instance query_instance;
-		query_instance.type = Poly_Instance_Type::FUNCTION; // Note: This is not used in poly_function_equals, we just need it not to be struct-pattern
-		query_instance.variable_states = states;
-		query_instance.header = poly_header;
-		query_instance.partial_pattern_instances = partial_pattern_instances;
-
-		// Note: Hashing instances only requires variable-states, header and partial-patterns, so we don't need to init the other values
-		Poly_Instance** found = hashset_find(&poly_header->instances, &query_instance);
-		if (found != nullptr)
-		{
-			array_destroy(&states);
-			array_destroy(&partial_pattern_instances);
-			if (call_info != nullptr)
-			{
-				call_info->instanciated = true;
-				Poly_Instance* instance = *found;
-				switch (instance->type)
-				{
-				case Poly_Instance_Type::FUNCTION: {
-					call_info->instanciation_data.function = instance->options.function_instance;
-					assert(call_info->origin.type == Call_Origin_Type::POLY_FUNCTION, "");
-					break;
-				}
-				case Poly_Instance_Type::STRUCTURE: {
-					call_info->instanciation_data.struct_instance = instance->options.struct_instance->struct_type;
-					assert(call_info->origin.type == Call_Origin_Type::POLY_STRUCT, "");
-					break;
-				}
-				case Poly_Instance_Type::STRUCT_PATTERN: {
-					panic("Struct pattern's don't get deduplicated, how did I end up here?");
-					break;
-				}
-				default: panic("");
-				}
-			}
-			return *found;
-		}
-	}
-
-	// Otherwise create new instances
-	Poly_Instance* instance = new Poly_Instance;
-	instance->header = poly_header;
-	instance->variable_states = states;
-	instance->partial_pattern_instances = partial_pattern_instances;
-
-	if (create_struct_pattern)
-	{
-		assert(!poly_header->is_function, "hey");
-		instance->type = Poly_Instance_Type::STRUCT_PATTERN;
-		instance->options.struct_pattern = type_system_make_struct_pattern(
-			type_system, instance, is_partial_struct_pattern, struct_pattern_contains_pattern_variable_definition
-		);
-		if (call_info != nullptr) {
-			call_info->instanciation_data.struct_pattern = instance->options.struct_pattern;
-			call_info->instanciated = true;
-		}
-	}
-	else if (poly_header->is_function)
-	{
-		assert(call_info != 0, "");
-		int return_type_index = poly_header->signature->return_type_index;
-
-		// Create instance function signature
-		Call_Signature* instance_signature = call_signature_create_empty();
-		auto& base_parameters = poly_header->signature->parameters;
-		for (int i = 0; i < base_parameters.size; i++)
-		{
-			auto& param = base_parameters[i];
-			if (param.comptime_variable_index != -1) continue; // comptime parameter or pattern-variable
-
-			Datatype* param_type = param.datatype;
-			if (param_type->contains_pattern) {
-				param_type = parameter_types_instanciated[i];
-				assert(param_type != nullptr && !param_type->contains_pattern, "must be true");
-			}
-
-			call_signature_add_parameter(
-				instance_signature, param.name, param_type,
-				param.required, false, i == poly_header->signature->return_type_index
-			);
-			if (i == poly_header->signature->return_type_index) {
-				instance_signature->return_type_index = instance_signature->parameters.size - 1;
-			}
-		}
-		instance_signature = call_signature_register(instance_signature, semantic_context->compilation_data);
-
-		Upp_Function* base_function = poly_header->origin.function;
-
-		// Create new instance function
-		Upp_Function* instance_function = upp_function_create_with_workloads(
-			nullptr, base_function->function_node, instance_signature, semantic_context, base_function
-		);
-		instance_function->poly_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-		instance_function->poly_function = base_function->poly_function;
-		instance_function->parameter_table = poly_header->parameter_table;
-
-		// Update body workload to use instance values
-		instance_function->body_workload->base.polymorphic_instanciation_depth += 1;
-		instance_function->body_workload->base.active_pattern_variable_states = instance->variable_states;
-		instance_function->body_workload->base.active_pattern_variable_states_origin = poly_header;
-
-		instance->type = Poly_Instance_Type::FUNCTION;
-		instance->options.function_instance = instance_function;
-
-		call_info->instanciation_data.function = instance_function;
-		call_info->instanciated = true;
-	}
-	else // !poly_header.is_function
-	{
-		auto base_struct_workload = poly_header->origin.struct_workload;
-
-		// Create new struct instance
-		auto body_workload = workload_structure_create(
-			base_struct_workload->body_workload->struct_node, nullptr, true, semantic_context, Symbol_Access_Level::POLYMORPHIC
-		);
-		body_workload->struct_type->name = base_struct_workload->body_workload->struct_type->name;
-		body_workload->polymorphic_type = Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE;
-		body_workload->polymorphic.instance.poly_instance = instance;
-		body_workload->polymorphic.instance.parent = base_struct_workload;
-		body_workload->symbol_table = poly_header->parameter_table;
-
-		body_workload->base.polymorphic_instanciation_depth += 1;
-		body_workload->base.active_pattern_variable_states = instance->variable_states;
-		body_workload->base.active_pattern_variable_states_origin = poly_header;
-
-		analysis_workload_add_dependency_internal(
-			semantic_context->compilation_data->workload_executer, upcast(body_workload), upcast(base_struct_workload->body_workload)
-		);
-
-		instance->type = Poly_Instance_Type::STRUCTURE;
-		instance->options.struct_instance = body_workload;
-
-		if (call_info != nullptr) {
-			call_info->instanciation_data.struct_instance = body_workload->struct_type;
-			call_info->instanciated = true;
-		}
-	}
-
-	bool success = hashset_insert_element(&poly_header->instances, instance);
-	assert(success, "Otherwise dedup would have happened");
-	return instance;
 }
 
 // This function tries to create a non-pattern type from pattern-type with the given pattern variables,
@@ -5223,7 +4824,7 @@ Datatype* datatype_pattern_instanciate(
 	case Datatype_Type::PATTERN_VARIABLE:
 	{
 		auto variable = downcast<Datatype_Pattern_Variable>(pattern_type)->variable;
-		auto& state = states[variable->value_access_index];
+		auto& state = states[variable->index];
 		if (state.type != Pattern_Variable_State_Type::SET) {
 			log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is not set", error_report_node, error_report_section);
 			log_error_info_id(semantic_context, variable->name);
@@ -5239,14 +4840,17 @@ Datatype* datatype_pattern_instanciate(
 		}
 		return upp_constant_as_datatype(constant, type_system);
 	}
-	case Datatype_Type::STRUCT_PATTERN:
+	case Datatype_Type::STRUCT:
 	{
 		auto& scratch_arena = *semantic_context->scratch_arena;
 		auto checkpoint = scratch_arena.make_checkpoint();
 		SCOPE_EXIT(scratch_arena.rewind_to_checkpoint(checkpoint));
 
-		Datatype_Struct_Pattern* struct_pattern = downcast<Datatype_Struct_Pattern>(pattern_type);
-		Poly_Header* poly_header = struct_pattern->instance->header;
+		Datatype_Struct* structure = downcast<Datatype_Struct>(pattern_type);
+		Upp_Struct* upp_struct = structure->upp_struct;
+		assert(upp_struct->poly_type == Poly_Type::PARTIAL, "Otherwise it wouldn't be a pattern!");
+
+		Poly_Header* poly_header = upp_struct->options.header;
 		assert(poly_header->signature->return_type_index == -1, "");
 
 		// Create new callable call
@@ -5259,13 +4863,13 @@ Datatype* datatype_pattern_instanciate(
 			auto& param_value = param_values[i];
 			param_value.value_type = Parameter_Value_Type::NOT_SET;
 
-			assert(param_info.comptime_variable_index != -1, "In poly-struct all parameters have comptime variables");
+			assert(param_info.pattern_variable_index != -1, "In poly-struct all parameters have comptime variables");
 			if (param_info.requires_named_addressing) { // Don't set parameters indirectly
 				continue;
 			}
 
-			auto variable = &struct_pattern->instance->header->pattern_variables[param_info.comptime_variable_index];
-			auto& var_state = struct_pattern->instance->variable_states[param_info.comptime_variable_index];
+			auto variable   = &upp_struct->options.instance->header->pattern_variables[param_info.pattern_variable_index];
+			auto& var_state = upp_struct->options.instance->variable_states[param_info.pattern_variable_index];
 			switch (var_state.type)
 			{
 			case Pattern_Variable_State_Type::SET: {
@@ -5285,7 +4889,7 @@ Datatype* datatype_pattern_instanciate(
 			if (pattern_type->type == Datatype_Type::PATTERN_VARIABLE)
 			{
 				auto variable = downcast<Datatype_Pattern_Variable>(pattern_type)->variable;
-				auto& var_state = states[variable->value_access_index];
+				auto& var_state = states[variable->index];
 				if (var_state.type != Pattern_Variable_State_Type::SET) {
 					log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is unset", error_report_node, error_report_section);
 					log_error_info_id(semantic_context, variable->name);
@@ -5316,8 +4920,20 @@ Datatype* datatype_pattern_instanciate(
 			log_semantic_error(semantic_context, "Instanciating struct template failed", error_report_node, error_report_section);
 			return nullptr; // Errors are reported at this point
 		}
-		assert(struct_instance->type == Poly_Instance_Type::STRUCTURE, "Should be the case, as all parameters are set?");
-		return upcast(struct_instance->options.struct_instance->struct_type);
+		assert(struct_instance->options.struct_instance->poly_type == Poly_Type::INSTANCE, "Should be the case, as all parameters are set?");
+
+		// Cast to correct subtype
+		DynArray<int> subtype_indices = DynArray<int>::create(&scratch_arena);
+		while (structure->parent != nullptr) {
+			subtype_indices.push_back(structure->subtype_index);
+			structure = structure->parent;
+		}
+		Datatype_Struct* final_subtype = struct_instance->options.struct_instance->datatype;
+		for (int i = subtype_indices.size - 1; i >= 0; i -= 1) {
+			final_subtype = final_subtype->subtypes[subtype_indices[i]];
+		}
+
+		return upcast(final_subtype);
 	}
 	case Datatype_Type::FUNCTION_POINTER:
 	{
@@ -5357,7 +4973,7 @@ Datatype* datatype_pattern_instanciate(
 		bool count_known = array->count_known;
 		if (array->count_variable_type != nullptr)
 		{
-			auto& state = states[array->count_variable_type->variable->value_access_index];
+			auto& state = states[array->count_variable_type->variable->index];
 			if (state.type != Pattern_Variable_State_Type::SET) {
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable is unset", error_report_node, error_report_section
@@ -5442,14 +5058,16 @@ Datatype* datatype_pattern_instanciate(
 
 		return type_system_make_array(type_system, element_type, count_known, (int)element_count, nullptr);
 	}
-	case Datatype_Type::SLICE: {
+	case Datatype_Type::SLICE: 
+	{
 		Datatype* child_type = datatype_pattern_instanciate(
 			downcast<Datatype_Slice>(pattern_type)->element_type, states, error_report_node, error_report_section, semantic_context
 		);
 		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_slice(type_system, child_type));
 	}
-	case Datatype_Type::POINTER: {
+	case Datatype_Type::POINTER: 
+	{
 		auto pointer = downcast<Datatype_Pointer>(pattern_type);
 		Datatype* child_type = datatype_pattern_instanciate(
 			pointer->element_type, states, error_report_node, error_report_section, semantic_context
@@ -5457,6 +5075,7 @@ Datatype* datatype_pattern_instanciate(
 		if (child_type == nullptr) return nullptr;
 		return upcast(type_system_make_pointer(type_system, child_type, pointer->is_optional));
 	}
+	default: panic("");
 	}
 
 	panic("Invalid code path, Datatype shouldn't contain pattern otherwise!");
@@ -5468,9 +5087,18 @@ Datatype* datatype_pattern_instanciate(
 Poly_Instance* poly_header_instanciate(
 	Call_Info* call_info, AST::Node* error_report_node, Node_Section error_report_section, Semantic_Context* semantic_context)
 {
+	auto compilation_data = semantic_context->compilation_data;
+	auto type_system = compilation_data->type_system;
+	auto& types = type_system->predefined_types;
+	auto& parameter_values = call_info->parameter_values;
+
+	Arena* tmp_arena = semantic_context->scratch_arena;
+	auto checkpoint = tmp_arena->make_checkpoint();
+	SCOPE_EXIT(checkpoint.rewind());
+
 	Poly_Header* poly_header;
 	if (call_info->origin.type == Call_Origin_Type::POLY_STRUCT) {
-		poly_header = call_info->origin.options.poly_struct->poly_header;
+		poly_header = call_info->origin.options.poly_struct->upp_struct->options.header;
 	}
 	else if (call_info->origin.type == Call_Origin_Type::POLY_FUNCTION) {
 		poly_header = call_info->origin.options.poly_function.poly_header;
@@ -5478,16 +5106,6 @@ Poly_Instance* poly_header_instanciate(
 	else {
 		panic("");
 	}
-
-	auto compilation_data = semantic_context->compilation_data;
-	auto type_system = compilation_data->type_system;
-	auto& types = type_system->predefined_types;
-	Arena& arena = *semantic_context->scratch_arena;
-	auto checkpoint = arena.make_checkpoint();
-	SCOPE_EXIT(arena.rewind_to_checkpoint(checkpoint));
-
-	auto& parameter_values = call_info->parameter_values;
-	auto& parameter_nodes = poly_header->parameter_nodes;
 	const int return_type_index = poly_header->signature->return_type_index;
 
 	// Check for errors (Instanciation limit or header has errors)
@@ -5512,8 +5130,7 @@ Poly_Instance* poly_header_instanciate(
 				header_workload = upcast(poly_header->origin.function->header_workload);
 			}
 			else {
-				Workload_Structure_Polymorphic* poly_struct = poly_header->origin.struct_workload;
-				header_workload = upcast(poly_struct);
+				header_workload = upcast(poly_header->origin.upp_struct->header_workload);
 			}
 
 			// Check if header has errors
@@ -5529,159 +5146,95 @@ Poly_Instance* poly_header_instanciate(
 		}
 	}
 
-	// Prepare instanciation data
-	bool success = true;
-	bool encounted_unknown = false;
-
-	Array<Pattern_Variable_State> variable_states = array_create<Pattern_Variable_State>(poly_header->pattern_variables.size);
-	SCOPE_EXIT(if (variable_states.data != 0) { array_destroy(&variable_states); });
-	for (int i = 0; i < variable_states.size; i++) {
-		assert(poly_header->base_analysis_states[i].type == Pattern_Variable_State_Type::UNSET, "");
-		variable_states[i] = pattern_variable_state_make_unset();
+	// Prepare instanciation data (Final instance get's copied over to non-temporary arena if it isn't duplicated)
+	Poly_Instance instance;
+	instance.header = poly_header;
+	instance.variable_states = tmp_arena->allocate_array<Pattern_Variable_State>(poly_header->pattern_variables.size);
+	instance.parameter_types = tmp_arena->allocate_array<Datatype*>(poly_header->signature->parameters.size);
+	instance.options.function_instance = nullptr;
+	for (int i = 0; i < instance.variable_states.size; i++) {
+		instance.variable_states[i] = pattern_variable_state_make_unset();
+	}
+	for (int i = 0; i < instance.parameter_types.size; i++) {
+		instance.parameter_types[i] = poly_header->signature->parameters[i].datatype;
 	}
 
-	Array<Datatype*> partial_pattern_instances = array_create<Datatype*>(poly_header->partial_pattern_count);
-	SCOPE_EXIT(if (partial_pattern_instances.data != 0) { array_destroy(&partial_pattern_instances); });
-	for (int i = 0; i < partial_pattern_instances.size; i++) {
-		partial_pattern_instances[i] = nullptr;
-	}
+	Pattern_Matcher pattern_match_result = pattern_matcher_make(compilation_data, tmp_arena);
 
-	Array<Datatype*> parameter_types_instanced = arena.allocate_array<Datatype*>(poly_header->signature->parameters.size);
-	for (int i = 0; i < parameter_types_instanced.size; i++) {
-		parameter_types_instanced[i] = nullptr;
-		auto& param_type = poly_header->signature->parameters[i].datatype;
-		if (!param_type->contains_pattern) {
-			parameter_types_instanced[i] = param_type;
-		}
-	}
-
-	// Setup datastructures
-	Pattern_Match_Result pattern_match_result = pattern_match_result_make_empty(&arena);
-	Parameter_Dependency_Graph graph = parameter_dependency_graph_create_empty(poly_header, &arena, variable_states, &pattern_match_result.constraints);
-	int last_constraint_count = 0;
-
-	// Initialize dependency graph infos
-	for (int param_index = 0; param_index < poly_header->signature->parameters.size; param_index++)
+	// Setup dependency graph
+	Parameter_Dependency_Graph graph;
 	{
-		auto& param_info = poly_header->signature->parameters[param_index];
-		auto& run_info = graph.run_infos[param_index];
-		auto& param_value = parameter_values[param_index];
+		graph.waiting_indices = DynArray<int>::create(tmp_arena, poly_header->signature->parameters.size);
+		graph.runnable_indices = DynArray<int>::create(tmp_arena, poly_header->signature->parameters.size);
+		graph.run_infos = tmp_arena->allocate_array<Parameter_Run_Info>(poly_header->signature->parameters.size);
+		graph.pattern_matcher = &pattern_match_result;
+		graph.instance = &instance;
+		graph.success = true;
+		graph.semantic_context = semantic_context;
 
-		// Skip explicitly set variables, there is a custom code-path for them
-		if (param_info.comptime_variable_index != -1 && param_info.requires_named_addressing) {
-			continue;
-		}
-
-		run_info.has_dependency_on_pattern_state = false;
-		run_info.dependency_count = 0;
-		run_info.dependency_on_self_definition_count = 0;
-		run_info.index_in_waiting_array = -1;
-
-		// Find dependencies
-		for (int i = 0; i < param_info.dependencies.size; i++)
+		// Initialize parameters
+		// Add parameters to correct queue (waiting or runnable) (Gives priority to explicitly set parameters by running backwards)
+		for (int i = graph.run_infos.size - 1; i >= 0; i -= 1) 
 		{
-			auto depends_on_var = &poly_header->pattern_variables[param_info.dependencies[i]];
-			auto& var_state = variable_states[depends_on_var->value_access_index];
-			if (depends_on_var->defined_in_parameter_index == param_index) {
-				run_info.dependency_on_self_definition_count += 1;
+			Parameter_Run_Info& info = graph.run_infos[i];
+			info.dependency_count = 0;
+			for (int j = 0; j < poly_header->param_infos[i].depends_on_variables.size; j++) 
+			{
+				Pattern_Variable* depends_on = &poly_header->pattern_variables[poly_header->param_infos[i].depends_on_variables[j]];
+				// Don't add self-dependencies, e.g. fn (a: fn(a: $T, T)) or even just fn (a: $T)
+				if (depends_on->defined_in_parameter_index != i) {
+					info.dependency_count += 1;
+				}
 			}
 
-			run_info.dependency_count += 1;
-			graph.variable_dependents[depends_on_var->value_access_index].dependents.push_back(param_index);
-		}
-
-		// Add to correct array
-		assert(run_info.index_in_waiting_array == -1, "Should be true after init");
-		if (run_info.dependency_count - run_info.dependency_on_self_definition_count == 0)
-		{
-			graph.runnable_indices.push_back(param_index);
-		}
-		else {
-			run_info.index_in_waiting_array = (int)graph.waiting_indices.size;
-			graph.waiting_indices.push_back(param_index);
+			if (info.dependency_count == 0) {
+				info.index_in_waiting_array = -1;
+				graph.runnable_indices.push_back(i);
+			}
+			else {
+				info.index_in_waiting_array = (int)graph.waiting_indices.size;
+				graph.waiting_indices.push_back(i);
+			}
 		}
 	}
 
-	// Handle explicitly set matching-variables first, e.g. add(15, 12, T = int), with add :: (a: $T, b: T)
-	for (int i = parameter_nodes.size; i < poly_header->signature->parameters.size; i++)
-	{
-		// See how argument-to-parameter mapping is done to get this, note: parameter_nodes, because param_matching_info does not have return type
-		auto& param_info = poly_header->signature->parameters[i];
-		auto& param_value = parameter_values[i];
-		if (param_value.value_type == Parameter_Value_Type::NOT_SET) continue;
-		assert(param_info.comptime_variable_index != -1 && param_info.requires_named_addressing, "");
-		assert(
-			param_value.value_type != Parameter_Value_Type::DATATYPE_KNOWN,
-			"Setting implicit parameters should not be done this way, as we need to calculate the comptime value"
-		);
-
-		auto& pattern_variable = poly_header->pattern_variables[param_info.comptime_variable_index];
-		assert(variable_states[pattern_variable.value_access_index].type == Pattern_Variable_State_Type::UNSET, "");
-
-		// Analyse argument in unknown context
-		analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, expression_context_make_unspecified(), true);
-
-		// Extra code-path for setting variables to patterns, e.g. Node(V = $T)
-		Datatype* param_type = parameter_value_get_datatype(param_value, call_info, semantic_context);
-		if (param_type->contains_pattern) {
-			parameter_dependency_graph_set_variable_to_pattern(&graph, &pattern_variable, param_type);
-			continue;
-		}
-		else if (datatype_is_unknown(param_type)) {
-			success = false;
-			encounted_unknown = true;
-			continue;
-		}
-		parameter_types_instanced[i] = param_type;
-
-		// Check if parameter_value is comptime
-		if (param_value.value_type == Parameter_Value_Type::COMPTIME_VALUE) {
-			parameter_dependency_graph_set_variable_value(&graph, &pattern_variable, param_value.options.constant, compilation_data);
-			continue;
-		}
-
-		// Otherwise
-		assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "");
-		auto arg_expr = call_info->argument_infos[param_value.options.argument_index].expression;
-		auto comptime_result = expression_calculate_comptime_value(
-			arg_expr, "Explicitly setting the pattern-variable value requires a polymorphic value", semantic_context);
-		if (comptime_result.available) {
-			parameter_dependency_graph_set_variable_value(&graph, &pattern_variable, comptime_result.value, compilation_data);
-		}
-		else {
-			success = false;
-			log_semantic_error(semantic_context, "Argument was not comptime", arg_expr, Node_Section::FIRST_TOKEN);
-		}
-	}
+	bool success = true;
+	bool encountered_unknown = false;
 
 	// Analyse all arguments
-	while (graph.waiting_indices.size > 0 || graph.runnable_indices.size > 0)
+	int next_runnable_index = 0;
+	while (graph.waiting_indices.size > 0 || next_runnable_index < graph.runnable_indices.size)
 	{
 		// Run runnable arguments
-		while (graph.runnable_indices.size > 0)
+		while (next_runnable_index < graph.runnable_indices.size)
 		{
-			int runnable_index = graph.runnable_indices.last();
-			graph.runnable_indices.swap_remove((int)graph.runnable_indices.size - 1);
+			int param_index = graph.runnable_indices[next_runnable_index];
+			next_runnable_index += 1;
 
-			auto& run_info = graph.run_infos[runnable_index];
-			auto& param_info = poly_header->signature->parameters[runnable_index];
-			auto& param_value = parameter_values[runnable_index];
-			const bool is_return_type = runnable_index == poly_header->signature->return_type_index;
+			Parameter_Run_Info& run_info = graph.run_infos[param_index];
+			auto& param_info = poly_header->signature->parameters[param_index];
+			auto& poly_info = poly_header->param_infos[param_index];
+			auto& param_value = parameter_values[param_index];
+			const bool is_return_type = param_index == poly_header->signature->return_type_index;
 
 			// Instanciate parameter-type if there are no dependencies anymore
 			Datatype* parameter_type = param_info.datatype;
-			if (param_info.datatype->contains_pattern && run_info.dependency_count == 0 &&
-				!run_info.has_dependency_on_pattern_state && !param_info.datatype->contains_partial_pattern)
+			bool can_be_instanciated = true;
+			for (int i = 0; i < poly_info.depends_on_variables.size; i++) 
+			{
+				Pattern_Variable_State& depends_on_state = instance.variable_states[poly_info.depends_on_variables[i]];
+				if (depends_on_state.type != Pattern_Variable_State_Type::SET) {
+					can_be_instanciated = false;
+					break;
+				}
+			}
+			if (param_info.datatype->contains_pattern && can_be_instanciated)
 			{
 				parameter_type = datatype_pattern_instanciate(
-					parameter_type, variable_states, error_report_node, error_report_section, semantic_context
+					parameter_type, instance.variable_states, error_report_node, error_report_section, semantic_context
 				);
-				if (parameter_type != nullptr)
-				{
-					parameter_types_instanced[runnable_index] = parameter_type;
-					if (param_info.partial_pattern_index != -1) {
-						partial_pattern_instances[param_info.partial_pattern_index] = parameter_type;
-					}
+				if (parameter_type != nullptr) {
+					instance.parameter_types[param_index] = parameter_type;
 				}
 				else {
 					// An error during instanciation is already logged in the instanciate call
@@ -5704,9 +5257,10 @@ Poly_Instance* poly_header_instanciate(
 				if (!parameter_type->contains_pattern) {
 					context = expression_context_make_specific_type(parameter_type);
 				}
-				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context, param_info.comptime_variable_index != -1);
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context, param_info.pattern_variable_index != -1);
 
 				// Do auto-dereference/address of if applicable before matching
+				// ! check if this is correct for return type
 				if (parameter_type->contains_pattern) 
 				{
 					auto expr_info = get_info(arg_expr, semantic_context);
@@ -5731,8 +5285,11 @@ Poly_Instance* poly_header_instanciate(
 			Datatype* argument_type = parameter_value_get_datatype(param_value, call_info, semantic_context, &argument_is_temporary);
 			if (argument_type->contains_pattern)
 			{
-				assert(param_info.comptime_variable_index != -1, "");
-				auto variable = &poly_header->pattern_variables[param_info.comptime_variable_index];
+				if (param_info.pattern_variable_index == -1) {
+					log_semantic_error(semantic_context, "Cannot set non-polymorphic parameter to pattern", error_report_node, error_report_section);
+					continue;
+				}
+				auto variable = &poly_header->pattern_variables[param_info.pattern_variable_index];
 				parameter_dependency_graph_set_variable_to_pattern(&graph, variable, argument_type);
 				continue;
 			}
@@ -5743,13 +5300,10 @@ Poly_Instance* poly_header_instanciate(
 				// Match pattern
 				auto& constraints = pattern_match_result.constraints;
 				int constraint_count_before = (int) constraints.size;
-				if (pattern_type_match_against(pattern_match_result, 0, parameter_type, argument_type, semantic_context))
+				if (pattern_matcher_match_types(pattern_match_result, parameter_type, argument_type))
 				{
 					// Store type infos for instanciations
-					parameter_types_instanced[runnable_index] = argument_type;
-					if (param_info.partial_pattern_index != -1) {
-						partial_pattern_instances[param_info.partial_pattern_index] = argument_type;
-					}
+					instance.parameter_types[param_index] = argument_type;
 
 					// Set all variables that were matched to values
 					int new_size = constraints.size; // Required because set_variable_value may add constraints
@@ -5764,7 +5318,7 @@ Poly_Instance* poly_header_instanciate(
 				{
 					success = false;
 					if (datatype_is_unknown(argument_type)) {
-						encounted_unknown = true;
+						encountered_unknown = true;
 					}
 					else {
 						log_semantic_error(semantic_context, "Could not match given type to pattern", error_report_node, error_report_section);
@@ -5782,7 +5336,7 @@ Poly_Instance* poly_header_instanciate(
 				{
 					success = false;
 					if (datatype_is_unknown(argument_type)) {
-						encounted_unknown = true;
+						encountered_unknown = true;
 					}
 					else {
 						log_semantic_error(semantic_context, "Argument type does not match parameter type", error_report_node, error_report_section);
@@ -5794,14 +5348,14 @@ Poly_Instance* poly_header_instanciate(
 			}
 
 			// Calculate comptime value if required
-			if (param_info.comptime_variable_index == -1) continue;
+			if (param_info.pattern_variable_index == -1) continue;
 			if (datatype_is_unknown(parameter_type)) {
-				encounted_unknown = true;
+				encountered_unknown = true;
 				success = false;
 				continue;
 			}
 
-			auto variable = &poly_header->pattern_variables[param_info.comptime_variable_index];
+			auto variable = &poly_header->pattern_variables[param_info.pattern_variable_index];
 			switch (param_value.value_type)
 			{
 			case Parameter_Value_Type::COMPTIME_VALUE:
@@ -5825,7 +5379,7 @@ Poly_Instance* poly_header_instanciate(
 						log_semantic_error(semantic_context, "Argument was not comptime", arg_expr, Node_Section::FIRST_TOKEN);
 					}
 					else {
-						encounted_unknown = true;
+						encountered_unknown = true;
 					}
 				}
 				break;
@@ -5842,7 +5396,7 @@ Poly_Instance* poly_header_instanciate(
 		}
 
 		// Handle unrunnable parameters (Cyclic dependency or dependent variable could not be resolved)
-		if (graph.waiting_indices.size > 0 && graph.runnable_indices.size == 0)
+		if (graph.waiting_indices.size > 0 && next_runnable_index == graph.runnable_indices.size)
 		{
 			// We analyse parameters from left-to-right if we have unresolvable variables
 			int smallest_index_to_run = INT_MAX;
@@ -5852,6 +5406,7 @@ Poly_Instance* poly_header_instanciate(
 					smallest_index_to_run = to_run;
 				}
 			}
+			assert(smallest_index_to_run != INT_MAX, "");
 			auto& run_info = graph.run_infos[smallest_index_to_run];
 			assert(run_info.index_in_waiting_array != -1, "Shouldn't have been run yet");
 			parameter_dependency_graph_set_parameter_runnable(&graph, smallest_index_to_run, false);
@@ -5859,25 +5414,199 @@ Poly_Instance* poly_header_instanciate(
 	}
 
 	// Check if all constraints are valid
-	if (!encounted_unknown) {
-		if (!pattern_match_result_check_constraints_with_states(pattern_match_result, variable_states)) {
+	if (!encountered_unknown) 
+	{
+		if (!pattern_match_result_check_constraints_with_states(pattern_match_result, instance.variable_states)) {
 			success = false;
 			log_semantic_error(semantic_context, "Matching failed, some constraints did not hold up", error_report_node, error_report_section);
 		}
 	}
 
 	// Return if there were errors/values not available
-	if (!success) {
+	if (!success || !graph.success) {
 		return nullptr;
 	}
 
-	auto result = poly_header_instanciate_with_variable_states(
-		poly_header, variable_states, partial_pattern_instances, parameter_types_instanced,
-		call_info, error_report_node, error_report_section, semantic_context
-	);
-	variable_states.data = nullptr; // Don't cleanup, as line above takes ownership
-	partial_pattern_instances.data = nullptr;
-	return result;
+	// Instanciate
+	{
+		bool is_pattern = false;
+		bool is_partial_pattern = false;
+		for (int i = 0; i < instance.variable_states.size; i++)
+		{
+			auto& state = instance.variable_states[i];
+			if (state.type == Pattern_Variable_State_Type::PATTERN) {
+				is_pattern = true;
+			}
+			else if (state.type == Pattern_Variable_State_Type::UNSET) {
+				is_pattern = true;
+				is_partial_pattern = true;
+			}
+		}
+
+		for (int i = 0; i < instance.parameter_types.size; i++) {
+			if (instance.parameter_types[i]->contains_pattern) {
+				is_pattern = true;
+			}
+			if (instance.parameter_types[i]->contains_partial_pattern) {
+				is_pattern = true;
+				is_partial_pattern = true;
+			}
+		}
+
+		// Check if instanciation failed
+		// Note entirely sure about these checks yet...
+		if (poly_header->is_function && is_pattern) {
+			log_semantic_error(semantic_context, "Not all polymorphic parameters could be deduced in instanciation", error_report_node, error_report_section);
+			return nullptr;
+		}
+
+		// Note: Previously we did not deduplicate struct-patterns
+		//		 maybe because it is not necessary to avoid more analysis, but I think this should be fine
+		{
+			// Note: Hashing instances only requires variable-states, header and partial-patterns, so we don't need to init the other values
+			Poly_Instance* query_ptr = &instance;
+			Poly_Instance** found = poly_header->instances.find(query_ptr);
+			if (found != nullptr)
+			{
+				if (call_info != nullptr)
+				{
+					call_info->instanciated = true;
+					Poly_Instance* instance = *found;
+					if (instance->header->is_function) {
+						call_info->instanciation_data.function = instance->options.function_instance;
+						assert(call_info->origin.type == Call_Origin_Type::POLY_FUNCTION, "");
+					}
+					else {
+						call_info->instanciation_data.struct_instance = instance->options.struct_instance;
+						assert(call_info->origin.type == Call_Origin_Type::POLY_STRUCT, "");
+					}
+				}
+				return *found;
+			}
+		}
+
+		// Otherwise create new instances
+		Arena* arena = &compilation_data->arena;
+		Poly_Instance* new_instance = arena->allocate<Poly_Instance>();
+		new_instance->header = poly_header;
+		new_instance->variable_states = arena->allocate_array<Pattern_Variable_State>(instance.variable_states.size);
+		new_instance->parameter_types = arena->allocate_array<Datatype*>(instance.parameter_types.size);
+		memory_copy(new_instance->variable_states.data, instance.variable_states.data, instance.variable_states.size * sizeof(Pattern_Variable_State));
+		memory_copy(new_instance->parameter_types.data, instance.parameter_types.data, instance.parameter_types.size * sizeof(Datatype*));
+
+		if (poly_header->is_function)
+		{
+			Symbol_Table* instance_table = symbol_table_create_with_parent(poly_header->base_parameter_table->parent_table, Symbol_Access_Level::GLOBAL, compilation_data);
+			Upp_Function* base_function = poly_header->origin.function;
+			Upp_Function* instance_function = upp_function_create_empty(nullptr, base_function->name, compilation_data);
+			instance_function->poly_type = Poly_Type::INSTANCE;
+			instance_function->options.instance = new_instance;
+			instance_function->function_node = base_function->function_node;
+			instance_function->symbol = base_function->symbol;
+			instance_function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(
+				semantic_context->current_workload, compilation_data
+			);
+			instance_function->body_workload->function = instance_function;
+			instance_function->body_workload->parameter_table = instance_table;
+			instance_function->body_workload->base.polymorphic_instanciation_depth += 1;
+
+			assert(call_info != 0, "");
+			new_instance->options.function_instance = instance_function;
+			call_info->instanciation_data.function = instance_function;
+			call_info->instanciated = true;
+
+			// Create instance symbol-table + function signature
+			int return_type_index = poly_header->signature->return_type_index;
+			Call_Signature* instance_signature = call_signature_create_empty();
+			auto& base_parameters = poly_header->signature->parameters;
+			for (int i = 0; i < base_parameters.size; i++)
+			{
+				auto& param = base_parameters[i];
+				auto& param_node = poly_header->parameter_nodes[i];
+				if (param.pattern_variable_index != -1) 
+				{
+					Pattern_Variable_State& state = new_instance->variable_states[i];
+					assert(state.type == Pattern_Variable_State_Type::SET, "");
+					
+					Symbol* symbol = symbol_table_define_symbol(
+						instance_table, param_node->name, Symbol_Type::COMPTIME_VALUE, upcast(param_node), 
+						Symbol_Access_Level::POLYMORPHIC, compilation_data
+					);
+					symbol->options.constant = state.options.value;
+					continue; // comptime parameter or pattern-variable
+				}
+
+				Symbol* symbol = symbol_table_define_symbol(
+					instance_table, param_node->name, Symbol_Type::PARAMETER, upcast(param_node), 
+					Symbol_Access_Level::INTERNAL, compilation_data
+				);
+				symbol->options.parameter.function = instance.options.function_instance;
+
+				Datatype* param_type = new_instance->parameter_types[i];
+				assert(!param_type->contains_pattern, "");
+				call_signature_add_parameter(
+					instance_signature, param.name, param_type,
+					param.required, false, i == poly_header->signature->return_type_index
+				);
+				if (i == poly_header->signature->return_type_index) {
+					instance_signature->return_type_index = instance_signature->parameters.size - 1;
+				}
+			}
+
+			instance_signature = call_signature_register(instance_signature, semantic_context->compilation_data);
+			instance_function->signature = instance_signature;
+		}
+		else // !poly_header.is_function
+		{
+			Upp_Struct* base_struct = poly_header->origin.upp_struct;
+
+			// Create new struct instance
+			Upp_Struct* instance_struct = upp_struct_create_empty(base_struct->struct_node, semantic_context, false);
+			instance_struct->datatype->name = base_struct->datatype->name;
+			instance_struct->poly_type = is_pattern ? Poly_Type::PARTIAL : Poly_Type::INSTANCE;
+			datatype_struct_set_poly_infos(instance_struct->datatype, is_pattern, is_partial_pattern);
+			instance_struct->options.instance = new_instance;
+			new_instance->options.struct_instance = instance_struct;
+			if (call_info != nullptr) {
+				call_info->instanciation_data.struct_instance = instance_struct;
+				call_info->instanciated = true;
+			}
+
+			// Create symbol table and body-workload if instance
+			if (instance_struct->poly_type == Poly_Type::INSTANCE) 
+			{
+				Symbol_Table* instance_table = symbol_table_create_with_parent(poly_header->base_parameter_table->parent_table, Symbol_Access_Level::GLOBAL, compilation_data);
+				auto& base_parameters = poly_header->signature->parameters;
+				for (int i = 0; i < base_parameters.size; i++)
+				{
+					auto& param_node = poly_header->parameter_nodes[i];
+					auto& param = base_parameters[i];
+					assert(param.pattern_variable_index != -1, "Must be true for struct variables!");
+
+					Pattern_Variable_State& state = new_instance->variable_states[i];
+					assert(state.type == Pattern_Variable_State_Type::SET, "");
+					
+					Symbol* symbol = symbol_table_define_symbol(
+						instance_table, param_node->name, Symbol_Type::COMPTIME_VALUE, upcast(param_node), 
+						Symbol_Access_Level::POLYMORPHIC, compilation_data
+					);
+					symbol->options.constant = state.options.value;
+				}
+
+				instance_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
+					semantic_context->current_workload, compilation_data
+				);
+				instance_struct->body_workload->upp_struct = instance_struct;
+				instance_struct->body_workload->base.polymorphic_instanciation_depth += 1;
+				instance_struct->body_workload->symbol_table = instance_table;
+				instance_struct->body_workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
+			}
+		}
+
+		bool success = poly_header->instances.insert(new_instance);
+		assert(success, "Otherwise dedup would have happened");
+		return new_instance;
+	}
 }
 
 
@@ -6139,14 +5868,47 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 			upp_module->options.module_symbol = symbol;
 			return;
 		}
-		case AST::Expression_Type::FUNCTION: {
-			// Note: Creating the progress also sets the symbol type
-			upp_function_create_with_workloads(symbol, value, nullptr, semantic_context);
+		case AST::Expression_Type::FUNCTION: 
+		{
+			Upp_Function* function = upp_function_create_empty(nullptr, symbol->id, semantic_context->compilation_data);
+			function->symbol = symbol;
+			symbol->type = Symbol_Type::FUNCTION;
+			symbol->options.function = function;
+			function->function_node = value;
+			function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(
+				semantic_context->current_workload, semantic_context->compilation_data
+			);
+			function->header_workload->function = function;
+			function->header_workload->symbol_table = symbol_table;
 			return;
 		}
-		case AST::Expression_Type::STRUCTURE_TYPE: {
+		case AST::Expression_Type::STRUCTURE_TYPE: 
+		{
 			// Note: Creating the workload also sets the symbol type
-			workload_structure_create(value, symbol, false, semantic_context);
+			auto& struct_node_info = value->options.structure;
+			Upp_Struct* upp_struct = upp_struct_create_empty(value, semantic_context, true);
+			upp_struct->symbol = symbol;
+			symbol->type = Symbol_Type::DATATYPE;
+			symbol->options.datatype = upcast(upp_struct->datatype);
+			if (struct_node_info.parameters.size > 0) 
+			{
+				upp_struct->header_workload = workload_executer_allocate_workload<Workload_Structure_Header>(
+					semantic_context->current_workload, semantic_context->compilation_data
+				);
+				upp_struct->header_workload->upp_struct = upp_struct;
+				upp_struct->header_workload->symbol_table = symbol_table;
+				// Because we don't have a body-workload for base currently, we just finish the struct after creating it
+				type_system_finish_struct(semantic_context->compilation_data->type_system, upp_struct->datatype);
+			}
+			else
+			{
+				upp_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
+					semantic_context->current_workload, semantic_context->compilation_data
+				);
+				upp_struct->body_workload->upp_struct = upp_struct;
+				upp_struct->body_workload->symbol_table = symbol_table;
+				upp_struct->body_workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
+			}
 			return;
 		}
 		default: break;
@@ -6497,14 +6259,14 @@ void analyse_structure_member_nodes_recursive(
 		{
 			auto& member = structure->members[member_index];
 			member_index += 1;
-			member.type = semantic_analyser_analyse_expression_type(member_node->options.expression, semantic_context);
+			member.datatype = semantic_analyser_analyse_expression_type(member_node->options.expression, semantic_context);
 
 			// Wait for member size to be known 
 			{
 				bool has_failed = false;
-				type_wait_for_size_info_to_finish(member.type, semantic_context, dependency_failure_info_make(&has_failed, 0));
+				type_wait_for_size_info_to_finish(member.datatype, semantic_context, dependency_failure_info_make(&has_failed, 0));
 				if (has_failed) {
-					member.type = types.unknown_type;
+					member.datatype = types.unknown_type;
 					log_semantic_error(
 						semantic_context, "Struct contains itself, this can only work with references",
 						upcast(member_node), Node_Section::IDENTIFIER
@@ -6687,7 +6449,7 @@ void analysis_workload_entry(void* userdata)
 				case Expression_Result_Type::POLYMORPHIC_STRUCT: {
 					// TODO: Maybe also disallow this if this is an alias, as above
 					symbol->type = Symbol_Type::DATATYPE;
-					symbol->options.datatype = upcast(result->options.polymorphic_struct->body_workload->struct_type);
+					symbol->options.datatype = upcast(result->options.polymorphic_struct->upp_struct->datatype);
 					break;
 				}
 				default: panic("");
@@ -6722,7 +6484,7 @@ void analysis_workload_entry(void* userdata)
 					bool found = false;
 					for (int i = 0; i < extern_functions.size; i++) {
 						auto extern_fn = extern_functions[i];
-						if (extern_fn->options.extern_definition->symbol->id == symbol->id && extern_fn->signature == function_ptr->signature)
+						if (extern_fn->symbol->id == symbol->id && extern_fn->signature == function_ptr->signature)
 						{
 							found = true;
 							symbol->type = Symbol_Type::FUNCTION;
@@ -6736,8 +6498,9 @@ void analysis_workload_entry(void* userdata)
 				}
 
 				Upp_Function* extern_fn = upp_function_create_empty(function_ptr->signature, symbol->id, compilation_data);
-				extern_fn->function_type = Upp_Function_Type::EXTERN;
-				extern_fn->options.extern_definition = definition_workload;
+				extern_fn->extern_definition_workload = definition_workload;
+				extern_fn->symbol = symbol;
+				extern_fn->is_extern = true;
 
 				symbol->type = Symbol_Type::FUNCTION;
 				symbol->options.function = extern_fn;
@@ -6791,7 +6554,7 @@ void analysis_workload_entry(void* userdata)
 					break;
 				}
 
-				downcast<Datatype_Struct>(type)->is_extern_struct = true;
+				downcast<Datatype_Struct>(type)->upp_struct->is_extern_struct = true;
 				break;
 			}
 			default: panic("The other options shouldn't generate a definition workload");
@@ -6805,75 +6568,52 @@ void analysis_workload_entry(void* userdata)
 		auto header_workload = downcast<Workload_Function_Header>(workload);
 		Upp_Function* function = header_workload->function;
 
-		// Handle infered function headers
-		auto& function_node_info = function->function_node->options.function;
-		if (!function_node_info.signature.available)
-		{
-			// Expression_Type::Function will set the signature based on context
-			Call_Signature* signature = function->signature;
-			assert(signature != nullptr, "Must have been set by expression before");
-			header_workload->poly_header = nullptr;
-
-			// Define all parameter symbols from derived signature
-			auto symbol_table = function->parameter_table;
-			for (int i = 0; i < signature->parameters.size; i++)
-			{
-				auto& param = signature->parameters[i];
-				Symbol* symbol = symbol_table_define_symbol(
-					symbol_table, param.name, Symbol_Type::PARAMETER, upcast(function->function_node), Symbol_Access_Level::INTERNAL,
-					compilation_data
-				);
-				symbol->options.parameter.function = function;
-				symbol->options.parameter.index_in_non_polymorphic_signature = i;
-				symbol->options.parameter.index_in_polymorphic_signature = i;
-			}
-
-			// TODO: This could be done when encountering lambdas, and functions could just not have
-			// a header progress... For infered functions the header workload does not do anything,
-			//		it could be better to just not have a header workload at all...
-			break;
-		}
-		auto signature_node = function_node_info.signature.value;
-
 		// Create semantic context
 		Semantic_Context local_context = semantic_context_make(
-			compilation_data, workload, function->parameter_table, Symbol_Access_Level::INTERNAL,
-			analysis_pass_allocate(workload, upcast(signature_node), compilation_data),
+			compilation_data, workload, header_workload->symbol_table, Symbol_Access_Level::GLOBAL,
+			analysis_pass_allocate(workload, upcast(function->function_node->options.function.signature), compilation_data),
 			&scratch_arena
 		);
 		local_context.current_function = function;
 		Semantic_Context* semantic_context = &local_context;
 
 		// Create analysis progress
-		auto& parameter_nodes = signature_node->options.signature_parameters;
-		assert(function->function_type == Upp_Function_Type::NORMAL, "");
-
+		auto& parameter_nodes = function->function_node->options.function.signature->options.signature_parameters;
 		Poly_Header* poly_header = poly_header_analyse(
-			parameter_nodes, semantic_context->current_symbol_table, function->name, semantic_context, function, nullptr
+			parameter_nodes, header_workload->symbol_table, function->name, semantic_context, function, nullptr
 		);
-		header_workload->poly_header = poly_header;
 
 		// Check if function is polymorphic
-		function->signature = poly_header->signature;
+		bool is_polymorphic = poly_header->pattern_variables.size > 0;
+		for (int i = 0; i < poly_header->signature->parameters.size && !is_polymorphic; i++) {
+			if (poly_header->signature->parameters[i].datatype->contains_pattern) {
+				is_polymorphic = true;
+				break;
+			}
+		}
 
-		const bool is_polymorphic = poly_header->pattern_variables.size > 0 || poly_header->partial_pattern_count > 0;
+		function->signature = poly_header->signature;
 		if (is_polymorphic)
 		{
-			// Switch progress type to polymorphic base
-			function->poly_type = Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
-			function->poly_function.function = function;
-			function->poly_function.poly_header = poly_header;
+			// Switch function-type to base
+			function->poly_type = Poly_Type::BASE;
+			function->options.poly_header = poly_header;
 
-			// Set poly-values for base-analysis
-			header_workload->base.active_pattern_variable_states = poly_header->base_analysis_states;
-			header_workload->base.active_pattern_variable_states_origin = poly_header;
-			function->body_workload->base.poly_parent_workload = upcast(function->header_workload); // So body workload can access poly-values
-
-			// Update function + symbol
-			if (function->symbol != nullptr) {
+			// Update symbol
+			if (function->symbol != nullptr) 
+			{
 				function->symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
-				function->symbol->options.poly_function = function->poly_function;
+				function->symbol->options.poly_function.function = function;
+				function->symbol->options.poly_function.poly_header = poly_header;
 			}
+		}
+		else
+		{
+			// Create body-analysis
+			assert(function->body_workload == nullptr, "");
+			function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(workload, compilation_data);
+			function->body_workload->function = function;
+			function->body_workload->parameter_table = poly_header->base_parameter_table;
 		}
 
 		break;
@@ -6884,11 +6624,13 @@ void analysis_workload_entry(void* userdata)
 		auto function = body_workload->function;
 		auto& body_node = function->function_node->options.function.body;
 
-		body_workload->body_pass = analysis_pass_allocate(
-			workload, (body_node.is_expression ? upcast(body_node.expr) : upcast(body_node.block)), compilation_data
-		);
+		if (function->body_pass == nullptr) {
+			function->body_pass = analysis_pass_allocate(
+				workload, (body_node.is_expression ? upcast(body_node.expr) : upcast(body_node.block)), compilation_data
+			);
+		}
 		Semantic_Context local_context = semantic_context_make(
-			compilation_data, workload, function->parameter_table, Symbol_Access_Level::INTERNAL, body_workload->body_pass,&scratch_arena
+			compilation_data, workload, body_workload->parameter_table, Symbol_Access_Level::INTERNAL, function->body_pass, &scratch_arena
 		);
 		local_context.current_function = function;
 		Semantic_Context* semantic_context = &local_context;
@@ -6919,54 +6661,38 @@ void analysis_workload_entry(void* userdata)
 
 		break;
 	}
-	case Analysis_Workload_Type::STRUCT_POLYMORPHIC:
+	case Analysis_Workload_Type::STRUCT_HEADER:
 	{
-		auto workload_poly = downcast<Workload_Structure_Polymorphic>(workload);
-		auto body_workload = workload_poly->body_workload;
-		auto& struct_node = body_workload->struct_node->options.structure;
+		auto workload_header = downcast<Workload_Structure_Header>(workload);
+		Upp_Struct* upp_struct = workload_header->upp_struct;
+		auto& struct_node = upp_struct->struct_node->options.structure;
 
 		Semantic_Context local_context = semantic_context_make(
-			compilation_data, workload, body_workload->symbol_table, body_workload->symbol_access_level,
-			analysis_pass_allocate(workload, upcast(body_workload->struct_node), compilation_data),
+			compilation_data, workload, workload_header->symbol_table, Symbol_Access_Level::GLOBAL,
+			analysis_pass_allocate(workload, upcast(upp_struct->struct_node), compilation_data),
 			&scratch_arena
 		);
 		Semantic_Context* semantic_context = &local_context;
 
-		// Create new symbol-table, define symbols and analyse parameters
-		Symbol_Table* parameter_table = symbol_table_create_with_parent(
-			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, compilation_data
-		);
-		semantic_context->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
 		auto poly_header_info = poly_header_analyse(
-			struct_node.parameters, parameter_table, workload_poly->body_workload->struct_type->name, semantic_context, 0, workload_poly
+			struct_node.parameters, workload_header->symbol_table, upp_struct->datatype->name, semantic_context, 0, workload_header
 		);
-		workload_poly->poly_header = poly_header_info;
+		upp_struct->poly_type = Poly_Type::BASE;
+		upp_struct->options.header = poly_header_info;
 
-		// Set poly-values for base-analysis
-		workload_poly->base.active_pattern_variable_states = poly_header_info->base_analysis_states;
-		workload_poly->base.active_pattern_variable_states_origin = poly_header_info;
-
-		// Store/Set correct symbol table for base-analysis and instance analysis
-		body_workload->base.poly_parent_workload = upcast(workload_poly); // So body workload can access poly-values
-		body_workload->symbol_table = parameter_table;
-		body_workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-		body_workload->analysis_pass = semantic_context->current_pass; // Base-pass body workload can use the same pass as header
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_BODY:
 	{
 		auto workload_structure = downcast<Workload_Structure_Body>(workload);
+		Upp_Struct* upp_struct = workload_structure->upp_struct;
 
-		auto& struct_node = workload_structure->struct_node->options.structure;
-		Datatype_Struct* structure = workload_structure->struct_type;
-
-		if (workload_structure->analysis_pass == nullptr) {
-			workload_structure->analysis_pass = analysis_pass_allocate(workload, upcast(workload_structure->struct_node), compilation_data);
-		}
+		auto& struct_node = upp_struct->struct_node->options.structure;
+		Datatype_Struct* structure = upp_struct->datatype;
 
 		Semantic_Context local_context = semantic_context_make(
 			compilation_data, workload, workload_structure->symbol_table, workload_structure->symbol_access_level,
-			workload_structure->analysis_pass, &scratch_arena
+			analysis_pass_allocate(workload, upcast(upp_struct->struct_node), compilation_data), &scratch_arena
 		);
 		Semantic_Context* semantic_context = &local_context;
 
@@ -6983,7 +6709,7 @@ void analysis_workload_entry(void* userdata)
 
 		Semantic_Context local_context = semantic_context_make(
 			compilation_data, workload, bake->symbol_table, Symbol_Access_Level::GLOBAL,
-			bake->analysis_pass, &scratch_arena
+			bake->bake_function->body_pass, &scratch_arena
 		);
 		Semantic_Context* semantic_context = &local_context;
 		semantic_context->current_function = function;
@@ -7164,18 +6890,22 @@ Expression_Info analyse_symbol_as_expression(
 		Datatype* type = symbol->options.datatype;
 		if (type->type == Datatype_Type::STRUCT)
 		{
-			auto struct_workload = downcast<Datatype_Struct>(type)->workload;
-			if (struct_workload == 0) {
+			Upp_Struct* upp_struct = downcast<Datatype_Struct>(type)->upp_struct;
+			auto struct_workload = upp_struct->body_workload;
+			if (struct_workload == nullptr) {
 				assert(!type_size_is_unfinished(type), "");
 				break;
 			}
 
 			// If it's a polymorphic struct, always wait for the header workload to finish
-			if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-				analysis_workload_add_dependency_internal(executer, workload, upcast(struct_workload->polymorphic.base), failure_info);
+			if (upp_struct->poly_type == Poly_Type::BASE) {
+				analysis_workload_add_dependency_internal(executer, workload, upcast(upp_struct->header_workload), failure_info);
 			}
-			else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-				analysis_workload_add_dependency_internal(executer, workload, upcast(struct_workload->polymorphic.instance.parent), failure_info);
+			else if (upp_struct->poly_type == Poly_Type::INSTANCE) {
+				analysis_workload_add_dependency_internal(
+					executer, workload, 
+					upcast(upp_struct->options.instance->header->origin.upp_struct->header_workload), 
+				failure_info);
 			}
 
 			// Additionally, we want some workloads to wait until the size has been resolved
@@ -7192,7 +6922,7 @@ Expression_Info analyse_symbol_as_expression(
 			case Analysis_Workload_Type::FUNCTION_BODY: break;
 			case Analysis_Workload_Type::FUNCTION_HEADER: break;
 			case Analysis_Workload_Type::STRUCT_BODY: break;
-			case Analysis_Workload_Type::STRUCT_POLYMORPHIC: break;
+			case Analysis_Workload_Type::STRUCT_HEADER: break;
 			case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: break;
 			default: panic("Invalid code path");
 			}
@@ -7247,13 +6977,12 @@ Expression_Info analyse_symbol_as_expression(
 		//	they have a unique expression_result_type, so we need special handling here
 		//	Maybe we could just add a special symbol type for this...
 		auto datatype = symbol->options.datatype;
-		if (datatype->type == Datatype_Type::STRUCT) {
-			auto s = downcast<Datatype_Struct>(datatype);
-			if (s->workload != 0) {
-				if (s->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-					expression_info_set_polymorphic_struct(&result, s->workload->polymorphic.base);
-					return result;
-				}
+		if (datatype->type == Datatype_Type::STRUCT) 
+		{
+			Upp_Struct* upp_struct = downcast<Datatype_Struct>(datatype)->upp_struct;
+			if (upp_struct->poly_type == Poly_Type::BASE) {
+				expression_info_set_polymorphic_struct(&result, upp_struct->header_workload);
+				return result;
 			}
 		}
 
@@ -7273,30 +7002,13 @@ Expression_Info analyse_symbol_as_expression(
 	case Symbol_Type::PARAMETER:
 	{
 		auto& param = symbol->options.parameter;
-		auto workload = semantic_context->current_workload;
-
-		// We should be in a function body workload
-		auto function = analysis_workload_try_get_upp_function(workload);
-		assert(function != 0, "We should be in function-body workload since normal parameters have internal symbol access");
-		Datatype* param_type = nullptr;
-		if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE)
-		{
-			param_type = function->poly_function.poly_header->signature->parameters[param.index_in_polymorphic_signature].datatype;
-			if (param_type->contains_pattern) {
-				param_type = types.unknown_type;
-			}
-		}
-		else {
-			param_type = function->signature->parameters[param.index_in_non_polymorphic_signature].datatype;
-		}
-
-		assert(!param_type->contains_pattern, "");
+		Datatype* param_type = param.function->signature->parameters[param.index].datatype;
 		expression_info_set_value(&result, param_type, true);
 		return result;
 	}
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
-		expression_info_set_to_pattern_variable(&result, symbol->options.pattern_variable, true, semantic_context);
+		expression_info_set_polymorphic_pattern(&result, upcast(symbol->options.pattern_variable_type), type_system);
 		return result;
 	}
 	case Symbol_Type::COMPTIME_VALUE: {
@@ -7437,8 +7149,8 @@ Datatype_Struct* analyse_member_initializer_recursive(
 			}
 
 			// Check if it's supertype name
-			if (subtype_index == -1 && structure->parent_struct != nullptr) {
-				if (structure->parent_struct->name == init_node->name.value) {
+			if (subtype_index == -1 && structure->parent != nullptr) {
+				if (structure->parent->name == init_node->name.value) {
 					is_supertype_init = true;
 				}
 			}
@@ -7449,7 +7161,7 @@ Datatype_Struct* analyse_member_initializer_recursive(
 
 		if (is_supertype_init)
 		{
-			if (structure->parent_struct == nullptr)
+			if (structure->parent == nullptr)
 			{
 				log_semantic_error(
 					semantic_context,
@@ -7467,7 +7179,7 @@ Datatype_Struct* analyse_member_initializer_recursive(
 				break;
 			}
 			else {
-				analyse_member_initializer_recursive(init_node->call_node, structure->parent_struct, -1, semantic_context);
+				analyse_member_initializer_recursive(init_node->call_node, structure->parent, -1, semantic_context);
 				supertype_initializer_found = true;
 				break;
 			}
@@ -7507,16 +7219,16 @@ Datatype_Struct* analyse_member_initializer_recursive(
 	bool found_ignore_symbol = call_node->uninitialized_tokens.size > 0;
 	if (!found_ignore_symbol)
 	{
-		if (structure->parent_struct != 0 && !supertype_initializer_found && allowed_direction == 0) 
+		if (structure->parent != 0 && !supertype_initializer_found && allowed_direction == 0) 
 		{
 			bool parent_has_members = false;
-			Datatype_Struct* parent = structure->parent_struct;
+			Datatype_Struct* parent = structure->parent;
 			while (parent != 0) {
 				if (parent->members.size != 0) {
 					parent_has_members = true;
 					break;
 				}
-				parent = parent->parent_struct;
+				parent = parent->parent;
 			}
 			if (parent_has_members) {
 				log_semantic_error(
@@ -7771,7 +7483,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					log_error_info_given_type(semantic_context, datatype);
 					EXIT_ERROR(types.unknown_type);
 				}
-				EXIT_VALUE(structure->tag_member.type, is_temporary);
+				EXIT_VALUE(structure->tag_member.datatype, is_temporary);
 			}
 			case Hardcoded_Type::BITWISE_NOT:
 			{
@@ -7848,21 +7560,23 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				return info;
 			}
 
-			switch (instance->type)
-			{
-			case Poly_Instance_Type::FUNCTION:
+			if (instance->header->is_function)
 			{
 				helper_set_info_to_call_return_type(false);
 				return info;
 			}
-			case Poly_Instance_Type::STRUCTURE: {
-				EXIT_TYPE(upcast(instance->options.struct_instance->struct_type));
-			}
-			case Poly_Instance_Type::STRUCT_PATTERN: {
-				expression_info_set_polymorphic_pattern(info, upcast(instance->options.struct_pattern), type_system);
-				return info;
-			}
-			default: panic("");
+			else
+			{
+				Upp_Struct* structure = instance->options.struct_instance;
+				assert(structure->poly_type != Poly_Type::NORMAL && structure->poly_type != Poly_Type::BASE, "");
+				if (structure->poly_type == Poly_Type::PARTIAL) {
+					expression_info_set_polymorphic_pattern(info, upcast(structure->datatype), type_system);
+					return info;
+				}
+				else {
+					assert(!structure->datatype->base.contains_pattern, "");
+					EXIT_TYPE(upcast(structure->datatype));
+				}
 			}
 			panic("Should not happen");
 			break;
@@ -7929,7 +7643,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			auto& param_value = call_info->parameter_values[arg_info.parameter_index];
 
 			// Analyse comptime values normally (Done in instanciate)
-			if (param_info.comptime_variable_index != -1) continue;
+			if (param_info.pattern_variable_index != -1) continue;
 
 			assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Shouldn't be different");
 			// Note: Overloading should not have analysed these arguments, so this should work without any re-analysis issues
@@ -7950,7 +7664,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		if (instance == nullptr) {
 			EXIT_ERROR(types.unknown_type);
 		}
-		assert(instance->type == Poly_Instance_Type::FUNCTION, "Poly-function should only instanciate to function");
+		assert(instance->options.function_instance->poly_type == Poly_Type::INSTANCE, "");
 		EXIT_FUNCTION(instance->options.function_instance);
 	}
 	case AST::Expression_Type::GET_OVERLOAD:
@@ -8071,10 +7785,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 				if (param_type->contains_pattern) {
 					auto checkpoint = scratch_arena->make_checkpoint();
-					Pattern_Match_Result match_result = pattern_match_result_make_empty(scratch_arena);
-					bool matches = pattern_type_match_against(match_result, 0, param_type, arg_type, semantic_context);
+					Pattern_Matcher pattern_matcher = pattern_matcher_make(semantic_context->compilation_data, scratch_arena);
+					bool matches = pattern_matcher_match_types(pattern_matcher, param_type, arg_type);
 					if (matches) {
-						matches = pattern_match_result_check_constraints_pairwise(match_result);
+						matches = pattern_match_result_check_constraints_pairwise(pattern_matcher);
 					}
 					scratch_arena->rewind_to_checkpoint(checkpoint);
 
@@ -8174,21 +7888,37 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::PATTERN_VARIABLE:
 	{
 		auto workload = semantic_context->current_workload;
-		Pattern_Variable** variable_opt = nullptr;
-		if (workload != nullptr) {
-			variable_opt = hashtable_find_element(&compilation_data->pattern_variable_expression_mapping, expr);
+
+		// Currently we do dumbass thing, where we just query the symbol-table for the thing
+		Arena* tmp_arena = semantic_context->scratch_arena;
+		auto checkpoint = tmp_arena->make_checkpoint();
+		SCOPE_EXIT(checkpoint.rewind());
+		DynArray<Symbol*> symbols = symbol_table_query_id(
+			semantic_context->current_symbol_table, expr->options.pattern_variable_name, 
+			symbol_query_info_make(semantic_context->symbol_access_level, Import_Type::NONE, false), 
+			tmp_arena
+		);
+		// Remove symbols that aren't pattern-variables
+		for (int i = 0; i < symbols.size; i++) {
+			if (symbols[i]->type != Symbol_Type::PATTERN_VARIABLE) {
+				symbols.swap_remove(i);
+				i -= 1;
+			}
 		}
-		if (variable_opt == 0) {
+		if (symbols.size == 0) {
 			log_semantic_error(semantic_context, "Implicit polymorphic parameter only valid in function header!", expr);
 			EXIT_ERROR(types.unknown_type);
 		}
+		if (symbols.size > 1) {
+			log_semantic_error(semantic_context, "Two poly-parameters with this name are accessible, not sure if this can even happen, lol", expr);
+			EXIT_ERROR(types.unknown_type);
+		}
 
-		Pattern_Variable* variable = *variable_opt;
-		assert(!variable->pattern_variable_type->is_reference,
-			"We can never be the reference if we are at the definition argument_expression, e.g. $T is not a symbol-read like T");
-
-		// If value is already set, return the value (Should happen in header-re-analysis)
-		expression_info_set_to_pattern_variable(info, variable, false, semantic_context);
+		Datatype_Pattern_Variable* pattern_type = symbols[0]->options.pattern_variable_type;
+		assert(!pattern_type->is_reference,
+			"We can never be the reference if we are at the definition argument_expression, e.g. $T is not a symbol-read like T"
+		);
+		expression_info_set_polymorphic_pattern(info, upcast(pattern_type), compilation_data->type_system);
 		return info;
 	}
 	case AST::Expression_Type::CAST:
@@ -8492,7 +8222,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			member.name = member_node->name;
 			member.value = next_member_value;
 			next_member_value++;
-			dynamic_array_push_back(&enum_type->members, member);
+			enum_type->members.push_back(member);
 		}
 
 		// Check for member errors
@@ -8519,41 +8249,93 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		log_semantic_error(semantic_context, "Module not valid in this context", AST::upcast(expr));
 		EXIT_ERROR(types.unknown_type);
 	}
-	case AST::Expression_Type::FUNCTION:
+	case AST::Expression_Type::INFERRED_FUNCTION: 
 	{
-		// Create new function progress
-		auto upp_function = upp_function_create_with_workloads(
-			nullptr, expr, nullptr, semantic_context, nullptr, Symbol_Access_Level::POLYMORPHIC
-		);
+		AST::Body_Node body_node = expr->options.inferred_function_body;
 
 		// Handle infered function types
-		if (!expr->options.function.signature.available)
+		bool log_error = true;
+		Call_Signature* signature = compilation_data->empty_call_signature;
+		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
 		{
-			upp_function->signature = compilation_data->empty_call_signature;
-			bool log_error = true;
-			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-			{
-				if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
-					upp_function->signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
-					log_error = false;
-				}
+			if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
+				signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
+				log_error = false;
 			}
-			if (log_error) {
-				log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
+			else {
+				log_semantic_error(semantic_context, "Inferred function context must expect a function-pointer", expr, Node_Section::FIRST_TOKEN);
+				log_error_info_given_type(semantic_context, context.datatype);
 			}
 		}
+		else {
+			log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
+		}
+
+		// Create function
+		Upp_Function* function = upp_function_create_empty(
+			signature, compilation_data->identifier_pool.predefined_ids.lambda_function, compilation_data
+		);
+		function->function_node = expr;
+		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context->current_workload, compilation_data);
+		function->body_workload->function = function;
+		Symbol_Table* parameter_table = symbol_table_create_with_parent(
+			semantic_context->current_symbol_table, semantic_context->symbol_access_level, compilation_data
+		);
+		function->body_workload->parameter_table = parameter_table;
+
+		// Define all parameter symbols from derived signature
+		for (int i = 0; i < signature->parameters.size; i++)
+		{
+			auto& param = signature->parameters[i];
+			assert(param.pattern_variable_index == -1, "");
+			if (i == signature->return_type_index) continue;
+			Symbol* symbol = symbol_table_define_symbol(
+				parameter_table, param.name, Symbol_Type::PARAMETER, upcast(function->function_node), Symbol_Access_Level::INTERNAL,
+				compilation_data
+			);
+			symbol->options.parameter.function = function;
+			symbol->options.parameter.index = i;
+		}
+
+		// Note: I could also not generate a function-body workload at all, and just analyse it here...
+		//		same for normal anonymous function
+
+		EXIT_FUNCTION(function);
+	}
+	case AST::Expression_Type::FUNCTION:
+	{
+		// Anonymous functions
+		Upp_Function* function = upp_function_create_empty(nullptr, nullptr, compilation_data);
+		function->function_node = expr;
+		function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(
+			semantic_context->current_workload, compilation_data
+		);
+		function->header_workload->function = function;
+		function->header_workload->symbol_table = semantic_context->current_symbol_table;
 
 		// Wait for header analysis to finish
 		auto executer = compilation_data->workload_executer;
-		analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(upp_function->header_workload));
+		analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(function->header_workload));
 		workload_executer_wait_for_dependency_resolution(semantic_context);
 
 		// Return function
-		EXIT_FUNCTION(upp_function);
+		EXIT_FUNCTION(function);
 	}
-	case AST::Expression_Type::STRUCTURE_TYPE: {
-		auto workload = workload_structure_create(expr, 0, false, semantic_context, Symbol_Access_Level::POLYMORPHIC);
-		EXIT_TYPE(upcast(workload->struct_type));
+	case AST::Expression_Type::STRUCTURE_TYPE: 
+	{
+		// Anonymous struct
+		if (expr->options.structure.parameters.size > 0) {
+			log_semantic_error(semantic_context, "Anonymous struct must not be polymorphic", expr, Node_Section::ENCLOSURE);
+		}
+		Upp_Struct* structure = upp_struct_create_empty(expr, semantic_context, true);
+		structure->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
+			semantic_context->current_workload, compilation_data
+		);
+		structure->body_workload->symbol_access_level = semantic_context->symbol_access_level;
+		structure->body_workload->symbol_table = semantic_context->current_symbol_table;
+		structure->body_workload->upp_struct = structure;
+
+		EXIT_TYPE(upcast(structure->datatype));
 	}
 	case AST::Expression_Type::BAKE:
 	{
@@ -8712,7 +8494,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		if (type_for_init->type == Datatype_Type::STRUCT)
 		{
 			Datatype_Struct* struct_type = downcast<Datatype_Struct>(type_for_init);
-			if (!struct_type->is_union)
+			if (!struct_type->upp_struct->is_union)
 			{
 				Datatype_Struct* final_type = analyse_member_initializer_recursive(init_node.call_node, struct_type, 0, semantic_context);
 				info->specifics.struct_init_lowest_subtype = final_type;
@@ -8879,7 +8661,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// if (!type_is_valid && array_type->type == Datatype_Type::STRUCT)
 		// {
 		// 	auto struct_type = downcast<Datatype_Struct>(array_type);
-		// 	if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE)
+		// 	if (struct_type->workload != 0 && struct_type->workload->polymorphic_type == Poly_Type::INSTANCE)
 		// 	{
 		// 		Custom_Operator_Key key;
 		// 		key.type = Context_Change_Type::ARRAY_ACCESS;
@@ -8955,12 +8737,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			Datatype* result_type = nullptr;
 			if (is_base_access) 
 			{
-				if (structure->parent_struct == nullptr || structure->parent_struct == structure) {
+				if (structure->parent == nullptr || structure->parent == structure) {
 					log_semantic_error(semantic_context, "Given structure is already root-struct", expr, Node_Section::FIRST_TOKEN);
 					log_error_info_given_type(semantic_context, datatype);
 					EXIT_ERROR(upcast(structure));
 				}
-				result_type = upcast(structure->parent_struct);
+				result_type = upcast(structure->parent);
 			}
 			else
 			{
@@ -9007,12 +8789,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			Datatype_Struct* result_struct = nullptr;
 			if (is_base_access)
 			{
-				if (structure->parent_struct == nullptr || structure->parent_struct == structure) {
+				if (structure->parent == nullptr || structure->parent == structure) {
 					log_semantic_error(semantic_context, "Given structure is already root-struct", expr, Node_Section::FIRST_TOKEN);
 					log_error_info_given_type(semantic_context, value_type);
 					EXIT_ERROR(upcast(structure));
 				}
-				result_struct = structure->parent_struct;
+				result_struct = structure->parent;
 			}
 			else
 			{
@@ -9059,21 +8841,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant>
 			{
-				if (struct_type->workload == 0) {
-					return optional_make_failure<Upp_Constant>();
-				}
-
-				auto struct_workload = struct_type->workload;
 				Poly_Header* poly_header = 0;
-				if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
-					// Accessing values of base-struct not possible
+				Upp_Struct* upp_struct = struct_type->upp_struct;
+				switch (upp_struct->poly_type)
+				{
+				case Poly_Type::NORMAL: 
+					return optional_make_failure<Upp_Constant>();
+				case Poly_Type::BASE: 
 					return optional_make_failure<Upp_Constant>(); // Not polymorphic
-				}
-				else if (struct_workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
-					poly_header = struct_workload->polymorphic.instance.parent->poly_header;
-				}
-				else {
-					return optional_make_failure<Upp_Constant>(); // Not polymorphic
+					break;
+				case Poly_Type::INSTANCE:
+					poly_header = upp_struct->options.instance->header; 
+					break;
+				default: panic("");
 				}
 
 				// Try to find structure parameter with this base_name
@@ -9081,17 +8861,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				for (int i = 0; i < poly_header->signature->parameters.size; i++) {
 					auto& parameter = poly_header->signature->parameters[i];
 					if (parameter.name == member_node.name) {
-						value_access_index = parameter.comptime_variable_index;
+						value_access_index = parameter.pattern_variable_index;
 						break;
 					}
 				}
 
-				if (value_access_index != -1) {
+				if (value_access_index != -1) 
+				{
 					info->specifics.member_access.type = Member_Access_Type::STRUCT_POLYMORHPIC_PARAMETER_ACCESS;
 					info->specifics.member_access.options.poly_access.index = value_access_index;
-					info->specifics.member_access.options.poly_access.struct_workload = struct_workload;
+					info->specifics.member_access.options.poly_access.upp_struct = upp_struct;
 
-					auto& value = struct_workload->base.active_pattern_variable_states[value_access_index];
+					auto& value = upp_struct->options.instance->variable_states[value_access_index];
 					assert(value.type == Pattern_Variable_State_Type::SET, "Struct instance value must be set");
 					return optional_make_success(value.options.value);
 				}
@@ -9208,11 +8989,11 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				for (int i = 0; i < structure->members.size; i++)
 				{
 					auto& member = structure->members[i];
-					if (member.id == member_node.name)
+					if (member.name == member_node.name)
 					{
 						access_info.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
 						access_info.options.member = member;
-						EXIT_VALUE(access_info.options.member.type, result_is_temporary);
+						EXIT_VALUE(access_info.options.member.datatype, result_is_temporary);
 					}
 				}
 			}
@@ -9250,7 +9031,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 					info->specifics.member_access.type = Member_Access_Type::STRUCT_MEMBER_ACCESS;
 					info->specifics.member_access.options.member = member;
-					EXIT_VALUE(member.type, result_is_temporary);
+					EXIT_VALUE(member.datatype, result_is_temporary);
 				}
 			}
 
@@ -9823,7 +9604,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 
 		Datatype* final_type;
 		auto type_index = upp_constant_to_value<u32>(constant);
-		if (type_index >= (u32)type_system->internal_type_infos.size) {
+		if (type_index >= (u32)type_system->types.size) {
 			// Note: Always log this error, because this should never happen!
 			log_semantic_error(semantic_context, "Expression contains invalid type handle", expression);
 			final_type = upcast(types.unknown_type);
@@ -10158,12 +9939,6 @@ void analyse_custom_operator_node(
 			int param_count = signature->parameters.size;
 			bool has_return_type = signature->return_type_index != -1;
 
-			if (function->function_type != Upp_Function_Type::NORMAL) {
-				log_semantic_error(semantic_context, "Extern functions are currently supported for custom casts", argument_info.expression);
-				success = false;
-				return nullptr;
-			}
-
 			if (has_return_type) { param_count -= 1; }
 			if (param_count != expected_parameter_count) {
 				log_semantic_error(semantic_context, "Function does not have the required number of arguments for overload", argument_info.expression);
@@ -10200,7 +9975,7 @@ void analyse_custom_operator_node(
 				param_count += 1;
 
 				// Check non-polymorphic
-				if (param_info.comptime_variable_index != -1) 
+				if (param_info.pattern_variable_index != -1) 
 				{
 					log_semantic_error(semantic_context, "Function must not have comptime parameters", argument_info.expression);
 					success = false;
@@ -10253,7 +10028,7 @@ void analyse_custom_operator_node(
 		if (success)
 		{
 			assert(upp_function != nullptr, "");
-			bool is_polymorphic = upp_function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE;
+			bool is_polymorphic = upp_function->poly_type == Poly_Type::BASE;
 			Upp_Function* function = upp_function;
 			auto& parameters = function->signature->parameters;
 			// Check for errors
@@ -10268,7 +10043,7 @@ void analyse_custom_operator_node(
 					break;
 				}
 				if (param.requires_named_addressing) continue;
-				if (param.comptime_variable_index != -1) {
+				if (param.pattern_variable_index != -1) {
 					contains_comptime_param = true;
 				}
 				if (i == 0) {
@@ -11242,7 +11017,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			type_wait_for_size_info_to_finish(datatype, semantic_context);
 			structure = downcast<Datatype_Struct>(datatype);
 			if (structure->subtypes.size != 0) {
-				datatype = structure->tag_member.type;
+				datatype = structure->tag_member.datatype;
 				switch_info.structure = structure;
 			}
 			else {
@@ -11509,7 +11284,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		// 	// Check for polymorphic overload
 		// 	if (op == nullptr && expr_type->type == Datatype_Type::STRUCT) {
 		// 		auto struct_type = downcast<Datatype_Struct>(expr_type);
-		// 		if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Polymorphic_Analysis_Type::POLYMORPHIC_INSTANCE) {
+		// 		if (struct_type->workload != nullptr && struct_type->workload->polymorphic_type == Poly_Type::INSTANCE) {
 		// 			key.options.iterator.datatype = upcast(struct_type->workload->polymorphic.instance.parent->body_workload->struct_type);
 		// 			op = symbol_table_query_custom_operator(operator_context, key);
 		// 		}

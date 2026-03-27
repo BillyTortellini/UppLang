@@ -180,16 +180,35 @@ void find_editor_infos_recursive(
 		{
 			auto pass = active_passes[i];
 
-			if (expr->type == AST::Expression_Type::FUNCTION) {
+			Symbol_Table* symbol_table = nullptr;
+			if (expr->type == AST::Expression_Type::FUNCTION) 
+			{
 				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-					Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->function->parameter_table;
-					Symbol_Table_Range table_range;
-					table_range.range = node->bounding_range;
-					table_range.symbol_table = table;
-					table_range.tree_depth = tree_depth;
-					table_range.pass = pass;
-					dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+					symbol_table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
 				}
+				else if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+					symbol_table = ((Workload_Function_Body*)(pass->origin_workload))->parameter_table;
+				}
+			}
+			else if (expr->type == AST::Expression_Type::STRUCTURE_TYPE)
+			{
+				if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_BODY) {
+					symbol_table = ((Workload_Structure_Body*)(pass->origin_workload))->symbol_table;
+				}
+				else if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_HEADER) {
+					symbol_table = ((Workload_Structure_Header*)(pass->origin_workload))->symbol_table;
+				}
+			}
+
+			if (symbol_table != nullptr)
+			{
+				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
+				Symbol_Table_Range table_range;
+				table_range.range = node->bounding_range;
+				table_range.symbol_table = table;
+				table_range.tree_depth = tree_depth;
+				table_range.pass = pass;
+				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
 			}
 
 			Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ, compilation_data);
@@ -614,7 +633,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 		result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
 		result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
-		result->pattern_variable_expression_mapping = hashtable_create_pointer_empty<AST::Expression*, Pattern_Variable*>(16);
 
 		result->error_symbol = nullptr; // Initialized after this block
 		result->global_allocator = nullptr;
@@ -626,6 +644,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		// Allocations
 		result->compilation_units = dynamic_array_create<Compilation_Unit*>();
 		result->arena = Arena::create(2048);
+		result->tmp_arena = Arena::create(2048);
 		result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
 		result->allocated_symbols = dynamic_array_create<Symbol*>();
 		result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
@@ -1109,7 +1128,6 @@ void compilation_data_destroy(Compilation_Data* data)
 
 	dynamic_array_destroy(&data->compiler_errors);
 	constant_pool_destroy(data->constant_pool);
-	type_system_destroy(data->type_system);
 	extern_sources_destroy(&data->extern_sources);
 	c_generator_destroy(data->c_generator);
 
@@ -1163,7 +1181,6 @@ void compilation_data_destroy(Compilation_Data* data)
 		}
 		dynamic_array_destroy(&data->allocated_passes);
 	}
-	hashtable_destroy(&data->pattern_variable_expression_mapping);
 
 	for (int i = 0; i < data->allocated_custom_operator_tables.size; i++) {
 		auto context = data->allocated_custom_operator_tables[i];
@@ -1173,7 +1190,7 @@ void compilation_data_destroy(Compilation_Data* data)
 	dynamic_array_destroy(&data->allocated_custom_operator_tables);
 
 	data->arena.destroy();
-
+	data->tmp_arena.destroy();
 
 	// Symbol tables + workloads
 	for (int i = 0; i < data->allocated_symbol_tables.size; i++) {
@@ -1203,10 +1220,6 @@ void compilation_data_destroy(Compilation_Data* data)
 
 void call_signature_destroy(Call_Signature* signature)
 {
-	for (int j = 0; j < signature->parameters.size; j++) {
-		auto& param = signature->parameters[j];
-		dynamic_array_destroy(&param.dependencies);
-	}
 	dynamic_array_destroy(&signature->parameters);
 	delete signature;
 }
@@ -1224,17 +1237,7 @@ u64 hash_call_signature(Call_Signature** callable_p)
 		hash = hash_bool(hash, param.required);
 		hash = hash_bool(hash, param.requires_named_addressing);
 		hash = hash_bool(hash, param.must_not_be_set);
-
-		hash = hash_combine(hash, hash_i32(&param.comptime_variable_index));
-		hash = hash_combine(hash, hash_i32(&param.dependencies.size));
-		for (int j = 0; j < param.dependencies.size; j++) {
-			hash = hash_combine(hash, hash_i32(&param.dependencies[j]));
-		}
-		hash = hash_bool(hash, param.contains_pattern_variable_definition);
-
-		hash = hash_bool(hash, param.default_value_exists);
-		hash = hash_combine(hash, hash_pointer(param.default_value_expr));
-		hash = hash_combine(hash, hash_pointer(param.default_value_pass));
+		hash = hash_combine(hash, hash_i32(&param.pattern_variable_index));
 	}
 	return hash;
 }
@@ -1255,20 +1258,8 @@ bool equals_call_signature(Call_Signature** app, Call_Signature** bpp)
 
 		if (pa.name != pb.name || pa.required != pb.required ||
 			pa.requires_named_addressing != pb.requires_named_addressing ||
-			pa.must_not_be_set != pb.must_not_be_set) return false;
-
-		if (pa.comptime_variable_index != pb.comptime_variable_index ||
-			pa.dependencies.size != pb.dependencies.size || pa.contains_pattern_variable_definition != pb.contains_pattern_variable_definition)
-			return false;
-
-		for (int j = 0; j < pa.dependencies.size; j++) {
-			if (pa.dependencies[j] != pb.dependencies[j]) return false;
-		}
-
-		if (pa.default_value_exists != pb.default_value_exists ||
-			pa.default_value_expr != pb.default_value_expr ||
-			pa.default_value_pass != pb.default_value_pass)
-			return false;
+			pa.must_not_be_set != pb.must_not_be_set ||
+			pa.pattern_variable_index != pb.pattern_variable_index) return false;
 	}
 
 	return true;
@@ -1295,15 +1286,7 @@ Call_Parameter* call_signature_add_parameter(
 	param.required = required;
 	param.requires_named_addressing = requires_named_addressing;
 	param.must_not_be_set = must_not_be_set;
-
-	param.comptime_variable_index = -1;
-	param.partial_pattern_index = -1;
-	param.dependencies = dynamic_array_create<int>();
-	param.contains_pattern_variable_definition = false;
-
-	param.default_value_exists = false;
-	param.default_value_expr = nullptr;
-	param.default_value_pass = nullptr;
+	param.pattern_variable_index = -1;
 
 	dynamic_array_push_back(&signature->parameters, param);
 	return &signature->parameters[signature->parameters.size - 1];
@@ -1359,7 +1342,7 @@ void call_signature_append_to_string(Call_Signature* signature, String* string, 
 		if (highlight_index == i) {
 			string_style_push(string, Mark_Type::BACKGROUND_COLOR, format.highlight_color);
 		}
-		if (param.comptime_variable_index != -1) {
+		if (param.pattern_variable_index != -1) {
 			string->append('$');
 		}
 		string_style_push(string, Mark_Type::TEXT_COLOR, Syntax_Color::VALUE_DEFINITION);
@@ -1372,9 +1355,6 @@ void call_signature_append_to_string(Call_Signature* signature, String* string, 
 
 		if (highlight_index == i) {
 			string_style_pop(string);
-		}
-		if (param.default_value_exists) {
-			string->append(" = ...");
 		}
 	}
 	string->append(")");

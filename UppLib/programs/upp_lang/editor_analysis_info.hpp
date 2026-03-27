@@ -29,7 +29,7 @@ struct Type_System;
 struct Call_Signature;
 struct Modtree_Function;
 struct Datatype_Struct;
-struct Workload_Structure_Polymorphic;
+struct Workload_Structure_Header;
 struct Analysis_Pass;
 struct Call_Info;
 struct Symbol;
@@ -143,7 +143,6 @@ struct Compilation_Data
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
-    Hashtable<AST::Expression*, Pattern_Variable*> pattern_variable_expression_mapping;
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of comptime-definitions in code-blocks
 
     Symbol* error_symbol;
@@ -164,6 +163,7 @@ struct Compilation_Data
 
     // Allocations
     Arena arena;
+    Arena tmp_arena;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;

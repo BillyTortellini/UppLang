@@ -154,7 +154,6 @@ namespace AST
 		case Node_Type::PARAMETER: {
 			auto param = (Parameter*)node;
 			FILL_OPTIONAL(param->type);
-			FILL_OPTIONAL(param->default_value);
 			break;
 		}
 		case Node_Type::GET_OVERLOAD_ARGUMENT: {
@@ -375,10 +374,21 @@ namespace AST
 			case Expression_Type::AUTO_ENUM: {
 				break;
 			}
+			case Expression_Type::INFERRED_FUNCTION:
+			{
+				auto& body = expr->options.inferred_function_body;
+				if (body.is_expression) {
+					FILL(body.expr);
+				}
+				else {
+					FILL(body.block)
+				}
+				break;
+			}
 			case Expression_Type::FUNCTION:
 			{
 				auto& func = expr->options.function;
-				FILL_OPTIONAL(func.signature);
+				FILL(func.signature);
 				auto& body = expr->options.function.body;
 				if (body.is_expression) {
 					FILL(body.expr);
@@ -610,7 +620,6 @@ namespace AST
 		case Node_Type::PARAMETER: {
 			auto param = (Parameter*)node;
 			FILL_OPTIONAL(param->type);
-			FILL_OPTIONAL(param->default_value);
 			break;
 		}
 		case Node_Type::GET_OVERLOAD_ARGUMENT: {
@@ -765,10 +774,21 @@ namespace AST
 			case Expression_Type::AUTO_ENUM: {
 				break;
 			}
+			case Expression_Type::INFERRED_FUNCTION:
+			{
+				auto& body = expr->options.inferred_function_body;
+				if (body.is_expression) {
+					FILL(body.expr);
+				}
+				else {
+					FILL(body.block)
+				}
+				break;
+			}
 			case Expression_Type::FUNCTION:
 			{
 				auto& func = expr->options.function;
-				FILL_OPTIONAL(func.signature);
+				FILL(func.signature);
 				auto& body = expr->options.function.body;
 				if (body.is_expression) {
 					FILL(body.expr);
@@ -974,6 +994,7 @@ namespace AST
 		case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "Basetype_Access"); break;
 		case Expression_Type::MODULE: string_append_formated(str, "Module"); break;
 		case Expression_Type::FUNCTION: string_append_formated(str, "Function"); break;
+		case Expression_Type::INFERRED_FUNCTION: string_append_formated(str, "Inferred_Function"); break;
 		case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "Function_Signature"); break;
 		case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "Struct Type"); break;
 		case Expression_Type::ENUM_TYPE: string_append_formated(str, "Enum Type"); break;
@@ -1152,13 +1173,8 @@ namespace AST
 			}
 			case Expression_Type::BASETYPE_ACCESS: string_append_formated(str, "BASETYPE_ACCESS"); break;
 			case Expression_Type::MODULE: string_append_formated(str, "MODULE"); break;
-			case Expression_Type::FUNCTION: {
-				string_append_formated(str, "FUNCTION");
-				if (!expr->options.function.signature.available) {
-					string_append_formated(str, "_INFERED");
-				}
-				break;
-			}
+			case Expression_Type::FUNCTION: string_append_formated(str, "FUNCTION"); break;
+			case Expression_Type::INFERRED_FUNCTION: string_append_formated(str, "INFERRED_FUNCTION"); break;
 			case Expression_Type::FUNCTION_SIGNATURE: string_append_formated(str, "FUNCTION_SIGNATURE"); break;
 			case Expression_Type::STRUCTURE_TYPE: string_append_formated(str, "STRUCTURE_TYPE"); break;
 			case Expression_Type::ENUM_TYPE: string_append_formated(str, "ENUM_TYPE"); break;

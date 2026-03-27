@@ -746,19 +746,15 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         Upp_Function* function = nullptr;
         {
             function = compilation_data->functions[function_index];
-            if (function->function_type == Upp_Function_Type::EXTERN) {
+            if (function->is_extern) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to extern function not possible in bytecode");
-                return true;
-            }
-            else if (function->function_type == Upp_Function_Type::BAKE) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Error, trying to call bake-function from bake");
                 return true;
             }
             else if (function->contains_errors) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to function with errors");
                 return true;
             }
-            else if (function->poly_type == Polymorphic_Analysis_Type::POLYMORPHIC_BASE) {
+            else if (function->poly_type == Poly_Type::BASE) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to poly-base");
                 return true;
             }
@@ -995,7 +991,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
                 thread->waiting_for_type_finish_type = type_system->types[type_index];
                 return true;
             }
-            *((Internal_Type_Information**)&thread->return_register[0]) = type_system->internal_type_infos[type_index];
+            *((Internal_Type_Information**)&thread->return_register[0]) = type_system->types[type_index]->internal_info;
             break;
         }
         default: {panic("What"); }

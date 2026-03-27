@@ -17,7 +17,7 @@ struct Poly_Header;
 struct Upp_Function;
 struct Source_Code;
 struct Analysis_Pass;
-struct Workload_Structure_Polymorphic;
+struct Workload_Structure_Header;
 struct Datatype_Function_Pointer;
 struct Call_Signature;
 namespace AST {
@@ -213,8 +213,6 @@ struct Poly_Function
 
 
 
-
-
 // CALLABLES AND PARAMETERS
 struct Call_Parameter
 {
@@ -224,19 +222,7 @@ struct Call_Parameter
     bool requires_named_addressing;     // Implicit arguments and #instanciate, #get_overload?
     bool must_not_be_set;               // #instanciate must not set specific normal arguments
 
-    // Polymorphic infos
-    int comptime_variable_index;              // -1, otherwise this is a comptime parameter
-	int partial_pattern_index;                // Parameters with datatype->pattern_contains_missing_parameter are indexed
-	Dynamic_Array<int> dependencies;          // Indices to pattern-variables
-    bool contains_pattern_variable_definition;
-
-    // Polymorphic dependency infos
-    // Note: this will change once we have smarter stuff here
-    // If the default value does not exist, boolean is set to false and the others are nullptr
-    // If it exists, the value_expr or value_pass may still be null (In polymorphic function/on error)
-    bool default_value_exists;
-    AST::Expression* default_value_expr;
-    Analysis_Pass* default_value_pass;
+	int pattern_variable_index; // -1 if not comptime or implicit parameter
 };
 
 struct Call_Signature
@@ -245,7 +231,6 @@ struct Call_Signature
     // Return type of functions/poly-functions is stored as one of the parameters
     //  or -1 if no return type exists
     int return_type_index; 
-
     bool is_registered; // For debugging/deduplication
 
     Optional<Datatype*> return_type();

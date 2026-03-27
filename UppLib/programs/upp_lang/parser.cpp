@@ -1945,9 +1945,7 @@ namespace Parser
 		auto result = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
 		result->is_comptime = false;
 		result->is_return_type = false;
-		result->default_value.available = false;
-		result->type = optional_make_failure<AST::Expression*>();
-		result->default_value = optional_make_failure<AST::Expression*>();
+		result->type.available = false;
 
 		// Parse identifier and optional mutators
 		if (test_token(Token_Type::DOLLAR)) {
@@ -1965,10 +1963,6 @@ namespace Parser
 		advance_token(); // Skip :
 		result->type = optional_make_success(parse_expression_or_error_expr((Node*)result));
 
-		if (test_token(Token_Type::ASSIGN)) {
-			advance_token();
-			result->default_value = optional_make_success(parse_expression_or_error_expr((Node*)result));
-		}
 		PARSE_SUCCESS(result);
 	}
 
@@ -2145,17 +2139,16 @@ namespace Parser
 			advance_token();
 			if (test_token(Token_Type::FUNCTION_KEYWORD))
 			{
-				result->type = Expression_Type::FUNCTION;
-				result->options.function.signature = optional_make_failure<AST::Expression*>();
+				result->type = Expression_Type::INFERRED_FUNCTION;
 				advance_token();
 
 				if (on_follow_block()) {
-					result->options.function.body.is_expression = false;
-					result->options.function.body.block = parse_code_block(&result->base, 0);
+					result->options.inferred_function_body.is_expression = false;
+					result->options.inferred_function_body.block = parse_code_block(&result->base, 0);
 					PARSE_SUCCESS(result);
 				}
-				result->options.function.body.is_expression = true;
-				result->options.function.body.expr = parse_expression_or_error_expr(upcast(result));
+				result->options.inferred_function_body.is_expression = true;
+				result->options.inferred_function_body.expr = parse_expression_or_error_expr(upcast(result));
 				PARSE_SUCCESS(result);
 			}
 			else if (test_token(Token_Type::PARENTHESIS_OPEN)) // Struct Initializer
@@ -2323,7 +2316,7 @@ namespace Parser
 			if (test_token(Token_Type::FUNCTION_KEYWORD)) {
 				result->type = Expression_Type::FUNCTION;
 				signature = allocate_base<AST::Expression>(upcast(result), Node_Type::EXPRESSION);
-				result->options.function.signature = optional_make_success(signature);
+				result->options.function.signature = signature;
 			}
 			else {
 				signature = result;
@@ -2344,7 +2337,6 @@ namespace Parser
 				{
 					advance_token();
 					auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
-					return_param->default_value = optional_make_failure<AST::Expression*>();
 					return_param->is_comptime = false;
 					return_param->is_return_type = true;
 					return_param->name = ids.return_type_name;

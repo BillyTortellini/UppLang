@@ -1,6 +1,29 @@
 
 Done:
 -----
+27.03.26:
+ - Remove Struct-Instance-Pattern type, use normal structs instead
+ - Poly-Parameter cannot access each other anymore, only poly-variables
+ - Parameter-Table is re-created for each instance
+    Active-Parameter-Table can be removed
+ - Parameter-Symbols don't differentiate between index-in-non-poly and index-in-poly
+ - Cyclic-Dependencies between parameters is fine, then parameters are analysed from left-to-right
+ - Base-Analysis is now done in instance, so editor has analysis infos
+    * Creates own symbol-table with unknowns
+    * Does not create bake or other workloads
+
+ - Call-Signature move poly-values to poly-header
+ - Remove header-workload from infered functions
+
+
+25.03.26:
+ - Struct storage rework (Upp_Struct)
+
+24.03.26:
+ - Syntax-editor should show subtypes on .>
+ - Fixed problems with struct-initializer
+ - Struct Subtype Syntax rework
+
 23.03.26:
  - Upp-Function 
  - Remove workload clusters/dependencies

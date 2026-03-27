@@ -9,12 +9,8 @@
 #include "syntax_colors.hpp"
 
 struct Compilation_Data;
-struct Symbol;
 struct Datatype;
 struct String;
-struct Workload_Structure_Body;
-struct Workload_Structure_Polymorphic;
-struct Function_Progress;
 struct Pattern_Variable_State;
 struct Datatype_Pattern_Variable;
 struct Datatype_Struct;
@@ -22,31 +18,28 @@ struct Analysis_Pass;
 struct Pattern_Variable;
 struct Poly_Instance;
 struct Call_Signature;
+struct Upp_Struct;
+struct Workload_Structure_Body;
+struct Internal_Type_Information;
 
-namespace AST
-{
-    struct Expression;
-};
 
 
 // Helpers
-struct Struct_Member
-{
-    Datatype* type;
-    String* id;
-    int offset; // Offset from base struct
-    Datatype_Struct* structure; // In which struct-content this member is defined, may be null for slices or other things
-    AST::Node* definition_node; // May be null, used for goto-definition in editor
-};
-
-Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* structure, int offset, AST::Node* definition_node);
-
 struct Enum_Member
 {
     String* name;
     int value;
 };
 
+struct Struct_Member
+{
+    Datatype* datatype;
+    String* name;
+    int offset; // Offset from base struct
+    Datatype_Struct* structure; // In which struct-content this member is defined, may be null for slices or other things
+    AST::Node* definition_node; // May be null, used for goto-definition in editor
+};
+Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* structure, int offset, AST::Node* definition_node);
 
 
 
@@ -74,7 +67,6 @@ enum class Datatype_Type
 
     // Types for polymorphism
     PATTERN_VARIABLE,
-    STRUCT_PATTERN
 };
 
 struct Datatype_Memory_Info
@@ -90,6 +82,7 @@ struct Datatype
 {
     Datatype_Type type;
     Upp_Type_Handle type_handle;
+    Internal_Type_Information* internal_info; // Pointer so that comptime-execution cannot fuck things up too much
 
     // For some types (e.g. structs, arrays, etc), the memory info isn't always available after the type has been created
     Optional<Datatype_Memory_Info> memory_info;
@@ -97,8 +90,8 @@ struct Datatype
 
     // Some cached values so we don't have to always walk the type tree
     bool contains_pattern;
-    bool contains_partial_pattern; // Patterns where variables are missing, e.g. Node(_)
-    bool contains_pattern_variable_definition; // Pattern with $T, not just reference
+    bool contains_partial_pattern;
+    bool contains_pattern_variable_definition;
 };
 
 enum class Primitive_Class
@@ -183,27 +176,25 @@ struct Datatype_Function_Pointer
 struct Datatype_Struct 
 {
     Datatype base;
-    Dynamic_Array<Struct_Member> members;
-    bool is_union;
 
-    String* name; // For base struct this is the struct-name, otherwise subtype names/ids
+    Upp_Struct* upp_struct;
+    Datatype_Struct* parent;
+    int subtype_index; // Index in parent, without + 1
+    int hierarchy_depth;
+
+    DynArray<Struct_Member> members;
+    DynArray<Datatype_Struct*> subtypes;
+    Struct_Member tag_member; // Only valid if subtypes aren't empty
+
+    String* name; // Subtype-name or for base another name
     AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
     Call_Signature* initializer_signature_cached;
-
-    Datatype_Struct* parent_struct;
-    Dynamic_Array<Datatype_Struct*> subtypes;
-    Struct_Member tag_member; // Only valid if subtypes aren't empty
-    int subtype_index; // Index in parent struct, without the + 1 for tag...
-
-    Workload_Structure_Body* workload; // May be null if it's a predefined struct
-    Dynamic_Array<Datatype*> types_waiting_for_size_finish; // May contain arrays, constant types or struct_subtypes
-    bool is_extern_struct; // C-Generator needs to know if the type is already defined in a header
 };
 
 struct Datatype_Enum
 {
     Datatype base;
-    Dynamic_Array<Enum_Member> members;
+    DynArray<Enum_Member> members;
     String* name;
     AST::Node* definition_node;
 
@@ -218,12 +209,6 @@ struct Datatype_Pattern_Variable
 
     bool is_reference;
     Datatype_Pattern_Variable* mirrored_type; // Pointer to either the reference type or the "base" variable
-};
-
-struct Datatype_Struct_Pattern
-{
-    Datatype base;
-    Poly_Instance* instance;
 };
 
 struct Datatype_Format
@@ -459,23 +444,16 @@ struct Predefined_Types
 // TYPE SYSTEM
 struct Type_System
 {
-    double register_time;
     Predefined_Types predefined_types;
-    Identifier_Pool* identifier_pool;
-
-    Hashtable<Type_Deduplication, Datatype*> deduplication_table;
-    Dynamic_Array<Datatype*> types;
-    Dynamic_Array<Internal_Type_Information*> internal_type_infos;
-
+    DynTable<Type_Deduplication, Datatype*> deduplication_table;
+    DynArray<Datatype*> types;
+    Compilation_Data* compilation_data;
 };
 
 Type_System* type_system_create(Compilation_Data* compilation_data);
-void type_system_destroy(Type_System* system);
 void type_system_print(Type_System* system);
 
 Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Type_System* type_system, Pattern_Variable* pattern_variable);
-Datatype_Struct_Pattern* type_system_make_struct_pattern(
-    Type_System* type_system, Poly_Instance* instance, bool is_partial_pattern, bool contains_pattern_variable_definition);
 Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type, bool is_optional = false);
 Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
@@ -485,11 +463,11 @@ Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatyp
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, String* name, AST::Node* definition_node = 0);
-Datatype_Struct* type_system_make_struct_empty(Type_System* type_system, String* name, bool is_union = false, Datatype_Struct* parent = 0, Workload_Structure_Body* workload = 0);
+Datatype_Struct* type_system_make_struct_empty(
+    Type_System* type_system, String* name, bool is_union = false, Datatype_Struct* parent = nullptr, AST::Node* definition_node = nullptr);
 void struct_add_member(Datatype_Struct* structure, String* id, Datatype* member_type, AST::Node* definition_node = nullptr);
 void type_system_finish_struct(Type_System* type_system, Datatype_Struct* structure);
 void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type);
-void type_system_finish_array(Type_System* type_system, Datatype_Array* array);
 
 
 
@@ -529,7 +507,6 @@ inline Datatype_Type get_datatype_type(Datatype_Slice* unused) { return Datatype
 inline Datatype_Type get_datatype_type(Datatype_Primitive* unused) { return Datatype_Type::PRIMITIVE; }
 inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Datatype_Type::POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Pattern_Variable* unused) { return Datatype_Type::PATTERN_VARIABLE; }
-inline Datatype_Type get_datatype_type(Datatype_Struct_Pattern* base) { return Datatype_Type::STRUCT_PATTERN; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>
