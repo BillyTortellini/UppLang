@@ -1,29 +1,21 @@
-:dder :: fn(a: int, b: int) => int
-    result := a + b
-    return result
 
-fib :: fn(n: int) => int
-    if n < 2
-        return 1
-    return fib(n - 1) + fib(n - 2)
 
-Player :: struct
-    name: ~c_string
+Node :: struct ($T)
+    count: int
+    value: T
 
-TEST :: 15
-SIZE :: TEST * 2
+foo :: fn(node: Node($K))
+    node.count += 1
 
 main :: fn()
-    text := "Hello world!"
-    ~print_string(text)
+    ~print_string("Hello world")
     ~print_line()
     
-    loop (i := 0, i < 10, i += 1)
-        ~print_string("fib(")
-        ~print_i32(i)
-        ~print_string(") = ")
-        ~print_i32(fib(i))
-        ~print_line()
-
-
-
+    x: * int
+    
+    node: Node(int) = .(15, 0)
+    ~print_i32(node.value)
+    ~print_line()
+    
+    bnode: Node(bool) = .(value = true, count = 0)
+    ~print_bool(bnode.value)

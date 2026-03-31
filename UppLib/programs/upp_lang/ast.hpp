@@ -94,6 +94,7 @@ namespace AST
         SWITCH_CASE,           // Expression 
         CONTEXT_CHANGE,        // Changing some operator context
         EXTERN_IMPORT,
+        SIGNATURE,
     };
 
     struct Node
@@ -250,6 +251,14 @@ namespace AST
         bool is_return_type;
     };
 
+    struct Signature
+    {
+        Node base;
+        // If we have a return type, it's the last in this array, and the is_return_type bool is set
+        Dynamic_Array<Parameter*> parameters;
+    };
+
+
     struct Code_Block
     {
         Node base;
@@ -371,11 +380,10 @@ namespace AST
             Module* module;
             Body_Node inferred_function_body;
             struct {
-                Expression* signature;
+                Signature* signature;
                 Body_Node body;
             } function;
-            // If we have a return type, it's the last in this array, and the is_return_type bool is set
-            Dynamic_Array<Parameter*> signature_parameters;
+            Signature* function_signature;
             struct {
                 Optional<Expression*> type_expr;
                 Call_Node* call_node;
@@ -390,7 +398,7 @@ namespace AST
             } array_type;
             Expression* slice_type;
             struct {
-                Dynamic_Array<Parameter*> parameters;
+                Signature* signature;
                 Dynamic_Array<Structure_Member_Node*> members;
                 bool is_union;
             } structure;
@@ -515,6 +523,7 @@ namespace AST
         bool type_correct(Definition_Symbol* base);
         bool type_correct(Switch_Case* base);
         bool type_correct(Statement* base);
+        bool type_correct(Signature* base);
         bool type_correct(Argument* base);
         bool type_correct(Parameter* base);
         bool type_correct(Expression* base);

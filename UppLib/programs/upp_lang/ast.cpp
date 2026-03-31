@@ -20,6 +20,11 @@ namespace AST
 		case Node_Type::CONTEXT_CHANGE:
 		case Node_Type::SUBTYPE_INITIALIZER:
 			break;
+		case Node_Type::SIGNATURE: {
+			auto signature = (Signature*)node;
+			dynamic_array_destroy(&signature->parameters);
+			break;
+		}
 		case Node_Type::STRUCT_MEMBER: {
 			auto member = (Structure_Member_Node*)node;
 			if (!member->is_expression) {
@@ -81,30 +86,16 @@ namespace AST
 				dynamic_array_destroy(&init.values);
 				break;
 			}
-			case Expression_Type::FUNCTION_SIGNATURE: {
-				dynamic_array_destroy(&expr->options.signature_parameters);
-				break;
-			}
 			case Expression_Type::GET_OVERLOAD: {
 				dynamic_array_destroy(&expr->options.get_overload.arguments);
 				break;
 			}
 			case Expression_Type::STRUCTURE_TYPE: {
-				auto& s = expr->options.structure;
-				if (s.parameters.data != 0) {
-					dynamic_array_destroy(&s.parameters);
-				}
-				auto& members = s.members;
-				if (members.data != 0) {
-					dynamic_array_destroy(&members);
-				}
+				dynamic_array_destroy(&expr->options.structure.members);
 				break;
 			}
 			case Expression_Type::ENUM_TYPE: {
-				auto& members = expr->options.enum_members;
-				if (members.data != 0) {
-					dynamic_array_destroy(&members);
-				}
+				dynamic_array_destroy(&expr->options.enum_members);
 				break;
 			}
 			}
@@ -154,6 +145,11 @@ namespace AST
 		case Node_Type::PARAMETER: {
 			auto param = (Parameter*)node;
 			FILL_OPTIONAL(param->type);
+			break;
+		}
+		case Node_Type::SIGNATURE: {
+			auto signature = (Signature*)node;
+			FILL_ARRAY(signature->parameters);
 			break;
 		}
 		case Node_Type::GET_OVERLOAD_ARGUMENT: {
@@ -408,12 +404,12 @@ namespace AST
 				break;
 			}
 			case Expression_Type::FUNCTION_SIGNATURE: {
-				FILL_ARRAY(expr->options.signature_parameters);
+				FILL(expr->options.function_signature);
 				break;
 			}
 			case Expression_Type::STRUCTURE_TYPE: {
 				auto& str = expr->options.structure;
-				FILL_ARRAY(str.parameters);
+				FILL(str.signature);
 				FILL_ARRAY(str.members);
 				break;
 			}
@@ -622,6 +618,11 @@ namespace AST
 			FILL_OPTIONAL(param->type);
 			break;
 		}
+		case Node_Type::SIGNATURE: {
+			auto signature = (Signature*)node;
+			FILL_ARRAY(signature->parameters);
+			break;
+		}
 		case Node_Type::GET_OVERLOAD_ARGUMENT: {
 			auto arg = (Get_Overload_Argument*)node;
 			FILL_OPTIONAL(arg->type_expr);
@@ -808,12 +809,12 @@ namespace AST
 				break;
 			}
 			case Expression_Type::FUNCTION_SIGNATURE: {
-				FILL_ARRAY(expr->options.signature_parameters);
+				FILL(expr->options.function_signature);
 				break;
 			}
 			case Expression_Type::STRUCTURE_TYPE: {
 				auto& str = expr->options.structure;
-				FILL_ARRAY(str.parameters);
+				FILL(str.signature);
 				FILL_ARRAY(str.members);
 				break;
 			}
@@ -1136,6 +1137,10 @@ namespace AST
 			string_append_string(str, param->name);
 			break;
 		}
+		case Node_Type::SIGNATURE: {
+			string_append_formated(str, "SIGNATURE ");
+			break;
+		}
 		case Node_Type::EXPRESSION:
 		{
 			auto expr = (Expression*)base;
@@ -1348,6 +1353,9 @@ namespace AST
 		}
 		bool type_correct(Parameter* base) {
 			return base->base.type == Node_Type::PARAMETER;
+		}
+		bool type_correct(Signature* base) {
+			return base->base.type == Node_Type::SIGNATURE;
 		}
 		bool type_correct(Expression* base) {
 			return base->base.type == Node_Type::EXPRESSION;

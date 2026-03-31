@@ -110,6 +110,7 @@ struct Compilation_Data
     Compilation_Unit* main_unit;
     Dynamic_Array<Compilation_Unit*> compilation_units;
     Dynamic_Array<Compiler_Error_Info> compiler_errors; // List of parser and semantic errors
+    Dynamic_Array<Semantic_Error> semantic_errors;
 
     // Program
     Dynamic_Array<Upp_Function*> functions;
@@ -139,7 +140,6 @@ struct Compilation_Data
     Workload_Root* root_workload;
     Symbol_Table* root_symbol_table;
     Upp_Module* builtin_module;
-    Dynamic_Array<Semantic_Error> semantic_errors;
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;

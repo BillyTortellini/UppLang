@@ -1,9 +1,23 @@
+ - Remove bake-workload
+    #bake needs to wait for bake, seems stupid...
+ - Lambda functions also shouldn't have own workload
+    fn smth and other stuff should not work
+    expression function never has a name
+
+Poly-Base analysis:
+ - Allow access to poly-structurs like normal types
+
+add_cast(from, to, function, take_pointer, take_pointer)
+add_cast([$C]$T, []$T, basic_cast) --> Array_To_Slice cast
+add_cast($T, Any, basic_cast) --> To_Any cast
+~builtin_cast
 
 TODO:
 -----
  - Create base-analysis for poly-header and poly-struct as instance, so we have something to analyse!
     --> Probably want to add to semantic-context that we cannot spawn new workloads (functions, structs, bakes, whatever)
- - Syntax-Editor pass-fitler should traverse all passes
+        This could also be used for calls from editor, where we need a semantic context
+ - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
 
  - In function call we could add the parameter names to code-completion
  - Think about differnece between comptime-value and datatype
@@ -12,11 +26,14 @@ TODO:
 
 DONE:
 -----
+ - Semantic-Context can disable workload-creation, error-logging
+ - Remove error-checkpoint
+ - Bug-Fixes with polymorphism
+
+
 Rough Plan:
  - Language Features?
     * Remove optional pointers (maybe)
-    * Subtype-Initializer for Hierarchy
-        - Also maybe new syntax for subtype accesses, .> and .<
     * break statement with if, loop, switch, block
         break if, break else, break loop
     * Operator_Context

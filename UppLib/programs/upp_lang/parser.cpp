@@ -1278,7 +1278,7 @@ namespace Parser
 		{
 			if (!test_token(Token_Type::IDENTIFIER) && !test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER) && 
 				!test_token(Token_Type::DEFINE_COMPTIME) &&
-				!test_token(Token_Type::COLON) && ! test_token(Token_Type::DEFINE_INFER)) {
+				!test_token(Token_Type::COLON) && !test_token(Token_Type::DEFINE_INFER)) {
 				return nullptr;
 			}
 
@@ -1966,6 +1966,34 @@ namespace Parser
 		PARSE_SUCCESS(result);
 	}
 
+	Signature* parse_signature(Node* parent, bool allow_return_type)
+	{
+		CHECKPOINT_SETUP;
+
+		auto result = allocate_base<Signature>(parent, Node_Type::SIGNATURE);
+		result->parameters = dynamic_array_create<Parameter*>();
+   		auto add_parameter = [](Node* parent, Node* child) {
+   			dynamic_array_push_back(&downcast<Signature>(parent)->parameters, downcast<Parameter>(child));
+ 		};
+		if (!test_token(Token_Type::PARENTHESIS_OPEN)) {
+			PARSE_SUCCESS(result);
+		}
+
+   		parse_list_items(upcast(result), wrapper_parse_parameter, add_parameter);
+		if (allow_return_type && test_token(Token_Type::ARROW)) 
+		{
+			advance_token();
+			auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
+			return_param->is_comptime = false;
+			return_param->is_return_type = true;
+			return_param->name = parser.predefined_ids->return_type_name;
+			return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+			dynamic_array_push_back(&result->parameters, return_param);
+		}
+
+		PARSE_SUCCESS(result);
+	}
+
 	Expression* parse_single_expression_no_postop(Node* parent)
 	{
 		auto& ids = *parser.predefined_ids;
@@ -2246,24 +2274,18 @@ namespace Parser
 		{
 			result->type = Expression_Type::STRUCTURE_TYPE;
 			result->options.structure.members = dynamic_array_create<Structure_Member_Node*>();
-			result->options.structure.parameters = dynamic_array_create<Parameter*>();
 			result->options.structure.is_union = test_token(Token_Type::UNION);
 			advance_token();
 
 			// Parse struct parameters
-			if (test_token(Token_Type::PARENTHESIS_OPEN))
-			{
-				auto add_parameter = [](Node* parent, Node* child) {
-					dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.parameters, downcast<Parameter>(child));
-					};
-				parse_list_items(upcast(result), wrapper_parse_parameter, add_parameter);
-			}
+			result->options.structure.signature = parse_signature(upcast(result), false);
 
 			if (!on_follow_block()) {
 				log_error_range_offset("Expected follow block", 0);
 				PARSE_SUCCESS(result);
 			}
 
+			// Parse members and subtypes
 			auto add_member = [](Node* parent, Node* child) {
 				dynamic_array_push_back(&downcast<Expression>(parent)->options.structure.members, downcast<Structure_Member_Node>(child));
 				};
@@ -2310,47 +2332,19 @@ namespace Parser
 			PARSE_SUCCESS(result);
 		}
 		case Token_Type::FUNCTION_POINTER_KEYWORD:
+		{
+			advance_token();
+			result->type = Expression_Type::FUNCTION_SIGNATURE;
+			result->options.function_signature = parse_signature(upcast(result), true);
+			PARSE_SUCCESS(result);
+		}
 		case Token_Type::FUNCTION_KEYWORD:
 		{
-			AST::Expression* signature = result;
-			if (test_token(Token_Type::FUNCTION_KEYWORD)) {
-				result->type = Expression_Type::FUNCTION;
-				signature = allocate_base<AST::Expression>(upcast(result), Node_Type::EXPRESSION);
-				result->options.function.signature = signature;
-			}
-			else {
-				signature = result;
-			}
-
-			// Parse signature
 			advance_token();
-			signature->type = Expression_Type::FUNCTION_SIGNATURE;
-			signature->options.signature_parameters = dynamic_array_create<Parameter*>();
-			if (test_token(Token_Type::PARENTHESIS_OPEN))
-			{
-				auto add_parameter = [](Node* parent, Node* child) {
-					dynamic_array_push_back(&downcast<Expression>(parent)->options.signature_parameters, downcast<Parameter>(child));
-					};
-				parse_list_items(upcast(signature), wrapper_parse_parameter, add_parameter);
-
-				if (test_token(Token_Type::ARROW))
-				{
-					advance_token();
-					auto return_param = allocate_base<Parameter>(parent, Node_Type::PARAMETER);
-					return_param->is_comptime = false;
-					return_param->is_return_type = true;
-					return_param->name = ids.return_type_name;
-					return_param->type = optional_make_success(parse_expression_or_error_expr(upcast(result)));
-					dynamic_array_push_back(&signature->options.signature_parameters, return_param);
-				}
-			}
-			node_finalize_range(upcast(signature));
-
-			// Parse function body if the expression is not just a type
-			if (result->type == Expression_Type::FUNCTION) {
-				result->options.function.body.is_expression = false;
-				result->options.function.body.block = parse_code_block(upcast(result), nullptr);
-			}
+			result->type = Expression_Type::FUNCTION;
+			result->options.function.signature = parse_signature(upcast(result), true);
+			result->options.function.body.is_expression = false;
+			result->options.function.body.block = parse_code_block(upcast(result), nullptr);
 			PARSE_SUCCESS(result);
 		}
 		case Token_Type::IDENTIFIER:

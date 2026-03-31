@@ -37,8 +37,8 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::_OPERATORS_START_: return "_OPERATORS_START_";
     case Token_Type::ADDITION: return "+";
     case Token_Type::SUBTRACTION: return "-";
-    case Token_Type::DIVISON: return "*";
-    case Token_Type::MULTIPLY: return "/";
+    case Token_Type::DIVISON: return "/";
+    case Token_Type::MULTIPLY: return "*";
     case Token_Type::MODULO: return "%";
 
     case Token_Type::EQUALS: return "==";

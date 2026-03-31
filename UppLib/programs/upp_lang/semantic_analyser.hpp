@@ -98,7 +98,7 @@ struct Upp_Function
     } options;
 
     bool is_extern;
-    bool contains_errors; // NOTE: contains_errors (No errors in this function) != is_runnable (This + all called functions are runnable)
+    bool contains_errors;
 
     // Code-Generation
     IR_Code_Block* ir_block;
@@ -155,6 +155,10 @@ struct Semantic_Context
     Symbol_Table* current_symbol_table;
     Symbol_Access_Level symbol_access_level;
     Analysis_Pass* current_pass;
+
+    bool can_create_workloads;
+    bool error_logging_enabled;
+    bool error_flagging_enabled;
 
     // Current position info's
     Upp_Function* current_function;
@@ -320,7 +324,7 @@ struct Poly_Header
     DynSet<Poly_Instance*> instances;
 
     // Origin infos
-    Dynamic_Array<AST::Parameter*> parameter_nodes;
+    AST::Signature* signature_node;
     Symbol_Table* base_parameter_table;
     String* name; // Either struct or function name, used for dot-calls auto id
     bool is_function;
@@ -335,7 +339,7 @@ struct Poly_Instance
     // Note: Because of implicit polymorphism all parameter-types need to be stored for differentiation
     Poly_Header* header;
     Array<Pattern_Variable_State> variable_states;
-    Array<Datatype*> parameter_types;
+    Array<Datatype*> parameter_types; // Does not contain implicit parameters, e.g. size == parameter_nodes.size
     union {
         Upp_Function* function_instance;
         Upp_Struct*   struct_instance;
