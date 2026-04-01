@@ -4,18 +4,22 @@ Node :: struct ($T)
     count: int
     value: T
 
-foo :: fn(node: Node($K))
+foo :: fn(node: *Node($K))
     node.count += 1
 
+bar :: fn($C: int)
+    x: int = C
+    z := C.asdf
+    if true
+        y: int = C
+
 main :: fn()
-    ~print_string("Hello world")
-    ~print_line()
+    // bar(5)
+    x: int = 5
     
-    x: * int
-    
-    node: Node(int) = .(15, 0)
+    node: Node(int) = .(15, 2)
+    foo(node-*)
     ~print_i32(node.value)
     ~print_line()
-    
-    bnode: Node(bool) = .(value = true, count = 0)
-    ~print_bool(bnode.value)
+    ~print_i32(node.count)
+    ~print_line()

@@ -152,7 +152,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
             for (int i = 0; i < compilation_data->functions.size; i++) {
                 Upp_Function* function = compilation_data->functions[i];
                 if (function->ir_block != nullptr) {
-                    bytecode_generator_compile_function(compilation_data->bytecode_generator, function);
+                    bytecode_generator_compile_function(compilation_data, function);
                 }
             }
         }
@@ -207,7 +207,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
                     String result_str = string_create(32);
                     SCOPE_EXIT(string_destroy(&result_str));
                     if (do_bytecode_gen && output_bytecode) {
-                        bytecode_generator_append_bytecode_to_string(compilation_data->bytecode_generator, &result_str);
+                        bytecode_generator_append_bytecode_to_string(compilation_data, &result_str);
                         logg("\n----------------BYTECODE_GENERATOR RESULT---------------: \n%s\n", result_str.characters);
                     }
                 }
@@ -305,11 +305,13 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
         }
         else
         {
-            Bytecode_Thread* thread = bytecode_thread_create(compilation_data, 10000);
-            SCOPE_EXIT(bytecode_thread_destroy(thread));
+            Arena* scratch_arena = &compilation_data->tmp_arena;
+            auto checkpoint = scratch_arena->make_checkpoint();
+            SCOPE_EXIT(checkpoint.rewind());
+
+            Bytecode_Thread* thread = bytecode_thread_create(compilation_data, scratch_arena, 10000, 1024 * 64, 1024 * 8, true);
             bytecode_thread_set_initial_state(thread, compilation_data->entry_function);
-            bytecode_thread_execute(thread);
-            return thread->exit_code;
+            return bytecode_thread_execute(thread);
         }
     }
     return exit_code_make(Exit_Code_Type::COMPILATION_FAILED);

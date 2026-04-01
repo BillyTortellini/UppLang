@@ -184,7 +184,8 @@ enum class Member_Access_Type
 
 enum class Exit_Code_Type
 {
-	SUCCESS,
+	SUCCESS, // Program executed successfully
+	RUNNING, // Bytecode-thread can continue, probably only used during stepping
 	COMPILATION_FAILED, // Code did not because there were compile errors
 	CODE_ERROR,
 	EXECUTION_ERROR, // Stack overflow, return value overflow, instruction limit reached
@@ -199,7 +200,12 @@ const char* exit_code_type_as_string(Exit_Code_Type type);
 struct Exit_Code
 {
 	Exit_Code_Type type;
-	const char* error_msg; // May be null
+	union 
+	{
+		Datatype* waiting_for_type_finish_type;
+		Upp_Function* waiting_for_function;
+		const char* error_msg; // May be null
+	} options;
 };
 
 Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg = 0);
@@ -234,6 +240,7 @@ struct Call_Signature
     bool is_registered; // For debugging/deduplication
 
     Optional<Datatype*> return_type();
+	int param_count(bool with_return = false);
 };
 
 

@@ -3481,7 +3481,6 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 	{
 	case Analysis_Workload_Type::FUNCTION_BODY:   function = ((Workload_Function_Body*)workload)->function; break;
 	case Analysis_Workload_Type::FUNCTION_HEADER: function = ((Workload_Function_Header*)workload)->function; break;
-	case Analysis_Workload_Type::BAKE_ANALYSIS:   function = ((Workload_Bake*)workload)->bake_function; break;
 	case Analysis_Workload_Type::STRUCT_BODY:     structure = ((Workload_Structure_Body*)workload)->upp_struct; break;
 	case Analysis_Workload_Type::STRUCT_HEADER:   structure = ((Workload_Structure_Header*)workload)->upp_struct; break;
 	}
@@ -8012,11 +8011,7 @@ void syntax_editor_render()
 					}
 
 					Upp_Function* upp_function = info.upp_function;
-					AST::Node* function_origin_node = nullptr;
-					function_origin_node = upcast(upp_function->function_node);
-					if (function_origin_node == nullptr && upp_function->bake_workload != nullptr) {
-						function_origin_node = upcast(upp_function->bake_workload->bake_node);
-					}
+					AST::Node* function_origin_node = upcast(upp_function->function_node);
 					if (function_origin_node == nullptr && upp_function->extern_definition_workload != nullptr) {
 						auto symbol = upp_function->extern_definition_workload->symbol;
 						if (symbol != nullptr) {

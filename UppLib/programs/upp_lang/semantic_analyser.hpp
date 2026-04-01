@@ -28,7 +28,6 @@ struct Workload_Base;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
 struct Workload_Structure_Body;
-struct Workload_Bake;
 struct Workload_Function_Header;
 struct Workload_Function_Body;
 
@@ -83,11 +82,10 @@ struct Upp_Function
     int function_index; // Index in functions array
     String* name; // Symbol name, or "bake_function"/"lambda_function"
     Symbol* symbol; // May be nullptr if function is anonymous
-    AST::Expression* function_node;
+    AST::Expression* function_node; // Either bake or function expr
 
     Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
     Workload_Function_Body* body_workload;
-    Workload_Bake* bake_workload;
     Workload_Definition* extern_definition_workload;
     Analysis_Pass* body_pass; // Used later in ir-generator
 
@@ -104,6 +102,7 @@ struct Upp_Function
     IR_Code_Block* ir_block;
     int bytecode_start_instruction;
     int bytecode_end_instruction;
+    int bytecode_maximum_stack_offset;
 };
 
 struct Upp_Struct
@@ -157,11 +156,13 @@ struct Semantic_Context
     Analysis_Pass* current_pass;
 
     bool can_create_workloads;
+    bool can_execute_bake;
     bool error_logging_enabled;
     bool error_flagging_enabled;
 
     // Current position info's
     Upp_Function* current_function;
+    Datatype* bake_return_datatype;
     Expression_Info* current_expression;
     bool statement_reachable;
 
@@ -200,8 +201,6 @@ enum class Analysis_Workload_Type
     STRUCT_HEADER,
     STRUCT_BODY,
 
-    BAKE_ANALYSIS,
-
     DEFINITION,
 };
 
@@ -219,7 +218,6 @@ struct Workload_Base
     // Errors
     int real_error_count;
     int errors_due_to_unknown_count;
-    int error_checkpoint_count; // If error_checkpoint_count > 0, then errors aren't logged...
 
     // Polymorphic info
     int polymorphic_instanciation_depth; 
@@ -278,19 +276,6 @@ struct Workload_Definition
         AST::Extern_Import* extern_import;
     } options;
 };
-
-struct Workload_Bake
-{
-    Workload_Base base;
-
-    Symbol_Table* symbol_table;
-    AST::Expression* bake_node;
-
-    Upp_Function* bake_function;
-    Datatype* result_type;
-    Optional<Upp_Constant> result;
-};
-
 
 
 
@@ -532,7 +517,6 @@ enum class Expression_Result_Type
     HARDCODED_FUNCTION,
     POLYMORPHIC_STRUCT, 
     POLYMORPHIC_FUNCTION,
-    POLYMORPHIC_PATTERN,
     NOTHING  // Functions returning void
 };
 
@@ -813,7 +797,6 @@ Semantic_Context semantic_context_make(
     Symbol_Table* symbol_table, Symbol_Access_Level symbol_access_level,
     Analysis_Pass* analysis_pass, Arena* scratch_arena
 );
-Upp_Function* analysis_workload_try_get_upp_function(Workload_Base* workload);
 
 Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
 Upp_Global* compilation_data_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern);

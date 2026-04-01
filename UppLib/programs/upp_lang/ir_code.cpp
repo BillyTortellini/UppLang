@@ -1169,7 +1169,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case Expression_Result_Type::HARDCODED_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_FUNCTION:
     case Expression_Result_Type::POLYMORPHIC_STRUCT:
-    case Expression_Result_Type::POLYMORPHIC_PATTERN:
         panic("must not happen");
     case Expression_Result_Type::NOTHING: // Nothing also needs to generate the expression...
     case Expression_Result_Type::VALUE:
@@ -2678,7 +2677,7 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
     if (function->contains_errors || function->is_extern) {
         return;
     }
-    if (function->poly_type == Poly_Type::BASE) {
+    if (function->poly_type == Poly_Type::BASE || function->poly_type == Poly_Type::PARTIAL) {
         return;
     }
 

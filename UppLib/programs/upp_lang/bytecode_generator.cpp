@@ -6,6 +6,56 @@
 #include "ast.hpp"
 #include "editor_analysis_info.hpp"
 
+struct Goto_Label
+{
+    int jmp_instruction;
+    int label_index;
+};
+
+// Either parameter or register
+struct Stack_Location
+{
+    void* address; // Either Upp_Function* or IR_Register*
+    int index;
+};
+
+Stack_Location stack_location_make_parameter(Upp_Function* function, int index) {
+    Stack_Location result;
+    result.address = (void*)function;
+    result.index = index;
+    return result;
+}
+
+Stack_Location stack_location_make_register(IR_Code_Block* ir_block, int index) {
+    Stack_Location result;
+    result.address = (void*)ir_block;
+    result.index = index;
+    return result;
+}
+
+u64 hash_stack_location(Stack_Location* loc) {
+    return hash_combine(hash_pointer(loc->address), hash_i32(&loc->index));
+}
+
+bool equals_stack_location(Stack_Location* a, Stack_Location* b) {
+    return a->address == b->address && a->index == b->index;
+}
+
+struct Bytecode_Generator
+{
+    Compilation_Data* compilation_data;
+
+    Upp_Function* function;
+    IR_Code_Block* current_block;
+    int current_stack_offset;
+
+    DynTable<Stack_Location, int> stack_locations; // For registers and parameters/return-value
+    DynTable<IR_Code_Block*, int> continue_location;
+    DynTable<IR_Code_Block*, int> break_location;
+    DynTable<int, int> label_locations;
+    DynArray<Goto_Label> fill_out_gotos;
+};
+
 int align_offset_next_multiple(int offset, int alignment) 
 {
     if (alignment == 0) {
@@ -19,44 +69,6 @@ int align_offset_next_multiple(int offset, int alignment)
     }
     return offset + (alignment - dist);
 }
-
-Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data)
-{
-    Bytecode_Generator* generator = new Bytecode_Generator;
-    generator->compilation_data = compilation_data;
-
-    // Code
-    generator->instructions = dynamic_array_create<Bytecode_Instruction>(64);
-
-    // Code Information
-    generator->function_parameter_stack_offset_index = hashtable_create_pointer_empty<Upp_Function*, int>(64);
-    generator->code_block_register_stack_offset_index = hashtable_create_pointer_empty<IR_Code_Block*, int>(64);
-    generator->stack_offsets = dynamic_array_create<Array<int>>(32);
-
-    // Fill outs
-    generator->fill_out_gotos = dynamic_array_create<Goto_Label>(64);
-    generator->label_locations = dynamic_array_create<int>(64);
-
-    return generator;
-}
-
-void bytecode_generator_destroy(Bytecode_Generator* generator)
-{
-    // Code
-    dynamic_array_destroy(&generator->instructions);
-
-    // Code Information
-    hashtable_destroy(&generator->function_parameter_stack_offset_index);
-    hashtable_destroy(&generator->code_block_register_stack_offset_index);
-    for (int i = 0; i < generator->stack_offsets.size; i++) {
-        array_destroy(&generator->stack_offsets[i]);
-    }
-    dynamic_array_destroy(&generator->stack_offsets);
-
-    // Fill outs
-    dynamic_array_destroy(&generator->fill_out_gotos);
-    dynamic_array_destroy(&generator->label_locations);
-} 
 
 
 
@@ -102,8 +114,8 @@ Bytecode_Instruction instruction_make_4(Instruction_Type type, int src_1, int sr
 }
 
 int bytecode_generator_add_instruction(Bytecode_Generator* generator, Bytecode_Instruction instruction) {
-    dynamic_array_push_back(&generator->instructions, instruction);
-    return generator->instructions.size - 1;
+    generator->compilation_data->bytecode.push_back(instruction);
+    return generator->compilation_data->bytecode.size - 1;
 }
 
 
@@ -130,18 +142,15 @@ int data_access_is_completely_on_stack(Bytecode_Generator* generator, IR_Data_Ac
     {
     case IR_Data_Access_Type::REGISTER: 
     {
-        Array<int>* register_offsets = &generator->stack_offsets[
-            *hashtable_find_element(&generator->code_block_register_stack_offset_index, access->option.register_access.definition_block)
-        ];
-        return register_offsets->data[access->option.register_access.index];
+        return *generator->stack_locations.find(
+            stack_location_make_register(access->option.register_access.definition_block, access->option.register_access.index)
+        );
     }
     case IR_Data_Access_Type::PARAMETER: 
     {
-        int* stack_offset_index = hashtable_find_element(
-            &generator->function_parameter_stack_offset_index, access->option.parameter.function
+        return *generator->stack_locations.find(
+            stack_location_make_parameter(access->option.parameter.function, access->option.parameter.index)
         );
-        Array<int>* parameter_offsets = &generator->stack_offsets[*stack_offset_index];
-        return parameter_offsets->data[access->option.parameter.index];
     }
     case IR_Data_Access_Type::MEMBER_ACCESS:
     {
@@ -470,7 +479,6 @@ void bytecode_generator_add_instruction_and_set_destination(Bytecode_Generator* 
 
     int pointer_offset = data_access_get_pointer_to_value(generator, destination, -1);
     bytecode_generator_add_instruction(generator, instruction_make_3(Instruction_Type::WRITE_MEMORY, pointer_offset, value_offset, memory_info.size));
-    return;
 }
 
 void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Access* destination, IR_Data_Access* source)
@@ -564,23 +572,17 @@ const char* bytecode_type_as_string(Bytecode_Type type)
 
 void push_exit_instruction(Bytecode_Generator* generator, Exit_Code exit_code)
 {
-    const char* msg = exit_code.error_msg;
-    u64 address = (u64)msg;
-    int lower_32bit = (int) (address & 0xFFFFFFFF);
-    int high_32_bit = (int) ((address >> 32) & 0xFFFFFFFF);
-    bytecode_generator_add_instruction(generator,
-        instruction_make_3(Instruction_Type::EXIT, (int)exit_code.type, lower_32bit, high_32_bit)
-    );
+    assert(sizeof(Exit_Code) <= sizeof(int) * 4, "");
+    Bytecode_Instruction instr = instruction_make_0(Instruction_Type::EXIT);
+    memory_copy(&instr.op1, &exit_code, sizeof(Exit_Code));
+    generator->compilation_data->bytecode.push_back(instr);
 }
 
-Exit_Code exit_code_from_exit_instruction(const Bytecode_Instruction& exit_instr)
+Exit_Code exit_code_from_exit_instruction(Bytecode_Instruction& exit_instr)
 {
     assert(exit_instr.instruction_type == Instruction_Type::EXIT, "");
     Exit_Code result;
-    result.type = (Exit_Code_Type)exit_instr.op1;
-
-    u64 address = ((u64)(u32)exit_instr.op2) | (((u64)(u32)exit_instr.op3) << 32);
-    result.error_msg = (const char*)address;
+    memory_copy(&result, &exit_instr.op1, sizeof(Exit_Code));
     return result;
 }
 
@@ -588,31 +590,24 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 {
     auto compilation_data = generator->compilation_data;
     auto& types = generator->compilation_data->type_system->predefined_types;
+    auto& instructions = generator->compilation_data->bytecode;
+    int& stack_offset = generator->current_stack_offset;
 
-    // Generate Stack offsets
     int rewind_stack_offset = generator->current_stack_offset;
     SCOPE_EXIT(
-        generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
+        generator->function->bytecode_maximum_stack_offset = math_maximum(
+            generator->function->bytecode_maximum_stack_offset, generator->current_stack_offset
+        );
         generator->current_stack_offset = rewind_stack_offset;
     );
+
+    // Generate Stack offsets for registers
+    for (int i = 0; i < code_block->registers.size; i++)
     {
-        // Calcuate offsets for each register
-        Array<int> register_stack_offsets = array_create<int>(code_block->registers.size);
-        int& stack_offset = generator->current_stack_offset;
-        for (int i = 0; i < code_block->registers.size; i++)
-        {
-            Datatype* signature = code_block->registers[i].type;
-            assert(signature->memory_info.available, "");
-            auto& memory_info = signature->memory_info.value;
-
-            stack_offset = align_offset_next_multiple(stack_offset, memory_info.alignment);
-            register_stack_offsets[i] = stack_offset;
-            stack_offset += memory_info.size;
-        }
-
-        // Store offset info
-        dynamic_array_push_back(&generator->stack_offsets, register_stack_offsets);
-        hashtable_insert_element(&generator->code_block_register_stack_offset_index, code_block, generator->stack_offsets.size - 1);
+        Datatype* reg_datatype = code_block->registers[i].type;
+        int reg_offset = bytecode_generator_create_temporary_stack_offset(generator, reg_datatype);
+        bool worked = generator->stack_locations.insert(stack_location_make_register(code_block, i), reg_offset);
+        assert(worked, "");
     }
 
     const int PLACEHOLDER = 0;
@@ -626,7 +621,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         // and not through temporary values
         int rewind_stack_offset = generator->current_stack_offset;
         SCOPE_EXIT(
-            generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
+            generator->function->bytecode_maximum_stack_offset = math_maximum(
+                generator->function->bytecode_maximum_stack_offset, generator->current_stack_offset);
             generator->current_stack_offset = rewind_stack_offset;
         );
 
@@ -651,26 +647,29 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 break;
             default: panic("Error");
             }
+            Optional<Datatype*> return_type = signature->return_type();
 
             // Prepare new stack frame
-            generator->current_stack_offset = align_offset_next_multiple(generator->current_stack_offset, 16); // 16 byte should be the highest possible alignment
-            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
-            bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // For previous stack address
+            int& stack_offset = generator->current_stack_offset;
+            stack_offset = align_offset_next_multiple(stack_offset, 16); // Just to be sure that all parameters will be aligned correctly
+            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // Return instruction-index
+            bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // Previous stack-frame
+
+            // Allocate buffer for return-value
+            int return_value_stack_offset = stack_offset;
+            if (return_type.available) {
+                return_value_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, return_type.value);
+            }
 
             // Push all arguments as parameters into new stack-frame
-            int next_argument_offset = generator->current_stack_offset;
             for (int i = 0; i < signature->parameters.size && i != signature->return_type_index; i++)
             {
                 Datatype* parameter_type = signature->parameters[i].datatype;
-                assert(parameter_type->memory_info.available, "");
-                auto& param_memory = parameter_type->memory_info.value;
-
-                next_argument_offset = align_offset_next_multiple(next_argument_offset, param_memory.alignment);
-                generator->current_stack_offset = next_argument_offset; // I think I'm allowed to reset the temporaray values from previous param here
-                data_access_read_value(generator, call->arguments[i], next_argument_offset);
-                next_argument_offset += param_memory.size;
+                int param_value_offset = bytecode_generator_create_temporary_stack_offset(generator, parameter_type);
+                int rewind_to_offset = stack_offset;
+                data_access_read_value(generator, call->arguments[i], param_value_offset);
+                stack_offset = rewind_to_offset; // data_access_read_value may generate temporary stack-variables, so we need to reset this back to get correct stack-frame
             }
-            generator->current_stack_offset = next_argument_offset;
 
             // Generate call instruction
             switch (call->call_type)
@@ -699,11 +698,17 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             // Load return value to destination
-            if (signature->return_type().available) {
+            if (return_type.available) 
+            {
                 assert(signature->return_type().value->memory_info.available, "");
                 bytecode_generator_add_instruction_and_set_destination(
                     generator, call->destination,
-                    instruction_make_2(Instruction_Type::LOAD_RETURN_VALUE, PLACEHOLDER, signature->return_type().value->memory_info.value.size)
+                    instruction_make_3(
+                        Instruction_Type::MOVE_STACK_DATA, 
+                        PLACEHOLDER, // Set to call->destination
+                        return_value_stack_offset,
+                        return_type.value->memory_info.value.size // Size of return-type
+                    )
                 );
             }
             break;
@@ -744,7 +749,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             for (int i = 0; i < switch_instr->cases.size; i++)
             {
                 IR_Switch_Case* switch_case = &switch_instr->cases[i];
-                generator->instructions[case_jump_indices[i]].op1 = generator->instructions.size;
+                instructions[case_jump_indices[i]].op1 = instructions.size;
                 bytecode_generator_generate_code_block(generator, switch_case->block);
                 dynamic_array_push_back(&jmp_to_switch_end_indices,
                     bytecode_generator_add_instruction(generator, instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER))
@@ -753,7 +758,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
 
             // Set jumps to end of switch
             for (int i = 0; i < jmp_to_switch_end_indices.size; i++) {
-                generator->instructions[jmp_to_switch_end_indices[i]].op1 = generator->instructions.size;
+                instructions[jmp_to_switch_end_indices[i]].op1 = instructions.size;
             }
             break;
         }
@@ -771,15 +776,15 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 generator,
                 instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER)
             );
-            generator->instructions[jmp_to_else_instr_index].op1 = generator->instructions.size;
+            instructions[jmp_to_else_instr_index].op1 = instructions.size;
             bytecode_generator_generate_code_block(generator, if_instr->false_branch);
-            generator->instructions[jmp_over_else_instruction_index].op1 = generator->instructions.size;
+            instructions[jmp_over_else_instruction_index].op1 = instructions.size;
             break;
         }
         case IR_Instruction_Type::WHILE:
         {
             IR_Instruction_While* while_instr = &instr->options.while_instr;
-            int condition_evaluation_start = generator->instructions.size;
+            int condition_evaluation_start = instructions.size;
             bytecode_generator_generate_code_block(generator, while_instr->condition_code);
             // Note: Even though generate_code_block resets the temporaray_stack_offset,
             // it should still be possible to read the condition value right afterwards, as no other instruction may overwrite it in the meantime
@@ -793,7 +798,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 generator,
                 instruction_make_1(Instruction_Type::JUMP, condition_evaluation_start)
             );
-            generator->instructions[jmp_to_end_instruction_index].op1 = generator->instructions.size;
+            instructions[jmp_to_end_instruction_index].op1 = instructions.size;
 
             break;
         }
@@ -801,10 +806,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             bytecode_generator_generate_code_block(generator, instr->options.block);
             break;
         case IR_Instruction_Type::LABEL: {
-            while (generator->label_locations.size <= instr->options.label_index) {
-                dynamic_array_push_back(&generator->label_locations, 0);
-            }
-            generator->label_locations[instr->options.label_index] = generator->instructions.size;
+            generator->label_locations.insert(instr->options.label_index, instructions.size);
             break;
         }
         case IR_Instruction_Type::GOTO: {
@@ -813,9 +815,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 instruction_make_1(Instruction_Type::JUMP, PLACEHOLDER)
             );
             Goto_Label fill_out;
-            fill_out.jmp_instruction = generator->instructions.size - 1 ;
+            fill_out.jmp_instruction = instructions.size - 1 ;
             fill_out.label_index = instr->options.label_index;
-            dynamic_array_push_back(&generator->fill_out_gotos, fill_out);
+            generator->fill_out_gotos.push_back(fill_out);
             break;
         }
         case IR_Instruction_Type::RETURN:
@@ -828,23 +830,18 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 push_exit_instruction(generator, return_instr->options.exit_code);
                 break;
             }
-            case IR_Instruction_Return_Type::RETURN_DATA: {
+            case IR_Instruction_Return_Type::RETURN_DATA: 
+            {
                 Datatype* return_sig = return_instr->options.return_value->datatype;
                 assert(return_sig->memory_info.available, "");
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(Instruction_Type::RETURN,
-                        data_access_read_value(generator, return_instr->options.return_value),
-                        return_sig->memory_info.value.size
-                    )
-                );
+
+                int return_value_stack_offset = 16; // Return value is always after [return-instr] [stack_pointer]
+                data_access_read_value(generator, return_instr->options.return_value, return_value_stack_offset);
+                bytecode_generator_add_instruction(generator, instruction_make_0(Instruction_Type::RETURN));
                 break;
             }
             case IR_Instruction_Return_Type::RETURN_EMPTY:
-                bytecode_generator_add_instruction(
-                    generator,
-                    instruction_make_2(Instruction_Type::RETURN, 0, 0)
-                );
+                bytecode_generator_add_instruction(generator, instruction_make_0(Instruction_Type::RETURN));
                 break;
             }
             break;
@@ -989,48 +986,62 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
     }
 }
 
-void bytecode_generator_compile_function(Bytecode_Generator* generator, Upp_Function* function)
+void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp_Function* function)
 {
     if (function->bytecode_start_instruction != -1) return; // Function already generated
     assert(function->ir_block != nullptr, "ir-block must exist");
 
+    Arena* tmp_arena = &compilation_data->tmp_arena;
+    auto checkpoint = tmp_arena->make_checkpoint();
+    SCOPE_EXIT(checkpoint.rewind());
+
+    Bytecode_Generator generator;
+    generator.compilation_data = compilation_data;
+    generator.function = function;
+    generator.current_block = nullptr;
+    generator.current_stack_offset = 0;
+    generator.stack_locations   = DynTable<Stack_Location, int>::create(tmp_arena, hash_stack_location, equals_stack_location);
+    generator.continue_location = DynTable<IR_Code_Block*, int>::create_pointer(tmp_arena);
+    generator.break_location    = DynTable<IR_Code_Block*, int>::create_pointer(tmp_arena);
+	generator.fill_out_gotos    = DynArray<Goto_Label>::create(tmp_arena);
+    generator.label_locations   = DynTable<int, int>::create(tmp_arena, hash_i32, equals_i32);
+
+    auto& stack_offset = generator.current_stack_offset;
+    auto& instructions = compilation_data->bytecode;
+
     // Generate parameter offsets
     {
         auto& function_parameters = function->signature->parameters;
-        Array<int> parameter_offsets = array_create<int>(function_parameters.size);
-
-        int stack_offset = 16; // Stack starts with [Return_Address] [Old_Stack_Pointer], then parameters
+        stack_offset = 16; // Stack starts with [Return_Address] [Old_Stack_Pointer], then parameters
+        auto return_type_opt = function->signature->return_type();
+        if (return_type_opt.available) {
+            // Note: we don't store return-type in stack-locations, because we shouldn't be able to access it
+            bytecode_generator_create_temporary_stack_offset(&generator, return_type_opt.value);
+        }
         for (int i = 0; i < function_parameters.size; i++)
         {
-            Datatype* signature = function_parameters[i].datatype;
-            assert(signature->memory_info.available, "");
-            auto& memory_info = signature->memory_info.value;
-
-            stack_offset = align_offset_next_multiple(stack_offset, memory_info.alignment);
-            parameter_offsets[i] = stack_offset;
-            stack_offset += memory_info.size;
+            if (function->signature->return_type_index == i) continue;
+            int param_offset = bytecode_generator_create_temporary_stack_offset(&generator, function_parameters[i].datatype);
+            bool worked = generator.stack_locations.insert(stack_location_make_parameter(function, i), param_offset);
+            assert(worked, "");
         }
-        generator->current_stack_offset = stack_offset;
-
-        dynamic_array_push_back(&generator->stack_offsets, parameter_offsets);
-        hashtable_insert_element(&generator->function_parameter_stack_offset_index, function, generator->stack_offsets.size - 1);
     }
 
-    // Register function
-    function->bytecode_start_instruction = generator->instructions.size;
+    // Store function start
+    function->bytecode_start_instruction = instructions.size;
 
     // Generate code
-    bytecode_generator_generate_code_block(generator, function->ir_block);
-    generator->maximum_stack_offset = math_maximum(generator->maximum_stack_offset, generator->current_stack_offset);
+    bytecode_generator_generate_code_block(&generator, function->ir_block);
+    function->bytecode_maximum_stack_offset = math_maximum(function->bytecode_maximum_stack_offset, stack_offset);
+
+    // Store function end
+    function->bytecode_end_instruction = instructions.size;
 
     // Fill out all open gotos
-    for (int i = 0; i < generator->fill_out_gotos.size; i++) {
-        Goto_Label fill_out = generator->fill_out_gotos[i];
-        generator->instructions[fill_out.jmp_instruction].op1 = generator->label_locations[fill_out.label_index];
+    for (int i = 0; i < generator.fill_out_gotos.size; i++) {
+        Goto_Label& fill_out = generator.fill_out_gotos[i];
+        instructions[fill_out.jmp_instruction].op1 = *generator.label_locations.find(fill_out.label_index);
     }
-    dynamic_array_reset(&generator->fill_out_gotos);
-
-    function->bytecode_end_instruction = generator->instructions.size;
 }
 
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction)
@@ -1051,13 +1062,13 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         string_append_formated(string, "MEMORY_COPY                  dst_addr_reg: %d, src_addr_reg:%d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::READ_GLOBAL:
-        string_append_formated(string, "READ_GLOBAL                  dst: %d, global_offset: %d, size: %d", i.op1, i.op2, i.op3);
+        string_append_formated(string, "READ_GLOBAL                  dst: %d, global_index: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::WRITE_GLOBAL:
-        string_append_formated(string, "WRITE_GLOBAL                 global_offset: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
+        string_append_formated(string, "WRITE_GLOBAL                 global_index: %d, src: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::READ_CONSTANT:
-        string_append_formated(string, "READ_CONSTANT                dst: %d, const_offset: %d, size: %d", i.op1, i.op2, i.op3);
+        string_append_formated(string, "READ_CONSTANT                dst: %d, const_index: %d, size: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::U64_ADD_CONSTANT_I32:
         string_append_formated(string, "U64_ADD_CONSTANT_I32         dst: %d, base: %d, offset: %d", i.op1, i.op2, i.op3);
@@ -1078,18 +1089,18 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         string_append_formated(string, "JUMP_ON_INT_EQUAL            instr-nr: %d, cond_reg: %d, equal_value: %d", i.op1, i.op2, i.op3);
         break;
     case Instruction_Type::CALL_FUNCTION:
-        string_append_formated(string, "CALL_FUNCTION                function-start-instr: %d, arg-start-offset: %d", i.op1, i.op2);
+        string_append_formated(string, "CALL_FUNCTION                function-start-instr: %d, new-frame-offset: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CALL_FUNCTION_POINTER:
-        string_append_formated(string, "CALL_FUNCTION_POINTER        pointer-reg: %d, arg-start-offset: %d", i.op1, i.op2);
+        string_append_formated(string, "CALL_FUNCTION_POINTER        pointer-reg: %d, new-frame-offset: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION      hardcoded_func_type:");
         hardcoded_type_append_to_string(string, (Hardcoded_Type)i.op1);
-        string_append_formated(string, ", arg-start-offset: %d", i.op2);
+        string_append_formated(string, ", new-frame-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:
-        string_append_formated(string, "RETURN                       value-reg: %d, return-size: %d", i.op1, i.op2);
+        string_append_formated(string, "RETURN                       ");
         break;
     case Instruction_Type::EXIT: {
         string_append_formated(string, "EXIT                         Code: ");
@@ -1097,20 +1108,17 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         exit_code_append_to_string(string, code);
         break;
     }
-    case Instruction_Type::LOAD_RETURN_VALUE:
-        string_append_formated(string, "LOAD_RETURN_VALUE            dst: %d, size: %d", i.op1, i.op2);
-        break;
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         string_append_formated(string, "LOAD_REGISTER_ADDRESS        dst: %d, reg-to-load: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_GLOBAL_ADDRESS:
-        string_append_formated(string, "LOAD_GLOBAL_ADDRESS          dst: %d, global-offset: %d", i.op1, i.op2);
+        string_append_formated(string, "LOAD_GLOBAL_ADDRESS          dst: %d, global-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_CONSTANT_ADDRESS:
-        string_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-offset: %d", i.op1, i.op2);
+        string_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, func-start-instr: %d", i.op1, i.op2);
+        string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, func-start-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
         string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
@@ -1245,11 +1253,11 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     }
 }
 
-void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string)
+void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string)
 {
-    for (int i = 0; i < generator->compilation_data->functions.size; i++)
+    for (int i = 0; i < compilation_data->functions.size; i++)
     {
-        Upp_Function* function = generator->compilation_data->functions[i];
+        Upp_Function* function = compilation_data->functions[i];
         string_append_formated(string, "Function Slot #%d: \"%s\" \n", i, function->name->characters);
         if (function->bytecode_start_instruction == -1) {
             string_append(string, "NO instructions generated!\n");
@@ -1258,9 +1266,9 @@ void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator,
 
         for (int i = function->bytecode_start_instruction; i < function->bytecode_end_instruction; i++)
         {
-            Bytecode_Instruction& instruction = generator->instructions[i];
+            Bytecode_Instruction& instruction = compilation_data->bytecode[i];
             string_append_formated(string, "%4d: ", i);
-            bytecode_instruction_append_to_string(string, generator->instructions[i]);
+            bytecode_instruction_append_to_string(string, instruction);
             string_append_formated(string, "\n");
         }
         string_append_formated(string, "\n");

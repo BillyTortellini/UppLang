@@ -1,34 +1,24 @@
- - Remove bake-workload
-    #bake needs to wait for bake, seems stupid...
- - Lambda functions also shouldn't have own workload
-    fn smth and other stuff should not work
-    expression function never has a name
 
-Poly-Base analysis:
- - Allow access to poly-structurs like normal types
+TODO:
+-----
+ - Remove unnecessary workload-types (inferred-function and lambda-function workloads)
+ - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
+    --> Can I just loop over parent-passes?
+ - In function call we could add the parameter names to code-completion
+ - Think about difference between comptime-value and datatype/function
+ - Rename constant to comptime-value
+ - Syntax-Rework with 'qualifier-first' syntax
+ - Cast update
+
 
 add_cast(from, to, function, take_pointer, take_pointer)
 add_cast([$C]$T, []$T, basic_cast) --> Array_To_Slice cast
 add_cast($T, Any, basic_cast) --> To_Any cast
 ~builtin_cast
 
-TODO:
------
- - Create base-analysis for poly-header and poly-struct as instance, so we have something to analyse!
-    --> Probably want to add to semantic-context that we cannot spawn new workloads (functions, structs, bakes, whatever)
-        This could also be used for calls from editor, where we need a semantic context
- - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
-
- - In function call we could add the parameter names to code-completion
- - Think about differnece between comptime-value and datatype
- - Rename constant to comptime-value
-
 
 DONE:
 -----
- - Semantic-Context can disable workload-creation, error-logging
- - Remove error-checkpoint
- - Bug-Fixes with polymorphism
 
 
 Rough Plan:

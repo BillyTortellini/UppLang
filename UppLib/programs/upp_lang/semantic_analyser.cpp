@@ -29,8 +29,8 @@ Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name,
 void analysis_workload_destroy(Workload_Base* workload);
 Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context);
 Datatype* semantic_analyser_analyse_expression_value(
-	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing = false, bool allow_poly_pattern = false);
-Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression, Semantic_Context* semantic_context, bool allow_poly_pattern = false);
+	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing = false);
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression, Semantic_Context* semantic_context);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block, Semantic_Context* semantic_context);
 Expression_Info analyse_symbol_as_expression(
 	Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node, Semantic_Context* semantic_context);
@@ -47,7 +47,7 @@ void analysis_workload_entry(void* userdata);
 void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 void workload_executer_wait_for_dependency_resolution(Semantic_Context* semantic_context);
 Dependency_Failure_Info dependency_failure_info_make_none();
-void analysis_workload_add_dependency_internal(
+void analysis_workload_add_dependency(
 	Workload_Executer* executer, Workload_Base* workload, Workload_Base* dependency,
 	Dependency_Failure_Info failure_info = dependency_failure_info_make_none()
 );
@@ -83,7 +83,6 @@ namespace Helpers
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Custom_Operator* workload) { return Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE; };
-    Analysis_Workload_Type get_workload_type(Workload_Bake* workload) { return Analysis_Workload_Type::BAKE_ANALYSIS; };
 };
 
 Workload_Base* upcast(Workload_Base* workload) { return workload; }
@@ -94,7 +93,6 @@ Workload_Base* upcast(Workload_Function_Body* workload) { return &workload->base
 Workload_Base* upcast(Workload_Structure_Body* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Structure_Header* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Definition* workload) { return &workload->base; }
-Workload_Base* upcast(Workload_Bake* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Custom_Operator* workload) { return &workload->base; }
 
 template <typename T>
@@ -140,15 +138,6 @@ Pattern_Variable_State pattern_variable_state_make_pattern(Datatype* pattern_typ
     access.type = Pattern_Variable_State_Type::PATTERN;
 	access.options.pattern_type = pattern_type;
     return access;
-}
-
-Upp_Function* analysis_workload_try_get_upp_function(Workload_Base* workload)
-{
-    switch (workload->type) {
-    case Analysis_Workload_Type::FUNCTION_BODY: return downcast<Workload_Function_Body>(workload)->function; break;
-    case Analysis_Workload_Type::FUNCTION_HEADER: return downcast<Workload_Function_Header>(workload)->function; break;
-    }
-    return 0;
 }
 
 
@@ -374,7 +363,7 @@ Error_Information error_information_make_empty(Error_Information_Type type) {
 void add_error_info_to_last_error(Semantic_Context* semantic_context, Error_Information info)
 {
     auto workload = semantic_context->current_workload;
-    if (workload != nullptr && workload->error_checkpoint_count > 0) {
+    if (!semantic_context->error_logging_enabled) {
         return;
     }
 
@@ -489,13 +478,14 @@ struct Workload_Entry_Info
 };
 
 template<typename T>
-T* workload_executer_allocate_workload(Workload_Base* parent_workload, Compilation_Data* compilation_data)
+T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
 {
-	auto& executer = *compilation_data->workload_executer;
+	auto& executer = *semantic_context->compilation_data->workload_executer;
 	executer.progress_was_made = true;
+	assert(semantic_context->can_create_workloads, "Should be the case, as this should be checked before workload creation");
 
     // Create new workload
-	T* result = compilation_data->arena.allocate<T>();
+	T* result = semantic_context->compilation_data->arena.allocate<T>();
     Workload_Base* workload = &result->base;
     workload->type = Helpers::get_workload_type(result);
     workload->is_finished = false;
@@ -505,11 +495,11 @@ T* workload_executer_allocate_workload(Workload_Base* parent_workload, Compilati
 
     workload->real_error_count = 0;
     workload->errors_due_to_unknown_count = 0;
-    workload->error_checkpoint_count = 0;
 
 	// Only root has parent_workload == nullptr
-	workload->polymorphic_instanciation_depth = parent_workload == nullptr ? 0 : parent_workload->polymorphic_instanciation_depth;
-	workload->parent_workload = parent_workload;
+	workload->polymorphic_instanciation_depth = 
+		semantic_context->current_workload == nullptr ? 0 : semantic_context->current_workload->polymorphic_instanciation_depth;
+	workload->parent_workload = semantic_context->current_workload;
 
     // Add to workload queue
     dynamic_array_push_back(&executer.all_workloads, workload);
@@ -602,27 +592,6 @@ Upp_Struct* upp_struct_create_empty(AST::Expression* struct_node, Semantic_Conte
     );
 
 	return upp_struct;
-}
-
-Workload_Bake* workload_bake_create(AST::Expression* bake_expr, Datatype* expected_type, Semantic_Context* semantic_context)
-{
-	assert(semantic_context->can_create_workloads, "Should be tested beforehand");
-    assert(bake_expr->type == AST::Expression_Type::BAKE, "Must be bake!");
-	auto compilation_data = semantic_context->compilation_data;
-	auto& ids = compilation_data->identifier_pool.predefined_ids;
-
-	Workload_Bake* bake = workload_executer_allocate_workload<Workload_Bake>(semantic_context->current_workload, compilation_data);
-
-    bake->bake_function = upp_function_create_empty(compilation_data->empty_call_signature, ids.bake_function, compilation_data);
-    bake->bake_function->bake_workload = bake;
-	bake->bake_function->body_pass = analysis_pass_allocate(upcast(bake), upcast(bake_expr), compilation_data);
-	bake->bake_function->function_node = bake_expr;
-	bake->bake_node = bake_expr;
-    bake->result = optional_make_failure<Upp_Constant>();
-    bake->result_type = expected_type;
-	bake->symbol_table = semantic_context->current_symbol_table;
-
-    return bake;
 }
 
 
@@ -844,6 +813,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	if (!info->is_valid) {
 		return comptime_result_make_unavailable(result_datatype, "Analysis contained errors");
 	}
+	else if (result_datatype->contains_pattern) {
+		return comptime_result_make_unavailable(result_datatype, "Result is variable-with pattern, so we are in base-analysis");
+	}
 	else if (datatype_is_unknown(result_datatype)) {
 		return comptime_result_make_unavailable(result_datatype, "Analysis contained errors");
 	}
@@ -855,6 +827,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		return comptime_result_make_available(upp_const.memory, upp_const.type);
 	}
 	case Expression_Result_Type::DATATYPE: {
+		if (info->options.datatype->contains_pattern) {
+			return comptime_result_make_unavailable(types.unknown_type, "Pattern is not comptime until it is instanciated");
+		}
 		return comptime_result_make_available(&info->options.datatype->type_handle, types.type_handle);
 	}
 	case Expression_Result_Type::NOTHING: {
@@ -870,9 +845,6 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 		);
 		*result_buffer = function->function_index + 1;
 		return comptime_result_make_available(result_buffer, upcast(pointer_type));
-	}
-	case Expression_Result_Type::POLYMORPHIC_PATTERN: {
-		return comptime_result_make_not_comptime("Polymorphic-Pattern is not comptime");
 	}
 	case Expression_Result_Type::POLYMORPHIC_STRUCT: {
 		return comptime_result_make_not_comptime("Cannot make comptime type_handle out of polymorphic struct");
@@ -1407,7 +1379,6 @@ Expression_Info expression_info_make_empty(Expression_Context context, Type_Syst
 
 void expression_info_set_value(Expression_Info* info, Datatype* result_type, bool is_temporary)
 {
-	assert(!result_type->contains_pattern, "I guess this should only be true for set_poly_pattern");
 	info->result_type = Expression_Result_Type::VALUE;
 	info->is_valid = true;
 	info->options.value.datatype = result_type;
@@ -1450,21 +1421,10 @@ void expression_info_set_datatype(Expression_Info* info, Datatype* datatype, Typ
 {
 	auto& types = type_system->predefined_types;
 
-	assert(!datatype->contains_pattern, ""); // Otherwise this should be a polymorphic pattern
 	info->result_type = Expression_Result_Type::DATATYPE;
 	info->is_valid = true;
 	info->options.datatype = datatype;
 	info->cast_info = cast_info_make_simple(types.type_handle);
-}
-
-void expression_info_set_polymorphic_pattern(Expression_Info* info, Datatype* pattern_type, Type_System* type_system)
-{
-	auto& types = type_system->predefined_types;
-	assert(pattern_type->contains_pattern, ""); // Otherwise this should be a normal type...
-	info->result_type = Expression_Result_Type::POLYMORPHIC_PATTERN;
-	info->is_valid = true;
-	info->options.polymorphic_pattern = pattern_type;
-	info->cast_info = cast_info_make_simple(pattern_type);
 }
 
 void expression_info_set_no_value(Expression_Info* info)
@@ -1567,11 +1527,6 @@ Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type
 	}
 	case Expression_Result_Type::NOTHING: {
 		value_info.initial_type = upcast(types.empty_struct_type);
-		value_info.initial_value_is_temporary = true;
-		break;
-	}
-	case Expression_Result_Type::POLYMORPHIC_PATTERN: {
-		value_info.initial_type = info->options.polymorphic_pattern;
 		value_info.initial_value_is_temporary = true;
 		break;
 	}
@@ -1900,7 +1855,7 @@ void analysis_workload_destroy(Workload_Base* workload)
 	list_destroy(&workload->dependents);
 }
 
-void analysis_workload_add_dependency_internal(
+void analysis_workload_add_dependency(
 	Workload_Executer* executer, Workload_Base* workload, Workload_Base* dependency, Dependency_Failure_Info failure_info)
 {
 	bool can_be_broken = failure_info.fail_indicator != 0;
@@ -2003,6 +1958,7 @@ Semantic_Context semantic_context_make(
 	result.statement_reachable = true;
 	result.block_stack = DynArray<AST::Code_Block*>::create(scratch_arena);
 	result.can_create_workloads = true;
+	result.can_execute_bake = true;
 	result.error_logging_enabled = true;
 	result.error_flagging_enabled = true;
 
@@ -2369,7 +2325,6 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			Analysis_Workload_Type type = (Analysis_Workload_Type)i;
 			const char* str = "";
 			switch (type) {
-			case Analysis_Workload_Type::BAKE_ANALYSIS: str = "Bake Analysis   "; break;
 			case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
 			case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
 			case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: str = "Operator Context Change   "; break;
@@ -2470,10 +2425,6 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 		}
 		break;
 	}
-	case Analysis_Workload_Type::BAKE_ANALYSIS: {
-		string_append_formated(string, "Bake-Analysis");
-		break;
-	}
 	case Analysis_Workload_Type::FUNCTION_BODY: {
 		Symbol* symbol = 0;
 		auto function = downcast<Workload_Function_Body>(workload)->function;
@@ -2501,7 +2452,10 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 
 Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data)
 {
-	auto root = workload_executer_allocate_workload<Workload_Root>(nullptr, compilation_data);
+	Semantic_Context local_context = semantic_context_make(
+		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
+	);
+	auto root = workload_executer_allocate_workload<Workload_Root>(&local_context);
 	root->base.is_finished = true;
 	root->base.was_started = true;
 	return root;
@@ -2509,9 +2463,10 @@ Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation
 
 Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, Compilation_Data* compilation_data)
 {
-	Workload_Module_Analysis* workload = workload_executer_allocate_workload<Workload_Module_Analysis>(
-		upcast(compilation_data->root_workload), compilation_data
+	Semantic_Context local_context = semantic_context_make(
+		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
 	);
+	Workload_Module_Analysis* workload = workload_executer_allocate_workload<Workload_Module_Analysis>(&local_context);
 	workload->module_node = module_node;
 	return workload;
 }
@@ -2531,7 +2486,7 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Semantic
 	auto structure = downcast<Datatype_Struct>(waiting_for_type);
 	assert(structure->upp_struct->body_workload != nullptr, "");
 
-	analysis_workload_add_dependency_internal(
+	analysis_workload_add_dependency(
 		executer, semantic_context->current_workload, upcast(structure->upp_struct->body_workload), failure_info
 	);
 	workload_executer_wait_for_dependency_resolution(semantic_context);
@@ -3448,7 +3403,7 @@ Call_Origin call_origin_make(Datatype_Struct* structure, Semantic_Context* seman
 		// Wait for struct-workload so members are analysed
 		if (structure->upp_struct->body_workload != nullptr) {
 			auto executer = semantic_context->compilation_data->workload_executer;
-			analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(structure->upp_struct->body_workload));
+			analysis_workload_add_dependency(executer, semantic_context->current_workload, upcast(structure->upp_struct->body_workload));
 			workload_executer_wait_for_dependency_resolution(semantic_context);
 		}
 		assert(structure->base.memory_info.available, "");
@@ -3555,7 +3510,6 @@ Call_Origin call_origin_from_expression_info(Expression_Info& info, Compilation_
 	// Figure out call type
 	switch (info.result_type)
 	{
-	case Expression_Result_Type::POLYMORPHIC_PATTERN:
 	case Expression_Result_Type::NOTHING:
 	case Expression_Result_Type::DATATYPE: return call_origin_make_error(compilation_data);
 	case Expression_Result_Type::POLYMORPHIC_STRUCT: return call_origin_make(info.options.polymorphic_struct->upp_struct->options.header);
@@ -3598,7 +3552,7 @@ Call_Origin call_origin_from_expression_info(Expression_Info& info, Compilation_
 }
 
 void analyse_parameter_value_if_not_already_done(
-	Call_Info* call_info, Parameter_Value* param_value, Semantic_Context* semantic_context, Expression_Context context, bool allow_poly_pattern = false)
+	Call_Info* call_info, Parameter_Value* param_value, Semantic_Context* semantic_context, Expression_Context context)
 {
 	if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && param_value->value_type != Parameter_Value_Type::ARGUMENT_EXPRESSION) 
 	{
@@ -3618,7 +3572,7 @@ void analyse_parameter_value_if_not_already_done(
 	}
 	else 
 	{
-		semantic_analyser_analyse_expression_value(arg_expr, context, semantic_context, false, allow_poly_pattern);
+		semantic_analyser_analyse_expression_value(arg_expr, context, semantic_context, false);
 	}
 }
 
@@ -3642,7 +3596,7 @@ void call_info_analyse_all_arguments(
 			semantic_analyser_set_error_flag(true, semantic_context);
 		}
 
-		semantic_analyser_analyse_expression_value(argument.expression, context, semantic_context, false, allow_poly_pattern);
+		semantic_analyser_analyse_expression_value(argument.expression, context, semantic_context, false);
 	}
 
 	// Note: subtype-initializer already reported errors during parameter matching, so we don't do that here
@@ -4440,7 +4394,7 @@ void datatype_search_for_pattern_variable_dependency(Datatype* datatype, Poly_He
 }
 
 // Note: parameter types may be polymorphic when calling this function
-void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter* parameter_node, bool allow_pattern_type, Semantic_Context* semantic_context)
+void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter* parameter_node, Semantic_Context* semantic_context)
 {
 	auto workload = semantic_context->current_workload;
 	auto& types = semantic_context->compilation_data->type_system->predefined_types;
@@ -4452,7 +4406,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 	// Analyse type
 	parameter.name = parameter_node->name;
 	if (parameter_node->type.available) {
-		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, semantic_context, allow_pattern_type);
+		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, semantic_context);
 	}
 	else
 	{
@@ -4606,15 +4560,50 @@ Poly_Header* poly_header_analyse(
 	}
 
 	// Analyse all parameter types and find dependencies
+	bool found_param_with_pattern = false;
 	for (int i = 0; i < parameter_nodes.size; i++) 
 	{
 		auto& param = header.signature->parameters[i];
-		analyse_parameter_type_and_value(param, parameter_nodes[i], true, semantic_context);
+		analyse_parameter_type_and_value(param, parameter_nodes[i], semantic_context);
 		if (param.datatype->contains_pattern) {
+			found_param_with_pattern = true;
 			datatype_search_for_pattern_variable_dependency(param.datatype, &header, i);
 		}
 	}
 	header.signature = call_signature_register(header.signature, compilation_data);
+
+	// Set body-analysis symbol-tables
+	if (found_param_with_pattern || header.pattern_variables.size > 0)
+	{
+		if (header.is_function) 
+		{
+			Upp_Function* function = header.origin.function;
+
+			// Switch function-type to base
+			function->poly_type = Poly_Type::BASE;
+			function->options.poly_header = result_header;
+
+			// Update symbol
+			if (function->symbol != nullptr) 
+			{
+				function->symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
+				function->symbol->options.poly_function.function = function;
+				function->symbol->options.poly_function.poly_header = result_header;
+			}
+
+			// Update body workload to use correct symbol table
+			Workload_Function_Body* body_workload = function->body_workload;
+			body_workload->function = header.origin.function;
+			body_workload->parameter_table = header.base_parameter_table;
+		}
+		else
+		{
+			// Update body workload to use correct symbol table
+			Workload_Structure_Body* body_workload = header.origin.upp_struct->body_workload;
+			body_workload->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
+			body_workload->symbol_table = header.base_parameter_table;
+		}
+	}
 
 	return result_header;
 }
@@ -5222,7 +5211,7 @@ Poly_Instance* poly_header_instanciate(
 				if (!parameter_type->contains_pattern) {
 					context = expression_context_make_specific_type(parameter_type);
 				}
-				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context, param_info.pattern_variable_index != -1);
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context);
 
 				// Do auto-dereference/address of if applicable before matching
 				// ! check if this is correct for return type
@@ -5426,6 +5415,10 @@ Poly_Instance* poly_header_instanciate(
 			log_semantic_error(semantic_context, "Not all polymorphic parameters could be deduced in instanciation", error_report_node, error_report_section);
 			return nullptr;
 		}
+		if (!semantic_context->can_create_workloads && !is_pattern) {
+			log_semantic_error(semantic_context, "Creating instance workload is disallowed by semantic context", error_report_node, error_report_section);
+			return nullptr;
+		}
 
 		// Note: Previously we did not deduplicate struct-patterns
 		//		 maybe because it is not necessary to avoid more analysis, but I think this should be fine
@@ -5452,11 +5445,6 @@ Poly_Instance* poly_header_instanciate(
 			}
 		}
 
-		if (!semantic_context->can_create_workloads && !is_pattern) {
-			log_semantic_error(semantic_context, "Creating instance workload is disallowed by semantic context", error_report_node, error_report_section);
-			return nullptr;
-		}
-
 		// Otherwise create new instances
 		Arena* arena = &compilation_data->arena;
 		Poly_Instance* new_instance = arena->allocate<Poly_Instance>();
@@ -5475,9 +5463,7 @@ Poly_Instance* poly_header_instanciate(
 			instance_function->options.instance = new_instance;
 			instance_function->function_node = base_function->function_node;
 			instance_function->symbol = base_function->symbol;
-			instance_function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(
-				semantic_context->current_workload, compilation_data
-			);
+			instance_function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
 			instance_function->body_workload->function = instance_function;
 			instance_function->body_workload->parameter_table = instance_table;
 			instance_function->body_workload->base.polymorphic_instanciation_depth += 1;
@@ -5548,6 +5534,11 @@ Poly_Instance* poly_header_instanciate(
 				call_info->instanciated = true;
 			}
 
+			// Normally finish_struct is done by body-analysis, but we don't create body-analysis for partial structs
+			if (instance_struct->poly_type != Poly_Type::INSTANCE) {
+				type_system_finish_struct(type_system, instance_struct->datatype);
+			}
+
 			// Create symbol table and body-workload if instance
 			if (instance_struct->poly_type == Poly_Type::INSTANCE) 
 			{
@@ -5571,9 +5562,7 @@ Poly_Instance* poly_header_instanciate(
 					symbol->options.constant = state.options.value;
 				}
 
-				instance_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
-					semantic_context->current_workload, compilation_data
-				);
+				instance_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
 				instance_struct->body_workload->upp_struct = instance_struct;
 				instance_struct->body_workload->base.polymorphic_instanciation_depth += 1;
 				instance_struct->body_workload->symbol_table = instance_table;
@@ -5718,7 +5707,7 @@ Upp_Module* analyse_module_node(
 			}
 
 			// Create workload
-			auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(semantic_context->current_workload, compilation_data);
+			auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(semantic_context);
 			definition_workload->symbol = symbol;
 			definition_workload->symbol_table = upp_module->symbol_table;
 			definition_workload->is_extern_import = true;
@@ -5776,11 +5765,6 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 	bool is_local_variable = !definition->is_comptime && definition->base.parent->type == AST::Node_Type::STATEMENT;
 	bool is_global_variable = !definition->is_comptime && !is_local_variable;
 
-	if (!semantic_context->can_create_workloads) {
-		log_semantic_error(semantic_context, "Semantic context disallows the creation of workloads", upcast(definition), Node_Section::FIRST_TOKEN);
-		return;
-	}
-
 	// Figure out initial symbol type
 	Symbol_Type initial_symbol_type = is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL;
 	if (definition->is_comptime && definition->values.size == 1) {
@@ -5810,6 +5794,10 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 
 	// Report errors
 	bool error_occured = false;
+	if (!semantic_context->can_create_workloads) {
+		log_semantic_error(semantic_context, "Semantic context disallows the creation of workloads", upcast(definition), Node_Section::FIRST_TOKEN);
+		error_occured = true;
+	}
 	if (definition->symbols.size == 0) {
 		log_semantic_error(semantic_context, "At least one symbol must be defined", upcast(definition));
 		error_occured = true;
@@ -5867,11 +5855,15 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 			symbol->type = Symbol_Type::FUNCTION;
 			symbol->options.function = function;
 			function->function_node = value;
-			function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(
-				semantic_context->current_workload, semantic_context->compilation_data
-			);
+			function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context);
 			function->header_workload->function = function;
 			function->header_workload->symbol_table = symbol_table;
+			function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
+			function->body_workload->function = function;
+			function->body_workload->parameter_table = nullptr; // Should be set by header analysis
+			analysis_workload_add_dependency(
+				semantic_context->compilation_data->workload_executer, upcast(function->body_workload), upcast(function->header_workload)
+			);
 			return;
 		}
 		case AST::Expression_Type::STRUCTURE_TYPE: 
@@ -5883,24 +5875,20 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 			upp_struct->datatype->name = symbol->id;
 			symbol->type = Symbol_Type::DATATYPE;
 			symbol->options.datatype = upcast(upp_struct->datatype);
+
+			upp_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
+			upp_struct->body_workload->upp_struct = upp_struct;
+			upp_struct->body_workload->symbol_table = symbol_table;
+			upp_struct->body_workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
+
 			if (struct_node_info.signature->parameters.size > 0) 
 			{
-				upp_struct->header_workload = workload_executer_allocate_workload<Workload_Structure_Header>(
-					semantic_context->current_workload, semantic_context->compilation_data
-				);
+				upp_struct->header_workload = workload_executer_allocate_workload<Workload_Structure_Header>(semantic_context);
 				upp_struct->header_workload->upp_struct = upp_struct;
 				upp_struct->header_workload->symbol_table = symbol_table;
-				// Because we don't have a body-workload for base currently, we just finish the struct after creating it
-				type_system_finish_struct(semantic_context->compilation_data->type_system, upp_struct->datatype);
-			}
-			else
-			{
-				upp_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
-					semantic_context->current_workload, semantic_context->compilation_data
+				analysis_workload_add_dependency(
+					semantic_context->compilation_data->workload_executer, upcast(upp_struct->body_workload), upcast(upp_struct->header_workload)
 				);
-				upp_struct->body_workload->upp_struct = upp_struct;
-				upp_struct->body_workload->symbol_table = symbol_table;
-				upp_struct->body_workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
 			}
 			return;
 		}
@@ -5909,9 +5897,7 @@ void analyser_create_symbol_and_workload_for_definition(AST::Definition* definit
 	}
 
 	// Create workload for global variables/comptime definitions
-	auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(
-		semantic_context->current_workload, semantic_context->compilation_data
-	);
+	auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(semantic_context);
 	definition_workload->symbol = symbol;
 	definition_workload->is_extern_import = false;
 	definition_workload->analysis_pass = semantic_context->current_pass;
@@ -6415,11 +6401,6 @@ void analysis_workload_entry(void* userdata)
 					log_semantic_error(semantic_context, "Creating aliases for polymorphic functions not supported!", AST::upcast(def.value_node));
 					break;
 				}
-				case Expression_Result_Type::POLYMORPHIC_PATTERN: {
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					log_semantic_error(semantic_context, "Creating aliases for polymorphic patterns currently not supported!", AST::upcast(def.value_node));
-					break;
-				}
 				case Expression_Result_Type::NOTHING: {
 					symbol->type = Symbol_Type::ERROR_SYMBOL;
 					log_semantic_error(semantic_context, "Comptime definition expected a value, not nothing (void/no return value)", AST::upcast(def.value_node));
@@ -6574,39 +6555,8 @@ void analysis_workload_entry(void* userdata)
 		Poly_Header* poly_header = poly_header_analyse(
 			function->function_node->options.function.signature, header_workload->symbol_table, function->name, semantic_context, function, nullptr
 		);
-
-		// Check if function is polymorphic
-		bool is_polymorphic = poly_header->pattern_variables.size > 0;
-		for (int i = 0; i < poly_header->signature->parameters.size && !is_polymorphic; i++) {
-			if (poly_header->signature->parameters[i].datatype->contains_pattern) {
-				is_polymorphic = true;
-				break;
-			}
-		}
-
 		function->signature = poly_header->signature;
-		if (is_polymorphic)
-		{
-			// Switch function-type to base
-			function->poly_type = Poly_Type::BASE;
-			function->options.poly_header = poly_header;
-
-			// Update symbol
-			if (function->symbol != nullptr) 
-			{
-				function->symbol->type = Symbol_Type::POLYMORPHIC_FUNCTION;
-				function->symbol->options.poly_function.function = function;
-				function->symbol->options.poly_function.poly_header = poly_header;
-			}
-		}
-		else
-		{
-			// Create body-analysis
-			assert(function->body_workload == nullptr, "");
-			function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(workload, compilation_data);
-			function->body_workload->function = function;
-			function->body_workload->parameter_table = poly_header->base_parameter_table;
-		}
+		function->body_workload->parameter_table = poly_header->base_parameter_table;
 
 		break;
 	}
@@ -6626,6 +6576,11 @@ void analysis_workload_entry(void* userdata)
 		);
 		local_context.current_function = function;
 		Semantic_Context* semantic_context = &local_context;
+		if (function->poly_type == Poly_Type::BASE || function->poly_type == Poly_Type::PARTIAL) {
+			semantic_context->can_create_workloads = false;
+			semantic_context->error_flagging_enabled = true;
+			semantic_context->error_logging_enabled = false;
+		}
 
 		if (body_node.is_expression)
 		{
@@ -6688,150 +6643,15 @@ void analysis_workload_entry(void* userdata)
 		);
 		Semantic_Context* semantic_context = &local_context;
 
+		if (upp_struct->poly_type == Poly_Type::BASE || upp_struct->poly_type == Poly_Type::PARTIAL) {
+			semantic_context->can_create_workloads = false;
+			semantic_context->error_flagging_enabled = true;
+			semantic_context->error_logging_enabled = false;
+		}
+
 		// Analyse all members
 		analyse_structure_member_nodes_recursive(structure, struct_node.members, semantic_context);
 		type_system_finish_struct(type_system, structure);
-		break;
-	}
-	case Analysis_Workload_Type::BAKE_ANALYSIS:
-	{
-		auto bake = downcast<Workload_Bake>(workload);
-		auto function = bake->bake_function;
-		auto bake_body = bake->bake_node->options.bake_body;
-
-		Semantic_Context local_context = semantic_context_make(
-			compilation_data, workload, bake->symbol_table, Symbol_Access_Level::GLOBAL,
-			bake->bake_function->body_pass, &scratch_arena
-		);
-		Semantic_Context* semantic_context = &local_context;
-		semantic_context->current_function = function;
-
-		// Analyse function/expression
-		{
-			if (bake_body.is_expression)
-			{
-				auto& bake_expr = bake_body.expr;
-				semantic_context->symbol_access_level = Symbol_Access_Level::POLYMORPHIC;
-				auto expression_context = expression_context_make_unspecified();
-				if (bake->result_type != nullptr) {
-					expression_context = expression_context_make_specific_type(bake->result_type);
-				}
-				bake->result_type = semantic_analyser_analyse_expression_value(bake_expr, expression_context, semantic_context);
-			}
-			else
-			{
-				auto code_block = bake_body.block;
-				auto flow = semantic_analyser_analyse_block(code_block, semantic_context);
-				if (flow != Control_Flow::RETURNS) {
-					log_semantic_error(semantic_context, "Missing return statement", AST::upcast(code_block), Node_Section::END_TOKEN);
-				}
-			}
-
-			// Set bake function signature
-			if (bake->result_type == nullptr) {
-				bake->result_type = types.unknown_type;
-				bake->bake_function->contains_errors = true;
-			}
-			Call_Signature* signature = call_signature_create_empty();
-			call_signature_add_return_type(signature, bake->result_type, compilation_data);
-			function->signature = call_signature_register(signature, compilation_data);
-
-			// Check if return-type is finished
-			bool dependency_failed = false;
-			type_wait_for_size_info_to_finish(bake->result_type, semantic_context, dependency_failure_info_make(&dependency_failed));
-			if (dependency_failed) {
-				log_semantic_error(semantic_context, "Cyclic dependency of bake on bake-return type", upcast(bake->bake_node), Node_Section::KEYWORD);
-				bake->bake_function->contains_errors = true;
-			}
-
-			if (bake->bake_function->contains_errors) {
-				bake->result = optional_make_failure<Upp_Constant>();
-				break;
-			}
-		}
-
-		// Compile function
-		{
-			ir_generator_generate_function(function, compilation_data);
-			if (function->ir_block == nullptr) { // If function is not runnable
-				break;
-			}
-			bytecode_generator_compile_function(compilation_data->bytecode_generator, function);
-		}
-
-		// Run function
-		Bytecode_Thread* thread = bytecode_thread_create(compilation_data, 10000);
-		SCOPE_EXIT(bytecode_thread_destroy(thread));
-		{
-			bytecode_thread_set_initial_state(thread, function);
-			while (true)
-			{
-				bytecode_thread_execute(thread);
-				if (thread->exit_code.type == Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED)
-				{
-					bool cyclic_dependency_occured = false;
-					type_wait_for_size_info_to_finish(
-						thread->waiting_for_type_finish_type, semantic_context, dependency_failure_info_make(&cyclic_dependency_occured)
-					);
-					if (cyclic_dependency_occured) {
-						log_semantic_error(
-							semantic_context, "Bake requires type_info which waits on bake, cyclic dependency!", bake->bake_node, Node_Section::KEYWORD
-						);
-						bake->result = optional_make_failure<Upp_Constant>();
-						return;
-					}
-				}
-				else if (thread->exit_code.type == Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION)
-				{
-					Upp_Function* call_to = thread->waiting_for_function;
-					bool cyclic_dependency_occured = false;
-					analysis_workload_add_dependency_internal(
-						compilation_data->workload_executer, upcast(bake), upcast(thread->waiting_for_function->body_workload),
-						dependency_failure_info_make(&cyclic_dependency_occured)
-					);
-					if (cyclic_dependency_occured) {
-						log_semantic_error(
-							semantic_context, "Bake waiting on body which waits on bake, cyclic-dependency!", bake->bake_node, Node_Section::KEYWORD
-						);
-						bake->result = optional_make_failure<Upp_Constant>();
-						return;
-					}
-
-					ir_generator_generate_function(call_to, compilation_data);
-					if (function->ir_block == nullptr) { // If function is not runnable
-						break;
-					}
-					bytecode_generator_compile_function(compilation_data->bytecode_generator, call_to);
-					assert(call_to->bytecode_start_instruction != -1, "");
-				}
-				else if (thread->exit_code.type == Exit_Code_Type::SUCCESS) {
-					break;
-				}
-				else {
-					log_semantic_error(semantic_context, "Bake function did not return successfully", bake->bake_node, Node_Section::KEYWORD);
-					log_error_info_exit_code(semantic_context, thread->exit_code);
-					bake->result = optional_make_failure<Upp_Constant>();
-					return;
-				}
-			}
-		}
-
-		// Add result to constant pool
-		{
-			void* value_ptr = thread->return_register;
-			assert(bake->bake_function->signature->return_type().available, "Bake return type must have been stated at this point...");
-			Constant_Pool_Result pool_result = constant_pool_add_constant(
-				compilation_data->constant_pool, bake->result_type, array_create_static<byte>((byte*)value_ptr, bake->result_type->memory_info.value.size)
-			);
-			if (!pool_result.success) {
-				log_semantic_error(semantic_context, "Couldn't serialize bake result", bake->bake_node, Node_Section::KEYWORD);
-				log_error_info_constant_status(semantic_context, pool_result.options.error_message);
-				bake->result = optional_make_failure<Upp_Constant>();
-				return;
-			}
-			bake->result = optional_make_success(pool_result.options.constant);
-		}
-
 		break;
 	}
 	default: panic("");
@@ -6860,21 +6680,21 @@ Expression_Info analyse_symbol_as_expression(
 	{
 	case Symbol_Type::DEFINITION_UNFINISHED:
 	{
-		analysis_workload_add_dependency_internal(executer, workload, upcast(symbol->options.definition_workload), failure_info);
+		analysis_workload_add_dependency(executer, workload, upcast(symbol->options.definition_workload), failure_info);
 		break;
 	}
 	case Symbol_Type::FUNCTION:
 	{
 		auto fn = symbol->options.function;
 		if (fn->header_workload != nullptr) {
-			analysis_workload_add_dependency_internal(executer, workload, upcast(fn->header_workload), failure_info);
+			analysis_workload_add_dependency(executer, workload, upcast(fn->header_workload), failure_info);
 		}
 		break;
 	}
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
 	{
 		auto function = symbol->options.poly_function.function;
-		analysis_workload_add_dependency_internal(executer, workload, upcast(function->header_workload), failure_info);
+		analysis_workload_add_dependency(executer, workload, upcast(function->header_workload), failure_info);
 		break;
 	}
 	case Symbol_Type::DATATYPE:
@@ -6891,10 +6711,10 @@ Expression_Info analyse_symbol_as_expression(
 
 			// If it's a polymorphic struct, always wait for the header workload to finish
 			if (upp_struct->poly_type == Poly_Type::BASE) {
-				analysis_workload_add_dependency_internal(executer, workload, upcast(upp_struct->header_workload), failure_info);
+				analysis_workload_add_dependency(executer, workload, upcast(upp_struct->header_workload), failure_info);
 			}
 			else if (upp_struct->poly_type == Poly_Type::INSTANCE) {
-				analysis_workload_add_dependency_internal(
+				analysis_workload_add_dependency(
 					executer, workload, 
 					upcast(upp_struct->options.instance->header->origin.upp_struct->header_workload), 
 				failure_info);
@@ -6904,11 +6724,7 @@ Expression_Info analyse_symbol_as_expression(
 			switch (workload->type)
 			{
 			case Analysis_Workload_Type::DEFINITION: {
-				analysis_workload_add_dependency_internal(executer, workload, upcast(struct_workload), failure_info);
-				break;
-			}
-			case Analysis_Workload_Type::BAKE_ANALYSIS: {
-				analysis_workload_add_dependency_internal(executer, workload, upcast(struct_workload), failure_info);
+				analysis_workload_add_dependency(executer, workload, upcast(struct_workload), failure_info);
 				break;
 			}
 			case Analysis_Workload_Type::FUNCTION_BODY: break;
@@ -7000,7 +6816,7 @@ Expression_Info analyse_symbol_as_expression(
 	}
 	case Symbol_Type::PATTERN_VARIABLE:
 	{
-		expression_info_set_polymorphic_pattern(&result, upcast(symbol->options.pattern_variable_type), type_system);
+		expression_info_set_datatype(&result, upcast(symbol->options.pattern_variable_type), type_system);
 		return result;
 	}
 	case Symbol_Type::COMPTIME_VALUE: {
@@ -7251,12 +7067,9 @@ void analyse_index_accept_all_ints_as_usize(AST::Expression* expr, Semantic_Cont
 		return;
 	}
 
-	Datatype* result_type = semantic_analyser_analyse_expression_value(expr, expression_context_make_unspecified(), semantic_context, false, allow_poly_pattern);
-	if (allow_poly_pattern) {
-		auto info = get_info(expr, semantic_context);
-		if (info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN) {
-			return;
-		}
+	Datatype* result_type = semantic_analyser_analyse_expression_value(expr, expression_context_make_unspecified(), semantic_context, false);
+	if (allow_poly_pattern && result_type->contains_pattern) {
+		return;
 	}
 	if (datatype_is_unknown(result_type)) return;
 	if (types_are_equal(result_type, upcast(types.usize))) return;
@@ -7283,6 +7096,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	Compilation_Data* compilation_data = semantic_context->compilation_data;
 	auto type_system = compilation_data->type_system;
 	auto& types = type_system->predefined_types;
+	auto& ids = compilation_data->identifier_pool.predefined_ids;
 
 	// Initialize expression info
 	auto info = get_info(expr, semantic_context, true);
@@ -7294,15 +7108,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #define EXIT_ERROR(type) expression_info_set_error(info, type, semantic_context); return info;
 #define EXIT_HARDCODED(hardcoded) expression_info_set_hardcoded(info, hardcoded); return info;
 #define EXIT_FUNCTION(function) expression_info_set_function(info, function, semantic_context); return info;
-#define EXIT_TYPE_OR_POLY(type) \
-	Datatype* _result_type = type; \
-	if (_result_type->contains_pattern) { \
-		expression_info_set_polymorphic_pattern(info, _result_type, type_system); \
-	} \
-	else { \
-		expression_info_set_datatype(info, _result_type, type_system); \
-	} \
-	return info;
 
 	switch (expr->type)
 	{
@@ -7372,7 +7177,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			{
 				auto& param_value = call_info->parameter_values[0];
 				assert(call_info->parameter_values.size == 2, "With return type we should have 2 parameters");
-				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, expression_context_make_unspecified(), false);
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, expression_context_make_unspecified());
 				EXIT_TYPE(parameter_value_get_datatype(param_value, call_info, semantic_context));
 			}
 			case Hardcoded_Type::SIZE_OF:
@@ -7382,7 +7187,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				assert(call_info->parameter_values.size == 2, "");
 				auto param_value = &call_info->parameter_values[0];
 
-				analyse_parameter_value_if_not_already_done(call_info, param_value, semantic_context, expression_context_make_specific_type(types.type_handle));
+				analyse_parameter_value_if_not_already_done(
+					call_info, param_value, semantic_context, expression_context_make_specific_type(types.type_handle)
+				);
 				Datatype* expr_type = parameter_value_get_datatype(*param_value, call_info, semantic_context);
 				if (datatype_is_unknown(expr_type)) {
 					if (is_size_of) {
@@ -7560,15 +7367,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			else
 			{
 				Upp_Struct* structure = instance->options.struct_instance;
-				assert(structure->poly_type != Poly_Type::NORMAL && structure->poly_type != Poly_Type::BASE, "");
-				if (structure->poly_type == Poly_Type::PARTIAL) {
-					expression_info_set_polymorphic_pattern(info, upcast(structure->datatype), type_system);
-					return info;
-				}
-				else {
-					assert(!structure->datatype->base.contains_pattern, "");
-					EXIT_TYPE(upcast(structure->datatype));
-				}
+				assert(structure->poly_type == Poly_Type::INSTANCE || structure->poly_type == Poly_Type::PARTIAL, "");
+				EXIT_TYPE(upcast(structure->datatype));
 			}
 			panic("Should not happen");
 			break;
@@ -7589,7 +7389,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Analyse return type first, as this is used in overload resolution
 		Datatype* expected_return_type = nullptr;
 		if (instanciate.return_type.available) {
-			expected_return_type = semantic_analyser_analyse_expression_type(instanciate.return_type.value, false);
+			expected_return_type = semantic_analyser_analyse_expression_type(instanciate.return_type.value, semantic_context);
 		}
 
 		// Analyse path-lookup, overload resolving and parameter matching
@@ -7639,7 +7439,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "Shouldn't be different");
 			// Note: Overloading should not have analysed these arguments, so this should work without any re-analysis issues
-			Datatype* datatype = semantic_analyser_analyse_expression_type(arg_info.expression, false);
+			Datatype* datatype = semantic_analyser_analyse_expression_type(arg_info.expression, semantic_context);
 			if (datatype_is_unknown(datatype)) {
 				encountered_unknown = true;
 			}
@@ -7679,10 +7479,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		for (int i = 0; i < args.size; i++)
 		{
 			auto arg = args[i];
-			if (arg->type_expr.available) {
-				// TODO: Maybe we want to allow poly-patterns, which would allow Node(_) as arg-types,
-				//	     but then we need matching between two poly-patterns...
-				arg_types[i] = semantic_analyser_analyse_expression_type(arg->type_expr.value, false);
+			if (arg->type_expr.available) 
+			{
+				arg_types[i] = semantic_analyser_analyse_expression_type(arg->type_expr.value, semantic_context);
 				if (datatype_is_unknown(arg_types[i])) {
 					encountered_unknown = true;
 					arg_types[i] = nullptr;
@@ -7909,8 +7708,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		Datatype_Pattern_Variable* pattern_type = symbols[0]->options.pattern_variable_type;
 		assert(pattern_type->is_reference, "Symbol from symbol-table should always be the reference type");
 		pattern_type = pattern_type->mirrored_type;
-		expression_info_set_polymorphic_pattern(info, upcast(pattern_type), compilation_data->type_system);
-		return info;
+		EXIT_TYPE(upcast(pattern_type));
 	}
 	case AST::Expression_Type::CAST:
 	{
@@ -7936,7 +7734,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			assert(param_value.value_type == Parameter_Value_Type::ARGUMENT_EXPRESSION, "We are in cast expression");
 
 			auto& arg = call_info->argument_infos[param_value.options.argument_index];
-			return semantic_analyser_analyse_expression_type(arg.expression, semantic_context, false);
+			return semantic_analyser_analyse_expression_type(arg.expression, semantic_context);
 		};
 
 		Datatype* datatype_to     = helper_analyse_type_param(param_to);
@@ -7961,7 +7759,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		if (datatype_from != nullptr) {
 			context = expression_context_make_specific_type(datatype_from);
 		}
-		analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context, false);
+		analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, context);
 		bool param_is_temporary = false;
 		datatype_from = parameter_value_get_datatype(param_value, call_info, semantic_context, &param_is_temporary);
 
@@ -8185,7 +7983,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	{
 		auto& members = expr->options.enum_members;
 
-		String* enum_name = compilation_data->identifier_pool.predefined_ids.anon_enum;
+		String* enum_name = ids.anon_enum;
 		if (expr->base.parent->type == AST::Node_Type::DEFINITION) {
 			AST::Definition* definition = downcast<AST::Definition>(expr->base.parent);
 			if (definition->is_comptime && definition->symbols.size == 1) {
@@ -8272,10 +8070,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		// Create function
 		Upp_Function* function = upp_function_create_empty(
-			signature, compilation_data->identifier_pool.predefined_ids.lambda_function, compilation_data
+			signature, ids.lambda_function, compilation_data
 		);
 		function->function_node = expr;
-		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context->current_workload, compilation_data);
+		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
 		function->body_workload->function = function;
 		Symbol_Table* parameter_table = symbol_table_create_with_parent(
 			semantic_context->current_symbol_table, semantic_context->symbol_access_level, compilation_data
@@ -8314,15 +8112,19 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Anonymous functions
 		Upp_Function* function = upp_function_create_empty(nullptr, nullptr, compilation_data);
 		function->function_node = expr;
-		function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(
-			semantic_context->current_workload, compilation_data
-		);
+		function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context);
 		function->header_workload->function = function;
 		function->header_workload->symbol_table = semantic_context->current_symbol_table;
+		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
+		function->body_workload->function = function;
+		function->body_workload->parameter_table = nullptr; // Should be set by header analysis
+		analysis_workload_add_dependency(
+			semantic_context->compilation_data->workload_executer, upcast(function->body_workload), upcast(function->header_workload)
+		);
 
 		// Wait for header analysis to finish
 		auto executer = compilation_data->workload_executer;
-		analysis_workload_add_dependency_internal(executer, semantic_context->current_workload, upcast(function->header_workload));
+		analysis_workload_add_dependency(executer, semantic_context->current_workload, upcast(function->header_workload));
 		workload_executer_wait_for_dependency_resolution(semantic_context);
 
 		// Return function
@@ -8343,9 +8145,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			log_semantic_error(semantic_context, "Anonymous struct must not be polymorphic", expr, Node_Section::ENCLOSURE);
 		}
 		Upp_Struct* structure = upp_struct_create_empty(expr, semantic_context, true);
-		structure->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(
-			semantic_context->current_workload, compilation_data
-		);
+		structure->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
 		structure->body_workload->symbol_access_level = semantic_context->symbol_access_level;
 		structure->body_workload->symbol_table = semantic_context->current_symbol_table;
 		structure->body_workload->upp_struct = structure;
@@ -8354,40 +8154,155 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::BAKE:
 	{
-		// Create bake progress and wait for it to finish
-		Datatype* expected_type = 0;
-		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
-			expected_type = context.datatype;
-		}
-		if (!semantic_context->can_create_workloads) {
-			log_semantic_error(semantic_context, "Cannot create bake-workload in current semantic_context", upcast(expr), Node_Section::FIRST_TOKEN);
+		if (!semantic_context->can_execute_bake) {
+			log_semantic_error(semantic_context, "Semantic context cannot execute bake", expr, Node_Section::FIRST_TOKEN);
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		Workload_Bake* bake_workload  = workload_bake_create(expr, expected_type, semantic_context);
-		analysis_workload_add_dependency_internal(
-			compilation_data->workload_executer, semantic_context->current_workload, upcast(bake_workload)
-		);
-		workload_executer_wait_for_dependency_resolution(semantic_context);
+		Upp_Function* bake_function = upp_function_create_empty(compilation_data->empty_call_signature, ids.bake_function, compilation_data);
+		bake_function->function_node = expr;
+		AST::Body_Node bake_body = expr->options.bake_body;
 
-		// Handle result
-		auto bake_result = &bake_workload->result;
-		if (bake_result->available) {
-			expression_info_set_constant(info, bake_result->value);
-			return info;
+		Datatype* result_type = nullptr;
+		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
+			result_type = context.datatype;
 		}
-		else
+
+		// Analyse function/expression
 		{
-			auto return_type = bake_workload->bake_function->signature->return_type();
-			if (return_type.available) {
-				EXIT_ERROR(return_type.value);
+			RESTORE_ON_SCOPE_EXIT(semantic_context->current_function, bake_function);
+			RESTORE_ON_SCOPE_EXIT(semantic_context->can_execute_bake, false); // No bakes in bakes, just to avoid weird things, maybe not necessary
+			RESTORE_ON_SCOPE_EXIT(semantic_context->bake_return_datatype, result_type);
+			RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::POLYMORPHIC); // Cannot access variables in bake
+			if (bake_body.is_expression)
+			{
+				auto& bake_expr = bake_body.expr;
+				if (result_type == nullptr) {
+					result_type = semantic_analyser_analyse_expression_value(bake_expr, expression_context_make_unspecified(), semantic_context);
+				}
+				else {
+					semantic_analyser_analyse_expression_value(bake_expr, expression_context_make_specific_type(result_type), semantic_context);
+				}
 			}
-			else {
+			else
+			{
+				auto code_block = bake_body.block;
+				auto flow = semantic_analyser_analyse_block(code_block, semantic_context);
+				if (flow != Control_Flow::RETURNS) {
+					log_semantic_error(semantic_context, "Missing return statement in bake-body", AST::upcast(expr), Node_Section::KEYWORD);
+					EXIT_ERROR(types.unknown_type);
+				}
+				if (result_type == nullptr) 
+				{
+					if (semantic_context->bake_return_datatype == nullptr) {
+						log_semantic_error(semantic_context, "Bake return-type could not be determined", AST::upcast(expr), Node_Section::KEYWORD);
+						EXIT_ERROR(types.unknown_type);
+					}
+					result_type = semantic_context->bake_return_datatype;
+				}
+			}
+			assert(result_type != nullptr, "");
+
+			// Set bake function signature
+			Call_Signature* signature = call_signature_create_empty();
+			call_signature_add_return_type(signature, result_type, compilation_data);
+			bake_function->signature = call_signature_register(signature, compilation_data);
+
+			// Check if return-type is finished
+			bool dependency_failed = false;
+			type_wait_for_size_info_to_finish(result_type, semantic_context, dependency_failure_info_make(&dependency_failed));
+			if (dependency_failed) {
+				log_semantic_error(semantic_context, "Cyclic dependency of bake on bake-return type", upcast(expr), Node_Section::KEYWORD);
+				EXIT_ERROR(types.unknown_type);
+			}
+
+			// Return if errors occured inside bake-function
+			if (bake_function->contains_errors) {
+				semantic_analyser_set_error_flag(false, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
 		}
-		panic("invalid_code_path");
-		EXIT_ERROR(types.unknown_type);
+
+		// Compile function
+		{
+			ir_generator_generate_function(bake_function, compilation_data);
+			if (bake_function->ir_block == nullptr) { // If function is not runnable
+				EXIT_ERROR(types.unknown_type);
+				break;
+			}
+			bytecode_generator_compile_function(compilation_data, bake_function);
+		}
+
+		// Run function
+		Arena* tmp_arena = semantic_context->scratch_arena;
+		auto checkpoint = tmp_arena->make_checkpoint();
+		SCOPE_EXIT(checkpoint.rewind());
+
+		Bytecode_Thread* thread = bytecode_thread_create(compilation_data, tmp_arena, 10000, 64*1024, 8*1024, false);
+		bytecode_thread_set_initial_state(thread, bake_function);
+		while (true)
+		{
+			Exit_Code exit_code = bytecode_thread_execute(thread);
+			if (exit_code.type == Exit_Code_Type::SUCCESS) {
+				break;
+			}
+			else if (exit_code.type == Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED)
+			{
+				bool cyclic_dependency_occured = false;
+				type_wait_for_size_info_to_finish(
+					exit_code.options.waiting_for_type_finish_type, semantic_context, dependency_failure_info_make(&cyclic_dependency_occured)
+				);
+				if (cyclic_dependency_occured) {
+					log_semantic_error(
+						semantic_context, "Bake requires type_info which waits on bake, cyclic dependency!", expr, Node_Section::KEYWORD
+					);
+					EXIT_ERROR(result_type);
+				}
+			}
+			else if (exit_code.type == Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION)
+			{
+				// Note: errors are checked in bytecode-interpreter, so here we know the function is callable
+				Upp_Function* call_to = exit_code.options.waiting_for_function;
+				bool cyclic_dependency_occured = false;
+				analysis_workload_add_dependency(
+					compilation_data->workload_executer, upcast(semantic_context->current_workload), upcast(call_to->body_workload),
+					dependency_failure_info_make(&cyclic_dependency_occured)
+				);
+				if (cyclic_dependency_occured) {
+					log_semantic_error(
+						semantic_context, "Bake waiting on body which waits on bake, cyclic-dependency!", expr, Node_Section::KEYWORD
+					);
+					EXIT_ERROR(result_type);
+				}
+				if (call_to->contains_errors) {
+					EXIT_ERROR(result_type);
+				}
+
+				ir_generator_generate_function(call_to, compilation_data);
+				assert(bake_function->ir_block != nullptr, "Should work here");
+				bytecode_generator_compile_function(compilation_data, call_to);
+				assert(call_to->bytecode_start_instruction != -1, "");
+			}
+			else 
+			{
+				log_semantic_error(semantic_context, "Bake function did not return successfully", expr, Node_Section::KEYWORD);
+				log_error_info_exit_code(semantic_context, exit_code);
+				EXIT_ERROR(result_type);
+			}
+		}
+
+		// Add result to constant pool
+		void* value_ptr = bytecode_thread_get_return_value_ptr(thread);
+		Constant_Pool_Result pool_result = constant_pool_add_constant(
+			compilation_data->constant_pool, result_type, array_create_static<byte>((byte*)value_ptr, result_type->memory_info.value.size)
+		);
+		if (!pool_result.success) {
+			log_semantic_error(semantic_context, "Couldn't serialize bake result", expr, Node_Section::KEYWORD);
+			log_error_info_constant_status(semantic_context, pool_result.options.error_message);
+			EXIT_ERROR(result_type);
+		}
+		expression_info_set_constant(info, pool_result.options.constant);
+		return info;
 	}
 	case AST::Expression_Type::FUNCTION_SIGNATURE:
 	{
@@ -8401,34 +8316,36 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				continue;
 			}
 			Call_Parameter* param = call_signature_add_parameter(signature, param_node->name, nullptr, true, false, param_node->is_return_type);
-			analyse_parameter_type_and_value(*param, param_node, true, semantic_context);
+			analyse_parameter_type_and_value(*param, param_node, semantic_context);
 			if (param_node->is_return_type) {
 				signature->return_type_index = signature->parameters.size - 1;
 			}
 		}
 		signature = call_signature_register(signature, compilation_data);
-		EXIT_TYPE_OR_POLY(upcast(type_system_make_function_pointer(type_system, signature)));
+		EXIT_TYPE(upcast(type_system_make_function_pointer(type_system, signature)));
 	}
 	case AST::Expression_Type::ARRAY_TYPE:
 	{
 		auto& array_node = expr->options.array_type;
 
 		// Analyse type expression
-		Datatype* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr, semantic_context, true);
+		Datatype* element_type = semantic_analyser_analyse_expression_type(array_node.type_expr, semantic_context);
 
 		// Analyse size expression (Which may be polymorhic)
 		analyse_index_accept_all_ints_as_usize(array_node.size_expr, semantic_context, true);
-		auto size_info = get_info(array_node.size_expr, semantic_context);
-		if (size_info->result_type == Expression_Result_Type::POLYMORPHIC_PATTERN)
+		Datatype* result_type = expression_info_get_type(get_info(array_node.size_expr, semantic_context), false, type_system);
+		if (result_type->contains_pattern)
 		{
-			auto pattern_type = size_info->options.polymorphic_pattern;
-			if (pattern_type->type != Datatype_Type::PATTERN_VARIABLE) {
-				log_semantic_error(semantic_context, "Array-Size does not take pattern-type-tree, only single pattern values", expr, Node_Section::ENCLOSURE);
-				EXIT_TYPE_OR_POLY(upcast(type_system_make_array(type_system, element_type, false, 1, nullptr)))
+			if (result_type->type == Datatype_Type::PATTERN_VARIABLE) 
+			{
+				Datatype_Pattern_Variable* variable = downcast<Datatype_Pattern_Variable>(result_type);
+				EXIT_TYPE(upcast(type_system_make_array(type_system, element_type, false, 1, variable)));
 			}
-
-			Datatype_Pattern_Variable* variable = downcast<Datatype_Pattern_Variable>(pattern_type);
-			EXIT_TYPE_OR_POLY(upcast(type_system_make_array(type_system, element_type, false, 1, variable)));
+			else {
+				log_semantic_error(semantic_context, "Array-Size does not take pattern-type-tree, only single pattern values", expr, Node_Section::ENCLOSURE);
+				log_error_info_given_type(semantic_context, result_type);
+				EXIT_TYPE(upcast(type_system_make_array(type_system, element_type, false, 1, nullptr)))
+			}
 		}
 
 		// Otherwise array-size needs to be comptime known
@@ -8451,21 +8368,21 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				array_size = 1;
 			}
 		}
-		EXIT_TYPE_OR_POLY(upcast(type_system_make_array(type_system, element_type, array_size_known, (int)array_size)))
+		EXIT_TYPE(upcast(type_system_make_array(type_system, element_type, array_size_known, (int)array_size)))
 	}
 	case AST::Expression_Type::SLICE_TYPE: {
-		auto element_type = semantic_analyser_analyse_expression_type(expr->options.slice_type, semantic_context, true);
+		auto element_type = semantic_analyser_analyse_expression_type(expr->options.slice_type, semantic_context);
 		auto slice_type = type_system_make_slice(type_system, element_type);
-		EXIT_TYPE_OR_POLY(upcast(slice_type));
+		EXIT_TYPE(upcast(slice_type));
 	}
 	case AST::Expression_Type::POINTER_TYPE: {
 		auto& ptr = expr->options.pointer_type;
 		auto result = type_system_make_pointer(
 			type_system,
-			semantic_analyser_analyse_expression_type(ptr.child_type, semantic_context, true), 
+			semantic_analyser_analyse_expression_type(ptr.child_type, semantic_context), 
 			ptr.is_optional
 		);
-		EXIT_TYPE_OR_POLY(upcast(result));
+		EXIT_TYPE(upcast(result));
 	}
 	case AST::Expression_Type::NEW_EXPR:
 	{
@@ -8857,7 +8774,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		info->specifics.member_access.options.member = struct_member_make(types.unknown_type, member_node.name, nullptr, 0, nullptr);
 
 		auto access_expr_info = semantic_analyser_analyse_expression_any(member_node.expr, expression_context_make_dereference(), semantic_context);
-		auto& ids = compilation_data->identifier_pool.predefined_ids;
 
 		auto search_struct_type_for_polymorphic_parameter_access = [&](Datatype_Struct* struct_type) -> Optional<Upp_Constant>
 			{
@@ -8870,6 +8786,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				case Poly_Type::BASE: 
 					return optional_make_failure<Upp_Constant>(); // Not polymorphic
 					break;
+				case Poly_Type::PARTIAL:
 				case Poly_Type::INSTANCE:
 					poly_header = upp_struct->options.instance->header; 
 					break;
@@ -8969,11 +8886,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 		case Expression_Result_Type::POLYMORPHIC_STRUCT: {
 			log_semantic_error(semantic_context, "Cannot access members of uninstanciated polymorphic struct", member_node.expr);
-			log_error_info_expression_result_type(semantic_context, access_expr_info->result_type);
-			EXIT_ERROR(types.unknown_type);
-		}
-		case Expression_Result_Type::POLYMORPHIC_PATTERN: {
-			log_semantic_error(semantic_context, "Cannot use member access on polymorphic-pattern", member_node.expr);
 			log_error_info_expression_result_type(semantic_context, access_expr_info->result_type);
 			EXIT_ERROR(types.unknown_type);
 		}
@@ -9289,31 +9201,38 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				right_type = semantic_analyser_analyse_expression_value(binop_node.right, unknown_context, semantic_context);
 				if (is_pointer_comparison) 
 				{
-					left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type), semantic_context);
+					left_type = semantic_analyser_analyse_expression_value(
+						binop_node.left, expression_context_make_specific_type(right_type), semantic_context);
 				}
 				else 
 				{
 					if (types_are_equal(upcast(types.address), right_type)) {
-						left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
+						left_type = semantic_analyser_analyse_expression_value(
+							binop_node.left, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
 					}
 					else {
-						left_type = semantic_analyser_analyse_expression_value(binop_node.left, expression_context_make_specific_type(right_type), semantic_context);
+						left_type = semantic_analyser_analyse_expression_value(
+							binop_node.left, expression_context_make_specific_type(right_type), semantic_context);
 					}
 				}
 			}
 			else if (!left_requires_context && right_requires_context)
 			{
-				left_type = semantic_analyser_analyse_expression_value(binop_node.left, unknown_context, semantic_context);
+				left_type = semantic_analyser_analyse_expression_value(
+					binop_node.left, unknown_context, semantic_context);
 				if (is_pointer_comparison) {
-					right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type), semantic_context);
+					right_type = semantic_analyser_analyse_expression_value(
+						binop_node.right, expression_context_make_specific_type(left_type), semantic_context);
 				}
 				else 
 				{
 					if (types_are_equal(upcast(types.address), left_type)) {
-						right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
+						right_type = semantic_analyser_analyse_expression_value(
+							binop_node.right, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
 					}
 					else {
-						right_type = semantic_analyser_analyse_expression_value(binop_node.right, expression_context_make_specific_type(left_type), semantic_context);
+						right_type = semantic_analyser_analyse_expression_value(
+							binop_node.right, expression_context_make_specific_type(left_type), semantic_context);
 					}
 				}
 			}
@@ -9493,7 +9412,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 #undef EXIT_ERROR
 #undef EXIT_HARDCODED
 #undef EXIT_FUNCTION
-#undef EXIT_TYPE_OR_POLY
 }
 
 void expression_context_apply(
@@ -9568,7 +9486,7 @@ Expression_Info* semantic_analyser_analyse_expression_any(AST::Expression* expre
 }
 
 // Can return a templated type if allow_poly_pattern is true
-Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression, Semantic_Context* semantic_context, bool allow_poly_pattern)
+Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression, Semantic_Context* semantic_context)
 {
 	auto& type_system = semantic_context->compilation_data->type_system;
 	auto& types = type_system->predefined_types;
@@ -9578,18 +9496,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 	switch (result->result_type)
 	{
 	case Expression_Result_Type::DATATYPE: {
-		assert(!result->options.datatype->contains_pattern, "Result type would need to be different, e.g. poly-pattern");
 		return result->options.datatype;
-	}
-	case Expression_Result_Type::POLYMORPHIC_PATTERN:
-	{
-		if (!allow_poly_pattern)
-		{
-			log_semantic_error(semantic_context, "Expected a normal type, but got a polymorphic pattern", expression);
-			log_error_info_expression_result_type(semantic_context, result->result_type);
-			return types.unknown_type;
-		}
-		return result->options.polymorphic_pattern;
 	}
 	case Expression_Result_Type::CONSTANT:
 	case Expression_Result_Type::VALUE:
@@ -9661,7 +9568,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 }
 
 Datatype* semantic_analyser_analyse_expression_value(
-	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing, bool allow_poly_pattern)
+	AST::Expression* expression, Expression_Context context, Semantic_Context* semantic_context, bool allow_nothing)
 {
 	auto& type_system = semantic_context->compilation_data->type_system;
 	auto& types = type_system->predefined_types;
@@ -9681,15 +9588,6 @@ Datatype* semantic_analyser_analyse_expression_value(
 			semantic_context
 		);
 		break;
-	}
-	case Expression_Result_Type::POLYMORPHIC_PATTERN:
-	{
-		if (!allow_poly_pattern) {
-			log_semantic_error(semantic_context, "Polymorphic-Pattern cannot be used as value", expression);
-			log_error_info_given_type(semantic_context, result->options.polymorphic_pattern);
-			return types.unknown_type;
-		}
-		return result->options.polymorphic_pattern;
 	}
 	case Expression_Result_Type::FUNCTION:
 	{
@@ -9771,7 +9669,7 @@ DynArray<Reachable_Operator_Table> symbol_table_query_reachable_operator_tables(
 
 		auto workload = operator_table->workloads[(int)op_type];
 		if (workload != nullptr) {
-			analysis_workload_add_dependency_internal(compilation_data->workload_executer, semantic_context->current_workload, upcast(workload));
+			analysis_workload_add_dependency(compilation_data->workload_executer, semantic_context->current_workload, upcast(workload));
 		}
 	}
 	workload_executer_wait_for_dependency_resolution(semantic_context);
@@ -9851,7 +9749,7 @@ Custom_Operator_Table* symbol_table_install_custom_operator_table(
 			continue;
 		}
 
-		auto workload = workload_executer_allocate_workload<Workload_Custom_Operator>(semantic_context->current_workload, compilation_data);
+		auto workload = workload_executer_allocate_workload<Workload_Custom_Operator>(semantic_context);
 		workload->analysis_pass = semantic_context->current_pass;
 		workload->operator_table = operator_table;
 		workload->type_to_analyse = change->type;
@@ -10832,20 +10730,14 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 	case AST::Statement_Type::RETURN_STATEMENT:
 	{
 		auto& return_stat = statement->options.return_value;
+
 		Upp_Function* current_function = semantic_context->current_function;
-		assert(current_function != 0, "No statements outside of function body");
-		Optional<Datatype*> expected_return_type = optional_make_failure<Datatype*>();
-		if (current_function->signature != 0) {
-			expected_return_type = current_function->signature->return_type();
-			if (expected_return_type.available && expected_return_type.value->contains_pattern) {
-				expected_return_type = optional_make_success(types.unknown_type);
-			}
-		}
-		if (current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS) {
-			Workload_Bake* bake_workload = downcast<Workload_Bake>(current_workload);
-			if (bake_workload->result_type != nullptr) {
-				expected_return_type = optional_make_success(bake_workload->result_type);
-			}
+		assert(current_function != 0 && current_function->signature != nullptr, "No statements outside of function body");
+		Optional<Datatype*> expected_return_type = current_function->signature->return_type();
+
+		bool inside_bake = current_function->function_node->type == AST::Expression_Type::BAKE;
+		if (inside_bake && semantic_context->bake_return_datatype != nullptr) {
+			expected_return_type = optional_make_success(semantic_context->bake_return_datatype);
 		}
 
 		if (return_stat.available)
@@ -10854,43 +10746,23 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			if (expected_return_type.available) {
 				context = expression_context_make_specific_type(expected_return_type.value);
 			}
+			else if (!inside_bake) {
+				log_semantic_error(semantic_context, "Function does not have a return value", return_stat.value);
+			}
 
 			auto return_type = semantic_analyser_analyse_expression_value(return_stat.value, context, semantic_context);
-			bool is_unknown = datatype_is_unknown(return_type);
-			if (expected_return_type.available) {
-				is_unknown = is_unknown || datatype_is_unknown(expected_return_type.value);
-			}
-
-			if (current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS)
-			{
-				Workload_Bake* bake_workload = downcast<Workload_Bake>(current_workload);
-				if (bake_workload->result_type == nullptr) {
-					bake_workload->result_type = return_type;
-				}
-			}
-			else
-			{
-				if (!expected_return_type.available) {
-					log_semantic_error(semantic_context, "Function does not have a return value", return_stat.value);
-				}
-				else if (!types_are_equal(expected_return_type.value, return_type) && !is_unknown) {
-					log_semantic_error(semantic_context, "Return type does not match the declared return type", statement);
-					log_error_info_given_type(semantic_context, return_type);
-					log_error_info_expected_type(semantic_context, expected_return_type.value);
-				}
+			if (inside_bake && semantic_context->bake_return_datatype == nullptr) {
+				semantic_context->bake_return_datatype = return_type;
 			}
 		}
 		else
 		{
-			if (current_workload->type == Analysis_Workload_Type::BAKE_ANALYSIS) {
+			if (inside_bake) {
 				log_semantic_error(semantic_context, "Must return a value in bake", statement);
 			}
-			else
-			{
-				if (expected_return_type.available) {
-					log_semantic_error(semantic_context, "Function requires a return value", statement);
-					log_error_info_expected_type(semantic_context, expected_return_type.value);
-				}
+			else if (expected_return_type.available) {
+				log_semantic_error(semantic_context, "Function requires a return value", statement);
+				log_error_info_expected_type(semantic_context, expected_return_type.value);
 			}
 		}
 
@@ -11992,9 +11864,6 @@ void error_information_append_to_rich_string(
 		{
 		case Expression_Result_Type::NOTHING:
 			string->append_formated("Nothing/void");
-			break;
-		case Expression_Result_Type::POLYMORPHIC_PATTERN:
-			string->append_formated("Polymorphic Pattern");
 			break;
 		case Expression_Result_Type::HARDCODED_FUNCTION:
 			string->append_formated("Hardcoded function");

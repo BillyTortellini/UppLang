@@ -425,7 +425,7 @@ struct DynTable
 
 	static DynTable<K, V> create_pointer(Arena* arena, usize expected_element_count = 0) 
 	{
-		return DynSet<K, V>::create(
+		return DynTable<K, V>::create(
 			arena, 
 			[](K* key) -> u64 { return hash_pointer(*key); },
 			[](K* a, K* b) -> bool { return (*a) == (*b); }, 

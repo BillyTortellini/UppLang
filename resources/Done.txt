@@ -1,6 +1,19 @@
 
 Done:
 -----
+01.04.26:
+ - Bytecode Update:
+    * Bytecode-Generator now uses arena
+    * Bytecode-Thread now uses arena
+    * Bytecode-Thread better interface
+    * Return-Value should be on the stack
+ - Removed bake-workload
+ - Create base-analysis workloads for poly-header and poly-struct as instance, so syntax-editor has infos to display
+ - Removed Expression_Result_Type::Polymorphic-info remove polymorphic_type as expression-info
+ - Semantic-Context can disable workload-creation, error-logging
+ - Remove error-checkpoint
+ - Bug-Fixes with polymorphism
+
 27.03.26:
  - Remove Struct-Instance-Pattern type, use normal structs instead
  - Poly-Parameter cannot access each other anymore, only poly-variables

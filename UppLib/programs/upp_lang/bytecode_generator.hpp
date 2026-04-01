@@ -13,10 +13,9 @@ struct IR_Code_Block;
         - Stack (Return addresses, register data, function arguments)
         - Stack_Pointer
         - Instruction_Pointer
-        - Return_Register (s, when we have multiple return values)
 
     A Stack-Frame looks like this:
-    [Return_Address] [Old_Stack_Pointer] [Param0] [Param1] [Param N...] [Reg0] [Reg1] [Reg2] [Regs...]
+    [Return_Instruction + 4byte padding] [Old_Stack_Pointer] [Return_Value_Buffer] [Param0] [Param1] [Param N...] [Reg 0] [Reg 1] [Reg N] [Tmp-Regs]
 */
 
 enum class Bytecode_Type
@@ -54,10 +53,9 @@ enum class Instruction_Type
     CALL_FUNCTION, // Pushes return address, op1 = function_index+1, op2 = stack_offset for new frame
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
     CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
-    RETURN, // Pops return address, op1 = return_value reg, op2 = return_size (Capped at 16 bytes)
+    RETURN, // Returns to previously called function, return-value should be stored on correct place on the stack by this point
     EXIT, // op1 = exit_code, op2 + op3 = Encoded pointer to error msg, see 
 
-    LOAD_RETURN_VALUE, // op1 = dst_reg, op2 = size
     LOAD_REGISTER_ADDRESS, // op1 = dest_reg, op2 = register_to_load
     LOAD_GLOBAL_ADDRESS, // op1 = dest_reg, op2 = global index
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function_slot_index (Update: Only puts function_slot_index + 1 as i64 into dest_reg)
@@ -104,39 +102,7 @@ struct Bytecode_Instruction
     int op4;
 };
 
-struct Goto_Label
-{
-    int jmp_instruction;
-    int label_index;
-};
-
-struct Bytecode_Generator
-{
-    // Result data
-    Dynamic_Array<Bytecode_Instruction> instructions;
-
-    // Program Information
-    Compilation_Data* compilation_data;
-
-    Dynamic_Array<Array<int>> stack_offsets; // For both registers and functions
-    Hashtable<IR_Code_Block*, int> code_block_register_stack_offset_index;
-    Hashtable<Upp_Function*, int> function_parameter_stack_offset_index;
-
-    // Data required for generation
-    Hashtable<IR_Code_Block*, int> continue_location;
-    Hashtable<IR_Code_Block*, int> break_location;
-    Dynamic_Array<Goto_Label> fill_out_gotos;
-    Dynamic_Array<int> label_locations;
-
-    int current_stack_offset;
-    int maximum_stack_offset;
-};
-
-Bytecode_Generator* bytecode_generator_create(Compilation_Data* compilation_data);
-void bytecode_generator_destroy(Bytecode_Generator* generator);
-void bytecode_generator_compile_function(Bytecode_Generator* generator, Upp_Function* function);
-
+void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp_Function* function);
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
-void bytecode_generator_append_bytecode_to_string(Bytecode_Generator* generator, String* string);
-int align_offset_next_multiple(int offset, int alignment);
-Exit_Code exit_code_from_exit_instruction(const Bytecode_Instruction& exit_instr);
+void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string);
+Exit_Code exit_code_from_exit_instruction(Bytecode_Instruction& exit_instr);

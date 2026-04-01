@@ -652,6 +652,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->allocated_nodes = dynamic_array_create<AST::Node*>();
 		result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 		result->custom_operator_deduplication = hashtable_create_empty<Custom_Operator, Custom_Operator*>(16, hash_custom_operator, equals_custom_operator);
+		result->bytecode = DynArray<Bytecode_Instruction>::create(&result->arena);
 
 		result->semantic_infos = dynamic_array_create<Editor_Info>();
 		result->next_analysis_item_index = 0;
@@ -661,7 +662,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->type_system = type_system_create(result);
 		result->extern_sources = extern_sources_create();
 		result->workload_executer = workload_executer_create(result);
-		result->bytecode_generator = bytecode_generator_create(result);
 		result->c_generator = c_generator_create(result);
 		c_compiler_initialize(); // Initializiation is cached, so calling this multiple times doesn't matter
 	}
@@ -1123,7 +1123,6 @@ void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_dat
 void compilation_data_destroy(Compilation_Data* data)
 {
 	ir_generator_destroy(data->ir_generator);
-	bytecode_generator_destroy(data->bytecode_generator);
 	workload_executer_destroy(data->workload_executer);
 
 	dynamic_array_destroy(&data->compiler_errors);
@@ -1363,11 +1362,4 @@ void call_signature_append_to_string(Call_Signature* signature, String* string, 
 		string->append(" => ");
 		datatype_append_to_string(signature->parameters[signature->return_type_index].datatype, string, type_system, format);
 	}
-}
-
-Optional<Datatype*> Call_Signature::return_type()
-{
-	assert(is_registered, "");
-	if (return_type_index == -1) return optional_make_failure<Datatype*>();
-	return optional_make_success(parameters[return_type_index].datatype);
 }

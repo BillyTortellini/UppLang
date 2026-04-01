@@ -7,33 +7,50 @@
 #include "ir_code.hpp"
 #include "editor_analysis_info.hpp"
 
-Bytecode_Thread* bytecode_thread_create(Compilation_Data* compilation_data, int instruction_limit)
+struct Bytecode_Thread
 {
-    Bytecode_Thread* result = new Bytecode_Thread;
-    result->heap_allocations = hashtable_create_pointer_empty<void*, int>(8);
-    result->heap_memory_consumption = 0;
-    result->compilation_data = compilation_data;
-    result->instruction_limit = instruction_limit;
-    result->waiting_for_type_finish_type = 0;
-    return result;
-}
+    Compilation_Data* compilation_data;
+    Arena* arena; // Where all heap allocations go
+    int max_instruction_executions;
+    int max_heap_consumption;
+    bool allow_global_access;
 
-void bytecode_thread_destroy(Bytecode_Thread* thread) {
-    auto iter = hashtable_iterator_create(&thread->heap_allocations);
-    while (hashtable_iterator_has_next(&iter)) {
-        void* allocation = *iter.key;
-        free(allocation);
-        hashtable_iterator_next(&iter);
-    }
-    hashtable_destroy(&thread->heap_allocations);
-    delete thread;
+    // Run-Information
+    int instruction_index;
+    byte* stack_pointer;
+    Array<byte> stack;
+    int heap_memory_consumption;
+    int executed_instruction_count;
+
+    // Result infos
+    Exit_Code exit_code;
+};
+
+
+Bytecode_Thread* bytecode_thread_create(
+	Compilation_Data* compilation_data, Arena* arena, int max_instruction_executions, int max_heap_consumption, int stack_size, bool allow_global_access
+)
+{
+    Bytecode_Thread* result = arena->allocate<Bytecode_Thread>();
+    memory_zero(result);
+    result->arena = arena;
+    result->compilation_data = compilation_data;
+
+    result->max_instruction_executions = max_instruction_executions;
+    result->max_heap_consumption = max_heap_consumption;
+    result->allow_global_access = allow_global_access;
+    result->stack.size = stack_size;
+    result->stack.data = (byte*) arena->allocate_raw(stack_size, 16); // Allocate raw instead of allocate_array so we can have 16 byte alignment
+
+    return result;
 }
 
 void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* src, Bytecode_Type dest_type, Bytecode_Type src_type)
 {
     switch (instr_type)
     {
-    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: {
+    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: 
+    {
         u64 source_unsigned = 0;
         i64 source_signed = 0;
         bool source_is_signed = false;
@@ -61,7 +78,8 @@ void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* 
         }
         break;
     }
-    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: {
+    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: 
+    {
         double source = 0.0;
         switch (src_type) {
         case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
@@ -75,7 +93,8 @@ void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* 
         }
         break;
     }
-    case Instruction_Type::CAST_FLOAT_INTEGER: {
+    case Instruction_Type::CAST_FLOAT_INTEGER: 
+    {
         double source = 0.0;
         switch (src_type) {
         case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
@@ -636,20 +655,19 @@ void interpreter_safe_memcopy(Bytecode_Thread* thread, void* dst, void* src, int
 {
     if (memory_is_readable(dst, size) && memory_is_readable(src, size)) {
         memory_copy(dst, src, size);
-        return;
     }
-    thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Memcpy failed as memory address is not readable");
-    thread->error_occured = true;
+    else {
+        thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Invalid memory access");
+    }
 }
 
 // Returns true if we need to stop execution, e.g. on exit instruction
-bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
+void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
 {
     auto compilation_data = thread->compilation_data;
     auto& globals = compilation_data->globals;
     auto& constant_pool = compilation_data->constant_pool;
-    auto& generator = compilation_data->bytecode_generator;
-    auto& instructions = generator->instructions;
+    auto& instructions = compilation_data->bytecode;
 
     Bytecode_Instruction* i = &instructions[thread->instruction_index];
     switch (i->instruction_type)
@@ -657,12 +675,17 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::MOVE_STACK_DATA:
         interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, thread->stack_pointer + i->op2, i->op3);
         break;
-    case Instruction_Type::READ_GLOBAL: {
+    case Instruction_Type::READ_GLOBAL: 
+    {
+        if (!thread->allow_global_access) {
+            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot read extern global");
+            return;
+        }
+
         auto global = globals[i->op2];
         if (global->is_extern) {
-            thread->error_occured = true;
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot read extern global");
-            return true;
+            return;
         }
         interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, globals[i->op2]->memory, i->op3);
         break;
@@ -670,9 +693,8 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::WRITE_GLOBAL: {
         auto global = globals[i->op2];
         if (global->is_extern) {
-            thread->error_occured = true;
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot write to extern global");
-            return true;
+            return;
         }
         interpreter_safe_memcopy(thread, globals[i->op1]->memory, thread->stack_pointer + i->op2, i->op3);
         break;
@@ -698,31 +720,31 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         u64 offset = (u64)((*(u32*)(thread->stack_pointer + i->op3)) * (u64)i->op4);
         if ((i32)offset < 0) {
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Multiply-Add (Used in array index calculations) went out of bounds");
-            return true;
+            return;
         }
         *(u64**)(thread->stack_pointer + i->op1) = (u64*)(*(byte**)(thread->stack_pointer + i->op2) + offset);
         break;
     }
     case Instruction_Type::JUMP:
         thread->instruction_index = i->op1;
-        return false;
+        return; // Return so we don't increment instruction-index
     case Instruction_Type::JUMP_ON_TRUE:
         if (*(thread->stack_pointer + i->op2) != 0) {
             thread->instruction_index = i->op1;
-            return false;
+            return;
         }
         break;
     case Instruction_Type::JUMP_ON_FALSE:
         if (*(thread->stack_pointer + i->op2) == 0) {
             thread->instruction_index = i->op1;
-            return false;
+            return;
         }
         break;
     case Instruction_Type::JUMP_ON_INT_EQUAL: {
         int value = *(int*)(thread->stack_pointer + i->op2);
         if (value == i->op3) {
             thread->instruction_index = i->op1;
-            return false;
+            return;
         }
         break;
     }
@@ -739,7 +761,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             }
             if (function_index < 0 || function_index >= compilation_data->functions.size) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Function call failed call-instruction has invalid function index");
-                return true;
+                return;
             }
         }
 
@@ -748,28 +770,28 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             function = compilation_data->functions[function_index];
             if (function->is_extern) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to extern function not possible in bytecode");
-                return true;
+                return;
             }
             else if (function->contains_errors) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to function with errors");
-                return true;
+                return;
             }
-            else if (function->poly_type == Poly_Type::BASE) {
+            else if (function->poly_type == Poly_Type::BASE || function->poly_type == Poly_Type::PARTIAL) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Call to poly-base");
-                return true;
+                return;
             }
             else if (function->bytecode_start_instruction == -1) {
-                thread->waiting_for_function = function;
-                thread->exit_code = exit_code_make(Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION, "Waiting for function");
-                return true;
+                thread->exit_code = exit_code_make(Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION);
+                thread->exit_code.options.waiting_for_function = function;
+                return;
             }
         }
 
         // Check for stack-overflow
-        int remaining_stack_size = &thread->stack[INTERPRETER_STACK_SIZE - 1] - thread->stack_pointer;
-        if (remaining_stack_size <= generator->maximum_stack_offset) {
+        int remaining_stack_size = &thread->stack[thread->stack.size - 1] - thread->stack_pointer;
+        if (remaining_stack_size <= function->bytecode_maximum_stack_offset) {
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Stack overflow on normal function call");
-            return true;
+            return;
         }
 
         byte* base_pointer = thread->stack_pointer;
@@ -778,20 +800,14 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         *(byte**)(thread->stack_pointer + 8) = base_pointer; // Push current stack_pointer
         thread->instruction_index = function->bytecode_start_instruction; // Jump to function
 
-        return false;
+        return;
     }
-    case Instruction_Type::RETURN: {
-        // Copy result into return register
-        if (i->op2 > 256) {
-            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Return value overflow, large return values (>256 bytes) currently not supported");
-            return true;
-        }
-        memory_copy(thread->return_register, thread->stack_pointer + i->op1, i->op2);
-
+    case Instruction_Type::RETURN: 
+    {
         // Check if we finished execution
         if (thread->stack_pointer == &thread->stack[0]) {
             thread->exit_code = exit_code_make(Exit_Code_Type::SUCCESS);
-            return true;
+            return;
         }
 
         // Restore stack and instruction pointer
@@ -799,130 +815,125 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         byte* stack_old_base = *(byte**)(thread->stack_pointer + 8);
         thread->instruction_index = return_address;
         thread->stack_pointer = stack_old_base;
-        return false;
+        return;
     }
     case Instruction_Type::EXIT: {
         thread->exit_code = exit_code_from_exit_instruction(*i);
-        return true;
+        return;
     }
     case Instruction_Type::CALL_HARDCODED_FUNCTION:
     {
         Hardcoded_Type hardcoded_type = (Hardcoded_Type)i->op1;
-        memory_set_bytes(&thread->return_register[0], 256, 0);
+        assert((u32)hardcoded_type < (int)Hardcoded_Type::MAX_ENUM_VALUE, "");
+        Call_Signature* hardcoded_signature = compilation_data->hardcoded_function_signatures[(int)hardcoded_type];
+
+        byte* return_buffer = thread->stack_pointer + i->op2 + 16; // Return buffer is after [return_instruction] [prev_stack_frame] [return_buffer] [params]...
         switch (hardcoded_type)
         {
         case Hardcoded_Type::SYSTEM_ALLOC: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            // System-alloc (u64 size) => address
+            byte* argument_start = return_buffer + 8;
             u64 size = *(u64*)argument_start;
             if (size == 0) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Called malloc with size 0");
-                return true;
+                return;
             }
-            if (thread->heap_memory_consumption + size > 1024 * 64) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Reached maximum heap allocations with 64kB memory");
-                return true;
+            if (thread->heap_memory_consumption + size > thread->max_heap_consumption) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Reached maximum heap allocations");
+                return;
             }
 
-            void* alloc_data = malloc(size);
-            hashtable_insert_element(&thread->heap_allocations, alloc_data, (int)size);
+            void* alloc_data = thread->arena->allocate_raw(size, 16);
             thread->heap_memory_consumption += size;
 
             // logg("Allocated memory size: %5d, pointer: %p\n", size, alloc_data);
-            memory_copy(thread->return_register, &alloc_data, sizeof(void*));
+            memory_copy(return_buffer, &alloc_data, sizeof(void*));
             break;
         }
         case Hardcoded_Type::SYSTEM_FREE: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            // System-free fn (ptr: address)
+            byte* argument_start = return_buffer;
             void* free_data = *(void**)argument_start;
 
-            int* size_opt = hashtable_find_element(&thread->heap_allocations, free_data);
-            if (size_opt == 0) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Free called on invalid pointer");
-                return true;
+            if (free_data == nullptr) {
+                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Free called on nullptr");
+                return;
             }
 
-            thread->heap_memory_consumption -= *size_opt;
-            hashtable_remove_element(&thread->heap_allocations, free_data);
-            free(free_data);
-
             // logg("Interpreter Free pointer: %p\n", free_data);
-            *(void**)argument_start = (void*)1;
             break;
         }
         case Hardcoded_Type::MEMORY_COPY: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            // fn (dst: address, src: address, size: usize)
+            byte* argument_start = return_buffer;
             void* destination = *(void**)argument_start;
             void* source = *(void**)(argument_start + 8);
             u64 size = *(u64*)(argument_start + 16);
-            if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
-                thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory copy called with invalid pointers/size");
-                return true;
-            }
-            memcpy(destination, source, size);
+            interpreter_safe_memcopy(thread, destination, source, size);
             break;
         }
         case Hardcoded_Type::MEMORY_COMPARE: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            // fn (a: address, b: address, size: usize) => bool
+            byte* argument_start = return_buffer + 8; // 1 byte for return-buffer, 7 byte alignment
             void* destination = *(void**)argument_start;
             void* source = *(void**)(argument_start + 8);
             u64 size = *(u64*)(argument_start + 16);
             if (!memory_is_readable(destination, size) || !memory_is_readable(source, size)) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory compare called with invalid pointers/size");
-                return true;
+                return;
             }
             int cmp = memcmp(destination, source, size);
-            thread->return_register[0] = cmp == 0;
+            *return_buffer = cmp == 0;
             break;
         }
         case Hardcoded_Type::MEMORY_ZERO: 
         {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            // fn (a: address, size: usize)
+            byte* argument_start = return_buffer;
             void* destination = *(void**)argument_start;
             u64 size = *(u64*)(argument_start + 8);
             if (!memory_is_readable(destination, size)) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Memory zero called with invalid pointers/size");
-                return true;
+                return;
             }
             memset(destination, 0, size);
             break;
         }
         case Hardcoded_Type::PRINT_I32: {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            byte* argument_start = return_buffer;
             i32 value = *(i32*)(argument_start);
             logg("%d", value); break;
         }
         case Hardcoded_Type::PRINT_F32: {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            byte* argument_start = return_buffer;
             logg("%3.2f", *(f32*)(argument_start)); break;
         }
         case Hardcoded_Type::PRINT_BOOL: {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            byte* argument_start = return_buffer;
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
         case Hardcoded_Type::PRINT_STRING: {
-            byte* argument_start = thread->stack_pointer + i->op2 + 16;
+            byte* argument_start = return_buffer;
             Upp_String string = *(Upp_String*)argument_start;
 
             // Check if c_string size is correct
             if (string.size == 0) {break;}
             if (string.size >= 10000) {
-                thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "Print_string failed, slice size was too large, > 10000");
-                return true;
+                return;
             }
             // Check if pointer data is correct
             if (!memory_is_readable((void*)string.data, string.size)) {
-                thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "Print c_string failed, memory of c_string was not readable");
-                return true;
+                return;
             }
 
             logg("%.*s", string.size, (const char*) string.data);
@@ -940,7 +951,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             }
             std::cin.ignore(10000, '\n');
             std::cin.clear();
-            interpreter_safe_memcopy(thread, thread->return_register, &num, 4);
+            interpreter_safe_memcopy(thread, return_buffer, &num, 4);
             break;
         }
         case Hardcoded_Type::READ_F32: {
@@ -952,7 +963,7 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             }
             std::cin.ignore(10000, '\n');
             std::cin.clear();
-            interpreter_safe_memcopy(thread, thread->return_register, &num, 4);
+            interpreter_safe_memcopy(thread, return_buffer, &num, 4);
             break;
         }
         case Hardcoded_Type::READ_BOOL: {
@@ -965,10 +976,10 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             std::cin.ignore(10000, '\n');
             std::cin.clear();
             if (num == 0) {
-                thread->return_register[0] = 0;
+                *return_buffer = false;
             }
             else {
-                thread->return_register[0] = 1;
+                *return_buffer = true;
             }
             break;
         }
@@ -979,37 +990,36 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             byte* argument_start = thread->stack_pointer + i->op2 + 16;
             int type_index = *(int*)(argument_start);
             if (type_index > type_system->types.size || type_index < 0) {
-                thread->error_occured = true;
                 thread->exit_code = exit_code_make(
                     Exit_Code_Type::CODE_ERROR, 
                     "type_info failed, type-handle was invalid value");
-                return true;
+                return;
             }
             if (type_size_is_unfinished(type_system->types[type_index])) {
-                thread->error_occured = true;
                 thread->exit_code = exit_code_make(Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED);
-                thread->waiting_for_type_finish_type = type_system->types[type_index];
-                return true;
+                thread->exit_code.options.waiting_for_type_finish_type = type_system->types[type_index];
+                return;
             }
-            *((Internal_Type_Information**)&thread->return_register[0]) = type_system->types[type_index]->internal_info;
+            *((Internal_Type_Information**)return_buffer) = type_system->types[type_index]->internal_info;
             break;
         }
         default: {panic("What"); }
         }
         break;
     }
-    case Instruction_Type::LOAD_RETURN_VALUE:
-        interpreter_safe_memcopy(thread, thread->stack_pointer + i->op1, &thread->return_register[0], i->op2);
-        break;
     case Instruction_Type::LOAD_REGISTER_ADDRESS:
         *(void**)(thread->stack_pointer + i->op1) = (void*)(thread->stack_pointer + i->op2);
         break;
-    case Instruction_Type::LOAD_GLOBAL_ADDRESS: {
+    case Instruction_Type::LOAD_GLOBAL_ADDRESS: 
+    {
+        if (!thread->allow_global_access) {
+            thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Trying to load global variable address");
+            return;
+        }
         auto global = globals[i->op2];
         if (global->is_extern) {
-            thread->error_occured = true;
             thread->exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Cannot load extern global address");
-            return true;
+            return;
         }
         *(void**)(thread->stack_pointer + i->op1) = (void*)(globals[i->op2]->memory);
         break;
@@ -1056,7 +1066,8 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
     case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
     case Instruction_Type::BINARY_OP_AND:
-    case Instruction_Type::BINARY_OP_OR: {
+    case Instruction_Type::BINARY_OP_OR: 
+    {
         if (!bytecode_execute_binary_instr(
             i->instruction_type,
             (Bytecode_Type)i->op4,
@@ -1064,7 +1075,6 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             thread->stack_pointer + i->op2,
             thread->stack_pointer + i->op3
         )) {
-            thread->error_occured = true;
             thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Binary op execution failed");
         }
         break;
@@ -1081,12 +1091,14 @@ bool bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         break;
     default: {
         panic("Should not happen!\n");
-        return true;
     }
     }
 
+    if (thread->exit_code.type != Exit_Code_Type::RUNNING) {
+        return;
+    }
     thread->instruction_index += 1;
-    return false;
+    thread->executed_instruction_count += 1;
 }
 
 void bytecode_thread_print_state(Bytecode_Thread* interpreter)
@@ -1147,40 +1159,32 @@ void bytecode_thread_print_state(Bytecode_Thread* interpreter)
 
 void bytecode_thread_set_initial_state(Bytecode_Thread* thread, Upp_Function* entry_function)
 {
-    // Reset/Zero out previous runs
-    memory_set_bytes(&thread->return_register, 256, 0);
-    memory_set_bytes(&thread->stack[0], 16, 0); // Sets return address and old stack pointer to 0
+    // Note parameters would be possible, but then we would need to initialze the stack correctly first
+    assert(entry_function->signature->param_count() == 0, "Entry function cannot have parameters currently");
+    assert(entry_function->bytecode_start_instruction != -1, "Function should be compiled at this point");
+
     thread->stack_pointer = &thread->stack[0];
     thread->instruction_index = entry_function->bytecode_start_instruction;
-    assert(entry_function->signature->parameters.size + (entry_function->signature->return_type().available ? -1 : 0) == 0, "Entry function cannot have params");
-
-    // Reset heap allocations
-    auto iter = hashtable_iterator_create(&thread->heap_allocations);
-    while (hashtable_iterator_has_next(&iter)) {
-        void* allocation = *iter.key;
-        free(allocation);
-        hashtable_iterator_next(&iter);
-    }
-    hashtable_reset(&thread->heap_allocations);
+    thread->executed_instruction_count = 0;
     thread->heap_memory_consumption = 0;
 }
 
-void bytecode_thread_execute(Bytecode_Thread* thread)
+Exit_Code bytecode_thread_execute(Bytecode_Thread* thread)
 {
     Timing_Task before_task = thread->compilation_data->task_current;
     compilation_data_switch_timing_task(thread->compilation_data, Timing_Task::CODE_EXEC);
-    thread->error_occured = false;
-    thread->waiting_for_type_finish_type = 0;
-    thread->exit_code = exit_code_make(Exit_Code_Type::SUCCESS);
 
-    int executed_instruction_count = 0;
+    thread->exit_code = exit_code_make(Exit_Code_Type::RUNNING);
     __try
     {
-        while (!thread->error_occured) {
+        while (true) 
+        {
             //bytecode_thread_print_state(thread);
-            if (bytecode_thread_execute_current_instruction(thread)) { break; }
-            executed_instruction_count++;
-            if (thread->instruction_limit > 0 && executed_instruction_count > thread->instruction_limit) {
+            bytecode_thread_execute_current_instruction(thread);
+            if (thread->exit_code.type != Exit_Code_Type::RUNNING) {
+                break;
+            }
+            if (thread->max_instruction_executions > 0 && thread->executed_instruction_count >= thread->max_instruction_executions) {
                 thread->exit_code = exit_code_make(Exit_Code_Type::INSTRUCTION_LIMIT_REACHED);
                 break;
             }
@@ -1199,5 +1203,10 @@ void bytecode_thread_execute(Bytecode_Thread* thread)
         thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Internal exception occured (Division by 0, invalid memory access, ...)");
     }
 
-    compilation_data_switch_timing_task(thread->compilation_data, Timing_Task::CODE_EXEC);
+    compilation_data_switch_timing_task(thread->compilation_data, before_task);
+    return thread->exit_code;
+}
+
+void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread) {
+    return &thread->stack[16]; // Return value starts at offset 16 in stack frame
 }

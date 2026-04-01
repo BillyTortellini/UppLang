@@ -12,7 +12,6 @@
 
 struct AST_Parser;
 struct Intermediate_Generator;
-struct Bytecode_Generator;
 struct Bytecode_Thread;
 struct C_Generator;
 struct C_Compiler;

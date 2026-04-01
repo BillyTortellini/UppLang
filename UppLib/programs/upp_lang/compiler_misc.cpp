@@ -112,7 +112,7 @@ Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg)
 {
 	Exit_Code result;
 	result.type = type;
-	result.error_msg = error_msg;
+	result.options.error_msg = error_msg;
 	return result;
 }
 
@@ -121,6 +121,7 @@ const char* exit_code_type_as_string(Exit_Code_Type type)
 	switch (type)
 	{
 	case Exit_Code_Type::SUCCESS: return "SUCCESS";
+	case Exit_Code_Type::RUNNING: return "RUNNING";
 	case Exit_Code_Type::COMPILATION_FAILED: return "COMPILATION_FAILED";
 	case Exit_Code_Type::CODE_ERROR: return "CODE_ERROR";
 	case Exit_Code_Type::EXECUTION_ERROR: return "EXECUTION_ERROR";
@@ -135,8 +136,11 @@ const char* exit_code_type_as_string(Exit_Code_Type type)
 void exit_code_append_to_string(String* string, Exit_Code code)
 {
 	string_append_formated(string, exit_code_type_as_string(code.type));
-	if (code.error_msg != 0) {
-		string_append_formated(string, ", %s", code.error_msg);
+	if (code.type == Exit_Code_Type::TYPE_INFO_WAITING_FOR_TYPE_FINISHED || code.type == Exit_Code_Type::CALL_TO_UNFINISHED_FUNCTION) {
+		return;
+	}
+	if (code.options.error_msg != 0) {
+		string_append_formated(string, ", %s", code.options.error_msg);
 	}
 }
 
@@ -508,4 +512,18 @@ void fiber_pool_test()
 	assert(pool->allocated_fibers.size == 2, "Must not have allocated 3, since only max of 2 fibers at a time were active\n");
 }
 
+Optional<Datatype*> Call_Signature::return_type()
+{
+	assert(is_registered, "");
+	if (return_type_index == -1) return optional_make_failure<Datatype*>();
+	return optional_make_success(parameters[return_type_index].datatype);
+}
 
+int Call_Signature::param_count(bool with_return) 
+{
+	int param_count = parameters.size;
+	if (return_type_index != -1) {
+		param_count -= 1;
+	}
+	return param_count;
+}

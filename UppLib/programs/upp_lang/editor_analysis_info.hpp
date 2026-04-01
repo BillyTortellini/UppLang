@@ -16,6 +16,7 @@ namespace AST
     struct Code_Block;
 };
 
+struct Bytecode_Instruction;
 struct Call_Signature;
 struct Fiber_Pool;
 struct Source_Code;
@@ -34,7 +35,6 @@ struct Analysis_Pass;
 struct Call_Info;
 struct Symbol;
 struct IR_Generator;
-struct Bytecode_Generator;
 struct C_Generator;
 
 
@@ -115,6 +115,7 @@ struct Compilation_Data
     // Program
     Dynamic_Array<Upp_Function*> functions;
     Dynamic_Array<Upp_Global*> globals;
+    DynArray<Bytecode_Instruction> bytecode;
 
     // Known functions
     Upp_Function* main_function;
@@ -133,7 +134,6 @@ struct Compilation_Data
     // Stages
     Workload_Executer* workload_executer;
     IR_Generator* ir_generator;
-    Bytecode_Generator* bytecode_generator;
     C_Generator* c_generator;
 
     // Semantic-Analysis information
