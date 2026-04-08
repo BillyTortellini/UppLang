@@ -69,6 +69,8 @@ DynArray<Reachable_Operator_Table> symbol_table_query_reachable_operator_tables(
 Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena);
 Call_Origin call_origin_make_cast(Compilation_Data* compilation_data);
 Call_Origin call_origin_make(Poly_Header* poly_header);
+void analyse_simple_function_header_and_body(
+	Upp_Function* function, Semantic_Context* semantic_context, AST::Expression* expr, bool analyse_signature, Expression_Context context);
 
 
 
@@ -456,7 +458,7 @@ Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name,
 	memory_zero(function);
 	function->function_index = compilation_data->functions.size;
 	function->signature = signature;
-	function->name = name;
+	function->name = name == nullptr ? compilation_data->identifier_pool.predefined_ids.lambda_function : name;
 	function->poly_type = Poly_Type::NORMAL;
 	function->is_extern = false;
 	function->contains_errors = false;
@@ -6582,30 +6584,7 @@ void analysis_workload_entry(void* userdata)
 			semantic_context->error_logging_enabled = false;
 		}
 
-		if (body_node.is_expression)
-		{
-			Expression_Context context = expression_context_make_unspecified();
-			if (function->signature->return_type().available) {
-				context = expression_context_make_specific_type(function->signature->return_type().value);
-			}
-			semantic_analyser_analyse_expression_any(body_node.expr, context, semantic_context);
-		}
-		else
-		{
-			auto code_block = body_node.block;
-			Control_Flow flow = semantic_analyser_analyse_block(code_block, semantic_context);
-			if (flow != Control_Flow::RETURNS && function->signature->return_type().available)
-			{
-				Node_Section error_report_section = Node_Section::END_TOKEN;
-				AST::Node* error_report_node = upcast(code_block);
-				if (function->symbol != nullptr && function->symbol->definition_node != nullptr) {
-					error_report_node = function->symbol->definition_node;
-					error_report_section = Node_Section::FIRST_TOKEN;
-				}
-				log_semantic_error(semantic_context, "Function is missing a return statement", error_report_node, error_report_section);
-			}
-		}
-
+		analyse_simple_function_header_and_body(function, semantic_context, function->function_node, false, expression_context_make_unspecified());
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_HEADER:
@@ -7088,6 +7067,119 @@ void analyse_index_accept_all_ints_as_usize(AST::Expression* expr, Semantic_Cont
 	if (!expression_apply_cast_if_possible(expr, upcast(types.usize), is_auto_cast, nullptr, semantic_context)) {
 		log_semantic_error(semantic_context, "Expected index type (integer or value castable to usize)", expr);
 		info->cast_info = cast_info_make_simple(upcast(types.usize), Cast_Type::INVALID);
+	}
+}
+
+// Creates function if function is nullptr
+void analyse_simple_function_header_and_body(
+	Upp_Function* function, Semantic_Context* semantic_context, AST::Expression* expr, bool analyse_signature, Expression_Context context)
+{
+	Compilation_Data* compilation_data = semantic_context->compilation_data;
+	auto& types = compilation_data->type_system->predefined_types;
+
+	RESTORE_ON_SCOPE_EXIT(semantic_context->current_function, function);
+
+	// Analyse parameter types and create call-signature
+	Symbol_Table* parameter_table = semantic_context->current_symbol_table;
+	if (analyse_signature) 
+	{
+		Call_Signature* call_signature = compilation_data->empty_call_signature;
+
+		if (expr->type == AST::Expression_Type::INFERRED_FUNCTION)
+		{
+			// Handle infered function types
+			bool log_error = true;
+			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+			{
+				if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
+					call_signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
+					log_error = false;
+				}
+				else {
+					log_semantic_error(semantic_context, "Inferred function context must expect a function-pointer", expr, Node_Section::FIRST_TOKEN);
+					log_error_info_given_type(semantic_context, context.datatype);
+				}
+			}
+			else {
+				log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
+			}
+		}
+		else if (expr->type == AST::Expression_Type::FUNCTION) 
+		{
+			// Create call-signature and analyse parameters
+			AST::Signature* signature_node = expr->options.function.signature;
+			call_signature = call_signature_create_empty();
+			for (int i = 0; i < signature_node->parameters.size; i++) 
+			{
+				AST::Parameter* param_node = signature_node->parameters[i];
+				if (param_node->is_comptime) {
+					log_semantic_error(semantic_context, "Anonymous function parameter must not be comptime", upcast(param_node), Node_Section::FIRST_TOKEN);
+				}
+
+				Datatype* datatype = types.unknown_type;
+				if (param_node->type.available) {
+					datatype = semantic_analyser_analyse_expression_type(param_node->type.value, semantic_context);
+				}
+				else {
+					log_semantic_error(semantic_context, "Anonymous function parameter must have a type", upcast(param_node), Node_Section::FIRST_TOKEN);
+				}
+
+				if (param_node->is_return_type) {
+					call_signature_add_return_type(call_signature, datatype, compilation_data);
+				}
+				else {
+					call_signature_add_parameter(call_signature, param_node->name, datatype, true, false, false);
+				}
+			}
+			call_signature = call_signature_register(call_signature, compilation_data);
+		}
+		else {
+			panic("");
+		}
+
+		// Define all parameter symbols from call-signature
+		if (call_signature != compilation_data->empty_call_signature)
+		{
+			parameter_table = symbol_table_create_with_parent(semantic_context->current_symbol_table, Symbol_Access_Level::POLYMORPHIC, compilation_data);
+			for (int i = 0; i < call_signature->parameters.size; i++)
+			{
+				auto& param = call_signature->parameters[i];
+				assert(param.pattern_variable_index == -1, "");
+				if (i == call_signature->return_type_index) continue;
+				Symbol* symbol = symbol_table_define_symbol(
+					parameter_table, param.name, Symbol_Type::PARAMETER, upcast(function->function_node), Symbol_Access_Level::INTERNAL,
+					compilation_data
+				);
+				symbol->options.parameter.function = function;
+				symbol->options.parameter.index = i;
+			}
+		}
+
+		function->signature = call_signature;
+	}
+
+	// Analyse body
+	auto& body_node = expr->options.function.body;
+	function->body_pass = semantic_context->current_pass;
+	RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, parameter_table);
+	RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::INTERNAL);
+	RESTORE_ON_SCOPE_EXIT(semantic_context->statement_reachable, true);
+
+	if (body_node.is_expression)
+	{
+		Expression_Context context = expression_context_make_unspecified();
+		if (function->signature->return_type().available) {
+			context = expression_context_make_specific_type(function->signature->return_type().value);
+		}
+		semantic_analyser_analyse_expression_any(body_node.expr, context, semantic_context);
+	}
+	else
+	{
+		auto code_block = body_node.block;
+		Control_Flow flow = semantic_analyser_analyse_block(code_block, semantic_context);
+		if (flow != Control_Flow::RETURNS && function->signature->return_type().available) {
+			log_semantic_error(semantic_context, "Function is missing a return statement", expr, Node_Section::FIRST_TOKEN);
+		}
 	}
 }
 
@@ -8038,10 +8130,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		log_semantic_error(semantic_context, "Module not valid in this context", AST::upcast(expr));
 		EXIT_ERROR(types.unknown_type);
 	}
+	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::INFERRED_FUNCTION: 
 	{
-		AST::Body_Node body_node = expr->options.inferred_function_body;
-
 		if (!semantic_context->can_create_workloads) {
 			log_semantic_error(
 				semantic_context,
@@ -8050,84 +8141,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		// Handle infered function types
-		bool log_error = true;
-		Call_Signature* signature = compilation_data->empty_call_signature;
-		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-		{
-			if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
-				signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
-				log_error = false;
-			}
-			else {
-				log_semantic_error(semantic_context, "Inferred function context must expect a function-pointer", expr, Node_Section::FIRST_TOKEN);
-				log_error_info_given_type(semantic_context, context.datatype);
-			}
-		}
-		else {
-			log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
-		}
-
-		// Create function
-		Upp_Function* function = upp_function_create_empty(
-			signature, ids.lambda_function, compilation_data
-		);
-		function->function_node = expr;
-		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
-		function->body_workload->function = function;
-		Symbol_Table* parameter_table = symbol_table_create_with_parent(
-			semantic_context->current_symbol_table, semantic_context->symbol_access_level, compilation_data
-		);
-		function->body_workload->parameter_table = parameter_table;
-
-		// Define all parameter symbols from derived signature
-		for (int i = 0; i < signature->parameters.size; i++)
-		{
-			auto& param = signature->parameters[i];
-			assert(param.pattern_variable_index == -1, "");
-			if (i == signature->return_type_index) continue;
-			Symbol* symbol = symbol_table_define_symbol(
-				parameter_table, param.name, Symbol_Type::PARAMETER, upcast(function->function_node), Symbol_Access_Level::INTERNAL,
-				compilation_data
-			);
-			symbol->options.parameter.function = function;
-			symbol->options.parameter.index = i;
-		}
-
-		// Note: I could also not generate a function-body workload at all, and just analyse it here...
-		//		same for normal anonymous function
-
-		EXIT_FUNCTION(function);
-	}
-	case AST::Expression_Type::FUNCTION:
-	{
-		if (!semantic_context->can_create_workloads) {
-			log_semantic_error(
-				semantic_context,
-				"Semantic context cannot create workload for anonymous function, as workload creation is disabled", upcast(expr), Node_Section::KEYWORD
-			);
-			EXIT_ERROR(types.unknown_type);
-		}
-
-		// Anonymous functions
+		AST::Body_Node body_node = expr->options.inferred_function_body;
 		Upp_Function* function = upp_function_create_empty(nullptr, nullptr, compilation_data);
 		function->function_node = expr;
-		function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context);
-		function->header_workload->function = function;
-		function->header_workload->symbol_table = semantic_context->current_symbol_table;
-		function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
-		function->body_workload->function = function;
-		function->body_workload->parameter_table = nullptr; // Should be set by header analysis
-		analysis_workload_add_dependency(
-			semantic_context->compilation_data->workload_executer, upcast(function->body_workload), upcast(function->header_workload)
-		);
-
-		// Wait for header analysis to finish
-		auto executer = compilation_data->workload_executer;
-		analysis_workload_add_dependency(executer, semantic_context->current_workload, upcast(function->header_workload));
-		workload_executer_wait_for_dependency_resolution(semantic_context);
-
-		// Return function
+		analyse_simple_function_header_and_body(function, semantic_context, expr, true, context);
 		EXIT_FUNCTION(function);
 	}
 	case AST::Expression_Type::STRUCTURE_TYPE: 

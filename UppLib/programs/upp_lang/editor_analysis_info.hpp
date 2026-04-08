@@ -75,7 +75,6 @@ struct Editor_Info_Call
 {
     Call_Info* callable_call;
     AST::Call_Node* call_node;
-    int test;
 };
 
 struct Editor_Info_Argument {

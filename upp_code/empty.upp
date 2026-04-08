@@ -1,5 +1,4 @@
 
-
 Node :: struct ($T)
     count: int
     value: T
@@ -9,13 +8,19 @@ foo :: fn(node: *Node($K))
 
 bar :: fn($C: int)
     x: int = C
-    z := C.asdf
     if true
         y: int = C
 
 main :: fn()
     // bar(5)
     x: int = 5
+    
+    add_fn := fn(a: int, b: int) => int
+        return a + b
+    
+    //  z := add_fn(1, 3)
+    //   ~print_i32(z)
+    //   ~print_line()
     
     node: Node(int) = .(15, 2)
     foo(node-*)

@@ -1,14 +1,31 @@
 
 TODO:
 -----
- - Remove unnecessary workload-types (inferred-function and lambda-function workloads)
- - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
-    --> Can I just loop over parent-passes?
- - In function call we could add the parameter names to code-completion
- - Think about difference between comptime-value and datatype/function
- - Rename constant to comptime-value
  - Syntax-Rework with 'qualifier-first' syntax
+ - Rename address to rawptr, usize, isize
  - Cast update
+
+New keywords:
+ - var
+ - global
+ - const
+ - fn, *fn instead of fn_ptr, lambda?, .=>
+
+Syntax-Rework:
+ Do I really want this, yeah, i would like to try
+
+const X: int = 15
+var Y = 15
+var Y: int = 15
+var z: float
+module Something
+struct Node
+fn add(a: int, b: int, c: int)
+import
+#add_binop
+fn (a: float) => float
+
+global X = 10 // Add a global variable
 
 
 add_cast(from, to, function, take_pointer, take_pointer)
@@ -19,6 +36,10 @@ add_cast($T, Any, basic_cast) --> To_Any cast
 
 DONE:
 -----
+07.04:
+ - In function call we could add the parameter names to code-completion
+ - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
+ - Remove unnecessary workload-types (inferred-function and lambda-function workloads)
 
 
 Rough Plan:

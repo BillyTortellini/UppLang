@@ -3474,40 +3474,73 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 	if (pass->origin_workload == nullptr) return;
 
 	// Generate pass-string
+	bool is_first_poly_workload = true;
 	Workload_Base* workload = pass->origin_workload;
-	Upp_Function* function = nullptr;
-	Upp_Struct* structure = nullptr;
-	switch (workload->type)
+	int indentation = 0;
+	while (workload != nullptr)
 	{
-	case Analysis_Workload_Type::FUNCTION_BODY:   function = ((Workload_Function_Body*)workload)->function; break;
-	case Analysis_Workload_Type::FUNCTION_HEADER: function = ((Workload_Function_Header*)workload)->function; break;
-	case Analysis_Workload_Type::STRUCT_BODY:     structure = ((Workload_Structure_Body*)workload)->upp_struct; break;
-	case Analysis_Workload_Type::STRUCT_HEADER:   structure = ((Workload_Structure_Header*)workload)->upp_struct; break;
-	}
+		SCOPE_EXIT(workload = workload->parent_workload);
 
-	Poly_Header* poly_header = nullptr;
-	Poly_Instance* instance = nullptr;
-	if (function != nullptr) 
-	{
-		switch (function->poly_type)
+		Upp_Function* function = nullptr;
+		Upp_Struct* structure = nullptr;
+		switch (workload->type)
 		{
-		case Poly_Type::BASE: poly_header = function->options.poly_header; break;
-		case Poly_Type::INSTANCE:
-		case Poly_Type::PARTIAL: instance = function->options.instance; break;
+		case Analysis_Workload_Type::FUNCTION_BODY:   function = ((Workload_Function_Body*)workload)->function; break;
+		case Analysis_Workload_Type::FUNCTION_HEADER: function = ((Workload_Function_Header*)workload)->function; break;
+		case Analysis_Workload_Type::STRUCT_BODY:     structure = ((Workload_Structure_Body*)workload)->upp_struct; break;
+		case Analysis_Workload_Type::STRUCT_HEADER:   structure = ((Workload_Structure_Header*)workload)->upp_struct; break;
 		}
-	}
-	if (structure != nullptr)
-	{
-		switch (structure->poly_type)
-		{
-		case Poly_Type::BASE: poly_header = structure->options.header; break;
-		case Poly_Type::INSTANCE:
-		case Poly_Type::PARTIAL: instance = structure->options.instance; break;
-		}
-	}
 
-	if (poly_header != nullptr)
-	{
+		Poly_Header* poly_header = nullptr;
+		Poly_Instance* instance = nullptr;
+		if (function != nullptr) 
+		{
+			switch (function->poly_type)
+			{
+			case Poly_Type::BASE: poly_header = function->options.poly_header; break;
+			case Poly_Type::INSTANCE:
+			case Poly_Type::PARTIAL: instance = function->options.instance; break;
+			}
+		}
+		if (structure != nullptr)
+		{
+			switch (structure->poly_type)
+			{
+			case Poly_Type::BASE: poly_header = structure->options.header; break;
+			case Poly_Type::INSTANCE:
+			case Poly_Type::PARTIAL: instance = structure->options.instance; break;
+			}
+		}
+
+		if (poly_header == nullptr && instance != nullptr) {
+			poly_header = instance->header;
+		}
+		if (poly_header == nullptr) {
+			continue;
+		}
+
+		if (is_first_poly_workload) 
+		{
+			is_first_poly_workload = false;
+			out_is_poly = true;
+			if (instance != nullptr) 
+			{
+				bool encounterd_set_parameter = false;
+				for (int i = 0; i < instance->variable_states.size; i++) {
+					if (instance->variable_states[i].type != Pattern_Variable_State_Type::UNSET) {
+						encounterd_set_parameter = true;
+						break;
+					}
+				}
+				if (!encounterd_set_parameter) {
+					out_is_base = true;
+				}
+			}
+			else {
+				out_is_base = true;
+			}
+		}
+
 		for (int i = 0; i < poly_header->pattern_variables.size; i++)
 		{
 			Pattern_Variable& variable = poly_header->pattern_variables[i];
@@ -3520,9 +3553,9 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			}
 
 			String* name = variable.name;
-			// for (int i = 0; i < polymorphic_depth - 1; i++) {
-			// 	string_append(string, "  ");
-			// }
+			for (int i = 0; i < indentation; i++) {
+				string_append(string, "  ");
+			}
 			string_append_string(string, name);
 			string_append(string, "=");
 
@@ -3544,6 +3577,8 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 			if (i != poly_header->pattern_variables.size - 1) {
 				string_append(string, "\n");
 			}
+
+			indentation += 1;
 		}
 	}
 }
@@ -4125,6 +4160,17 @@ void code_completion_find_suggestions()
 	}
 	Position_Info position_info = code_query_find_position_infos(cursor_char_index, nullptr);
 	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
+
+	// Add parameter names in function call
+	if (position_info.call_info != nullptr) 
+	{
+		auto signature = position_info.call_info->callable_call->origin.signature;
+		for (int i = 0; i < signature->parameters.size; i++) {
+			auto param_info = signature->parameters[i];
+			fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
+		}
+	}
 
 	// Member-Access code completion
 	if (is_hashtag)
@@ -6976,18 +7022,25 @@ void syntax_editor_update(bool& animations_running)
 		ui_system_push_active_container(window.container, false);
 		SCOPE_EXIT(ui_system_pop_active_container());
 
-		ui_system_push_next_component_label("Prefer polymorphic passes:");
+		Container_Handle line_container = ui_system_push_line_container();
+		ui_system_push_active_container(line_container, false);
 		bool new_prefer = ui_system_push_checkbox(editor.prefer_poly_passes);
 		if (new_prefer != editor.prefer_poly_passes) {
 			editor.prefer_poly_passes = new_prefer;
 			filters_updated = true;
 		}
-		ui_system_push_next_component_label("Prefer base-pass:");
+		ui_system_push_label("Prefer polymorphic-passes", false);
+		ui_system_pop_active_container();
+
+		line_container = ui_system_push_line_container();
+		ui_system_push_active_container(line_container, false);
 		bool prefer_base = ui_system_push_checkbox(editor.prefer_base_pass);
 		if (prefer_base != editor.prefer_base_pass) {
 			editor.prefer_base_pass = prefer_base;
 			filters_updated = true;
 		}
+		ui_system_push_label("Prefer base-pass", false);
+		ui_system_pop_active_container();
 
 		ui_system_push_label("Filters:", false);
 		auto& filters = editor.poly_pass_filters;
@@ -7075,6 +7128,7 @@ void syntax_editor_update(bool& animations_running)
 				string_reset(&tmp_str);
 				bool is_poly, is_base;
 				analysis_pass_append_polymorphic_infos(pass, &tmp_str, is_poly, is_base);
+				string_style_remove_codes(&tmp_str);
 
 				String tmp_header = string_create();
 				SCOPE_EXIT(string_destroy(&tmp_header));

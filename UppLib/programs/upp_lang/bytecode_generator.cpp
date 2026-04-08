@@ -913,7 +913,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             IR_Instruction_Function_Address* function_address = &instr->options.function_address;
             bytecode_generator_add_instruction_and_set_destination(generator,
                 function_address->destination, instruction_make_2(
-                    Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, function_address->function->function_index + 1)
+                    Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, function_address->function->function_index)
             );
             break;
         }
@@ -1118,7 +1118,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         string_append_formated(string, "LOAD_CONSTANT_ADDRESS        dst: %d, constant-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
-        string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, func-start-index: %d", i.op1, i.op2);
+        string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, function-index: %d", i.op1, i.op2);
         break;
     case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
         string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
@@ -1258,7 +1258,7 @@ void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_
     for (int i = 0; i < compilation_data->functions.size; i++)
     {
         Upp_Function* function = compilation_data->functions[i];
-        string_append_formated(string, "Function Slot #%d: \"%s\" \n", i, function->name->characters);
+        string_append_formated(string, "Function #%d: \"%s\" \n", i, function->name->characters);
         if (function->bytecode_start_instruction == -1) {
             string_append(string, "NO instructions generated!\n");
             continue;

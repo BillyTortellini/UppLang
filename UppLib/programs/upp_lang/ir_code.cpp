@@ -197,6 +197,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         auto& function = function_address->function;
 
         string_append_formated(string, "FUNCTION_ADDRESS of %s\n", function->name->characters);
+        indent_string(string, indentation + 1);
         string_append_formated(string, "dst: ");
         ir_data_access_append_to_string(function_address->destination, string, code_block, compilation_data);
         break;
