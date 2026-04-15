@@ -145,8 +145,6 @@ struct Compilation_Data
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of comptime-definitions in code-blocks
 
     Symbol* error_symbol;
-    Upp_Global* global_allocator; // Datatype: Allocator
-    Upp_Global* system_allocator; // Datatype: Allocator
 
     // Editor_Info
     Dynamic_Array<Editor_Info> semantic_infos;
@@ -167,7 +165,6 @@ struct Compilation_Data
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
     Dynamic_Array<Custom_Operator_Table*> allocated_custom_operator_tables;
-    Dynamic_Array<AST::Node*> allocated_nodes; // Why is this here, I thought this was somewhere else
 
     // Timing stuff
     Timing_Task task_current;

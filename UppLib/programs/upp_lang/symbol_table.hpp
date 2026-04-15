@@ -14,7 +14,7 @@ struct Semantic_Context;
 struct Upp_Global;
 struct Upp_Function;
 struct Datatype;
-struct Workload_Definition;
+struct Workload_Global;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
 
@@ -33,9 +33,9 @@ struct Custom_Operator_Table;
 
 namespace AST
 {
-    struct Symbol_Lookup;
+    struct Definition_Custom_Operator;
     struct Node;
-    struct Import;
+    struct Symbol_Node;
 }
 
 
@@ -112,7 +112,7 @@ struct Custom_Operator
 struct Custom_Operator_Install
 {
     Custom_Operator* custom_operator;
-    AST::Custom_Operator_Node* node;
+    AST::Definition_Custom_Operator* node;
 };
 
 struct Workload_Custom_Operator;
@@ -140,9 +140,9 @@ bool equals_custom_operator(Custom_Operator* a, Custom_Operator* b);
 // Note: Both symbols and symbol-table includes have access levels
 enum class Symbol_Type
 {
-    DEFINITION_UNFINISHED,   // A Definition that isn't ready yet (global variable or comptime value)
-    VARIABLE_UNDEFINED,      // A variable/parameter/global that hasn't been defined yet
-    ALIAS_UNFINISHED,         // An import that isn't finished yet
+    WAITING_FOR_WORKLOAD, // A Definition that isn't ready yet (global, const, extern-import or enum)
+    VARIABLE_UNDEFINED,   // A variable that is defined in this scope but has not been reached yet
+    ALIAS_UNFINISHED,     // An import that isn't finished yet
 
     HARDCODED_FUNCTION,
     FUNCTION,
@@ -168,7 +168,7 @@ struct Symbol
         Datatype* variable_type;
         Upp_Function* function;
         Poly_Function poly_function;
-        Workload_Definition* definition_workload;
+        Workload_Base* waiting_for_workload;
         Symbol* alias_for;
         int unfinished_alias_index;
         Hardcoded_Type hardcoded;
@@ -186,11 +186,9 @@ struct Symbol
     String* id;
     Symbol_Table* origin_table;
     Symbol_Access_Level access_level;
-    Dynamic_Array<AST::Symbol_Lookup*> references;
+    Dynamic_Array<AST::Symbol_Node*> references;
 
-    AST::Node* definition_node; // Note: This is a base because it could be either AST::Definition, AST::Parameter, AST::Import or AST::Expression::Polymorphic_Symbol
-    Compilation_Unit* definition_unit; // May be null
-    Text_Index definition_text_index;
+    AST::Symbol_Node* definition_node;
 };
 
 
@@ -241,7 +239,8 @@ void symbol_table_destroy(Symbol_Table* symbol_table);
 void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(
-    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level, Compilation_Data* compilation_data
+    Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
+    Compilation_Data* compilation_data
 );
 void symbol_table_add_import(
     Symbol_Table* symbol_table, Symbol_Table* imported_table, Import_Type import_type, 

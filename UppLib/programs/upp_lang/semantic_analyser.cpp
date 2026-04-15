@@ -33,7 +33,7 @@ Datatype* semantic_analyser_analyse_expression_value(
 Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression, Semantic_Context* semantic_context);
 Control_Flow semantic_analyser_analyse_block(AST::Code_Block* code_block, Semantic_Context* semantic_context);
 Expression_Info analyse_symbol_as_expression(
-	Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node, Semantic_Context* semantic_context);
+	Symbol* symbol, Expression_Context context, AST::Symbol_Node* error_report_node, Semantic_Context* semantic_context);
 bool expression_is_auto_expression_with_preferred_type(AST::Expression* expression);
 bool expression_is_auto_expression(AST::Expression* expression, Compilation_Data* compilation_data);
 Poly_Instance* poly_header_instanciate(
@@ -56,12 +56,10 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(
 	Semantic_Context* context,
 	Dependency_Failure_Info failure_info = dependency_failure_info_make_none()
 );
-Custom_Operator_Table* symbol_table_install_custom_operator_table(
-	Symbol_Table* symbol_table, Dynamic_Array<AST::Custom_Operator_Node*> custom_operators, bool create_workload, Semantic_Context* semantic_context
-);
 void analyse_custom_operator_node(
-	AST::Custom_Operator_Node* custom_operator_node, Custom_Operator_Table* custom_operator_table, Semantic_Context* semantic_context);
+	AST::Definition_Custom_Operator* custom_operator_node, Custom_Operator_Table* custom_operator_table, Semantic_Context* semantic_context);
 u64 custom_operator_key_hash(Custom_Operator_Key* key);
+bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b);
 bool cast_type_result_is_temporary(Cast_Type cast_type, bool initial_value_temporary);
 DynArray<Reachable_Operator_Table> symbol_table_query_reachable_operator_tables(
 	Symbol_Table* symbol_table, Custom_Operator_Type op_type, Semantic_Context* semantic_context
@@ -69,8 +67,7 @@ DynArray<Reachable_Operator_Table> symbol_table_query_reachable_operator_tables(
 Call_Info call_info_make_with_empty_arguments(Call_Origin origin, Arena* arena);
 Call_Origin call_origin_make_cast(Compilation_Data* compilation_data);
 Call_Origin call_origin_make(Poly_Header* poly_header);
-void analyse_simple_function_header_and_body(
-	Upp_Function* function, Semantic_Context* semantic_context, AST::Expression* expr, bool analyse_signature, Expression_Context context);
+void analyse_function_body(Upp_Function* function, Semantic_Context* semantic_context, const Function_Body& body, Symbol_Table* parameter_table);
 
 
 
@@ -79,12 +76,14 @@ namespace Helpers
 {
     Analysis_Workload_Type get_workload_type(Workload_Root* workload) { return Analysis_Workload_Type::ROOT; };
     Analysis_Workload_Type get_workload_type(Workload_Module_Analysis* workload) { return Analysis_Workload_Type::MODULE_ANALYSIS; };
-    Analysis_Workload_Type get_workload_type(Workload_Definition* workload) { return Analysis_Workload_Type::DEFINITION; };
+    Analysis_Workload_Type get_workload_type(Workload_Global* workload) { return Analysis_Workload_Type::GLOBAL; };
     Analysis_Workload_Type get_workload_type(Workload_Structure_Body* workload) { return Analysis_Workload_Type::STRUCT_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Structure_Header* workload) { return Analysis_Workload_Type::STRUCT_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Header* workload) { return Analysis_Workload_Type::FUNCTION_HEADER; };
     Analysis_Workload_Type get_workload_type(Workload_Function_Body* workload) { return Analysis_Workload_Type::FUNCTION_BODY; };
     Analysis_Workload_Type get_workload_type(Workload_Custom_Operator* workload) { return Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE; };
+    Analysis_Workload_Type get_workload_type(Workload_Enum* workload) { return Analysis_Workload_Type::ENUM; };
+    Analysis_Workload_Type get_workload_type(Workload_Extern_Import* workload) { return Analysis_Workload_Type::EXTERN_IMPORT; };
 };
 
 Workload_Base* upcast(Workload_Base* workload) { return workload; }
@@ -94,8 +93,10 @@ Workload_Base* upcast(Workload_Function_Header* workload) { return &workload->ba
 Workload_Base* upcast(Workload_Function_Body* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Structure_Body* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Structure_Header* workload) { return &workload->base; }
-Workload_Base* upcast(Workload_Definition* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Global* workload) { return &workload->base; }
 Workload_Base* upcast(Workload_Custom_Operator* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Enum* workload) { return &workload->base; }
+Workload_Base* upcast(Workload_Extern_Import* workload) { return &workload->base; }
 
 template <typename T>
 T* downcast(Workload_Base* workload) {
@@ -114,7 +115,7 @@ Dependency_Failure_Info dependency_failure_info_make_none() {
     return info;
 }
 
-Dependency_Failure_Info dependency_failure_info_make(bool* fail_indicator, AST::Symbol_Lookup* error_report_node = 0) {
+Dependency_Failure_Info dependency_failure_info_make(bool* fail_indicator, AST::Symbol_Node* error_report_node = 0) {
     Dependency_Failure_Info info;
     info.error_report_node = error_report_node;
     info.fail_indicator = fail_indicator;
@@ -237,24 +238,16 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
     return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->param_info;
 }
 
-Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query, Compilation_Data* compilation_data) {
-    return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->path_info;
-}
-
-Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query, Compilation_Data* compilation_data) {
-    return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->definition_symbol_info;
-}
-
-Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query, Compilation_Data* compilation_data) {
-    return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->symbol_lookup_info;
-}
-
-Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query, Compilation_Data* compilation_data) {
-    return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->module_info;
+Symbol_Node_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Node* node, Info_Query query, Compilation_Data* compilation_data) {
+    return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->symbol_node_info;
 }
 
 Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query, Compilation_Data* compilation_data) {
 	return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->call_info;
+}
+
+Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query, Compilation_Data* compilation_data) {
+	return &pass_get_base_info(pass, AST::upcast(node), query, compilation_data)->definition_info;
 }
 
 
@@ -280,24 +273,16 @@ Parameter_Info* get_info(AST::Parameter* param, Semantic_Context* context, bool 
     return pass_get_node_info(context->current_pass, param, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
 }
 
-Definition_Symbol_Info* get_info(AST::Definition_Symbol* definition, Semantic_Context* context, bool create = false) {
-    return pass_get_node_info(context->current_pass, definition, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
-}
-
-Symbol_Lookup_Info* get_info(AST::Symbol_Lookup* lookup, Semantic_Context* context, bool create = false) {
-    return pass_get_node_info(context->current_pass, lookup, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
-}
-
-Path_Lookup_Info* get_info(AST::Path_Lookup* node, Semantic_Context* context, bool create = false) {
-    return pass_get_node_info(context->current_pass, node, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
-}
-
-Module_Info* get_info(AST::Module* module, Semantic_Context* context, bool create = false) {
-    return pass_get_node_info(context->current_pass, module, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
+Symbol_Node_Info* get_info(AST::Symbol_Node* symbol_node, Semantic_Context* context, bool create = false) {
+    return pass_get_node_info(context->current_pass, symbol_node, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
 }
 
 Call_Info* get_info(AST::Call_Node* arguments, Semantic_Context* context, bool create = false) {
     return pass_get_node_info(context->current_pass, arguments, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
+}
+
+Definition_Info* get_info(AST::Definition* definition, Semantic_Context* context, bool create = false) {
+    return pass_get_node_info(context->current_pass, definition, create ? Info_Query::CREATE : Info_Query::READ_NOT_NULL, context->compilation_data);
 }
 
 
@@ -458,8 +443,10 @@ Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name,
 	memory_zero(function);
 	function->function_index = compilation_data->functions.size;
 	function->signature = signature;
+	function->body_node.available = false;
 	function->name = name == nullptr ? compilation_data->identifier_pool.predefined_ids.lambda_function : name;
 	function->poly_type = Poly_Type::NORMAL;
+	function->origin.type = Function_Origin_Type::BUILT_IN;
 	function->is_extern = false;
 	function->contains_errors = false;
 	function->ir_block = nullptr;
@@ -514,7 +501,7 @@ T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
 // Creates member-types and sub-types, and also checks if the member names are valid...
 // Note: We want to know the subtypes so that subtype creation can check the subtypes of a non-analysed struct...
 void add_struct_members_empty_recursive(
-    Datatype_Struct* structure, Dynamic_Array<AST::Structure_Member_Node*> member_nodes, bool report_errors, 
+    Datatype_Struct* structure, Array<AST::Structure_Member_Node*> member_nodes, bool report_errors, 
     AST::Signature* struct_signature, Semantic_Context* semantic_context)
 {
 	auto type_system = semantic_context->compilation_data->type_system;
@@ -552,7 +539,7 @@ void add_struct_members_empty_recursive(
             // Check struct params
             for (int j = 0; j < struct_signature->parameters.size; j++) {
                 auto param = struct_signature->parameters[j];
-                if (param->name == member_node->name) {
+                if (param->symbol->name == member_node->name) {
                     log_semantic_error(
 						semantic_context, "Struct member name is already defined as struct parameter name", 
 						upcast(member_node), Node_Section::IDENTIFIER
@@ -572,16 +559,14 @@ void datatype_struct_set_poly_infos(Datatype_Struct* structure, bool contains_pa
 	}
 }
 
-Upp_Struct* upp_struct_create_empty(AST::Expression* struct_node, Semantic_Context* semantic_context, bool log_hierarchy_errors)
+Upp_Struct* upp_struct_create_empty(AST::Definition_Struct* struct_node, Semantic_Context* semantic_context, bool log_hierarchy_errors)
 {
-    assert(struct_node->type == AST::Expression_Type::STRUCTURE_TYPE, "Has to be struct!");
-    auto& struct_expr = struct_node->options.structure;
 	auto compilation_data = semantic_context->compilation_data;
 	auto& ids = compilation_data->identifier_pool.predefined_ids;
 	auto type_system = compilation_data->type_system;
 
 	Datatype_Struct* structure = type_system_make_struct_empty(
-		type_system, ids.anon_struct, struct_expr.is_union, nullptr
+		type_system, ids.anon_struct, struct_node->is_union, nullptr
 	);
 	Upp_Struct* upp_struct = structure->upp_struct;
 	upp_struct->struct_node = struct_node;
@@ -590,36 +575,31 @@ Upp_Struct* upp_struct_create_empty(AST::Expression* struct_node, Semantic_Conte
 	upp_struct->datatype = structure;
 
 	add_struct_members_empty_recursive(
-        structure, struct_expr.members, log_hierarchy_errors, struct_expr.signature, semantic_context
+        structure, struct_node->members, log_hierarchy_errors, struct_node->signature, semantic_context
     );
 
 	return upp_struct;
 }
 
-
-
-Upp_Global* compilation_data_add_global_assert_type_finished(Compilation_Data* compilation_data, Datatype* datatype, Symbol* symbol, bool is_extern)
+Upp_Global* compilation_data_add_global(Semantic_Context* semantic_context, Datatype* datatype)
 {
+	Compilation_Data* compilation_data = semantic_context->compilation_data;
+	type_wait_for_size_info_to_finish(datatype, semantic_context);
+
 	assert(datatype->memory_info.available, "");
 	auto& memory_info = datatype->memory_info.value;
 
-	auto global = compilation_data->arena.allocate<Upp_Global>();;
-	global->symbol = symbol;
+	Upp_Global* global = compilation_data->arena.allocate<Upp_Global>();
+	global->symbol = nullptr;
 	global->type = datatype;
 	global->has_initial_value = false;
-	global->init_expr = 0;
-	global->is_extern = is_extern;
+	global->init_expr = nullptr;
+	global->is_extern = false;
 	global->index = compilation_data->globals.size;
 	global->memory = compilation_data->arena.allocate_raw(memory_info.size, memory_info.alignment);
 	dynamic_array_push_back(&compilation_data->globals, global);
 
 	return global;
-}
-
-Upp_Global* compilation_data_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern)
-{
-	type_wait_for_size_info_to_finish(datatype, semantic_context);
-	return compilation_data_add_global_assert_type_finished(semantic_context->compilation_data, datatype, symbol, is_extern);
 }
 
 
@@ -866,13 +846,9 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	case AST::Expression_Type::ARRAY_TYPE:
 	case AST::Expression_Type::AUTO_ENUM:
 	case AST::Expression_Type::BAKE:
-	case AST::Expression_Type::ENUM_TYPE:
-	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::LITERAL_READ:
-	case AST::Expression_Type::STRUCTURE_TYPE:
 	case AST::Expression_Type::SLICE_TYPE:
 	case AST::Expression_Type::POINTER_TYPE:
-	case AST::Expression_Type::MODULE:
 		panic("Should be handled above!");
 	case AST::Expression_Type::BASETYPE_ACCESS: 
 	{
@@ -899,7 +875,11 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	}
 	case AST::Expression_Type::PATH_LOOKUP:
 	{
-		auto symbol = get_info(expr->options.path_lookup, semantic_context)->symbol;
+		auto path = expr->options.path_lookup;
+		if (path->parts.size == 0) {
+			return comptime_result_make_unavailable(types.unknown_type, "Path lookup is module, cannot be comptime");
+		}
+		auto symbol = get_info(path->last(), semantic_context)->symbol;
 		if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
 			return comptime_result_make_unavailable(types.unknown_type, "Analysis contained error-type");
 		}
@@ -1100,10 +1080,6 @@ Comptime_Result expression_calculate_comptime_value_without_context_cast(AST::Ex
 	}
 	case AST::Expression_Type::GET_OVERLOAD: {
 		return comptime_result_make_not_comptime("#get_overload was not successfull, so we don't have a comptime function here");
-	}
-	case AST::Expression_Type::NEW_EXPR: {
-		// New is always uninitialized, so it cannot have a comptime value (Future: Maybe new with values)
-		return comptime_result_make_not_comptime("New cannot be used in comptime values");
 	}
 	case AST::Expression_Type::ARRAY_INITIALIZER:
 	{
@@ -1584,8 +1560,6 @@ void path_lookup_set_info_to_error_symbol(AST::Path_Lookup* path, Semantic_Conte
 	for (int i = 0; i < path->parts.size; i++) {
 		pass_get_node_info(pass, path->parts[i], Info_Query::CREATE_IF_NULL, compilation_data)->symbol = error_symbol;
 	}
-	// Set final path result to error
-	pass_get_node_info(pass, path, Info_Query::CREATE_IF_NULL, compilation_data)->symbol = error_symbol;
 }
 
 void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol, Semantic_Context* semantic_context) 
@@ -1593,19 +1567,19 @@ void path_lookup_set_result_symbol(AST::Path_Lookup* path, Symbol* symbol, Seman
 	auto pass = semantic_context->current_pass;
 	auto compilation_data = semantic_context->compilation_data;
 
-	// Set last symbol_read to symbol
-	pass_get_node_info(pass, path->last, Info_Query::CREATE_IF_NULL, compilation_data)->symbol = symbol;
-	// Set whole read to symbol
-	pass_get_node_info(pass, path, Info_Query::CREATE_IF_NULL, compilation_data)->symbol = symbol;
+	AST::Symbol_Node* last = path->last();
+	if (last == nullptr) return;
+	auto info = pass_get_node_info(semantic_context->current_pass, last, Info_Query::CREATE_IF_NULL, compilation_data);
+	info->symbol = symbol;
 	// If symbol is not error, add reference to symbol
 	if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-		dynamic_array_push_back(&symbol->references, path->last);
+		dynamic_array_push_back(&symbol->references, last);
 	}
 }
 
 // Logs an error if overloaded symbols was found
 Symbol* symbol_lookup_resolve_to_single_symbol(
-	AST::Symbol_Lookup* lookup, Symbol_Table* symbol_table, Symbol_Query_Info query_info, Semantic_Context* semantic_context,
+	AST::Symbol_Node* lookup, Symbol_Table* symbol_table, Symbol_Query_Info query_info, Semantic_Context* semantic_context,
 	bool prefer_module_symbols_on_overload = false, bool resolve_aliases = true)
 {
 	Compilation_Data* compilation_data = semantic_context->compilation_data;
@@ -1613,7 +1587,7 @@ Symbol* symbol_lookup_resolve_to_single_symbol(
 	auto info = pass_get_node_info(semantic_context->current_pass, lookup, Info_Query::READ_NOT_NULL, compilation_data);
 	auto error = compilation_data->error_symbol;
 
-	if (lookup->is_root_module) {
+	if (lookup->is_root_lookup) {
 		info->symbol = compilation_data->builtin_module->options.module_symbol;
 		return info->symbol;
 	}
@@ -1702,7 +1676,6 @@ Symbol_Table* path_lookup_resolve_only_path_parts(
 	path_lookup_set_info_to_error_symbol(path, semantic_context);
 
 	auto table = semantic_context->current_symbol_table;
-	auto pass  = semantic_context->current_pass;
 	auto error = semantic_context->compilation_data->error_symbol;
 
 	out_final_symbol_query_info = symbol_query_info_make(
@@ -1732,7 +1705,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(
 			}
 
 			// Report error and exit
-			if (symbol->type == Symbol_Type::DEFINITION_UNFINISHED) {
+			if (symbol->type == Symbol_Type::WAITING_FOR_WORKLOAD) {
 				// FUTURE: It may be possible that symbol resolution needs to create dependencies itself, which would happen here!
 				log_semantic_error(semantic_context, "Expected module, not a definition (global/comptime)", upcast(part));
 			}
@@ -1763,15 +1736,8 @@ DynArray<Symbol*> path_lookup_resolve(AST::Path_Lookup* path, Arena* arena, bool
 		return DynArray<Symbol*>::create(arena);
 	}
 
-	// Handle special case of ~
-	if (path->last->is_root_module) {
-		DynArray<Symbol*> results = DynArray<Symbol*>::create(arena, 1);
-		results.push_back(compilation_data->builtin_module->options.module_symbol);
-		return results;
-	}
-
 	// Resolve symbol
-	auto results = symbol_table_query_id(symbol_table, path->last->name, query_info, arena);
+	auto results = symbol_table_query_id(symbol_table, path->last()->name, query_info, arena);
 	if (resolve_aliases) {
 		symbol_table_query_resolve_aliases(results);
 	}
@@ -1792,9 +1758,20 @@ Symbol* path_lookup_resolve_to_single_symbol(
 	}
 
 	Symbol* symbol = symbol_lookup_resolve_to_single_symbol(
-		path->last, symbol_table, query_info, semantic_context, prefer_module_symbols_on_overload, resolve_aliases
+		path->last(), symbol_table, query_info, semantic_context, prefer_module_symbols_on_overload, resolve_aliases
 	);
 	path_lookup_set_result_symbol(path, symbol, semantic_context);
+	return symbol;
+}
+
+Symbol* symbol_node_define_symbol(
+	AST::Symbol_Node* symbol_node, Symbol_Type symbol_type, 
+	Symbol_Table* symbol_table, Symbol_Access_Level access_level, Semantic_Context* semantic_context)
+{
+	Symbol* symbol = symbol_table_define_symbol(
+		semantic_context->current_symbol_table, symbol_node->name, symbol_type, symbol_node, access_level, semantic_context->compilation_data
+	);
+	get_info(symbol_node, semantic_context, true)->symbol = symbol;
 	return symbol;
 }
 
@@ -2327,13 +2304,13 @@ void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* co
 			Analysis_Workload_Type type = (Analysis_Workload_Type)i;
 			const char* str = "";
 			switch (type) {
-			case Analysis_Workload_Type::DEFINITION: str = "Definition      "; break;
-			case Analysis_Workload_Type::MODULE_ANALYSIS: str = "Module Analysis "; break;
+			case Analysis_Workload_Type::GLOBAL:                  str = "GLOBAL          "; break;
+			case Analysis_Workload_Type::MODULE_ANALYSIS:         str = "Module Analysis "; break;
 			case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: str = "Operator Context Change   "; break;
-			case Analysis_Workload_Type::FUNCTION_HEADER: str = "Header          "; break;
-			case Analysis_Workload_Type::FUNCTION_BODY: str = "Body            "; break;
-			case Analysis_Workload_Type::STRUCT_BODY: str = "Struct Body Analysis "; break;
-			case Analysis_Workload_Type::STRUCT_HEADER: str = "Struct Polymorphic Header "; break;
+			case Analysis_Workload_Type::FUNCTION_HEADER:         str = "Header          "; break;
+			case Analysis_Workload_Type::FUNCTION_BODY:           str = "Body            "; break;
+			case Analysis_Workload_Type::STRUCT_BODY:             str = "Struct Body Analysis "; break;
+			case Analysis_Workload_Type::STRUCT_HEADER:           str = "Struct Polymorphic Header "; break;
 			default: panic("hey");
 			}
 			logg("Time in %s %3.4fms\n", str, time_per_workload_type[i] * 1000);
@@ -2405,26 +2382,30 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 	{
 	case Analysis_Workload_Type::MODULE_ANALYSIS: {
 		auto module = downcast<Workload_Module_Analysis>(workload);
-		string_append(string, "Module analysis");
+		string_append(string, "Module analysis ");
+		if (module->module_node->symbol.available) {
+			string_append(string, module->module_node->symbol.value->name->characters);
+		}
 		break;
 	}
 	case Analysis_Workload_Type::OPERATOR_CONTEXT_CHANGE: {
 		auto change = downcast<Workload_Custom_Operator>(workload);
 		string_append(string, "Operator Context Change Type: ");
-		AST::custom_operator_type_append_to_string(change->type_to_analyse, string);
 		break;
 	}
-	case Analysis_Workload_Type::DEFINITION: {
-		auto def = downcast<Workload_Definition>(workload);
-		string_append_formated(string, "Definition %s", def->symbol->id->characters);
-		if (def->is_extern_import) {
-			string_append_formated(string, " extern_import");
-		}
-		else {
-			if (def->options.normal.is_comptime) {
-				string_append_formated(string, " comptime");
-			}
-		}
+	case Analysis_Workload_Type::ENUM: {
+		auto enumeration = downcast<Workload_Enum>(workload);
+		string_append_formated(string, "Enum: %s", enumeration->node->symbol->name->characters);
+		break;
+	}
+	case Analysis_Workload_Type::EXTERN_IMPORT: {
+		string_append(string, "Extern-Import");
+		break;
+	}
+	case Analysis_Workload_Type::GLOBAL: 
+	{
+		auto def = downcast<Workload_Global>(workload);
+		string_append_formated(string, "Global/Comptime %s", def->symbol->id->characters);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_BODY: {
@@ -2463,7 +2444,7 @@ Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation
 	return root;
 }
 
-Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, Compilation_Data* compilation_data)
+Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data)
 {
 	Semantic_Context local_context = semantic_context_make(
 		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
@@ -3386,7 +3367,7 @@ Call_Origin call_origin_make(Hardcoded_Type hardcoded_type, Compilation_Data* co
 Call_Origin call_origin_make(Custom_Operator_Type context_change_type, Compilation_Data* compilation_data)
 {
 	Call_Origin origin;
-	origin.type = Call_Origin_Type::CONTEXT_CHANGE;
+	origin.type = Call_Origin_Type::CUSTOM_OPERATOR;
 	origin.options.context_change_type = context_change_type;
 	origin.signature = compilation_data->context_change_type_signatures[(int)context_change_type];
 	return origin;
@@ -3819,8 +3800,8 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 		DynArray<Symbol*> symbols = path_lookup_resolve(path_lookup, &scratch_arena, true, semantic_context);
 		if (symbols.size == 0) {
 			// Error is already reported here
-			log_semantic_error(semantic_context, "Could not resolve Symbol (No definition found)", upcast(path_lookup->last), Node_Section::FIRST_TOKEN);
-			log_error_info_id(semantic_context, path_lookup->last->name);
+			log_semantic_error(semantic_context, "Could not resolve Symbol (No definition found)", upcast(path_lookup->last()), Node_Section::FIRST_TOKEN);
+			log_error_info_id(semantic_context, path_lookup->last()->name);
 			*call_info = call_info_make_error(call_node, semantic_context->compilation_data);
 			return call_info;
 		}
@@ -3834,7 +3815,7 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 				continue;
 			}
 
-			auto info = analyse_symbol_as_expression(symbol, expression_context_make_dereference(), path_lookup->last, semantic_context);
+			auto info = analyse_symbol_as_expression(symbol, expression_context_make_dereference(), path_lookup->last(), semantic_context);
 			if (info.result_type == Expression_Result_Type::VALUE || info.result_type == Expression_Result_Type::CONSTANT) {
 				if (datatype_is_unknown(expression_info_get_type(&info, false, type_system))) {
 					encountered_unknown = true;
@@ -3856,7 +3837,7 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 			return call_info;
 		}
 		if (candidates.size == 0) {
-			log_semantic_error(semantic_context, "None of the symbol-overloads are callable!", upcast(path_lookup->last));
+			log_semantic_error(semantic_context, "None of the symbol-overloads are callable!", upcast(path_lookup->last()));
 			for (int i = 0; i < symbols.size; i++) {
 				log_error_info_symbol(semantic_context, symbols[i]);
 			}
@@ -4272,7 +4253,7 @@ struct Parameter_Symbol_Lookup
 {
 	int parameter_index;
 	String* lookup_id;
-	AST::Symbol_Lookup* node;
+	AST::Symbol_Node* node;
 };
 
 void expression_search_for_pattern_variables_recursive(
@@ -4282,10 +4263,9 @@ void expression_search_for_pattern_variables_recursive(
 	{
 		Pattern_Variable variable;
 		memory_zero(&variable); // Note: most values are filled out later
-		variable.definition_node = upcast(expression);
+		variable.symbol_node = expression->options.pattern_variable_symbol;
 		variable.is_comptime_parameter = false;
 		variable.defined_in_parameter_index = parameter_index;
-		variable.name = expression->options.pattern_variable_name;
 		pattern_variables.push_back(variable);
 		return;
 	}
@@ -4294,8 +4274,7 @@ void expression_search_for_pattern_variables_recursive(
 	switch (expression->type)
 	{
 	case AST::Expression_Type::BAKE:
-	case AST::Expression_Type::FUNCTION:
-	case AST::Expression_Type::MODULE:
+	case AST::Expression_Type::INFERRED_FUNCTION:
 		return;
 	}
 
@@ -4406,7 +4385,7 @@ void analyse_parameter_type_and_value(Call_Parameter& parameter, AST::Parameter*
 	}
 
 	// Analyse type
-	parameter.name = parameter_node->name;
+	parameter.name = parameter_node->symbol->name;
 	if (parameter_node->type.available) {
 		parameter.datatype = semantic_analyser_analyse_expression_type(parameter_node->type.value, semantic_context);
 	}
@@ -4474,12 +4453,7 @@ Poly_Header* poly_header_analyse(
 	{
 		auto parameter_node = parameter_nodes[i];
 		Call_Parameter* parameter_info = call_signature_add_parameter(
-			header.signature, parameter_node->name, nullptr, false, false, i == return_type_index);
-
-		Poly_Parameter_Info param_info;
-		param_info.parameter_index = i;
-		param_info.depends_on_variables = DynArray<int>::create(arena);
-		header.param_infos.push_back(param_info);
+			header.signature, parameter_node->symbol->name, nullptr, false, false, i == return_type_index);
 
 		if (upp_function == nullptr && !parameter_node->is_comptime) {
 			log_semantic_error(semantic_context, "Parameters of struct header must be comptime, e.g. use $", upcast(parameter_node), Node_Section::IDENTIFIER);
@@ -4489,35 +4463,24 @@ Poly_Header* poly_header_analyse(
 		bool is_comptime = parameter_node->is_comptime || !header.is_function; // In poly-struct all parameters are comptime
 		if (is_comptime) 
 		{
-			Symbol* symbol = symbol_table_define_symbol(
-				header.base_parameter_table, parameter_node->name, Symbol_Type::PATTERN_VARIABLE, AST::upcast(parameter_node),
-				Symbol_Access_Level::POLYMORPHIC, semantic_context->compilation_data
-			);
-			get_info(parameter_node, semantic_context, true)->symbol = symbol;
-
 			Pattern_Variable variable;
 			memory_zero(&variable);
 			variable.defined_in_parameter_index = i;
-			variable.definition_node = upcast(parameter_node);
+			variable.symbol_node = parameter_node->symbol;
 			variable.is_comptime_parameter = true;
-			variable.name = parameter_node->name;
-			variable.symbol = symbol;
 			header.pattern_variables.push_back(variable);
 		}
-		else if (!parameter_node->is_return_type) 
+		else
 		{
-			// We also define normal parameter symbols because we want to figure out naming conflicts during header analysis
-			Symbol* symbol = symbol_table_define_symbol(
-				header.base_parameter_table, parameter_node->name, Symbol_Type::PARAMETER, AST::upcast(parameter_node),
-				Symbol_Access_Level::INTERNAL, semantic_context->compilation_data
+			// Define normal parameter symbols
+			Symbol* symbol = symbol_node_define_symbol(
+				parameter_node->symbol, Symbol_Type::PARAMETER, header.base_parameter_table, Symbol_Access_Level::INTERNAL, semantic_context
 			);
-			get_info(parameter_node, semantic_context, true)->symbol = symbol;
 			symbol->options.parameter.function = upp_function;
 			symbol->options.parameter.index = i;
 		}
 
 		// Find implicit parameters/lookups
-		int before_count = header.pattern_variables.size;
 		if (parameter_node->type.available) {
 			expression_search_for_pattern_variables_recursive(i, parameter_node->type.value, header.pattern_variables);
 		}
@@ -4534,15 +4497,12 @@ Poly_Header* poly_header_analyse(
 		// Create type
 		pattern_variable.pattern_variable_type = type_system_make_pattern_variable_type(type_system, &pattern_variable);
 
-		// Finish symbol
-		if (pattern_variable.symbol == nullptr) 
-		{
-			pattern_variable.symbol = symbol_table_define_symbol(
-				header.base_parameter_table, pattern_variable.name, Symbol_Type::PATTERN_VARIABLE,
-				pattern_variable.definition_node, Symbol_Access_Level::POLYMORPHIC, compilation_data
-			);
-		}
-		pattern_variable.symbol->options.pattern_variable_type = pattern_variable.pattern_variable_type->mirrored_type;
+		// Create symbol
+		Symbol* symbol = symbol_node_define_symbol(
+			pattern_variable.symbol_node, Symbol_Type::PATTERN_VARIABLE, header.base_parameter_table,
+			Symbol_Access_Level::POLYMORPHIC, semantic_context
+		);
+		symbol->options.pattern_variable_type = pattern_variable.pattern_variable_type->mirrored_type;
 
 		// Add implicit parameters to call-signature
 		if (pattern_variable.is_comptime_parameter) {
@@ -4551,14 +4511,15 @@ Poly_Header* poly_header_analyse(
 		else
 		{
 			auto param = call_signature_add_parameter(
-				header.signature, pattern_variable.name, upcast(pattern_variable.pattern_variable_type), false, true, false
+				header.signature, pattern_variable.symbol_node->name, upcast(pattern_variable.pattern_variable_type), false, true, false
 			);
 			param->pattern_variable_index = i;
-			Poly_Parameter_Info info;
-			info.depends_on_variables = DynArray<int>::create(arena);
-			info.parameter_index = header.param_infos.size;
-			header.param_infos.push_back(info);
 		}
+
+		Poly_Parameter_Info info;
+		info.depends_on_variables = DynArray<int>::create(arena);
+		info.parameter_index = header.param_infos.size;
+		header.param_infos.push_back(info);
 	}
 
 	// Analyse all parameter types and find dependencies
@@ -4580,6 +4541,7 @@ Poly_Header* poly_header_analyse(
 		if (header.is_function) 
 		{
 			Upp_Function* function = header.origin.function;
+			assert(function->origin.type == Function_Origin_Type::TOPLEVEL, "Shouldn't be poly otherwise");
 
 			// Switch function-type to base
 			function->poly_type = Poly_Type::BASE;
@@ -4594,7 +4556,7 @@ Poly_Header* poly_header_analyse(
 			}
 
 			// Update body workload to use correct symbol table
-			Workload_Function_Body* body_workload = function->body_workload;
+			Workload_Function_Body* body_workload = function->origin.options.toplevel.body_workload;
 			body_workload->function = header.origin.function;
 			body_workload->parameter_table = header.base_parameter_table;
 		}
@@ -4775,7 +4737,7 @@ Datatype* datatype_pattern_instanciate(
 		auto& state = states[variable->index];
 		if (state.type != Pattern_Variable_State_Type::SET) {
 			log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is not set", error_report_node, error_report_section);
-			log_error_info_id(semantic_context, variable->name);
+			log_error_info_id(semantic_context, variable->symbol_node->name);
 			return nullptr;
 		}
 
@@ -4783,7 +4745,7 @@ Datatype* datatype_pattern_instanciate(
 		auto constant_type = constant.type;
 		if (!types_are_equal(constant_type, types.type_handle)) {
 			log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is not a type handle", error_report_node, error_report_section);
-			log_error_info_id(semantic_context, variable->name);
+			log_error_info_id(semantic_context, variable->symbol_node->name);
 			return nullptr;
 		}
 		return upp_constant_as_datatype(constant, type_system);
@@ -4826,7 +4788,7 @@ Datatype* datatype_pattern_instanciate(
 			}
 			case Pattern_Variable_State_Type::UNSET: {
 				log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is unset", error_report_node, error_report_section);
-				log_error_info_id(semantic_context, variable->name);
+				log_error_info_id(semantic_context, variable->symbol_node->name);
 				return nullptr; // Return null, as this function only works if all states are set...
 			}
 			case Pattern_Variable_State_Type::PATTERN: break; // Rest of block
@@ -4840,7 +4802,7 @@ Datatype* datatype_pattern_instanciate(
 				auto& var_state = states[variable->index];
 				if (var_state.type != Pattern_Variable_State_Type::SET) {
 					log_semantic_error(semantic_context, "Datatype instanciate failed: Pattern variable is unset", error_report_node, error_report_section);
-					log_error_info_id(semantic_context, variable->name);
+					log_error_info_id(semantic_context, variable->symbol_node->name);
 					return nullptr;
 				}
 				param_value = parameter_value_make_comptime(var_state.options.value);
@@ -4926,7 +4888,7 @@ Datatype* datatype_pattern_instanciate(
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable is unset", error_report_node, error_report_section
 				);
-				log_error_info_id(semantic_context, array->count_variable_type->variable->name);
+				log_error_info_id(semantic_context, array->count_variable_type->variable->symbol_node->name);
 				return nullptr;
 			}
 			auto constant = state.options.value;
@@ -4935,7 +4897,7 @@ Datatype* datatype_pattern_instanciate(
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable is not an integer", error_report_node, error_report_section
 				);
-				log_error_info_id(semantic_context, array->count_variable_type->variable->name);
+				log_error_info_id(semantic_context, array->count_variable_type->variable->symbol_node->name);
 				return nullptr;
 			}
 			auto primitive = downcast<Datatype_Primitive>(constant_type);
@@ -4943,7 +4905,7 @@ Datatype* datatype_pattern_instanciate(
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable is not an integer", error_report_node, error_report_section
 				);
-				log_error_info_id(semantic_context, array->count_variable_type->variable->name);
+				log_error_info_id(semantic_context, array->count_variable_type->variable->symbol_node->name);
 				return nullptr;
 			}
 
@@ -4998,7 +4960,7 @@ Datatype* datatype_pattern_instanciate(
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable integer is <= 0", error_report_node, error_report_section
 				);
-				log_error_info_id(semantic_context, array->count_variable_type->variable->name);
+				log_error_info_id(semantic_context, array->count_variable_type->variable->symbol_node->name);
 				return nullptr;
 			}
 			count_known = true;
@@ -5076,7 +5038,7 @@ Poly_Instance* poly_header_instanciate(
 		{
 			Workload_Base* header_workload = nullptr;
 			if (poly_header->is_function) {
-				header_workload = upcast(poly_header->origin.function->header_workload);
+				header_workload = upcast(poly_header->origin.function->origin.options.toplevel.header_workload);
 			}
 			else {
 				header_workload = upcast(poly_header->origin.upp_struct->header_workload);
@@ -5458,17 +5420,22 @@ Poly_Instance* poly_header_instanciate(
 
 		if (poly_header->is_function)
 		{
-			Symbol_Table* instance_table = symbol_table_create_with_parent(poly_header->base_parameter_table->parent_table, Symbol_Access_Level::GLOBAL, compilation_data);
+			Symbol_Table* instance_table = symbol_table_create_with_parent(
+				poly_header->base_parameter_table->parent_table, Symbol_Access_Level::GLOBAL, compilation_data
+			);
 			Upp_Function* base_function = poly_header->origin.function;
 			Upp_Function* instance_function = upp_function_create_empty(nullptr, base_function->name, compilation_data);
 			instance_function->poly_type = Poly_Type::INSTANCE;
 			instance_function->options.instance = new_instance;
-			instance_function->function_node = base_function->function_node;
+			instance_function->body_node = base_function->body_node;
 			instance_function->symbol = base_function->symbol;
-			instance_function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
-			instance_function->body_workload->function = instance_function;
-			instance_function->body_workload->parameter_table = instance_table;
-			instance_function->body_workload->base.polymorphic_instanciation_depth += 1;
+			instance_function->origin.type = Function_Origin_Type::TOPLEVEL;
+			instance_function->origin.options.toplevel.header_workload = poly_header->origin.function->origin.options.toplevel.header_workload;
+			Workload_Function_Body* body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
+			instance_function->origin.options.toplevel.body_workload = body_workload;
+			body_workload->function = instance_function;
+			body_workload->parameter_table = instance_table;
+			body_workload->base.polymorphic_instanciation_depth += 1;
 
 			assert(call_info != 0, "");
 			new_instance->options.function_instance = instance_function;
@@ -5488,18 +5455,18 @@ Poly_Instance* poly_header_instanciate(
 					Pattern_Variable_State& state = new_instance->variable_states[i];
 					assert(state.type == Pattern_Variable_State_Type::SET, "");
 					
+					// Note: We don't store symbol-definition infos for instances
 					Symbol* symbol = symbol_table_define_symbol(
-						instance_table, param_node->name, Symbol_Type::COMPTIME_VALUE, upcast(param_node), 
+						instance_table, param_node->symbol->name, Symbol_Type::COMPTIME_VALUE, param_node->symbol, 
 						Symbol_Access_Level::POLYMORPHIC, compilation_data
 					);
 					symbol->options.constant = state.options.value;
 					continue; // comptime parameter or pattern-variable
 				}
-
-				if (!param_node->is_return_type) 
-				{
+				else {
+					// Note: We don't store symbol-definition infos for instances
 					Symbol* symbol = symbol_table_define_symbol(
-						instance_table, param_node->name, Symbol_Type::PARAMETER, upcast(param_node),
+						instance_table, param_node->symbol->name, Symbol_Type::PARAMETER, param_node->symbol,
 						Symbol_Access_Level::INTERNAL, compilation_data
 					);
 					symbol->options.parameter.function = new_instance->options.function_instance;
@@ -5558,7 +5525,7 @@ Poly_Instance* poly_header_instanciate(
 					assert(state.type == Pattern_Variable_State_Type::SET, "");
 					
 					Symbol* symbol = symbol_table_define_symbol(
-						instance_table, param_node->name, Symbol_Type::COMPTIME_VALUE, upcast(param_node), 
+						instance_table, param_node->symbol->name, Symbol_Type::COMPTIME_VALUE, param_node->symbol, 
 						Symbol_Access_Level::POLYMORPHIC, compilation_data
 					);
 					symbol->options.constant = state.options.value;
@@ -5583,11 +5550,11 @@ Poly_Instance* poly_header_instanciate(
 // MODULE ANALYSIS
 struct Import_Info
 {
-	AST::Import* import_node;
+	AST::Definition_Import* import_node;
 	Symbol_Table* symbol_table;
 };
 
-struct Module_Content
+struct Toplevel_Content
 {
 	DynArray<Import_Info> file_imports;
 	DynArray<Import_Info> module_imports;
@@ -5596,9 +5563,9 @@ struct Module_Content
 	DynArray<Upp_Module*> modules;
 };
 
-Module_Content module_content_create(Arena* arena)
+Toplevel_Content toplevel_content_create(Arena* arena)
 {
-	Module_Content result;
+	Toplevel_Content result;
 	result.file_imports = DynArray<Import_Info>::create(arena);
 	result.module_imports = DynArray<Import_Info>::create(arena);
 	result.symbol_imports = DynArray<Import_Info>::create(arena);
@@ -5607,125 +5574,192 @@ Module_Content module_content_create(Arena* arena)
 	return result;
 }
 
-void module_content_add_import_node(Module_Content& module_content, AST::Import* import_node, Symbol_Table* symbol_table)
+void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition* definition, Semantic_Context* semantic_context, bool allow_local_variables)
 {
-	DynArray<Import_Info>* add_to = nullptr;
-	switch (import_node->operator_type)
+	auto& types = semantic_context->compilation_data->type_system->predefined_types;
+
+	switch (definition->type)
 	{
-	case AST::Import_Operator::FILE_IMPORT: add_to = &module_content.file_imports; break;
-	case AST::Import_Operator::MODULE_IMPORT:
-	case AST::Import_Operator::MODULE_IMPORT_TRANSITIVE: add_to = &module_content.module_imports; break;
-	case AST::Import_Operator::SINGLE_SYMBOL: add_to = &module_content.symbol_imports; break;
-	default: panic("");;
-	}
-
-	assert(import_node->import_type != Import_Type::NONE, "None is only used for lookups, parser should not create that");
-	if (import_node->import_type != Import_Type::SYMBOLS) {
-		add_to = &module_content.context_or_dot_call_imports;
-	}
-
-	Import_Info info;
-	info.import_node = import_node;
-	info.symbol_table = symbol_table;
-	add_to->push_back(info);
-}
-
-void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Module_Content* content, Semantic_Context* context);
-
-Upp_Module* analyse_module_node(
-	AST::Module* module_node, Module_Content* module_content, Semantic_Context* semantic_context, Compilation_Unit* compilation_unit)
-{
-	auto compilation_data = semantic_context->compilation_data;
-
-	// Create module
-	Upp_Module* upp_module = compilation_data->arena.allocate<Upp_Module>();
-	upp_module->node = module_node;
-	upp_module->symbol_table = symbol_table_create_with_parent(
-		semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
-	);
-	upp_module->is_file_module = false;
-	upp_module->options.module_symbol = nullptr;
-	module_content->modules.push_back(upp_module);
-
-	if (compilation_unit != nullptr ) {
-		assert(compilation_unit->module == nullptr, "Otherwise this was already analysed...");
-		compilation_unit->module = upp_module;
-	}
-
-	// Store infos
-	get_info(module_node, semantic_context, true)->upp_module = upp_module;
-
-	if (!semantic_context->can_create_workloads) 
+	case AST::Definition_Type::VARIABLE:
 	{
-		log_semantic_error(
-			semantic_context, "Semantic context does not allow workload creation, so module-nodes are disallowed", 
-			upcast(module_node), Node_Section::KEYWORD
+		auto& variable = definition->options.value;
+
+		Symbol* symbol = symbol_node_define_symbol(
+			variable.symbol, Symbol_Type::VARIABLE_UNDEFINED, 
+			semantic_context->current_symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
 		);
-		return upp_module;
+		if (!allow_local_variables) 
+		{
+			log_semantic_error(
+				semantic_context, "Local variables are not allowed in top-level context, only globals or constants", 
+				upcast(definition), Node_Section::FIRST_TOKEN
+			);
+
+			// Analyse expressions because in this context it won't happen otherwise
+			if (variable.datatype_expr.available) {
+				semantic_analyser_analyse_expression_type(variable.datatype_expr.value, semantic_context);
+			}
+			if (variable.value_expr.available) {
+				semantic_analyser_analyse_expression_value(variable.value_expr.value, expression_context_make_unspecified(), semantic_context);
+			}
+			break;
+		}
+
+		// Variables are analysed later during statement-analysis
+		symbol->options.variable_type = types.unknown_type;
+		break;
 	}
-
-	// Create custom_operator_table workload now, because parent-relations are stored when the symbol-tables are created
-	symbol_table_install_custom_operator_table(upp_module->symbol_table, upp_module->node->custom_operators, true, semantic_context);
-	RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, upp_module->symbol_table);
-
-	// Store all imports
-	for (int i = 0; i < module_node->import_nodes.size; i++) {
-		module_content_add_import_node(*module_content, module_node->import_nodes[i], semantic_context->current_symbol_table);
-	}
-
-	// Create/Handle extern imports
-	for (int i = 0; i < module_node->extern_imports.size; i++)
+    case AST::Definition_Type::CONSTANT:
+    case AST::Definition_Type::GLOBAL:
 	{
-		auto extern_import = module_node->extern_imports[i];
-		Workload_Definition* definition_workload = nullptr;
+		auto& global = definition->options.value;
+
+		Symbol* symbol = symbol_node_define_symbol(
+			global.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
+			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+		);
+		Workload_Global* global_workload = workload_executer_allocate_workload<Workload_Global>(semantic_context);
+		global_workload->analysis_pass = semantic_context->current_pass;
+		global_workload->definition_node = &definition->options.value;
+		global_workload->symbol = symbol;
+		global_workload->symbol_table = semantic_context->current_symbol_table;
+		symbol->options.waiting_for_workload = upcast(global_workload);
+		break;
+	}
+	case AST::Definition_Type::FUNCTION:
+	{
+		AST::Definition_Function* function_node = &definition->options.function;
+
+		Symbol* symbol = symbol_node_define_symbol(
+			function_node->symbol, Symbol_Type::FUNCTION, semantic_context->current_symbol_table, 
+			Symbol_Access_Level::GLOBAL, semantic_context
+		);
+		Upp_Function* function = upp_function_create_empty(nullptr, symbol->id, semantic_context->compilation_data);
+		function->symbol = symbol;
+		symbol->type = Symbol_Type::FUNCTION;
+		symbol->options.function = function;
+		function->body_node = optional_make_success(function_node->body);
+
+		Workload_Function_Header* header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context);
+		header_workload->function = function;
+		header_workload->function_node = function_node;
+		header_workload->symbol_table = semantic_context->current_symbol_table;
+
+		Workload_Function_Body* body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
+		body_workload->function = function;
+		body_workload->parameter_table = nullptr; // Should be set by header analysis
+
+		function->origin.type = Function_Origin_Type::TOPLEVEL;
+		function->origin.options.toplevel.body_workload = body_workload;
+		function->origin.options.toplevel.header_workload = header_workload;
+
+		analysis_workload_add_dependency(
+			semantic_context->compilation_data->workload_executer, upcast(body_workload), upcast(header_workload)
+		);
+		break;
+	}
+	case AST::Definition_Type::STRUCT: 
+	{
+		auto& structure = definition->options.structure;
+
+		// Note: Creating the workload also sets the symbol type
+		Symbol* symbol = symbol_node_define_symbol(
+			structure.symbol, Symbol_Type::DATATYPE, semantic_context->current_symbol_table, 
+			Symbol_Access_Level::GLOBAL, semantic_context
+		);
+		Upp_Struct* upp_struct = upp_struct_create_empty(&definition->options.structure, semantic_context, true);
+		upp_struct->symbol = symbol;
+		upp_struct->datatype->name = symbol->id;
+		symbol->options.datatype = upcast(upp_struct->datatype);
+
+		upp_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
+		upp_struct->body_workload->upp_struct = upp_struct;
+		upp_struct->body_workload->symbol_table = semantic_context->current_symbol_table;
+		upp_struct->body_workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
+
+		if (structure.signature->parameters.size > 0) 
+		{
+			upp_struct->header_workload = workload_executer_allocate_workload<Workload_Structure_Header>(semantic_context);
+			upp_struct->header_workload->upp_struct = upp_struct;
+			upp_struct->header_workload->symbol_table = semantic_context->current_symbol_table;
+			analysis_workload_add_dependency(
+				semantic_context->compilation_data->workload_executer, upcast(upp_struct->body_workload), upcast(upp_struct->header_workload)
+			);
+		}
+		break;
+	}
+	case AST::Definition_Type::ENUM:
+	{
+		auto& enumeration = definition->options.enumeration;
+
+		Symbol* symbol = symbol_node_define_symbol(
+			enumeration.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
+			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+		);
+		Workload_Enum* enum_workload = workload_executer_allocate_workload<Workload_Enum>(semantic_context);
+		enum_workload->analysis_pass = semantic_context->current_pass;
+		enum_workload->node = &definition->options.enumeration;
+		enum_workload->symbol = symbol;
+		enum_workload->symbol_table = semantic_context->current_symbol_table;
+		symbol->options.waiting_for_workload = upcast(enum_workload);
+		break;
+	}
+	case AST::Definition_Type::IMPORT:
+	{
+		AST::Definition_Import* import_node = &definition->options.import;
+		DynArray<Import_Info>* add_to = nullptr;
+		switch (import_node->operator_type)
+		{
+		case AST::Import_Operator::FILE_IMPORT: add_to = &content.file_imports; break;
+		case AST::Import_Operator::MODULE_IMPORT:
+		case AST::Import_Operator::MODULE_IMPORT_TRANSITIVE: add_to = &content.module_imports; break;
+		case AST::Import_Operator::SINGLE_SYMBOL: add_to = &content.symbol_imports; break;
+		default: panic("");;
+		}
+
+		assert(import_node->import_type != Import_Type::NONE, "None is only used for lookups, parser should not create that");
+		if (import_node->import_type != Import_Type::SYMBOLS) {
+			add_to = &content.context_or_dot_call_imports;
+		}
+
+		Import_Info info;
+		info.import_node = import_node;
+		info.symbol_table = semantic_context->current_symbol_table;
+		add_to->push_back(info);
+		break;
+	}
+	case AST::Definition_Type::EXTERN:
+	{
+		AST::Definition_Extern_Import* extern_import = &definition->options.extern_import;
 		switch (extern_import->type)
 		{
 		case AST::Extern_Type::STRUCT:
 		case AST::Extern_Type::GLOBAL:
 		case AST::Extern_Type::FUNCTION:
 		{
-			// Create Symbol
-			Symbol* symbol = 0;
-			{
-				String* id;
-				if (extern_import->type == AST::Extern_Type::STRUCT) {
-					id = 0;
-				}
-				else if (extern_import->type == AST::Extern_Type::FUNCTION) {
-					id = extern_import->options.function.id;
-				}
-				else if (extern_import->type == AST::Extern_Type::GLOBAL) {
-					id = extern_import->options.global.id;
-				}
-				else {
-					panic("");
-				}
-				if (id != 0) {
-					symbol = symbol_table_define_symbol(
-						upp_module->symbol_table, id, Symbol_Type::DEFINITION_UNFINISHED, upcast(extern_import), Symbol_Access_Level::GLOBAL,
-						compilation_data
-					);
-				}
-			}
-
 			// Create workload
-			auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(semantic_context);
-			definition_workload->symbol = symbol;
-			definition_workload->symbol_table = upp_module->symbol_table;
-			definition_workload->is_extern_import = true;
-			definition_workload->options.extern_import = extern_import;
-			definition_workload->analysis_pass = semantic_context->current_pass;
-			definition_workload->symbol_table = semantic_context->current_symbol_table;
+			auto extern_workload = workload_executer_allocate_workload<Workload_Extern_Import>(semantic_context);
+			extern_workload->symbol = nullptr;
+			extern_workload->symbol_table = semantic_context->current_symbol_table;
+			extern_workload->analysis_pass = semantic_context->current_pass;
+			extern_workload->import_node = extern_import;
 
-			// Add dependencies and finish
-			if (symbol != 0) {
-				symbol->options.definition_workload = definition_workload;
+			// Create extern function symbol
+			if (extern_import->type == AST::Extern_Type::FUNCTION) 
+			{
+				Symbol* symbol = symbol_node_define_symbol(
+					extern_import->options.function.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, semantic_context->current_symbol_table, 
+					Symbol_Access_Level::GLOBAL, semantic_context
+				);
+				symbol->options.waiting_for_workload = upcast(extern_workload);
+				extern_workload->symbol = symbol;
 			}
+
 			break;
 		}
 		case AST::Extern_Type::COMPILER_SETTING:
 		{
-			Dynamic_Array<String*>& values = compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
+			Dynamic_Array<String*>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
 			String* id = extern_import->options.setting.value;
 
 			// Check if unique
@@ -5742,187 +5776,118 @@ Upp_Module* analyse_module_node(
 			}
 			break;
 		}
-		case AST::Extern_Type::INVALID: break;
 		default: panic("");
 		}
-	}
 
-	// Create definition workloads (Recursive)
-	for (int i = 0; i < module_node->definitions.size; i++) {
-		auto definition_node = module_node->definitions[i];
-		analyser_create_symbol_and_workload_for_definition(definition_node, module_content, semantic_context);
+		break;
 	}
-
-	return upp_module;
-}
-
-// Create correct workloads for comptime definitions, for non-comptime checks if its a variable or a global and sets the symbol correctly
-void analyser_create_symbol_and_workload_for_definition(AST::Definition* definition, Module_Content* module_content, Semantic_Context* semantic_context)
-{
-	Symbol_Table* symbol_table = semantic_context->current_symbol_table;
-	// assert(definition->symbols.size != 0, "Parser shouldn't allow this");
-	assert(!(module_content == nullptr && definition->is_comptime), "");
-
-	// Define all symbols
-	bool is_local_variable = !definition->is_comptime && definition->base.parent->type == AST::Node_Type::STATEMENT;
-	bool is_global_variable = !definition->is_comptime && !is_local_variable;
-
-	// Figure out initial symbol type
-	Symbol_Type initial_symbol_type = is_local_variable ? Symbol_Type::VARIABLE_UNDEFINED : Symbol_Type::ERROR_SYMBOL;
-	if (definition->is_comptime && definition->values.size == 1) {
-		auto value_expr = definition->values[0];
-		switch (value_expr->type)
-		{
-		case AST::Expression_Type::MODULE: initial_symbol_type = Symbol_Type::MODULE; break;
-		case AST::Expression_Type::FUNCTION: initial_symbol_type = Symbol_Type::FUNCTION; break;
-		case AST::Expression_Type::STRUCTURE_TYPE: initial_symbol_type = Symbol_Type::DATATYPE; break;
-		default: break;
-		}
-	}
-
-	for (int i = 0; i < definition->symbols.size; i++) {
-		auto info = get_info(definition->symbols[i], semantic_context, true);
-		info->symbol = symbol_table_define_symbol(
-			symbol_table, definition->symbols[i]->name, initial_symbol_type, AST::upcast(definition->symbols[i]),
-			(is_local_variable ? Symbol_Access_Level::INTERNAL : Symbol_Access_Level::GLOBAL), 
-			semantic_context->compilation_data
-		);
-	}
-
-	// For local variables only symbol is defined, and analysis happens when the statement is processed
-	if (is_local_variable) {
-		return;
-	}
-
-	// Report errors
-	bool error_occured = false;
-	if (!semantic_context->can_create_workloads) {
-		log_semantic_error(semantic_context, "Semantic context disallows the creation of workloads", upcast(definition), Node_Section::FIRST_TOKEN);
-		error_occured = true;
-	}
-	if (definition->symbols.size == 0) {
-		log_semantic_error(semantic_context, "At least one symbol must be defined", upcast(definition));
-		error_occured = true;
-	}
-	for (int i = 1; i < definition->symbols.size; i++) {
-		log_semantic_error(semantic_context, "Multiple Symbols not allowed for global/comptime definition, e.g. '::'", upcast(definition->symbols[i]));
-		error_occured = true;
-	}
-	for (int i = 1; i < definition->values.size; i++) {
-		log_semantic_error(semantic_context, "Multiple Values not allowed for global/comptime definition, e.g. '::'", upcast(definition->values[i]));
-		error_occured = true;
-	}
-	if (!is_global_variable && definition->types.size > 0) {
-		log_semantic_error(semantic_context, "Type not allowed on comptime definition", upcast(definition->types[0]));
-		error_occured = true;
-	}
-	for (int i = 1; i < definition->types.size; i++) {
-		log_semantic_error(semantic_context, "Multiple types currently not allowed on global/comptime definition", upcast(definition->types[i]));
-		error_occured = true;
-	}
-	if (definition->values.size == 0 && !is_global_variable) {
-		log_semantic_error(semantic_context, "Comptime definition must have a value", upcast(definition));
-		error_occured = true;
-	}
-	if (error_occured) {
-		// Set all defined symbols to error_symbol
-		for (int i = 0; i < definition->symbols.size; i++) {
-			auto info = get_info(definition->symbols[i], semantic_context);
-			info->symbol->type = Symbol_Type::ERROR_SYMBOL;
-		}
-		return;
-	}
-
-	// Create workload for functions, structs and modules directly
-	Symbol* symbol = get_info(definition->symbols[0], semantic_context)->symbol;
-	if (definition->is_comptime)
+	case AST::Definition_Type::MODULE: 
 	{
-		AST::Expression* value = definition->values[0];
-		// Check if it's a 'named' construct (function, struct, module)
-		switch (value->type)
+		AST::Definition_Module* module_node = &definition->options.module;
+		auto compilation_data = semantic_context->compilation_data;
+
+		// Create module and symbol
+		Upp_Module* upp_module = compilation_data->arena.allocate<Upp_Module>();
 		{
-		case AST::Expression_Type::MODULE:
-		{
-			Upp_Module* upp_module = analyse_module_node(value->options.module, module_content, semantic_context, nullptr);
-			symbol->type = Symbol_Type::MODULE;
-			symbol->options.upp_module = upp_module;
-			upp_module->is_file_module = false;
-			upp_module->options.module_symbol = symbol;
-			return;
-		}
-		case AST::Expression_Type::FUNCTION: 
-		{
-			Upp_Function* function = upp_function_create_empty(nullptr, symbol->id, semantic_context->compilation_data);
-			function->symbol = symbol;
-			symbol->type = Symbol_Type::FUNCTION;
-			symbol->options.function = function;
-			function->function_node = value;
-			function->header_workload = workload_executer_allocate_workload<Workload_Function_Header>(semantic_context);
-			function->header_workload->function = function;
-			function->header_workload->symbol_table = symbol_table;
-			function->body_workload = workload_executer_allocate_workload<Workload_Function_Body>(semantic_context);
-			function->body_workload->function = function;
-			function->body_workload->parameter_table = nullptr; // Should be set by header analysis
-			analysis_workload_add_dependency(
-				semantic_context->compilation_data->workload_executer, upcast(function->body_workload), upcast(function->header_workload)
+			upp_module->node = module_node;
+			upp_module->symbol_table = symbol_table_create_with_parent(
+				semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
 			);
-			return;
-		}
-		case AST::Expression_Type::STRUCTURE_TYPE: 
-		{
-			// Note: Creating the workload also sets the symbol type
-			auto& struct_node_info = value->options.structure;
-			Upp_Struct* upp_struct = upp_struct_create_empty(value, semantic_context, true);
-			upp_struct->symbol = symbol;
-			upp_struct->datatype->name = symbol->id;
-			symbol->type = Symbol_Type::DATATYPE;
-			symbol->options.datatype = upcast(upp_struct->datatype);
+			content.modules.push_back(upp_module);
+			get_info(AST::upcast_definition(module_node), semantic_context, true)->upp_module = upp_module;
 
-			upp_struct->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
-			upp_struct->body_workload->upp_struct = upp_struct;
-			upp_struct->body_workload->symbol_table = symbol_table;
-			upp_struct->body_workload->symbol_access_level = Symbol_Access_Level::GLOBAL;
-
-			if (struct_node_info.signature->parameters.size > 0) 
+			if (definition->base.parent == nullptr) 
 			{
-				upp_struct->header_workload = workload_executer_allocate_workload<Workload_Structure_Header>(semantic_context);
-				upp_struct->header_workload->upp_struct = upp_struct;
-				upp_struct->header_workload->symbol_table = symbol_table;
-				analysis_workload_add_dependency(
-					semantic_context->compilation_data->workload_executer, upcast(upp_struct->body_workload), upcast(upp_struct->header_workload)
-				);
+				Compilation_Unit* compilation_unit = compiler_find_ast_compilation_unit(compilation_data, upcast(definition));
+				assert(compilation_unit->upp_module == nullptr, "Otherwise this was already analysed...");
+				assert(!module_node->symbol.available, "");
+				compilation_unit->upp_module = upp_module;
+				upp_module->options.compilation_unit = compilation_unit;
 			}
-			return;
+			else
+			{
+				assert(module_node->symbol.available, "Should be available for non-root things");
+				Symbol* symbol = symbol_node_define_symbol(
+					module_node->symbol.value, Symbol_Type::MODULE, 
+					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+				);
+				upp_module->options.module_symbol = symbol;
+				symbol->options.upp_module = upp_module;
+			}
 		}
-		default: break;
+
+		if (!semantic_context->can_create_workloads) 
+		{
+			log_semantic_error(
+				semantic_context, "Semantic context does not allow workload creation, so module-nodes are disallowed", 
+				upcast(module_node), Node_Section::KEYWORD
+			);
+			break;
 		}
-	}
 
-	// Create workload for global variables/comptime definitions
-	auto definition_workload = workload_executer_allocate_workload<Workload_Definition>(semantic_context);
-	definition_workload->symbol = symbol;
-	definition_workload->is_extern_import = false;
-	definition_workload->analysis_pass = semantic_context->current_pass;
-	definition_workload->symbol_table = semantic_context->current_symbol_table;
-	auto& def = definition_workload->options.normal;
-	def.is_comptime = definition->is_comptime;
-	def.type_node = nullptr;
-	if (is_global_variable && definition->types.size != 0) {
-		def.type_node = definition->types[0];
+		// Recursively add definitions
+		RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, upp_module->symbol_table);
+		for (int i = 0; i < module_node->definitions.size; i++) {
+			toplevel_content_add_definition(content, module_node->definitions[i], semantic_context, false);
+		}
+		break;
 	}
-	def.value_node = nullptr;
-	if (definition->values.size != 0) {
-		def.value_node = definition->values[0];
-	}
+	case AST::Definition_Type::CUSTOM_OPERATOR:
+	{
+		AST::Definition_Custom_Operator* custom_op_node = &definition->options.custom_operator;
+		Symbol_Table* symbol_table = semantic_context->current_symbol_table;
+		auto& ids = semantic_context->compilation_data->identifier_pool.predefined_ids;
 
-	symbol->type = Symbol_Type::DEFINITION_UNFINISHED;
-	symbol->options.definition_workload = definition_workload;
+		// Create new workload for custom-operator
+		if (!semantic_context->can_create_workloads) {
+			log_semantic_error(
+				semantic_context, "Semantic context disallows the creation of new workload for custom operator", 
+				upcast(definition), Node_Section::FIRST_TOKEN
+			);
+			break;
+		}
+
+		// Create new custom-operator table if it doesn't exist yet
+		if (symbol_table->custom_operator_table == nullptr)
+		{
+			auto compilation_data = semantic_context->compilation_data;
+
+			// Create new Operator_Table 
+			auto operator_table = new Custom_Operator_Table;
+			operator_table->installed_operators = hashtable_create_empty<Custom_Operator_Key, DynArray<Custom_Operator_Install>>(
+				1, custom_operator_key_hash, custom_operator_key_equals
+			);
+			for (int i = 0; i < (int)Custom_Operator_Type::MAX_ENUM_VALUE; i++) {
+				operator_table->workloads[i] = nullptr;
+				operator_table->contains_operator[i] = false;
+			}
+
+			dynamic_array_push_back(&compilation_data->allocated_custom_operator_tables, operator_table);
+			symbol_table->custom_operator_table = operator_table;
+		}
+
+		Workload_Custom_Operator* operator_workload = symbol_table->custom_operator_table->workloads[(int)custom_op_node->type];
+		if (operator_workload == nullptr) 
+		{
+			operator_workload = workload_executer_allocate_workload<Workload_Custom_Operator>(semantic_context);
+			operator_workload->analysis_pass = semantic_context->current_pass;
+			operator_workload->operator_table = symbol_table->custom_operator_table;
+			operator_workload->symbol_table = symbol_table;
+			operator_workload->change_nodes = DynArray<AST::Definition_Custom_Operator*>::create(&semantic_context->compilation_data->arena);
+			symbol_table->custom_operator_table->workloads[(int)custom_op_node->type] = operator_workload;
+		}
+		operator_workload->change_nodes.push_back(custom_op_node);
+
+		break;
+	}
+	default: panic("");
+	}
 }
 
 struct Symbol_Import
 {
 	Symbol* symbol;
-	AST::Import* import_node;
+	AST::Definition_Import* import_node;
 	Symbol_Table* symbol_table;
 	bool currently_analysing;
 	bool is_circular_start;
@@ -5944,7 +5909,7 @@ Symbol* symbol_import_resolve_recursive(
 	Symbol_Table* symbol_table = symbol_import.symbol_table;
 	for (int i = 0; i < path->parts.size; i++)
 	{
-		AST::Symbol_Lookup* path_part = path->parts[i];
+		AST::Symbol_Node* path_part = path->parts[i];
 		Symbol_Query_Info query_info = symbol_query_info_make(Symbol_Access_Level::GLOBAL, Import_Type::SYMBOLS, true);
 		if (i != 0) {
 			query_info.import_search_type = Import_Type::NONE;
@@ -5992,7 +5957,6 @@ Symbol* symbol_import_resolve_recursive(
 		if (i == path->parts.size - 1)
 		{
 			// Check if we are at the end of the path import
-			get_info(path, semantic_context, false)->symbol = part_symbol;
 			symbol->type = Symbol_Type::ALIAS;
 			symbol->options.alias_for = part_symbol;
 			return symbol;
@@ -6015,26 +5979,26 @@ Symbol* symbol_import_resolve_recursive(
 	return nullptr;
 }
 
-void module_content_analyse_items(Module_Content& module_content, Semantic_Context* semantic_context)
+void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semantic_Context* semantic_context)
 {
 	auto workload = semantic_context->current_workload;
 	Arena* scratch_arena = semantic_context->scratch_arena;
 	auto compilation_data = semantic_context->compilation_data;
 	
 	// Resolve all file-imports
-	for (int i = 0; i < module_content.file_imports.size; i++)
+	for (int i = 0; i < toplevel_content.file_imports.size; i++)
 	{
-		Import_Info info = module_content.file_imports[i];
+		Import_Info info = toplevel_content.file_imports[i];
 		Symbol_Table* import_symbol_table = info.symbol_table;
-		AST::Import* import_node = info.import_node;
+		AST::Definition_Import* import_node = info.import_node;
 		assert(import_node->operator_type == AST::Import_Operator::FILE_IMPORT, "");
 
 		Symbol* module_import_symbol = nullptr;
 		if (import_node->alias_name.available)
 		{
-			module_import_symbol = symbol_table_define_symbol(
-				import_symbol_table, import_node->alias_name.value->name, Symbol_Type::ERROR_SYMBOL,
-				upcast(import_node->alias_name.value), Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
+			module_import_symbol = symbol_node_define_symbol(
+				import_node->alias_name.value, Symbol_Type::ERROR_SYMBOL,
+				import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
 			);
 			get_info(import_node->alias_name.value, semantic_context, true)->symbol = module_import_symbol;
 		}
@@ -6071,14 +6035,14 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_pass, import_module_pass);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, semantic_context->compilation_data->root_symbol_table);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::GLOBAL);
-			import_module = analyse_module_node(compilation_unit->root, &module_content, semantic_context, compilation_unit);
+			toplevel_content_add_definition(toplevel_content, AST::upcast_definition(compilation_unit->root), semantic_context, false);
 		}
 		else
 		{
 			assert(node_passes->passes.size == 1, "Modules should only be analysed at most once currently");
-			import_module = pass_get_base_info(
-				node_passes->passes[0], upcast(compilation_unit->root), Info_Query::TRY_READ, compilation_data
-			)->module_info.upp_module;
+			import_module = pass_get_node_info(
+				node_passes->passes[0], AST::upcast_definition(compilation_unit->root), Info_Query::TRY_READ, compilation_data
+			)->upp_module;
 		}
 
 		// Update Symbol info
@@ -6090,15 +6054,15 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 	}
 
 	// Resolve all module-imports (import A~*, B~*)
-	for (int i = 0; i < module_content.module_imports.size; i++)
+	for (int i = 0; i < toplevel_content.module_imports.size; i++)
 	{
-		Import_Info info = module_content.module_imports[i];
+		Import_Info info = toplevel_content.module_imports[i];
 		Symbol_Table* import_symbol_table = info.symbol_table;
-		AST::Import* import_node = info.import_node;
+		AST::Definition_Import* import_node = info.import_node;
 		assert(import_node->operator_type == AST::Import_Operator::MODULE_IMPORT || 
 			import_node->operator_type == AST::Import_Operator::MODULE_IMPORT_TRANSITIVE, ""
 		);
-		assert(import_node->import_type == Import_Type::SYMBOLS, "Otherwise the imports would be in other module_content array");
+		assert(import_node->import_type == Import_Type::SYMBOLS, "Otherwise the imports would be in other toplevel_content array");
 
 		if (import_node->alias_name.available) {
 			log_semantic_error(semantic_context, "Cannot alias ~* or ~** imports", upcast(import_node), Node_Section::FIRST_TOKEN);
@@ -6109,7 +6073,7 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 		Symbol* symbol = path_lookup_resolve_to_single_symbol(import_node->options.path, true, semantic_context, true);
 		if (symbol->type != Symbol_Type::MODULE) {
 			if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-				log_semantic_error(semantic_context, "Symbol is not a module", upcast(import_node->options.path->last), Node_Section::FIRST_TOKEN);
+				log_semantic_error(semantic_context, "Symbol is not a module", upcast(import_node->options.path->last()), Node_Section::FIRST_TOKEN);
 			}
 			continue;
 		}
@@ -6124,11 +6088,11 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 
 	// Create all alias symbols (Single symbol imports like import A~Node, import B~C~foo as bar)
 	DynArray<Symbol_Import> symbol_imports = DynArray<Symbol_Import>::create(scratch_arena);
-	for (int i = 0; i < module_content.symbol_imports.size; i++)
+	for (int i = 0; i < toplevel_content.symbol_imports.size; i++)
 	{
-		Import_Info info = module_content.symbol_imports[i];
+		Import_Info info = toplevel_content.symbol_imports[i];
 		Symbol_Table* import_symbol_table = info.symbol_table;
-		AST::Import* import_node = info.import_node;
+		AST::Definition_Import* import_node = info.import_node;
 		assert(import_node->operator_type == AST::Import_Operator::SINGLE_SYMBOL, "");
 		auto path = import_node->options.path;
 
@@ -6146,30 +6110,27 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 			);
 			continue;
 		}
-		if (path->parts.size == 1 && import_node->alias_name.available && import_node->alias_name.value->name == path->last->name) {
+		if (path->parts.size == 1 && import_node->alias_name.available && import_node->alias_name.value->name == path->last()->name) {
 			log_semantic_error(
 				semantic_context, "This does nothing, as available symbol is imported with same name"
 				, upcast(import_node), Node_Section::FIRST_TOKEN
 			);
 			continue;
 		}
-		if (path->last->name == nullptr) {
-			// NOTE: This may happen for usage in the Syntax-Editor, look at the parser for more info.
-			//       Also i think this is kinda ugly because it's such a special case, but we'll see
-			continue;
-		}
 
 		// Define new symbol
-		AST::Node* definition_node = upcast(path->last);
-		String* name = path->last->name;
-		if (import_node->alias_name.available)
-		{
-			name = import_node->alias_name.value->name;
-			definition_node = upcast(import_node->alias_name.value);
+		Symbol* new_symbol = nullptr;
+		if (import_node->alias_name.available) {
+			new_symbol = symbol_node_define_symbol(
+				import_node->alias_name.value, Symbol_Type::ALIAS_UNFINISHED, import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+			);
 		}
-		Symbol* new_symbol = symbol_table_define_symbol(
-			import_symbol_table, name, Symbol_Type::ALIAS_UNFINISHED, definition_node, Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
-		);
+		else {
+			new_symbol = symbol_table_define_symbol(
+				import_symbol_table, path->last()->name, Symbol_Type::ALIAS_UNFINISHED, 
+				path->last(), Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
+			);
+		}
 		new_symbol->options.unfinished_alias_index = (int) symbol_imports.size;
 		if (import_node->alias_name.available) {
 			get_info(import_node->alias_name.value, semantic_context, true)->symbol = new_symbol;
@@ -6192,11 +6153,11 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 	}
 
 	// Resolve all dot_call or context imports
-	for (int i = 0; i < module_content.context_or_dot_call_imports.size; i++)
+	for (int i = 0; i < toplevel_content.context_or_dot_call_imports.size; i++)
 	{
-		Import_Info info = module_content.context_or_dot_call_imports[i];
+		Import_Info info = toplevel_content.context_or_dot_call_imports[i];
 		Symbol_Table* import_symbol_table = info.symbol_table;
-		AST::Import* import_node = info.import_node;
+		AST::Definition_Import* import_node = info.import_node;
 		auto path = import_node->options.path;
 		assert(import_node->import_type == Import_Type::DOT_CALLS || import_node->import_type == Import_Type::OPERATORS, "");
 
@@ -6209,7 +6170,7 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 		Symbol* symbol = path_lookup_resolve_to_single_symbol(path, true, semantic_context, true);
 		if (symbol->type != Symbol_Type::MODULE) {
 			if (symbol->type != Symbol_Type::ERROR_SYMBOL) {
-				log_semantic_error(semantic_context, "Symbol is not a module", upcast(path->last), Node_Section::FIRST_TOKEN);
+				log_semantic_error(semantic_context, "Symbol is not a module", upcast(path->last()), Node_Section::FIRST_TOKEN);
 			}
 			continue;
 		}
@@ -6227,7 +6188,7 @@ void module_content_analyse_items(Module_Content& module_content, Semantic_Conte
 
 // WORKLOAD ENTRY
 void analyse_structure_member_nodes_recursive(
-	Datatype_Struct* structure, Dynamic_Array<AST::Structure_Member_Node*> member_nodes, Semantic_Context* semantic_context)
+	Datatype_Struct* structure, Array<AST::Structure_Member_Node*> member_nodes, Semantic_Context* semantic_context)
 {
 	auto& types = semantic_context->compilation_data->type_system->predefined_types;
 
@@ -6291,14 +6252,9 @@ void analysis_workload_entry(void* userdata)
 		);
 
 		// Analyse module and sub-modules recursive
-		Module_Content module_content = module_content_create(&scratch_arena);
-		Upp_Module* main_module = analyse_module_node(
-			module_node, &module_content, &semantic_context, 
-			compiler_find_ast_compilation_unit(compilation_data, upcast(module_node))
-		);
-		main_module->is_file_module = true;
-		main_module->options.compilation_unit = compilation_data->main_unit;
-		module_content_analyse_items(module_content, &semantic_context);
+		Toplevel_Content module_content = toplevel_content_create(&scratch_arena);
+		toplevel_content_add_definition(module_content, AST::upcast_definition(module_node), &semantic_context, false);
+		toplevel_content_resolve_imports(module_content, &semantic_context);
 
 		break;
 	}
@@ -6311,232 +6267,269 @@ void analysis_workload_entry(void* userdata)
 			change_workload->analysis_pass, &scratch_arena
 		);
 
-		for (int i = 0; i < change_workload->change_nodes.size; i++)
-		{
-			auto change_node = change_workload->change_nodes[i];
-			if (change_workload->type_to_analyse != change_node->type) continue;
-
-			analyse_custom_operator_node(change_node, change_workload->operator_table, &semantic_context);
+		for (int i = 0; i < change_workload->change_nodes.size; i++) {
+			analyse_custom_operator_node(change_workload->change_nodes[i], change_workload->operator_table, &semantic_context);
 		}
 		break;
 	}
-	case Analysis_Workload_Type::DEFINITION:
+	case Analysis_Workload_Type::EXTERN_IMPORT:
 	{
-		auto definition_workload = downcast<Workload_Definition>(workload);
-		auto symbol = definition_workload->symbol;
+		auto extern_workload = downcast<Workload_Extern_Import>(workload);
+		Symbol* symbol = extern_workload->symbol;
 
 		Semantic_Context local_semantic_context = semantic_context_make(
-			compilation_data, workload, definition_workload->symbol_table, Symbol_Access_Level::GLOBAL,
-			definition_workload->analysis_pass, &scratch_arena
+			compilation_data, workload, extern_workload->symbol_table, Symbol_Access_Level::GLOBAL,
+			extern_workload->analysis_pass, &scratch_arena
 		);
 		Semantic_Context* semantic_context = &local_semantic_context;
 
-		if (!definition_workload->is_extern_import)
+		AST::Definition_Extern_Import* extern_node = extern_workload->import_node;
+		switch (extern_node->type)
 		{
-			auto& def = definition_workload->options.normal;
-			if (!def.is_comptime) // Global variable definition
-			{
-				Expression_Context context = expression_context_make_unspecified();
-				Datatype* type = 0;
-				if (def.type_node != 0) {
-					type = semantic_analyser_analyse_expression_type(def.type_node, semantic_context);
-				}
-				if (def.value_node != 0)
-				{
-					Expression_Context context = expression_context_make_unspecified();
-					if (type != nullptr) {
-						context = expression_context_make_specific_type(type);
-					}
-					type = semantic_analyser_analyse_expression_value(def.value_node, context, semantic_context);
-				}
-
-				auto global = compilation_data_add_global(semantic_context, type, symbol, false);
-				if (def.value_node != 0) {
-					global->has_initial_value = true;
-					global->init_expr = def.value_node;
-					global->definition_workload = downcast<Workload_Definition>(workload);
-				}
-				symbol->type = Symbol_Type::GLOBAL;
-				symbol->options.global = global;
-			}
-			else // Comptime definition
-			{
-				auto result = semantic_analyser_analyse_expression_any(def.value_node, expression_context_make_unspecified(), semantic_context);
-				switch (result->result_type)
-				{
-				case Expression_Result_Type::VALUE:
-				{
-					auto comptime = expression_calculate_comptime_value(
-						def.value_node, "Value must be comptime in comptime definition (:: syntax)", semantic_context
-					);
-					if (!comptime.available) {
-						symbol->type = Symbol_Type::ERROR_SYMBOL;
-						return;
-					}
-					symbol->type = Symbol_Type::COMPTIME_VALUE;
-					symbol->options.constant = comptime.value;
-					break;
-				}
-				case Expression_Result_Type::CONSTANT: {
-					symbol->type = Symbol_Type::COMPTIME_VALUE;
-					symbol->options.constant = result->options.constant;
-					break;
-				}
-				case Expression_Result_Type::HARDCODED_FUNCTION:
-				{
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					log_semantic_error(semantic_context, "Creating aliases for hardcoded functions currently not supported", AST::upcast(def.value_node));
-					break;
-					//symbol->type = Symbol_Type::HARDCODED_FUNCTION;
-					//symbol->options.hardcoded = result->options.hardcoded;
-					//break;
-				}
-				case Expression_Result_Type::FUNCTION:
-				{
-					Upp_Function* function = result->options.function;
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					log_semantic_error(semantic_context, "Creating symbol/function aliases currently not supported", AST::upcast(def.value_node));
-					break;
-				}
-				case Expression_Result_Type::POLYMORPHIC_FUNCTION: {
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					log_semantic_error(semantic_context, "Creating aliases for polymorphic functions not supported!", AST::upcast(def.value_node));
-					break;
-				}
-				case Expression_Result_Type::NOTHING: {
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					log_semantic_error(semantic_context, "Comptime definition expected a value, not nothing (void/no return value)", AST::upcast(def.value_node));
-					break;
-				}
-				case Expression_Result_Type::DATATYPE: 
-				{
-					// TODO: Maybe also disallow this if this is an alias, as above
-					symbol->type = Symbol_Type::DATATYPE;
-					symbol->options.datatype = result->options.datatype;
-
-					if (result->options.datatype->type == Datatype_Type::ENUM) {
-						auto enum_type = downcast<Datatype_Enum>(result->options.datatype);
-						if (enum_type->name == 0) {
-							enum_type->name = symbol->id;
-						}
-					}
-					break;
-				}
-				case Expression_Result_Type::POLYMORPHIC_STRUCT: {
-					// TODO: Maybe also disallow this if this is an alias, as above
-					symbol->type = Symbol_Type::DATATYPE;
-					symbol->options.datatype = upcast(result->options.polymorphic_struct->upp_struct->datatype);
-					break;
-				}
-				default: panic("");
-				}
-			}
-		}
-		else // is_extern_import
+		case AST::Extern_Type::FUNCTION:
 		{
-			AST::Extern_Import* import = definition_workload->options.extern_import;
-			switch (import->type)
-			{
-			case AST::Extern_Type::FUNCTION:
-			{
-				auto function_type = semantic_analyser_analyse_expression_type(import->options.function.type_expr, semantic_context);
+			auto& extern_fn_node = extern_node->options.function;
+			auto function_type = semantic_analyser_analyse_expression_type(extern_fn_node.type_expr, semantic_context);
 
-				// Check for errors
-				if (datatype_is_unknown(function_type)) {
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					break;
-				}
-				else if (function_type->type != Datatype_Type::FUNCTION_POINTER) {
-					log_semantic_error(semantic_context, "Extern function type must be function", import->options.function.type_expr);
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					break;
-				}
-				auto function_ptr = downcast<Datatype_Function_Pointer>(function_type);
-
-				// Check if function already exists in extern functions...
-				// TODO: Deduplication could be done with hashset?
-				auto& extern_functions = compilation_data->extern_sources.extern_functions;
-				{
-					bool found = false;
-					for (int i = 0; i < extern_functions.size; i++) {
-						auto extern_fn = extern_functions[i];
-						if (extern_fn->symbol->id == symbol->id && extern_fn->signature == function_ptr->signature)
-						{
-							found = true;
-							symbol->type = Symbol_Type::FUNCTION;
-							symbol->options.function = extern_fn;
-							break;
-						}
-					}
-					if (found) {
-						break;
-					}
-				}
-
-				Upp_Function* extern_fn = upp_function_create_empty(function_ptr->signature, symbol->id, compilation_data);
-				extern_fn->extern_definition_workload = definition_workload;
-				extern_fn->symbol = symbol;
-				extern_fn->is_extern = true;
-
-				symbol->type = Symbol_Type::FUNCTION;
-				symbol->options.function = extern_fn;
-
-				dynamic_array_push_back(&extern_functions, extern_fn);
-
+			// Check for errors
+			if (datatype_is_unknown(function_type)) {
+				symbol->type = Symbol_Type::ERROR_SYMBOL;
 				break;
 			}
-			case AST::Extern_Type::GLOBAL:
-			{
-				Datatype* datatype = semantic_analyser_analyse_expression_type(import->options.global.type_expr, semantic_context);
-				if (datatype_is_unknown(datatype)) {
-					symbol->type = Symbol_Type::ERROR_SYMBOL;
-					break;
-				}
+			else if (function_type->type != Datatype_Type::FUNCTION_POINTER) {
+				log_semantic_error(semantic_context, "Extern function type must be function", extern_fn_node.type_expr);
+				symbol->type = Symbol_Type::ERROR_SYMBOL;
+				break;
+			}
+			auto function_ptr = downcast<Datatype_Function_Pointer>(function_type);
 
-				// Deduplicate if we already added this global
-				{
-					bool found = false;
-					for (int i = 0; i < compilation_data->globals.size; i++) 
+			// Check if function already exists in extern functions...
+			// TODO: Deduplication could be done with hashset?
+			auto& extern_functions = compilation_data->extern_sources.extern_functions;
+			{
+				bool found = false;
+				for (int i = 0; i < extern_functions.size; i++) {
+					auto extern_fn = extern_functions[i];
+					if (extern_fn->symbol->id == symbol->id && extern_fn->signature == function_ptr->signature)
 					{
-						auto global = compilation_data->globals[i];
-						if (!global->is_extern) continue;
-						if (global->symbol->id == symbol->id && types_are_equal(global->type, datatype)) {
-							symbol->type = Symbol_Type::GLOBAL;
-							symbol->options.global = global;
-							found = true;
-							break;
-						}
-					}
-					if (found) {
+						found = true;
+						symbol->type = Symbol_Type::FUNCTION;
+						symbol->options.function = extern_fn;
 						break;
 					}
 				}
-
-				auto global = compilation_data_add_global(semantic_context, datatype, symbol, true);
-				symbol->type = Symbol_Type::GLOBAL;
-				symbol->options.global = global;
-
-				break;
+				if (found) {
+					break;
+				}
 			}
-			case AST::Extern_Type::STRUCT:
+
+			Upp_Function* extern_fn = upp_function_create_empty(function_ptr->signature, symbol->id, compilation_data);
+			extern_fn->origin.type = Function_Origin_Type::EXTERN;
+			extern_fn->origin.options.extern_import_workload = extern_workload;
+			extern_fn->symbol = symbol;
+			extern_fn->is_extern = true;
+
+			symbol->type = Symbol_Type::FUNCTION;
+			symbol->options.function = extern_fn;
+			dynamic_array_push_back(&extern_functions, extern_fn);
+
+			break;
+		}
+		case AST::Extern_Type::GLOBAL:
+		{
+			AST::Path_Lookup* lookup = extern_node->options.global_lookup;
+			Symbol* symbol = path_lookup_resolve_to_single_symbol(lookup, false, semantic_context, true);
+
+			// Wait for definition to finish
+			if (symbol->type == Symbol_Type::WAITING_FOR_WORKLOAD) 
 			{
-				Datatype* type = semantic_analyser_analyse_expression_type(import->options.struct_type_expr, semantic_context);
-				if (datatype_is_unknown(type)) {
+				bool dependency_failed = false;
+				analysis_workload_add_dependency(
+					compilation_data->workload_executer, workload, symbol->options.waiting_for_workload,
+					dependency_failure_info_make(&dependency_failed, lookup->last())
+				);
+				workload_executer_wait_for_dependency_resolution(semantic_context);
+				if (dependency_failed) {
 					break;
 				}
-
-				if (type->type != Datatype_Type::STRUCT) {
-					log_semantic_error(semantic_context, "extern struct must be followed by a struct type", import->options.struct_type_expr);
-					break;
-				}
-
-				downcast<Datatype_Struct>(type)->upp_struct->is_extern_struct = true;
+			}
+			if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
 				break;
 			}
-			default: panic("The other options shouldn't generate a definition workload");
+
+			if (symbol->type != Symbol_Type::GLOBAL) { 
+				log_semantic_error(semantic_context, "Expected global variable symbol", upcast(lookup->last()));
+				log_error_info_symbol(semantic_context, symbol);
+				break;
+			}
+
+			symbol->options.global->is_extern = true;
+			break;
+		}
+		case AST::Extern_Type::STRUCT:
+		{
+			AST::Path_Lookup* lookup = extern_node->options.struct_type_lookup;
+			Symbol* symbol = path_lookup_resolve_to_single_symbol(lookup, false, semantic_context, true);
+			if (symbol->type == Symbol_Type::ERROR_SYMBOL) {
+				break;
+			}
+			if (symbol->type != Symbol_Type::DATATYPE) {
+				log_semantic_error(semantic_context, "extern struct must be followed by a struct symbol", upcast(lookup->last()));
+				log_error_info_symbol(semantic_context, symbol);
+				break;
+			}
+			Datatype* datatype = symbol->options.datatype;
+			if (datatype_is_unknown(datatype)) {
+				break;
+			}
+			if (datatype->type != Datatype_Type::STRUCT) {
+				log_semantic_error(semantic_context, "extern struct must be followed by a struct symbol", upcast(lookup->last()));
+				log_error_info_given_type(semantic_context, datatype);
+				break;
+			}
+
+			Upp_Struct* upp_struct = downcast<Datatype_Struct>(datatype)->upp_struct;
+			if (upp_struct->body_workload == nullptr) {
+				log_semantic_error(semantic_context, "Given struct must be user-defined, e.g. must not be built-in", upcast(lookup->last()));
+				log_error_info_given_type(semantic_context, datatype);
+				break;
+			}
+			upp_struct->is_extern_struct = true;
+			break;
+		}
+		default: panic("The other options shouldn't generate a definition workload");
+		}
+		break;
+	}
+	case Analysis_Workload_Type::GLOBAL:
+	{
+		auto workload_global = downcast<Workload_Global>(workload);
+		auto symbol = workload_global->symbol;
+		AST::Definition_Value* value_node = workload_global->definition_node;
+
+		Semantic_Context local_semantic_context = semantic_context_make(
+			compilation_data, workload, workload_global->symbol_table, Symbol_Access_Level::GLOBAL,
+			workload_global->analysis_pass, &scratch_arena
+		);
+		Semantic_Context* semantic_context = &local_semantic_context;
+
+		if (!value_node->datatype_expr.available && !value_node->value_expr.available) {
+			log_semantic_error(
+				semantic_context, "For global/const definition either value or type must be given!", 
+				AST::upcast(AST::upcast_definition(value_node))
+			);
+		}
+
+		Datatype* datatype = nullptr;
+		if (value_node->datatype_expr.available) {
+			datatype = semantic_analyser_analyse_expression_type(value_node->datatype_expr.value, semantic_context);
+		}
+		if (value_node->value_expr.available) {
+			Expression_Context context = datatype == nullptr ? expression_context_make_unspecified() : expression_context_make_specific_type(datatype);
+			datatype = semantic_analyser_analyse_expression_value(value_node->value_expr.value, context, semantic_context, false);
+		}
+		if (datatype == nullptr) {
+			datatype = types.invalid_type;
+		}
+
+		bool is_global = AST::upcast_definition(value_node)->type == AST::Definition_Type::GLOBAL;
+		if (is_global)
+		{
+			auto global = compilation_data_add_global(semantic_context, datatype);
+			global->symbol = symbol;
+			symbol->type = Symbol_Type::GLOBAL;
+			symbol->options.global = global;
+			if (value_node->value_expr.available) {
+				global->has_initial_value = true;
+				global->init_expr = value_node->value_expr.value;
+				global->definition_workload = workload_global;
+			}
+		}
+		else // Comptime definition
+		{
+			if (!value_node->value_expr.available) 
+			{
+				log_semantic_error(
+					semantic_context, "Const value requires initial value", 
+					upcast(AST::upcast_definition(value_node)), Node_Section::FIRST_TOKEN
+				);
+				symbol->type = Symbol_Type::ERROR_SYMBOL;
+				break;
+			}
+
+			Optional<Upp_Constant> result = expression_calculate_comptime_value(
+				value_node->value_expr.value, "Const definition value must be comptime", semantic_context
+			);
+			if (!result.available) {
+				symbol->type = Symbol_Type::ERROR_SYMBOL;
+				break;
+			}
+			// TODO: Maybe check if this is a reference to a function/struct, and handle this as alias instead
+			symbol->type = Symbol_Type::COMPTIME_VALUE;
+			symbol->options.constant = result.value;
+		}
+		break;
+	}
+	case Analysis_Workload_Type::ENUM:
+	{
+		Workload_Enum* enum_workload = downcast<Workload_Enum>(workload);
+
+		Semantic_Context local_semantic_context = semantic_context_make(
+			compilation_data, workload, enum_workload->symbol_table, Symbol_Access_Level::GLOBAL,
+			enum_workload->analysis_pass, &scratch_arena
+		);
+		Semantic_Context* semantic_context = &local_semantic_context;
+
+		Symbol* symbol = enum_workload->symbol;
+		auto& members = enum_workload->node->members;
+
+		Datatype_Enum* enum_type = type_system_make_enum_empty(type_system, symbol->id, upcast(AST::upcast_definition(enum_workload->node)));
+		int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
+		for (int i = 0; i < members.size; i++)
+		{
+			auto& member_node = members[i];
+			if (member_node->value.available)
+			{
+				semantic_analyser_analyse_expression_value(
+					member_node->value.value, expression_context_make_specific_type(upcast(types.i32_type)), semantic_context
+				);
+				auto constant = expression_calculate_comptime_value(member_node->value.value, "Enum value must be comptime known", semantic_context);
+				if (constant.available) {
+					next_member_value = upp_constant_to_value<i32>(constant.value);
+				}
+			}
+
+			Enum_Member member;
+			member.name = member_node->name;
+			member.value = next_member_value;
+			next_member_value++;
+			enum_type->members.push_back(member);
+		}
+
+		// Check for member errors
+		for (int i = 0; i < enum_type->members.size; i++)
+		{
+			auto member = &enum_type->members[i];
+			for (int j = i + 1; j < enum_type->members.size; j++)
+			{
+				auto other = &enum_type->members[j];
+				if (other->name == member->name) {
+					log_semantic_error(semantic_context, "Enum member name is already in use", AST::upcast(members[j]), Node_Section::FIRST_TOKEN);
+					log_error_info_id(semantic_context, other->name);
+				}
+				if (other->value == member->value) {
+					log_semantic_error(
+						semantic_context, "Enum value is already taken by previous member", 
+						AST::upcast(members[j]), Node_Section::FIRST_TOKEN
+					);
+					log_error_info_id(semantic_context, other->name);
+				}
 			}
 		}
 
+		type_system_finish_enum(type_system, enum_type);
+		symbol->type = Symbol_Type::DATATYPE;
+		symbol->options.datatype = upcast(enum_type);
 		break;
 	}
 	case Analysis_Workload_Type::FUNCTION_HEADER:
@@ -6547,18 +6540,18 @@ void analysis_workload_entry(void* userdata)
 		// Create semantic context
 		Semantic_Context local_context = semantic_context_make(
 			compilation_data, workload, header_workload->symbol_table, Symbol_Access_Level::GLOBAL,
-			analysis_pass_allocate(workload, upcast(function->function_node->options.function.signature), compilation_data),
+			analysis_pass_allocate(workload, upcast(header_workload->function_node->signature), compilation_data),
 			&scratch_arena
 		);
 		local_context.current_function = function;
 		Semantic_Context* semantic_context = &local_context;
 
-		// Create analysis progress
+		// Analyse signature
 		Poly_Header* poly_header = poly_header_analyse(
-			function->function_node->options.function.signature, header_workload->symbol_table, function->name, semantic_context, function, nullptr
+			header_workload->function_node->signature, header_workload->symbol_table, function->name, semantic_context, function, nullptr
 		);
 		function->signature = poly_header->signature;
-		function->body_workload->parameter_table = poly_header->base_parameter_table;
+		function->origin.options.toplevel.body_workload->parameter_table = poly_header->base_parameter_table;
 
 		break;
 	}
@@ -6566,7 +6559,8 @@ void analysis_workload_entry(void* userdata)
 	{
 		auto body_workload = downcast<Workload_Function_Body>(workload);
 		auto function = body_workload->function;
-		auto& body_node = function->function_node->options.function.body;
+		assert(function->body_node.available, "Henlo?");
+		auto& body_node = function->body_node.value;
 
 		if (function->body_pass == nullptr) {
 			function->body_pass = analysis_pass_allocate(
@@ -6584,24 +6578,24 @@ void analysis_workload_entry(void* userdata)
 			semantic_context->error_logging_enabled = false;
 		}
 
-		analyse_simple_function_header_and_body(function, semantic_context, function->function_node, false, expression_context_make_unspecified());
+		analyse_function_body(function, semantic_context, body_node, body_workload->parameter_table);
 		break;
 	}
 	case Analysis_Workload_Type::STRUCT_HEADER:
 	{
 		auto workload_header = downcast<Workload_Structure_Header>(workload);
 		Upp_Struct* upp_struct = workload_header->upp_struct;
-		auto& struct_node = upp_struct->struct_node->options.structure;
+		AST::Definition_Struct* struct_node = upp_struct->struct_node;
 
 		Semantic_Context local_context = semantic_context_make(
 			compilation_data, workload, workload_header->symbol_table, Symbol_Access_Level::GLOBAL,
-			analysis_pass_allocate(workload, upcast(struct_node.signature), compilation_data),
+			analysis_pass_allocate(workload, upcast(struct_node->signature), compilation_data),
 			&scratch_arena
 		);
 		Semantic_Context* semantic_context = &local_context;
 
 		auto poly_header_info = poly_header_analyse(
-			struct_node.signature, workload_header->symbol_table, upp_struct->datatype->name, semantic_context, 0, workload_header
+			struct_node->signature, workload_header->symbol_table, upp_struct->datatype->name, semantic_context, 0, workload_header
 		);
 		upp_struct->poly_type = Poly_Type::BASE;
 		upp_struct->options.header = poly_header_info;
@@ -6613,7 +6607,7 @@ void analysis_workload_entry(void* userdata)
 		auto workload_structure = downcast<Workload_Structure_Body>(workload);
 		Upp_Struct* upp_struct = workload_structure->upp_struct;
 
-		auto& struct_node = upp_struct->struct_node->options.structure;
+		AST::Definition_Struct* struct_node = upp_struct->struct_node;
 		Datatype_Struct* structure = upp_struct->datatype;
 
 		Semantic_Context local_context = semantic_context_make(
@@ -6629,7 +6623,7 @@ void analysis_workload_entry(void* userdata)
 		}
 
 		// Analyse all members
-		analyse_structure_member_nodes_recursive(structure, struct_node.members, semantic_context);
+		analyse_structure_member_nodes_recursive(structure, struct_node->members, semantic_context);
 		type_system_finish_struct(type_system, structure);
 		break;
 	}
@@ -6641,7 +6635,7 @@ void analysis_workload_entry(void* userdata)
 
 // EXPRESSIONS UPDATES
 Expression_Info analyse_symbol_as_expression(
-	Symbol* symbol, Expression_Context context, AST::Symbol_Lookup* error_report_node, Semantic_Context* semantic_context)
+	Symbol* symbol, Expression_Context context, AST::Symbol_Node* error_report_node, Semantic_Context* semantic_context)
 {
 	auto workload = semantic_context->current_workload;
 	auto compilation_data = semantic_context->compilation_data;
@@ -6657,23 +6651,24 @@ Expression_Info analyse_symbol_as_expression(
 	auto failure_info = dependency_failure_info_make(&dependency_failed, error_report_node);
 	switch (symbol->type)
 	{
-	case Symbol_Type::DEFINITION_UNFINISHED:
+	case Symbol_Type::WAITING_FOR_WORKLOAD:
 	{
-		analysis_workload_add_dependency(executer, workload, upcast(symbol->options.definition_workload), failure_info);
+		analysis_workload_add_dependency(executer, workload, upcast(symbol->options.waiting_for_workload), failure_info);
 		break;
 	}
 	case Symbol_Type::FUNCTION:
 	{
 		auto fn = symbol->options.function;
-		if (fn->header_workload != nullptr) {
-			analysis_workload_add_dependency(executer, workload, upcast(fn->header_workload), failure_info);
+		if (fn->origin.type == Function_Origin_Type::TOPLEVEL) {
+			analysis_workload_add_dependency(executer, workload, upcast(fn->origin.options.toplevel.header_workload), failure_info);
 		}
 		break;
 	}
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
 	{
 		auto function = symbol->options.poly_function.function;
-		analysis_workload_add_dependency(executer, workload, upcast(function->header_workload), failure_info);
+		assert(function->origin.type == Function_Origin_Type::TOPLEVEL, "");
+		analysis_workload_add_dependency(executer, workload, upcast(function->origin.options.toplevel.header_workload), failure_info);
 		break;
 	}
 	case Symbol_Type::DATATYPE:
@@ -6702,7 +6697,7 @@ Expression_Info analyse_symbol_as_expression(
 			// Additionally, we want some workloads to wait until the size has been resolved
 			switch (workload->type)
 			{
-			case Analysis_Workload_Type::DEFINITION: {
+			case Analysis_Workload_Type::GLOBAL: {
 				analysis_workload_add_dependency(executer, workload, upcast(struct_workload), failure_info);
 				break;
 			}
@@ -6739,7 +6734,7 @@ Expression_Info analyse_symbol_as_expression(
 		expression_info_set_error(&result, unknown_type, semantic_context);
 		return result;
 	}
-	case Symbol_Type::DEFINITION_UNFINISHED: {
+	case Symbol_Type::WAITING_FOR_WORKLOAD: {
 		panic("Should not happen, we just waited on this workload to finish!");
 	}
 	case Symbol_Type::ALIAS_UNFINISHED:
@@ -7071,95 +7066,14 @@ void analyse_index_accept_all_ints_as_usize(AST::Expression* expr, Semantic_Cont
 }
 
 // Creates function if function is nullptr
-void analyse_simple_function_header_and_body(
-	Upp_Function* function, Semantic_Context* semantic_context, AST::Expression* expr, bool analyse_signature, Expression_Context context)
+void analyse_function_body(Upp_Function* function, Semantic_Context* semantic_context, const Function_Body& body_node, Symbol_Table* parameter_table)
 {
 	Compilation_Data* compilation_data = semantic_context->compilation_data;
 	auto& types = compilation_data->type_system->predefined_types;
 
 	RESTORE_ON_SCOPE_EXIT(semantic_context->current_function, function);
 
-	// Analyse parameter types and create call-signature
-	Symbol_Table* parameter_table = semantic_context->current_symbol_table;
-	if (analyse_signature) 
-	{
-		Call_Signature* call_signature = compilation_data->empty_call_signature;
-
-		if (expr->type == AST::Expression_Type::INFERRED_FUNCTION)
-		{
-			// Handle infered function types
-			bool log_error = true;
-			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
-			{
-				if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
-					call_signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
-					log_error = false;
-				}
-				else {
-					log_semantic_error(semantic_context, "Inferred function context must expect a function-pointer", expr, Node_Section::FIRST_TOKEN);
-					log_error_info_given_type(semantic_context, context.datatype);
-				}
-			}
-			else {
-				log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
-			}
-		}
-		else if (expr->type == AST::Expression_Type::FUNCTION) 
-		{
-			// Create call-signature and analyse parameters
-			AST::Signature* signature_node = expr->options.function.signature;
-			call_signature = call_signature_create_empty();
-			for (int i = 0; i < signature_node->parameters.size; i++) 
-			{
-				AST::Parameter* param_node = signature_node->parameters[i];
-				if (param_node->is_comptime) {
-					log_semantic_error(semantic_context, "Anonymous function parameter must not be comptime", upcast(param_node), Node_Section::FIRST_TOKEN);
-				}
-
-				Datatype* datatype = types.unknown_type;
-				if (param_node->type.available) {
-					datatype = semantic_analyser_analyse_expression_type(param_node->type.value, semantic_context);
-				}
-				else {
-					log_semantic_error(semantic_context, "Anonymous function parameter must have a type", upcast(param_node), Node_Section::FIRST_TOKEN);
-				}
-
-				if (param_node->is_return_type) {
-					call_signature_add_return_type(call_signature, datatype, compilation_data);
-				}
-				else {
-					call_signature_add_parameter(call_signature, param_node->name, datatype, true, false, false);
-				}
-			}
-			call_signature = call_signature_register(call_signature, compilation_data);
-		}
-		else {
-			panic("");
-		}
-
-		// Define all parameter symbols from call-signature
-		if (call_signature != compilation_data->empty_call_signature)
-		{
-			parameter_table = symbol_table_create_with_parent(semantic_context->current_symbol_table, Symbol_Access_Level::POLYMORPHIC, compilation_data);
-			for (int i = 0; i < call_signature->parameters.size; i++)
-			{
-				auto& param = call_signature->parameters[i];
-				assert(param.pattern_variable_index == -1, "");
-				if (i == call_signature->return_type_index) continue;
-				Symbol* symbol = symbol_table_define_symbol(
-					parameter_table, param.name, Symbol_Type::PARAMETER, upcast(function->function_node), Symbol_Access_Level::INTERNAL,
-					compilation_data
-				);
-				symbol->options.parameter.function = function;
-				symbol->options.parameter.index = i;
-			}
-		}
-
-		function->signature = call_signature;
-	}
-
 	// Analyse body
-	auto& body_node = expr->options.function.body;
 	function->body_pass = semantic_context->current_pass;
 	RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, parameter_table);
 	RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::INTERNAL);
@@ -7178,7 +7092,7 @@ void analyse_simple_function_header_and_body(
 		auto code_block = body_node.block;
 		Control_Flow flow = semantic_analyser_analyse_block(code_block, semantic_context);
 		if (flow != Control_Flow::RETURNS && function->signature->return_type().available) {
-			log_semantic_error(semantic_context, "Function is missing a return statement", expr, Node_Section::FIRST_TOKEN);
+			log_semantic_error(semantic_context, "Function is missing a return statement", code_block->base.parent, Node_Section::FIRST_TOKEN);
 		}
 	}
 }
@@ -7586,16 +7500,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		// Find all overload symbols
 		DynArray<Symbol*> symbols = DynArray<Symbol*>::create(scratch_arena);
-		// Overload.path is not avaialble only if there was a parsing error, so we don't need error-reporting here
-		if (get_overload.path.available) {
-			symbols = path_lookup_resolve(get_overload.path.value, scratch_arena, true, semantic_context);
-		}
-		else {
-			semantic_analyser_set_error_flag(true, semantic_context);
-			EXIT_ERROR(types.unknown_type);
-		}
+		symbols = path_lookup_resolve(get_overload.path, scratch_arena, true, semantic_context);
 		if (symbols.size == 0) {
-			log_semantic_error(semantic_context, "Could not find symbol for given path", upcast(get_overload.path.value));
+			log_semantic_error(semantic_context, "Could not find symbol for given path", upcast(get_overload.path));
 			EXIT_ERROR(types.unknown_type);
 		}
 
@@ -7607,7 +7514,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		{
 			auto symbol = symbols[i];
 			Expression_Info info = analyse_symbol_as_expression(
-				symbol, expression_context_make_unspecified(), get_overload.path.value->last, semantic_context
+				symbol, expression_context_make_unspecified(), get_overload.path->last(), semantic_context
 			);
 
 			// Get signature
@@ -7735,7 +7642,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 
 		if (symbols.size == 0) {
-			log_semantic_error(semantic_context, "#get_overload failed, no symbol matched given parameters and types", upcast(get_overload.path.value));
+			log_semantic_error(semantic_context, "#get_overload failed, no symbol matched given parameters and types", upcast(get_overload.path));
 			EXIT_ERROR(types.unknown_type);
 		}
 		else if (symbols.size > 1)
@@ -7744,14 +7651,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				semantic_analyser_set_error_flag(true, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
-			log_semantic_error(semantic_context, "#get_overload failed to distinguish symbols with given parameters/types", upcast(get_overload.path.value));
+			log_semantic_error(semantic_context, "#get_overload failed to distinguish symbols with given parameters/types", upcast(get_overload.path));
 			for (int i = 0; i < symbols.size; i++) {
 				log_error_info_symbol(semantic_context, symbols[i]);
 			}
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		path_lookup_set_result_symbol(get_overload.path.value, symbols[0], semantic_context);
+		path_lookup_set_result_symbol(get_overload.path, symbols[0], semantic_context);
 		auto symbol = symbols[0];
 		*info = result_info;
 		return info;
@@ -7765,7 +7672,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		assert(symbol != 0, "In error cases this should be set to error, never 0!");
 
 		// Analyse symbol
-		*info = analyse_symbol_as_expression(symbol, context, path->last, semantic_context);
+		*info = analyse_symbol_as_expression(symbol, context, path->last(), semantic_context);
 		return info;
 	}
 	case AST::Expression_Type::PATTERN_VARIABLE:
@@ -7777,7 +7684,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		auto checkpoint = tmp_arena->make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 		DynArray<Symbol*> symbols = symbol_table_query_id(
-			semantic_context->current_symbol_table, expr->options.pattern_variable_name, 
+			semantic_context->current_symbol_table, expr->options.pattern_variable_symbol->name, 
 			symbol_query_info_make(semantic_context->symbol_access_level, Import_Type::NONE, false), 
 			tmp_arena
 		);
@@ -8071,66 +7978,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		);
 		return info;
 	}
-	case AST::Expression_Type::ENUM_TYPE:
-	{
-		auto& members = expr->options.enum_members;
-
-		String* enum_name = ids.anon_enum;
-		if (expr->base.parent->type == AST::Node_Type::DEFINITION) {
-			AST::Definition* definition = downcast<AST::Definition>(expr->base.parent);
-			if (definition->is_comptime && definition->symbols.size == 1) {
-				enum_name = definition->symbols[0]->name;
-			}
-		}
-
-		Datatype_Enum* enum_type = type_system_make_enum_empty(type_system, enum_name, upcast(expr));
-		int next_member_value = 1; // Note: Enum values all start at 1, so 0 represents an invalid enum
-		for (int i = 0; i < members.size; i++)
-		{
-			auto& member_node = members[i];
-			if (member_node->value.available)
-			{
-				semantic_analyser_analyse_expression_value(
-					member_node->value.value, expression_context_make_specific_type(upcast(types.i32_type)), semantic_context
-				);
-				auto constant = expression_calculate_comptime_value(member_node->value.value, "Enum value must be comptime known", semantic_context);
-				if (constant.available) {
-					next_member_value = upp_constant_to_value<i32>(constant.value);
-				}
-			}
-
-			Enum_Member member;
-			member.name = member_node->name;
-			member.value = next_member_value;
-			next_member_value++;
-			enum_type->members.push_back(member);
-		}
-
-		// Check for member errors
-		for (int i = 0; i < enum_type->members.size; i++)
-		{
-			auto member = &enum_type->members[i];
-			for (int j = i + 1; j < enum_type->members.size; j++)
-			{
-				auto other = &enum_type->members[j];
-				if (other->name == member->name) {
-					log_semantic_error(semantic_context, "Enum member name is already in use", AST::upcast(expr));
-					log_error_info_id(semantic_context, other->name);
-				}
-				if (other->value == member->value) {
-					log_semantic_error(semantic_context, "Enum value is already taken by previous member", AST::upcast(expr));
-					log_error_info_id(semantic_context, other->name);
-				}
-			}
-		}
-		type_system_finish_enum(type_system, enum_type);
-		EXIT_TYPE(upcast(enum_type));
-	}
-	case AST::Expression_Type::MODULE: {
-		log_semantic_error(semantic_context, "Module not valid in this context", AST::upcast(expr));
-		EXIT_ERROR(types.unknown_type);
-	}
-	case AST::Expression_Type::FUNCTION:
 	case AST::Expression_Type::INFERRED_FUNCTION: 
 	{
 		if (!semantic_context->can_create_workloads) {
@@ -8141,33 +7988,48 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		AST::Body_Node body_node = expr->options.inferred_function_body;
-		Upp_Function* function = upp_function_create_empty(nullptr, nullptr, compilation_data);
-		function->function_node = expr;
-		analyse_simple_function_header_and_body(function, semantic_context, expr, true, context);
-		EXIT_FUNCTION(function);
-	}
-	case AST::Expression_Type::STRUCTURE_TYPE: 
-	{
-		if (!semantic_context->can_create_workloads) {
-			log_semantic_error(
-				semantic_context,
-				"Semantic context cannot create workload for anonymous struct, as workload creation is disabled", upcast(expr), Node_Section::KEYWORD
-			);
-			EXIT_ERROR(types.unknown_type);
+		Call_Signature* call_signature = compilation_data->empty_call_signature;
+		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
+		{
+			if (context.datatype->type == Datatype_Type::FUNCTION_POINTER) {
+				call_signature = downcast<Datatype_Function_Pointer>(context.datatype)->signature;
+			}
+			else {
+				log_semantic_error(semantic_context, "Inferred function context must expect a function-pointer", expr, Node_Section::FIRST_TOKEN);
+				log_error_info_given_type(semantic_context, context.datatype);
+			}
+		}
+		else {
+			log_semantic_error(semantic_context, "Inferred function type requires context, which is not available", expr, Node_Section::FIRST_TOKEN);
 		}
 
-		// Anonymous struct
-		if (expr->options.structure.signature->parameters.size > 0) {
-			log_semantic_error(semantic_context, "Anonymous struct must not be polymorphic", expr, Node_Section::ENCLOSURE);
-		}
-		Upp_Struct* structure = upp_struct_create_empty(expr, semantic_context, true);
-		structure->body_workload = workload_executer_allocate_workload<Workload_Structure_Body>(semantic_context);
-		structure->body_workload->symbol_access_level = semantic_context->symbol_access_level;
-		structure->body_workload->symbol_table = semantic_context->current_symbol_table;
-		structure->body_workload->upp_struct = structure;
+		Upp_Function* upp_function = upp_function_create_empty(call_signature, ids.lambda_function, compilation_data);
+		upp_function->origin.type = Function_Origin_Type::INFERRED;
+		upp_function->origin.options.inferred_expr = expr;
+		upp_function->body_node = optional_make_success(expr->options.inferred_function_body);
+		upp_function->body_pass = semantic_context->current_pass;
 
-		EXIT_TYPE(upcast(structure->datatype));
+		// Define all parameter symbols from call-signature
+		Symbol_Table* parameter_table = semantic_context->current_symbol_table;
+		if (call_signature != compilation_data->empty_call_signature)
+		{
+			parameter_table = symbol_table_create_with_parent(semantic_context->current_symbol_table, Symbol_Access_Level::POLYMORPHIC, compilation_data);
+			for (int i = 0; i < call_signature->parameters.size; i++)
+			{
+				auto& param = call_signature->parameters[i];
+				assert(param.pattern_variable_index == -1, "");
+				if (i == call_signature->return_type_index) continue;
+				Symbol* symbol = symbol_table_define_symbol(
+					parameter_table, param.name, Symbol_Type::PARAMETER, nullptr, Symbol_Access_Level::INTERNAL,
+					compilation_data
+				);
+				symbol->options.parameter.function = upp_function;
+				symbol->options.parameter.index = i;
+			}
+		}
+
+		analyse_function_body(upp_function, semantic_context, expr->options.inferred_function_body, parameter_table);
+		EXIT_FUNCTION(upp_function);
 	}
 	case AST::Expression_Type::BAKE:
 	{
@@ -8175,10 +8037,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			log_semantic_error(semantic_context, "Semantic context cannot execute bake", expr, Node_Section::FIRST_TOKEN);
 			EXIT_ERROR(types.unknown_type);
 		}
+		Function_Body& bake_body = expr->options.bake_body;
 
 		Upp_Function* bake_function = upp_function_create_empty(compilation_data->empty_call_signature, ids.bake_function, compilation_data);
-		bake_function->function_node = expr;
-		AST::Body_Node bake_body = expr->options.bake_body;
+		bake_function->origin.type = Function_Origin_Type::BAKE;
+		bake_function->origin.options.bake_expr = expr;
+		bake_function->body_node = optional_make_success(bake_body);
+		bake_function->body_pass = semantic_context->current_pass;
 
 		Datatype* result_type = nullptr;
 		if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED) {
@@ -8280,17 +8145,22 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			{
 				// Note: errors are checked in bytecode-interpreter, so here we know the function is callable
 				Upp_Function* call_to = exit_code.options.waiting_for_function;
-				bool cyclic_dependency_occured = false;
-				analysis_workload_add_dependency(
-					compilation_data->workload_executer, upcast(semantic_context->current_workload), upcast(call_to->body_workload),
-					dependency_failure_info_make(&cyclic_dependency_occured)
-				);
-				if (cyclic_dependency_occured) {
-					log_semantic_error(
-						semantic_context, "Bake waiting on body which waits on bake, cyclic-dependency!", expr, Node_Section::KEYWORD
+				if (call_to->origin.type == Function_Origin_Type::TOPLEVEL) 
+				{
+					bool cyclic_dependency_occured = false;
+					analysis_workload_add_dependency(
+						compilation_data->workload_executer, upcast(semantic_context->current_workload), 
+						upcast(call_to->origin.options.toplevel.body_workload),
+						dependency_failure_info_make(&cyclic_dependency_occured)
 					);
-					EXIT_ERROR(result_type);
+					if (cyclic_dependency_occured) {
+						log_semantic_error(
+							semantic_context, "Bake waiting on body which waits on bake, cyclic-dependency!", expr, Node_Section::KEYWORD
+						);
+						EXIT_ERROR(result_type);
+					}
 				}
+
 				if (call_to->contains_errors) {
 					EXIT_ERROR(result_type);
 				}
@@ -8321,9 +8191,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		expression_info_set_constant(info, pool_result.options.constant);
 		return info;
 	}
-	case AST::Expression_Type::FUNCTION_SIGNATURE:
+	case AST::Expression_Type::FUNCTION_POINTER_TYPE:
 	{
-		auto& parameters = expr->options.function_signature->parameters;
+		auto& parameters = expr->options.function_pointer_signature->parameters;
 		Call_Signature* signature = call_signature_create_empty();
 		for (int i = 0; i < parameters.size; i++)
 		{
@@ -8332,7 +8202,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				log_semantic_error(semantic_context, "Comptime parameters are only allowed in functions, not in signatures!", AST::upcast(param_node));
 				continue;
 			}
-			Call_Parameter* param = call_signature_add_parameter(signature, param_node->name, nullptr, true, false, param_node->is_return_type);
+			Call_Parameter* param = call_signature_add_parameter(signature, param_node->symbol->name, nullptr, true, false, param_node->is_return_type);
 			analyse_parameter_type_and_value(*param, param_node, semantic_context);
 			if (param_node->is_return_type) {
 				signature->return_type_index = signature->parameters.size - 1;
@@ -8400,23 +8270,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			ptr.is_optional
 		);
 		EXIT_TYPE(upcast(result));
-	}
-	case AST::Expression_Type::NEW_EXPR:
-	{
-		auto& new_node = expr->options.new_expr;
-		Datatype* allocated_type = semantic_analyser_analyse_expression_type(new_node.type_expr, semantic_context);
-		// Wait for type size since ir-generator needs it to function properly
-		type_wait_for_size_info_to_finish(allocated_type, semantic_context);
-
-		Datatype* result_type = 0;
-		if (new_node.count_expr.available) {
-			result_type = upcast(type_system_make_slice(type_system, allocated_type));
-			analyse_index_accept_all_ints_as_usize(new_node.count_expr.value, semantic_context);
-		}
-		else {
-			result_type = upcast(type_system_make_pointer(type_system, allocated_type));
-		}
-		EXIT_VALUE(result_type, true);
 	}
 	case AST::Expression_Type::STRUCT_INITIALIZER:
 	{
@@ -9723,63 +9576,11 @@ bool custom_operator_key_equals(Custom_Operator_Key* a, Custom_Operator_Key* b)
 	}
 	}
 
-	return true;
-}
-
-Custom_Operator_Table* symbol_table_install_custom_operator_table(
-	Symbol_Table* symbol_table, Dynamic_Array<AST::Custom_Operator_Node*> custom_operators, bool create_workload, Semantic_Context* semantic_context)
-{
-	auto compilation_data = semantic_context->compilation_data;
-
-	if (custom_operators.size == 0) return symbol_table->custom_operator_table;
-
-	// Create new table 
-	auto operator_table = new Custom_Operator_Table;
-	operator_table->installed_operators = hashtable_create_empty<Custom_Operator_Key, DynArray<Custom_Operator_Install>>(
-		1, custom_operator_key_hash, custom_operator_key_equals
-	);
-	for (int i = 0; i < (int)Custom_Operator_Type::MAX_ENUM_VALUE; i++) {
-		operator_table->workloads[i] = nullptr;
-		operator_table->contains_operator[i] = false;
-	}
-
-	dynamic_array_push_back(&compilation_data->allocated_custom_operator_tables, operator_table);
-	symbol_table->custom_operator_table = operator_table;
-
-	// Check which operators are included and create workloads
-	auto parent_workload = semantic_context->current_workload;
-	for (int i = 0; i < custom_operators.size; i++)
-	{
-		auto change = custom_operators[i];
-
-		if (!semantic_context->can_create_workloads) {
-			log_semantic_error(
-				semantic_context, "Cannot install custom operators, as semantic_context disallows workload creation",
-				upcast(change), Node_Section::FIRST_TOKEN
-			);
-			continue;
-		}
-
-		operator_table->contains_operator[(int)change->type] = true;
-		if (!create_workload) continue;
-		if (operator_table->workloads[(int)change->type] != 0) { // Only create one workload per change type
-			continue;
-		}
-
-		auto workload = workload_executer_allocate_workload<Workload_Custom_Operator>(semantic_context);
-		workload->analysis_pass = semantic_context->current_pass;
-		workload->operator_table = operator_table;
-		workload->type_to_analyse = change->type;
-		workload->symbol_table = symbol_table;
-		workload->change_nodes = custom_operators;
-		operator_table->workloads[(int)change->type] = workload;
-	}
-
-	return operator_table;
+	return false;
 }
 
 void analyse_custom_operator_node(
-	AST::Custom_Operator_Node* custom_operator_node, Custom_Operator_Table* custom_operator_table, Semantic_Context* semantic_context)
+	AST::Definition_Custom_Operator* custom_operator_node, Custom_Operator_Table* custom_operator_table, Semantic_Context* semantic_context)
 {
 	auto compilation_data = semantic_context->compilation_data;
 	auto& ids = compilation_data->identifier_pool;
@@ -10752,7 +10553,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		assert(current_function != 0 && current_function->signature != nullptr, "No statements outside of function body");
 		Optional<Datatype*> expected_return_type = current_function->signature->return_type();
 
-		bool inside_bake = current_function->function_node->type == AST::Expression_Type::BAKE;
+		bool inside_bake = current_function->origin.type == Function_Origin_Type::BAKE;
 		if (inside_bake && semantic_context->bake_return_datatype != nullptr) {
 			expected_return_type = optional_make_success(semantic_context->bake_return_datatype);
 		}
@@ -11010,9 +10811,8 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			{
 				Symbol_Table* case_table = symbol_table_create_with_parent(restore_table, Symbol_Access_Level::INTERNAL, compilation_data);
 				semantic_context->current_symbol_table = case_table;
-				Symbol* var_symbol = symbol_table_define_symbol(
-					case_table, case_node->variable_definition.value->name, Symbol_Type::VARIABLE, upcast(case_node->variable_definition.value),
-					Symbol_Access_Level::INTERNAL, compilation_data
+				Symbol* var_symbol = symbol_node_define_symbol(
+					case_node->variable_definition.value, Symbol_Type::VARIABLE, case_table, Symbol_Access_Level::INTERNAL, semantic_context
 				);
 				var_symbol->options.variable_type = types.unknown_type;
 				case_info->variable_symbol = var_symbol;
@@ -11110,11 +10910,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 
 		// Analyse loop variable 
 		{
-			Symbol* symbol = symbol_table_define_symbol(
-				symbol_table, for_loop.loop_variable_definition->name, 
-				Symbol_Type::VARIABLE, upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL, compilation_data
+			Symbol* symbol = symbol_node_define_symbol(
+				for_loop.loop_variable_definition, Symbol_Type::VARIABLE,
+				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
 			);
-			get_info(for_loop.loop_variable_definition, semantic_context, true)->symbol = symbol;
 
 			info->specifics.for_loop.loop_variable_symbol = symbol;
 			Expression_Context context = expression_context_make_unspecified();
@@ -11154,12 +10953,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		loop_info.symbol_table = symbol_table;
 
 		// Create loop variable symbol
-		Symbol* symbol = symbol_table_define_symbol(
-			symbol_table, for_loop.loop_variable_definition->name, Symbol_Type::VARIABLE,
-			upcast(for_loop.loop_variable_definition), Symbol_Access_Level::INTERNAL,
-			compilation_data
+		Symbol* symbol = symbol_node_define_symbol(
+			for_loop.loop_variable_definition, Symbol_Type::VARIABLE, symbol_table, 
+			Symbol_Access_Level::INTERNAL, semantic_context
 		);
-		get_info(for_loop.loop_variable_definition, semantic_context, true)->symbol = symbol;
 		loop_info.loop_variable_symbol = symbol;
 		symbol->options.variable_type = types.unknown_type; // Should be updated by further code
 
@@ -11360,10 +11157,9 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		{
 			// Use current symbol table so collisions are handled
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, symbol_table);
-			Symbol* index_symbol = symbol_table_define_symbol(
-				symbol_table, for_loop.index_variable_definition.value->name, Symbol_Type::VARIABLE,
-				upcast(for_loop.index_variable_definition.value), Symbol_Access_Level::INTERNAL,
-				compilation_data
+			Symbol* index_symbol = symbol_node_define_symbol(
+				for_loop.index_variable_definition.value, Symbol_Type::VARIABLE,
+				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
 			);
 			get_info(for_loop.index_variable_definition.value, semantic_context, true)->symbol = index_symbol;
 			loop_info.index_variable_symbol = index_symbol;
@@ -11373,21 +11169,6 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 
 		// Analyse body
 		semantic_analyser_analyse_block(for_loop.body_block, semantic_context);
-		EXIT(Control_Flow::SEQUENTIAL);
-	}
-	case AST::Statement_Type::DELETE_STATEMENT:
-	{
-		auto delete_type = semantic_analyser_analyse_expression_value(
-			statement->options.delete_expr, expression_context_make_unspecified(), semantic_context
-		);
-		if (datatype_is_unknown(delete_type)) {
-			semantic_analyser_set_error_flag(true, semantic_context);
-			EXIT(Control_Flow::SEQUENTIAL);
-		}
-		if (delete_type->type != Datatype_Type::POINTER && delete_type->type != Datatype_Type::SLICE) {
-			log_semantic_error(semantic_context, "Delete is only valid on pointer or slice types", statement->options.delete_expr);
-			log_error_info_given_type(semantic_context, delete_type);
-		}
 		EXIT(Control_Flow::SEQUENTIAL);
 	}
 	case AST::Statement_Type::BINOP_ASSIGNMENT:
@@ -11500,211 +11281,52 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 	{
 		auto& assignment_node = statement->options.assignment;
 
-		// Analyse expr side
-		Datatype* all_left_types = 0;
-		bool left_side_all_same_type = true;
-		for (int i = 0; i < assignment_node.left_side.size; i++)
-		{
-			auto expr = assignment_node.left_side[i];
-			auto left_type = semantic_analyser_analyse_expression_value(expr, expression_context_make_unspecified(), semantic_context);
-
-			// Check for errors
-			if (!expression_has_memory_address(expr, semantic_context)) {
-				log_semantic_error(semantic_context, "Cannot assign to a temporary value", upcast(expr));
-			}
-
-			if (all_left_types == 0) {
-				all_left_types = left_type;
-			}
-			else if (!types_are_equal(all_left_types, left_type)) {
-				left_side_all_same_type = false;
-			}
+		Datatype* left_type = semantic_analyser_analyse_expression_value(
+			assignment_node.left_side, expression_context_make_unspecified(), semantic_context
+		);
+		if (!expression_has_memory_address(assignment_node.left_side, semantic_context)) {
+			log_semantic_error(semantic_context, "Cannot assign to a temporary value", upcast(assignment_node.left_side));
 		}
+		semantic_analyser_analyse_expression_value(
+			assignment_node.right_side, expression_context_make_specific_type(left_type), semantic_context
+		);
 
-		if (assignment_node.right_side.size == 1 && left_side_all_same_type) {
-			// Broadcast
-			semantic_analyser_analyse_expression_value(
-				assignment_node.right_side[0], expression_context_make_specific_type(all_left_types), semantic_context
-			);
-		}
-		else
-		{
-			if (assignment_node.left_side.size != assignment_node.right_side.size) {
-				log_semantic_error(
-					semantic_context, "Left side and right side of assignment have different count", 
-					upcast(statement), Node_Section::WHOLE_NO_CHILDREN
-				);
-			}
-
-			// Analyse right side
-			for (int i = 0; i < assignment_node.right_side.size; i++) {
-				auto right_node = assignment_node.right_side[i];
-				Expression_Context context;
-				if (i < assignment_node.left_side.size) {
-					auto left_node = assignment_node.left_side[i];
-					context = expression_context_make_specific_type(expression_info_get_type(get_info(left_node, semantic_context), false, type_system));
-				}
-				else {
-					context = expression_context_make_error();
-				}
-				semantic_analyser_analyse_expression_value(right_node, context, semantic_context);
-			}
-		}
-
-		EXIT(Control_Flow::SEQUENTIAL);
-	}
-	case AST::Statement_Type::IMPORT: {
-		// Already handled on block start...
 		EXIT(Control_Flow::SEQUENTIAL);
 	}
 	case AST::Statement_Type::DEFINITION:
 	{
-		auto definition = statement->options.definition;
-		auto& types = definition->types;
-		auto& symbol_nodes = definition->symbols;
-		auto& values = definition->values;
-		auto& predefined_types = type_system->predefined_types;
-
-		// Check if this was already handled at block start
-		if (definition->is_comptime) {
+		AST::Definition* definition_node = statement->options.definition;
+		// Everything except variables should be handled at the start of the block
+		if (definition_node->type != AST::Definition_Type::VARIABLE) {
 			EXIT(Control_Flow::SEQUENTIAL);
 		}
 
-		// Initialize symbols
-		for (int i = 0; i < symbol_nodes.size; i++) {
-			auto symbol = get_info(symbol_nodes[i], semantic_context)->symbol;
-			symbol->type = Symbol_Type::VARIABLE_UNDEFINED;
-			symbol->options.variable_type = predefined_types.unknown_type;
+		AST::Definition_Value* value_node = &definition_node->options.value;
+		Symbol* variable_symbol = pass_get_node_info(
+			semantic_context->current_pass, definition_node->options.value.symbol, Info_Query::READ_NOT_NULL, compilation_data
+		)->symbol;
 
-			if (i >= types.size && types.size > 1) {
-				log_semantic_error(semantic_context, "No type was specified for this symbol", upcast(symbol_nodes[i]), Node_Section::IDENTIFIER);
-				symbol->type = Symbol_Type::ERROR_SYMBOL;
-			}
-			if (i >= values.size && values.size > 1) {
-				log_semantic_error(semantic_context, "No value was specified for this symbol", upcast(symbol_nodes[i]), Node_Section::IDENTIFIER);
-				symbol->type = Symbol_Type::ERROR_SYMBOL;
-			}
+		if (!value_node->datatype_expr.available && !value_node->value_expr.available) {
+			log_semantic_error(
+				semantic_context, "For variable definition either the value or datatype must be know", 
+				upcast(statement), Node_Section::FIRST_TOKEN
+			);
 		}
 
-		// Analyse types
-		bool all_types_are_equal = true;
-		Datatype* equal_type = 0;
-		for (int i = 0; i < types.size; i++)
-		{
-			// Analyse type
-			auto type_node = types[i];
-			Datatype* type = semantic_analyser_analyse_expression_type(type_node, semantic_context);
-
-			// Check for errors
-			bool is_pointer = datatype_is_pointer(type);
-
-			// Check if all types are the same
-			if (equal_type == 0) {
-				equal_type = type;
-			}
-			else if (!types_are_equal(equal_type, type)) {
-				all_types_are_equal = false;
-			}
-
-			// Set types of variables
-			if (types.size == 1) // Type broadcast
-			{
-				for (int j = 0; j < symbol_nodes.size; j++) {
-					auto symbol = get_info(symbol_nodes[j], semantic_context)->symbol;
-					symbol->options.variable_type = type;
-				}
-			}
-			else
-			{
-				if (i < symbol_nodes.size) {
-					auto symbol = get_info(symbol_nodes[i], semantic_context)->symbol;
-					symbol->options.variable_type = type;
-				}
-				else {
-					log_semantic_error(semantic_context, "No symbol exists on the left side of definition for this type", type_node);
-				}
-			}
+		Datatype* datatype = types.unknown_type;
+		if (value_node->datatype_expr.available) {
+			datatype = semantic_analyser_analyse_expression_type(value_node->datatype_expr.value, semantic_context);
+		}
+		if (value_node->value_expr.available) {
+			datatype = semantic_analyser_analyse_expression_value(
+				value_node->value_expr.value, 
+				(value_node->datatype_expr.available ? expression_context_make_specific_type(datatype) : expression_context_make_unspecified()),
+				semantic_context
+			);
 		}
 
-		// Analyse values
-		for (int i = 0; i < values.size; i++)
-		{
-			// Figure out context
-			Expression_Context context = expression_context_make_unspecified();
-			if (types.size == 0)
-			{
-				context = expression_context_make_unspecified();
-			}
-			else if (types.size == 1) 
-			{
-				auto type_info = get_info(types[0], semantic_context);
-				if (type_info->result_type == Expression_Result_Type::DATATYPE) {
-					context = expression_context_make_specific_type(type_info->options.datatype);
-				}
-				else {
-					context = expression_context_make_error();
-				}
-			}
-			else  // types.size > 1
-			{
-				if (values.size == 1) { // Value broadcast
-					if (all_types_are_equal) {
-						context = expression_context_make_specific_type(equal_type);
-					}
-					else {
-						log_semantic_error(semantic_context, "For value broadcast all specified types must be equal", values[i]);
-						context = expression_context_make_error();
-					}
-				}
-				else
-				{
-					if (i < types.size) {
-						auto type_info = get_info(types[i], semantic_context);
-						if (type_info->result_type == Expression_Result_Type::DATATYPE) {
-							context = expression_context_make_specific_type(type_info->options.datatype);
-						}
-						else {
-							context = expression_context_make_error();
-						}
-					}
-					else {
-						log_semantic_error(semantic_context, "No type is specified in the definition for this value", values[i]);
-						context = expression_context_make_error();
-					}
-				}
-			}
-
-			// Analyse value
-			Datatype* value_type = semantic_analyser_analyse_expression_value(values[i], context, semantic_context);
-
-			// Update symbol type
-			if (values.size == 1) // Value broadcast
-			{
-				if (types.size == 0) {
-					for (int j = 0; j < symbol_nodes.size; j++) {
-						auto symbol = get_info(symbol_nodes[j], semantic_context)->symbol;
-						symbol->options.variable_type = value_type;
-					}
-				}
-			}
-			else
-			{
-				if (i < symbol_nodes.size) {
-					if (types.size == 0) {
-						auto symbol = get_info(symbol_nodes[i], semantic_context)->symbol;
-						symbol->options.variable_type = value_type;
-					}
-				}
-				else {
-					log_semantic_error(semantic_context, "No symbol/variable exists for this value", values[i]);
-				}
-			}
-		}
-
-		// Set symbols to defined
-		for (int i = 0; i < symbol_nodes.size; i++) {
-			get_info(symbol_nodes[i], semantic_context)->symbol->type = Symbol_Type::VARIABLE;
-		}
+		variable_symbol->type = Symbol_Type::VARIABLE;
+		variable_symbol->options.variable_type = datatype;
 
 		EXIT(Control_Flow::SEQUENTIAL);
 	}
@@ -11734,58 +11356,46 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, Semantic_Co
 
 	// Check if this code block was already analysed by another instance (FUTURE: Can cause problems if multithreaded)
 	Symbol_Table** analysed_opt = hashtable_find_element(&compilation_data->code_block_comptimes, block);
-	if (analysed_opt != nullptr)
+	const bool already_analysed = analysed_opt != nullptr;
+	if (already_analysed)
 	{
 		// Add include table to already analysed comptime definitions
+		Symbol_Table* analysed_table = *analysed_opt;
 		symbol_table_add_import(
-			block_info->symbol_table, *analysed_opt, Import_Type::SYMBOLS, true, Symbol_Access_Level::GLOBAL, semantic_context,
+			block_info->symbol_table, analysed_table, Import_Type::SYMBOLS, true, Symbol_Access_Level::GLOBAL, semantic_context,
 			upcast(block), Node_Section::FIRST_TOKEN
 		);
 		symbol_table_add_import(
-			block_info->symbol_table, *analysed_opt, Import_Type::DOT_CALLS, true, Symbol_Access_Level::GLOBAL, semantic_context,
+			block_info->symbol_table, analysed_table, Import_Type::DOT_CALLS, true, Symbol_Access_Level::GLOBAL, semantic_context,
 			upcast(block), Node_Section::FIRST_TOKEN
 		);
-		// We don't add operator import because operators are analysed for each instance seperately
-
-		// Add local variable symbols
-		for (int i = 0; i < block->statements.size; i++)
-		{
-			auto statement = block->statements[i];
-			if (statement->type != AST::Statement_Type::DEFINITION) continue;
-			auto definition = statement->options.definition;
-			if (definition->is_comptime) continue;
-			analyser_create_symbol_and_workload_for_definition(definition, nullptr, semantic_context);
-		}
+		symbol_table_add_import(
+			block_info->symbol_table, analysed_table, Import_Type::OPERATORS, true, Symbol_Access_Level::GLOBAL, semantic_context,
+			upcast(block), Node_Section::FIRST_TOKEN
+		);
 	}
 	else
 	{
 		bool inserted = hashtable_insert_element(&compilation_data->code_block_comptimes, block, block_info->symbol_table);
 		assert(inserted, "");
+	}
 
-		// Create block content
+	// Add workloads for definitions (Only local variables if we have already analysed this)
+	{
 		Arena* scratch_arena = semantic_context->scratch_arena;
 		auto checkpoint = scratch_arena->make_checkpoint();
 		SCOPE_EXIT(scratch_arena->rewind_to_checkpoint(checkpoint));
-		Module_Content block_content = module_content_create(scratch_arena);
-
-		// Add workloads for all Definitions and Imports
+		Toplevel_Content block_content = toplevel_content_create(scratch_arena);
+		RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::GLOBAL);
 		for (int i = 0; i < block->statements.size; i++)
 		{
 			auto statement = block->statements[i];
-			if (statement->type == AST::Statement_Type::IMPORT) {
-				module_content_add_import_node(block_content, statement->options.import_node, semantic_context->current_symbol_table);
-			}
 			if (statement->type != AST::Statement_Type::DEFINITION) continue;
 			auto definition = statement->options.definition;
-			analyser_create_symbol_and_workload_for_definition(definition, &block_content, semantic_context);
+			if (already_analysed && definition->type != AST::Definition_Type::VARIABLE) continue;
+			toplevel_content_add_definition(block_content, definition, semantic_context, true);
 		}
-		module_content_analyse_items(block_content, semantic_context);
-	}
-
-	// Install custom operators and analyse them
-	auto custom_operator_table = symbol_table_install_custom_operator_table(block_info->symbol_table, block->custom_operators, false, semantic_context);
-	for (int i = 0; i < block->custom_operators.size; i++) {
-		analyse_custom_operator_node(block->custom_operators[i], custom_operator_table, semantic_context);
+		toplevel_content_resolve_imports(block_content, semantic_context);
 	}
 
 	// Check if block id is unique

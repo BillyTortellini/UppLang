@@ -1,34 +1,19 @@
 
 TODO:
 -----
- - Syntax-Rework with 'qualifier-first' syntax
+ - Bug-Fixes
+ - Move Editor-analysis-info into compilation-data file
+ - top_level_add_definition should respect can_create_workload
  - Rename address to rawptr, usize, isize
+    Rename null to nil
  - Cast update
 
-New keywords:
- - var
- - global
- - const
- - fn, *fn instead of fn_ptr, lambda?, .=>
+- DONE:
+ - Syntax-Rework with 'qualifier-first' syntax
+ - Remove new/delete (Also global allocators)
 
-Syntax-Rework:
- Do I really want this, yeah, i would like to try
-
-const X: int = 15
-var Y = 15
-var Y: int = 15
-var z: float
-module Something
-struct Node
-fn add(a: int, b: int, c: int)
-import
-#add_binop
-fn (a: float) => float
-
-global X = 10 // Add a global variable
-
-
-add_cast(from, to, function, take_pointer, take_pointer)
+operators add_cast(from, to, function, take_pointer, take_pointer)
+operators add_binop, add_unop, add_cast, add_iterator, add_array_access, add_default_value
 add_cast([$C]$T, []$T, basic_cast) --> Array_To_Slice cast
 add_cast($T, Any, basic_cast) --> To_Any cast
 ~builtin_cast

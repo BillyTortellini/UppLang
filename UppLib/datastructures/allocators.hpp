@@ -152,7 +152,7 @@ struct DynArray
 
 	void rollback_to_size(int new_size)
 	{
-		assert((usize)new_size < size, "Can only make array smaller");
+		assert((usize)new_size <= size, "Can only make array smaller");
 		size = (usize)new_size;
 	}
 

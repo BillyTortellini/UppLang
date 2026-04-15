@@ -130,7 +130,7 @@ Syntax_Color symbol_type_to_color(Symbol_Type type)
     case Symbol_Type::DATATYPE: return Syntax_Color::DATATYPE; 
     case Symbol_Type::VARIABLE: return Syntax_Color::VARIABLE; 
     case Symbol_Type::COMPTIME_VALUE: return Syntax_Color::VARIABLE; 
-    case Symbol_Type::DEFINITION_UNFINISHED: return Syntax_Color::TEXT; 
+    case Symbol_Type::WAITING_FOR_WORKLOAD: return Syntax_Color::TEXT; 
     case Symbol_Type::ALIAS: return Syntax_Color::VARIABLE; 
     case Symbol_Type::ALIAS_UNFINISHED: return Syntax_Color::VARIABLE; 
     case Symbol_Type::ERROR_SYMBOL: return Syntax_Color::TEXT; 

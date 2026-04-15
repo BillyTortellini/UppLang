@@ -23,13 +23,14 @@ struct Analysis_Pass;
 struct IR_Code_Block;
 struct Upp_Struct;
 
-struct Workload_Definition;
+struct Workload_Global;
 struct Workload_Base;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
 struct Workload_Structure_Body;
 struct Workload_Function_Header;
 struct Workload_Function_Body;
+struct Workload_Extern_Import;
 
 struct Datatype_Struct;
 struct Bake_Progress;
@@ -52,14 +53,14 @@ namespace AST
     struct Code_Block;
     struct Path_Lookup;
     struct Expression;
-    struct Module;
+    struct Definition_Value;
 }
 
 
 
 struct Upp_Module
 {
-    AST::Module* node; // Is only null for compiler-generated modules
+    AST::Definition_Module* node; // Is only null for compiler-generated modules
     Symbol_Table* symbol_table;
     bool is_file_module;
     union {
@@ -76,21 +77,42 @@ enum class Poly_Type
     INSTANCE
 };
 
+enum class Function_Origin_Type
+{
+    TOPLEVEL,
+    INFERRED,
+    BAKE,
+    EXTERN,
+    BUILT_IN,
+};
+
+struct Function_Origin
+{
+    Function_Origin_Type type;
+    union {
+        struct {
+            Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
+            Workload_Function_Body* body_workload;
+        } toplevel;
+        Workload_Extern_Import* extern_import_workload;
+        AST::Expression* bake_expr;
+        AST::Expression* inferred_expr;
+    } options;
+};
+
+
 struct Upp_Function
 {
     Call_Signature* signature; // Note: Signature is nullptr until function-header is analysed
     int function_index; // Index in functions array
     String* name; // Symbol name, or "bake_function"/"lambda_function"
     Symbol* symbol; // May be nullptr if function is anonymous
-    AST::Expression* function_node; // Either bake or function expr
-
-    Workload_Function_Header* header_workload; // Points to base header workload if it's an instance
-    Workload_Function_Body* body_workload;
-    Workload_Definition* extern_definition_workload;
+    Optional<Function_Body> body_node;
     Analysis_Pass* body_pass; // Used later in ir-generator
+    Function_Origin origin;
 
     Poly_Type poly_type;
-    struct {
+    union {
         Poly_Header* poly_header;
         Poly_Instance* instance;
     } options;
@@ -109,7 +131,7 @@ struct Upp_Struct
 {
     Datatype_Struct* datatype;
     Symbol* symbol;
-    AST::Expression* struct_node;
+    AST::Definition_Struct* struct_node;
 
     Workload_Structure_Header* header_workload; 
     Workload_Structure_Body*   body_workload;  
@@ -136,7 +158,7 @@ struct Upp_Global
     // Initial value
     bool has_initial_value;
     AST::Expression* init_expr;
-    Workload_Definition* definition_workload; // For code generation
+    Workload_Global* definition_workload; // For code generation
 
     // Used by interpreter
     void* memory;
@@ -194,14 +216,15 @@ enum class Analysis_Workload_Type
 
     MODULE_ANALYSIS, // This is basically just symbol discovery
     OPERATOR_CONTEXT_CHANGE,
+    GLOBAL,
+    EXTERN_IMPORT,
+    ENUM,
 
     FUNCTION_HEADER,
     FUNCTION_BODY,
 
     STRUCT_HEADER,
     STRUCT_BODY,
-
-    DEFINITION,
 };
 
 struct Workload_Base
@@ -233,23 +256,23 @@ struct Workload_Root
 struct Workload_Custom_Operator
 {
     Workload_Base base;
-    Custom_Operator_Type type_to_analyse; // Note: Dependencies are split on different custom-operator types
     Analysis_Pass* analysis_pass;
-    Dynamic_Array<AST::Custom_Operator_Node*> change_nodes;
     Symbol_Table* symbol_table;
     Custom_Operator_Table* operator_table;
+    DynArray<AST::Definition_Custom_Operator*> change_nodes;
 };
 
 struct Workload_Module_Analysis
 {
     Workload_Base base;
-    AST::Module* module_node;
+    AST::Definition_Module* module_node;
 };
 
 struct Workload_Function_Header
 {
     Workload_Base base;
     Upp_Function* function;
+    AST::Definition_Function* function_node;
     Symbol_Table* symbol_table;
 };
 
@@ -260,21 +283,31 @@ struct Workload_Function_Body
     Symbol_Table* parameter_table;
 };
 
-struct Workload_Definition
+struct Workload_Global
 {
     Workload_Base base;
     Symbol* symbol;
     Symbol_Table* symbol_table;
     Analysis_Pass* analysis_pass;
-    bool is_extern_import;
-    union {
-        struct {
-            bool is_comptime;
-            AST::Expression* value_node; // May be null
-            AST::Expression* type_node; // May be null
-        } normal;
-        AST::Extern_Import* extern_import;
-    } options;
+    AST::Definition_Value* definition_node;
+};
+
+struct Workload_Extern_Import
+{
+    Workload_Base base;
+    Symbol* symbol;
+    Symbol_Table* symbol_table;
+    Analysis_Pass* analysis_pass;
+    AST::Definition_Extern_Import* import_node;
+};
+
+struct Workload_Enum
+{
+    Workload_Base base;
+    Symbol* symbol;
+    Symbol_Table* symbol_table;
+    Analysis_Pass* analysis_pass;
+    AST::Definition_Enum* node;
 };
 
 
@@ -288,9 +321,7 @@ struct Pattern_Variable
 
     // Origin infos
     Poly_Header* origin;
-    String* name;
-    Symbol* symbol;
-    AST::Node* definition_node; // Could be either Expression::Pattern_Value or Argument
+    AST::Symbol_Node* symbol_node;
     bool is_comptime_parameter; // e.g. foo($A: int)
     int defined_in_parameter_index;
 };
@@ -361,7 +392,7 @@ struct Workload_Pair
 struct Dependency_Failure_Info
 {
     bool* fail_indicator;
-    AST::Symbol_Lookup* error_report_node;
+    AST::Symbol_Node* error_report_node;
 };
 
 struct Dependency_Information
@@ -387,7 +418,7 @@ Workload_Executer* workload_executer_create(Compilation_Data* compilation_data);
 void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
 Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data);
-Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Module* module_node, Compilation_Data* compilation_data);
+Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data);
 
 
 
@@ -442,7 +473,7 @@ enum class Call_Origin_Type
 	SLICE_INITIALIZER, // Struct-initializer syntax for slices
 	HARDCODED,
     FUNCTION_POINTER,
-	CONTEXT_CHANGE,
+	CUSTOM_OPERATOR,
     CAST,
 	ERROR_OCCURED, // In case of non-resolvable overloads or invalid symbol
 };
@@ -480,7 +511,7 @@ struct Call_Info
 	{
         Upp_Function* function;
 		Upp_Struct* struct_instance;
-		Datatype_Struct_Pattern* struct_pattern;
+		Upp_Struct* struct_pattern;
 		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
         Cast_Info cast_info;
 		struct 
@@ -631,37 +662,24 @@ struct Parameter_Info {
     Symbol* symbol;
 };
 
-struct Definition_Symbol_Info {
+struct Symbol_Node_Info {
     Symbol* symbol;
 };
 
-struct Symbol_Lookup_Info {
-    Symbol* symbol; // Resolved symbol
+struct Definition_Info {
+    Upp_Module* upp_module; // Only valid for module definitions
 };
 
-struct Path_Lookup_Info {
-    Symbol* symbol; // Resolved symbol
-};
-
-struct Module_Info {
-    Upp_Module* upp_module;
-};
-
-
-struct Analysis_Info
+union Analysis_Info
 {
-    union {
-        Expression_Info info_expr;
-        Statement_Info info_stat;
-        Code_Block_Info info_block;
-        Case_Info info_case;
-        Parameter_Info param_info;
-        Definition_Symbol_Info definition_symbol_info;
-        Symbol_Lookup_Info symbol_lookup_info;
-        Path_Lookup_Info path_info;
-        Module_Info module_info;
-        Call_Info call_info; // For AST::Call_Node*
-    };
+    Expression_Info info_expr;
+    Statement_Info info_stat;
+    Code_Block_Info info_block;
+    Case_Info info_case;
+    Parameter_Info param_info;
+    Symbol_Node_Info symbol_node_info;
+    Call_Info call_info; // For AST::Call_Node*
+    Definition_Info definition_info;
 };
 
 enum class Info_Query
@@ -676,12 +694,10 @@ Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, 
 Case_Info* pass_get_node_info(Analysis_Pass* pass, AST::Switch_Case* node, Info_Query query, Compilation_Data* compilation_data);
 Statement_Info* pass_get_node_info(Analysis_Pass* pass, AST::Statement* node, Info_Query query, Compilation_Data* compilation_data);
 Code_Block_Info* pass_get_node_info(Analysis_Pass* pass, AST::Code_Block* node, Info_Query query, Compilation_Data* compilation_data);
-Symbol_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Lookup* node, Info_Query query, Compilation_Data* compilation_data);
-Definition_Symbol_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition_Symbol* node, Info_Query query, Compilation_Data* compilation_data);
+Symbol_Node_Info* pass_get_node_info(Analysis_Pass* pass, AST::Symbol_Node* node, Info_Query query, Compilation_Data* compilation_data);
 Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, Info_Query query, Compilation_Data* compilation_data);
-Path_Lookup_Info* pass_get_node_info(Analysis_Pass* pass, AST::Path_Lookup* node, Info_Query query, Compilation_Data* compilation_data);
-Module_Info* pass_get_node_info(Analysis_Pass* pass, AST::Module* node, Info_Query query, Compilation_Data* compilation_data);
 Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query, Compilation_Data* compilation_data);
+Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query, Compilation_Data* compilation_data);
 
 
 
@@ -799,8 +815,6 @@ Semantic_Context semantic_context_make(
 );
 
 Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
-Upp_Global* compilation_data_add_global(Semantic_Context* semantic_context, Datatype* datatype, Symbol* symbol, bool is_extern);
-Upp_Global* compilation_data_add_global_assert_type_finished(Compilation_Data* compilation_data, Datatype* datatype, Symbol* symbol, bool is_extern);
 
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 void analysis_workload_destroy(Workload_Base* workload);

@@ -40,11 +40,11 @@ enum class Token_Type
 
     CONCATENATE_LINES,    // \
 
-    ADDITION,             // +
-    SUBTRACTION,          // - 
-    DIVISON,              // /
-    MULTIPLY,             // *
-    MODULO,               // %
+    PLUS,                 // +
+    MINUS,                // - 
+    SLASH,                // /
+    ASTERIX,              // *
+    PERCENTAGE,           // %
 
     EQUALS,               // ==
     NOT_EQUALS,           // !=
@@ -76,15 +76,13 @@ enum class Token_Type
     APOSTROPHE,           // '
     QUESTION_MARK,        // ?
     OPTIONAL_POINTER,     // ?*
-    DOT_CALL,             // ->
+    POSTFIX_CALL_ARROW,   // ->
+    FUNCTION_ARROW,       // =>, note: different to DOT_CALL ->
     SUBTYPE_ACCESS,       // .>
     BASETYPE_ACCESS,      // .<
     ADDRESS_OF,           // -*
     DEREFERENCE,          // -&
     OPTIONAL_DEREFERENCE, // -?&
-    DEFINE_COMPTIME,      // ::
-    DEFINE_INFER,         // :=
-    ARROW,                // =>, note: different to DOT_CALL ->
     DOLLAR,               // $
     ASSIGN,               // =
     ASSIGN_ADD,           // +=
@@ -99,40 +97,38 @@ enum class Token_Type
     // Keywords
     _KEYWORDS_START_,
 
-    FUNCTION_KEYWORD,
-    FUNCTION_POINTER_KEYWORD,
-    RETURN,
-    BREAK,
-    CONTINUE,
-    IF,
-    ELSE,
-    LOOP,
-    IN_KEYWORD,
-    SWITCH,
-    DEFAULT,
+    FUNCTION_KEYWORD, // fn
     MODULE,
-    NEW,
     STRUCT,
     UNION,
     ENUM,
-    DELETE_KEYWORD,
-    DEFER,
-    DEFER_RESTORE,
-    CAST,
+    VAR,
+    GLOBAL_KEYWORD,
+    CONST_KEYWORD,
+    OPERATORS,
     IMPORT,
     AS,
     EXTERN,
+
+    IF,
+    ELSE,
+    SWITCH,
+    DEFAULT,
+    LOOP,
+    IN_KEYWORD,
+    RETURN,
+    BREAK,
+    CONTINUE,
+    DEFER,
+    DEFER_RESTORE,
+    CAST,
     
+    // #keywords, 
     BAKE,
     INSTANCIATE,
     GET_OVERLOAD,
     GET_OVERLOAD_POLY,
     EXPLICIT_BLOCK,
-    ADD_BINOP,
-    ADD_UNOP,
-    ADD_CAST,
-    ADD_ARRAY_ACCESS,
-    ADD_ITERATOR,
 
     _KEYWORDS_END_,
 };

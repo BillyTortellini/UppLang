@@ -8,23 +8,15 @@
 
 struct Datatype;
 struct String;
-struct Type_System;
-struct Datatype_Struct;
-struct Datatype_Primitive;
-struct Datatype_Struct_Pattern;
-struct Datatype_Slice;
 struct Poly_Header;
 struct Upp_Function;
-struct Source_Code;
-struct Analysis_Pass;
-struct Workload_Structure_Header;
-struct Datatype_Function_Pointer;
 struct Call_Signature;
-namespace AST {
-	struct Module;
-	struct Expression;
-	struct Call_Node;
-}
+
+namespace AST
+{
+    struct Expression;
+    struct Code_Block;
+};
 
 enum class Compile_Type
 {
@@ -79,6 +71,7 @@ enum class Custom_Operator_Type
 	UNOP,
 	ARRAY_ACCESS,
 	ITERATOR,
+	INVALID, // Invalid identifier given
 
 	MAX_ENUM_VALUE
 };
@@ -181,6 +174,16 @@ enum class Member_Access_Type
 };
 
 
+struct Function_Body
+{
+    bool is_expression;
+    union {
+        AST::Expression* expr;
+        AST::Code_Block* block;
+    };
+};
+
+
 
 enum class Exit_Code_Type
 {
@@ -278,12 +281,12 @@ struct Predefined_IDs
 	String* hashtag_bake;
 	String* hashtag_get_overload;
 	String* hashtag_get_overload_poly;
-	String* hashtag_add_binop;
-	String* hashtag_add_unop;
-	String* hashtag_add_cast;
-	String* hashtag_add_auto_cast_type;
-	String* hashtag_add_iterator;
-	String* hashtag_add_array_access;
+
+	String* add_binop;
+	String* add_unop;
+	String* add_cast;
+	String* add_iterator;
+	String* add_array_access;
 
 	String* defer_restore;
 	String* cast;

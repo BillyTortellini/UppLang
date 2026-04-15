@@ -210,12 +210,11 @@ Identifier_Pool identifier_pool_create()
 		ids.hashtag_bake = add_id("#bake");
 		ids.hashtag_get_overload = add_id("#get_overload");
 		ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
-	    ids.hashtag_add_binop = add_id("#add_binop");
-	    ids.hashtag_add_unop = add_id("#add_unop");
-	    ids.hashtag_add_cast = add_id("#add_cast");
-	    ids.hashtag_add_auto_cast_type = add_id("#add_auto_cast_type");
-	    ids.hashtag_add_iterator = add_id("#add_iterator");
-	    ids.hashtag_add_array_access = add_id("#add_array_access");
+	    ids.add_binop = add_id("add_binop");
+	    ids.add_unop = add_id("add_unop");
+	    ids.add_cast = add_id("add_cast");
+	    ids.add_iterator = add_id("add_iterator");
+	    ids.add_array_access = add_id("add_array_access");
 
 		ids.defer_restore = add_id("defer_restore");
 		ids.cast = add_id("cast");

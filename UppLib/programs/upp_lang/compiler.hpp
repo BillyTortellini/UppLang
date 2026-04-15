@@ -26,7 +26,8 @@ struct Upp_Module;
 namespace AST
 {
     struct Node;
-    struct Module;
+    struct Definition_Module;
+    struct Definition_Import;
 }
 
 struct Compilation_Unit
@@ -35,11 +36,9 @@ struct Compilation_Unit
 
     // All data may be nullptr until loaded...
     Source_Code* code;
-    AST::Module* root;
-    Upp_Module* module;
-
-    Dynamic_Array<AST::Node*> allocated_nodes;
-    Dynamic_Array<Error_Message> parser_errors;
+    AST::Definition_Module* root;
+    Upp_Module* upp_module;
+    Array<Error_Message> parser_errors;
 };
 
 // Expects file_path to be a full path (For deduplication)
@@ -48,7 +47,7 @@ struct Compilation_Unit
 void compilation_unit_destroy(Compilation_Unit* unit);
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
-Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Import* import_node); // Returns 0 if file could not be read
+Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Definition_Import* import_node); // Returns 0 if file could not be read
 bool compiler_can_execute_c_compiled(Compilation_Data* compilation_data);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
 

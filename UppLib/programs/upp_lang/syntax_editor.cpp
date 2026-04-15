@@ -1612,16 +1612,23 @@ namespace Text_Editing
         {
 			Display_Line& display_line = display_lines[display_line_index];
             Source_Line* line = source_code_get_line(tab.code, display_line.line_index);
+			if (display_line.line_index < range.start.line) continue;
 			if (display_line.line_index > range.end.line) return;
     
 			// Figure out start and end in line
             int start = range.start.line == display_line.line_index ? range.start.character : 0;
             int end = range.end.line == display_line.line_index ? range.end.character : line->text.size;
             if (display_line.fold_info.inside_fold) {
-                start = 0;
-                end = 4;
+				start = 0;
+				end = 4;
             }
-    
+
+			// Skip initial whitespaces
+			while (string_test_char(line->text, start, ' ')) {
+				start += 1;
+			}
+			if (start >= end) continue;
+
 			auto char_size = editor.font_main->char_size;
 			ibox2 box = ibox2(
 				editor.main_box.get_corner(Corner::TOP_LEFT) + ivec2(start, -display_line_index) * char_size,
@@ -1926,17 +1933,9 @@ namespace Text_Editing
 		}
 
 		// Keywords
-		case Token_Type::ADD_CAST:
-		case Token_Type::ADD_ARRAY_ACCESS:
-		case Token_Type::ADD_BINOP:
-		case Token_Type::ADD_UNOP:
-		case Token_Type::ADD_ITERATOR:
-		case Token_Type::FUNCTION_KEYWORD:
-		case Token_Type::FUNCTION_POINTER_KEYWORD:
-		case Token_Type::NEW: no_space_if_next_is_parenthesis = true; break;
 		case Token_Type::CAST: 
 		{
-			if (test_token(Token_Type::DOT_CALL, -1)) {
+			if (test_token(Token_Type::POSTFIX_CALL_ARROW, -1)) {
 				out_space_before = false;
 			}
 			else {
@@ -1955,8 +1954,8 @@ namespace Text_Editing
 		}
 
 		// Operators that always have spaces before and after
-		case Token_Type::ADDITION:
-		case Token_Type::DIVISON:
+		case Token_Type::PLUS:
+		case Token_Type::SLASH:
 		case Token_Type::LESS_THAN:
 		case Token_Type::GREATER_THAN:
 		case Token_Type::LESS_EQUAL:
@@ -1965,17 +1964,15 @@ namespace Text_Editing
 		case Token_Type::NOT_EQUALS:
 		case Token_Type::POINTER_EQUALS:
 		case Token_Type::POINTER_NOT_EQUALS:
-		case Token_Type::DEFINE_COMPTIME:
-		case Token_Type::DEFINE_INFER:
 		case Token_Type::AND:
 		case Token_Type::OR:
-		case Token_Type::ARROW:
+		case Token_Type::FUNCTION_ARROW:
 		case Token_Type::ASSIGN_ADD:
 		case Token_Type::ASSIGN_SUB:
 		case Token_Type::ASSIGN_DIV:
 		case Token_Type::ASSIGN_MULT:
 		case Token_Type::ASSIGN_MODULO:
-		case Token_Type::MODULO: {
+		case Token_Type::PERCENTAGE: {
 			out_space_after = true;
 			out_space_before = true;
 			break;
@@ -1992,7 +1989,7 @@ namespace Text_Editing
 		case Token_Type::ADDRESS_OF:
 		case Token_Type::DEREFERENCE:
 		case Token_Type::OPTIONAL_DEREFERENCE:
-		case Token_Type::DOT_CALL:
+		case Token_Type::POSTFIX_CALL_ARROW:
 		case Token_Type::DOLLAR: {
 			out_space_after = false;
 			out_space_before = false;
@@ -2026,6 +2023,11 @@ namespace Text_Editing
 		}
 
 		// Only space after
+		case Token_Type::GLOBAL_KEYWORD:
+		case Token_Type::CONST_KEYWORD:
+		case Token_Type::MODULE:
+		case Token_Type::VAR:
+		case Token_Type::FUNCTION_KEYWORD:
 		case Token_Type::COMMA:
 		case Token_Type::TILDE_STAR:
 		case Token_Type::TILDE_STAR_STAR:
@@ -2036,8 +2038,8 @@ namespace Text_Editing
 		}
 
 		// Complicated cases, where it could either be a Unop (expects no space after) or a binop (expects a space afterwards)
-		case Token_Type::MULTIPLY: // Could also be pointer type
-		case Token_Type::SUBTRACTION:
+		case Token_Type::ASTERIX: // Could also be pointer type
+		case Token_Type::MINUS:
 		{
 			// If we don't have a token before or after, assume that it's a Unop
 			if (token_index <= 0 || token_index + 1 >= tokens.size) {
@@ -2085,7 +2087,6 @@ namespace Text_Editing
 				{
 				case Token_Type::CAST:
 				case Token_Type::INSTANCIATE:
-				case Token_Type::NEW:
 					next_is_value = true;
 				}
 			}
@@ -2177,7 +2178,10 @@ namespace Text_Editing
 					}
 
 					// Don't remove if cursor is before or after
-					if (respect_cursor_space && cursor == i || cursor - 1 == i) {
+					if (respect_cursor_space && cursor - 1 == i) { // Space before cursor
+						remove = false;
+					}
+					if (respect_cursor_space && cursor == i && char_is_space_critical(next)) { // Space directly after cursor
 						remove = false;
 					}
 
@@ -2252,7 +2256,7 @@ namespace Text_Editing
 		// logg("Formated: %s\n", formated_string.characters);
 		// logg("-----------------------\n");
 
-		// 4. Diff formated-text and actuall text
+		// 4. Diff formated-text and actual text
 		int text_index = 0;
 		int formated_index = 0;
 		while (!(text_index >= text.size && formated_index >= formated_string.size))
@@ -2266,13 +2270,18 @@ namespace Text_Editing
 				continue;
 			}
 
-			if (text_char == ' ') {
+			if (text_char == ' ') 
+			{
 				history_delete_char(&tab.history, text_index_make(line_index, text_index));
-				if (cursor_on_line && cursor >= text_index) {
+				if (cursor_on_line && editor.mode == Editor_Mode::INSERT && cursor > text_index) {
+					cursor -= 1;
+				}
+				if (cursor_on_line && editor.mode != Editor_Mode::INSERT && cursor >= text_index) {
 					cursor -= 1;
 				}
 			}
-			else if (formated_char == ' ') {
+			else if (formated_char == ' ') 
+			{
 				history_insert_char(&tab.history, text_index_make(line_index, text_index), ' ');
 				if (cursor_on_line && cursor > text_index) {
 					cursor += 1;
@@ -2904,7 +2913,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 			int tab_index = compilation_unit_find_tab_index(old_unit);
 			// Remove units if they weren't used during compilation and are also not open in any tab
-			if (old_unit->module == nullptr && tab_index == -1) {
+			if (old_unit->upp_module == nullptr && tab_index == -1) {
 				continue;
 			}
 
@@ -3368,13 +3377,13 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 	auto& editor = syntax_editor;
 
 	// Switch tab to file with symbol
-	auto unit = symbol->definition_unit;
+	auto unit = compiler_find_ast_compilation_unit(editor.editor_compilation_data, upcast(symbol->definition_node));
 	if (unit == nullptr) return;
 	int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
 	syntax_editor_switch_tab(index);
 
 	auto& tab = editor.tabs[editor.open_tab_index];
-	tab.cursor = code_query_text_index_at_last_synchronize(symbol->definition_text_index, editor.open_tab_index, true);
+	tab.cursor = code_query_text_index_at_last_synchronize(symbol->definition_node->base.range.start, editor.open_tab_index, true);
 	syntax_editor_sanitize_cursor();
 }
 
@@ -3552,7 +3561,7 @@ void analysis_pass_append_polymorphic_infos(Analysis_Pass* pass, String* string,
 				state.type = Pattern_Variable_State_Type::UNSET;
 			}
 
-			String* name = variable.name;
+			String* name = variable.symbol_node->name;
 			for (int i = 0; i < indentation; i++) {
 				string_append(string, "  ");
 			}
@@ -4025,183 +4034,199 @@ void code_completion_find_suggestions()
 	tab.last_code_completion_info_index = editor.compile_count;
 	tab.last_code_completion_query_pos = cursor;
 	editor.last_code_completion_tab = editor.open_tab_index;
-
-	Arena tmp_arena = Arena::create();
-	SCOPE_EXIT(tmp_arena.destroy());
-
 	dynamic_array_reset(&suggestions);
 
-	// Early exit if we aren't in completion context
+	// Tokenize code
+	Arena tmp_arena = Arena::create();
+	SCOPE_EXIT(tmp_arena.destroy());
 	auto line = source_code_get_line(tab.code, cursor.line);
-	bool inside_string_literal = false;
-	{
-		Line_Iter iter = Line_Iter::create(cursor.line);
-		if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || Folds::get_fold_info(cursor.line).inside_fold) {
-			return;
-		}
-
-		// Check if we are inside line comment
-		if (text_index_inside_comment_or_string_literal(cursor, inside_string_literal)) {
-			if (!inside_string_literal) {
-				return;
-			}
+	int cursor_token_index = 0;
+	DynArray<Token> tokens = tokenize_partial_code(tab.code, cursor, &tmp_arena, cursor_token_index, true, false);
+	// Tokenize partial code prefers later tokens if the text-index is inbetween two tokens, but for completion we want the first token
+	if (cursor_token_index - 1 >= 0 && cursor_token_index - 1 < tokens.size) {
+		Token& prev = tokens[cursor_token_index - 1];
+		if (prev.line = cursor.line && prev.start <= cursor.character && prev.end >= cursor.character) {
+			cursor_token_index = cursor_token_index - 1;
 		}
 	}
 
-	auto test_char = [](String str, int index, char c) -> bool {
+	auto helper_test_char = [&](int index, char c) -> bool {
+		String& str = line->text;
 		if (index < 0 || index >= str.size) return false;
 		return str.characters[index] == c;
-		};
-
-	// Import file code completion
-	if (inside_string_literal)
-	{
-		bool add_file_suggestion = false;
-
-		// Figure out if we are on import-keyword
-		int word_end = cursor.character;
-		auto char_is_quotation = [](char c, void* userdata) -> bool {return c == '\"'; };
-		word_end = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_quotation, nullptr, true, true);
-		String file_path = string_create_substring_static(&line->text, word_end + 1, cursor.character);
-		if (test_char(line->text, word_end, '\"'))
-		{
-			word_end -= 1;
-			// Skip whitespaces
-			word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
-			int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
-			if (word_start != word_end) {
-				String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
-				if (string_equals_cstring(&substring, "import")) {
-					add_file_suggestion = true;
-				}
-			}
+	};
+	auto helper_test_token = [&](int token_index, Token_Type type) -> bool {
+		if (token_index < 0 || token_index >= tokens.size) return false;
+		return tokens[token_index].type == type;
+	};
+	auto helper_get_token = [&](int token_index) -> Token {
+		if (token_index < 0 || token_index >= tokens.size) {
+			return token_make(Token_Type::INVALID, 0, 0, cursor.line);
 		}
+		return tokens[token_index];
+	};
 
-		if (add_file_suggestion) {
-			suggestions_fill_with_file_directory(file_path);
-		}
-
+	// Early exit if we aren't in completion context
+	if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || Folds::get_fold_info(cursor.line).inside_fold) {
+		return;
+	}
+	Token cursor_token = helper_get_token(cursor_token_index);
+	if (cursor_token.type == Token_Type::COMMENT) {
 		return;
 	}
 
+	// Import file code completion
+	if (cursor_token.type == Token_Type::LITERAL_STRING)
+	{
+		// Literal string token starts at " and ends at "
+		if (helper_test_token(cursor_token_index - 1, Token_Type::IMPORT) &&
+			cursor.line == cursor_token.line && cursor.character > cursor_token.start && cursor.character < cursor_token.end)
+		{
+			String file_path = string_create_substring_static(&line->text, cursor_token.start + 1, cursor.character);
+			suggestions_fill_with_file_directory(file_path);
+		}
+		return; // Don't show suggestions inside string
+	}
 
-
+	// Start search with partially typed word
+	String fuzzy_search_string = string_create_static("");
+	if (cursor_token.type == Token_Type::IDENTIFIER || token_type_is_keyword(cursor_token.type)) {
+		fuzzy_search_string = string_create_substring_static(&line->text, cursor_token.start, cursor_token.end);
+	}
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
 	auto& ids = syntax_editor.editor_compilation_data->identifier_pool.predefined_ids;
-
-	// Get partially typed word
-	String fuzzy_search_string = string_create_static("");
-	bool is_member_access = false;
-	bool is_dot_call_access = false;
-	bool is_path_lookup = false;
-	bool is_subtype_access = false;
-	bool is_hashtag = false;
-	int word_start = cursor.character;
-	{
-		// Figure out word-start index
-		// Check if char before cursor is a character
-		if (word_start > 0 && char_is_valid_identifier(line->text[word_start - 1])) {
-			word_start = Motions::move_while_condition(line->text, cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
-		}
-		fuzzy_search_string = string_create_substring_static(&line->text, word_start, cursor.character);
-
-		// Figure out operation
-		if (test_char(line->text, word_start, '#')) {
-			is_hashtag = true;
-		}
-		if (test_char(line->text, word_start - 1, '.')) {
-			is_member_access = true;
-		}
-		if (test_char(line->text, word_start - 1, '~'))
-		{
-			is_path_lookup = true;
-			if (!test_char(line->text, word_start, '~')) {
-				word_start = word_start - 1; // We start on '~' character
-			}
-			while (true)
-			{
-				if (word_start - 1 < 0) break;
-				int next_start = Motions::move_while_condition(line->text, word_start - 1, false, char_is_valid_identifier, nullptr, false, true);
-				// Stop if we haven't moved (e.g. before ~ there are no valid identifiers)
-				if (next_start == word_start - 1) {
-					break;
-				}
-
-				// Check if we landed on a ~
-				if (test_char(line->text, next_start, '~')) {
-					word_start = next_start;
-					continue;
-				}
-				else if (next_start == 0 && char_is_valid_identifier(line->text.characters[0], nullptr)) {
-					word_start = 0;
-					break;
-				}
-				else {
-					word_start = next_start + 1;
-					break;
-				}
-			}
-			word_start = word_start;
-		}
-		// Note: Checking for dot-call after path-lookup
-		if (test_char(line->text, word_start - 2, '-') && test_char(line->text, word_start - 1, '>')) {
-			is_dot_call_access = true;
-		}
-		else if (test_char(line->text, word_start - 2, '.') && test_char(line->text, word_start - 1, '>')) {
-			is_subtype_access = true;
-		}
-	}
 	fuzzy_search_start_search(fuzzy_search_string, 10);
-
-	Text_Index cursor_char_index = tab.cursor;
-	if (cursor_char_index.character > 0) {
-		cursor_char_index.character -= 1;
-	}
-	Position_Info position_info = code_query_find_position_infos(cursor_char_index, nullptr);
-	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
+	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor);
 
 	// Add parameter names in function call
-	if (position_info.call_info != nullptr) 
 	{
-		auto signature = position_info.call_info->callable_call->origin.signature;
-		for (int i = 0; i < signature->parameters.size; i++) {
-			auto param_info = signature->parameters[i];
-			fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
-			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
+		Text_Index before_cursor_index = text_index_make(cursor.line, math_maximum(0, cursor.character - 1));
+		Position_Info position_info = code_query_find_position_infos(before_cursor_index, nullptr);
+		if (position_info.call_info != nullptr)
+		{
+			auto signature = position_info.call_info->callable_call->origin.signature;
+			for (int i = 0; i < signature->parameters.size; i++) {
+				auto param_info = signature->parameters[i];
+				fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
+			}
 		}
 	}
 
-	// Member-Access code completion
-	if (is_hashtag)
+	// Hashtag completion
+	if (helper_test_char(cursor.character - 1, '#'))
 	{
-		auto helper_add_ids = [&](std::initializer_list<String*> ids) {
-			for (String* id : ids) {
-				fuzzy_search_add_item(*id, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
-			}
-			};
-		helper_add_ids({
-			ids.hashtag_instanciate,
-			ids.hashtag_bake,
-			ids.hashtag_get_overload,
-			ids.hashtag_get_overload_poly,
-			ids.hashtag_add_binop,
-			ids.hashtag_add_unop,
-			ids.hashtag_add_cast,
-			ids.hashtag_add_auto_cast_type,
-			ids.hashtag_add_iterator,
-			ids.hashtag_add_array_access
-			});
+		auto helper_add_id = [&](String* id) {
+			fuzzy_search_add_item(*id, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
+		};
+		helper_add_id(ids.hashtag_bake);
+		helper_add_id(ids.hashtag_instanciate);
+		helper_add_id(ids.hashtag_get_overload);
+		helper_add_id(ids.hashtag_get_overload_poly);
 	}
-	else if (symbol_table != nullptr && is_dot_call_access)
+
+	// Check if we are on path lookup and find operator token
+	int operator_token_index = cursor_token_index;
+	if (!token_type_is_operator(cursor_token.type)) {
+		operator_token_index = cursor_token_index - 1;
+	}
+
+	// Path lookup
+	if (helper_test_token(operator_token_index, Token_Type::TILDE) && symbol_table != nullptr)
+	{
+		int path_start_index = operator_token_index;
+		while (true) 
+		{
+			// On tilde
+			if (helper_test_token(path_start_index - 1, Token_Type::IDENTIFIER)) {
+				path_start_index -= 1;
+			}
+			if (helper_test_token(path_start_index - 1, Token_Type::TILDE)) {
+				path_start_index -= 1;
+				continue;
+			}
+			break;
+		}
+
+		// First resolve path
+		Import_Type import_type = Import_Type::SYMBOLS;
+		Token path_start_token = helper_get_token(path_start_index);
+		String path_string = string_create_substring_static(&line->text, path_start_token.start, cursor.character);
+		DynArray<Symbol*> symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
+
+		// Add symbols to results 
+		for (int i = 0; i < symbols.size; i++) {
+			Symbol* symbol = symbols[i];
+			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
+		}
+	}
+
+	// Member access
+	if (helper_test_token(operator_token_index, Token_Type::DOT))
+	{
+		// Find expression-info before dot
+		Token& op_token = tokens[operator_token_index];
+		Text_Index before_dot_index = text_index_make(op_token.line, math_maximum(0, op_token.start - 1));
+		Position_Info position_info = code_query_find_position_infos(before_dot_index, nullptr);
+
+		// Note: For member-accesses, we need the type of the value, not the member-access expression
+		Datatype* type = nullptr;
+		auto expr_info = position_info.expression_info;
+		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr) {
+			type = expr_info->member_access_info.value_type;
+		}
+
+		// Add possible member-accesses for given type
+		if (type != nullptr)
+		{
+			auto original = type;
+			type = datatype_get_undecorated(type, true, false, true);
+			switch (type->type)
+			{
+			case Datatype_Type::ARRAY:
+			case Datatype_Type::SLICE: {
+				fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
+				fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
+				break;
+			}
+			case Datatype_Type::STRUCT:
+			{
+				Datatype_Struct* structure = downcast<Datatype_Struct>(type);
+				auto& members = structure->members;
+				for (int i = 0; i < members.size; i++) {
+					auto& mem = members[i];
+					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.datatype, mem.name));
+				}
+				break;
+			}
+			case Datatype_Type::ENUM:
+				auto& members = downcast<Datatype_Enum>(type)->members;
+				for (int i = 0; i < members.size; i++) {
+					auto& mem = members[i];
+					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_enum_member(downcast<Datatype_Enum>(type), mem.name));
+				}
+				break;
+			}
+		}
+	}
+
+	// Dot-call access
+	if (helper_test_token(operator_token_index, Token_Type::POSTFIX_CALL_ARROW) && symbol_table != nullptr)
 	{
 		// Find call value type, should be info before ->, so op_index - 1
 		Datatype* call_value_type = nullptr;
 		Analysis_Pass* call_value_pass = nullptr;
-		if (word_start - 3 >= 0)
 		{
-			Position_Info dot_call_position_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
+			Token op_token = helper_get_token(operator_token_index);
+			Text_Index before_op_index = text_index_make(op_token.line, math_maximum(0, op_token.start - 1));
+			Position_Info dot_call_position_info = code_query_find_position_infos(before_op_index, nullptr);
 			Editor_Info_Expression* expr_info = dot_call_position_info.expression_info;
 			if (expr_info != nullptr) {
 				call_value_type = expr_info->info->cast_info.result_type;
@@ -4329,11 +4354,15 @@ void code_completion_find_suggestions()
 			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
 		}
 	}
-	else if (symbol_table != nullptr && is_subtype_access && word_start - 3 >= 0)
+
+	// Subtype access
+	if (helper_test_token(operator_token_index, Token_Type::SUBTYPE_ACCESS))
 	{
-		// Find call value type, should be info before .>, so word_start - 3
-		Position_Info subtype_pos_info = code_query_find_position_infos(text_index_make(cursor.line, word_start - 3), nullptr);
-		Editor_Info_Expression* expr_info = subtype_pos_info.expression_info;
+		// Find expression-info before dot
+		Token& op_token = tokens[operator_token_index];
+		Text_Index before_dot_index = text_index_make(op_token.line, math_maximum(0, op_token.start - 1));
+		Position_Info position_info = code_query_find_position_infos(before_dot_index, nullptr);
+		Editor_Info_Expression* expr_info = position_info.expression_info;
 
 		Datatype_Struct* parent_struct = nullptr;
 		if (expr_info != nullptr) 
@@ -4371,113 +4400,29 @@ void code_completion_find_suggestions()
 			}
 		}
 	}
-	else if (symbol_table != nullptr && is_path_lookup) // Both path-lookup and dot-call access can be true
+
+	// Auto complete continue/break block-id
+	if (helper_test_token(operator_token_index, Token_Type::CONTINUE) || helper_test_token(operator_token_index, Token_Type::BREAK))
 	{
-		// First resolve path
-		DynArray<Symbol*> symbols;
-		Import_Type import_type = Import_Type::SYMBOLS;
-		String path_string = string_create_substring_static(&line->text, word_start, cursor.character);
-		symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
-
-		// Add symbols to results 
-		for (int i = 0; i < symbols.size; i++) {
-			Symbol* symbol = symbols[i];
-			fuzzy_search_add_item(*symbol->id, unranked_suggestions.size);
-			dynamic_array_push_back(&unranked_suggestions, suggestion_make_symbol(symbol));
-		}
-	}
-	else if (is_member_access)
-	{
-		Datatype* type = nullptr;
-
-		auto expr_info = position_info.expression_info;
-		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr)
-		{
-			// Note: For member-accesses, we need the type of the value, not the member-access expression
-			type = expr_info->member_access_info.value_type;
-		}
-
-		// Add possible member-accesses for given type
-		if (type != 0)
-		{
-			auto original = type;
-			type = datatype_get_undecorated(type, true, false, true);
-			switch (type->type)
-			{
-			case Datatype_Type::ARRAY:
-			case Datatype_Type::SLICE: {
-				fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
-				fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
-				break;
-			}
-			case Datatype_Type::STRUCT:
-			{
-				Datatype_Struct* structure = downcast<Datatype_Struct>(type);
-				auto& members = structure->members;
-				for (int i = 0; i < members.size; i++) {
-					auto& mem = members[i];
-					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_struct_member(structure, mem.datatype, mem.name));
-				}
-				break;
-			}
-			case Datatype_Type::ENUM:
-				auto& members = downcast<Datatype_Enum>(type)->members;
-				for (int i = 0; i < members.size; i++) {
-					auto& mem = members[i];
-					fuzzy_search_add_item(*mem.name, unranked_suggestions.size);
-					dynamic_array_push_back(&unranked_suggestions, suggestion_make_enum_member(downcast<Datatype_Enum>(type), mem.name));
-				}
-				break;
+		auto& id_ranges = tab.code->block_id_range;
+		auto prev_cursor_index = code_query_text_index_at_last_synchronize(cursor, editor.open_tab_index, false);
+		for (int i = 0; i < id_ranges.size; i++) {
+			auto id_range = id_ranges[i];
+			if (text_range_contains(id_range.range, prev_cursor_index)) {
+				fuzzy_search_add_item(*id_range.block_id, unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id_range.block_id));
 			}
 		}
 	}
-	else
+
+	// Add normal symbol table things if nothing else was found
+	if (unranked_suggestions.size == 0)
 	{
-		// Auto complete continue/break
-		if (unranked_suggestions.size == 0)
-		{
-			bool add_block_id_suggestions = false;
-			int word_end = cursor.character - 1;
-			word_end = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, true);
-			word_end = Motions::move_while_condition(line->text, word_end, false, char_is_whitespace, nullptr, false, true);
-			int word_start = Motions::move_while_condition(line->text, word_end, false, char_is_valid_identifier, nullptr, false, false);
-			if (word_start != word_end) {
-				String substring = string_create_substring_static(&line->text, word_start, word_end + 1);
-				if (string_equals_cstring(&substring, "continue") || string_equals_cstring(&substring, "break")) {
-					add_block_id_suggestions = true;
-				}
-			}
-
-			if (add_block_id_suggestions)
-			{
-				auto& id_ranges = tab.code->block_id_range;
-				auto prev_cursor_index = code_query_text_index_at_last_synchronize(cursor, editor.open_tab_index, false);
-				for (int i = 0; i < id_ranges.size; i++) {
-					auto id_range = id_ranges[i];
-					if (text_range_contains(id_range.range, prev_cursor_index)) {
-						fuzzy_search_add_item(*id_range.block_id, unranked_suggestions.size);
-						dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id_range.block_id));
-					}
-				}
-			}
-		}
-
-		// Exit if nothing specific was found
-		if (unranked_suggestions.size == 0 && fuzzy_search_string.size == 0) {
-			return;
-		}
-
 		// Search symbols
-		Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor_char_index);
-		if (unranked_suggestions.size == 0 && symbol_table != nullptr)
+		if (symbol_table != nullptr)
 		{
-			Arena arena = Arena::create(256);
-			SCOPE_EXIT(arena.destroy());
 			auto results = symbol_table_query_all_symbols(
-				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &arena
+				symbol_table, symbol_query_info_make(Symbol_Access_Level::INTERNAL, Import_Type::SYMBOLS, true), &tmp_arena
 			);
 			for (int i = 0; i < results.size; i++) {
 				fuzzy_search_add_item(*results[i]->id, unranked_suggestions.size);
@@ -4492,6 +4437,11 @@ void code_completion_find_suggestions()
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.cast, Syntax_Color::KEYWORD));
 		fuzzy_search_add_item(*ids.defer, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer, Syntax_Color::KEYWORD));
+	}
+
+	// Exit if nothing specific was found
+	if (unranked_suggestions.size == 0 && fuzzy_search_string.size == 0) {
+		return;
 	}
 
 	// Add results to suggestions
@@ -6534,7 +6484,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			fuzzy_search_start_search(lookup_info.last_part, 10);
 			for (int i = 0; i < lookup_info.symbols.size; i++) {
 				auto symbol = lookup_info.symbols[i];
-				if (symbol->definition_unit != 0) {
+				if (symbol->definition_node != nullptr) { // Symbol needs to be defined in code to jump to it
 					fuzzy_search_add_item(*symbol->id, i);
 				}
 			}
@@ -7734,13 +7684,14 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	case Token_Type::SWITCH:
 	case Token_Type::CAST:
 	case Token_Type::DEFAULT:
-	case Token_Type::DELETE_KEYWORD:
-	case Token_Type::NEW:
-	case Token_Type::ENUM:
 	case Token_Type::STRUCT:
 	case Token_Type::UNION:
+	case Token_Type::ENUM:
 	case Token_Type::FUNCTION_KEYWORD:
-	case Token_Type::FUNCTION_POINTER_KEYWORD:
+	case Token_Type::VAR:
+	case Token_Type::GLOBAL_KEYWORD:
+	case Token_Type::CONST_KEYWORD:
+	case Token_Type::OPERATORS:
 	case Token_Type::CONTINUE:
 	case Token_Type::RETURN:
 	case Token_Type::BREAK:
@@ -7774,7 +7725,7 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	if (test_token(Token_Type::DOT, -1)) {
 		return Syntax_Color::MEMBER;
 	}
-	else if (test_token(Token_Type::DOT_CALL, -1)) {
+	else if (test_token(Token_Type::POSTFIX_CALL_ARROW, -1)) {
 		return Syntax_Color::FUNCTION;
 	}
 	else if (test_token(Token_Type::DOLLAR, -1)) {
@@ -7783,37 +7734,31 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::SUBTYPE_ACCESS, -1)) {
 		return Syntax_Color::SUBTYPE;
 	}
+	else if (test_token(Token_Type::FUNCTION_KEYWORD, -1)) {
+		return Syntax_Color::FUNCTION;
+	}
+	else if (test_token(Token_Type::MODULE, -1)) {
+		return Syntax_Color::MODULE;
+	}
+	else if (test_token(Token_Type::ENUM, -1) || test_token(Token_Type::STRUCT, -1) || test_token(Token_Type::UNION, -1)) {
+		return Syntax_Color::DATATYPE;
+	}
+	else if (test_token(Token_Type::VAR, -1) || test_token(Token_Type::CONST_KEYWORD, -1) || test_token(Token_Type::GLOBAL_KEYWORD, -1)) {
+		return Syntax_Color::VALUE_DEFINITION;
+	}
 
 	// Test next token
 	if (test_token(Token_Type::TILDE, 1) || test_token(Token_Type::TILDE_STAR, 1) || test_token(Token_Type::TILDE_STAR_STAR, 1)) {
 		return Syntax_Color::MODULE;
 	}
-	else if (test_token(Token_Type::DEFINE_INFER, 1) || test_token(Token_Type::COLON, 1))
-	{
-		return Syntax_Color::VALUE_DEFINITION;
+	else if (test_token(Token_Type::COLON, 1)) {
+		return Syntax_Color::VALUE_DEFINITION; // This is mostly for parameters and struct-members
 	}
-
-	// Check for known comptime definitions, e.g. struct, module, enum, function
-	if (test_token(Token_Type::DEFINE_COMPTIME, 1))
-	{
-		if (test_token(Token_Type::STRUCT, 2) || test_token(Token_Type::ENUM, 2) || test_token(Token_Type::UNION, 2)) {
-			return Syntax_Color::VALUE_DEFINITION;
-		}
-		if (test_token(Token_Type::MODULE, 2)) {
-			return Syntax_Color::MODULE;
-		}
-		if (test_token(Token_Type::FUNCTION_POINTER_KEYWORD, 2)) {
-			return Syntax_Color::DATATYPE;
-		}
-		if (test_token(Token_Type::FUNCTION_KEYWORD, 2)) {
-			return Syntax_Color::FUNCTION;
-		}
-	}
-
-	if (test_token(Token_Type::PARENTHESIS_OPEN, 1)) {
+	else if (test_token(Token_Type::PARENTHESIS_OPEN, 1)) {
 		return Syntax_Color::FUNCTION;
 	}
 
+	// Otherwise we found an identifier somewhere in the code, so we just assume it's a variable for this initial coloring
 	return Syntax_Color::VARIABLE;
 }
 
@@ -8065,12 +8010,17 @@ void syntax_editor_render()
 					}
 
 					Upp_Function* upp_function = info.upp_function;
-					AST::Node* function_origin_node = upcast(upp_function->function_node);
-					if (function_origin_node == nullptr && upp_function->extern_definition_workload != nullptr) {
-						auto symbol = upp_function->extern_definition_workload->symbol;
-						if (symbol != nullptr) {
-							function_origin_node = symbol->definition_node;
-						}
+					AST::Node* function_origin_node = nullptr;
+					switch (upp_function->origin.type)
+					{
+					case Function_Origin_Type::TOPLEVEL: {
+						function_origin_node = AST::upcast(AST::upcast_definition(upp_function->origin.options.toplevel.header_workload->function_node));
+						break;
+					}
+					case Function_Origin_Type::EXTERN: {
+						function_origin_node = AST::upcast(AST::upcast_definition(upp_function->origin.options.extern_import_workload->import_node));
+					}
+					default: break; // Nothing to jump to 
 					}
 
 					if (function_origin_node != nullptr) {

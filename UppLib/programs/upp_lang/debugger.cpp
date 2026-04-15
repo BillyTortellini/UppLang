@@ -3868,7 +3868,7 @@ bool debugger_start_process(
 		for (int i = 0; i < compilation_data->compilation_units.size; i++)
 		{
 			auto unit = compilation_data->compilation_units[i];
-            if (unit->module == nullptr) continue; // Skip unused units
+            if (unit->upp_module == nullptr) continue; // Skip unused units
 
 			Compilation_Unit_Mapping unit_mapping;
 			unit_mapping.lines = dynamic_array_create<Upp_Line_Mapping>(unit->code->line_count);

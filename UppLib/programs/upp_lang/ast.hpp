@@ -36,10 +36,10 @@ namespace AST
     struct Statement;
     struct Code_Block;
     struct Definition;
-    struct Extern_Import;
     struct Path_Lookup;
     struct Call_Node;
-    struct Definition_Symbol;
+    struct Symbol_Node;
+    struct Signature;
 
     enum class Binop
     {
@@ -75,26 +75,21 @@ namespace AST
     {
         EXPRESSION,
         STATEMENT,
-        DEFINITION_SYMBOL, // Just an id
-        DEFINITION, // ::, :=, : ... =, ...: ...
-        CODE_BLOCK,
-        MODULE,
+        DEFINITION,
 
         // Helpers
-        CALL_NODE,             // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
-        ARGUMENT,              // Expression with optional base_name
-        GET_OVERLOAD_ARGUMENT, // Either just id, or id = type_expr
-        SUBTYPE_INITIALIZER,   // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
-        PARAMETER,             // Name/Type compination with optional default value + comptime
-        SYMBOL_LOOKUP,         // A single identifier lookup
+        CODE_BLOCK,
+        SIGNATURE,
+        SYMBOL_NODE,           // Just an id, used to attach analysis-info to symbol
         PATH_LOOKUP,           // Possibliy multiple symbol-lookups together (e.g. Utils~Logger~log)
-        IMPORT,                // Aliases/Symbol-Import/File-Loading
         ENUM_MEMBER,           // ID with or without value-expr
         STRUCT_MEMBER,         // Either a normal member or a struct-subtype
+        CALL_NODE,             // Parenthesis (either () or {}) and list of arguments, optional _ and subtype-inititalizer
+        SUBTYPE_INITIALIZER,   // Named or unnamed parameter with parenthesis, e.g. .Location = {12, 100}
+        PARAMETER,             // Name/Type compination with optional default value + comptime
+        ARGUMENT,              // Expression with optional base_name
+        GET_OVERLOAD_ARGUMENT, // Either just id, or id = type_expr
         SWITCH_CASE,           // Expression 
-        CONTEXT_CHANGE,        // Changing some operator context
-        EXTERN_IMPORT,
-        SIGNATURE,
     };
 
     struct Node
@@ -103,26 +98,6 @@ namespace AST
         Node* parent;
         Text_Range range;
         Text_Range bounding_range;
-    };
-
-    enum class Import_Operator
-    {
-        SINGLE_SYMBOL,             // import A~a
-        MODULE_IMPORT,            // import A~*
-        MODULE_IMPORT_TRANSITIVE, // import A~**
-        FILE_IMPORT,               // import "filename"
-    };
-
-    struct Import
-    {
-        Node base;
-        Import_Type import_type;
-        Import_Operator operator_type;
-        Optional<Definition_Symbol*> alias_name;
-        union {
-            Path_Lookup* path;
-            String* file_name;
-        } options;
     };
 
     // Note: #get_overload can also specify return_type, in which case the id is set appropriately (see parser.cpp)
@@ -134,38 +109,126 @@ namespace AST
         Optional<Expression*> type_expr;
     };
 
-    struct Argument;
-    struct Custom_Operator_Node
+    struct Symbol_Node
     {
         Node base;
-        Custom_Operator_Type type;
-        Call_Node* call_node; 
-    };
-
-    struct Symbol_Lookup
-    {
-        Node base;
-        String* name; // Name for root is Root_Module, unique id
-        bool is_root_module; // E.g. ~, like ~, or ~foo~bar
+        String* name;
+        bool is_root_lookup; // If it is a ~
+        bool is_definition;  // Symbol nodes are either definitions or lookups
     };
 
     struct Path_Lookup
     {
         Node base;
-        Dynamic_Array<Symbol_Lookup*> parts;
-        // NOTE: The last node is only a convenient pointer to the end of parts, but the
-        //       node is also inside parts, e.g. parts[parts.size-1] == last
-        Symbol_Lookup* last;
+        Array<Symbol_Node*> parts; // Always > 0, because first one may be _root_
         bool is_dot_call_lookup;
+
+        Symbol_Node* last(); // May return nullptr
     };
 
-    struct Module
+    enum class Definition_Type
+    {
+        VARIABLE,
+        GLOBAL,
+        CONSTANT,
+        FUNCTION,
+        STRUCT,
+        ENUM,
+        IMPORT,
+        EXTERN,
+        MODULE,
+        CUSTOM_OPERATOR
+    };
+
+    struct Definition_Function
+    {
+        Symbol_Node* symbol;
+        Signature* signature;
+        Function_Body body;
+    };
+
+    struct Definition_Custom_Operator
+    {
+        Custom_Operator_Type type;
+        Call_Node* call_node; 
+    };
+
+    struct Definition_Value
+    {
+        Symbol_Node* symbol;
+        Optional<Expression*> datatype_expr;
+        Optional<Expression*> value_expr;
+    };
+    
+    struct Structure_Member_Node
     {
         Node base;
-        Dynamic_Array<Definition*> definitions;
-        Dynamic_Array<Custom_Operator_Node*> custom_operators;
-        Dynamic_Array<Import*> import_nodes;
-        Dynamic_Array<Extern_Import*> extern_imports;
+        String* name;
+        bool is_expression; // Either expression or subtype_members
+        union {
+            Expression* expression;
+            Array<Structure_Member_Node*> subtype_members;
+        } options;
+    };
+
+    struct Definition_Struct 
+    {
+        Symbol_Node* symbol;
+        Signature* signature;
+        Array<Structure_Member_Node*> members;
+        bool is_union;
+    };
+
+    struct Definition_Module
+    {
+        Optional<Symbol_Node*> symbol; // The root modules does not have a definition
+        Array<Definition*> definitions;
+    };
+
+
+    enum class Extern_Type
+    {
+        FUNCTION,
+        GLOBAL,
+        STRUCT,
+        COMPILER_SETTING,
+    };
+
+    struct Definition_Extern_Import
+    {
+        Extern_Type type;
+        union 
+        {
+            struct {
+                Symbol_Node* symbol;
+                Expression* type_expr;
+            } function;
+            Path_Lookup* global_lookup;
+            Path_Lookup* struct_type_lookup; // This should be a path to an already defined struct
+            struct {
+                Extern_Compiler_Setting type;
+                String* value;
+            } setting;
+        } options;
+    };
+
+    enum class Import_Operator
+    {
+        SINGLE_SYMBOL,             // import A~a
+        MODULE_IMPORT,            // import A~*
+        MODULE_IMPORT_TRANSITIVE, // import A~**
+        FILE_IMPORT,               // import "filename"
+    };
+
+    struct Definition_Import
+    {
+        Import_Type import_type;
+        Import_Operator operator_type;
+        Optional<Symbol_Node*> alias_name;
+        union {
+            Path_Lookup* path;
+            String* file_name;
+        } options;
     };
 
     struct Enum_Member_Node
@@ -175,19 +238,26 @@ namespace AST
         Optional<Expression*> value;
     };
 
-    struct Definition_Symbol
+    struct Definition_Enum
     {
-        Node base;
-        String* name;
+        Symbol_Node* symbol;
+        Array<Enum_Member_Node*> members;
     };
 
     struct Definition
     {
         Node base;
-        bool is_comptime; // :: instead of :=
-        Dynamic_Array<Definition_Symbol*> symbols;
-        Dynamic_Array<Expression*> types;
-        Dynamic_Array<Expression*> values;
+        Definition_Type type;
+        union {
+            Definition_Function function;
+            Definition_Struct structure;
+            Definition_Value value; // Global, var or const
+            Definition_Custom_Operator custom_operator;
+            Definition_Import import;
+            Definition_Extern_Import extern_import;
+            Definition_Enum enumeration;
+            Definition_Module module;
+        } options;
     };
 
     struct Argument
@@ -207,45 +277,15 @@ namespace AST
     struct Call_Node
     {
         Node base;
-        Dynamic_Array<Argument*> arguments;
-        Dynamic_Array<Subtype_Initializer*> subtype_initializers;
-        Dynamic_Array<Expression*> uninitialized_tokens;
-    };
-
-    enum class Extern_Type
-    {
-        FUNCTION,
-        GLOBAL,
-        STRUCT,
-        COMPILER_SETTING,
-        INVALID, // If there was an error during parsing
-    };
-
-    struct Extern_Import
-    {
-        Node base;
-        Extern_Type type;
-        union {
-            struct {
-                String* id;
-                Expression* type_expr;
-            } function;
-            struct {
-                String* id;
-                Expression* type_expr;
-            } global;
-            AST::Expression* struct_type_expr; // This should normally be a path_lookup to an existing struct.
-            struct {
-                Extern_Compiler_Setting type;
-                String* value;
-            } setting;
-        } options;
+        Array<Argument*> arguments;
+        Array<Subtype_Initializer*> subtype_initializers;
+        Array<Expression*> uninitialized_tokens;
     };
 
     struct Parameter
     {
         Node base;
-        String* name; // name of parameter, or "!return_type" (See identifier pool)
+        Symbol_Node* symbol; // name of parameter, or "!return_type" (See identifier pool)
         Optional<Expression*> type; // Comptime parameters may not have a type...
         bool is_comptime;    // $ at the start
         bool is_return_type;
@@ -255,37 +295,14 @@ namespace AST
     {
         Node base;
         // If we have a return type, it's the last in this array, and the is_return_type bool is set
-        Dynamic_Array<Parameter*> parameters;
+        Array<Parameter*> parameters;
     };
-
 
     struct Code_Block
     {
         Node base;
-        Dynamic_Array<Statement*> statements;
-        Dynamic_Array<Custom_Operator_Node*> custom_operators;
+        Array<Statement*> statements;
         Optional<String*> block_id;
-    };
-
-    struct Structure_Member_Node
-    {
-        Node base;
-        String* name;
-        bool is_expression; // Either expression or subtype_members
-        union {
-            Expression* expression;
-            Dynamic_Array<Structure_Member_Node*> subtype_members;
-        } options;
-    };
-
-    // For convenience, Note: This is not an allocated node, it is not a child of Node
-    struct Body_Node
-    {
-        bool is_expression;
-        union {
-            Expression* expr;
-            Code_Block* block;
-        };
     };
 
     enum class Expression_Type
@@ -294,7 +311,6 @@ namespace AST
         BINARY_OPERATION,
         UNARY_OPERATION,
         FUNCTION_CALL,
-        NEW_EXPR,
         CAST,
         ARRAY_INITIALIZER,
         STRUCT_INITIALIZER,
@@ -312,17 +328,13 @@ namespace AST
         BASETYPE_ACCESS, // .<
 
         // Types/Definitions
-        MODULE,
-        FUNCTION,
-        FUNCTION_SIGNATURE,
-        INFERRED_FUNCTION, // .=> return x or smth
+        INFERRED_FUNCTION, // .fn a > 17 or .fn { ... }
         PATTERN_VARIABLE, // $T
 
-        STRUCTURE_TYPE, // Struct, union, c_union
-        ENUM_TYPE,
         ARRAY_TYPE,
         SLICE_TYPE,
-        POINTER_TYPE,      // *int  or ?*
+        POINTER_TYPE,          // *int or ?*int
+        FUNCTION_POINTER_TYPE, // *fn (a:int,b:int)
 
         ERROR_EXPR,
     };
@@ -333,7 +345,7 @@ namespace AST
         Expression_Type type;
         union
         {
-            String* pattern_variable_name;
+            Symbol_Node* pattern_variable_symbol;
             struct {
                 Expression* child_type; // ?int
                 bool is_optional;
@@ -347,16 +359,12 @@ namespace AST
                 Unop type;
                 Expression* expr;
             } unop;
-            Body_Node bake_body; 
+            Function_Body bake_body; 
             struct {
                 Expression* expr;
                 Call_Node* call_node;
                 bool is_dot_call;
             } call;
-            struct {
-                Expression* type_expr;
-                Optional<Expression*> count_expr;
-            } new_expr;
             struct {
                 Call_Node* call_node;
                 bool is_dot_call;
@@ -377,20 +385,15 @@ namespace AST
                 String* name;
                 Expression* expr;
             } member_access;
-            Module* module;
-            Body_Node inferred_function_body;
-            struct {
-                Signature* signature;
-                Body_Node body;
-            } function;
-            Signature* function_signature;
+            Function_Body inferred_function_body;
+            Signature* function_pointer_signature;
             struct {
                 Optional<Expression*> type_expr;
                 Call_Node* call_node;
             } struct_initializer;
             struct {
                 Optional<Expression*> type_expr;
-                Dynamic_Array<Expression*> values;
+                Array<Expression*> values;
             } array_initializer;
             struct {
                 Expression* size_expr;
@@ -398,21 +401,15 @@ namespace AST
             } array_type;
             Expression* slice_type;
             struct {
-                Signature* signature;
-                Dynamic_Array<Structure_Member_Node*> members;
-                bool is_union;
-            } structure;
-            struct {
                 Path_Lookup* path_lookup;
                 Call_Node* call_node;
                 Optional<AST::Expression*> return_type;
             } instanciate;
             struct {
-                Optional<Path_Lookup*> path; // Is not available if parsing failed!
-                Dynamic_Array<Get_Overload_Argument*> arguments;
+                Path_Lookup* path; // Is not available if parsing failed!
+                Array<Get_Overload_Argument*> arguments;
                 bool is_poly;
             } get_overload;
-            Dynamic_Array<Enum_Member_Node*> enum_members;
         } options;
     };
 
@@ -420,7 +417,7 @@ namespace AST
     {
         Node base;
         Optional<Expression*> value; // Default-Case if value not available
-        Optional<Definition_Symbol*> variable_definition; // case .IPv4 => v4
+        Optional<Symbol_Node*> variable_definition; // case .IPv4 => v4
         Code_Block* block;
     };
 
@@ -432,7 +429,6 @@ namespace AST
         BINOP_ASSIGNMENT,
         EXPRESSION_STATEMENT,
         // Keyword Statements
-        IMPORT,
         DEFER,
         DEFER_RESTORE,
         IF_STATEMENT,
@@ -443,7 +439,6 @@ namespace AST
         BREAK_STATEMENT,
         CONTINUE_STATEMENT,
         RETURN_STATEMENT,
-        DELETE_STATEMENT
     };
 
     struct Statement
@@ -456,11 +451,11 @@ namespace AST
             Code_Block* block;
             Definition* definition;
             struct {
-                Dynamic_Array<Expression*> left_side;
-                Dynamic_Array<Expression*> right_side;
+                Expression* left_side;
+                Expression* right_side;
             } assignment;
             struct {
-                Definition_Symbol* loop_variable_definition;
+                Symbol_Node* loop_variable_definition;
                 Optional<Expression*> loop_variable_type;
                 Expression* initial_value;
                 Expression* condition;
@@ -468,8 +463,8 @@ namespace AST
                 Code_Block* body_block;
             } for_loop;
             struct {
-                Definition_Symbol* loop_variable_definition;
-                Optional<Definition_Symbol*> index_variable_definition;
+                Symbol_Node* loop_variable_definition;
+                Optional<Symbol_Node*> index_variable_definition;
                 Expression* expression;
                 Code_Block* body_block;
             } foreach_loop;
@@ -494,20 +489,16 @@ namespace AST
             } if_statement;
             struct {
                 Expression* condition;
-                Dynamic_Array<Switch_Case*> cases;
+                Array<Switch_Case*> cases;
                 Optional<String*> label;
             } switch_statement;
             Optional<String*> break_name;
             Optional<String*> continue_name;
             Optional<Expression*> return_value;
-            Expression* delete_expr;
-            Import* import_node;
         } options;
     };
 
-    void base_destroy(Node* node);
     Node* base_get_child(Node* node, int child_index);
-    void base_enumerate_children(Node* node, Dynamic_Array<Node*>* fill);
     void base_print(Node* node);
     void expression_append_to_string(AST::Expression* expr, String* str);
     void base_append_to_string(Node* base, String* str);
@@ -520,7 +511,7 @@ namespace AST
     {
         bool type_correct(Definition* base);
         bool type_correct(Get_Overload_Argument* base);
-        bool type_correct(Definition_Symbol* base);
+        bool type_correct(Symbol_Node* base);
         bool type_correct(Switch_Case* base);
         bool type_correct(Statement* base);
         bool type_correct(Signature* base);
@@ -528,16 +519,11 @@ namespace AST
         bool type_correct(Parameter* base);
         bool type_correct(Expression* base);
         bool type_correct(Enum_Member_Node* base);
-        bool type_correct(Module* base);
-        bool type_correct(Import* base);
         bool type_correct(Path_Lookup* base);
-        bool type_correct(Symbol_Lookup* base);
         bool type_correct(Code_Block* base);
-        bool type_correct(Custom_Operator_Node* base);
         bool type_correct(Structure_Member_Node* base);
         bool type_correct(Call_Node* base);
         bool type_correct(Subtype_Initializer* base);
-        bool type_correct(Extern_Import* base);
     }
 
     template<typename T>
@@ -548,10 +534,40 @@ namespace AST
         return result;
     }
 
-    template<typename T>
-    AST::Node* upcast(T* node) {
-        return &node->base;
-    }
-    AST::Node* upcast(Body_Node node);
+    Node* upcast(Definition* node);
+    Node* upcast(Get_Overload_Argument* node);
+    Node* upcast(Symbol_Node* node);
+    Node* upcast(Switch_Case* node);
+    Node* upcast(Statement* node);
+    Node* upcast(Signature* node);
+    Node* upcast(Argument* node);
+    Node* upcast(Parameter* node);
+    Node* upcast(Expression* node);
+    Node* upcast(Enum_Member_Node* node);
+    Node* upcast(Path_Lookup* node);
+    Node* upcast(Code_Block* node);
+    Node* upcast(Structure_Member_Node* node);
+    Node* upcast(Call_Node* node);
+    Node* upcast(Subtype_Initializer* node);
+
+    Node* upcast(Function_Body node);
+
+    Node* upcast(Definition_Custom_Operator* node);
+    Node* upcast(Definition_Function* node);
+    Node* upcast(Definition_Struct* node);
+    Node* upcast(Definition_Value* node);
+    Node* upcast(Definition_Import* node);
+    Node* upcast(Definition_Extern_Import* node);
+    Node* upcast(Definition_Enum* node);
+    Node* upcast(Definition_Module* node);
+
+    Definition* upcast_definition(Definition_Custom_Operator* node);
+    Definition* upcast_definition(Definition_Function* node);
+    Definition* upcast_definition(Definition_Struct* node);
+    Definition* upcast_definition(Definition_Value* node);
+    Definition* upcast_definition(Definition_Import* node);
+    Definition* upcast_definition(Definition_Extern_Import* node);
+    Definition* upcast_definition(Definition_Enum* node);
+    Definition* upcast_definition(Definition_Module* node);
 }
 

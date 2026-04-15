@@ -109,3 +109,11 @@ template<typename T, typename Comparator>
 void array_sort(Array<T> array, Comparator comparator) {
     std::sort(&array.data[0], &array.data[array.size], comparator);
 }
+
+template<typename T>
+Array<T> array_create_empty() {
+	Array<T> result;
+	result.data = nullptr;
+	result.size = 0;
+	return result;
+}

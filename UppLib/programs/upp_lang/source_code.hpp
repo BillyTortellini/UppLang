@@ -17,9 +17,7 @@ struct Expression_Info;
 
 namespace AST
 {
-    struct Symbol_Lookup;
     struct Node;
-    struct Module;
     struct Expression;
     struct Call_Node;
 }

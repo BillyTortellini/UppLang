@@ -10,6 +10,7 @@ struct Datatype;
 struct Analysis_Pass;
 struct Type_System;
 struct Upp_Function;
+struct Symbol;
 struct Upp_Global;
 
 
@@ -339,7 +340,7 @@ struct IR_Generator
     Dynamic_Array<IR_Data_Access*> data_accesses;
     IR_Data_Access nothing_access;
 
-    Hashtable<AST::Definition_Symbol*, IR_Data_Access*> variable_mapping;
+    Hashtable<Symbol*, IR_Data_Access*> variable_mapping;
     Hashtable<AST::Code_Block*, Loop_Increment> loop_increment_instructions; // For for loops
 
     Dynamic_Array<Defer_Item> defer_stack;

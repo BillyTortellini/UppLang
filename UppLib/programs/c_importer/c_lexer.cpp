@@ -78,7 +78,7 @@ const char* token_type_to_string(C_Token_Type type)
     case C_Token_Type::COMMA: return "COMMA";
     case C_Token_Type::DOUBLE_COLON: return "DOUBLE_COLON";
     case C_Token_Type::INFER_ASSIGN: return "INFER_ASSIGN";
-    case C_Token_Type::ARROW: return "ARROW";
+    case C_Token_Type::ARROW: return "FUNCTION_ARROW";
     case C_Token_Type::SEMICOLON: return "SEMICOLON";
     case C_Token_Type::OPEN_PARENTHESIS: return "OPEN_BRACKET";
     case C_Token_Type::CLOSED_PARENTHESIS: return "CLOSED_BRACKET";

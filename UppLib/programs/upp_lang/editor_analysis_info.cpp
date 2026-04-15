@@ -110,7 +110,7 @@ Text_Range text_index_to_word_range(Text_Index pos, Source_Code* code)
 
 
 void find_editor_infos_recursive(
-	AST::Node* node, Compilation_Unit* unit, Dynamic_Array<Analysis_Pass*>& active_passes, int tree_depth, Compilation_Data* compilation_data)
+	AST::Node* node, Compilation_Unit* unit, DynArray<Analysis_Pass*>& active_passes, int tree_depth, Compilation_Data* compilation_data)
 {
 	auto code = unit->code;
 	auto type_system = compilation_data->type_system;
@@ -121,25 +121,64 @@ void find_editor_infos_recursive(
 	if (node_passes_opt != nullptr) {
 		auto new_passes = node_passes_opt->passes;
 		for (int i = 0; i < new_passes.size; i++) {
-			dynamic_array_push_back(&active_passes, new_passes[i]);
+			active_passes.push_back(new_passes[i]);
 		}
 	}
 
 	switch (node->type)
 	{
-	case AST::Node_Type::MODULE:
+	case AST::Node_Type::DEFINITION:
 	{
+		AST::Definition* definition = downcast<AST::Definition>(node);
+		if (definition->type != AST::Definition_Type::MODULE) break;
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
-			auto info = pass_get_node_info(pass, AST::downcast<AST::Module>(node), Info_Query::TRY_READ, compilation_data);
-			if (info == 0) { break; }
-			Symbol_Table_Range table_range;
-			table_range.range = node->bounding_range;
-			table_range.symbol_table = info->upp_module->symbol_table;
-			table_range.tree_depth = tree_depth;
-			table_range.pass = pass;
-			dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+
+			Symbol_Table* symbol_table = nullptr;
+			switch (definition->type)
+			{
+			case AST::Definition_Type::STRUCT: 
+			{
+				if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_BODY) {
+					symbol_table = ((Workload_Structure_Body*)(pass->origin_workload))->symbol_table;
+				}
+				else if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_HEADER) {
+					symbol_table = ((Workload_Structure_Header*)(pass->origin_workload))->symbol_table;
+				}
+				break;
+			}
+			case AST::Definition_Type::FUNCTION: 
+			{
+				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
+					symbol_table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
+				}
+				else if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
+					symbol_table = ((Workload_Function_Body*)(pass->origin_workload))->parameter_table;
+				}
+				break;
+			}
+			case AST::Definition_Type::MODULE: 
+			{
+				auto info = pass_get_node_info(pass, definition, Info_Query::TRY_READ, compilation_data);
+				if (info == nullptr) { continue; }
+				if (info->upp_module == nullptr) { continue; }
+				symbol_table = info->upp_module->symbol_table;
+				break;
+			}
+			default: break;
+			}
+
+			if (symbol_table != nullptr)
+			{
+				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
+				Symbol_Table_Range table_range;
+				table_range.range = node->bounding_range;
+				table_range.symbol_table = table;
+				table_range.tree_depth = tree_depth;
+				table_range.pass = pass;
+				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
+			}
 		}
 		break;
 	}
@@ -179,37 +218,6 @@ void find_editor_infos_recursive(
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
-
-			Symbol_Table* symbol_table = nullptr;
-			if (expr->type == AST::Expression_Type::FUNCTION) 
-			{
-				if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_HEADER) {
-					symbol_table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
-				}
-				else if (pass->origin_workload->type == Analysis_Workload_Type::FUNCTION_BODY) {
-					symbol_table = ((Workload_Function_Body*)(pass->origin_workload))->parameter_table;
-				}
-			}
-			else if (expr->type == AST::Expression_Type::STRUCTURE_TYPE)
-			{
-				if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_BODY) {
-					symbol_table = ((Workload_Structure_Body*)(pass->origin_workload))->symbol_table;
-				}
-				else if (pass->origin_workload->type == Analysis_Workload_Type::STRUCT_HEADER) {
-					symbol_table = ((Workload_Structure_Header*)(pass->origin_workload))->symbol_table;
-				}
-			}
-
-			if (symbol_table != nullptr)
-			{
-				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
-				Symbol_Table_Range table_range;
-				table_range.range = node->bounding_range;
-				table_range.symbol_table = table;
-				table_range.tree_depth = tree_depth;
-				table_range.pass = pass;
-				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
-			}
 
 			Expression_Info* info = pass_get_node_info(pass, expr, Info_Query::TRY_READ, compilation_data);
 			if (info == nullptr) continue;
@@ -353,87 +361,35 @@ void find_editor_infos_recursive(
 		add_semantic_info(analysis_item_index, Editor_Info_Type::ARGUMENT, option, nullptr, compilation_data);
 		break;
 	}
-	case AST::Node_Type::CONTEXT_CHANGE:
+	case AST::Node_Type::SYMBOL_NODE:
 	{
-		auto line = source_code_get_line(code, node->range.start.line);
-		// Not sure what I was doing here
-
-		// if (node->range.start.token + 1 < line->tokens.size) {
-		// 	if (line->tokens[node->range.start.token + 1].type == Token_Type::IDENTIFIER) {
-		// 		Token_Range range = token_range_make(node->range.start, node->range.start);
-		// 		range.start.token += 1;
-		// 		range.end.token += 2;
-		// 		add_markup(range, code, tree_depth, Syntax_Color::VARIABLE, compilation_data);
-		// 	}
-		// }
-		break;
-	}
-	case AST::Node_Type::DEFINITION_SYMBOL:
-	case AST::Node_Type::SYMBOL_LOOKUP:
-	case AST::Node_Type::PARAMETER:
-	{
-		bool is_definition = false;
+		AST::Symbol_Node* symbol_node = downcast<AST::Symbol_Node>(node);
+		bool is_definition = symbol_node->is_definition;
 		Text_Range range = text_index_to_word_range(node->range.start, code);
-		if (node->type == AST::Node_Type::PARAMETER) 
-		{
-			auto param = downcast<AST::Parameter>(node);
-			int offset = 0;
-			if (param->is_return_type) break;
-			if (param->is_comptime) {
-				range.start.character += 1;
-			}
-			range = text_index_to_word_range(range.start, code);
-			
-			is_definition = true;
-
-			add_markup(range, code, tree_depth, Syntax_Color::VALUE_DEFINITION, compilation_data);
-		}
 
 		int analysis_item_index = add_code_analysis_item(range, code, tree_depth, compilation_data);
-
 		for (int i = 0; i < active_passes.size; i++)
 		{
 			auto pass = active_passes[i];
 
 			Symbol* symbol = nullptr;
-			AST::Symbol_Lookup* lookup = nullptr;
-			bool add_color = true;
-			switch (node->type)
-			{
-			case AST::Node_Type::DEFINITION_SYMBOL: {
-				is_definition = true;
-				auto info = pass_get_node_info(pass, AST::downcast<AST::Definition_Symbol>(node), Info_Query::TRY_READ, compilation_data);
-				symbol = info == 0 ? 0 : info->symbol;
-				break;
-			}
-			case AST::Node_Type::SYMBOL_LOOKUP: {
-				lookup = AST::downcast<AST::Symbol_Lookup>(node);
-				if (lookup->is_root_module) {
-					add_color = false;
-				}
-				auto info = pass_get_node_info(pass, lookup, Info_Query::TRY_READ, compilation_data);
-				symbol = info == nullptr ? 0 : info->symbol;
-				break;
-			}
-			case AST::Node_Type::PARAMETER:
-			{
-				auto info = pass_get_node_info(pass, AST::downcast<AST::Parameter>(node), Info_Query::TRY_READ, compilation_data);
-				symbol = info == nullptr ? 0 : info->symbol;
-				break;
-			}
-			default: panic("");
+			Symbol_Node_Info* info = pass_get_node_info(pass, symbol_node, Info_Query::TRY_READ, compilation_data);
+			if (info != nullptr){
+				symbol = info->symbol;
 			}
 
-			if (symbol != nullptr) {
+			if (symbol != nullptr) 
+			{
 				// Add symbol lookup info
 				Editor_Info_Option option;
 				option.symbol_info.symbol = symbol;
 				option.symbol_info.is_definition = is_definition;
 				option.symbol_info.pass = pass;
-				option.symbol_info.add_color = add_color;
+				option.symbol_info.add_color = !symbol_node->is_root_lookup;
 				add_semantic_info(analysis_item_index, Editor_Info_Type::SYMBOL_LOOKUP, option, pass, compilation_data);
 			}
-			else if (node->type == AST::Node_Type::PARAMETER) {
+			else if (symbol_node->is_definition) 
+			{
 				Editor_Info_Option option;
 				option.markup_color = Syntax_Color::VALUE_DEFINITION;
 				add_semantic_info(analysis_item_index, Editor_Info_Type::MARKUP, option, pass, compilation_data);
@@ -452,8 +408,7 @@ void find_editor_infos_recursive(
 		index += 1;
 		child = AST::base_get_child(node, index);
 	}
-
-	dynamic_array_rollback_to_size(&active_passes, active_pass_count_before);
+	active_passes.rollback_to_size(active_pass_count_before);
 }
 
 struct Semantic_Info_Comparator
@@ -466,19 +421,6 @@ struct Semantic_Info_Comparator
 		return a.analysis_item_index < b.analysis_item_index;
 	}
 };
-
-Upp_Module* compilation_unit_to_module(Compilation_Unit* compilation_unit, Compilation_Data* compilation_data)
-{
-	Node_Passes* passes = hashtable_find_element(&compilation_data->ast_to_pass_mapping, upcast(compilation_unit->root));
-	if (passes == nullptr) return nullptr;
-	if (passes->passes.size == 0) return nullptr;
-	AST_Info_Key key;
-	key.base = upcast(compilation_unit->root);
-	key.pass = passes->passes[0];
-	Analysis_Info** info = hashtable_find_element(&compilation_data->ast_to_info_mapping, key);
-	if (info == nullptr) return nullptr;
-	return (*info)->module_info.upp_module;
-}
 
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data)
 {
@@ -499,15 +441,13 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		}
 
 		// Store nodes
-		dynamic_array_append_other(&compilation_data->allocated_nodes, &unit->allocated_nodes);
-		dynamic_array_reset(&unit->allocated_nodes);
-
-		if (compilation_unit_to_module(unit, compilation_data) == nullptr) {
+		if (unit->upp_module == nullptr) {
 			continue;
 		}
 
-		Dynamic_Array<Analysis_Pass*> active_passes = dynamic_array_create<Analysis_Pass*>(0);
-		SCOPE_EXIT(dynamic_array_destroy(&active_passes));
+		auto checkpoint = compilation_data->tmp_arena.make_checkpoint();
+		SCOPE_EXIT(checkpoint.rewind());
+		DynArray<Analysis_Pass*> active_passes = DynArray<Analysis_Pass*>::create(&compilation_data->tmp_arena);
 		find_editor_infos_recursive(upcast(unit->root), unit, active_passes, 0, compilation_data);
 
 		// Add parser errors
@@ -635,8 +575,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
 
 		result->error_symbol = nullptr; // Initialized after this block
-		result->global_allocator = nullptr;
-		result->system_allocator = nullptr;
 		result->code_block_comptimes = hashtable_create_pointer_empty<AST::Code_Block*, Symbol_Table*>(1);
 		result->functions = dynamic_array_create<Upp_Function*>();
 		result->globals = dynamic_array_create<Upp_Global*>();
@@ -649,7 +587,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->allocated_symbols = dynamic_array_create<Symbol*>();
 		result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
 		result->allocated_custom_operator_tables = dynamic_array_create<Custom_Operator_Table*>();
-		result->allocated_nodes = dynamic_array_create<AST::Node*>();
 		result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 		result->custom_operator_deduplication = hashtable_create_empty<Custom_Operator, Custom_Operator*>(16, hash_custom_operator, equals_custom_operator);
 		result->bytecode = DynArray<Bytecode_Instruction>::create(&result->arena);
@@ -806,30 +743,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			//       that isn't connected to anything or not adding the error symbol to any table.
 			compilation_data->error_symbol = define_type_symbol("0_ERROR_SYMBOL", types.unknown_type);
 			compilation_data->error_symbol->type = Symbol_Type::ERROR_SYMBOL;
-
-			// Add global allocator symbol
-			auto global_allocator_symbol = symbol_table_define_symbol(
-				builtin_table,
-				identifier_pool_add(id_pool, string_create_static("global_allocator")),
-				Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL,
-				compilation_data
-			);
-			compilation_data->global_allocator = compilation_data_add_global_assert_type_finished(
-				compilation_data,
-				upcast(type_system_make_pointer(type_system, upcast(types.allocator))), global_allocator_symbol, false
-			);
-			global_allocator_symbol->options.global = compilation_data->global_allocator;
-
-			// Add system allocator
-			auto default_allocator_symbol = symbol_table_define_symbol(
-				builtin_table,
-				identifier_pool_add(id_pool, string_create_static("system_allocator")),
-				Symbol_Type::GLOBAL, 0, Symbol_Access_Level::GLOBAL, compilation_data
-			);
-			compilation_data->system_allocator = compilation_data_add_global_assert_type_finished(
-				compilation_data, upcast(types.allocator), default_allocator_symbol, false
-			);
-			default_allocator_symbol->options.global = compilation_data->system_allocator;
 		}
 
 		// Predefined Callables (Hardcoded and context change)
@@ -1058,12 +971,11 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 	Compilation_Unit* unit = new Compilation_Unit;
 	unit->filepath = full_file_path;
 	full_file_path.capacity = 0;
-	unit->allocated_nodes = dynamic_array_create<AST::Node*>();
-	unit->parser_errors   = dynamic_array_create<Error_Message>();
+	unit->parser_errors = array_create_empty<Error_Message>();
 
 	unit->code = source_code;
 	unit->root = nullptr;
-	unit->module = nullptr;
+	unit->upp_module = nullptr;
 
 	dynamic_array_push_back(&compilation_data->compilation_units, unit);
 
@@ -1086,7 +998,7 @@ void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_dat
 
 	// Check if main is defined
 	DynArray<Symbol*> main_symbols = symbol_table_query_id(
-		compilation_unit_to_module(compilation_data->main_unit, compilation_data)->symbol_table, ids.main, 
+		compilation_data->main_unit->upp_module->symbol_table, ids.main, 
 		symbol_query_info_make(Symbol_Access_Level::GLOBAL, Import_Type::NONE, false), &arena
 	);
 	if (main_symbols.size == 0) {
@@ -1096,19 +1008,19 @@ void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_dat
 	if (main_symbols.size > 1) {
 		for (int i = 0; i < main_symbols.size; i++) {
 			auto symbol = main_symbols[i];
-			log_semantic_error(semantic_context, "Multiple main functions found!", symbol->definition_node, Node_Section::FIRST_TOKEN);
+			log_semantic_error(semantic_context, "Multiple main functions found!", upcast(symbol->definition_node), Node_Section::FIRST_TOKEN);
 		}
 		return;
 	}
 
 	Symbol* main_symbol = main_symbols[0];
 	if (main_symbol->type != Symbol_Type::FUNCTION) {
-		log_semantic_error(semantic_context, "Main Symbol must be a function", main_symbol->definition_node, Node_Section::FIRST_TOKEN);
+		log_semantic_error(semantic_context, "Main Symbol must be a function", upcast(main_symbol->definition_node), Node_Section::FIRST_TOKEN);
 		log_error_info_symbol(semantic_context, main_symbol);
 		return;
 	}
 	if (main_symbol->options.function->signature != compilation_data->empty_call_signature) {
-		log_semantic_error(semantic_context, "Main function does not have correct signature", main_symbol->definition_node, Node_Section::FIRST_TOKEN);
+		log_semantic_error(semantic_context, "Main function does not have correct signature", upcast(main_symbol->definition_node), Node_Section::FIRST_TOKEN);
 		log_error_info_symbol(semantic_context, main_symbol);
 		return;
 	}
@@ -1143,12 +1055,6 @@ void compilation_data_destroy(Compilation_Data* data)
 	dynamic_array_destroy(&data->semantic_infos);
 	hashtable_destroy(&data->custom_operator_deduplication);
 	hashtable_destroy(&data->code_block_comptimes);
-
-	for (int i = 0; i < data->allocated_nodes.size; i++) {
-		AST::Node* node = data->allocated_nodes[i];
-		AST::base_destroy(node);
-	}
-	dynamic_array_destroy(&data->allocated_nodes);
 
 	for (int i = 0; i < data->semantic_errors.size; i++) {
 		dynamic_array_destroy(&data->semantic_errors[i].information);

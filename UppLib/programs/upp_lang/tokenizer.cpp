@@ -35,11 +35,11 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::LITERAL_NULL: return "null";
 
     case Token_Type::_OPERATORS_START_: return "_OPERATORS_START_";
-    case Token_Type::ADDITION: return "+";
-    case Token_Type::SUBTRACTION: return "-";
-    case Token_Type::DIVISON: return "/";
-    case Token_Type::MULTIPLY: return "*";
-    case Token_Type::MODULO: return "%";
+    case Token_Type::PLUS: return "+";
+    case Token_Type::MINUS: return "-";
+    case Token_Type::SLASH: return "/";
+    case Token_Type::ASTERIX: return "*";
+    case Token_Type::PERCENTAGE: return "%";
 
     case Token_Type::EQUALS: return "==";
     case Token_Type::NOT_EQUALS: return "!=";
@@ -71,15 +71,13 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::APOSTROPHE: return "'";
     case Token_Type::QUESTION_MARK: return "?";
     case Token_Type::OPTIONAL_POINTER: return "?*";
-    case Token_Type::DOT_CALL: return "->";
+    case Token_Type::POSTFIX_CALL_ARROW: return "->";
     case Token_Type::SUBTYPE_ACCESS: return ".>";
     case Token_Type::BASETYPE_ACCESS: return ".<";
     case Token_Type::ADDRESS_OF: return "-*";
     case Token_Type::DEREFERENCE: return "-&";
     case Token_Type::OPTIONAL_DEREFERENCE: return "-?&";
-    case Token_Type::DEFINE_COMPTIME: return "::";
-    case Token_Type::DEFINE_INFER: return ":=";
-    case Token_Type::ARROW: return "=>";
+    case Token_Type::FUNCTION_ARROW: return "=>";
     case Token_Type::DOLLAR: return "$";
     case Token_Type::ASSIGN: return "=";
     case Token_Type::ASSIGN_ADD: return "+=";
@@ -95,39 +93,35 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::_KEYWORDS_START_: return "_KEYWORDS_START_";
 
     case Token_Type::FUNCTION_KEYWORD: return "fn";
-    case Token_Type::FUNCTION_POINTER_KEYWORD: return "fn_ptr";
+    case Token_Type::MODULE: return "module";
+    case Token_Type::STRUCT: return "struct";
+    case Token_Type::UNION: return "union";
+    case Token_Type::ENUM: return "enum";
+    case Token_Type::VAR: return "var";
+    case Token_Type::GLOBAL_KEYWORD: return "global";
+    case Token_Type::CONST_KEYWORD: return "const";
+    case Token_Type::OPERATORS: return "operators";
+    case Token_Type::IMPORT: return "import";
+    case Token_Type::AS: return "as";
+    case Token_Type::EXTERN: return "exter";
     case Token_Type::RETURN: return "return";
     case Token_Type::BREAK: return "break";
     case Token_Type::CONTINUE: return "continue";
     case Token_Type::IF: return "if";
     case Token_Type::ELSE: return "else";
     case Token_Type::LOOP: return "loop";
+    case Token_Type::IN_KEYWORD: return "in";
     case Token_Type::SWITCH: return "switch";
     case Token_Type::DEFAULT: return "default";
-    case Token_Type::MODULE: return "module";
-    case Token_Type::NEW: return "new";
-    case Token_Type::STRUCT: return "struct";
-    case Token_Type::UNION: return "union";
-    case Token_Type::ENUM: return "enum";
-    case Token_Type::DELETE_KEYWORD: return "delete";
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";
     case Token_Type::CAST: return "cast";
+
     case Token_Type::BAKE: return "#bake";
     case Token_Type::INSTANCIATE: return "#instanciate";
     case Token_Type::GET_OVERLOAD: return "#get_overload";
     case Token_Type::GET_OVERLOAD_POLY: return "#get_overload_poly";
     case Token_Type::EXPLICIT_BLOCK: return "#block";
-    case Token_Type::IMPORT: return "import";
-    case Token_Type::AS: return "as";
-    case Token_Type::IN_KEYWORD: return "in";
-    case Token_Type::EXTERN: return "extern";
-
-    case Token_Type::ADD_BINOP: return "#add_binop";
-    case Token_Type::ADD_UNOP: return "#add_unop";
-    case Token_Type::ADD_CAST: return "#add_cast";
-    case Token_Type::ADD_ARRAY_ACCESS: return "#add_array_access";
-    case Token_Type::ADD_ITERATOR: return "#add_iterator";
 
     case Token_Type::_KEYWORDS_END_: return "_KEYWORDS_END_";
 

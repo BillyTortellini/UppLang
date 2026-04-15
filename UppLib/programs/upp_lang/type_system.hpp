@@ -21,6 +21,7 @@ struct Call_Signature;
 struct Upp_Struct;
 struct Workload_Structure_Body;
 struct Internal_Type_Information;
+struct Type_System;
 
 
 
@@ -217,9 +218,6 @@ struct Datatype_Format
     Syntax_Color highlight_color;
     bool append_struct_poly_parameter_values;
 };
-Datatype_Format datatype_format_make_default();
-
-void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format = datatype_format_make_default());
 
 struct Datatype_Value_Format
 {
@@ -233,10 +231,12 @@ struct Datatype_Value_Format
     int max_indentation; // Should always be used, as we could have recursive datastructures
     int indentation_spaces;
 };
+
+Datatype_Format datatype_format_make_default();
 Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int max_indentation_before_single_line);
 Datatype_Value_Format datatype_value_format_single_line();
 
-// We have both local and pointer memory sources, to facilitate all use-cases
+void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format = datatype_format_make_default());
 void datatype_append_value_to_string(
     Datatype* type, String* string, byte* value_ptr, Datatype_Value_Format format,
     int indentation, Memory_Source local_memory, Memory_Source pointer_memory, Type_System* type_system
@@ -497,7 +497,6 @@ inline Datatype* upcast(Datatype_Slice* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Primitive* value) { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pattern_Variable* value)   { return (Datatype*)value; }
-inline Datatype* upcast(Datatype_Struct_Pattern* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
 inline Datatype_Type get_datatype_type(Datatype_Function_Pointer* unused) { return Datatype_Type::FUNCTION_POINTER; }

@@ -25,7 +25,7 @@ Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol
     Symbol_Table* result = symbol_table_create(compilation_data);
 	result->parent_table = parent_table;
 	result->parent_access_level = parent_access_level;
-    result->custom_operator_table = parent_table->custom_operator_table;
+    result->custom_operator_table = nullptr;
     return result;
 }
 
@@ -79,7 +79,7 @@ void symbol_destroy(Symbol* symbol) {
 }
 
 Symbol* symbol_table_define_symbol(
-	Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Node* definition_node, Symbol_Access_Level access_level,
+	Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
 	Compilation_Data* compilation_data)
 {
     assert(id != 0, "HEY");
@@ -91,17 +91,8 @@ Symbol* symbol_table_define_symbol(
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
     new_sym->access_level = access_level;
-    new_sym->references = dynamic_array_create<AST::Symbol_Lookup*>();
-
+    new_sym->references = dynamic_array_create<AST::Symbol_Node*>();
     new_sym->definition_node = definition_node;
-    if (definition_node != nullptr) {
-        new_sym->definition_unit = compiler_find_ast_compilation_unit(compilation_data, new_sym->definition_node);
-		new_sym->definition_text_index = definition_node->range.start;
-    }
-    else {
-        new_sym->definition_unit = nullptr;
-        new_sym->definition_text_index = text_index_make(0, 0);
-    }
 
     // Check if symbol is already defined
     bool add_to_symbol_table = true;
@@ -382,7 +373,7 @@ void symbol_type_append_to_string(Symbol_Type type, String* string)
 	case Symbol_Type::POLYMORPHIC_FUNCTION:
 		string_append_formated(string, "Polymorphic Function");
 		break;
-	case Symbol_Type::DEFINITION_UNFINISHED:
+	case Symbol_Type::WAITING_FOR_WORKLOAD:
 		string_append_formated(string, "Definition Unfinished");
 		break;
 	case Symbol_Type::PATTERN_VARIABLE:

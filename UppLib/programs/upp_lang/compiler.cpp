@@ -56,11 +56,6 @@ void compilation_unit_destroy(Compilation_Unit* unit)
         source_code_destroy(unit->code);
         unit->code = nullptr;
     }
-    dynamic_array_destroy(&unit->parser_errors);
-    for (int i = 0; i < unit->allocated_nodes.size; i++) {
-        AST::base_destroy(unit->allocated_nodes[i]);
-    }
-    dynamic_array_destroy(&unit->allocated_nodes);
     string_destroy(&unit->filepath);
     delete unit;
 }
@@ -73,23 +68,14 @@ void compiler_parse_unit(Compilation_Unit* unit, Compilation_Data* compilation_d
     Timing_Task before = compilation_data->task_current;
     SCOPE_EXIT(compilation_data_switch_timing_task(compilation_data, before));
 
-    // Reset parsing data
-    for (int i = 0; i < unit->allocated_nodes.size; i++) {
-        AST::base_destroy(unit->allocated_nodes[i]);
-    }
-    dynamic_array_reset(&unit->allocated_nodes);
-    dynamic_array_reset(&unit->parser_errors);
-    unit->root = 0;
-
+    unit->root = nullptr;
     if (!enable_parsing) {
         return;
     }
 
     // Parse code
     compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
-    Arena arena = Arena::create(256);
-    SCOPE_EXIT(arena.destroy());
-    Parser::execute_clean(unit, &compilation_data->identifier_pool, &arena);
+    Parser::execute_clean(unit, &compilation_data->identifier_pool, &compilation_data->arena, &compilation_data->tmp_arena);
 }
 
 void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type)
@@ -243,13 +229,13 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
     }
 }
 
-Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Import* import_node)
+Compilation_Unit* compiler_import_file(Compilation_Data* compilation_data, AST::Definition_Import* import_node)
 {
     assert(import_node->operator_type == AST::Import_Operator::FILE_IMPORT, "");
     String* filename = import_node->options.file_name;
 
     // Resolve file-path (E.g. imports are relative from the file they are in)
-    auto current_unit = compiler_find_ast_compilation_unit(compilation_data, &import_node->base);
+    auto current_unit = compiler_find_ast_compilation_unit(compilation_data, upcast(import_node));
     String path = string_copy(current_unit->filepath);
     SCOPE_EXIT(string_destroy(&path));
     file_io_relative_to_full_path(&path);
@@ -355,7 +341,7 @@ bool compilation_data_errors_occured(Compilation_Data* compilation_data)
     for (int i = 0; i < compilation_data->compilation_units.size; i++) 
     {
         auto unit = compilation_data->compilation_units[i];
-        if (unit->module == nullptr) continue; // Checking if unit was analysed
+        if (unit->upp_module == nullptr) continue; // Checking if unit was analysed
         if (unit->parser_errors.size > 0) return true;
     }
     return false;
@@ -366,19 +352,22 @@ Compilation_Unit* compiler_find_ast_compilation_unit(Compilation_Data* compilati
     while (base->parent != nullptr) {
         base = base->parent;
     }
+    assert(base->type == AST::Node_Type::DEFINITION, "Root must be definition module");
+    AST::Definition* definition = downcast<AST::Definition>(base);
+    assert(definition->type == AST::Definition_Type::MODULE, "Root must be definition module");
+
     for (int i = 0; i < compilation_data->compilation_units.size; i++) {
         auto unit = compilation_data->compilation_units[i];
-        if (upcast(unit->root) == base) {
+        if (unit->root == &definition->options.module) {
             return unit;
         }
     }
-    return 0;
+    return nullptr;
 }
 
 bool compilation_unit_was_used_in_compile(Compilation_Unit* compilation_unit, Compilation_Data* compilation_data)
 {
-    if (compilation_unit->root == nullptr) return false;
-	return hashtable_find_element(&compilation_data->ast_to_pass_mapping, upcast(compilation_unit->root)) != nullptr;
+    return compilation_unit->upp_module != nullptr;
 }
 
 

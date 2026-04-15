@@ -542,7 +542,7 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
         if (!polymorphic->is_reference) {
             string->append("$");
         }
-		string->append(*polymorphic->variable->name);
+		string->append(*polymorphic->variable->symbol_node->name);
         break;
     }
     case Datatype_Type::ARRAY: {

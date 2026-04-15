@@ -781,11 +781,7 @@ Case_Info* get_info(AST::Switch_Case* node) {
     return pass_get_node_info(ir_generator->current_pass, node, Info_Query::READ_NOT_NULL, ir_generator->compilation_data);
 }
 
-Symbol* get_info(AST::Path_Lookup* node) {
-    return pass_get_node_info(ir_generator->current_pass, node, Info_Query::READ_NOT_NULL, ir_generator->compilation_data)->symbol;
-}
-
-Symbol* get_info(AST::Definition_Symbol* node) {
+Symbol* get_info(AST::Symbol_Node* node) {
     return pass_get_node_info(ir_generator->current_pass, node, Info_Query::READ_NOT_NULL, ir_generator->compilation_data)->symbol;
 }
 
@@ -1550,7 +1546,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
     case AST::Expression_Type::PATH_LOOKUP:
     {
-        auto symbol = get_info(expression->options.path_lookup);
+        auto symbol = get_info(expression->options.path_lookup->last());
         IR_Data_Access* result_access;
         switch (symbol->type)
         {
@@ -1559,7 +1555,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             break;
         }
         case Symbol_Type::VARIABLE: {
-            result_access = *hashtable_find_element(&ir_generator->variable_mapping, AST::downcast<AST::Definition_Symbol>(symbol->definition_node));
+            result_access = *hashtable_find_element(&ir_generator->variable_mapping, symbol);
             break;
         }
         case Symbol_Type::PARAMETER: {
@@ -1753,79 +1749,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         assert(info->specifics.member_access.type == Member_Access_Type::STRUCT_MEMBER_ACCESS, "");
         return move_access_to_destination(ir_data_access_create_member(source, info->specifics.member_access.options.member));
     }
-    case AST::Expression_Type::NEW_EXPR:
-    {
-        auto& new_expr = expression->options.new_expr;
-        auto type_info = get_info(new_expr.type_expr);
-        assert(type_info->result_type == Expression_Result_Type::DATATYPE, "Hey");
-        assert(type_info->options.datatype->memory_info.available, "");
-        auto& mem = type_info->options.datatype->memory_info.value;
-
-        auto allocate_from_global_allocator = [](IR_Data_Access* size, IR_Data_Access* alignment, IR_Data_Access* destination)
-        {
-            auto& types = ir_generator->compilation_data->type_system->predefined_types;
-
-            IR_Data_Access* allocator_ptr_access = ir_data_access_create_global(ir_generator->compilation_data->global_allocator);
-            IR_Data_Access* allocator_access = ir_data_access_create_dereference(allocator_ptr_access);
-            IR_Data_Access* alloc_fn_access = ir_data_access_create_member(allocator_access, types.allocator->members[0]);
-
-            IR_Instruction alloc_instr;
-            alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            alloc_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-            alloc_instr.options.call.options.pointer_access = alloc_fn_access;
-            alloc_instr.options.call.destination = destination;
-            alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
-            dynamic_array_push_back(&alloc_instr.options.call.arguments, allocator_ptr_access);
-            dynamic_array_push_back(&alloc_instr.options.call.arguments, size);
-            dynamic_array_push_back(&alloc_instr.options.call.arguments, alignment);
-            add_instruction(alloc_instr);
-        };
-
-        if (new_expr.count_expr.available)
-        {
-            assert(result_type->type == Datatype_Type::SLICE, "HEY");
-            auto slice_type = downcast<Datatype_Slice>(result_type);
-            IR_Data_Access* slice_access = make_destination_access_on_demand(result_type);
-            IR_Data_Access* slice_data_access = ir_data_access_create_member(slice_access, slice_type->data_member);
-            IR_Data_Access* slice_size_access = ir_data_access_create_member(slice_access, slice_type->size_member);
-
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.source = ir_generator_generate_expression(new_expr.count_expr.value);
-            move_instr.options.move.destination = slice_size_access;
-            add_instruction(move_instr);
-
-            IR_Instruction mult_instr;
-            mult_instr.type = IR_Instruction_Type::BINARY_OP;
-            mult_instr.options.binary_op.type = IR_Binop::MULTIPLICATION;
-            mult_instr.options.binary_op.destination = ir_data_access_create_intermediate(upcast(types.u64_type));
-            mult_instr.options.binary_op.operand_left = slice_size_access;
-            mult_instr.options.binary_op.operand_right = ir_data_access_create_constant_usize(mem.size);
-            add_instruction(mult_instr);
-
-            u32 alignment_u32 = (u32)mem.alignment;
-            allocate_from_global_allocator(
-                mult_instr.options.binary_op.destination,
-                ir_data_access_create_constant(upcast(types.u32_type), array_create_static_as_bytes(&alignment_u32, 1)),
-                slice_data_access
-            );
-            return slice_access;
-        }
-        else
-        {
-            IR_Data_Access* destination = make_destination_access_on_demand(result_type);
-            u32 alignment_u32 = (u32)mem.alignment;
-            allocate_from_global_allocator(
-                ir_data_access_create_constant_usize(mem.size),
-                ir_data_access_create_constant(upcast(types.u32_type), array_create_static_as_bytes(&alignment_u32, 1)),
-                destination
-            );
-            return destination;
-        }
-
-        panic("Unreachable");
-        break;
-    }
     case AST::Expression_Type::CAST: 
     {
         auto call_info = get_info(expression->options.cast.call_node);
@@ -1840,13 +1763,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
     case AST::Expression_Type::POINTER_TYPE:
     case AST::Expression_Type::BAKE:
-    case AST::Expression_Type::ENUM_TYPE:
     case AST::Expression_Type::ERROR_EXPR:
-    case AST::Expression_Type::FUNCTION:
-    case AST::Expression_Type::FUNCTION_SIGNATURE:
+    case AST::Expression_Type::FUNCTION_POINTER_TYPE:
     case AST::Expression_Type::LITERAL_READ:
-    case AST::Expression_Type::MODULE:
-    case AST::Expression_Type::STRUCTURE_TYPE:
     case AST::Expression_Type::AUTO_ENUM:
     case AST::Expression_Type::ARRAY_TYPE: {
         panic("A different path should have handled this before!");
@@ -2032,50 +1951,33 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     case AST::Statement_Type::DEFINITION:
     {
         auto definition = statement->options.definition;
-        if (definition->is_comptime) {
+        if (definition->type != AST::Definition_Type::VARIABLE) {
             // Comptime definitions should be already handled
             return;
         }
 
-        IR_Data_Access* broadcast_value;
-        Datatype* broadcast_type;
-        if (definition->values.size == 1 && definition->symbols.size > 1) {
-            broadcast_value = ir_generator_generate_expression(definition->values[0]);
-            broadcast_type = broadcast_value->datatype;
-        }
+        AST::Definition_Value* value_node = &definition->options.value;
+        Symbol* variable_symbol = get_info(value_node->symbol);
 
-        // Define all variables
-        for (int i = 0; i < definition->symbols.size; i++)
-        {
-            auto symbol = get_info(definition->symbols[i]);
-            assert(symbol->type == Symbol_Type::VARIABLE, "");
-            auto var_type = symbol->options.variable_type;
-            IR_Register reg;
-            reg.name = optional_make_success<String*>(symbol->id);
-            reg.type = var_type;
-            reg.has_definition_instruction = true;
-            dynamic_array_push_back(&ir_block->registers, reg);
+        IR_Register var_reg;
+        var_reg.has_definition_instruction = true;
+        var_reg.name = optional_make_success(value_node->symbol->name);
+        var_reg.type = variable_symbol->options.variable_type;
+        dynamic_array_push_back(&ir_block->registers, var_reg);
+        IR_Data_Access* variable_access = ir_data_access_create_register(ir_block->registers.size - 1);
+        bool success = hashtable_insert_element(&ir_generator->variable_mapping, variable_symbol, variable_access);
+        assert(success, "Variable symbols should not be encountered twice");
 
-            IR_Data_Access* access = ir_data_access_create_register(ir_block->registers.size - 1);
-            hashtable_insert_element(&ir_generator->variable_mapping, definition->symbols[i], access);
+        IR_Instruction definition_instr;
+        definition_instr.type = IR_Instruction_Type::VARIABLE_DEFINITION;
+        definition_instr.options.variable_definition.symbol = variable_symbol;
+        definition_instr.options.variable_definition.variable_access = variable_access;
+        definition_instr.options.variable_definition.initial_value.available = false;
 
-            IR_Instruction definition_instr;
-            definition_instr.type = IR_Instruction_Type::VARIABLE_DEFINITION;
-            definition_instr.options.variable_definition.symbol = symbol;
-            definition_instr.options.variable_definition.variable_access = access;
-            definition_instr.options.variable_definition.initial_value.available = false;
-
-            if (definition->values.size == 1 && definition->symbols.size > 1) {
-                definition_instr.options.variable_definition.initial_value = optional_make_success(broadcast_value);
-            }
-            else if (definition->values.size != 0) {
-                assert(i < definition->values.size, "Must be guaranteed by semantic analyser!");
-                definition_instr.options.variable_definition.initial_value = optional_make_success(
-                    ir_generator_generate_expression(definition->values[i])
-                );
-            }
-
-            add_instruction(definition_instr);
+        if (value_node->value_expr.available) {
+            definition_instr.options.variable_definition.initial_value = optional_make_success(
+                ir_generator_generate_expression(value_node->value_expr.value, nullptr)
+            );
         }
 
         break;
@@ -2152,7 +2054,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 // Generate pointer access to subtype
                 IR_Data_Access* pointer_access = ir_data_access_create_address_of(condition_access);
                 // new_case.block->registers[pointer_access.index] = case_info->variable_symbol->options.variable_type; // Update type to subtype
-                hashtable_insert_element(&ir_generator->variable_mapping, switch_case->variable_definition.value, pointer_access);
+                hashtable_insert_element(&ir_generator->variable_mapping, get_info(switch_case->variable_definition.value), pointer_access);
             }
 
             ir_generator_generate_block(new_case.block, switch_case->block);
@@ -2189,7 +2091,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             auto symbol = loop_info.loop_variable_symbol;
             assert(symbol->type == Symbol_Type::VARIABLE, "");
             IR_Data_Access* access = ir_data_access_create_intermediate(symbol->options.variable_type);
-            hashtable_insert_element(&ir_generator->variable_mapping, for_loop.loop_variable_definition, access);
+            hashtable_insert_element(&ir_generator->variable_mapping, get_info(for_loop.loop_variable_definition), access);
             ir_generator_generate_expression(for_loop.initial_value, access);
         }
 
@@ -2240,7 +2142,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
             if (foreach_loop.index_variable_definition.available) {
                 assert(loop_info.index_variable_symbol != 0 && loop_info.index_variable_symbol->type == Symbol_Type::VARIABLE, "");
-                hashtable_insert_element(&ir_generator->variable_mapping, foreach_loop.index_variable_definition.value, index_access);
+                hashtable_insert_element(&ir_generator->variable_mapping, get_info(foreach_loop.index_variable_definition.value), index_access);
             }
         }
 
@@ -2253,7 +2155,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* iterator_access; // Only valid for custom iterators
         IR_Data_Access* loop_variable_access = ir_data_access_create_intermediate(upcast(loop_info.loop_variable_symbol->options.variable_type));
         {
-            hashtable_insert_element(&ir_generator->variable_mapping, foreach_loop.loop_variable_definition, loop_variable_access);
+            hashtable_insert_element(&ir_generator->variable_mapping, get_info(foreach_loop.loop_variable_definition), loop_variable_access);
 
             // Initialize
             if (loop_info.is_custom_op) 
@@ -2473,9 +2375,6 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         add_instruction(instr);
         break;
     }
-    case AST::Statement_Type::IMPORT: {
-        break; // Imports don't generate code
-    }
     case AST::Statement_Type::EXPRESSION_STATEMENT: {
         ir_generator_generate_expression(statement->options.expression);
         break;
@@ -2560,86 +2459,9 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     }
     case AST::Statement_Type::ASSIGNMENT:
     {
-        auto& as = statement->options.assignment;
-
-        IR_Data_Access* broadcast_value;
-        Datatype* broadcast_type = 0;
-        if (as.right_side.size == 1 && as.left_side.size > 1) {
-            broadcast_value = ir_generator_generate_expression(as.right_side[0]);
-            broadcast_type = broadcast_value->datatype;
-        }
-
-        for (int i = 0; i < as.left_side.size; i++)
-        {
-            if (as.right_side.size == 1 && as.left_side.size > 1)
-            {
-                IR_Instruction instr;
-                instr.type = IR_Instruction_Type::MOVE;
-                instr.options.move.destination = ir_generator_generate_expression(as.left_side[i]);
-                instr.options.move.source = broadcast_value;
-                add_instruction(instr);
-            }
-            else {
-                IR_Data_Access* left_access = ir_generator_generate_expression(as.left_side[i]);
-                ir_generator_generate_expression(as.right_side[i], left_access);
-            }
-        }
-        break;
-    }
-    case AST::Statement_Type::DELETE_STATEMENT:
-    {
-        IR_Data_Access* delete_access = ir_generator_generate_expression(statement->options.delete_expr);
-        auto delete_type = delete_access->datatype;
-        IR_Data_Access* size_access = nullptr;
-        IR_Data_Access* pointer_to_delete_access = nullptr;
-        if (delete_type->type == Datatype_Type::SLICE)
-        {
-            auto slice = downcast<Datatype_Slice>(delete_type);
-            pointer_to_delete_access = ir_data_access_create_member(delete_access, slice->data_member);
-            size_access = ir_data_access_create_member(delete_access, slice->size_member);
-
-            IR_Instruction multiply_instr;
-            multiply_instr.type = IR_Instruction_Type::BINARY_OP;
-            multiply_instr.options.binary_op.type = IR_Binop::MULTIPLICATION;
-            multiply_instr.options.binary_op.destination = size_access;
-            multiply_instr.options.binary_op.operand_left = size_access;
-            u64 element_size_u64 = slice->element_type->memory_info.value.size;
-            multiply_instr.options.binary_op.operand_right = ir_data_access_create_constant_usize(element_size_u64);
-            add_instruction(multiply_instr);
-        }
-        else
-        {
-            assert(delete_type->type == Datatype_Type::POINTER, "Can only delete slices or pointers");
-            u64 element_size_u64 = downcast<Datatype_Pointer>(delete_type)->element_type->memory_info.value.size;
-            size_access = ir_data_access_create_constant_usize(element_size_u64);
-            pointer_to_delete_access = delete_access;
-        }
-
-        // Call delete function on current allocator
-        IR_Data_Access* allocator_ptr_access = ir_data_access_create_global(gen.compilation_data->global_allocator);
-        IR_Data_Access* delete_fn_access = ir_data_access_create_member(
-            ir_data_access_create_dereference(allocator_ptr_access), types.allocator->members[1]
-        );
-
-        IR_Data_Access* address_access = ir_data_access_create_intermediate(upcast(types.address));
-        IR_Instruction address_case;
-        address_case.type = IR_Instruction_Type::CAST;
-        address_case.options.cast.destination = address_access;
-        address_case.options.cast.source = pointer_to_delete_access;
-        address_case.options.cast.type = IR_Cast_Type::POINTER_TO_ADDRESS;
-        add_instruction(address_case);
-
-        IR_Instruction alloc_instr;
-        alloc_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-        alloc_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_POINTER_CALL;
-        alloc_instr.options.call.options.pointer_access = delete_fn_access;
-        alloc_instr.options.call.destination = ir_data_access_create_intermediate(upcast(types.bool_type));
-        alloc_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(3);
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, allocator_ptr_access);
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, address_access);
-        dynamic_array_push_back(&alloc_instr.options.call.arguments, size_access);
-        add_instruction(alloc_instr);
-
+        auto& assignment = statement->options.assignment;
+        IR_Data_Access* left_access = ir_generator_generate_expression(assignment.left_side);
+        ir_generator_generate_expression(assignment.right_side, left_access);
         break;
     }
     default: panic("Statment type invalid!");
@@ -2671,11 +2493,18 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
     compilation_data_switch_timing_task(compilation_data, Timing_Task::CODE_GEN);
 
     ir_generator = compilation_data->ir_generator;
+    ir_generator->current_block = nullptr;
+    ir_generator->current_expr = nullptr;
+    ir_generator->current_pass = nullptr;
+    ir_generator->current_statement = nullptr;
 
     if (function->ir_block != nullptr) { // Function already generated
         return;
     }
     if (function->contains_errors || function->is_extern) {
+        return;
+    }
+    if (!function->body_node.available) {
         return;
     }
     if (function->poly_type == Poly_Type::BASE || function->poly_type == Poly_Type::PARTIAL) {
@@ -2685,14 +2514,7 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
     // Generate function code
     function->ir_block = ir_code_block_create(function);
     ir_generator->current_pass = function->body_pass;
-    AST::Body_Node body;
-    if (function->function_node->type == AST::Expression_Type::FUNCTION) {
-        body = function->function_node->options.function.body;
-    }
-    else {
-        body = function->function_node->options.bake_body;
-    }
-
+    Function_Body& body = function->body_node.value;
     if (body.is_expression)
     {
         IR_Instruction return_instr;
@@ -2752,33 +2574,6 @@ void ir_generator_finish(Compilation_Data* compilation_data)
         compilation_data->entry_function = entry_function;
         ir_generator->current_block = entry_function->ir_block;
 
-        // Initialize system allocator
-        {
-            // Inititalize system allocator (Load function pointers)
-            IR_Data_Access* alloc_access = ir_data_access_create_global(compilation_data->system_allocator);
-            IR_Instruction address_instr;
-            address_instr.type = IR_Instruction_Type::FUNCTION_ADDRESS;
-
-            address_instr.options.function_address.function = compilation_data->default_allocate_function;
-            address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[0]);
-            add_instruction(address_instr);
-
-            address_instr.options.function_address.function = compilation_data->default_free_function;
-            address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[1]);
-            add_instruction(address_instr);
-
-            address_instr.options.function_address.function = compilation_data->default_reallocate_function;
-            address_instr.options.function_address.destination = ir_data_access_create_member(alloc_access, types.allocator->members[2]);
-            add_instruction(address_instr);
-
-            // Set system allocator as default allocator
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.source = ir_data_access_create_address_of(alloc_access);
-            move_instr.options.move.destination = ir_data_access_create_global(compilation_data->global_allocator);
-            add_instruction(move_instr);
-        }
-
         // Initialize all globals
         auto& globals = compilation_data->globals;
         for (int i = 0; i < globals.size; i++)
@@ -2819,14 +2614,19 @@ void ir_generator_finish(Compilation_Data* compilation_data)
 
 IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
 {
+    auto& type_system = compilation_data->type_system;
+    auto& types = type_system->predefined_types;
+
     IR_Generator* generator = new IR_Generator;
     generator->compilation_data = compilation_data;
+    generator->nothing_access.datatype = upcast(types.unknown_type);
+    generator->nothing_access.type = IR_Data_Access_Type::NOTHING;
 
     // Create datastructures
     {
         generator->data_accesses = dynamic_array_create<IR_Data_Access*>();
         generator->loop_increment_instructions = hashtable_create_pointer_empty<AST::Code_Block*, Loop_Increment>(8);
-        generator->variable_mapping = hashtable_create_pointer_empty<AST::Definition_Symbol*, IR_Data_Access*>(8);
+        generator->variable_mapping = hashtable_create_pointer_empty<Symbol*, IR_Data_Access*>(8);
         generator->labels_break = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
         generator->labels_continue = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
         generator->block_defer_depths = hashtable_create_pointer_empty<AST::Code_Block*, int>(8);
@@ -2835,112 +2635,6 @@ IR_Generator* ir_generator_create(Compilation_Data* compilation_data)
         generator->fill_out_breaks = dynamic_array_create<Unresolved_Goto>();
         generator->fill_out_continues = dynamic_array_create<Unresolved_Goto>();
         generator->label_positions = dynamic_array_create<IR_Instruction_Reference>();
-    }
-
-    // Set initial data
-    {
-        ir_generator = generator; // Set thread-local variable value
-
-        auto& type_system = compilation_data->type_system;
-        auto& types = type_system->predefined_types;
-
-        generator->nothing_access.datatype = types.unknown_type;
-
-        generator->current_block = nullptr;
-        generator->current_expr = nullptr;
-        generator->current_pass = nullptr;
-        generator->current_statement = nullptr;
-
-        // Create default alloc function
-        {
-            Upp_Function* function = upp_function_create_empty(
-                types.allocate_function->signature, 
-                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_alloc_fn_")),
-                compilation_data
-            );
-            function->ir_block = ir_code_block_create(function);
-            compilation_data->default_allocate_function = function;
-
-            auto fn = function;
-            generator->current_block = fn->ir_block;
-            IR_Data_Access* address_access = ir_data_access_create_intermediate(upcast(types.address));
-            IR_Data_Access* size_param_u64 = ir_data_access_create_parameter(fn, 1);
-
-            IR_Instruction call_instr;
-            call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = Hardcoded_Type::SYSTEM_ALLOC;
-            call_instr.options.call.destination = address_access;
-            call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            dynamic_array_push_back(&call_instr.options.call.arguments, size_param_u64);
-            add_instruction(call_instr);
-
-            IR_Instruction return_instr;
-            return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = address_access;
-            add_instruction(return_instr);
-        }
-
-        // Default free function
-        {
-            Upp_Function* function = upp_function_create_empty(
-                types.free_function->signature, 
-                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_free_fn_")),
-                compilation_data
-            );
-            function->ir_block = ir_code_block_create(function);
-            compilation_data->default_free_function = function;
-
-            auto fn = function;
-            ir_generator->current_block = fn->ir_block;
-            IR_Data_Access* pointer_value = ir_data_access_create_parameter(fn, 1);
-
-            IR_Instruction call_instr;
-            call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = Hardcoded_Type::SYSTEM_FREE;
-            call_instr.options.call.destination = ir_data_access_create_nothing();
-            call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            dynamic_array_push_back(&call_instr.options.call.arguments, pointer_value);
-            add_instruction(call_instr);
-
-            IR_Instruction return_instr;
-            return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_EMPTY;
-            add_instruction(return_instr);
-        }
-
-        // Default resize function
-        {
-            Upp_Function* function = upp_function_create_empty(
-                types.resize_function->signature, 
-                identifier_pool_add(&compilation_data->identifier_pool, string_create_static("__upp_default_reallocate_fn_")),
-                compilation_data
-            );
-            function->ir_block = ir_code_block_create(function);
-            compilation_data->default_reallocate_function = function;
-
-            auto fn = function;
-            ir_generator->current_block = fn->ir_block;
-
-            // System allocator currently never resizes
-            IR_Instruction return_instr;
-            return_instr.type = IR_Instruction_Type::RETURN;
-            return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
-            return_instr.options.return_instr.options.return_value = ir_data_access_create_constant_bool(false);
-            add_instruction(return_instr);
-        }
-
-        Upp_Allocator allocator;
-        allocator.allocate_fn_index_plus_one = compilation_data->default_allocate_function->function_index + 1;
-        allocator.free_fn_index_plus_one     = compilation_data->default_free_function->function_index + 1;
-        allocator.resize_fn_index_plus_one   = compilation_data->default_reallocate_function->function_index + 1;
-
-        *(Upp_Allocator*)compilation_data->system_allocator->memory = allocator;
-        *(Upp_Allocator**)compilation_data->global_allocator->memory = (Upp_Allocator*) compilation_data->system_allocator->memory;
-
-        ir_generator->current_block = nullptr;
     }
 
     return generator;
