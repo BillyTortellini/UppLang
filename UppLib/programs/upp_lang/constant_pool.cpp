@@ -1,8 +1,8 @@
 #include "constant_pool.hpp"
 
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "semantic_analyser.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 
 bool deduplication_info_is_equal(Deduplication_Info* a, Deduplication_Info* b) {
     if (!types_are_equal(a->type, b->type) || a->memory.size != b->memory.size) return false;
@@ -135,7 +135,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     case Datatype_Type::PRIMITIVE: 
     {
         auto primitive = downcast<Datatype_Primitive>(signature);
-        if (primitive->primitive_class == Primitive_Class::TYPE_HANDLE) {
+        if (primitive->get_class() == Primitive_Class::TYPE_HANDLE) {
             Upp_Type_Handle handle;
             memory_copy(&handle, memory, sizeof(Upp_Type_Handle));
             if (handle.index >= (u32)type_system->types.size) {
@@ -143,7 +143,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
                 return;
             }
         }
-        if (primitive->primitive_type == Primitive_Type::ADDRESS) {
+        if (primitive->primitive_type == Primitive_Type::RAWPTR) {
             void* pointer = *(void**)memory;
             if (pointer != nullptr) {
                 result = constant_pool_result_make_error("Found address that isn't nullptr");

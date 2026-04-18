@@ -6,8 +6,9 @@
 #include "../../datastructures/list.hpp"
 #include "../../datastructures/dependency_graph.hpp"
 #include "../../utility/file_io.hpp"
+#include "../../win32/timing.hpp"
 
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "type_system.hpp"
 #include "bytecode_generator.hpp"
 #include "bytecode_interpreter.hpp"
@@ -18,7 +19,6 @@
 #include "source_code.hpp"
 #include "symbol_table.hpp"
 #include "syntax_colors.hpp"
-#include "editor_analysis_info.hpp"
 
 // GLOBALS
 bool PRINT_DEPENDENCIES = false;
@@ -288,7 +288,7 @@ Definition_Info* get_info(AST::Definition* definition, Semantic_Context* context
 
 
 // Error logging
-void semantic_analyser_set_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context)
+void semantic_context_raise_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context)
 {
 	auto workload = semantic_context->current_workload;
     if (workload == 0) {
@@ -326,7 +326,7 @@ void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST
 	if (semantic_context->error_logging_enabled) {
 		dynamic_array_push_back(&semantic_context->compilation_data->semantic_errors, error);
 	}
-	semantic_analyser_set_error_flag(false, semantic_context);
+	semantic_context_raise_error_flag(false, semantic_context);
 }
 
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Expression* node, Node_Section node_section = Node_Section::WHOLE) {
@@ -471,7 +471,7 @@ T* workload_executer_allocate_workload(Semantic_Context* semantic_context)
 {
 	auto& executer = *semantic_context->compilation_data->workload_executer;
 	executer.progress_was_made = true;
-	assert(semantic_context->can_create_workloads, "Should be the case, as this should be checked before workload creation");
+	assert(semantic_context->can_create_toplevel_items, "Should be the case, as this should be checked before workload creation");
 
     // Create new workload
 	T* result = semantic_context->compilation_data->arena.allocate<T>();
@@ -1209,7 +1209,7 @@ Optional<Upp_Constant> expression_calculate_comptime_value(
 			if (was_not_available != 0) {
 				*was_not_available = true;
 			}
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 		}
 		return optional_make_failure<Upp_Constant>();
 	}
@@ -1369,7 +1369,7 @@ void expression_info_set_error(Expression_Info* info, Datatype* result_type, Sem
 	auto types = semantic_context->compilation_data->type_system->predefined_types;
 	expression_info_set_value(info, types.unknown_type, false);
 	info->is_valid = false;
-	semantic_analyser_set_error_flag(true, semantic_context);
+	semantic_context_raise_error_flag(true, semantic_context);
 }
 
 void expression_info_set_function(Expression_Info* info, Upp_Function* function, Semantic_Context* semantic_context)
@@ -1936,7 +1936,7 @@ Semantic_Context semantic_context_make(
 	result.current_function = nullptr;
 	result.statement_reachable = true;
 	result.block_stack = DynArray<AST::Code_Block*>::create(scratch_arena);
-	result.can_create_workloads = true;
+	result.can_create_toplevel_items = true;
 	result.can_execute_bake = true;
 	result.error_logging_enabled = true;
 	result.error_flagging_enabled = true;
@@ -2480,6 +2480,56 @@ Datatype_Memory_Info* type_wait_for_size_info_to_finish(Datatype* type, Semantic
 	return &type->memory_info.value;
 }
 
+void semantic_analyser_finish_analysis(Compilation_Data* compilation_data)
+{
+	// Finish semantic-analysis
+	auto& type_system = compilation_data->type_system;
+	auto& ids = compilation_data->identifier_pool.predefined_ids;
+
+	Arena arena = Arena::create();
+	SCOPE_EXIT(arena.destroy());
+
+	// Semantic context just for error logging
+	Semantic_Context error_context = semantic_context_make(
+		compilation_data, nullptr, compilation_data->root_symbol_table, Symbol_Access_Level::GLOBAL, nullptr, &arena
+	);
+	Semantic_Context* semantic_context = &error_context;
+
+	// Check if main is defined
+	DynArray<Symbol*> main_symbols = symbol_table_query_id(
+		compilation_data->main_unit->upp_module->symbol_table, ids.main, 
+		symbol_query_info_make(Symbol_Access_Level::GLOBAL, Import_Type::NONE, false), &arena
+	);
+	if (main_symbols.size == 0) {
+		log_semantic_error(semantic_context, "Main function not defined", upcast(compilation_data->main_unit->root), Node_Section::END_TOKEN);
+		return;
+	}
+	if (main_symbols.size > 1) {
+		for (int i = 0; i < main_symbols.size; i++) {
+			auto symbol = main_symbols[i];
+			log_semantic_error(semantic_context, "Multiple main functions found!", upcast(symbol->definition_node), Node_Section::FIRST_TOKEN);
+		}
+		return;
+	}
+
+	Symbol* main_symbol = main_symbols[0];
+	if (main_symbol->type != Symbol_Type::FUNCTION) {
+		log_semantic_error(semantic_context, "Main Symbol must be a function", upcast(main_symbol->definition_node), Node_Section::FIRST_TOKEN);
+		log_error_info_symbol(semantic_context, main_symbol);
+		return;
+	}
+	if (main_symbol->options.function->signature != compilation_data->empty_call_signature) {
+		log_semantic_error(semantic_context, "Main function does not have correct signature", upcast(main_symbol->definition_node), Node_Section::FIRST_TOKEN);
+		log_error_info_symbol(semantic_context, main_symbol);
+		return;
+	}
+	compilation_data->main_function = main_symbol->options.function;
+
+	if (!compilation_data_errors_occured(compilation_data)) {
+		assert(!compilation_data->main_function->contains_errors, "");
+	}
+}
+
 
 
 // CASTING/PATTERN_TYPES/EXPRESSION CONTEXT
@@ -2928,7 +2978,7 @@ Cast_Info check_if_cast_possible(
 	if (datatype_is_unknown(src) || datatype_is_unknown(dst)) {
 		result.cast_type = Cast_Type::UNKNOWN;
 		// if (!called_from_editor) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 		// }
 		return result;
 	}
@@ -2950,16 +3000,16 @@ Cast_Info check_if_cast_possible(
 			bool dst_is_ptr = datatype_is_pointer(dst, &dst_is_opt);
 
 			// Check for from/to address
-			if (src_is_ptr && datatype_is_primitive_class(dst, Primitive_Class::ADDRESS)) {
+			if (src_is_ptr && datatype_is_primitive_class(dst, Primitive_Class::RAWPTR)) {
 				CAST_SUCCESS(Cast_Type::POINTER_TO_ADDRESS);
 			}
-			else if (dst_is_ptr && datatype_is_primitive_class(src, Primitive_Class::ADDRESS)) {
+			else if (dst_is_ptr && datatype_is_primitive_class(src, Primitive_Class::RAWPTR)) {
 				CAST_SUCCESS(Cast_Type::ADDRESS_TO_POINTER);
 			}
-			else if (datatype_is_primitive_class(dst, Primitive_Class::C_STRING) && datatype_is_primitive_class(src, Primitive_Class::ADDRESS)) {
+			else if (datatype_is_primitive_class(dst, Primitive_Class::C_STRING) && datatype_is_primitive_class(src, Primitive_Class::RAWPTR)) {
 				CAST_SUCCESS(Cast_Type::ADDRESS_TO_POINTER);
 			}
-			else if (datatype_is_primitive_class(src, Primitive_Class::C_STRING) && datatype_is_primitive_class(dst, Primitive_Class::ADDRESS)) {
+			else if (datatype_is_primitive_class(src, Primitive_Class::C_STRING) && datatype_is_primitive_class(dst, Primitive_Class::RAWPTR)) {
 				CAST_SUCCESS(Cast_Type::POINTER_TO_ADDRESS);
 			}
 			else if (src_is_ptr && dst_is_ptr) {
@@ -2979,14 +3029,14 @@ Cast_Info check_if_cast_possible(
 				if (src->type == Datatype_Type::PRIMITIVE && dst->type == Datatype_Type::ENUM)
 				{
 					auto src_primitive = downcast<Datatype_Primitive>(src);
-					if (src_primitive->primitive_class == Primitive_Class::INTEGER) {
+					if (src_primitive->get_class() == Primitive_Class::INTEGER) {
 						CAST_SUCCESS(Cast_Type::INT_TO_ENUM);
 					}
 				}
 				else if (src->type == Datatype_Type::ENUM && dst->type == Datatype_Type::PRIMITIVE)
 				{
 					auto dst_primitive = downcast<Datatype_Primitive>(dst);
-					if (dst_primitive->primitive_class == Primitive_Class::INTEGER) {
+					if (dst_primitive->get_class() == Primitive_Class::INTEGER) {
 						CAST_SUCCESS(Cast_Type::ENUM_TO_INT);
 					}
 				}
@@ -2996,8 +3046,8 @@ Cast_Info check_if_cast_possible(
 				}
 				else if (src->type == Datatype_Type::PRIMITIVE && dst->type == Datatype_Type::PRIMITIVE)
 				{
-					auto src_class = downcast<Datatype_Primitive>(src)->primitive_class;
-					auto dst_class = downcast<Datatype_Primitive>(dst)->primitive_class;
+					auto src_class = downcast<Datatype_Primitive>(src)->get_class();
+					auto dst_class = downcast<Datatype_Primitive>(dst)->get_class();
 
 					// Figure out allowed mode and cast type
 					if (src_class == Primitive_Class::INTEGER && dst_class == Primitive_Class::INTEGER) {
@@ -3012,10 +3062,10 @@ Cast_Info check_if_cast_possible(
 					else if (src_class == Primitive_Class::FLOAT && dst_class == Primitive_Class::FLOAT) {
 						CAST_SUCCESS(Cast_Type::FLOATS);
 					}
-					else if (src_class == Primitive_Class::INTEGER && dst_class == Primitive_Class::ADDRESS) {
+					else if (src_class == Primitive_Class::INTEGER && dst_class == Primitive_Class::RAWPTR) {
 						CAST_SUCCESS(Cast_Type::INTEGERS);
 					}
-					else if (src_class == Primitive_Class::ADDRESS && dst_class == Primitive_Class::INTEGER) {
+					else if (src_class == Primitive_Class::RAWPTR && dst_class == Primitive_Class::INTEGER) {
 						CAST_SUCCESS(Cast_Type::INTEGERS);
 					}
 				}
@@ -3303,7 +3353,7 @@ bool expression_apply_cast_if_possible(
 		value_info.initial_type, to_type, value_info.initial_value_is_temporary, is_auto_cast, semantic_context
 	);
 	if (new_cast_info.cast_type == Cast_Type::UNKNOWN) {
-		semantic_analyser_set_error_flag(true, semantic_context);
+		semantic_context_raise_error_flag(true, semantic_context);
 	}
 	if (new_cast_info.cast_type != Cast_Type::INVALID) 
 	{
@@ -3576,7 +3626,7 @@ void call_info_analyse_all_arguments(
 			}
 		}
 		else {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 		}
 
 		semantic_analyser_analyse_expression_value(argument.expression, context, semantic_context, false);
@@ -3832,7 +3882,7 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 
 		// Check success
 		if (encountered_unknown) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 			*call_info = call_info_make_error(call_node, semantic_context->compilation_data);
 			return call_info;
 		}
@@ -3856,7 +3906,7 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 				log_error_info_expression_result_type(semantic_context, call_expr_info->result_type);
 			}
 			else {
-				semantic_analyser_set_error_flag(true, semantic_context);
+				semantic_context_raise_error_flag(true, semantic_context);
 			}
 
 			*call_info = call_info_make_error(call_node, semantic_context->compilation_data);
@@ -4901,7 +4951,7 @@ Datatype* datatype_pattern_instanciate(
 				return nullptr;
 			}
 			auto primitive = downcast<Datatype_Primitive>(constant_type);
-			if (primitive->primitive_class != Primitive_Class::INTEGER) {
+			if (primitive->get_class() != Primitive_Class::INTEGER) {
 				log_semantic_error(
 					semantic_context, "Datatype instanciate failed: Array count pattern variable is not an integer", error_report_node, error_report_section
 				);
@@ -5052,7 +5102,7 @@ Poly_Instance* poly_header_instanciate(
 		}
 
 		if (base_contains_errors) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 			return nullptr;
 		}
 	}
@@ -5379,7 +5429,7 @@ Poly_Instance* poly_header_instanciate(
 			log_semantic_error(semantic_context, "Not all polymorphic parameters could be deduced in instanciation", error_report_node, error_report_section);
 			return nullptr;
 		}
-		if (!semantic_context->can_create_workloads && !is_pattern) {
+		if (!semantic_context->can_create_toplevel_items && !is_pattern) {
 			log_semantic_error(semantic_context, "Creating instance workload is disallowed by semantic context", error_report_node, error_report_section);
 			return nullptr;
 		}
@@ -5618,6 +5668,12 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			global.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
 			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
 		);
+		if (!semantic_context->can_create_toplevel_items) {
+			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+			symbol->type = Symbol_Type::ERROR_SYMBOL;
+			break;
+		}
+
 		Workload_Global* global_workload = workload_executer_allocate_workload<Workload_Global>(semantic_context);
 		global_workload->analysis_pass = semantic_context->current_pass;
 		global_workload->definition_node = &definition->options.value;
@@ -5634,6 +5690,12 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			function_node->symbol, Symbol_Type::FUNCTION, semantic_context->current_symbol_table, 
 			Symbol_Access_Level::GLOBAL, semantic_context
 		);
+		if (!semantic_context->can_create_toplevel_items) {
+			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+			symbol->type = Symbol_Type::ERROR_SYMBOL;
+			break;
+		}
+
 		Upp_Function* function = upp_function_create_empty(nullptr, symbol->id, semantic_context->compilation_data);
 		function->symbol = symbol;
 		symbol->type = Symbol_Type::FUNCTION;
@@ -5667,6 +5729,12 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			structure.symbol, Symbol_Type::DATATYPE, semantic_context->current_symbol_table, 
 			Symbol_Access_Level::GLOBAL, semantic_context
 		);
+		if (!semantic_context->can_create_toplevel_items) {
+			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+			symbol->type = Symbol_Type::ERROR_SYMBOL;
+			break;
+		}
+
 		Upp_Struct* upp_struct = upp_struct_create_empty(&definition->options.structure, semantic_context, true);
 		upp_struct->symbol = symbol;
 		upp_struct->datatype->name = symbol->id;
@@ -5696,6 +5764,12 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			enumeration.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
 			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
 		);
+		if (!semantic_context->can_create_toplevel_items) {
+			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+			symbol->type = Symbol_Type::ERROR_SYMBOL;
+			break;
+		}
+
 		Workload_Enum* enum_workload = workload_executer_allocate_workload<Workload_Enum>(semantic_context);
 		enum_workload->analysis_pass = semantic_context->current_pass;
 		enum_workload->node = &definition->options.enumeration;
@@ -5737,28 +5811,41 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 		case AST::Extern_Type::GLOBAL:
 		case AST::Extern_Type::FUNCTION:
 		{
-			// Create workload
-			auto extern_workload = workload_executer_allocate_workload<Workload_Extern_Import>(semantic_context);
-			extern_workload->symbol = nullptr;
-			extern_workload->symbol_table = semantic_context->current_symbol_table;
-			extern_workload->analysis_pass = semantic_context->current_pass;
-			extern_workload->import_node = extern_import;
-
 			// Create extern function symbol
+			Symbol* symbol = nullptr;
 			if (extern_import->type == AST::Extern_Type::FUNCTION) 
 			{
 				Symbol* symbol = symbol_node_define_symbol(
 					extern_import->options.function.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, semantic_context->current_symbol_table, 
 					Symbol_Access_Level::GLOBAL, semantic_context
 				);
+				if (!semantic_context->can_create_toplevel_items) {
+					log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+					symbol->type = Symbol_Type::ERROR_SYMBOL;
+					break;
+				}
+			}
+
+			// Create workload
+			auto extern_workload = workload_executer_allocate_workload<Workload_Extern_Import>(semantic_context);
+			extern_workload->symbol = symbol;
+			extern_workload->symbol_table = semantic_context->current_symbol_table;
+			extern_workload->analysis_pass = semantic_context->current_pass;
+			extern_workload->import_node = extern_import;
+
+			if (symbol != nullptr) {
 				symbol->options.waiting_for_workload = upcast(extern_workload);
-				extern_workload->symbol = symbol;
 			}
 
 			break;
 		}
 		case AST::Extern_Type::COMPILER_SETTING:
 		{
+			if (!semantic_context->can_create_toplevel_items) {
+				log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
+				break;
+			}
+
 			Dynamic_Array<String*>& values = semantic_context->compilation_data->extern_sources.compiler_settings[(int)extern_import->options.setting.type];
 			String* id = extern_import->options.setting.value;
 
@@ -5786,6 +5873,21 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 		AST::Definition_Module* module_node = &definition->options.module;
 		auto compilation_data = semantic_context->compilation_data;
 
+		if (!semantic_context->can_create_toplevel_items) 
+		{
+			log_semantic_error(
+				semantic_context, "Semantic context does not allow workload creation, so module-nodes are disallowed", 
+				upcast(module_node), Node_Section::KEYWORD
+			);
+			if (module_node->symbol.available) {
+				symbol_node_define_symbol(
+					module_node->symbol.value, Symbol_Type::ERROR_SYMBOL, 
+					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+				);
+			}
+			break;
+		}
+
 		// Create module and symbol
 		Upp_Module* upp_module = compilation_data->arena.allocate<Upp_Module>();
 		{
@@ -5798,7 +5900,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 			if (definition->base.parent == nullptr) 
 			{
-				Compilation_Unit* compilation_unit = compiler_find_ast_compilation_unit(compilation_data, upcast(definition));
+				Compilation_Unit* compilation_unit = compilation_data_ast_node_to_compilation_unit(compilation_data, upcast(definition));
 				assert(compilation_unit->upp_module == nullptr, "Otherwise this was already analysed...");
 				assert(!module_node->symbol.available, "");
 				compilation_unit->upp_module = upp_module;
@@ -5816,15 +5918,6 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			}
 		}
 
-		if (!semantic_context->can_create_workloads) 
-		{
-			log_semantic_error(
-				semantic_context, "Semantic context does not allow workload creation, so module-nodes are disallowed", 
-				upcast(module_node), Node_Section::KEYWORD
-			);
-			break;
-		}
-
 		// Recursively add definitions
 		RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, upp_module->symbol_table);
 		for (int i = 0; i < module_node->definitions.size; i++) {
@@ -5839,7 +5932,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 		auto& ids = semantic_context->compilation_data->identifier_pool.predefined_ids;
 
 		// Create new workload for custom-operator
-		if (!semantic_context->can_create_workloads) {
+		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(
 				semantic_context, "Semantic context disallows the creation of new workload for custom operator", 
 				upcast(definition), Node_Section::FIRST_TOKEN
@@ -5992,6 +6085,7 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 		Symbol_Table* import_symbol_table = info.symbol_table;
 		AST::Definition_Import* import_node = info.import_node;
 		assert(import_node->operator_type == AST::Import_Operator::FILE_IMPORT, "");
+		auto& file_import = import_node->options.file_import;
 
 		Symbol* module_import_symbol = nullptr;
 		if (import_node->alias_name.available)
@@ -6014,34 +6108,49 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 		}
 
 		// Load file
-		Compilation_Unit* compilation_unit = compiler_import_file(compilation_data, import_node);
-		if (compilation_unit == nullptr)
+		Compilation_Unit* imported_unit = nullptr;
+		{
+			// Convert relative-path filename to full path
+			auto arena_checkpoint = semantic_context->scratch_arena->make_checkpoint();
+			SCOPE_EXIT(arena_checkpoint.rewind());
+			String path = string_create(semantic_context->scratch_arena);
+
+			// Replace filename in path with import string (All imports are currently relative)
+			path.append(file_import.node_unit->filepath);
+			Optional<int> last_pos = string_find_character_index_reverse(&path, '/', path.size - 1);
+			if (last_pos.available) {
+			    string_truncate(&path, last_pos.value + 1);
+			}
+			else {
+			    string_reset(&path);
+			}
+			string_append_string(&path, file_import.relative_path);
+			file_io_relative_to_full_path(&path);
+			imported_unit = compilation_data_add_compilation_unit_unique(compilation_data, path, true, true);
+		}
+
+		if (imported_unit == nullptr)
 		{
 			log_semantic_error(semantic_context, "Could not load file", upcast(import_node), Node_Section::FIRST_TOKEN);
 			continue;
 		}
 
-		// Parse file if not done yet
-		if (compilation_unit->root == nullptr) {
-			compiler_parse_unit(compilation_unit, compilation_data);
-		}
-
 		// Analyse module if not done already
 		Upp_Module* import_module = nullptr;
-		Node_Passes* node_passes = hashtable_find_element(&semantic_context->compilation_data->ast_to_pass_mapping, upcast(compilation_unit->root));
+		Node_Passes* node_passes = hashtable_find_element(&semantic_context->compilation_data->ast_to_pass_mapping, upcast(imported_unit->root));
 		if (node_passes == nullptr) // File was not yet analysed
 		{
-			Analysis_Pass* import_module_pass = analysis_pass_allocate(semantic_context->current_workload, upcast(compilation_unit->root), compilation_data);
+			Analysis_Pass* import_module_pass = analysis_pass_allocate(semantic_context->current_workload, upcast(imported_unit->root), compilation_data);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_pass, import_module_pass);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, semantic_context->compilation_data->root_symbol_table);
 			RESTORE_ON_SCOPE_EXIT(semantic_context->symbol_access_level, Symbol_Access_Level::GLOBAL);
-			toplevel_content_add_definition(toplevel_content, AST::upcast_definition(compilation_unit->root), semantic_context, false);
+			toplevel_content_add_definition(toplevel_content, AST::upcast_definition(imported_unit->root), semantic_context, false);
 		}
 		else
 		{
 			assert(node_passes->passes.size == 1, "Modules should only be analysed at most once currently");
 			import_module = pass_get_node_info(
-				node_passes->passes[0], AST::upcast_definition(compilation_unit->root), Info_Query::TRY_READ, compilation_data
+				node_passes->passes[0], AST::upcast_definition(imported_unit->root), Info_Query::TRY_READ, compilation_data
 			)->upp_module;
 		}
 
@@ -6573,7 +6682,7 @@ void analysis_workload_entry(void* userdata)
 		local_context.current_function = function;
 		Semantic_Context* semantic_context = &local_context;
 		if (function->poly_type == Poly_Type::BASE || function->poly_type == Poly_Type::PARTIAL) {
-			semantic_context->can_create_workloads = false;
+			semantic_context->can_create_toplevel_items = false;
 			semantic_context->error_flagging_enabled = true;
 			semantic_context->error_logging_enabled = false;
 		}
@@ -6617,7 +6726,7 @@ void analysis_workload_entry(void* userdata)
 		Semantic_Context* semantic_context = &local_context;
 
 		if (upp_struct->poly_type == Poly_Type::BASE || upp_struct->poly_type == Poly_Type::PARTIAL) {
-			semantic_context->can_create_workloads = false;
+			semantic_context->can_create_toplevel_items = false;
 			semantic_context->error_flagging_enabled = true;
 			semantic_context->error_logging_enabled = false;
 		}
@@ -6722,7 +6831,7 @@ Expression_Info analyse_symbol_as_expression(
 	// Wait and check if dependency failed
 	workload_executer_wait_for_dependency_resolution(semantic_context);
 	if (dependency_failed) {
-		semantic_analyser_set_error_flag(true, semantic_context);
+		semantic_context_raise_error_flag(true, semantic_context);
 		expression_info_set_error(&result, unknown_type, semantic_context);
 		return result;
 	}
@@ -6730,7 +6839,7 @@ Expression_Info analyse_symbol_as_expression(
 	switch (symbol->type)
 	{
 	case Symbol_Type::ERROR_SYMBOL: {
-		semantic_analyser_set_error_flag(true, semantic_context);
+		semantic_context_raise_error_flag(true, semantic_context);
 		expression_info_set_error(&result, unknown_type, semantic_context);
 		return result;
 	}
@@ -7056,7 +7165,7 @@ void analyse_index_accept_all_ints_as_usize(AST::Expression* expr, Semantic_Cont
 	bool is_auto_cast = true;
 	if (result_type->type == Datatype_Type::PRIMITIVE) {
 		auto primitive = downcast<Datatype_Primitive>(result_type);
-		is_auto_cast = primitive->primitive_class != Primitive_Class::INTEGER;
+		is_auto_cast = primitive->get_class() != Primitive_Class::INTEGER;
 	}
 
 	if (!expression_apply_cast_if_possible(expr, upcast(types.usize), is_auto_cast, nullptr, semantic_context)) {
@@ -7119,7 +7228,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	{
 	case AST::Expression_Type::ERROR_EXPR: {
 		// Error due to parsing, dont log error message because we already have parse error messages
-		semantic_analyser_set_error_flag(false, semantic_context);
+		semantic_context_raise_error_flag(false, semantic_context);
 		EXIT_ERROR(types.unknown_type);
 	}
 	case AST::Expression_Type::FUNCTION_CALL:
@@ -7303,7 +7412,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype_Primitive* primitive = nullptr;
 				if (type_valid) {
 					primitive = downcast<Datatype_Primitive>(type);
-					type_valid = primitive->primitive_class == Primitive_Class::INTEGER;
+					type_valid = primitive->get_class() == Primitive_Class::INTEGER;
 				}
 				if (!type_valid) {
 					log_semantic_error(semantic_context, "Type for bitwise not must be an integer", arg_expr);
@@ -7334,7 +7443,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype_Primitive* primitive = nullptr;
 				if (type_valid) {
 					primitive = downcast<Datatype_Primitive>(type_a);
-					type_valid = primitive->primitive_class == Primitive_Class::INTEGER;
+					type_valid = primitive->get_class() == Primitive_Class::INTEGER;
 				}
 				if (!type_valid) {
 					log_semantic_error(semantic_context, "Type for bitwise operation must be an integer", expr_a);
@@ -7453,7 +7562,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 		if (encountered_unknown) {
 			call_info_analyse_all_arguments(call_info, false, semantic_context, true);
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 			EXIT_ERROR(types.unknown_type);
 		}
 
@@ -7648,7 +7757,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		else if (symbols.size > 1)
 		{
 			if (encountered_unknown) {
-				semantic_analyser_set_error_flag(true, semantic_context);
+				semantic_context_raise_error_flag(true, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
 			log_semantic_error(semantic_context, "#get_overload failed to distinguish symbols with given parameters/types", upcast(get_overload.path));
@@ -7818,7 +7927,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				Datatype* expected = context.datatype;
 				if (expected->type == Datatype_Type::PRIMITIVE)
 				{
-					auto primitive_class = downcast<Datatype_Primitive>(expected)->primitive_class;
+					auto primitive_class = downcast<Datatype_Primitive>(expected)->get_class();
 					if (primitive_class == Primitive_Class::INTEGER) {
 						check_for_auto_conversion = true;
 					}
@@ -7980,7 +8089,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	}
 	case AST::Expression_Type::INFERRED_FUNCTION: 
 	{
-		if (!semantic_context->can_create_workloads) {
+		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(
 				semantic_context,
 				"Semantic context cannot create workload for inferred function, as workload creation is disabled", upcast(expr), Node_Section::KEYWORD
@@ -8100,7 +8209,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			// Return if errors occured inside bake-function
 			if (bake_function->contains_errors) {
-				semantic_analyser_set_error_flag(false, semantic_context);
+				semantic_context_raise_error_flag(false, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
 		}
@@ -8694,7 +8803,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			Datatype* datatype = access_expr_info->options.datatype;
 
 			if (datatype_is_unknown(datatype)) {
-				semantic_analyser_set_error_flag(true, semantic_context);
+				semantic_context_raise_error_flag(true, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
 
@@ -8770,7 +8879,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 			// Early exit
 			if (datatype_is_unknown(datatype)) {
-				semantic_analyser_set_error_flag(true, semantic_context);
+				semantic_context_raise_error_flag(true, semantic_context);
 				EXIT_ERROR(types.unknown_type);
 			}
 
@@ -8980,7 +9089,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					log_error_info_given_type(semantic_context, datatype);
 				}
 				else {
-					semantic_analyser_set_error_flag(true, semantic_context);
+					semantic_context_raise_error_flag(true, semantic_context);
 				}
 			}
 
@@ -8997,7 +9106,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					log_error_info_given_type(semantic_context, datatype);
 				}
 				else {
-					semantic_analyser_set_error_flag(true, semantic_context);
+					semantic_context_raise_error_flag(true, semantic_context);
 				}
 				EXIT_VALUE(types.unknown_type, false);
 			}
@@ -9191,12 +9300,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			if (operand_type->type == Datatype_Type::PRIMITIVE)
 			{
 				auto primitive = downcast<Datatype_Primitive>(operand_type);
-				switch (primitive->primitive_class)
+				switch (primitive->get_class())
 				{
 				case Primitive_Class::INTEGER:     types_are_valid = int_valid; break;
 				case Primitive_Class::FLOAT:       types_are_valid = float_valid; break;
 				case Primitive_Class::BOOLEAN:     types_are_valid = bool_valid; break;
-				case Primitive_Class::ADDRESS:     types_are_valid = address_valid; break;
+				case Primitive_Class::RAWPTR:     types_are_valid = address_valid; break;
 				case Primitive_Class::TYPE_HANDLE: types_are_valid = type_type_valid; break;
 				default: panic("");
 				}
@@ -9218,10 +9327,10 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			bool right_is_address = types_are_equal(right_type, upcast(types.address));
 			bool left_is_int =
 				left_type->type == Datatype_Type::PRIMITIVE &&
-				downcast<Datatype_Primitive>(left_type)->primitive_class == Primitive_Class::INTEGER;
+				downcast<Datatype_Primitive>(left_type)->get_class() == Primitive_Class::INTEGER;
 			bool right_is_int =
 				right_type->type == Datatype_Type::PRIMITIVE &&
-				downcast<Datatype_Primitive>(right_type)->primitive_class == Primitive_Class::INTEGER;
+				downcast<Datatype_Primitive>(right_type)->get_class() == Primitive_Class::INTEGER;
 			if (left_is_address && right_is_address)
 			{
 				if (binop_node.type == AST::Binop::SUBTRACTION) {
@@ -9373,7 +9482,7 @@ Datatype* semantic_analyser_analyse_expression_type(AST::Expression* expression,
 	{
 		Datatype* result_type = expression_info_get_type(result, false, type_system);
 		if (datatype_is_unknown(result_type)) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 			return result_type;
 		}
 		if (!types_are_equal(result_type, types.type_handle))
@@ -10747,7 +10856,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		}
 
 		if (datatype_is_unknown(datatype)) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 		}
 		else if (datatype->type != Datatype_Type::ENUM)
 		{
@@ -10792,7 +10901,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 				else {
 					case_info->is_valid = false;
 					case_info->case_value = -1;
-					semantic_analyser_set_error_flag(true, semantic_context);
+					semantic_context_raise_error_flag(true, semantic_context);
 				}
 			}
 			else
@@ -10964,7 +11073,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		Datatype* expr_type = semantic_analyser_analyse_expression_value(for_loop.expression, expression_context_make_dereference(), semantic_context);
 
 		if (datatype_is_unknown(expr_type)) {
-			semantic_analyser_set_error_flag(true, semantic_context);
+			semantic_context_raise_error_flag(true, semantic_context);
 		}
 
 		if (expr_type->type == Datatype_Type::ARRAY || expr_type->type == Datatype_Type::SLICE)
@@ -11189,7 +11298,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		}
 
 		Expression_Context right_context = expression_context_make_dereference();
-		if (left_type->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(left_type)->primitive_class == Primitive_Class::INTEGER) {
+		if (left_type->type == Datatype_Type::PRIMITIVE && downcast<Datatype_Primitive>(left_type)->get_class() == Primitive_Class::INTEGER) {
 			right_context = expression_context_make_specific_type(left_type);
 		}
 		// Analyse right side
@@ -11227,10 +11336,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			if (operand_type->type == Datatype_Type::PRIMITIVE)
 			{
 				auto primitive = downcast<Datatype_Primitive>(operand_type);
-				if (primitive->primitive_class == Primitive_Class::INTEGER && int_valid) {
+				if (primitive->get_class() == Primitive_Class::INTEGER && int_valid) {
 					EXIT(Control_Flow::SEQUENTIAL);
 				}
-				else if (primitive->primitive_class == Primitive_Class::FLOAT && float_valid) {
+				else if (primitive->get_class() == Primitive_Class::FLOAT && float_valid) {
 					EXIT(Control_Flow::SEQUENTIAL);
 				}
 			}
@@ -11374,8 +11483,7 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, Semantic_Co
 			upcast(block), Node_Section::FIRST_TOKEN
 		);
 	}
-	else
-	{
+	else if (semantic_context->can_create_toplevel_items) {
 		bool inserted = hashtable_insert_element(&compilation_data->code_block_comptimes, block, block_info->symbol_table);
 		assert(inserted, "");
 	}
@@ -11429,6 +11537,8 @@ Control_Flow semantic_analyser_analyse_block(AST::Code_Block* block, Semantic_Co
 	}
 	return block_info->flow;
 }
+
+
 
 
 
@@ -11524,7 +11634,7 @@ void error_information_append_to_rich_string(
 	}
 }
 
-void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
+void compilation_data_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
 {
 	auto& errors = compilation_data->semantic_errors;
 	for (int i = 0; i < errors.size; i++)

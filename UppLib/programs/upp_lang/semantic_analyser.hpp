@@ -41,11 +41,7 @@ struct Poly_Header;
 struct Poly_Instance;
 struct Compilation_Data;
 struct Compilation_Unit;
-
-namespace Parser
-{
-    enum class Node_Section;
-}
+struct Workload_Base;
 
 namespace AST
 {
@@ -58,6 +54,84 @@ namespace AST
 
 
 
+// POLYMORPISM
+enum class Poly_Type
+{
+    NORMAL, // Non-polymorphic
+    BASE,
+    PARTIAL, // Only some values are filled out
+    INSTANCE
+};
+
+struct Pattern_Variable
+{
+    Datatype_Pattern_Variable* pattern_variable_type;
+    int index; // Used to access values, index in pattern_variables array
+    DynArray<int> dependent_params;
+
+    // Origin infos
+    Poly_Header* origin;
+    AST::Symbol_Node* symbol_node;
+    bool is_comptime_parameter; // e.g. foo($A: int)
+    int defined_in_parameter_index;
+};
+
+struct Poly_Parameter_Info
+{
+    int parameter_index;
+	DynArray<int> depends_on_variables;
+};
+
+struct Poly_Header
+{
+    Call_Signature* signature; // Contains all parameters + return-type + implicit parameters
+    DynArray<Pattern_Variable> pattern_variables; // Contains all pattern-variables, e.g. comptime and implicit parameters
+    DynArray<Poly_Parameter_Info> param_infos; // More information for each call-signature parameter
+    DynSet<Poly_Instance*> instances;
+
+    // Origin infos
+    AST::Signature* signature_node;
+    Symbol_Table* base_parameter_table;
+    String* name; // Either struct or function name, used for dot-calls auto id
+    bool is_function;
+    union {
+        Upp_Struct*   upp_struct;
+        Upp_Function* function;
+    } origin;
+};
+
+// The pattern_values define what happens when a pattern expression is analysed.
+enum class Pattern_Variable_State_Type
+{
+    SET,     // Comptime value was assigned to this variable
+    UNSET,   // Causes panic when accessed, means that this variable wasn't matched yet
+    PATTERN, // Returns pattern-type on access
+};
+
+struct Pattern_Variable_State
+{
+    Pattern_Variable_State_Type type;
+    union {
+        Upp_Constant value; // Only valid if state = SET
+        Datatype* pattern_type;
+    } options;
+};
+
+struct Poly_Instance
+{
+    // Note: Because of implicit polymorphism all parameter-types need to be stored for differentiation
+    Poly_Header* header;
+    Array<Pattern_Variable_State> variable_states;
+    Array<Datatype*> parameter_types; // Does not contain implicit parameters, e.g. size == parameter_nodes.size
+    union {
+        Upp_Function* function_instance;
+        Upp_Struct*   struct_instance;
+    } options;
+};
+
+
+
+// Top-Level Definitions
 struct Upp_Module
 {
     AST::Definition_Module* node; // Is only null for compiler-generated modules
@@ -67,14 +141,6 @@ struct Upp_Module
         Compilation_Unit* compilation_unit;
         Symbol* module_symbol;
     } options;
-};
-
-enum class Poly_Type
-{
-    NORMAL, // Non-polymorphic
-    BASE,
-    PARTIAL, // Only some values are filled out
-    INSTANCE
 };
 
 enum class Function_Origin_Type
@@ -99,7 +165,6 @@ struct Function_Origin
         AST::Expression* inferred_expr;
     } options;
 };
-
 
 struct Upp_Function
 {
@@ -164,52 +229,11 @@ struct Upp_Global
     void* memory;
 };
 
+Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
+
 
 
 // WORKLOADS
-struct Workload_Base;
-struct Semantic_Context
-{
-    // Data required for analysis
-    Compilation_Data* compilation_data;
-    Workload_Base* current_workload;
-    Symbol_Table* current_symbol_table;
-    Symbol_Access_Level symbol_access_level;
-    Analysis_Pass* current_pass;
-
-    bool can_create_workloads;
-    bool can_execute_bake;
-    bool error_logging_enabled;
-    bool error_flagging_enabled;
-
-    // Current position info's
-    Upp_Function* current_function;
-    Datatype* bake_return_datatype;
-    Expression_Info* current_expression;
-    bool statement_reachable;
-
-    // Scratch data during analysis
-    DynArray<AST::Code_Block*> block_stack;
-    Arena* scratch_arena;
-};
-
-// The pattern_values define what happens when a pattern expression is analysed.
-enum class Pattern_Variable_State_Type
-{
-    SET,     // Comptime value was assigned to this variable
-    UNSET,   // Causes panic when accessed, means that this variable wasn't matched yet
-    PATTERN, // Returns pattern-type on access
-};
-
-struct Pattern_Variable_State
-{
-    Pattern_Variable_State_Type type;
-    union {
-        Upp_Constant value; // Only valid if state = SET
-        Datatype* pattern_type;
-    } options;
-};
-
 enum class Analysis_Workload_Type
 {
     ROOT, // Root workload, which spawns all other workloads
@@ -252,13 +276,13 @@ struct Workload_Root
     Workload_Base base;
 };
 
-// Analyses context changes of a single type
 struct Workload_Custom_Operator
 {
     Workload_Base base;
     Analysis_Pass* analysis_pass;
     Symbol_Table* symbol_table;
     Custom_Operator_Table* operator_table;
+    // Analyses context changes of a single type
     DynArray<AST::Definition_Custom_Operator*> change_nodes;
 };
 
@@ -310,61 +334,6 @@ struct Workload_Enum
     AST::Definition_Enum* node;
 };
 
-
-
-// Polymorphism
-struct Pattern_Variable
-{
-    Datatype_Pattern_Variable* pattern_variable_type;
-    int index; // Used to access values, index in pattern_variables array
-    DynArray<int> dependent_params;
-
-    // Origin infos
-    Poly_Header* origin;
-    AST::Symbol_Node* symbol_node;
-    bool is_comptime_parameter; // e.g. foo($A: int)
-    int defined_in_parameter_index;
-};
-
-struct Poly_Parameter_Info
-{
-    int parameter_index;
-	DynArray<int> depends_on_variables;
-};
-
-struct Poly_Header
-{
-    Call_Signature* signature; // Contains all parameters + return-type + implicit parameters
-    DynArray<Pattern_Variable> pattern_variables; // Contains all pattern-variables, e.g. comptime and implicit parameters
-    DynArray<Poly_Parameter_Info> param_infos; // More information for each call-signature parameter
-    DynSet<Poly_Instance*> instances;
-
-    // Origin infos
-    AST::Signature* signature_node;
-    Symbol_Table* base_parameter_table;
-    String* name; // Either struct or function name, used for dot-calls auto id
-    bool is_function;
-    union {
-        Upp_Struct*   upp_struct;
-        Upp_Function* function;
-    } origin;
-};
-
-struct Poly_Instance
-{
-    // Note: Because of implicit polymorphism all parameter-types need to be stored for differentiation
-    Poly_Header* header;
-    Array<Pattern_Variable_State> variable_states;
-    Array<Datatype*> parameter_types; // Does not contain implicit parameters, e.g. size == parameter_nodes.size
-    union {
-        Upp_Function* function_instance;
-        Upp_Struct*   struct_instance;
-    } options;
-};
-
-
-
-// Structures
 struct Workload_Structure_Body
 {
     Workload_Base base;
@@ -379,6 +348,9 @@ struct Workload_Structure_Header
     Upp_Struct* upp_struct;
     Symbol_Table* symbol_table;
 };
+
+void analysis_workload_destroy(Workload_Base* workload);
+void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 
 
 
@@ -419,10 +391,28 @@ void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
 Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data);
 Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data);
+void semantic_analyser_finish_analysis(Compilation_Data* compilation_data);
 
 
 
 // ANALYSIS-INFOS (AST-Annotations)
+struct Analysis_Pass 
+{
+    Workload_Base* origin_workload;
+};
+
+struct AST_Info_Key
+{
+    Analysis_Pass* pass;
+    AST::Node* base;
+};
+
+struct Node_Passes
+{
+    Dynamic_Array<Analysis_Pass*> passes;
+    AST::Node* base;
+};
+
 enum class Parameter_Value_Type
 {
     NOT_SET,             // No parameter was provided, e.g. use default value
@@ -451,16 +441,8 @@ struct Argument_Info
 struct Cast_Info
 {
     Cast_Type cast_type;
+    Datatype* result_type;
     Upp_Function* custom_cast_function; // Optional
-    Datatype* result_type;
-};
-
-struct Expression_Value_Info 
-{
-    Datatype* initial_type;
-    Datatype* result_type;
-    bool initial_value_is_temporary;
-    bool result_value_is_temporary;
 };
 
 enum class Call_Origin_Type
@@ -513,7 +495,7 @@ struct Call_Info
 		Upp_Struct* struct_instance;
 		Upp_Struct* struct_pattern;
 		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
-        Cast_Info cast_info;
+        Cast_Info cast_info; // Cast-Info from e.g. cast(x, 15)
 		struct 
 		{
 			bool subtype_valid;
@@ -536,9 +518,6 @@ struct Expression_Context
     Datatype* datatype;
 };
 
-
-
-// ANALYSIS INFO
 enum class Expression_Result_Type
 {
     VALUE,
@@ -598,10 +577,6 @@ struct Expression_Info
     Cast_Info cast_info;
 };
 
-Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system);
-Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied, Type_System* type_system);
-bool expression_has_memory_address(AST::Expression* expr, Semantic_Context* semantic_context);
-
 enum class Control_Flow
 {
     SEQUENTIAL, // One sequential path exists, but there may be paths that stop/return
@@ -612,7 +587,8 @@ enum class Control_Flow
 struct Statement_Info
 {
     Control_Flow flow;
-    struct {
+    struct 
+    {
         AST::Code_Block* block; // Continue/break
         struct {
             Upp_Function* function;
@@ -699,28 +675,60 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query, Compilation_Data* compilation_data);
 Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query, Compilation_Data* compilation_data);
 
+Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
+Cast_Info check_if_cast_possible(
+    Datatype* from_type, Datatype* to_type, bool value_is_temporary, bool is_auto_cast, Semantic_Context* semantic_context
+);
 
-
-
-// HELPERS
-// I currently need this so that a workload can analyse the same node multiple times
-struct Analysis_Pass 
+struct Expression_Value_Info 
 {
-    Workload_Base* origin_workload;
+    Datatype* initial_type;
+    Datatype* result_type;
+    bool initial_value_is_temporary;
+    bool result_value_is_temporary;
 };
 
-struct AST_Info_Key
+Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system);
+Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied, Type_System* type_system);
+bool expression_has_memory_address(AST::Expression* expr, Semantic_Context* semantic_context);
+
+
+
+// Semantic_Context
+struct Semantic_Context
 {
-    Analysis_Pass* pass;
-    AST::Node* base;
+    // Data required for analysis
+    Compilation_Data* compilation_data;
+    Workload_Base* current_workload;
+    Symbol_Table* current_symbol_table;
+    Symbol_Access_Level symbol_access_level;
+    Analysis_Pass* current_pass;
+
+    bool can_create_toplevel_items;
+    bool can_execute_bake;
+    bool error_logging_enabled;
+    bool error_flagging_enabled;
+
+    // Current position info's
+    Upp_Function* current_function;
+    Datatype* bake_return_datatype;
+    Expression_Info* current_expression;
+    bool statement_reachable;
+
+    // Scratch data during analysis
+    DynArray<AST::Code_Block*> block_stack;
+    Arena* scratch_arena;
 };
 
-struct Node_Passes
-{
-    Dynamic_Array<Analysis_Pass*> passes;
-    AST::Node* base;
-};
+Semantic_Context semantic_context_make(
+    Compilation_Data* compilation_data, Workload_Base* workload,
+    Symbol_Table* symbol_table, Symbol_Access_Level symbol_access_level,
+    Analysis_Pass* analysis_pass, Arena* scratch_arena
+);
 
+
+
+// Pattern matcher
 struct Matching_Constraint
 {
 	Datatype_Pattern_Variable* pattern_variable;
@@ -733,12 +741,14 @@ struct Pattern_Matcher
 	DynArray<Matching_Constraint> constraints;
 	int max_match_depth;
 };
+
 Pattern_Matcher pattern_matcher_make(Compilation_Data* compilation_data, Arena* arena);
 bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Datatype* type_b, int match_depth = 0);
 bool pattern_matcher_match_type_and_value(
     Pattern_Matcher& result, Datatype* datatype, Upp_Constant& value, int match_depth = 0 
 );
 bool pattern_match_result_check_constraints_pairwise(Pattern_Matcher& results);
+
 
 
 // ERRORS
@@ -798,29 +808,11 @@ struct Semantic_Error
 };
 
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section = Node_Section::WHOLE);
-void semantic_analyser_set_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
+void semantic_context_raise_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
 void error_information_append_to_rich_string(
     const Error_Information& info, Compilation_Data* compilation_data, String* text, 
     Datatype_Format format = datatype_format_make_default()
 );
-void semantic_analyser_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
-
-
-
-// ANALYSER (Does not really exist anymore)
-Semantic_Context semantic_context_make(
-    Compilation_Data* compilation_data, Workload_Base* workload,
-    Symbol_Table* symbol_table, Symbol_Access_Level symbol_access_level,
-    Analysis_Pass* analysis_pass, Arena* scratch_arena
-);
-
-Upp_Function* upp_function_create_empty(Call_Signature* signature, String* name, Compilation_Data* compilation_data);
-
+void compilation_data_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
-void analysis_workload_destroy(Workload_Base* workload);
-void analysis_workload_append_to_string(Workload_Base* workload, String* string);
 
-Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
-Cast_Info check_if_cast_possible(
-    Datatype* from_type, Datatype* to_type, bool value_is_temporary, bool is_auto_cast, Semantic_Context* semantic_context
-);

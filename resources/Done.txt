@@ -1,6 +1,25 @@
 
 Done:
 -----
+18.04:
+ - Parsing/lexing update with continuations
+
+16.04:
+ - primitive-cast was moved
+ - Rename address to rawptr, null to nil
+ - top_level_add_definition should respect can_create_workload
+ - Move Editor-analysis-info into compilation-data file
+ - Fixed variable-definition-bug
+
+15.04:
+ - Syntax-Rework with 'qualifier-first' syntax
+ - Remove new/delete (Also global allocators)
+
+07.04:
+ - In function call we could add the parameter names to code-completion
+ - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
+ - Remove unnecessary workload-types (inferred-function and lambda-function workloads)
+
 01.04.26:
  - Bytecode Update:
     * Bytecode-Generator now uses arena
@@ -27,7 +46,6 @@ Done:
 
  - Call-Signature move poly-values to poly-header
  - Remove header-workload from infered functions
-
 
 25.03.26:
  - Struct storage rework (Upp_Struct)
@@ -173,8 +191,6 @@ xx.03.26:
 17.03:
  * Editor Analysis-Info rework
 
-
-
 14.03:
  * Fixed memory-leaks
  * size_of should return usize
@@ -211,8 +227,6 @@ xx.03.26:
  * Auto-formating respects strings and end-of line comments
  * Reworked Comment-System/Auto-formating/Lexing, new Block-Comment (///)
 
-
-
 07.03:
  * Fixed synchronization bug
  * Added identifier-pool lock
@@ -247,8 +261,6 @@ xx.03.26:
  * Visual Line Selection errors when folds are enabled
  * Updated imports so we can have import Arena~Arena
  * Off by one error in syntax highlighting
-
-
 
 28.02.2025
  * Fixed error-hover information

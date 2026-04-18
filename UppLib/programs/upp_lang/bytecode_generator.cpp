@@ -1,10 +1,9 @@
 #include "bytecode_generator.hpp"
 
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "../../utility/hash_functions.hpp"
 #include "ir_code.hpp"
 #include "ast.hpp"
-#include "editor_analysis_info.hpp"
 
 struct Goto_Label
 {
@@ -506,7 +505,7 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
     auto primitive = downcast<Datatype_Primitive>(type);
     int type_size = type->memory_info.value.size;
     Bytecode_Type result;
-    switch (primitive->primitive_class)
+    switch (primitive_type_get_class(primitive->primitive_type))
     {
     case Primitive_Class::INTEGER: {
         switch (type_size) {
@@ -531,7 +530,7 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
         else panic("HEY");
         break;
     }
-    case Primitive_Class::ADDRESS: result = Bytecode_Type::UINT64; break;
+    case Primitive_Class::RAWPTR: result = Bytecode_Type::UINT64; break;
     case Primitive_Class::TYPE_HANDLE: result = Bytecode_Type::UINT32; break;
     case Primitive_Class::BOOLEAN: result = Bytecode_Type::BOOL; break;
     default: panic("HEY");

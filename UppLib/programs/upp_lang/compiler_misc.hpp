@@ -24,11 +24,6 @@ enum class Compile_Type
     BUILD_CODE,
 };
 
-// Note:
-// Cast type records all cast where 'an actual operation' happens, e.g. new values are created
-// The type of the result may still change, even if there is no cast involved,
-// which happens with auto-dereference, subtype-changes, to/from optional pointer and const-changes
-// To get a full picture of all performed operations the Expression_Cast_Info struct is required
 enum class Cast_Type
 {
 	// Primitive casts

@@ -227,7 +227,10 @@ namespace AST
         Optional<Symbol_Node*> alias_name;
         union {
             Path_Lookup* path;
-            String* file_name;
+            struct {
+                String* relative_path;
+                Compilation_Unit* node_unit;
+            } file_import;
         } options;
     };
 

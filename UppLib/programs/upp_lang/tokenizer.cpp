@@ -32,7 +32,7 @@ const char* token_type_as_cstring(Token_Type token_type)
 
     case Token_Type::LITERAL_TRUE: return "true";
     case Token_Type::LITERAL_FALSE: return "false";
-    case Token_Type::LITERAL_NULL: return "null";
+    case Token_Type::LITERAL_NIL: return "nil";
 
     case Token_Type::_OPERATORS_START_: return "_OPERATORS_START_";
     case Token_Type::PLUS: return "+";
@@ -86,7 +86,6 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::ASSIGN_DIV: return "/=";
     case Token_Type::ASSIGN_MODULO: return "%=";
     case Token_Type::UNINITIALIZED: return "_";
-    case Token_Type::CONCATENATE_LINES: return "\\";
 
     case Token_Type::_OPERATORS_END_: return "_OPERATORS_END_";
 
@@ -116,12 +115,12 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";
     case Token_Type::CAST: return "cast";
+    case Token_Type::SCOPE: return "scope";
 
     case Token_Type::BAKE: return "#bake";
     case Token_Type::INSTANCIATE: return "#instanciate";
     case Token_Type::GET_OVERLOAD: return "#get_overload";
     case Token_Type::GET_OVERLOAD_POLY: return "#get_overload_poly";
-    case Token_Type::EXPLICIT_BLOCK: return "#block";
 
     case Token_Type::_KEYWORDS_END_: return "_KEYWORDS_END_";
 
@@ -199,7 +198,7 @@ int tokenizer_initialize()
         }
 
         // We also have true, false, and null in the keyword table
-        insert_keyword_token(Token_Type::LITERAL_NULL);
+        insert_keyword_token(Token_Type::LITERAL_NIL);
         insert_keyword_token(Token_Type::LITERAL_TRUE);
         insert_keyword_token(Token_Type::LITERAL_FALSE);
     }
@@ -453,72 +452,74 @@ void tokenizer_parse_string_literal(String literal, String* append_to)
 DynArray<Token> tokenize_partial_code(
     Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments)
 {
+    int nearby_bundle_index = 0;
 	DynArray<Token> tokens = DynArray<Token>::create(arena);
 	token_index = 0;
 	if (index.line < 0 || index.line >= code->line_count) return tokens;
 
-	auto helper_has_continuation = [&]() -> bool {
-			if (tokens.size > 0 && tokens[tokens.size - 1].type == Token_Type::CONCATENATE_LINES) return true;
-			if (tokens.size > 1 &&
-				tokens[tokens.size - 1].type == Token_Type::COMMENT &&
-				tokens[tokens.size - 2].type == Token_Type::CONCATENATE_LINES) 
-			{
-				return true;
-			}
-			return false;
-		};
+    // Handle line-continuations
+    int line_start_index = index.line;
+    int line_end_index = index.line;
+    if (handle_line_continuations)
+    {
+        auto helper_lines_can_connect = [&](int prev_line_index, int curr_line_index) -> bool
+        {
+            auto checkpoint = arena->make_checkpoint();
+            SCOPE_EXIT(checkpoint.rewind());
+            DynArray<Token> prev_tokens = DynArray<Token>::create(arena);
+            DynArray<Token> curr_tokens = DynArray<Token>::create(arena);
 
-	// Check for continuations in previous lines
-	if (handle_line_continuations)
-	{
-		int start_line = index.line;
-		while (start_line > 0)
-		{
-			Source_Line* prev = source_code_get_line(code, start_line - 1);
-			tokens.reset();
-			tokenizer_tokenize_single_line(prev->text, &tokens, start_line - 1, remove_comments);
-			if (helper_has_continuation()) {
-				start_line = start_line - 1;
-				continue;
-			}
-			break;
-		}
+            Source_Line* prev_line = source_code_get_line(code, prev_line_index, nearby_bundle_index);
+            Source_Line* curr_line = source_code_get_line(code, curr_line_index, nearby_bundle_index);
+            tokenizer_tokenize_single_line(prev_line->text, &prev_tokens, prev_line_index, true);
+            tokenizer_tokenize_single_line(curr_line->text, &curr_tokens, curr_line_index, true);
+            if (prev_tokens.size == 0 || curr_tokens.size == 0) { // Empty lines don't connect
+                return false;
+            }
 
-		// Tokenize previous lines with continuations
-		tokens.reset();
-		for (int i = start_line; i < index.line; i += 1) {
-			tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, i, remove_comments);
-		}
-	}
+            // Note: In parser indentation is also considered, but here we need to make approximations because we go backwards
+            Continuation_Info prev_last_info  = token_type_get_continuation_info(prev_tokens[prev_tokens.size - 1].type);
+            Continuation_Info curr_first_info = token_type_get_continuation_info(curr_tokens[0].type);
+            if (prev_last_info.connects_to_next) return true;
+            if (curr_first_info.connects_to_previous) return true;
+            if (prev_last_info.is_parenthesis && token_type_get_class(prev_last_info.type) == Token_Class::LIST_START) return true;
+            if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_END) return true;
+            if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_START && curr_tokens.size == 1) return true;
 
-	// Tokenize current line
-	token_index = math_maximum(0, (int)tokens.size - 1);
-	int line_token_start = tokens.size;
-	tokenizer_tokenize_single_line(source_code_get_line(code, index.line)->text, &tokens, index.line, remove_comments);
+            return false;
+        };
 
-	// Find closest token
-	for (int i = line_token_start; i < tokens.size; i++) {
-		Token& token = tokens[i];
-		if (token.start <= index.character) {
-			token_index = i;
-		}
-		else {
-			break;
-		}
-	}
+        // Got backwards while lines connect
+        while (line_start_index > 0 && helper_lines_can_connect(line_start_index - 1, line_start_index)) {
+            line_start_index -= 1;
+        }
+        // Go forwards while lines connect
+        while (line_end_index + 1 < code->line_count && helper_lines_can_connect(line_end_index, line_end_index + 1)) {
+            line_end_index += 1;
+        }
+    }
 
-	if (handle_line_continuations)
-	{
-		int line = index.line + 1;
-		while (helper_has_continuation() && line < code->line_count) 
-		{
-			int prev_size = tokens.size;
-			tokenizer_tokenize_single_line(source_code_get_line(code, line)->text, &tokens, line, remove_comments);
-			if (tokens.size == prev_size) break; // Empty lines stop continuations
-			line += 1;
-		}
-	}
+    // Tokenize all relevant lines
+    for (int i = line_start_index; i <= line_end_index; i += 1)
+    {
+        int line_token_start = tokens.size;
+	    tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, index.line, remove_comments);
 
+        if (i == index.line) 
+        {
+	        token_index = math_maximum(0, (int)tokens.size - 1);
+	        for (int i = line_token_start; i < tokens.size; i++) {
+	        	Token& token = tokens[i];
+	        	if (token.start <= index.character) {
+	        		token_index = i;
+	        	}
+	        	else {
+	        		break;
+	        	}
+	        }
+        }
+
+    }
 	return tokens;
 }
 
@@ -570,6 +571,90 @@ ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type
 	}
 
 	return ivec2(start, end);
+}
+
+Continuation_Info continuation_info_make(Token_Type type, bool connects_to_previous, bool connects_to_next, bool is_statement_start, bool is_parenthesis) 
+{
+	Continuation_Info info;
+	info.type = type;
+	info.connects_to_next = connects_to_next;
+	info.connects_to_previous = connects_to_previous;
+	info.is_statement_start = is_statement_start;
+	info.is_parenthesis = is_parenthesis;
+	return info;
+}
+
+Continuation_Info token_type_get_continuation_info(Token_Type type)
+{
+	switch (type)
+	{
+    case Token_Type::PLUS:
+    case Token_Type::SLASH:
+    case Token_Type::PERCENTAGE:
+    case Token_Type::EQUALS:
+    case Token_Type::NOT_EQUALS:
+    case Token_Type::POINTER_EQUALS:
+    case Token_Type::POINTER_NOT_EQUALS:
+    case Token_Type::LESS_THAN: 
+    case Token_Type::GREATER_THAN: 
+    case Token_Type::LESS_EQUAL: 
+    case Token_Type::GREATER_EQUAL: 
+    case Token_Type::AND:
+    case Token_Type::OR:
+    case Token_Type::COLON:
+    case Token_Type::POSTFIX_CALL_ARROW:
+    case Token_Type::FUNCTION_ARROW:
+		return continuation_info_make(type, true, true, false, false);
+
+    case Token_Type::SEMI_COLON:
+    case Token_Type::COMMA:
+    case Token_Type::DOT:
+    case Token_Type::SUBTYPE_ACCESS:
+    case Token_Type::BASETYPE_ACCESS:
+    case Token_Type::ASSIGN:
+    case Token_Type::ASSIGN_ADD:
+    case Token_Type::ASSIGN_SUB:
+    case Token_Type::ASSIGN_MULT:
+    case Token_Type::ASSIGN_DIV:
+    case Token_Type::ASSIGN_MODULO:
+    case Token_Type::TILDE:
+    case Token_Type::ASTERIX:  // Minus and Asterix would cause confusion if it connects to last line, as it is also a unop
+    case Token_Type::MINUS:
+		return continuation_info_make(type, false, true, false, false);
+
+    case Token_Type::PARENTHESIS_OPEN:
+    case Token_Type::BRACKET_OPEN:
+    case Token_Type::CURLY_BRACE_OPEN:
+		return continuation_info_make(type, false, false, false, true);
+    case Token_Type::PARENTHESIS_CLOSED:
+    case Token_Type::BRACKET_CLOSED:
+    case Token_Type::CURLY_BRACE_CLOSED:
+		return continuation_info_make(type, false, false, false, true);
+
+    case Token_Type::FUNCTION_KEYWORD:
+    case Token_Type::MODULE:
+    case Token_Type::STRUCT:
+    case Token_Type::UNION:
+    case Token_Type::ENUM:
+    case Token_Type::VAR:
+    case Token_Type::GLOBAL_KEYWORD:
+    case Token_Type::CONST_KEYWORD:
+    case Token_Type::OPERATORS:
+    case Token_Type::IMPORT:
+    case Token_Type::AS:
+    case Token_Type::EXTERN:
+    case Token_Type::RETURN:
+    case Token_Type::BREAK:
+    case Token_Type::CONTINUE:
+    case Token_Type::IF:
+    case Token_Type::ELSE:
+    case Token_Type::LOOP:
+    case Token_Type::IN_KEYWORD:
+    case Token_Type::DEFER:
+    case Token_Type::DEFER_RESTORE:
+		return continuation_info_make(type, false, false, true, false);
+	}
+	return continuation_info_make(type, false, false, false, false);
 }
 
 

@@ -43,12 +43,11 @@
     <ClInclude Include="programs\upp_lang\bytecode_generator.hpp" />
     <ClInclude Include="programs\upp_lang\bytecode_interpreter.hpp" />
     <ClInclude Include="programs\upp_lang\code_history.hpp" />
-    <ClInclude Include="programs\upp_lang\compiler.hpp" />
     <ClInclude Include="programs\upp_lang\compiler_misc.hpp" />
     <ClInclude Include="programs\upp_lang\constant_pool.hpp" />
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
     <ClInclude Include="programs\upp_lang\debugger.hpp" />
-    <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp" />
+    <ClInclude Include="programs\upp_lang\compilation_data.hpp" />
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
     <ClInclude Include="programs\upp_lang\tokenizer.hpp" />
     <ClInclude Include="programs\upp_lang\memory_source.hpp" />
@@ -121,12 +120,11 @@
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp" />
     <ClCompile Include="programs\upp_lang\bytecode_interpreter.cpp" />
     <ClCompile Include="programs\upp_lang\code_history.cpp" />
-    <ClCompile Include="programs\upp_lang\compiler.cpp" />
     <ClCompile Include="programs\upp_lang\compiler_misc.cpp" />
     <ClCompile Include="programs\upp_lang\constant_pool.cpp" />
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
     <ClCompile Include="programs\upp_lang\debugger.cpp" />
-    <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp" />
+    <ClCompile Include="programs\upp_lang\compilation_data.cpp" />
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
     <ClCompile Include="programs\upp_lang\tokenizer.cpp" />
     <ClCompile Include="programs\upp_lang\memory_source.cpp" />

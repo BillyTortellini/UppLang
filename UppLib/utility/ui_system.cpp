@@ -1928,7 +1928,7 @@ void container_element_do_horizontal_layout_and_find_height(Container_Element* e
 			for (int i = 0; i < max_width_children.size; i++)
 			{
 				Max_Width_Child& max_width_child = max_width_children[i];
-				auto child = container.elements[max_width_child.index];
+				Container_Element& child = container.elements[max_width_child.index];
 
 				int child_space = child.min_width_without_collapse + extra_per_widget;
 				// Once we cannot fill child, we have found our extra_per_widget value

@@ -2,7 +2,7 @@
 
 #include "ast.hpp"
 #include "syntax_editor.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "code_history.hpp"
 
 namespace Parser
@@ -65,63 +65,73 @@ Text_Range token_get_text_range(Token& token) {
 	return text_range_make(text_index_make(token.line, token.start), text_index_make(token.line, token.end));
 }
 
+struct Line_Indent_Info
+{
+	int indentation;
+	bool is_empty; // Line is also counted as empty if it only starts with a backslash
+};
+
+Line_Indent_Info source_line_get_indent_info(Source_Line* line) 
+{
+	Line_Indent_Info result;
+	result.indentation = 0;
+	result.is_empty = true;
+
+	String& text = line->text;
+	int index = 0;
+	while (index < text.size) 
+	{
+		if (text[index] == ' ') {
+			index += 1;
+			continue;
+		}
+		else if (string_test_char(text, index, '/') && string_test_char(text, index + 1, '/')) {
+			break;
+		}
+		else {
+			result.is_empty = false;
+			break;
+		}
+	}
+	result.indentation = index/ 4;
+	return result;
+}
+
 DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Arena* arena, Identifier_Pool* id_pool)
 {
-	String string_buffer = string_create(256);
-	SCOPE_EXIT(string_destroy(&string_buffer));
-
-	DynArray<Token> tokens = DynArray<Token>::create(arena, 256);
+	DynArray<Token> tokens = DynArray<Token>::create(arena);
 	tokens.push_back(token_make(Token_Type::BLOCK_START, 0, 0, 0));
 
-	// First pass
+	int nearby_bundle_index = 0;
 	int indentation = 0;
+	int prev_indentation = 0;
+	int min_continuation_indentation = -1;
 	Text_Index last_text_pos = text_index_make(0, 0);
-	bool concatenate_to_last_line = false;
-	for (int bundle_index = 0; bundle_index < code->bundles.size; bundle_index += 1)
+	Token_Type last_line_end_token_type = Token_Type::INVALID;
+	for (int line_index = 0; line_index < code->line_count; line_index += 1)
 	{
-		Line_Bundle& bundle = code->bundles[bundle_index];
-		for (int in_bundle_index = 0; in_bundle_index < bundle.lines.size; in_bundle_index += 1)
+		Source_Line* line = source_code_get_line(code, line_index, nearby_bundle_index);
+		Line_Indent_Info indent_info = source_line_get_indent_info(line);
+		if (indent_info.is_empty) {
+			last_line_end_token_type = Token_Type::INVALID;
+			min_continuation_indentation = -1;
+			continue; // Skip empty lines
+		}
+		SCOPE_EXIT(prev_indentation = indent_info.indentation);
+
+		// Insert Block-Start/End tokens on indentation change
+		int indentation_before_line = indentation;
 		{
-			Source_Line& line = bundle.lines[in_bundle_index];
-			int line_index = in_bundle_index + bundle.first_line_index;
-
-			bool next_concatenate = false;
-			SCOPE_EXIT(concatenate_to_last_line = next_concatenate);
-			bool line_is_empty = true;
-			int line_indentation = 0;
-			{
-				int leading_whitespace_count = 0;
-				for (int i = 0; i < line.text.size; i += 1) 
-				{
-					char c = line.text[i];
-					if (c == '/' && i + 1 < line.text.size && line.text[i + 1] == '/') {
-						line_is_empty = true;
-						break;
-					}
-
-					if (c == ' ') {
-						leading_whitespace_count += 1;
-					}
-					else {
-						line_is_empty = false;
-						break;
-					}
-				}
-				line_indentation = leading_whitespace_count / 4;
-			}
-			if (line_is_empty) {
-				continue;
-			}
-
-			// Insert Block-Start/End tokens
-			bool added_block_end = false;
-			while (indentation != line_indentation && !concatenate_to_last_line)
-			{
-				while (tokens.last().type == Token_Type::LINE_END) {
+			// Remove previous line-end tokens if the indentation changes
+			if (indentation != indent_info.indentation) {
+				while (tokens.size > 0 && tokens.last().type == Token_Type::LINE_END) {
 					tokens.size -= 1;
 				}
-				
-				if (line_indentation > indentation) {
+			}
+			bool added_block_end = false;
+			while (indentation != indent_info.indentation)
+			{
+				if (indent_info.indentation > indentation) {
 					tokens.push_back(token_make(Token_Type::BLOCK_START, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 					indentation += 1;
 				}
@@ -134,47 +144,156 @@ DynArray<Token> tokenize_source_code_and_build_hierarchy(Source_Code* code, Aren
 			if (added_block_end) {
 				tokens.push_back(token_make(Token_Type::LINE_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 			}
+		}
 
-			// Tokenize line
-			int token_count_before = tokens.size;
-			tokenizer_tokenize_single_line(line.text, &tokens, line_index, true);
-			if (tokens.last().type == Token_Type::CONCATENATE_LINES) {
-				tokens.size -= 1;
-				next_concatenate = true;
-			}
-			else {
-				Token& last_token = tokens.last();
-				last_text_pos = text_index_make(last_token.line, last_token.end);
-				tokens.push_back(token_make(Token_Type::LINE_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
-			}
+		// Tokenize line
+		int token_count_before = tokens.size;
+		{
+			tokenizer_tokenize_single_line(line->text, &tokens, line_index, true);
 
-			// Parse string literals and identifiers
+			// Add identifiers and string-literals to identifier-pool
 			for (int i = token_count_before; i < tokens.size; i++)
 			{
 				Token& token = tokens[i];
-
 				if (token.type == Token_Type::IDENTIFIER) {
-					token.options.string_value = identifier_pool_add(id_pool, string_create_substring_static(&line.text, token.start, token.end));
-					continue;
+					token.options.string_value = identifier_pool_add(id_pool, string_create_substring_static(&line->text, token.start, token.end));
 				}
-				else if (token.type == Token_Type::LITERAL_STRING) {
-					auto substring = string_create_substring_static(&line.text, token.start, token.end);
-					string_reset(&string_buffer);
+				else if (token.type == Token_Type::LITERAL_STRING)
+				{
+					auto checkpoint = arena->make_checkpoint();
+					SCOPE_EXIT(checkpoint.rewind());
+					String string_buffer = string_create(arena, 256);
+					auto substring = string_create_substring_static(&line->text, token.start, token.end);
 					tokenizer_parse_string_literal(substring, &string_buffer);
 					token.options.string_value = identifier_pool_add(id_pool, string_buffer);
-					continue;
 				}
 			}
 		}
+
+		if (tokens.size == token_count_before) {
+			last_line_end_token_type = Token_Type::INVALID;
+			min_continuation_indentation = -1; // empty lines reset continuations?
+			indentation = indentation_before_line;
+			continue;
+		}
+
+		// Check if lines should be joined
+		bool lines_should_join = false;
+		{
+			Continuation_Info curr_line_first_info = token_type_get_continuation_info(tokens[token_count_before].type);
+			Continuation_Info prev_line_last_info = token_type_get_continuation_info(last_line_end_token_type);
+
+			// Connect lines if prev-line ends in continuation
+			if (!lines_should_join && prev_line_last_info.connects_to_next && !curr_line_first_info.is_statement_start) 
+			{
+				if (min_continuation_indentation == -1) {
+					if (indentation > prev_indentation) {
+						lines_should_join = true;
+						min_continuation_indentation = prev_indentation + 1;
+					}
+				}
+				else if (indentation >= min_continuation_indentation) {
+					lines_should_join = true;
+				}
+			}
+
+			// Connect lines if current-line starts with a connection to last
+			if (!lines_should_join && curr_line_first_info.connects_to_previous && !prev_line_last_info.is_statement_start)
+			{
+				if (min_continuation_indentation == -1) {
+					if (indentation > prev_indentation) {
+						lines_should_join = true;
+						min_continuation_indentation = prev_indentation + 1;
+					}
+				}
+				else if (indentation >= min_continuation_indentation) {
+					lines_should_join = true;
+				}
+			}
+
+			// Connect lines if prev-line ends with open parenthesis
+			if (!lines_should_join && prev_line_last_info.is_parenthesis && 
+				token_type_get_class(prev_line_last_info.type) == Token_Class::LIST_START && // Parenthesis on prev-line must be start
+				!(curr_line_first_info.is_statement_start && prev_line_last_info.type != Token_Type::CURLY_BRACE_OPEN) && // Next must not be statement if ( or [
+				indentation > prev_indentation) // Parenthesis always require one indentation jump
+			{
+				if (min_continuation_indentation == -1) {
+					lines_should_join = true;
+					min_continuation_indentation = prev_indentation + 1;
+				}
+				else if (indentation >= min_continuation_indentation) {
+					lines_should_join = true;
+				}
+			}
+
+			// Connect lines if current-line is closing parenthesis
+			// or if it's an open parenthesis that is the only token on the line
+			if (!lines_should_join && curr_line_first_info.is_parenthesis && (
+					token_type_get_class(curr_line_first_info.type) == Token_Class::LIST_END ||
+					(token_type_get_class(curr_line_first_info.type) == Token_Class::LIST_START && token_count_before + 1 == tokens.size)
+				)) // Parenthesis on curr-line must be end
+			{
+				if (min_continuation_indentation == -1) {
+					if (indentation >= prev_indentation) { // Closing parenthesis can be on same indentation as prev-line
+						lines_should_join = true;
+					}
+				}
+				else if (indentation >= min_continuation_indentation) {
+					lines_should_join = true;
+				}
+				else if (indentation == min_continuation_indentation - 1) { // Stop continuation is we arrive back at starting indentation
+					lines_should_join = true;
+					min_continuation_indentation = -1;
+				}
+			}
+		}
+		if (!lines_should_join) {
+			min_continuation_indentation = -1;
+		}
+
+		// Join lines if necessary (Remove line-seperator tokens)
+		if (lines_should_join)
+		{
+			indentation = indentation_before_line;
+			int copy_start_index = token_count_before;
+			while (copy_start_index > 0)
+			{
+				Token& prev = tokens[copy_start_index - 1];
+				if (prev.type == Token_Type::BLOCK_START || prev.type == Token_Type::BLOCK_END || prev.type == Token_Type::LINE_END) {
+					copy_start_index -= 1;
+				}
+				else {
+					break;
+				}
+			}
+			if (copy_start_index != token_count_before)
+			{
+				for (int i = 0; i < tokens.size - token_count_before; i++) {
+					tokens[copy_start_index + i] = tokens[token_count_before + i];
+				}
+				tokens.size = tokens.size - (token_count_before - copy_start_index);
+			}
+		}
+
+		// Store last text-index for block and line_end tokens
+		if (tokens.size > 0) {
+			Token& last_token = tokens.last();
+			last_text_pos = text_index_make(last_token.line, last_token.end);
+			last_line_end_token_type = last_token.type;
+		}
+
+		// Push line-end token
+		tokens.push_back(token_make(Token_Type::LINE_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 	}
 
 	// Add missing block-end tokens
-	while (tokens.last().type == Token_Type::LINE_END) {
+	while (tokens.size > 0 && tokens.last().type == Token_Type::LINE_END) {
 		tokens.size -= 1;
 	}
 	for (int i = 0; i < indentation + 1; i += 1) {
 		tokens.push_back(token_make(Token_Type::BLOCK_END, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 	}
+	// Push invalid token so access to last block-end + 1 is possible (Not sure if necessary anymore) 
 	tokens.push_back(token_make(Token_Type::INVALID, last_text_pos.character, last_text_pos.character, last_text_pos.line));
 
 	return tokens;
@@ -335,7 +454,7 @@ namespace Parser
 	}
 
 	bool on_follow_block() {
-		return test_token(Token_Type::CURLY_BRACE_OPEN) || test_token(Token_Type::BLOCK_START) || test_token(Token_Type::EXPLICIT_BLOCK);
+		return test_token(Token_Type::CURLY_BRACE_OPEN) || test_token(Token_Type::BLOCK_START) || test_token(Token_Type::SCOPE);
 	}
 
 
@@ -404,7 +523,7 @@ namespace Parser
 				found = true;
 				break;
 			}
-			if (test_token(Token_Type::BLOCK_END) || test_token(Token_Type::LINE_END) || test_token(Token_Type::EXPLICIT_BLOCK) ||
+			if (test_token(Token_Type::BLOCK_END) || test_token(Token_Type::LINE_END) || test_token(Token_Type::SCOPE) ||
 				(parenthesis_stack.size == 0 && test_token(Token_Type::CURLY_BRACE_CLOSED)))
 			{
 				found = false;
@@ -462,13 +581,16 @@ namespace Parser
 				iter.is_valid = true;
 				break;
 			}
-			case Token_Type::EXPLICIT_BLOCK:
+			case Token_Type::SCOPE:
 			{
+				iter.type = Token_Type::BLOCK_START;
 				if (test_token(Token_Type::BLOCK_START, 1)) {
+					advance_token();
 					advance_token();
 					iter.is_valid = true;
 				}
 				else if (test_token(Token_Type::BLOCK_START, Token_Type::IDENTIFIER, 1)) {
+					advance_token();
 					advance_token();
 					advance_token();
 					iter.is_valid = true;
@@ -638,7 +760,7 @@ namespace Parser
 
 	void parse_list_items(Node* parent, list_item_parse_fn parse_fn, DynArray<Node*>& append_to)
 	{
-		if (get_token()->type == Token_Type::EXPLICIT_BLOCK || token_type_get_class(get_token()->type) != Token_Class::LIST_START) {
+		if (!(get_token()->type == Token_Type::SCOPE || token_type_get_class(get_token()->type) == Token_Class::LIST_START)) {
 			return;
 		}
 
@@ -1151,9 +1273,11 @@ namespace Parser
 			}
 	
 			// Check if it's a file import
-			if (test_token(Token_Type::LITERAL_STRING)) {
+			if (test_token(Token_Type::LITERAL_STRING)) 
+			{
 				import_node.operator_type = Import_Operator::FILE_IMPORT;
-				import_node.options.file_name = get_token()->options.string_value;
+				import_node.options.file_import.node_unit = parser.unit;
+				import_node.options.file_import.relative_path = get_token()->options.string_value;
 				advance_token();
 			}
 			else
@@ -1659,15 +1783,21 @@ namespace Parser
 			}
 			PARSE_SUCCESS(result);
 		}
+		case Token_Type::SCOPE: {
+			result->type = Statement_Type::BLOCK;
+			result->options.block = parse_code_block(upcast(result), nullptr);
+			PARSE_SUCCESS(result);
+			break;
+		}
 		}
 
 		if (on_follow_block())
 		{
+			log_error_range_offset("New block requires the scope keyword", 0);
 			result->type = Statement_Type::BLOCK;
 			result->options.block = parse_code_block(upcast(result), nullptr);
 			PARSE_SUCCESS(result);
 		}
-
 
 		// Otherwise try to parse expression or assignment statement
 		parser_rollback(checkpoint); // Rollback first
@@ -1695,7 +1825,7 @@ namespace Parser
 	Optional<String*> parse_block_label_or_use_related_node_id(AST::Node* related_node)
 	{
 		Optional<String*> result = optional_make_failure<String*>();
-		if (test_token(Token_Type::EXPLICIT_BLOCK, Token_Type::IDENTIFIER)) {
+		if (test_token(Token_Type::SCOPE, Token_Type::IDENTIFIER)) {
 			result = optional_make_success(get_token(1)->options.string_value);
 		}
 		else if (related_node != nullptr)
@@ -2069,7 +2199,7 @@ namespace Parser
 			advance_token();
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::LITERAL_NULL:
+		case Token_Type::LITERAL_NIL:
 		{
 			result->type = Expression_Type::LITERAL_READ;
 			result->options.literal_read.type = Literal_Type::NULL_VAL;

@@ -246,9 +246,6 @@
     <ClInclude Include="programs\upp_lang\c_backend.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\compiler.hpp">
-      <Filter>Header Files\Programs\Upp_Lang</Filter>
-    </ClInclude>
     <ClInclude Include="programs\upp_lang\compiler_misc.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
@@ -312,7 +309,7 @@
     <ClInclude Include="utility\line_edit.hpp">
       <Filter>Header Files\Utility</Filter>
     </ClInclude>
-    <ClInclude Include="programs\upp_lang\editor_analysis_info.hpp">
+    <ClInclude Include="programs\upp_lang\compilation_data.hpp">
       <Filter>Header Files\Programs\Upp_Lang</Filter>
     </ClInclude>
     <ClInclude Include="win32\thread.hpp">
@@ -417,9 +414,6 @@
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\c_backend.cpp">
-      <Filter>Source Files\Programs\Upp_Lang</Filter>
-    </ClCompile>
-    <ClCompile Include="programs\upp_lang\compiler.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="programs\upp_lang\bytecode_generator.cpp">
@@ -536,7 +530,7 @@
     <ClCompile Include="utility\line_edit.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
-    <ClCompile Include="programs\upp_lang\editor_analysis_info.cpp">
+    <ClCompile Include="programs\upp_lang\compilation_data.cpp">
       <Filter>Source Files\Programs\Upp_Lang</Filter>
     </ClCompile>
     <ClCompile Include="win32\thread.cpp">

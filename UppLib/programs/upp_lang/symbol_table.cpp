@@ -1,11 +1,11 @@
 #include "symbol_table.hpp"
 
 #include "compiler_misc.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "ast.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)

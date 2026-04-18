@@ -1,8 +1,8 @@
 #include "type_system.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 #include "../../utility/rich_text.hpp"
 
 #include "syntax_colors.hpp"
@@ -384,9 +384,9 @@ void datatype_append_value_to_string(
         auto primitive = downcast<Datatype_Primitive>(type);
         int size = primitive->base.memory_info.value.size;
 
-        switch (primitive->primitive_class)
+        switch (primitive_type_get_class(primitive->primitive_type))
         {
-        case Primitive_Class::ADDRESS: 
+        case Primitive_Class::RAWPTR: 
         {
             void* data = nullptr;
             if (!local_memory.read_single_value(value_ptr, &data)) {
@@ -584,9 +584,9 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
 
         auto primitive = downcast<Datatype_Primitive>(datatype);
         auto memory = primitive->base.memory_info.value;
-        switch (primitive->primitive_class)
+        switch (primitive_type_get_class(primitive->primitive_type))
         {
-        case Primitive_Class::ADDRESS: 
+        case Primitive_Class::RAWPTR: 
         {
             string->append("address");
             break;
@@ -855,14 +855,13 @@ Datatype datatype_make_simple_base(Datatype_Type type, int size, int alignment)
 	return result;
 }
 
-Datatype_Primitive* type_system_make_primitive(Type_System* type_system, Primitive_Type type, Primitive_Class primitive_class, int size, bool is_signed)
+Datatype_Primitive* type_system_make_primitive(Type_System* type_system, Primitive_Type type, int size, bool is_signed)
 {
 	Arena* arena = &type_system->compilation_data->arena;
 
 	Datatype_Primitive* result = arena->allocate<Datatype_Primitive>();
 	result->base = datatype_make_simple_base(Datatype_Type::PRIMITIVE, size, size);
 	result->primitive_type = type;
-	result->primitive_class = primitive_class;
 	result->is_signed = is_signed;
 
 	auto& internal_info = type_system_register_type(upcast(result), type_system)->options.primitive;
@@ -1519,26 +1518,26 @@ void type_system_add_predefined_types(Type_System* type_system)
 
 	// Primitive types
 	{
-		types->i8_type = type_system_make_primitive(type_system, Primitive_Type::I8, Primitive_Class::INTEGER, 1, true);
-		types->i16_type = type_system_make_primitive(type_system, Primitive_Type::I16, Primitive_Class::INTEGER, 2, true);
-		types->i32_type = type_system_make_primitive(type_system, Primitive_Type::I32, Primitive_Class::INTEGER, 4, true);
-		types->i64_type = type_system_make_primitive(type_system, Primitive_Type::I64, Primitive_Class::INTEGER, 8, true);
-		types->u8_type = type_system_make_primitive(type_system, Primitive_Type::U8, Primitive_Class::INTEGER, 1, false);
-		types->u16_type = type_system_make_primitive(type_system, Primitive_Type::U16, Primitive_Class::INTEGER, 2, false);
-		types->u32_type = type_system_make_primitive(type_system, Primitive_Type::U32, Primitive_Class::INTEGER, 4, false);
-		types->u64_type = type_system_make_primitive(type_system, Primitive_Type::U64, Primitive_Class::INTEGER, 8, false);
+		types->i8_type = type_system_make_primitive(type_system, Primitive_Type::I8, 1, true);
+		types->i16_type = type_system_make_primitive(type_system, Primitive_Type::I16, 2, true);
+		types->i32_type = type_system_make_primitive(type_system, Primitive_Type::I32, 4, true);
+		types->i64_type = type_system_make_primitive(type_system, Primitive_Type::I64, 8, true);
+		types->u8_type = type_system_make_primitive(type_system, Primitive_Type::U8, 1, false);
+		types->u16_type = type_system_make_primitive(type_system, Primitive_Type::U16, 2, false);
+		types->u32_type = type_system_make_primitive(type_system, Primitive_Type::U32, 4, false);
+		types->u64_type = type_system_make_primitive(type_system, Primitive_Type::U64, 8, false);
 
-		types->f32_type = type_system_make_primitive(type_system, Primitive_Type::F32, Primitive_Class::FLOAT, 4, true);
-		types->f64_type = type_system_make_primitive(type_system, Primitive_Type::F64, Primitive_Class::FLOAT, 8, true);
+		types->f32_type = type_system_make_primitive(type_system, Primitive_Type::F32, 4, true);
+		types->f64_type = type_system_make_primitive(type_system, Primitive_Type::F64, 8, true);
 
-		types->bool_type = type_system_make_primitive(type_system, Primitive_Type::BOOLEAN, Primitive_Class::BOOLEAN, 1, false);
-		types->address = type_system_make_primitive(type_system, Primitive_Type::ADDRESS, Primitive_Class::ADDRESS, 8, false);
-		types->isize = type_system_make_primitive(type_system, Primitive_Type::ISIZE, Primitive_Class::INTEGER, 8, true);
-		types->usize = type_system_make_primitive(type_system, Primitive_Type::USIZE, Primitive_Class::INTEGER, 8, false);
-		types->type_handle = upcast(type_system_make_primitive(type_system, Primitive_Type::TYPE_HANDLE, Primitive_Class::TYPE_HANDLE, 4, false));
+		types->bool_type = type_system_make_primitive(type_system, Primitive_Type::BOOLEAN, 1, false);
+		types->address = type_system_make_primitive(type_system, Primitive_Type::RAWPTR, 8, false);
+		types->isize = type_system_make_primitive(type_system, Primitive_Type::ISIZE, 8, true);
+		types->usize = type_system_make_primitive(type_system, Primitive_Type::USIZE, 8, false);
+		types->type_handle = upcast(type_system_make_primitive(type_system, Primitive_Type::TYPE_HANDLE, 4, false));
 
-		types->c_char   = type_system_make_primitive(type_system, Primitive_Type::C_CHAR, Primitive_Class::INTEGER, 1, false);
-		types->c_string = upcast(type_system_make_primitive(type_system, Primitive_Type::C_STRING, Primitive_Class::C_STRING, 8, false));
+		types->c_char   = type_system_make_primitive(type_system, Primitive_Type::C_CHAR, 1, false);
+		types->c_string = upcast(type_system_make_primitive(type_system, Primitive_Type::C_STRING, 8, false));
 	}
 
 	// Other basic types
@@ -1688,7 +1687,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 				add_enum_member(types->primitive_type_enum, "U16", 6);
 				add_enum_member(types->primitive_type_enum, "U32", 7);
 				add_enum_member(types->primitive_type_enum, "U64", 8);
-				add_enum_member(types->primitive_type_enum, "ADDRESS", 9);
+				add_enum_member(types->primitive_type_enum, "RAWPTR", 9);
 				add_enum_member(types->primitive_type_enum, "ISIZE", 10);
 				add_enum_member(types->primitive_type_enum, "USIZE", 11);
 				add_enum_member(types->primitive_type_enum, "TYPE_HANDLE", 12);
@@ -1836,9 +1835,44 @@ bool datatype_is_unknown(Datatype* datatype) {
 	return datatype_get_undecorated(datatype, true, true, true)->type == Datatype_Type::UNKNOWN_TYPE;
 }
 
+Primitive_Class primitive_type_get_class(Primitive_Type primitive_type)
+{
+	switch (primitive_type)
+	{
+    // Basic integers
+	case Primitive_Type::I8:
+    case Primitive_Type::I16:
+    case Primitive_Type::I32:
+    case Primitive_Type::I64:
+    case Primitive_Type::U8:
+    case Primitive_Type::U16:
+    case Primitive_Type::U32:
+    case Primitive_Type::U64:
+    case Primitive_Type::ISIZE:
+    case Primitive_Type::USIZE:
+    case Primitive_Type::C_CHAR:
+		return Primitive_Class::INTEGER;
+    case Primitive_Type::F32:
+    case Primitive_Type::F64:
+		return Primitive_Class::FLOAT;
+    case Primitive_Type::BOOLEAN:
+		return Primitive_Class::BOOLEAN;
+    case Primitive_Type::RAWPTR:
+		return Primitive_Class::RAWPTR;
+    case Primitive_Type::TYPE_HANDLE:
+		return Primitive_Class::TYPE_HANDLE;
+    case Primitive_Type::C_STRING:
+		return Primitive_Class::C_STRING;
+	default: panic("");
+	}
+
+	panic("");
+	return Primitive_Class::INTEGER;
+}
+
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class) {
 	if (datatype->type != Datatype_Type::PRIMITIVE) return false;
-	return downcast<Datatype_Primitive>(datatype)->primitive_class == primitive_class;
+	return primitive_type_get_class(downcast<Datatype_Primitive>(datatype)->primitive_type) == primitive_class;
 }
 
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
@@ -1913,5 +1947,9 @@ Upp_String upp_string_empty() {
 	result.data = nullptr;
 	result.size = 0;
 	return result;
+}
+
+Primitive_Class Datatype_Primitive::get_class() {
+	return primitive_type_get_class(primitive_type);
 }
 

@@ -1,6 +1,6 @@
 #include "ast.hpp"
 
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 
 namespace AST
 {
@@ -531,7 +531,7 @@ namespace AST
 				auto& import = def->options.import;
 				string_append_formated(str, "IMPORT ");
 				if (import.operator_type == Import_Operator::FILE_IMPORT) {
-					string_append_formated(str, "\"%s\" ", import.options.file_name->characters);
+					string_append_formated(str, "\"%s\" ", import.options.file_import.relative_path->characters);
 				}
 				else if (import.operator_type == Import_Operator::MODULE_IMPORT) {
 					string_append_formated(str, "~* ");

@@ -7,6 +7,7 @@
 #include "source_code.hpp"
 #include "tokenizer.hpp"
 #include "ast.hpp"
+#include "compiler_misc.hpp"
 
 namespace AST
 {

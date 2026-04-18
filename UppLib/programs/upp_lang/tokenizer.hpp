@@ -33,12 +33,10 @@ enum class Token_Type
 
     LITERAL_TRUE,
     LITERAL_FALSE,
-    LITERAL_NULL,
+    LITERAL_NIL,
 
     // Operators
     _OPERATORS_START_,
-
-    CONCATENATE_LINES,    // \
 
     PLUS,                 // +
     MINUS,                // - 
@@ -97,6 +95,7 @@ enum class Token_Type
     // Keywords
     _KEYWORDS_START_,
 
+    // Toplevel Definitions
     FUNCTION_KEYWORD, // fn
     MODULE,
     STRUCT,
@@ -107,28 +106,30 @@ enum class Token_Type
     CONST_KEYWORD,
     OPERATORS,
     IMPORT,
-    AS,
     EXTERN,
 
+    // Block statements
     IF,
     ELSE,
     SWITCH,
     DEFAULT,
     LOOP,
+    SCOPE,
+    DEFER,
+
+    AS,
     IN_KEYWORD,
     RETURN,
     BREAK,
     CONTINUE,
-    DEFER,
-    DEFER_RESTORE,
     CAST,
+    DEFER_RESTORE,
     
     // #keywords, 
     BAKE,
     INSTANCIATE,
     GET_OVERLOAD,
     GET_OVERLOAD_POLY,
-    EXPLICIT_BLOCK,
 
     _KEYWORDS_END_,
 };
@@ -162,4 +163,15 @@ bool token_type_is_operator(Token_Type type);
 bool token_type_is_keyword(Token_Type type);
 Token_Type token_type_get_partner(Token_Type type);
 const char* token_type_as_cstring(Token_Type token_type);
+
+struct Continuation_Info
+{
+	bool connects_to_previous;
+	bool connects_to_next;
+	bool is_statement_start;
+	bool is_parenthesis;
+	Token_Type type;
+};
+Continuation_Info token_type_get_continuation_info(Token_Type type);
+Continuation_Info continuation_info_make(Token_Type type, bool connects_to_previous, bool connects_to_next, bool is_statement_start, bool is_parenthesis);
 

@@ -2,10 +2,10 @@
 
 #include <iostream>
 #include "../../utility/random.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include <Windows.h>
 #include "ir_code.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 
 struct Bytecode_Thread
 {

@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "../../datastructures/dynamic_array.hpp"
@@ -16,6 +15,7 @@ namespace AST
     struct Code_Block;
 };
 
+struct Editor_Info;
 struct Bytecode_Instruction;
 struct Call_Signature;
 struct Fiber_Pool;
@@ -39,67 +39,16 @@ struct C_Generator;
 
 
 
-// Editor_Info
-enum class Editor_Info_Type
+// COMPILATION_DATA
+struct Compilation_Unit
 {
-    EXPRESSION_INFO,
-    SYMBOL_LOOKUP,
-    CALL_INFORMATION,
-    ARGUMENT,
-    MARKUP,
-    ERROR_ITEM
-};
+    String filepath; // For deduplication, full-filepath, owned by this structure
 
-struct Editor_Info_Symbol {
-    Symbol* symbol;
-    bool is_definition;
-    Analysis_Pass* pass;
-    bool add_color;
-};
-
-struct Editor_Info_Expression 
-{
-    AST::Expression* expr;
-    Expression_Info* info;
-    Analysis_Pass* analysis_pass;
-    bool is_member_access;
-    struct {
-        Datatype* value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
-        bool has_definition;
-        Text_Index definition_index;
-        Compilation_Unit* member_definition_unit;
-    } member_access_info;
-};
-
-struct Editor_Info_Call 
-{
-    Call_Info* callable_call;
-    AST::Call_Node* call_node;
-};
-
-struct Editor_Info_Argument {
-    AST::Call_Node* call_node;
-    int argument_index;
-    int test;
-};
-
-union Editor_Info_Option 
-{
-    Editor_Info_Option() {};
-    Editor_Info_Expression expression;
-    Editor_Info_Symbol symbol_info;
-    Editor_Info_Argument argument_info;
-    Editor_Info_Call call_info;
-    Syntax_Color markup_color;
-    int error_index;
-};
-
-struct Editor_Info
-{
-    Editor_Info_Type type;
-    Editor_Info_Option options;
-    Analysis_Pass* pass;
-    int analysis_item_index;
+    // All data may be nullptr until loaded...
+    Source_Code* code;
+    AST::Definition_Module* root;
+    Upp_Module* upp_module;
+    Array<Error_Message> parser_errors;
 };
 
 struct Compilation_Data
@@ -180,13 +129,88 @@ struct Compilation_Data
 };
 
 Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool);
-Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new);
 void compilation_data_destroy(Compilation_Data* data);
-void compilation_data_finish_semantic_analysis(Compilation_Data* compilation_data);
+
+Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data* compilation_data, String filepath, bool load_file_if_new, bool parse_ast);
+void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Unit* main_unit, Compile_Type compile_type);
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data);
+Exit_Code compiler_execute(Compilation_Data* compilation_data);
+
+bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilation_data);
+bool compilation_data_errors_occured(Compilation_Data* compilation_data);
+Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base);
+void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task);
+
+void compiler_run_testcases(bool force_run);
 
 
 
+// EDITOR_INFO
+enum class Editor_Info_Type
+{
+    EXPRESSION_INFO,
+    SYMBOL_LOOKUP,
+    CALL_INFORMATION,
+    ARGUMENT,
+    MARKUP,
+    ERROR_ITEM
+};
+
+struct Editor_Info_Symbol {
+    Symbol* symbol;
+    bool is_definition;
+    Analysis_Pass* pass;
+    bool add_color;
+};
+
+struct Editor_Info_Expression 
+{
+    AST::Expression* expr;
+    Expression_Info* info;
+    Analysis_Pass* analysis_pass;
+    bool is_member_access;
+    struct {
+        Datatype* value_type; // Since the Editor cannot query Analysis-Pass, we store member-access infos here...
+        bool has_definition;
+        Text_Index definition_index;
+        Compilation_Unit* member_definition_unit;
+    } member_access_info;
+};
+
+struct Editor_Info_Call 
+{
+    Call_Info* callable_call;
+    AST::Call_Node* call_node;
+};
+
+struct Editor_Info_Argument {
+    AST::Call_Node* call_node;
+    int argument_index;
+    int test;
+};
+
+union Editor_Info_Option 
+{
+    Editor_Info_Option() {};
+    Editor_Info_Expression expression;
+    Editor_Info_Symbol symbol_info;
+    Editor_Info_Argument argument_info;
+    Editor_Info_Call call_info;
+    Syntax_Color markup_color;
+    int error_index;
+};
+
+struct Editor_Info
+{
+    Editor_Info_Type type;
+    Editor_Info_Option options;
+    Analysis_Pass* pass;
+    int analysis_item_index;
+};
+
+
+
+// CALL_SIGNATURES
 // Note: Call_Signatures get deduplicated (Because function-pointer-types get deduplicated, so we need to do this anyway)
 Call_Signature* call_signature_create_empty();
 void call_signature_destroy(Call_Signature* signature);
@@ -199,8 +223,6 @@ Call_Parameter* call_signature_add_return_type(Call_Signature* signature, Dataty
 // Takes ownership of signature, returns deduplicated signature
 Call_Signature* call_signature_register(Call_Signature* signature, Compilation_Data* compilation_data); 
 void call_signature_append_to_string(Call_Signature* signature, String* string, Type_System* type_system, Datatype_Format format);
-
-Source_Code* source_code_load_from_file(String filepath);
 
 
 

@@ -1,7 +1,6 @@
 #include "compiler_misc.hpp"
 
 #include "type_system.hpp"
-#include "compiler.hpp"
 #include "../../win32/process.hpp"
 #include "../../win32/thread.hpp"
 

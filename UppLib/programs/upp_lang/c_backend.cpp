@@ -1,6 +1,6 @@
 #include "c_backend.hpp"
 
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "../../utility/file_io.hpp"
 #include <cstdlib>
 #include <Windows.h>
@@ -10,7 +10,7 @@
 #include "../../win32/process.hpp"
 #include "ir_code.hpp"
 #include "symbol_table.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 #include "constant_pool.hpp"
 
 // --------------
@@ -519,7 +519,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         case Primitive_Type::U16: string_append(&access_name, "u16"); break;
         case Primitive_Type::U32: string_append(&access_name, "u32"); break;
         case Primitive_Type::U64: string_append(&access_name, "u64"); break;
-        case Primitive_Type::ADDRESS: string_append(&access_name, "_void_ptr"); break; // See datatypes.h
+        case Primitive_Type::RAWPTR: string_append(&access_name, "_void_ptr"); break; // See datatypes.h
         case Primitive_Type::ISIZE: string_append(&access_name, "i64"); break;
         case Primitive_Type::USIZE: string_append(&access_name, "u64"); break;
         case Primitive_Type::TYPE_HANDLE: string_append(&access_name, "Type_Handle_"); break; // See hardcoded_functions.h for definition
@@ -1447,7 +1447,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
             auto primitive = downcast<Datatype_Primitive>(type);
             int type_size = type->memory_info.value.size;
             byte* memory = base_memory;
-            switch (primitive->primitive_class)
+            switch (primitive->get_class())
             {
             case Primitive_Class::BOOLEAN: {
                 bool* value_ptr = (bool*)memory;
@@ -1458,7 +1458,7 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
                 string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
                 break;
             }
-            case Primitive_Class::ADDRESS: {
+            case Primitive_Class::RAWPTR: {
                 byte* pointer = *(byte**)memory;
                 assert(pointer == 0, "Pointers must be null in constant memory");
                 string_append(gen.text, "nullptr");

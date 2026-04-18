@@ -1,16 +1,17 @@
 
 TODO:
 -----
- - Bug-Fixes
- - Move Editor-analysis-info into compilation-data file
- - top_level_add_definition should respect can_create_workload
- - Rename address to rawptr, usize, isize
-    Rename null to nil
+ - tokens_get_parenthesis range is badly implemented, needed for jumps in editor
  - Cast update
+ - Re-implement other operators
+ - Default-values
+ - Design: Subtypes, Optional values/pointers
+ - Fix all Test-Cases
+ - Replace Dynamic_Array with Arenas in whole code-base
 
 - DONE:
- - Syntax-Rework with 'qualifier-first' syntax
- - Remove new/delete (Also global allocators)
+-------
+
 
 operators add_cast(from, to, function, take_pointer, take_pointer)
 operators add_binop, add_unop, add_cast, add_iterator, add_array_access, add_default_value
@@ -19,12 +20,6 @@ add_cast($T, Any, basic_cast) --> To_Any cast
 ~builtin_cast
 
 
-DONE:
------
-07.04:
- - In function call we could add the parameter names to code-completion
- - Syntax-Editor pass-filter should traverse all passes (Somehow we need to know which pattern-variables we can access)
- - Remove unnecessary workload-types (inferred-function and lambda-function workloads)
 
 
 Rough Plan:
@@ -39,7 +34,7 @@ Rough Plan:
     * String-Handling
     * Access to normal math functions/built-ins
         sin, cos, tan, sind, cosd, tand, pow, exp, atan2, and all the others
-    * Allocator rework, remove new/delete
+    * Allocator rework
  - Fix Editor
     * Fix Testcases
  - Incremental compilation
@@ -68,50 +63,40 @@ Rough Plan:
         - String-List?
 
 
-Language Open-Design Problems:
-------------------------------
+Language Design Problems:
+-------------------------
 Struct Subtypes
+    We'll leave it as it is for now
 Auto-pointering is now always enabled?
-Default-Values
-Macros
+    Always enabled, dereference + address-of is automatic
 Incremental Compilation
-
+    Yeah, I want that
+Polymorphic Base-Analysis:
+    Is always done, but does not report errors, and cannot evaluate bakes or workloads
+Top-Level definitions inside polymorphism, should they be re-analysed?
+    Currently no, because re-analysis will report errors multiple times, and not really necessary.
+    Bakes yes
+--------------
+Open Problems:
+--------------
+Optional Pointers and values?
+    Should they be part of the language? 
+    Would be kinda nice if the compiler could understand this, we already have tagged-unions in the language
+    Optional Pointers are more compilicate
+Default-Values
+    Part of operator-context
+Macros
+    Yeah i want those for simple helper functions probably
 
 NOTES:
 ------
  * Motions and line-movements probably should be moved out of syntax_editor, and be part of source-code
- * Editor_Analysis_Info file is kinda dumb, as most of it is compilation-unit things
-
-Struct-Subtypes and subtype-initializer needs reworks...
-    Node :: struct
-        x: int
-        y: float
-        Expression:
-            something
-        Statement:
-            something
-    
-    x.>Expression.something
-    x.< // Base access
-    x.>Subtype // Subtype access
-    x:*Node.>Expression // subtype
-    
-    x: Node.Expression
-
-
-
-Notes:
-------
-Note: Different compilation stages have different properties:
- * atomic: IR-Generator, Tokenizer, Parser never generate dependencies/need to wait on something else
- * Error-Free: Only semantic_analyser and parser stages can actually produce errors
 
 Architecture Upgrades:
 ----------------------
  - Replace main loop in workload executer by just having other threads yield?
     Syntax editor could just be another fiber that generates/waits for things to finish when calling some functions like
     analyse_node or whatever
- - Call-Signature could _NOT_ store all this extra information and be a thing in the type-system, not something out of it...
 
 
 

@@ -1,30 +1,33 @@
 
-Node :: struct ($T)
-    count: int
-    value: T
+fn fib(n: int) => int
+    if n < 2
+        return 1
+    return fib(n - 1) + fib(n - 2)
 
-foo :: fn(node: *Node($K))
-    node.count += 1
+struct Player
+    name: ~string
+    age: int
+    alive: bool
 
-bar :: fn($C: int)
-    x: int = C
-    if true
-        y: int = C
+fn print(player: Player)
+    import ~*
+    print_string(player.name)
+    print_string(", age: ")
+    print_i32(player.age)
+    print_string(", alive: ")
+    print_bool(player.alive)
 
-main :: fn()
-    // bar(5)
-    x: int = 5
-    
-    add_fn := fn(a: int, b: int) => int
-        return a + b
-    
-    //  z := add_fn(1, 3)
-    //   ~print_i32(z)
-    //   ~print_line()
-    
-    node: Node(int) = .(15, 2)
-    foo(node-*)
-    ~print_i32(node.value)
+fn main
+    var player = Player.("Frank", 15, true)
+    ~print_i32(player.age)
     ~print_line()
-    ~print_i32(node.count)
-    ~print_line()
+    
+    ~print_string("Hello World!\n")
+    loop (var i = 0; i < 10; i += 1)
+        ~print_string("fib(#")
+        ~print_i32(i)
+        ~print_string(") = ")
+        ~print_i32(fib(i))
+        ~print_line()
+    
+        

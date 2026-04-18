@@ -22,8 +22,6 @@ namespace AST
     struct Call_Node;
 }
 
-
-
 // Indices
 struct Text_Index
 {
@@ -115,6 +113,7 @@ struct Source_Code
 
 Source_Code* source_code_create(); 
 Source_Code* source_code_copy(Source_Code* copy_from); 
+Source_Code* source_code_load_from_file(String filepath);
 void source_code_destroy(Source_Code* code);
 void source_code_reset(Source_Code* code);
 void source_code_print_bundles(Source_Code* code);
@@ -130,6 +129,7 @@ void source_code_append_to_string(Source_Code* code, String* text);
 // Index Functions
 int source_code_get_line_bundle_index(Source_Code* code, int line_index);
 Source_Line* source_code_get_line(Source_Code* code, int line_index);
+Source_Line* source_code_get_line(Source_Code* code, int line_index, int& nearby_bundle_index);
 
 
 

@@ -95,16 +95,6 @@ struct Datatype
     bool contains_pattern_variable_definition;
 };
 
-enum class Primitive_Class
-{
-    INTEGER = 1,
-    FLOAT,
-    BOOLEAN,
-    ADDRESS,
-    TYPE_HANDLE,
-    C_STRING,
-};
-
 enum class Primitive_Type
 {
     // Basic integers
@@ -118,7 +108,7 @@ enum class Primitive_Type
     U64,
 
     // 'Integer-Aliases'
-    ADDRESS, // translates to void* in c-generator
+    RAWPTR, // translates to void* in c-generator
     ISIZE,
     USIZE,
     TYPE_HANDLE, // 32-bit unsigned int
@@ -133,13 +123,24 @@ enum class Primitive_Type
     BOOLEAN
 };
 
+enum class Primitive_Class
+{
+    INTEGER = 1,
+    FLOAT,
+    BOOLEAN,
+    RAWPTR,
+    TYPE_HANDLE,
+    C_STRING,
+};
+
 struct Datatype_Primitive
 {
     Datatype base;
     // Note: Size of primitive (e.g. 16 or 32 bit) is determined by type size, e.g. base.size
     Primitive_Type primitive_type;
-    Primitive_Class primitive_class;
     bool is_signed; // True for all non-unsigned integers, on c_char this is set to false
+
+    Primitive_Class get_class();
 };
 
 struct Datatype_Array
@@ -470,10 +471,9 @@ void type_system_finish_struct(Type_System* type_system, Datatype_Struct* struct
 void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type);
 
 
-
+// Helpers
 bool types_are_equal(Datatype* a, Datatype* b);
 bool datatype_is_unknown(Datatype* a);
-bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_undecorated(
@@ -484,6 +484,9 @@ bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
 Upp_String upp_string_from_id(String* id);
 Upp_String upp_string_empty();
+
+Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);
+bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
 
 
 

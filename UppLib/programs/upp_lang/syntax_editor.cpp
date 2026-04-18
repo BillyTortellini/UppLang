@@ -14,20 +14,21 @@
 #include "../../win32/thread.hpp"
 #include "../../win32/process.hpp"
 #include "../../win32/window.hpp"
+#include "../../win32/timing.hpp"
 
 #include "../../rendering/font_renderer.hpp"
 #include "../../win32/input.hpp"
 #include "syntax_colors.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "ast.hpp"
 #include "symbol_table.hpp"
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "source_code.hpp"
 #include "code_history.hpp"
-#include "editor_analysis_info.hpp"
 #include "debugger.hpp"
 #include "tokenizer.hpp"
+#include "../../utility/random.hpp"
 
 #include "ir_code.hpp"
 
@@ -2042,9 +2043,15 @@ namespace Text_Editing
 		case Token_Type::MINUS:
 		{
 			// If we don't have a token before or after, assume that it's a Unop
-			if (token_index <= 0 || token_index + 1 >= tokens.size) {
+			if (token_index <= 0) {
 				out_space_after = false;
 				out_space_before = false;
+				break;
+			}
+			// If it's the last token in line, assume it's a binop
+			if (token_index + 1 >= tokens.size) {
+				out_space_after = true;
+				out_space_before = true;
 				break;
 			}
 			auto helper_is_literal = [](Token_Type t) {
@@ -2053,7 +2060,7 @@ namespace Text_Editing
 					t == Token_Type::LITERAL_TRUE ||
 					t == Token_Type::LITERAL_INTEGER ||
 					t == Token_Type::LITERAL_FLOAT ||
-					t == Token_Type::LITERAL_NULL ||
+					t == Token_Type::LITERAL_NIL ||
 					t == Token_Type::LITERAL_STRING;
 			};
 
@@ -2918,7 +2925,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			}
 
 			// Create new unit and move source-code over
-			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(compiler_thread_data.compilation_data, old_unit->filepath, false);
+			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(compiler_thread_data.compilation_data, old_unit->filepath, false, false);
 			assert(new_unit->code == nullptr && old_unit->code != nullptr, "All units from old code should be unique");
 			new_unit->code = old_unit->code;
 			old_unit->code = nullptr; // So it won't get destroyed
@@ -2938,7 +2945,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		{
 			auto& tab = editor.tabs[i];
 
-			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false);
+			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false, false);
 			if (i == compile_tab_index) {
 				main_compilation_unit = unit;
 			}
@@ -3377,7 +3384,7 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 	auto& editor = syntax_editor;
 
 	// Switch tab to file with symbol
-	auto unit = compiler_find_ast_compilation_unit(editor.editor_compilation_data, upcast(symbol->definition_node));
+	auto unit = compilation_data_ast_node_to_compilation_unit(editor.editor_compilation_data, upcast(symbol->definition_node));
 	if (unit == nullptr) return;
 	int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
 	syntax_editor_switch_tab(index);
@@ -3732,6 +3739,9 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 		}
 		else {
 			on_item = index.character >= item.start_char && index.character < item.end_char;
+		}
+		if (item.start_char == line->text.size && index.character == line->text.size - 1) {
+			on_item = true;
 		}
 		if (!on_item) continue;
 		if (item.editor_info_mapping_count == 0) continue; // Shouldn't happen currently, but still check
@@ -4715,12 +4725,12 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			Token_Type type = Token_Type::INVALID;
 			Text_Range range = text_range_make(pos, pos);
 			switch (c) {
-			case '(': 
-			case ')': type = Token_Type::PARENTHESIS_OPEN; break;
-			case '{': 
-			case '}': type = Token_Type::CURLY_BRACE_OPEN; break;
-			case '[': 
-			case ']': type = Token_Type::BRACKET_OPEN; break;
+			case '(': type = Token_Type::PARENTHESIS_OPEN; break;
+			case ')': type = Token_Type::PARENTHESIS_CLOSED; break;
+			case '{': type = Token_Type::CURLY_BRACE_OPEN; break;
+			case '}': type = Token_Type::CURLY_BRACE_CLOSED; break;
+			case '[': type = Token_Type::BRACKET_OPEN; break;
+			case ']': type = Token_Type::BRACKET_CLOSED; break;
 			case '\"': {
 				range = Motions::text_range_get_string_literal(pos);
 				break;
@@ -6100,7 +6110,7 @@ void insert_command_execute(Insert_Command input)
 
 		// Don't allow deleting of indentation when auto-formating is enabled (Experimental feature)
 		int space_count = line_count_leading_spaces(cursor.line);
-		if (editor.auto_format_during_edits && cursor.character == space_count && cursor.character % 4 == 0) {
+		if (editor.auto_format_during_edits && cursor.character == space_count && cursor.character % 4 == 0 && space_count != line->text.size) {
 			break;
 		}
 
@@ -7108,7 +7118,7 @@ void syntax_editor_update(bool& animations_running)
 				Array<String> lines = string_split(tmp_str, '\n');
 				SCOPE_EXIT(string_split_destroy(lines));
 				for (int i = 0; i < lines.size; i++) {
-					auto line = lines[i];
+					String& line = lines[i];
 					if (line.size == 0) continue;
 					ui_system_push_label(line, false);
 				}
@@ -7162,7 +7172,7 @@ void syntax_editor_update(bool& animations_running)
 
 				for (int i = 0; i < stack_frames.size; i++)
 				{
-					auto frame = stack_frames[i];
+					Stack_Frame& frame = stack_frames[i];
 					String str = string_create();
 					str.append_formated("%2d ", i);
 
@@ -7532,7 +7542,7 @@ void syntax_editor_update(bool& animations_running)
 	}
 
 	// Start debugger if we are in C-Compilation mode
-	if (compiler_can_execute_c_compiled(editor.editor_compilation_data))
+	if (compilation_data_is_configured_for_c_compilation(editor.editor_compilation_data))
 	{
 		editor_leave_insert_mode();
 		editor.mode = Editor_Mode::NORMAL;
@@ -7599,7 +7609,7 @@ void syntax_editor_update(bool& animations_running)
 		}
 
 		// Append semantic errors
-		semantic_analyser_append_semantic_errors_to_string(editor.editor_compilation_data, &tmp, 1);
+		compilation_data_append_semantic_errors_to_string(editor.editor_compilation_data, &tmp, 1);
 		string_style_remove_codes(&tmp);
 		logg(tmp.characters);
 
@@ -7697,6 +7707,7 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	case Token_Type::BREAK:
 	case Token_Type::EXTERN:
 	case Token_Type::IMPORT:
+	case Token_Type::SCOPE:
 		return Syntax_Color::KEYWORD;
 
 	// Literals
@@ -7705,7 +7716,7 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 		return Syntax_Color::BOOLEAN_LITERAL;
 	case Token_Type::LITERAL_FLOAT:
 	case Token_Type::LITERAL_INTEGER:
-	case Token_Type::LITERAL_NULL:
+	case Token_Type::LITERAL_NIL:
 		return Syntax_Color::LITERAL_NUMBER; 
 	case Token_Type::LITERAL_STRING: 
 		return Syntax_Color::STRING_LITERAL;
@@ -8024,7 +8035,7 @@ void syntax_editor_render()
 					}
 
 					if (function_origin_node != nullptr) {
-						unit = compiler_find_ast_compilation_unit(editor.editor_compilation_data, function_origin_node);
+						unit = compilation_data_ast_node_to_compilation_unit(editor.editor_compilation_data, function_origin_node);
 						upp_line_index = function_origin_node->range.start.line;
 					}
 				}

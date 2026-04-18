@@ -1,9 +1,9 @@
 #include "ir_code.hpp"
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "bytecode_generator.hpp"
 #include "ast.hpp"
 #include "symbol_table.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 #include "memory_source.hpp"
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
@@ -1979,6 +1979,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 ir_generator_generate_expression(value_node->value_expr.value, nullptr)
             );
         }
+        add_instruction(definition_instr);
 
         break;
     }

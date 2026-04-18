@@ -1,8 +1,8 @@
 #include "source_code.hpp"
 
 #include "../../datastructures/hashtable.hpp"
-#include "compiler.hpp"
 #include "../../utility/character_info.hpp"
+#include "../../utility/file_io.hpp"
 #include "ast.hpp"
 #include <string>
 
@@ -128,6 +128,27 @@ Source_Line* source_code_get_line(Source_Code* code, int line_index)
     int bundle_index = source_code_get_line_bundle_index(code, line_index);
     auto& bundle = code->bundles[bundle_index];
     return &bundle.lines[line_index - bundle.first_line_index];
+}
+
+Source_Line* source_code_get_line(Source_Code* code, int line_index, int& nearby_bundle_index)
+{
+    if (line_index < 0 || line_index >= code->line_count) return nullptr;
+    if (nearby_bundle_index < 0) {
+        nearby_bundle_index = 0;
+    }
+    if (nearby_bundle_index >= code->bundles.size) {
+        nearby_bundle_index = code->bundles.size - 1;
+    }
+    Line_Bundle* bundle = &code->bundles[nearby_bundle_index];
+    while (bundle->first_line_index > line_index) {
+        nearby_bundle_index -= 1;
+        bundle = &code->bundles[nearby_bundle_index];
+    }
+    while (bundle->first_line_index + bundle->lines.size <= line_index) {
+        nearby_bundle_index += 1;
+        bundle = &code->bundles[nearby_bundle_index];
+    }
+    return &bundle->lines[line_index - bundle->first_line_index];
 }
 
 Source_Line* source_code_insert_line(Source_Code* code, int new_line_index)
@@ -294,7 +315,18 @@ void source_code_append_to_string(Source_Code* code, String* text)
     }
 }
 
+Source_Code* source_code_load_from_file(String filepath)
+{
+	Optional<String> file_content = file_io_load_text_file(filepath.characters);
+	SCOPE_EXIT(file_io_unload_text_file(&file_content));
+	if (!file_content.available) {
+	    return nullptr;
+	}
 
+	Source_Code* source_code = source_code_create();
+	source_code_fill_from_string(source_code, file_content.value);
+	return source_code;
+}
 
 // Utils
 void source_text_remove_invalid_whitespaces(String& text)

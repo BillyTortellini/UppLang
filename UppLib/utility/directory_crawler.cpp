@@ -139,7 +139,7 @@ void directory_crawler_print_all_files(Directory_Crawler* crawler)
     auto files = directory_crawler_get_content(crawler);
     logg("Directory: %s\n", crawler->path.characters);
     for (int i = 0; i < files.size; i++) {
-        auto file = files[i];
+        File_Info& file = files[i];
         logg("    %s %s\n", files[i].name.characters, file.is_directory ? "d" : "");
     }
 }

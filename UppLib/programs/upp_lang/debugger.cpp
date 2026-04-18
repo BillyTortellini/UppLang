@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include "../../win32/windows_helper_functions.hpp"
+#include "../../win32/timing.hpp"
 #include <cstdio>
 #include <iostream>
 #include "../../utility/file_io.hpp"
@@ -9,9 +10,9 @@
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
 #include <bddisasm.h>
-#include "compiler.hpp"
+#include "compilation_data.hpp"
 #include "c_backend.hpp"
-#include "editor_analysis_info.hpp"
+#include "compilation_data.hpp"
 #include "ir_code.hpp"
 #include "memory_source.hpp"
 
@@ -4607,7 +4608,7 @@ void debugger_wait_for_console_command(Debugger* debugger)
 				continue;
 			}
 
-			auto variable_name = parts[1];
+			String& variable_name = parts[1];
 			auto& byte_buffer = debugger->byte_buffer;
 			dynamic_array_reset(&byte_buffer);
 			Debugger_Value_Read value_read = debugger_read_variable_value(debugger, variable_name, &byte_buffer, 0, 3);

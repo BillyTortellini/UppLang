@@ -1,7 +1,7 @@
 #include "test.hpp"
 
 #include "../../upplib.hpp"
-#include "../upp_lang/compiler.hpp"
+#include "../upp_lang/compilation_data.hpp"
 
 #include <iostream>
 
