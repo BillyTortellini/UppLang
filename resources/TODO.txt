@@ -1,7 +1,6 @@
 
 TODO:
 -----
- - tokens_get_parenthesis range is badly implemented, needed for jumps in editor
  - Cast update
  - Re-implement other operators
  - Default-values
@@ -11,6 +10,8 @@ TODO:
 
 - DONE:
 -------
+ - Display lines now respect continuation
+ - tokens_get_parenthesis range working properly now
 
 
 operators add_cast(from, to, function, take_pointer, take_pointer)

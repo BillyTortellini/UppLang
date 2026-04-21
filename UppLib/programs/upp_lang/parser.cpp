@@ -2613,6 +2613,7 @@ namespace Parser
 			int token_index = 0;
 			DynArray<Token> tokens = tokenize_partial_code(code, base->range.start, arena, token_index, true, false);
 
+			// Move forward until we find start parenthesis
 			int start_index = -1;
 			for (int i = token_index; i < tokens.size; i++) {
 				Token& token = tokens[i];

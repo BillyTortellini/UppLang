@@ -4723,6 +4723,9 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			// If on some type of parenthesis its quite logical () {} [] <>, just search next thing
 			// The question is what to do when not on such a thing, currently nothing
 			Token_Type type = Token_Type::INVALID;
+			int token_index = 0;
+			DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
+
 			Text_Range range = text_range_make(pos, pos);
 			switch (c) {
 			case '(': type = Token_Type::PARENTHESIS_OPEN; break;
@@ -4735,13 +4738,21 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 				range = Motions::text_range_get_string_literal(pos);
 				break;
 			}
-			default: break;
+			default: 
+			{
+				int index = math_minimum((int)tokens.size - 1, token_index);
+				while (index >= 0) {
+					if (token_type_get_class(tokens[index].type) == Token_Class::LIST_START) {
+						type = tokens[index].type;
+						break;
+					}
+					index -= 1;
+				}
+				break;
+			}
 			}
 
-			if (type != Token_Type::INVALID) 
-			{
-				int token_index = 0;
-				DynArray<Token> tokens = tokenize_partial_code(tab.code, pos, arena, token_index, true, false);
+			if (type != Token_Type::INVALID) {
 				ivec2 token_range = tokens_get_parenthesis_range(tokens, token_index, type, arena);
 				range = Motions::token_range_to_text_range(pos, token_range, tokens);
 			}
@@ -8418,6 +8429,22 @@ void syntax_editor_render()
 		auto helper_draw_block_outline = [&](int display_start, int display_end, int indentation)
 		{
 			if (indentation <= 0) return;
+
+			auto& display_lines = editor.display_lines;
+			int nearby_bundle_index = 0;
+			while (display_start - 1 >= 0 && display_start < display_lines.size && display_start <= display_end) 
+			{
+				Display_Line* first = &editor.display_lines[display_start - 1];
+				Display_Line* next = &editor.display_lines[display_start];
+				if (first->line_index + 1 != next->line_index) break;
+				if (source_line_tokens_may_connect(code, first->line_index, &editor.arena, nearby_bundle_index)) {
+					display_start += 1;
+				}
+				else {
+					break;
+				}
+			}
+			if (display_start > display_end) return;
 
 			const int top_bot_offset = 2;
 			const int thickness = 2;

@@ -449,6 +449,33 @@ void tokenizer_parse_string_literal(String literal, String* append_to)
 	}
 }
 
+bool source_line_tokens_may_connect(Source_Code* code, int first_line_index, Arena* arena, int& nearby_bundle_index)
+{
+    auto checkpoint = arena->make_checkpoint();
+    SCOPE_EXIT(checkpoint.rewind());
+    DynArray<Token> prev_tokens = DynArray<Token>::create(arena);
+    DynArray<Token> curr_tokens = DynArray<Token>::create(arena);
+
+    Source_Line* prev_line = source_code_get_line(code, first_line_index, nearby_bundle_index);
+    Source_Line* curr_line = source_code_get_line(code, first_line_index + 1, nearby_bundle_index);
+    tokenizer_tokenize_single_line(prev_line->text, &prev_tokens, first_line_index, true);
+    tokenizer_tokenize_single_line(curr_line->text, &curr_tokens, first_line_index + 1, true);
+    if (prev_tokens.size == 0 || curr_tokens.size == 0) { // Empty lines don't connect
+        return false;
+    }
+
+    // Note: In parser indentation is also considered, but here we need to make approximations because we go backwards
+    Continuation_Info prev_last_info  = token_type_get_continuation_info(prev_tokens[prev_tokens.size - 1].type);
+    Continuation_Info curr_first_info = token_type_get_continuation_info(curr_tokens[0].type);
+    if (prev_last_info.connects_to_next) return true;
+    if (curr_first_info.connects_to_previous) return true;
+    if (prev_last_info.is_parenthesis && token_type_get_class(prev_last_info.type) == Token_Class::LIST_START) return true;
+    if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_END) return true;
+    if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_START && curr_tokens.size == 1) return true;
+
+    return false;
+}
+
 DynArray<Token> tokenize_partial_code(
     Source_Code* code, Text_Index index, Arena* arena, int& token_index, bool handle_line_continuations, bool remove_comments)
 {
@@ -462,39 +489,12 @@ DynArray<Token> tokenize_partial_code(
     int line_end_index = index.line;
     if (handle_line_continuations)
     {
-        auto helper_lines_can_connect = [&](int prev_line_index, int curr_line_index) -> bool
-        {
-            auto checkpoint = arena->make_checkpoint();
-            SCOPE_EXIT(checkpoint.rewind());
-            DynArray<Token> prev_tokens = DynArray<Token>::create(arena);
-            DynArray<Token> curr_tokens = DynArray<Token>::create(arena);
-
-            Source_Line* prev_line = source_code_get_line(code, prev_line_index, nearby_bundle_index);
-            Source_Line* curr_line = source_code_get_line(code, curr_line_index, nearby_bundle_index);
-            tokenizer_tokenize_single_line(prev_line->text, &prev_tokens, prev_line_index, true);
-            tokenizer_tokenize_single_line(curr_line->text, &curr_tokens, curr_line_index, true);
-            if (prev_tokens.size == 0 || curr_tokens.size == 0) { // Empty lines don't connect
-                return false;
-            }
-
-            // Note: In parser indentation is also considered, but here we need to make approximations because we go backwards
-            Continuation_Info prev_last_info  = token_type_get_continuation_info(prev_tokens[prev_tokens.size - 1].type);
-            Continuation_Info curr_first_info = token_type_get_continuation_info(curr_tokens[0].type);
-            if (prev_last_info.connects_to_next) return true;
-            if (curr_first_info.connects_to_previous) return true;
-            if (prev_last_info.is_parenthesis && token_type_get_class(prev_last_info.type) == Token_Class::LIST_START) return true;
-            if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_END) return true;
-            if (curr_first_info.is_parenthesis && token_type_get_class(curr_first_info.type) == Token_Class::LIST_START && curr_tokens.size == 1) return true;
-
-            return false;
-        };
-
         // Got backwards while lines connect
-        while (line_start_index > 0 && helper_lines_can_connect(line_start_index - 1, line_start_index)) {
+        while (line_start_index > 0 && source_line_tokens_may_connect(code, line_start_index - 1, arena, nearby_bundle_index)) {
             line_start_index -= 1;
         }
         // Go forwards while lines connect
-        while (line_end_index + 1 < code->line_count && helper_lines_can_connect(line_end_index, line_end_index + 1)) {
+        while (line_end_index + 1 < code->line_count && source_line_tokens_may_connect(code, line_end_index, arena, nearby_bundle_index)) {
             line_end_index += 1;
         }
     }
@@ -503,7 +503,7 @@ DynArray<Token> tokenize_partial_code(
     for (int i = line_start_index; i <= line_end_index; i += 1)
     {
         int line_token_start = tokens.size;
-	    tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, index.line, remove_comments);
+	    tokenizer_tokenize_single_line(source_code_get_line(code, i)->text, &tokens, i, remove_comments);
 
         if (i == index.line) 
         {
@@ -529,48 +529,76 @@ ivec2 tokens_get_parenthesis_range(DynArray<Token> tokens, int start, Token_Type
 	auto checkpoint = arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
+    Token_Type start_type = Token_Type::INVALID;
+    Token_Type end_type = Token_Type::INVALID;
 	Token_Class token_class = token_type_get_class(type);
-	assert(token_class == Token_Class::LIST_START || token_class == Token_Class::LIST_END, "");
-	if (token_class == Token_Class::LIST_END) {
-		type = token_type_get_partner(type);
+	if (token_class == Token_Class::LIST_START) {
+        start_type = type;
+        end_type = token_type_get_partner(type);
 	}
+    else if (token_class == Token_Class::LIST_END) {
+        start_type = token_type_get_partner(type);
+        end_type = type;
+    }
+    else {
+        panic("");
+    }
 
-	// Find parenthesis start
-	while (start > 0 && start < tokens.size)
-	{
-		if (tokens[start].type == type) {
-			break;
-		}
-		start -= 1;
-	}
-	if (start < 0) { // Exit if no start could be found
+    auto helper_test_token = [&](int index, Token_Type type) {
+        if (index < 0 || index >= tokens.size) return false;
+        return tokens[index].type == type;
+    };
+
+    // Handle starting on list end token as special path
+    if (helper_test_token(start, end_type)) 
+    {
+        int parenthesis_depth = 1;
+        int index = start - 1;
+        while (index > 0)
+        {
+            if (helper_test_token(index, end_type)) {
+                parenthesis_depth += 1;
+            }
+            else if (helper_test_token(index, start_type)) 
+            {
+                parenthesis_depth -= 1;
+                if (parenthesis_depth == 0) {
+	                return ivec2(index, start);
+                }
+            }
+            index -= 1;
+        }
+
+        return ivec2(-1, start);
+    }
+
+    // If we aren't on end, search backwards for token-start
+    int index = start;
+    while (index > 0 && !helper_test_token(index, start_type)) {
+        index -= 1;
+    }
+	if (index < 0) { // Exit if no start could be found
 		return ivec2(-1, -1);
 	}
 
-	// Find end parenthesis
-	DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(arena);
-	parenthesis_stack.push_back(type);
-	int end = start + 1;
-	while (end < tokens.size) 
-	{
-		Token& token = tokens[end];
-		Token_Class token_class = token_type_get_class(token.type);
-		if (token_class == Token_Class::LIST_START) {
-			parenthesis_stack.push_back(token.type);
-		}
-		else if (token_type_get_partner(token.type) == parenthesis_stack.last()) {
-			parenthesis_stack.size -= 1;
-			if (parenthesis_stack.size == 0) {
-				break;
-			}
-		}
-		end += 1;
-	}
-	if (end >= tokens.size) {
-		end = -1;
-	}
-
-	return ivec2(start, end);
+    start = index;
+    index = start + 1;
+    int parenthesis_depth = 1;
+    while (index < tokens.size)
+    {
+        if (helper_test_token(index, start_type)) {
+            parenthesis_depth += 1;
+        }
+        else if (helper_test_token(index, end_type)) 
+        {
+            parenthesis_depth -= 1;
+            if (parenthesis_depth == 0) {
+	            return ivec2(start, index);
+            }
+        }
+        index += 1;
+    }
+    return ivec2(start, -1);
 }
 
 Continuation_Info continuation_info_make(Token_Type type, bool connects_to_previous, bool connects_to_next, bool is_statement_start, bool is_parenthesis) 
