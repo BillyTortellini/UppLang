@@ -1934,17 +1934,6 @@ namespace Text_Editing
 		}
 
 		// Keywords
-		case Token_Type::CAST: 
-		{
-			if (test_token(Token_Type::POSTFIX_CALL_ARROW, -1)) {
-				out_space_before = false;
-			}
-			else {
-				out_space_before = true;
-			}
-			no_space_if_next_is_parenthesis = true; 
-			break;
-		}
 		case Token_Type::BAKE:
 		case Token_Type::INSTANCIATE:
 		case Token_Type::GET_OVERLOAD:
@@ -2092,7 +2081,6 @@ namespace Text_Editing
 				}
 				switch (t.type)
 				{
-				case Token_Type::CAST:
 				case Token_Type::INSTANCIATE:
 					next_is_value = true;
 				}
@@ -2252,6 +2240,10 @@ namespace Text_Editing
 			if (space_between_tokens_expected) {
 				formated_string.append(' ');
 			}
+		}
+
+		if (text.size > 0 && text[text.size - 1] == ' ') {
+			formated_string.append(' ');
 		}
 
 		// string_add_null_terminator(&text);
@@ -4239,7 +4231,7 @@ void code_completion_find_suggestions()
 			Position_Info dot_call_position_info = code_query_find_position_infos(before_op_index, nullptr);
 			Editor_Info_Expression* expr_info = dot_call_position_info.expression_info;
 			if (expr_info != nullptr) {
-				call_value_type = expr_info->info->cast_info.result_type;
+				call_value_type = expr_info->info->auto_cast_info.result_type;
 				call_value_pass = expr_info->analysis_pass;
 			}
 		}
@@ -4332,8 +4324,8 @@ void code_completion_find_suggestions()
 				// Try updating type-modifiers
 				Type_Modifier_Info src_mods = datatype_get_modifier_info(arg_type);
 				Type_Modifier_Info dst_mods = datatype_get_modifier_info(param_type);
-				Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
-				if (cast_type == Cast_Type::INVALID) {
+				Auto_Cast_Type cast_type = check_if_type_modifier_update_valid(src_mods, dst_mods, false);
+				if (cast_type == Auto_Cast_Type::INVALID) {
 					remove_symbol = true;
 					continue;
 				}
@@ -4351,9 +4343,9 @@ void code_completion_find_suggestions()
 			else
 			{
 				remove_symbol = true;
-				// remove_symbol = check_if_cast_possible(
+				// remove_symbol = check_if_auto_cast_possible(
 				// 	arg_type, param_type, false, true, true, &editor.editor_compilation_data->type_system
-				// ).cast_type == Cast_Type::INVALID;
+				// ).type == Primitive_Cast_Type::INVALID;
 			}
 		}
 
@@ -4382,7 +4374,7 @@ void code_completion_find_suggestions()
 			case Expression_Result_Type::VALUE:
 			case Expression_Result_Type::CONSTANT:
 			{
-				Datatype* value_type = expr_info->info->cast_info.result_type;
+				Datatype* value_type = expr_info->info->auto_cast_info.result_type;
 				Type_Modifier_Info mods = datatype_get_modifier_info(value_type);
 				if (mods.base_type->type == Datatype_Type::STRUCT) {
 					parent_struct = mods.struct_subtype;
@@ -5982,7 +5974,8 @@ void insert_command_execute(Insert_Command input)
 
 		Movement movement = Parsing::movement_make(Movement_Type::PREVIOUS_WORD, 1);
 		Text_Index start = movement_evaluate(movement, cursor);
-		if (!text_index_equal(start, cursor)) {
+		if (!text_index_equal(start, cursor)) 
+		{
 			Text_Index end = cursor;
 			cursor = start;
 			Text_Editing::delete_text_range(text_range_make(start, end), false, true);
@@ -7703,7 +7696,6 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	case Token_Type::DEFER_RESTORE:
 	case Token_Type::IN_KEYWORD:
 	case Token_Type::SWITCH:
-	case Token_Type::CAST:
 	case Token_Type::DEFAULT:
 	case Token_Type::STRUCT:
 	case Token_Type::UNION:
@@ -8727,10 +8719,10 @@ void syntax_editor_render()
 					text->append('\n');
 				}
 
-				auto& cast_info = hover_info.expression_info->info->cast_info;
-				if (cast_info.cast_type != Cast_Type::NO_CAST) {
-					text->append("    Cast-Type: ");
-					text->append(cast_type_to_string(cast_info.cast_type));
+				auto& auto_cast_info = hover_info.expression_info->info->auto_cast_info;
+				if (auto_cast_info.type != Auto_Cast_Type::NO_OPERATION) {
+					text->append("    Autocast-Type: ");
+					text->append(auto_cast_type_to_string(auto_cast_info.type));
 					text->append('\n');
 				}
 

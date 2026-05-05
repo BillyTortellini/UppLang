@@ -239,7 +239,7 @@ enum class Analysis_Workload_Type
     ROOT, // Root workload, which spawns all other workloads
 
     MODULE_ANALYSIS, // This is basically just symbol discovery
-    OPERATOR_CONTEXT_CHANGE,
+    CUSTOM_OPERATORS,
     GLOBAL,
     EXTERN_IMPORT,
     ENUM,
@@ -276,13 +276,11 @@ struct Workload_Root
     Workload_Base base;
 };
 
-struct Workload_Custom_Operator
+struct Workload_Custom_Operators
 {
     Workload_Base base;
     Analysis_Pass* analysis_pass;
     Symbol_Table* symbol_table;
-    Custom_Operator_Table* operator_table;
-    // Analyses context changes of a single type
     DynArray<AST::Definition_Custom_Operator*> change_nodes;
 };
 
@@ -438,13 +436,6 @@ struct Argument_Info
 	int parameter_index; // -1 if no matching parameter was found
 };
 
-struct Cast_Info
-{
-    Cast_Type cast_type;
-    Datatype* result_type;
-    Upp_Function* custom_cast_function; // Optional
-};
-
 enum class Call_Origin_Type
 {
     FUNCTION,
@@ -456,7 +447,6 @@ enum class Call_Origin_Type
 	HARDCODED,
     FUNCTION_POINTER,
 	CUSTOM_OPERATOR,
-    CAST,
 	ERROR_OCCURED, // In case of non-resolvable overloads or invalid symbol
 };
 
@@ -495,7 +485,6 @@ struct Call_Info
 		Upp_Struct* struct_instance;
 		Upp_Struct* struct_pattern;
 		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
-        Cast_Info cast_info; // Cast-Info from e.g. cast(x, 15)
 		struct 
 		{
 			bool subtype_valid;
@@ -528,6 +517,27 @@ enum class Expression_Result_Type
     POLYMORPHIC_STRUCT, 
     POLYMORPHIC_FUNCTION,
     NOTHING  // Functions returning void
+};
+
+enum class Auto_Cast_Type
+{
+	NO_OPERATION,
+	CUSTOM_CAST,
+	DEREFERENCE,
+	ADDRESS_OF,
+    FUNCTION_POINTERS,
+    TO_BASE_TYPE,
+
+    INVALID, // Src and required destination did not match
+    UNKNOWN,
+};
+
+struct Auto_Cast_Info
+{
+    Auto_Cast_Type type;
+    Datatype* result_type;
+    // Function is null if not custom_cast, or if custom_cast has some errors
+    Upp_Function* custom_cast_function;
 };
 
 struct Expression_Info
@@ -574,7 +584,7 @@ struct Expression_Info
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
-    Cast_Info cast_info;
+    Auto_Cast_Info auto_cast_info;
 };
 
 enum class Control_Flow
@@ -675,10 +685,10 @@ Parameter_Info* pass_get_node_info(Analysis_Pass* pass, AST::Parameter* node, In
 Call_Info* pass_get_node_info(Analysis_Pass* pass, AST::Call_Node* node, Info_Query query, Compilation_Data* compilation_data);
 Definition_Info* pass_get_node_info(Analysis_Pass* pass, AST::Definition* node, Info_Query query, Compilation_Data* compilation_data);
 
-Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
-Cast_Info check_if_cast_possible(
-    Datatype* from_type, Datatype* to_type, bool value_is_temporary, bool is_auto_cast, Semantic_Context* semantic_context
+Auto_Cast_Info check_if_auto_cast_possible(
+    Datatype* from_type, Datatype* to_type, bool value_is_temporary, Semantic_Context* semantic_context
 );
+Auto_Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, Type_Modifier_Info dst_mods, bool source_is_temporary);
 
 struct Expression_Value_Info 
 {
@@ -706,6 +716,7 @@ struct Semantic_Context
 
     bool can_create_toplevel_items;
     bool can_execute_bake;
+    bool can_access_custom_operators; // During custom-operator analysis we cannot access custom operators
     bool error_logging_enabled;
     bool error_flagging_enabled;
 
@@ -740,6 +751,7 @@ struct Pattern_Matcher
     Compilation_Data* compilation_data;
 	DynArray<Matching_Constraint> constraints;
 	int max_match_depth;
+    bool success;
 };
 
 Pattern_Matcher pattern_matcher_make(Compilation_Data* compilation_data, Arena* arena);
@@ -816,3 +828,4 @@ void error_information_append_to_rich_string(
 void compilation_data_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 
+const char* auto_cast_type_to_string(Auto_Cast_Type type);

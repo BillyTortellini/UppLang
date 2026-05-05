@@ -17,6 +17,7 @@ struct Datatype;
 struct Workload_Global;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
+struct Workload_Custom_Operators;
 
 struct Symbol;
 struct Symbol_Table;
@@ -29,7 +30,6 @@ struct Poly_Function;
 struct Function_Parameter;
 struct Poly_Header;
 struct Pattern_Variable;
-struct Custom_Operator_Table;
 
 namespace AST
 {
@@ -40,37 +40,20 @@ namespace AST
 
 
 // CUSTOM_OPERATORS
-/*
-    Notes on Custom_Operator_Key:
-    Operator_Context stores multiple ways to reach a single Custom-Operator
-    The key-types are always stored as the base_type (E.g. no pointer/optional_pointer/subtype).
-    After querying the analyse has to make sure that the type-mods are correct
-*/
-struct Custom_Operator_Key
-{
-    Custom_Operator_Type type;
-    union
-    {
-        struct {
-            Datatype* from_type; // Stored as base-type
-            Datatype* to_type;   // Stored as base-type
-        } custom_cast;
-        AST::Binop binop;
-        AST::Unop unop;
-    } options;
-};
-
+// Note: If the function is nullptr, then the function analysis contained errors
 struct Custom_Operator
 {
     Custom_Operator_Type type;
+    AST::Definition_Custom_Operator* node;
     union
     {
         struct
         {
+            Datatype* from_type;
+            Datatype* to_type;
             Upp_Function* function;
-            bool call_by_reference;
-            bool return_by_reference;
-            bool auto_cast;
+            bool from_by_ref;
+            bool to_by_ref;
         } custom_cast;
         struct
         {
@@ -109,30 +92,8 @@ struct Custom_Operator
     } options;
 };
 
-struct Custom_Operator_Install
-{
-    Custom_Operator* custom_operator;
-    AST::Definition_Custom_Operator* node;
-};
-
-struct Workload_Custom_Operator;
-struct Custom_Operator_Table
-{
-    Workload_Custom_Operator* workloads[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
-    bool contains_operator[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
-    // Note: The DynArrays are allocated in analysis-data arena
-    Hashtable<Custom_Operator_Key, DynArray<Custom_Operator_Install>> installed_operators;
-};
-
-struct Reachable_Operator_Table
-{
-	Custom_Operator_Table* operator_table;
-	int depth;
-};
-
-u64  hash_custom_operator(Custom_Operator* op);
-bool equals_custom_operator(Custom_Operator* a, Custom_Operator* b);
-
+u64 hash_custom_operator(Custom_Operator* op);
+bool equals_custom_operator(Custom_Operator* op_a, Custom_Operator* op_b);
 
 
 // SYMBOLS
@@ -204,11 +165,17 @@ struct Symbol_Table_Import
 
 struct Symbol_Table
 {
+    Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
+
+    // Connections to other symbol tables
     Symbol_Table* parent_table;
     Symbol_Access_Level parent_access_level;
     Dynamic_Array<Symbol_Table_Import> imports;
-    Hashtable<String*, Dynamic_Array<Symbol*>> symbols;
-    Custom_Operator_Table* custom_operator_table;
+
+    // Custom operators
+    Workload_Custom_Operators* custom_operators_workload;
+    DynArray<Custom_Operator> custom_operators_per_type[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
+    u32 contains_operator_type_bitmask;
 };
 
 struct Reachable_Table

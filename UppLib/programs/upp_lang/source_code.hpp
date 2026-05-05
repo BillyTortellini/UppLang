@@ -22,7 +22,6 @@ namespace AST
     struct Call_Node;
 }
 
-// Indices
 struct Text_Index
 {
     int line;
@@ -35,6 +34,7 @@ struct Text_Range
     Text_Index end;
 };
 
+// Indices
 Text_Index text_index_make(int line, int character);
 Text_Index text_index_make_line_end(Source_Code* code, int line);
 bool text_index_equal(const Text_Index& a, const Text_Index& b);
@@ -42,6 +42,12 @@ bool text_index_in_order(const Text_Index& a, const Text_Index& b);
 Text_Range text_range_make(Text_Index start, Text_Index end);
 bool text_range_contains(Text_Range range, Text_Index index);
 
+
+struct Error_Message
+{
+    const char* msg;
+    Text_Range range;
+};
 
 
 // Analysis Info
@@ -91,12 +97,6 @@ struct Line_Bundle
 {
     Dynamic_Array<Source_Line> lines;
     int first_line_index;
-};
-
-struct Error_Message
-{
-    const char* msg;
-    Text_Range range;
 };
 
 struct Source_Code

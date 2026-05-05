@@ -194,11 +194,6 @@ namespace AST
 				FILL(expr->options.pattern_variable_symbol);
 				break;
 			}
-			case Expression_Type::CAST: {
-				auto& cast = expr->options.cast;
-				FILL(cast.call_node);
-				break;
-			}
 			case Expression_Type::PATH_LOOKUP: {
 				FILL(expr->options.path_lookup);
 				break;
@@ -455,7 +450,6 @@ namespace AST
 		}
 		case Expression_Type::PATTERN_VARIABLE: string_append(str, "Pattern_Variable"); break;
 		case Expression_Type::FUNCTION_CALL: string_append_formated(str, "Function Call"); break;
-		case Expression_Type::CAST: string_append_formated(str, "Cast"); break;
 		case Expression_Type::BAKE: string_append_formated(str, "Bake Expr"); break;
 		case Expression_Type::INSTANCIATE: string_append_formated(str, "#instanciate"); break;
 		case Expression_Type::GET_OVERLOAD: string_append_formated(str, "#get_overload"); break;
@@ -633,7 +627,6 @@ namespace AST
 			case Expression_Type::UNARY_OPERATION: string_append_formated(str, "UNARY_OPERATION"); break;
 			case Expression_Type::PATTERN_VARIABLE: string_append_formated(str, "PATTERN_VARIABLE"); break;
 			case Expression_Type::FUNCTION_CALL: string_append_formated(str, "FUNCTION_CALL"); break;
-			case Expression_Type::CAST: string_append_formated(str, "CAST"); break;
 			case Expression_Type::BAKE: string_append_formated(str, "BAKE"); break;
 			case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
 			case Expression_Type::GET_OVERLOAD: string_append_formated(str, "GET_OVERLOAD"); break;
@@ -782,7 +775,7 @@ namespace AST
 		case Custom_Operator_Type::ARRAY_ACCESS: string_append(string, "ARRAY_ACCESS"); break;
 		case Custom_Operator_Type::BINOP: string_append(string, "BINARY_OPERATOR"); break;
 		case Custom_Operator_Type::UNOP: string_append(string, "UNARY_OPERATOR"); break;
-		case Custom_Operator_Type::CAST: string_append(string, "CAST"); break;
+		case Custom_Operator_Type::AUTO_CAST: string_append(string, "CAST"); break;
 		case Custom_Operator_Type::ITERATOR: string_append(string, "ITERATOR"); break;
 		default: panic("");
 		}

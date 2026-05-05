@@ -45,11 +45,15 @@ Bytecode_Thread* bytecode_thread_create(
     return result;
 }
 
-void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* src, Bytecode_Type dest_type, Bytecode_Type src_type)
+void bytecode_execute_primitive_cast(void* dst, void* src, Bytecode_Type dst_type, Bytecode_Type src_type)
 {
-    switch (instr_type)
-    {
-    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: 
+    assert(dst_type != Bytecode_Type::BOOL && src_type != Bytecode_Type::BOOL, "");
+
+    auto is_int = [](Bytecode_Type type) {
+        return type != Bytecode_Type::FLOAT32 && type != Bytecode_Type::FLOAT64;
+    };
+
+    if (is_int(src_type) && is_int(dst_type)) // Int to int
     {
         u64 source_unsigned = 0;
         i64 source_signed = 0;
@@ -65,56 +69,20 @@ void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* 
         case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src); break;
         default: panic("what the frigg\n");
         }
-        switch (dest_type) {
-        case Bytecode_Type::INT8:   *(i8*)(dest)  = (i8) (source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT16:  *(i16*)(dest) = (i16)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT32:  *(i32*)(dest) = (i32)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT64:  *(i64*)(dest) = (i64)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT8:  *(u8*)(dest)  = (u8) (source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT16: *(u16*)(dest) = (u16)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT32: *(u32*)(dest) = (u32)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT64: *(u64*)(dest) = (u64)(source_is_signed ? source_signed : source_unsigned); break;
+
+        switch (dst_type) {
+        case Bytecode_Type::INT8:   *(i8*)(dst)  = (i8) (source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT8:  *(u8*)(dst)  = (u8) (source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)(source_is_signed ? source_signed : source_unsigned); break;
         default: panic("what the frigg\n");
         }
-        break;
     }
-    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: 
-    {
-        double source = 0.0;
-        switch (src_type) {
-        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
-        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
-        default: panic("what the frigg\n");
-        }
-        switch (dest_type) {
-        case Bytecode_Type::FLOAT32: *(float*)(dest) = (float)source; break;
-        case Bytecode_Type::FLOAT64: *(double*)(dest) = (double)source; break;
-        default: panic("what the frigg\n");
-        }
-        break;
-    }
-    case Instruction_Type::CAST_FLOAT_INTEGER: 
-    {
-        double source = 0.0;
-        switch (src_type) {
-        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
-        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
-        default: panic("what the frigg\n");
-        }
-        switch (dest_type) {
-        case Bytecode_Type::INT8:   *(i8*)(dest) = (i8)source; break;
-        case Bytecode_Type::INT16:  *(i16*)(dest) = (i16)source; break;
-        case Bytecode_Type::INT32:  *(i32*)(dest) = (i32)source; break;
-        case Bytecode_Type::INT64:  *(i64*)(dest) = (i64)source; break;
-        case Bytecode_Type::UINT8:  *(u8*)(dest) = (u8)source; break;
-        case Bytecode_Type::UINT16: *(u16*)(dest) = (u16)source; break;
-        case Bytecode_Type::UINT32: *(u32*)(dest) = (u32)source; break;
-        case Bytecode_Type::UINT64: *(u64*)(dest) = (u64)source; break;
-        default: panic("what the frigg\n");
-        }
-        break;
-    }
-    case Instruction_Type::CAST_INTEGER_FLOAT:
+    else if (is_int(src_type)) // Int to float
     {
         u64 source_unsigned;
         i64 source_signed;
@@ -130,14 +98,48 @@ void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* 
         case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src); break;
         default: panic("what the frigg\n");
         }
-        switch (dest_type) {
-        case Bytecode_Type::FLOAT32: *(float*)(dest) = (float)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::FLOAT64: *(double*)(dest) = (double)(source_is_signed ? source_signed : source_unsigned); break;
+
+        switch (dst_type) {
+        case Bytecode_Type::FLOAT32: *(float*)(dst) = (float)(source_is_signed ? source_signed : source_unsigned); break;
+        case Bytecode_Type::FLOAT64: *(double*)(dst) = (double)(source_is_signed ? source_signed : source_unsigned); break;
         default: panic("what the frigg\n");
         }
-        break;
     }
-    default: panic("");
+    else if (is_int(dst_type)) // Float to int
+    {
+        double source = 0.0;
+        switch (src_type) {
+        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
+        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
+        default: panic("what the frigg\n");
+        }
+
+        switch (dst_type) {
+        case Bytecode_Type::INT8:   *(i8*)(dst) = (i8)source; break;
+        case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)source; break;
+        case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)source; break;
+        case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)source; break;
+        case Bytecode_Type::UINT8:  *(u8*)(dst) = (u8)source; break;
+        case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)source; break;
+        case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)source; break;
+        case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)source; break;
+        default: panic("what the frigg\n");
+        }
+    }
+    else
+    {
+        double source = 0.0;
+        switch (src_type) {
+        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
+        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
+        default: panic("what the frigg\n");
+        }
+
+        switch (dst_type) {
+        case Bytecode_Type::FLOAT32: *(float*)(dst) = (float)source; break;
+        case Bytecode_Type::FLOAT64: *(double*)(dst) = (double)source; break;
+        default: panic("what the frigg\n");
+        }
     }
 }
 
@@ -1030,12 +1032,9 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         *(i64*)(thread->stack_pointer + i->op1) = (i64)(i->op2 + 1); // Note: Function pointers are encoded as function indices in interpreter
         break;
-    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE: 
-    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE: 
-    case Instruction_Type::CAST_FLOAT_INTEGER: 
-    case Instruction_Type::CAST_INTEGER_FLOAT: {
-        bytecode_execute_cast_instr(
-            i->instruction_type,
+    case Instruction_Type::CAST_PRIMITIVE_TYPES: 
+    {
+        bytecode_execute_primitive_cast(
             thread->stack_pointer + i->op1,
             thread->stack_pointer + i->op2,
             (Bytecode_Type)i->op3,

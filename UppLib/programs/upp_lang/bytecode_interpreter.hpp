@@ -20,5 +20,5 @@ void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread);
 
 bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right);
 void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* operand);
-void bytecode_execute_cast_instr(Instruction_Type instr_type, void* dest, void* src, Bytecode_Type dest_type, Bytecode_Type src_type);
+void bytecode_execute_primitive_cast(void* dest, void* src, Bytecode_Type dest_type, Bytecode_Type src_type);
 void bytecode_thread_print_state(Bytecode_Thread* thread);

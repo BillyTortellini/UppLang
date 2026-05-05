@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../../datastructures/dynamic_array.hpp"
-#include "source_code.hpp"
+#include "../../datastructures/array.hpp"
 #include "compiler_misc.hpp"
 #include "semantic_analyser.hpp"
-#include "symbol_table.hpp"
+#include "source_code.hpp"
 #include "../../datastructures/allocators.hpp"
 
 namespace AST
@@ -28,7 +28,6 @@ struct Pattern_Variable;
 struct Datatype_Format;
 struct Type_System;
 struct Call_Signature;
-struct Modtree_Function;
 struct Datatype_Struct;
 struct Workload_Structure_Header;
 struct Analysis_Pass;
@@ -37,7 +36,10 @@ struct Symbol;
 struct IR_Generator;
 struct C_Generator;
 
-
+namespace AST
+{
+    struct Definition_Module;
+}
 
 // COMPILATION_DATA
 struct Compilation_Unit
@@ -92,6 +94,7 @@ struct Compilation_Data
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of comptime-definitions in code-blocks
+    DynTable<Custom_Operator, Upp_Function*> custom_operator_instances;
 
     Symbol* error_symbol;
 
@@ -101,10 +104,8 @@ struct Compilation_Data
 
     // Call_Signatures and callables
     Hashset<Call_Signature*> call_signatures; // Callables get duplicated
-    Hashtable<Custom_Operator, Custom_Operator*> custom_operator_deduplication;
     Call_Signature* hardcoded_function_signatures[(int)Hardcoded_Type::MAX_ENUM_VALUE];
     Call_Signature* context_change_type_signatures[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
-    Call_Signature* cast_signature;
     Call_Signature* empty_call_signature;
 
     // Allocations
@@ -113,7 +114,6 @@ struct Compilation_Data
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
-    Dynamic_Array<Custom_Operator_Table*> allocated_custom_operator_tables;
 
     // Timing stuff
     Timing_Task task_current;

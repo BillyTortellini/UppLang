@@ -5,18 +5,24 @@
 #include "semantic_analyser.hpp"
 #include "parser.hpp"
 #include "ast.hpp"
-#include "compilation_data.hpp"
 
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 {
     Symbol_Table* result = new Symbol_Table;
-    result->custom_operator_table = nullptr;
+    result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
+
 	result->parent_table = nullptr;
 	result->parent_access_level = Symbol_Access_Level::GLOBAL;
-    dynamic_array_push_back(&compilation_data->allocated_symbol_tables, result);
     result->imports = dynamic_array_create<Symbol_Table_Import>();
-    result->symbols = hashtable_create_pointer_empty<String*, Dynamic_Array<Symbol*>>(1);
+
+	result->contains_operator_type_bitmask = 0;
+	result->custom_operators_workload = nullptr;
+	for (int i = 0; i < (int)Custom_Operator_Type::MAX_ENUM_VALUE; i++) {
+		result->custom_operators_per_type[i] = DynArray<Custom_Operator>::create(&compilation_data->arena);
+	}
+
+    dynamic_array_push_back(&compilation_data->allocated_symbol_tables, result);
     return result;
 }
 
@@ -25,7 +31,6 @@ Symbol_Table* symbol_table_create_with_parent(Symbol_Table* parent_table, Symbol
     Symbol_Table* result = symbol_table_create(compilation_data);
 	result->parent_table = parent_table;
 	result->parent_access_level = parent_access_level;
-    result->custom_operator_table = nullptr;
     return result;
 }
 
@@ -110,8 +115,7 @@ Symbol* symbol_table_define_symbol(
 }
 
 Symbol_Query_Info symbol_query_info_make(
-    Symbol_Access_Level access_level, Import_Type import_search_type, bool search_parents
-)
+    Symbol_Access_Level access_level, Import_Type import_search_type, bool search_parents)
 {
 	Symbol_Query_Info result;
 	result.access_level = access_level;
@@ -319,44 +323,47 @@ void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols)
 // CUSTOM OPERATORS
 u64 hash_custom_operator(Custom_Operator* op)
 {
-	int type = (int)op->type;
-	u64 hash = hash_i32(&type);
+	int op_type_int = (int)op->type;
+	u64 hash = hash_i32(&op_type_int);
+	// Note: We don't hash the operator node, so that instances over different nodes are also shared
+	// hash = hash_combine(hash, hash_pointer(op->node));
 	switch (op->type)
 	{
-	case Custom_Operator_Type::CAST: 
+	case Custom_Operator_Type::AUTO_CAST: 
 	{
 		auto& cast = op->options.custom_cast;
 		hash = hash_combine(hash, hash_pointer(cast.function));
-		hash = hash_bool(hash, cast.auto_cast);
-		hash = hash_bool(hash, cast.call_by_reference);
-		hash = hash_bool(hash, cast.return_by_reference);
+		hash = hash_combine(hash, hash_pointer(cast.from_type));
+		hash = hash_combine(hash, hash_pointer(cast.to_type));
+		hash = hash_bool(hash, cast.from_by_ref);
+		hash = hash_bool(hash, cast.to_by_ref);
 		break;
 	}
 	}
+
 	return hash;
 }
 
-bool equals_custom_operator(Custom_Operator* a_op, Custom_Operator* b_op)
+bool equals_custom_operator(Custom_Operator* op_a, Custom_Operator* op_b)
 {
-	if (a_op->type != b_op->type) return false;
-
-	switch (a_op->type)
+	if (op_a->type != op_b->type) return false;
+	switch (op_a->type)
 	{
-	case Custom_Operator_Type::CAST: 
+	case Custom_Operator_Type::AUTO_CAST: 
 	{
-		auto& a = a_op->options.custom_cast;
-		auto& b = b_op->options.custom_cast;
+		auto& cast_a = op_a->options.custom_cast;
+		auto& cast_b = op_b->options.custom_cast;
 		return
-			a.function == b.function &&
-			a.call_by_reference == b.call_by_reference &&
-			a.return_by_reference == b.return_by_reference &&
-			a.auto_cast == b.auto_cast;
+			types_are_equal(cast_a.from_type, cast_b.from_type) &&
+			types_are_equal(cast_a.to_type, cast_b.to_type) &&
+			cast_a.function == cast_b.function &&
+			cast_a.from_by_ref == cast_b.from_by_ref &&
+			cast_a.to_by_ref == cast_b.to_by_ref;
 	}
 	}
 
 	return true;
 }
-
 
 
 // PRINTING

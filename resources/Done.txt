@@ -1,6 +1,9 @@
 
 Done:
 -----
+05.05:
+ - Auto_Cast design rework with polymorphic types
+
 18.04:
  - Parsing/lexing update with continuations
 

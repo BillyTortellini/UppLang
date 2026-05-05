@@ -14,6 +14,7 @@ namespace AST
     struct Node;
 }
 
+struct Compilation_Data;
 struct Compilation_Unit;
 struct Predefined_IDs;
 struct Identifier_Pool;
@@ -21,7 +22,7 @@ struct Identifier_Pool;
 namespace Parser 
 {
     // PARSER
-    void execute_clean(Compilation_Unit* unit, Identifier_Pool* identifier_pool, Arena* permanent_arena, Arena* temporary_arena);
+    void execute_clean(Compilation_Unit* unit, Compilation_Data* compilation_data);
 
     // Utility
     DynArray<Text_Range> ast_base_get_section_token_range(Source_Code* code, AST::Node* base, Node_Section section, Arena* arena);

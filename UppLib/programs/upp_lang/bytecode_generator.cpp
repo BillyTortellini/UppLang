@@ -507,7 +507,8 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
     Bytecode_Type result;
     switch (primitive_type_get_class(primitive->primitive_type))
     {
-    case Primitive_Class::INTEGER: {
+    case Primitive_Class::INTEGER: 
+    {
         switch (type_size) {
         case 1: result = Bytecode_Type::INT8; break;
         case 2: result = Bytecode_Type::INT16; break;
@@ -520,7 +521,8 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
         }
         break;
     }
-    case Primitive_Class::FLOAT: {
+    case Primitive_Class::FLOAT: 
+    {
         if (type_size == 4) {
             result = Bytecode_Type::FLOAT32; break;
         }
@@ -532,7 +534,6 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
     }
     case Primitive_Class::RAWPTR: result = Bytecode_Type::UINT64; break;
     case Primitive_Class::TYPE_HANDLE: result = Bytecode_Type::UINT32; break;
-    case Primitive_Class::BOOLEAN: result = Bytecode_Type::BOOL; break;
     default: panic("HEY");
     }
     return result;
@@ -542,8 +543,6 @@ const char* bytecode_type_as_string(Bytecode_Type type)
 {
     switch (type)
     {
-    case Bytecode_Type::BOOL:
-        return "BOOL";
     case Bytecode_Type::FLOAT32:
         return "FLOAT32";
     case Bytecode_Type::FLOAT64:
@@ -564,6 +563,8 @@ const char* bytecode_type_as_string(Bytecode_Type type)
         return "UINT32";
     case Bytecode_Type::UINT64:
         return "UINT64";
+    case Bytecode_Type::BOOL:
+        return "BOOL";
     default: panic("HEY");
     }
     return "ERROR";
@@ -858,53 +859,17 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         }
         case IR_Instruction_Type::CAST:
         {
-            IR_Instruction_Cast* cast = &instr->options.cast;
-            switch (cast->type)
-            {
-            case IR_Cast_Type::POINTERS:
-            case IR_Cast_Type::POINTER_TO_ADDRESS:
-            case IR_Cast_Type::ADDRESS_TO_POINTER: {
-                bytecode_generator_move_accesses(generator, cast->destination, cast->source);
-                break;
-            }
-            case IR_Cast_Type::ENUMS:
-            case IR_Cast_Type::ENUM_TO_INT:
-            case IR_Cast_Type::INT_TO_ENUM:
-            case IR_Cast_Type::INTEGERS:
-            case IR_Cast_Type::FLOATS:
-            case IR_Cast_Type::FLOAT_TO_INT:
-            case IR_Cast_Type::INT_TO_FLOAT:
-            {
-                Datatype* cast_source = cast->source->datatype;
-                Datatype* cast_destination = cast->destination->datatype;
-                Instruction_Type instr_type;
-                switch (cast->type) {
-                    case IR_Cast_Type::ENUMS: 
-                    case IR_Cast_Type::ENUM_TO_INT: 
-                    case IR_Cast_Type::INT_TO_ENUM:
-                    case IR_Cast_Type::INTEGERS:
-                        instr_type = Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE; break;
-                    case IR_Cast_Type::FLOATS:
-                        instr_type = Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE; break;
-                    case IR_Cast_Type::FLOAT_TO_INT:
-                        instr_type = Instruction_Type::CAST_FLOAT_INTEGER; break;
-                    case IR_Cast_Type::INT_TO_FLOAT:
-                        instr_type = Instruction_Type::CAST_INTEGER_FLOAT; break;
-                    default: panic("");
-                }
-                bytecode_generator_add_instruction_and_set_destination(
-                    generator,
-                    cast->destination,
-                    instruction_make_4(
-                        instr_type, PLACEHOLDER,
-                        data_access_read_value(generator, cast->source),
-                        (int)type_base_to_bytecode_type(cast_destination), (int)type_base_to_bytecode_type(cast_source)
-                    )
-                );
-                break;
-            }
-            default: panic("");
-            }
+            IR_Instruction_Primitive_Cast* cast = &instr->options.cast;
+            bytecode_generator_add_instruction_and_set_destination(
+                generator,
+                cast->destination,
+                instruction_make_4(
+                    Instruction_Type::CAST_PRIMITIVE_TYPES, PLACEHOLDER,
+                    data_access_read_value(generator, cast->source),
+                    (int)type_base_to_bytecode_type(cast->destination->datatype), 
+                    (int)type_base_to_bytecode_type(cast->source->datatype)
+                )
+            );
             break;
         }
         case IR_Instruction_Type::FUNCTION_ADDRESS:
@@ -1119,23 +1084,8 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, function-index: %d", i.op1, i.op2);
         break;
-    case Instruction_Type::CAST_INTEGER_DIFFERENT_SIZE:
-        string_append_formated(string, "CAST_INTEGER_DIFFERENT_SIZE  dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::CAST_FLOAT_DIFFERENT_SIZE:
-        string_append_formated(string, "CAST_FLOAT_DIFFERENT_SIZE    dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::CAST_FLOAT_INTEGER:
-        string_append_formated(string, "CAST_FLOAT_INTEGER           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::CAST_INTEGER_FLOAT:
-        string_append_formated(string, "CAST_INTEGER_FLOAT           dst: %d, src: %d, dst-primitive-type: %s, src-primitive-type: %s",
+    case Instruction_Type::CAST_PRIMITIVE_TYPES:
+        string_append_formated(string, "CAST_PRIMITIVE_TYPES         dst: %d, src: %d, dst: %s, src: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
         );
         break;

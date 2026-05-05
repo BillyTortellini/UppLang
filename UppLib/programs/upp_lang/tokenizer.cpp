@@ -114,7 +114,6 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::DEFAULT: return "default";
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";
-    case Token_Type::CAST: return "cast";
     case Token_Type::SCOPE: return "scope";
 
     case Token_Type::BAKE: return "#bake";

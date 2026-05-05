@@ -30,7 +30,7 @@ enum class Bytecode_Type
     UINT64,
     FLOAT32,
     FLOAT64,
-    BOOL,
+    BOOL
 };
 Bytecode_Type type_base_to_bytecode_type(Datatype* primitive);
 
@@ -61,10 +61,7 @@ enum class Instruction_Type
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function_slot_index (Update: Only puts function_slot_index + 1 as i64 into dest_reg)
     LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant index
 
-    CAST_INTEGER_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
-    CAST_FLOAT_DIFFERENT_SIZE, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
-    CAST_FLOAT_INTEGER, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
-    CAST_INTEGER_FLOAT, // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
+    CAST_PRIMITIVE_TYPES,  // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
 
     // Binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset, op4 = bytecode_type
     BINARY_OP_ADDITION,

@@ -314,7 +314,6 @@ namespace AST
         BINARY_OPERATION,
         UNARY_OPERATION,
         FUNCTION_CALL,
-        CAST,
         ARRAY_INITIALIZER,
         STRUCT_INITIALIZER,
         AUTO_ENUM,
@@ -368,10 +367,6 @@ namespace AST
                 Call_Node* call_node;
                 bool is_dot_call;
             } call;
-            struct {
-                Call_Node* call_node;
-                bool is_dot_call;
-            } cast;
             struct {
                 Expression* expr;
                 String* name;

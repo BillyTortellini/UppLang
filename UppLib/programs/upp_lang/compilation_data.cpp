@@ -29,11 +29,11 @@ bool enable_c_compilation = true;
 
 // Output stages
 bool output_identifiers = false;
-bool output_ast = true;
+bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
-bool output_bytecode = true;
+bool output_ir = false;
+bool output_bytecode = false;
 bool output_timing = true;
 
 // Testcases
@@ -71,9 +71,6 @@ bool ast_info_equals(AST_Info_Key* a, AST_Info_Key* b) {
 
 void compilation_unit_parse_ast(Compilation_Unit* unit, Compilation_Data* compilation_data)
 {
-    Timing_Task before = compilation_data->task_current;
-    SCOPE_EXIT(compilation_data_switch_timing_task(compilation_data, before));
-
 	// Already parsed
 	if (unit->root != nullptr) {
 		return;
@@ -85,8 +82,7 @@ void compilation_unit_parse_ast(Compilation_Unit* unit, Compilation_Data* compil
     }
 
     // Parse code
-    compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
-    Parser::execute_clean(unit, &compilation_data->identifier_pool, &compilation_data->arena, &compilation_data->tmp_arena);
+    Parser::execute_clean(unit, compilation_data);
 }
 
 void call_signature_destroy(Call_Signature* signature)
@@ -204,10 +200,9 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
 		result->allocated_symbols = dynamic_array_create<Symbol*>();
 		result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
-		result->allocated_custom_operator_tables = dynamic_array_create<Custom_Operator_Table*>();
 		result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
-		result->custom_operator_deduplication = hashtable_create_empty<Custom_Operator, Custom_Operator*>(16, hash_custom_operator, equals_custom_operator);
 		result->bytecode = DynArray<Bytecode_Instruction>::create(&result->arena);
+		result->custom_operator_instances = DynTable<Custom_Operator, Upp_Function*>::create(&result->arena, hash_custom_operator, equals_custom_operator);
 
 		result->semantic_infos = dynamic_array_create<Editor_Info>();
 		result->next_analysis_item_index = 0;
@@ -347,6 +342,9 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			define_hardcoded_symbol("return_type", Hardcoded_Type::RETURN_TYPE);
 			define_hardcoded_symbol("struct_tag", Hardcoded_Type::STRUCT_TAG);
 
+			define_hardcoded_symbol("cast_primitive", Hardcoded_Type::CAST_PRIMITIVE);
+			define_hardcoded_symbol("cast_pointer", Hardcoded_Type::CAST_POINTER);
+
 			define_hardcoded_symbol("bitwise_not", Hardcoded_Type::BITWISE_NOT);
 			define_hardcoded_symbol("bitwise_and", Hardcoded_Type::BITWISE_AND);
 			define_hardcoded_symbol("bitwise_or", Hardcoded_Type::BITWISE_OR);
@@ -377,23 +375,14 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 
 
-			// CAST
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("to"), types.type_handle, false, false, false);
-			call_signature_add_parameter(call_signature, make_id("from"), types.type_handle, false, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable), compilation_data);
-			compilation_data->cast_signature = call_signature;
-
-
-
 			// Context functions
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("auto_cast"), upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("call_by_reference"), upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("return_by_reference"), upcast(types.bool_type), false, false, false);
-			context_signatures[(int)Custom_Operator_Type::CAST] = call_signature_register(call_signature, compilation_data);
+			call_signature_add_parameter(call_signature, make_id("from_type"),   upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("to_type"),     upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("function"),    upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("from_by_ref"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("to_by_ref"),   upcast(types.bool_type), false, false, false);
+			context_signatures[(int)Custom_Operator_Type::AUTO_CAST] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("binop"), upcast(types.string), true, false, false);
@@ -422,6 +411,8 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_parameter(call_signature, make_id("get_value"), upcast(types.empty_pattern_variable), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("use_pointer"), upcast(types.bool_type), false, false, false);
 			context_signatures[(int)Custom_Operator_Type::ITERATOR] = call_signature_register(call_signature, compilation_data);
+
+			context_signatures[(int)Custom_Operator_Type::INVALID] = compilation_data->empty_call_signature;
 
 
 
@@ -461,7 +452,13 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::STRUCT_TAG] = call_signature_register(call_signature, compilation_data);
 
-
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("to"), upcast(types.type_handle), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("from"), upcast(types.type_handle), false, false, false);
+			call_signature_add_return_type(call_signature, upcast(types.empty_pattern_variable), compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::CAST_PRIMITIVE] = call_signature_register(call_signature, compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::CAST_POINTER] = hardcoded_signatures[(int)Hardcoded_Type::CAST_PRIMITIVE];
 
 			// Memory functions
 			call_signature = call_signature_create_empty();
@@ -570,7 +567,6 @@ void compilation_data_destroy(Compilation_Data* data)
 	dynamic_array_destroy(&data->globals);
 
 	dynamic_array_destroy(&data->semantic_infos);
-	hashtable_destroy(&data->custom_operator_deduplication);
 	hashtable_destroy(&data->code_block_comptimes);
 
 	for (int i = 0; i < data->semantic_errors.size; i++) {
@@ -603,13 +599,6 @@ void compilation_data_destroy(Compilation_Data* data)
 		}
 		dynamic_array_destroy(&data->allocated_passes);
 	}
-
-	for (int i = 0; i < data->allocated_custom_operator_tables.size; i++) {
-		auto context = data->allocated_custom_operator_tables[i];
-		hashtable_destroy(&context->installed_operators);
-		delete data->allocated_custom_operator_tables[i];
-	}
-	dynamic_array_destroy(&data->allocated_custom_operator_tables);
 
 	data->arena.destroy();
 	data->tmp_arena.destroy();
@@ -952,10 +941,9 @@ void find_editor_infos_recursive(
 
 			if (symbol_table != nullptr)
 			{
-				Symbol_Table* table = ((Workload_Function_Header*)(pass->origin_workload))->symbol_table;
 				Symbol_Table_Range table_range;
 				table_range.range = node->bounding_range;
-				table_range.symbol_table = table;
+				table_range.symbol_table = symbol_table;
 				table_range.tree_depth = tree_depth;
 				table_range.pass = pass;
 				dynamic_array_push_back(&code->symbol_table_ranges, table_range);
@@ -977,7 +965,8 @@ void find_editor_infos_recursive(
 		{
 			auto pass = active_passes[i];
 			auto block = pass_get_node_info(pass, block_node, Info_Query::TRY_READ, compilation_data);
-			if (block == 0) { continue; }
+			if (block == nullptr) { continue; }
+			if (block->symbol_table == nullptr) { continue; }
 			Symbol_Table_Range table_range;
 			table_range.range = node->bounding_range;
 			table_range.symbol_table = block->symbol_table;
@@ -1040,7 +1029,7 @@ void find_editor_infos_recursive(
 
 				auto value_info = pass_get_node_info(pass, expr->options.member_access.expr, Info_Query::TRY_READ, compilation_data);
 				if (value_info != nullptr && value_info->is_valid) {
-					option.expression.member_access_info.value_type = value_info->cast_info.result_type;
+					option.expression.member_access_info.value_type = value_info->auto_cast_info.result_type;
 					if (value_info->result_type == Expression_Result_Type::DATATYPE) {
 						option.expression.member_access_info.value_type = value_info->options.datatype;
 					}

@@ -24,48 +24,14 @@ enum class Compile_Type
     BUILD_CODE,
 };
 
-enum class Cast_Type
-{
-	// Primitive casts
-	INTEGERS,
-	FLOATS,
-	ENUMS,
-	FLOAT_TO_INT,
-	INT_TO_FLOAT,
-	ENUM_TO_INT,
-	INT_TO_ENUM,
-
-	// Pointer conversions
-	POINTERS,
-	POINTER_TO_ADDRESS,
-	ADDRESS_TO_POINTER,
-
-	TO_SUB_TYPE,
-	TO_BASE_TYPE,
-
-	// Operation casts
-	DEREFERENCE,
-	ADDRESS_OF,
-	ARRAY_TO_SLICE,
-	TO_ANY,
-	FROM_ANY,
-	CUSTOM_CAST,
-
-	// Note: From here upwards the values are not accessible in the language anymore
-	NO_CAST, // No cast needed, source-type == destination-type
-	UNKNOWN, // Either source or destination type are/contain error/unknown type
-	INVALID, // Cast is not valid
-	MAX_ENUM_VALUE
-};
-const char* cast_type_to_string(Cast_Type type);
-
 enum class Custom_Operator_Type
 {
-	CAST,
+	AUTO_CAST,
 	BINOP,
 	UNOP,
 	ARRAY_ACCESS,
 	ITERATOR,
+
 	INVALID, // Invalid identifier given
 
 	MAX_ENUM_VALUE
@@ -133,6 +99,9 @@ enum class Hardcoded_Type
 	PANIC_FN,
 	RETURN_TYPE,
 	STRUCT_TAG,
+
+	CAST_PRIMITIVE,
+	CAST_POINTER,
 
 	MEMORY_COPY,
 	MEMORY_ZERO,
@@ -279,7 +248,7 @@ struct Predefined_IDs
 
 	String* add_binop;
 	String* add_unop;
-	String* add_cast;
+	String* add_auto_cast;
 	String* add_iterator;
 	String* add_array_access;
 
@@ -325,10 +294,6 @@ struct Predefined_IDs
 	String* string;
 	String* allocator;
 	String* bytes;
-
-	// Cast type
-	String* cast_type;
-	String* cast_type_enum_values[(int)Cast_Type::MAX_ENUM_VALUE];
 };
 
 struct Identifier_Pool

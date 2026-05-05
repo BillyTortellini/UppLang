@@ -4,6 +4,7 @@
 #include "syntax_editor.hpp"
 #include "compilation_data.hpp"
 #include "code_history.hpp"
+#include "compiler_misc.hpp"
 
 namespace Parser
 {
@@ -1176,9 +1177,18 @@ namespace Parser
 				function.body.is_expression = false;
 				function.body.block = parse_code_block(upcast(result), nullptr);
 			}
-			else {
-				function.body.is_expression = true;
-				function.body.expr = parse_expression_or_error_expr(upcast(result));
+			else
+			{
+				Expression* expr = parse_expression(upcast(result));
+				if (expr != nullptr) {
+					function.body.is_expression = true;
+					function.body.expr = parse_expression_or_error_expr(upcast(result));
+				}
+				else {
+					skip_until_next_follow_block();
+					function.body.is_expression = false;
+					function.body.block = parse_code_block(upcast(result), nullptr);
+				}
 			}
 
 			PARSE_SUCCESS(result);
@@ -1407,8 +1417,8 @@ namespace Parser
 				else if (id == ids.add_unop) {
 					custom_op.type = Custom_Operator_Type::UNOP;
 				}
-				else if (id == ids.add_cast) {
-					custom_op.type = Custom_Operator_Type::CAST;
+				else if (id == ids.add_auto_cast) {
+					custom_op.type = Custom_Operator_Type::AUTO_CAST;
 				}
 				else if (id == ids.add_iterator) {
 					custom_op.type = Custom_Operator_Type::ITERATOR;
@@ -1416,6 +1426,7 @@ namespace Parser
 				else {
 					log_error_range_offset("Expected valid option, e.g. operators add_binop", 0);
 				}
+				advance_token();
 			}
 			else {
 				log_error_range_offset("Expected Identifier", 0);
@@ -2063,37 +2074,6 @@ namespace Parser
 
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::CAST:
-		{
-			result->type = Expression_Type::CAST;
-			auto& cast = result->options.cast;
-			cast.is_dot_call = false;
-			advance_token();
-
-			if (test_token(Token_Type::PARENTHESIS_OPEN)) {
-				// cast(value, to, from, option)
-				cast.call_node = parse_call_node(upcast(result));
-			}
-			else
-			{
-				// cast x
-				Call_Node* call_node = allocate_base<Call_Node>(upcast(result), Node_Type::CALL_NODE);
-				call_node->arguments = parser.permanent_arena->allocate_array<Argument*>(1);
-				call_node->subtype_initializers = array_create_empty<Subtype_Initializer*>();
-				call_node->uninitialized_tokens = array_create_empty<Expression*>();
-
-				Argument* argument = allocate_base<Argument>(upcast(call_node), Node_Type::ARGUMENT);;
-				argument->name.available = false;
-				argument->value = parse_single_expression_or_error(upcast(argument));
-				call_node->arguments[0] = argument;
-
-				node_finalize_range(upcast(argument));
-				node_finalize_range(upcast(call_node));
-				cast.call_node = call_node;
-			}
-
-			PARSE_SUCCESS(result);
-		}
 		case Token_Type::BRACKET_OPEN:
 		{
 			if (test_token(Token_Type::BRACKET_CLOSED, 1)) {
@@ -2296,37 +2276,24 @@ namespace Parser
 		{
 			advance_token();
 
-			AST::Call_Node** fill_call_node = nullptr;
-			if (test_token(Token_Type::CAST))
-			{
-				result->type = Expression_Type::CAST;
-				result->options.cast.is_dot_call = true;
-				result->options.cast.call_node = nullptr;
-				advance_token();
-				fill_call_node = &result->options.cast.call_node;
-			}
-			else
-			{
-				result->type = Expression_Type::FUNCTION_CALL;
-				auto& call = result->options.call;
-				call.is_dot_call = true;
+			result->type = Expression_Type::FUNCTION_CALL;
+			auto& call = result->options.call;
+			call.is_dot_call = true;
 
-				Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
-				call_expr->type = AST::Expression_Type::PATH_LOOKUP;
-				call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
-				call_expr->options.path_lookup->is_dot_call_lookup = true;
-				node_finalize_range(upcast(call_expr));
-				call.expr = call_expr;
-				fill_call_node = &call.call_node;
-			}
+			Expression* call_expr = allocate_base<Expression>(upcast(result), AST::Node_Type::EXPRESSION);
+			call_expr->type = AST::Expression_Type::PATH_LOOKUP;
+			call_expr->options.path_lookup = parse_path_lookup_or_error(upcast(call_expr));
+			call_expr->options.path_lookup->is_dot_call_lookup = true;
+			node_finalize_range(upcast(call_expr));
+			call.expr = call_expr;
 
 			AST::Argument* argument = allocate_base<Argument>(nullptr, AST::Node_Type::ARGUMENT);
 			argument->name = optional_make_failure<String*>();
 			argument->value = child;
 			argument->base.range = child->base.range;
 			argument->base.bounding_range = child->base.bounding_range;
-			*fill_call_node = parse_call_node(upcast(result), argument);
-			argument->base.parent = upcast(*fill_call_node);
+			call.call_node = parse_call_node(upcast(result), argument);
+			argument->base.parent = upcast(call.call_node);
 
 			PARSE_SUCCESS(result);
 		}
@@ -2504,8 +2471,16 @@ namespace Parser
 #undef CHECKPOINT_SETUP
 #undef PARSE_SUCCESS
 
-    void execute_clean(Compilation_Unit* unit, Identifier_Pool* identifier_pool, Arena* permanent_arena, Arena* temporary_arena)
+    void execute_clean(Compilation_Unit* unit, Compilation_Data* compilation_data)
 	{
+		auto task_before = compilation_data->task_current;
+		SCOPE_EXIT(compilation_data_switch_timing_task(compilation_data, task_before));
+		compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
+
+		Arena* temporary_arena = &compilation_data->tmp_arena;
+		Arena* permanent_arena = &compilation_data->arena;
+		Identifier_Pool* identifier_pool = &compilation_data->identifier_pool;
+
 		auto checkpoint = temporary_arena->make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 
@@ -2523,10 +2498,12 @@ namespace Parser
 		parser.pos = 0;
 
 		// Tokenize code
+		compilation_data_switch_timing_task(compilation_data, Timing_Task::LEXING);
 		parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, temporary_arena, identifier_pool);
 		// print_tokens(parser.tokens);
 
 		// Parse root
+		compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
 		AST::Definition* root_def = allocate_base<Definition>(nullptr, Node_Type::DEFINITION);
 		root_def->type = Definition_Type::MODULE;
 		root_def->options.module.symbol.available = false;

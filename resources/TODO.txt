@@ -1,8 +1,68 @@
 
+Auto-Cast Design:
+-----------------
+Analysis:
+ - One workload for all operators in a given scope
+ - Custom_Operator workload checks if number of parameters and return type is correct, nothing else.
+    If there are errors, then function is nullptr, and we can still use types to determine if this operator should be used
+ - Semantic_Context has can_access_operator_context, which is set to false during
+    custom_operator analysis and during header analysis (To prevent circular workloads)
+
+Query/Instanciate:
+ - On cast_query we search through all symbol-tables and loop all custom-operators and wait for Operator_Workload to finish
+ - If a custom operator matches, we use hashtable to check if this custom_op was already instanciated with given types
+    --> Multiple errors aren't logged, and Poly-Matching isn't done multiple times
+
+
+CAST-UPDATE TODO:
+-----------------
+ - Compilation_Data includes could be pruned
+
+
+operators add_binop_plus(vec2, vec2, #instanciate vector_bitwise_op(T=float, C=2, op=float_add))
+
+operators add_auto_cast(from_type, to_type, function)
+operators add_binop_plus(left_type, right_type, result_type, function)
+operators add_binop_minus(left_type, right_type, result_type, function)
+operators add_unop_minus(value_type, result_type, function)
+operators add_index_access(array_type, index_type, result_type, function)
+operators add_iterator(iterable_type, iterator_type, element_type, create_fn, has_next_fn, next_fn, get_value_fn)
+
+How to handle polymorphic-functions?
+    --> Allow polymorphic types in arguments...
+
+Auto-Cast steps:
+ 1. Install custom-operator tables and workloads, so we can query them and know they exist
+ 2. Analyse custom_operator arguments and store them correctly
+ 3. Query them when necessary, figure out which workloads to wait for
+ 4. Instanciate/store then when the operator is used.
+
+Questions:
+How to store in custom-operator table which operators are given? 
+ - Store bitmask while analysing the block --> Best representation
+How to divide workloads?
+    We need 2 workload if we want to seperate function-evaluation from type-evaluation
+    Options:
+        * 2 workloads per node
+        * 2 workloads per type
+        * 2 workloads per block  (X) --> Probably the fastest, but most prone to dependencies
+
+How do we query by types?
+ - Normal types need to be exactly specified, binop/unops auto-dereference
+ - Poly-types could be:
+    $T --> then we know nothing
+    Node($T) --> Then we could store Node
+    [], [5]$T
+
+Cast-Updates:
+ * Add auto_cast should work with new workloads
+
 TODO:
 -----
  - Cast update
  - Re-implement other operators
+ - Ternary operator with .if then else 
+    var x = .if a < b then a else b
  - Default-values
  - Design: Subtypes, Optional values/pointers
  - Fix all Test-Cases
@@ -10,6 +70,9 @@ TODO:
 
 - DONE:
 -------
+22.04:
+21.04:
+ - Replaced Cast keyword with ~cast_primitive and ~cast_pointer
  - Display lines now respect continuation
  - tokens_get_parenthesis range working properly now
 

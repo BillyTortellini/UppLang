@@ -2172,7 +2172,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
         }
         case IR_Instruction_Type::CAST:
         {
-            IR_Instruction_Cast* cast = &instr->options.cast;
+            IR_Instruction_Primitive_Cast* cast = &instr->options.cast;
             c_generator_output_data_access(generator, cast->destination);
             string_append_formated(gen.text, " = ");
             c_generator_output_cast_if_necessary(generator, cast->destination, cast->source->datatype);

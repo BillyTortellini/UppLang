@@ -58,7 +58,6 @@ struct IR_Data_Access
         IR_Data_Access* pointer_value; // For pointer dereferences
         IR_Data_Access* address_of_value;
         struct {
-            Cast_Type cast_type;
             IR_Data_Access* value_access;
         } non_destructive_cast;
     } option;
@@ -168,23 +167,8 @@ struct IR_Instruction_Unary_OP
     IR_Data_Access* source;
 };
 
-enum class IR_Cast_Type
+struct IR_Instruction_Primitive_Cast
 {
-    INTEGERS,
-    FLOATS,
-    FLOAT_TO_INT,
-    INT_TO_FLOAT,
-    POINTERS,
-    POINTER_TO_ADDRESS,
-    ADDRESS_TO_POINTER,
-    ENUM_TO_INT,
-    INT_TO_ENUM,
-    ENUMS,
-};
-
-struct IR_Instruction_Cast
-{
-    IR_Cast_Type type;
     IR_Data_Access* destination;
     IR_Data_Access* source;
 };
@@ -267,7 +251,7 @@ struct IR_Instruction
         IR_Instruction_Return return_instr;
         IR_Instruction_Switch switch_instr;
         IR_Instruction_Move move;
-        IR_Instruction_Cast cast;
+        IR_Instruction_Primitive_Cast cast;
         IR_Instruction_Function_Address function_address;
         IR_Instruction_Unary_OP unary_op;
         IR_Instruction_Binary_OP binary_op;

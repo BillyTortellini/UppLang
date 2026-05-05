@@ -122,7 +122,6 @@ enum class Token_Type
     RETURN,
     BREAK,
     CONTINUE,
-    CAST,
     DEFER_RESTORE,
     
     // #keywords, 
