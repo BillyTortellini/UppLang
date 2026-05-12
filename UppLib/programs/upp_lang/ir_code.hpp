@@ -289,12 +289,7 @@ struct Loop_Increment
             IR_Data_Access* index_access;
             IR_Data_Access* iterable_access;
             IR_Data_Access* loop_variable_access;
-
-            bool is_custom_iterator;
-            // Only valid for custom iterators
-            IR_Data_Access* iterator_access;
-            Upp_Function* next_function;
-            int iterator_deref_value;
+            bool is_custom_iterator; // Custom iterators don't need code at continue
         } foreach_loop;
     } options;
 };

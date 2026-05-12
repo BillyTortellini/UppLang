@@ -2061,8 +2061,11 @@ namespace Text_Editing
 				if (t.type == Token_Type::IDENTIFIER || helper_is_literal(t.type)) {
 					prev_is_value = true;
 				}
-				if (token_type_get_class(t.type) == Token_Class::LIST_START) {
+				if (token_type_get_class(t.type) == Token_Class::LIST_END) {
 					prev_is_value = true;
+				}
+				if (test_token(Token_Type::BRACKET_CLOSED, -1) && test_token(Token_Type::BRACKET_OPEN, -2)) {
+					prev_is_value = false;
 				}
 			}
 			bool next_is_value = false;
@@ -2181,7 +2184,7 @@ namespace Text_Editing
 					}
 
 					// Remove if we are still on start of line
-					if (trimmed_text.size == indentation * 4) {
+					if (trimmed_text.size == 0) {
 						remove = true;
 					}
 				}
@@ -4047,7 +4050,7 @@ void code_completion_find_suggestions()
 	// Tokenize partial code prefers later tokens if the text-index is inbetween two tokens, but for completion we want the first token
 	if (cursor_token_index - 1 >= 0 && cursor_token_index - 1 < tokens.size) {
 		Token& prev = tokens[cursor_token_index - 1];
-		if (prev.line = cursor.line && prev.start <= cursor.character && prev.end >= cursor.character) {
+		if (prev.line == cursor.line && prev.start <= cursor.character && prev.end >= cursor.character) {
 			cursor_token_index = cursor_token_index - 1;
 		}
 	}
@@ -4177,8 +4180,8 @@ void code_completion_find_suggestions()
 		// Note: For member-accesses, we need the type of the value, not the member-access expression
 		Datatype* type = nullptr;
 		auto expr_info = position_info.expression_info;
-		if (expr_info != nullptr && expr_info->is_member_access && expr_info->member_access_info.value_type != nullptr) {
-			type = expr_info->member_access_info.value_type;
+		if (expr_info != nullptr) {
+			type = expression_info_get_value_info(expr_info->info, editor.editor_compilation_data->type_system).initial_type;
 		}
 
 		// Add possible member-accesses for given type
@@ -4414,6 +4417,15 @@ void code_completion_find_suggestions()
 				fuzzy_search_add_item(*id_range.block_id, unranked_suggestions.size);
 				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id_range.block_id));
 			}
+		}
+	}
+
+	if (helper_test_token(operator_token_index, Token_Type::OPERATORS) || helper_test_token(operator_token_index - 1, Token_Type::OPERATORS))
+	{
+		for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++) {
+			String* id = ids.custom_operator_function_names[i];
+			fuzzy_search_add_item(*id, unranked_suggestions.size);
+			dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(id));
 		}
 	}
 
@@ -7977,8 +7989,7 @@ void syntax_editor_render()
 		for (int i = 0; i < display_lines.size; i += 1) {
 			auto& display_line = display_lines[i];
 			if (display_line.fold_info.inside_fold) continue;
-			bool worked = editor.source_to_display_line_mapping.insert(display_lines[i].line_index, i);
-			assert(worked, "");
+			editor.source_to_display_line_mapping.insert(display_lines[i].line_index, i);
 		}
 	}
 	// Note: Arena only get's reset after display lines, because particles need the display-line mapping
@@ -8218,9 +8229,6 @@ void syntax_editor_render()
 			DynArray<int> hover_errors = DynArray<int>::create(&arena);
 			Position_Info hover_info = code_query_find_position_infos(cursor, &hover_errors);
 			Symbol* highlight_symbol = nullptr;
-			if (hover_info.symbol_info != nullptr) {
-				highlight_symbol = hover_info.symbol_info->symbol;
-			}
 			bool highlight_only_definition = false;
 			if (editor.mode == Editor_Mode::FUZZY_FIND_DEFINITION || editor.mode == Editor_Mode::TEXT_SEARCH || cursor_is_on_fold) {
 				highlight_symbol = nullptr;
@@ -8232,6 +8240,29 @@ void syntax_editor_render()
 					highlight_symbol = sugg.options.symbol;
 					highlight_only_definition = true;
 				}
+			}
+
+			// Figure out which identifier/keyword the cursor is on
+			String cursor_token_text = string_create_static("");
+			{
+				int token_index = 0;
+				Source_Line* line = source_code_get_line(code, cursor.line);
+
+				auto checkpoint = arena.make_checkpoint();
+				SCOPE_EXIT(checkpoint.rewind());
+				DynArray<Token> tokens = tokenize_partial_code(code, cursor, &arena, token_index, false, false);
+				if (token_index < tokens.size)
+				{
+					Token& token = tokens[token_index];
+					if (token.start <= cursor.character && token.end >= cursor.character &&
+						(token_type_is_keyword(token.type) || token.type == Token_Type::IDENTIFIER)) {
+						cursor_token_text = string_create_substring_static(&line->text, token.start, token.end);
+					}
+				}
+			}
+
+			if (hover_info.symbol_info != nullptr) {
+				highlight_symbol = hover_info.symbol_info->symbol;
 			}
 
 			for (int i = 0; i < display_lines.size; i += 1)
@@ -8250,6 +8281,13 @@ void syntax_editor_render()
 					auto& token = tokens[j];
 					Syntax_Color color = token_get_syntax_color_based_on_surrounding(tokens, j);
 					main_area.mark(ivec2(token.start, i), token.end - token.start, Mark_Type::TEXT_COLOR, color);
+
+					// Highlight tokens with same text as token under cursor
+					if (highlight_symbol != nullptr) continue;
+					String token_text = string_create_substring_static(&line->text, token.start, token.end);
+					if (string_equals(token_text, cursor_token_text)) {
+						main_area.mark(ivec2(token.start, i), token.end - token.start, Mark_Type::BACKGROUND_COLOR, Syntax_Color::BG_HIGHLIGHT);
+					}
 				}
 
 				// Highlight search results in editor
@@ -8903,11 +8941,11 @@ void syntax_editor_render()
 
 				// Move boxes to the left if they are too far
 				if (context_box.max.x > screen_size.x) {
-					context_box.min.x = math_maximum(0, context_box.max.x - screen_size.x);
+					context_box.min.x = math_maximum(0, screen_size.x - context_size.x);
 					context_box.max.x = context_box.min.x + context_size.x;
 				}
 				if (call_info_box.max.x > screen_size.x) {
-					call_info_box.min.x = math_maximum(0, call_info_box.max.x - screen_size.x);
+					call_info_box.min.x = math_maximum(0, screen_size.x - call_info_size.x);
 					call_info_box.max.x = call_info_box.min.x + call_info_size.x;
 				}
 			}

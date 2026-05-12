@@ -18,6 +18,7 @@ struct Workload_Global;
 struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
 struct Workload_Custom_Operators;
+struct Custom_Operator;
 
 struct Symbol;
 struct Symbol_Table;
@@ -40,60 +41,99 @@ namespace AST
 
 
 // CUSTOM_OPERATORS
+
+enum class Custom_Operator_Query_Node_Type
+{
+    OPERATOR_TYPE,
+    NORMAL_DATATYPE,
+    POLYMORPHIC_DATATYPE_TYPE,
+    POLYMORPHIC_STRUCT_BASE,
+    PATTERN_VARIABLE,
+    CUSTOM_OPERATOR
+};
+
+struct Custom_Operator_Query_Node
+{
+    Custom_Operator_Query_Node_Type type;
+    int parent_index; // -1 if root
+    union
+    {
+        Custom_Operator_Type op_type;
+        Datatype* datatype;
+        Datatype_Type poly_datatype_type;
+        Poly_Header* poly_struct_base;
+        int custom_operator_child_index;
+    } options;
+};
+
+struct Custom_Operator_Query_Node_Value
+{
+    int index; // Either node-index for further querying, or custom-operator index 
+    u32 has_child_query_node_type_mask;
+};
+
+// In instances the types are pointers if it's by ref
+struct Custom_Operator_Instance_Key
+{
+    Custom_Operator_Type type;
+    Datatype* datatypes[2];
+    Upp_Function* functions[2]; // Custom_Iterator has create and next function, all other's have 1 function
+};
+
+struct Custom_Operator_Instance_Value
+{
+    Custom_Operator* custom_op;
+    Upp_Function* instance_functions[2];
+};
+
+struct Custom_Operator_Query
+{
+	Custom_Operator_Type operator_type;
+    bool argument_is_temporary[2];
+    Datatype* argument_datatypes[2];
+};
+
+enum class Custom_Operator_Query_Result_Type
+{
+    SUCCESS,
+    FOUND_BUT_FUNCTION_INVALID, // If function does not match the types given in the operator node
+    VALUE_MUST_NOT_BE_TEMPORARY,
+    NOT_FOUND,
+};
+
+struct Custom_Operator_Query_Result
+{
+    Custom_Operator_Query_Result_Type type;
+    Custom_Operator_Instance_Value value;
+};
+
 // Note: If the function is nullptr, then the function analysis contained errors
+// Note: Commutative binops get inserted twice
+struct Custom_Operator_Parameter
+{
+    Datatype* datatype; // if nullptr, then parameter is not used
+    int parameter_index; // -1 if return type
+    bool by_reference;
+    bool is_return_type;
+};
+
 struct Custom_Operator
 {
     Custom_Operator_Type type;
     AST::Definition_Custom_Operator* node;
-    union
-    {
-        struct
-        {
-            Datatype* from_type;
-            Datatype* to_type;
-            Upp_Function* function;
-            bool from_by_ref;
-            bool to_by_ref;
-        } custom_cast;
-        struct
-        {
-            Datatype* left_type;
-            Datatype* right_type;
-            Upp_Function* function;
-            bool switch_left_and_right;
-            bool take_pointer_left;
-            bool take_pointer_right;
-        } binop;
-        struct
-        {
-            Datatype* datatype;
-            Upp_Function* function;
-            bool take_pointer;
-        } unop;
-        struct
-        {
-            Datatype* container_type;
-            Datatype* index_type;
-            Upp_Function* function;
-            bool take_pointer_for_container;
-            bool take_pointer_for_index;
-        } array_access;
-        struct
-        {
-            Datatype* iterable_type;
-            Datatype* iterator_type;
-            Upp_Function* create;
-            Upp_Function* has_next;
-            Upp_Function* next;
-            Upp_Function* get_value;
-            bool take_pointer_for_iterable;
-            bool take_pointer_for_iterator;
-        } iterator;
-    } options;
+    Custom_Operator_Parameter parameters[2];
+    Upp_Function* functions[2];
+    bool result_by_reference;
 };
 
-u64 hash_custom_operator(Custom_Operator* op);
-bool equals_custom_operator(Custom_Operator* op_a, Custom_Operator* op_b);
+Custom_Operator_Query custom_operator_query_make(
+    Custom_Operator_Type op_type, Datatype* datatype_0, bool arg_0_is_temporary, Datatype* datatype_1 = nullptr, bool arg_1_is_temporary = false
+);
+
+u64 hash_custom_operator_instance_key(Custom_Operator_Instance_Key* op);
+bool equals_custom_operator_instance_key(Custom_Operator_Instance_Key* op_a, Custom_Operator_Instance_Key* op_b);
+u64 hash_custom_operator_query_node(Custom_Operator_Query_Node* node);
+bool equals_custom_operator_query_node(Custom_Operator_Query_Node* node_a, Custom_Operator_Query_Node* node_b);
 
 
 // SYMBOLS
@@ -174,8 +214,9 @@ struct Symbol_Table
 
     // Custom operators
     Workload_Custom_Operators* custom_operators_workload;
-    DynArray<Custom_Operator> custom_operators_per_type[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
-    u32 contains_operator_type_bitmask;
+    DynTable<Custom_Operator_Query_Node, Custom_Operator_Query_Node_Value> custom_operator_query_table;
+    DynArray<Custom_Operator> custom_operators;
+    int next_query_node_index;
 };
 
 struct Reachable_Table

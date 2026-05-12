@@ -1,106 +1,20 @@
 
-Auto-Cast Design:
------------------
-Analysis:
- - One workload for all operators in a given scope
- - Custom_Operator workload checks if number of parameters and return type is correct, nothing else.
-    If there are errors, then function is nullptr, and we can still use types to determine if this operator should be used
- - Semantic_Context has can_access_operator_context, which is set to false during
-    custom_operator analysis and during header analysis (To prevent circular workloads)
-
-Query/Instanciate:
- - On cast_query we search through all symbol-tables and loop all custom-operators and wait for Operator_Workload to finish
- - If a custom operator matches, we use hashtable to check if this custom_op was already instanciated with given types
-    --> Multiple errors aren't logged, and Poly-Matching isn't done multiple times
-
-
-CAST-UPDATE TODO:
------------------
- - Compilation_Data includes could be pruned
-
-
-operators add_binop_plus(vec2, vec2, #instanciate vector_bitwise_op(T=float, C=2, op=float_add))
-
-operators add_auto_cast(from_type, to_type, function)
-operators add_binop_plus(left_type, right_type, result_type, function)
-operators add_binop_minus(left_type, right_type, result_type, function)
-operators add_unop_minus(value_type, result_type, function)
-operators add_index_access(array_type, index_type, result_type, function)
-operators add_iterator(iterable_type, iterator_type, element_type, create_fn, has_next_fn, next_fn, get_value_fn)
-
-How to handle polymorphic-functions?
-    --> Allow polymorphic types in arguments...
-
-Auto-Cast steps:
- 1. Install custom-operator tables and workloads, so we can query them and know they exist
- 2. Analyse custom_operator arguments and store them correctly
- 3. Query them when necessary, figure out which workloads to wait for
- 4. Instanciate/store then when the operator is used.
-
-Questions:
-How to store in custom-operator table which operators are given? 
- - Store bitmask while analysing the block --> Best representation
-How to divide workloads?
-    We need 2 workload if we want to seperate function-evaluation from type-evaluation
-    Options:
-        * 2 workloads per node
-        * 2 workloads per type
-        * 2 workloads per block  (X) --> Probably the fastest, but most prone to dependencies
-
-How do we query by types?
- - Normal types need to be exactly specified, binop/unops auto-dereference
- - Poly-types could be:
-    $T --> then we know nothing
-    Node($T) --> Then we could store Node
-    [], [5]$T
-
-Cast-Updates:
- * Add auto_cast should work with new workloads
+DONE:
 
 TODO:
 -----
- - Cast update
- - Re-implement other operators
- - Ternary operator with .if then else 
-    var x = .if a < b then a else b
- - Default-values
- - Design: Subtypes, Optional values/pointers
- - Fix all Test-Cases
- - Replace Dynamic_Array with Arenas in whole code-base
-
-- DONE:
--------
-22.04:
-21.04:
- - Replaced Cast keyword with ~cast_primitive and ~cast_pointer
- - Display lines now respect continuation
- - tokens_get_parenthesis range working properly now
-
-
-operators add_cast(from, to, function, take_pointer, take_pointer)
-operators add_binop, add_unop, add_cast, add_iterator, add_array_access, add_default_value
-add_cast([$C]$T, []$T, basic_cast) --> Array_To_Slice cast
-add_cast($T, Any, basic_cast) --> To_Any cast
-~builtin_cast
-
-
-
-
-Rough Plan:
- - Language Features?
+ - Default-Values
+ - Simple Macros
+ - Smaller Language Features
+    * Ternary operator with .if then else 
+       var x = .if a < b then a else b
     * Remove optional pointers (maybe)
     * break statement with if, loop, switch, block
         break if, break else, break loop
-    * Operator_Context
-        - Fix things that worked before, (casting and auto-pointering)
-    * Default value update/rework
-    * Simple Macros (Design not final)
     * String-Handling
     * Access to normal math functions/built-ins
         sin, cos, tan, sind, cosd, tand, pow, exp, atan2, and all the others
-    * Allocator rework
- - Fix Editor
-    * Fix Testcases
+ - Fix Testcases
  - Incremental compilation
     * Incremental parsing
     * Incremental semantic-analysis
@@ -116,41 +30,56 @@ Rough Plan:
     * Better views
  - Base-Library writing
     * Allocators
-        - Arena
+        - Allocator with one allocate_function(Allocation_Type, pointer, size) // Allocate, reallocate, free
         - System-Allocator
-        - Free-List
-        - Generic size allocator (Or maybe just skip this one)
+        - Arena
     * Datastructures (Just with arenas, other allocators not needed)
         - Dynamic_Array
         - Hashtable/Hashmap
         - String_Builder
-        - String-List?
+    * Math
+        - Vectors
+        - Matrices
+    * Window-Setup and OpenGL
 
 
 Language Design Problems:
 -------------------------
-Struct Subtypes
-    We'll leave it as it is for now
-Auto-pointering is now always enabled?
-    Always enabled, dereference + address-of is automatic
-Incremental Compilation
-    Yeah, I want that
+Optional Pointers and values?
+    Should they be part of the language? 
+    Would be kinda nice if the compiler could understand this, we already have tagged-unions in the language
+    Optional Pointers are more compilicate
 Polymorphic Base-Analysis:
     Is always done, but does not report errors, and cannot evaluate bakes or workloads
 Top-Level definitions inside polymorphism, should they be re-analysed?
     Currently no, because re-analysis will report errors multiple times, and not really necessary.
     Bakes yes
---------------
-Open Problems:
---------------
-Optional Pointers and values?
-    Should they be part of the language? 
-    Would be kinda nice if the compiler could understand this, we already have tagged-unions in the language
-    Optional Pointers are more compilicate
-Default-Values
-    Part of operator-context
-Macros
-    Yeah i want those for simple helper functions probably
+Struct Subtypes
+    We'll leave it as it is for now
+
+
+
+Auto-Cast Design:
+-----------------
+Analysis:
+ - Datatypes and function are parameters, as it is more stable this way
+ - One workload for all operators in a given scope
+ - Custom_Operator workload checks if number of parameters and return type is correct, nothing else.
+    If there are errors, then function is nullptr, and we can still use types to determine if this operator should be used
+ - Semantic_Context has can_access_operator_context, which is set to false during
+    custom_operator analysis and during header analysis (To prevent circular workloads)
+ - Return/Result types are taken from function, because otherwise matching becomes more complicated
+    e.g First match parameters, then find function, then match again with parameters and return?
+ - Comparison Overloads always need to return bool-type, but array-access can return anything
+ - No commutativity, multiple overloads need to be used for this
+
+Query/Instanciate:
+ - On query we search all reachable symbol-tables and wait for Operator_Workload 
+    Hash-Tree is used to find matching operators, and Matching is done using simplified Pattern_Matching
+ - If a custom operator matches, we use hashtable to check if this custom_op was already instanciated with given types
+    --> Multiple errors aren't logged, and Poly-Matching isn't done multiple times
+
+
 
 NOTES:
 ------
@@ -164,154 +93,8 @@ Architecture Upgrades:
 
 
 
-
-TODO for add_cast:
- - From-by-reference and to-by-reference
-    Result-type is temporary fix...
- - Check if weirder cast types work
- - check_if_cast_possible from editor (arena and symbol-table)
-    Semantic_Context would be great
-        Symbol_Table symbol_table,
-        Arena* persistent_arena;
-        Arena* scratch_arena,
-        Type_System,
-        Constant_Pool,
-        Identifier_Pool?
-
-
-#add_cast(cast_fn, auto_cast, call_by_reference, return_by_reference)
-    cast_fn :: (from: From_Type) -> To_Type
- * Implement custom cast
- * Implement custom cast polymorphic
- * check_cast in syntax-editor
- * Add all other custom operators
-    - Array-Access
-    - Binary Operator
-    - Unary Operator
-    - Iterator
-
-
-How does operator context work:
- 1. A context change node is found in a code-block or module
-    A new operator context is installed in the symbol table + workloads are created
- 2. Somewhere in code we need to query the operator context:
-    * Generate list of available operator contexts (from current symbol-table, deduplicated)
-    * Wait for all context-type workloads to finish
-    * Query the context based on types
-    * If we found a match, create instance of the operator context and add it to current workload
-    * At the end of the workload (Or where appropriate), instanciate the operation with given types
- 3. Maybe store a list of instances
-
-
-
-Operator Context rework:
- * CAST,
- context add_cast()
- * BINARY_OPERATOR,
- * UNARY_OPERATOR,
- * ARRAY_ACCESS,
- * ITERATOR,
- * CAST_OPTION,
- * IMPORT,
-
-Plan for now:
- - I guess rework operator context
- - Do the const/optional/pointer dereference
- - Update testcases
-
-Check which testcases crash...
-All testcases should run without crashing
-Implement operator context again (Maybe from scratch)
-    Start with cast, do other things afterwards...
-Casting with polymorphic patterns should work again/overloading should do the right thing
-
-Expression_Result_Type rework:
-    Combine constant/datatype/value maybe
-    Error type?
-
-Testing:
- enum casts
- c-generator const pointer syntax
-
-
-
-CAST/CONTEXT RE-DESIGN:
-----------------------
- * Cast is now only done by cast-keyword, no more cast_raw/cast_pointer
- * Cast-Modes were removed, now a cast can either be an auto-cast or not
- * New syntax in 3 different ways (All equivalent in parser)
-    cast value
-    cast(value, from, to, cast_option)
-    value->cast(from, to, cast_option)
- * Casts now include auto-address and dereference
- * Auto pointer handling was removed (auto address-of and dereference)
-    Can now be enabled with auto-cast, although less powerfull
-    Assignments are now simpler, and polymorphic behavior is well defined
-    Pointer-Comparison with *== and *!= will stay
- * Adding casts in context:
-    context add_cast(from, to, auto_cast, function, cast_type)
-        Either function or cast-type need to be specified
-    If the cast_type is specified, then to and from are not needed
-        context add_cast(cast_type = .TO_ANY, auto_cast = true)
-    Here we could support polymorphic from/to types
-        context add_cast(from = Node(_), to = Foo(_), function = node_to_foo)
-        This will require some extra thoughts
-    Making from/to a requirement allows errors to be reported at the correct place, at the add_cast
-        This also allows better dependency handling (Cyclic dependencies will work correctly)
-
-analyse_parameter_value 
-    context is not working if given --> Check how we should fix this at some point?
-    What if overloading analysed an argument which is just $T, not even a struct template?
-        add :: (a: $T, b: int)
-        add :: (a: $T, b: float)
-
-BUG: F5 -> F8 -> F5 --> crashes interpreter, I guess something do to with testcases
-Re-implement Allocators and Dynamic_Array/Hashtable in Upp for speed test...
-
-
-
-
-FEATURE IMPLEMENTATION PLAN:
-----------------------------
- * Operator Context rework
-    Type-System rework --> Remove type_mods, subtype
-    Rework dependencies
-    Redesign primitive operations maybe
-    Update dot-call lookup maybe?
- * Default-value update for polymorphic "traits"
- * Default-value rework
- * Misc smaller features
-    null-initializiation ? // Values are explicitly initialized to null, except if = --- is used? 
-    enum size
-    ? auto pointer handling, remove * and &
-    remove new/delete, think about context vs arena
-        Probably just arena, and allocators have one big function for everything
- ? Modules, files, directories Rework
-    I don't think I really wanna do this, as I will just work with large files and editor "zoom" feature
-    Do something similar to Odin, where we import "packages", which are just directories of code.
-    Code editor does not work on files, but rather on packages (or whatever)
- * Incremental parser
- * Incremental compiler
- * Macros? Would be nice before coding schtuff...
-    Can be kept relatively simple at the start
-
-
-
-
-
 Notes and Improvements (Reading through all code again and thinking about the design problems:)
 -----------------------------------------------------------------------------------------------
-Operator-Context:
-    If we add more parameters instead of getting everything out of the passed function,
-            like add_dot_call(name, type, function)
-            add_cast(from, to, function)
-        dependencies would be on the types, not on something else.
-        This could also use pattern-matching for polymorphism
-            e.g. add_cast(Node(_), add) --> Adds add to Polymorphic struct Node type...
-        Would allow us to have a lot more granularity with our stuff...
-    Operator-Context could handle basic casts?
-    Importing should not copy all the things over, instead use structure like Symbol-Tables and fallback to defaults if something is not found
-
 Module-Analysis Update:
     Instead of having a complicated system for import resolution, we restrict it:
         1. First run all file-imports

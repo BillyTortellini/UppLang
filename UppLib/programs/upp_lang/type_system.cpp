@@ -933,8 +933,7 @@ Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* c
 	internal_info.child_type = child_type->type_handle;
 	internal_info.is_optional = is_optional;
 
-	bool worked = type_system->deduplication_table.insert(dedup, upcast(result));
-	assert(worked, "");
+	type_system->deduplication_table.insert(dedup, upcast(result));
 
 	return result;
 }
@@ -1011,8 +1010,7 @@ Datatype* type_system_make_array(
 	internal_info.size = (int)result->element_count;
 
 	// We always store the constant array type in deduplication, and switch path depending on element type
-	bool worked = type_system->deduplication_table.insert(dedup, upcast(result));
-	assert(worked, "");
+	type_system->deduplication_table.insert(dedup, upcast(result));
 	return upcast(result);
 }
 
@@ -1052,8 +1050,7 @@ Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* eleme
 	auto& internal_info = type_system_register_type(upcast(result), type_system)->options.slice;
 	internal_info.element_type = element_type->type_handle;
 
-	bool worked = type_system->deduplication_table.insert(dedup, upcast(result));
-	assert(worked, "");
+	type_system->deduplication_table.insert(dedup, upcast(result));
 	return result;
 }
 
@@ -1110,8 +1107,7 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Type_System* type_s
 		}
 	}
 
-	bool worked = type_system->deduplication_table.insert(dedup, upcast(result));
-	assert(worked, "");
+	type_system->deduplication_table.insert(dedup, upcast(result));
 	return result;
 }
 
@@ -1873,6 +1869,27 @@ Primitive_Class primitive_type_get_class(Primitive_Type primitive_type)
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class) {
 	if (datatype->type != Datatype_Type::PRIMITIVE) return false;
 	return primitive_type_get_class(downcast<Datatype_Primitive>(datatype)->primitive_type) == primitive_class;
+}
+
+bool datatype_type_references_subtypes(Datatype_Type datatype_type)
+{
+	switch (datatype_type)
+	{
+		case Datatype_Type::PRIMITIVE:
+		case Datatype_Type::ENUM:
+		case Datatype_Type::UNKNOWN_TYPE:
+		case Datatype_Type::INVALID_TYPE:
+			return false;
+		case Datatype_Type::ARRAY:
+		case Datatype_Type::SLICE:
+		case Datatype_Type::POINTER:
+		case Datatype_Type::FUNCTION_POINTER:
+		case Datatype_Type::STRUCT:
+		case Datatype_Type::PATTERN_VARIABLE:
+			return true;
+		default: panic("");
+	}
+	return false;
 }
 
 bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)

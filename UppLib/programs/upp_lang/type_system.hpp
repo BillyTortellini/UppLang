@@ -487,6 +487,7 @@ Upp_String upp_string_empty();
 
 Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
+bool datatype_type_references_subtypes(Datatype_Type datatype_type);
 
 
 

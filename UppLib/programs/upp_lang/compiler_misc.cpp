@@ -177,11 +177,26 @@ Identifier_Pool identifier_pool_create()
 		ids.hashtag_bake = add_id("#bake");
 		ids.hashtag_get_overload = add_id("#get_overload");
 		ids.hashtag_get_overload_poly = add_id("#get_overload_poly");
-	    ids.add_binop = add_id("add_binop");
-	    ids.add_unop = add_id("add_unop");
-	    ids.add_auto_cast = add_id("add_auto_cast");
-	    ids.add_iterator = add_id("add_iterator");
-	    ids.add_array_access = add_id("add_array_access");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::ARRAY_ACCESS]      = add_id("add_array_access");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::AUTO_CAST]         = add_id("add_auto_cast");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::ITERATOR]          = add_id("add_iterator");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_ADDITION]      = add_id("add_binop_addition");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_SUBTRACTION]   = add_id("add_binop_subtraction");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MULTIPLY]      = add_id("add_binop_multiply");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_DIVIDE]        = add_id("add_binop_divide");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_MODULO]        = add_id("add_binop_modulo");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_EQUAL]         = add_id("add_binop_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_NOT_EQUAL]     = add_id("add_binop_not_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS]          = add_id("add_binop_less");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_LESS_EQUAL]    = add_id("add_binop_less_equal");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER]       = add_id("add_binop_greater");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_GREATER_EQUAL] = add_id("add_binop_greater_equal");
+
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NOT]          = add_id("add_unop_not");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::UNOP_NEGATE]       = add_id("add_unop_negate");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::INVALID]           = add_id("!custom_op_invalid!");
 
 		ids.defer_restore = add_id("defer_restore");
 		ids.cast = add_id("cast");

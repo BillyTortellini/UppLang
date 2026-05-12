@@ -501,7 +501,6 @@ namespace AST
     void expression_append_to_string(AST::Expression* expr, String* str);
     void base_append_to_string(Node* base, String* str);
 
-    void custom_operator_type_append_to_string(Custom_Operator_Type type, String* string);
     void path_lookup_append_to_string(Path_Lookup* read, String* string);
     int binop_priority(Binop binop);
 

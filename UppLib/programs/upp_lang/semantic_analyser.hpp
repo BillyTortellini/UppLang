@@ -527,7 +527,9 @@ enum class Auto_Cast_Type
 	ADDRESS_OF,
     FUNCTION_POINTERS,
     TO_BASE_TYPE,
+    PRIMITIVE_CAST, // Only happens in array-access, to cast all integer types to usize
 
+    CUSTOM_CAST_INVALID_FUNCTION,
     INVALID, // Src and required destination did not match
     UNKNOWN,
 };
@@ -576,11 +578,7 @@ struct Expression_Info
                 Struct_Member member;
             } options;
         } member_access;
-        struct 
-        {
-            Upp_Function* function; // Is null if it's a primitive overload (e.g. not overloaded)
-            bool switch_left_and_right;
-        } overload;
+        Custom_Operator_Instance_Value overload;
     } specifics;
 
     Expression_Context context; // Maybe I don't even want to store the context
@@ -600,10 +598,7 @@ struct Statement_Info
     struct 
     {
         AST::Code_Block* block; // Continue/break
-        struct {
-            Upp_Function* function;
-            bool switch_arguments;
-        } overload; // Binop assignments (function is null if no overload)
+        Custom_Operator_Instance_Value overload;
         struct {
             Symbol_Table* symbol_table;
             Symbol* loop_variable_symbol;
@@ -612,17 +607,7 @@ struct Statement_Info
             Symbol_Table* symbol_table;
             Symbol* loop_variable_symbol;
             Symbol* index_variable_symbol; // May be null
-
-            bool is_custom_op;
-            struct {
-                Upp_Function* fn_create;
-                Upp_Function* fn_has_next;
-                Upp_Function* fn_next;
-                Upp_Function* fn_get_value;
-                int has_next_pointer_diff;
-                int next_pointer_diff;
-                int get_value_pointer_diff;
-            } custom_op;
+            Custom_Operator_Instance_Value overload;
         } foreach_loop;
         struct {
             Datatype_Struct* structure; // May be null for simple enum switch

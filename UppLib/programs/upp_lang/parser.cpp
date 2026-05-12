@@ -1408,23 +1408,17 @@ namespace Parser
 			if (test_token(Token_Type::IDENTIFIER)) 
 			{
 				String* id = get_token()->options.string_value;
-				if (id == ids.add_array_access) {
-					custom_op.type = Custom_Operator_Type::ARRAY_ACCESS;
+				custom_op.type = Custom_Operator_Type::INVALID;
+
+				for (int i = 0; i < (int)Custom_Operator_Type::INVALID; i++)
+				{
+					if (id == ids.custom_operator_function_names[i]) {
+						custom_op.type = (Custom_Operator_Type)i;
+						break;
+					}
 				}
-				else if (id == ids.add_binop) {
-					custom_op.type = Custom_Operator_Type::BINOP;
-				}
-				else if (id == ids.add_unop) {
-					custom_op.type = Custom_Operator_Type::UNOP;
-				}
-				else if (id == ids.add_auto_cast) {
-					custom_op.type = Custom_Operator_Type::AUTO_CAST;
-				}
-				else if (id == ids.add_iterator) {
-					custom_op.type = Custom_Operator_Type::ITERATOR;
-				}
-				else {
-					log_error_range_offset("Expected valid option, e.g. operators add_binop", 0);
+				if (custom_op.type == Custom_Operator_Type::INVALID) {
+					log_error_range_offset("Expected valid option, e.g. operators add_auto_cast", 0);
 				}
 				advance_token();
 			}

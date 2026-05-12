@@ -389,6 +389,15 @@ struct DynSet
 	}
 };
 
+
+
+struct DynTable_Query_Result
+{
+	u64 hash;
+	int index; // If value is in table, then this is the entry-index, otherwise it's the sonding index for insert
+	bool value_is_in_table;
+};
+
 template<typename K, typename V>
 struct DynTable_Entry
 {
@@ -485,13 +494,15 @@ struct DynTable
 		{
 			auto& old_entry = old_entries[i];
 			if (old_entry.state != DynSet_Entry_State::OCCUPIED) continue;
-			insert_with_hash(old_entry.key, old_entry.value, old_entry.hash);
+			insert_with_query(query_with_hash(old_entry.key, old_entry.hash), old_entry.key, old_entry.value);
 		}
 		arena->rewind_to_checkpoint(checkpoint);
 	}
 
 	int hash_to_entry_index(u64 hash_value, int sonding_index)
 	{
+		// NOTE: We modulo the sonding-increment
+		//     before position calculation because integer overflow would result in invalid modulo calculations
 		u64 sonding_increment = hash_combine(hash_value, 0xFE57D3AC94BF1E27) % entries.size;
 		if (sonding_increment == 0) {
 			// Must not be null, otherwise we wouldn't reach all element entries
@@ -500,102 +511,149 @@ struct DynTable
 			assert(sonding_increment != 0, "");
 		}
 
-		// NOTE: We modulo before calculation because integer overflow
-		//	will result in invalid calculations (Because the modulo will change in unpredictable ways)
 		u64 hash_pos = hash_value % entries.size;
 		return (hash_pos + sonding_index * sonding_increment) % entries.size;
 	}
 
-	bool insert_with_hash(K key, V value, u64 key_hash)
+	DynTable_Query_Result query_with_hash(K key, u64 hash, bool query_for_insert = true)
 	{
-		reserve(element_count + 1);
+		DynTable_Query_Result result;
+		result.hash = hash;
+		result.index = query_for_insert ? -1 : -2;
+		result.value_is_in_table = false;
+
+		if (query_for_insert) {
+			reserve(element_count + 1);
+		}
+
 		for (int sonding_index = 0; sonding_index < entries.size; sonding_index++)
 		{
-			auto& entry = entries[hash_to_entry_index(key_hash, sonding_index)];
+			int entry_index = hash_to_entry_index(result.hash, sonding_index);
+			auto& entry = entries[entry_index];
 
-			bool entry_is_free = entry.state != DynSet_Entry_State::OCCUPIED;
-			if (!entry_is_free)
+			switch (entry.state)
+			{
+			case DynSet_Entry_State::OCCUPIED: 
 			{
 				// Check if element is already inserted (No duplicate values)
-				if (entry.hash == key_hash && equals_function(&entry.key, &key)) {
-					return false;
+				if (entry.hash == result.hash && equals_function(&entry.key, &key)) {
+					result.value_is_in_table = true;
+					result.index = entry_index;
+					return result;
 				}
 
 				// Check if the entry value can be moved (Improvement by Brent paper)
-				auto& other_entry = entries[hash_to_entry_index(entry.hash, entry.sonding_index + 1)];
-				if (other_entry.state != DynSet_Entry_State::OCCUPIED)
+				if (result.index == -1) 
 				{
-					// Move current entry to other_entry
-					other_entry = entry;
-					other_entry.sonding_index += 1;
-					entry_is_free = true;
+					int other_entry_index = hash_to_entry_index(entry.hash, entry.sonding_index + 1);
+					auto& other_entry = entries[other_entry_index];
+					if (other_entry.state != DynSet_Entry_State::OCCUPIED) {
+						result.index = sonding_index; // We can use this sonding index for inserts
+					}
 				}
+				break;
 			}
-			
-			if (entry_is_free) 
+			case DynSet_Entry_State::FREE: 
 			{
-				entry.state = DynSet_Entry_State::OCCUPIED;
-				entry.key = key;
-				entry.value = value;
-				entry.sonding_index = sonding_index;
-				entry.hash = key_hash;
-				element_count += 1;
-				return true;
-			}
-		}
-
-		panic("Table is full, should not happen after reserve!");
-		return false;
-	}
-
-	// Returns true if value was inserted, false if it already exists?
-	bool insert(K key, V value) {
-		return insert_with_hash(key, value, hash_function(&key));
-	}
-
-	V* find(K& key)
-	{
-		u64 key_hash = hash_function(&key);
-		for (int sonding_index = 0; sonding_index < entries.size; sonding_index++)
-		{
-			auto& entry = entries[hash_to_entry_index(key_hash, sonding_index)];
-			if (entry.state == DynSet_Entry_State::FREE) {
-				return nullptr;
-			}
-			else if (entry.state == DynSet_Entry_State::OCCUPIED) {
-				if (entry.hash == key_hash && equals_function(&entry.key, &key)) {
-					return &entry.value;
+				result.value_is_in_table = false;
+				if (result.index == -1) {
+					result.index = sonding_index; // We can insert at this sonding_index
 				}
+				return result;
 			}
-		}
-		return nullptr;
-	}
-
-	bool contains(K& key)
-	{
-		return find(key) != nullptr;
-	}
-
-	// Returns true if the operation succeeded, otherwise false
-	bool remove(K& key)
-	{
-		u64 key_hash = hash_function(&key);
-		for (int sonding_index = 0; sonding_index < entries.size; sonding_index++)
-		{
-			auto& entry = entries[hash_to_entry_index(key_hash, sonding_index)];
-
-			if (entry.state == DynSet_Entry_State::FREE) {
-				return false;
-			}
-			else if (entry.state == DynSet_Entry_State::OCCUPIED) {
-				if (entry.hash == key_hash && equals_function(&entry.key, &key)) {
-					entry.state = DynSet_Entry_State::FREE_AGAIN;
-					element_count -= 1;
-					return true;
+			case DynSet_Entry_State::FREE_AGAIN: 
+			{
+				if (result.index == -1) {
+					result.index = sonding_index;
 				}
+				// If free again, we need to continue searching...
+				break;
+			}
+			default: panic("");
 			}
 		}
-		return false;
+
+		return result;
+	}
+
+	DynTable_Query_Result query(K key, bool query_for_insert = true) {
+		return query_with_hash(key, hash_function(&key), query_for_insert);
+	}
+
+	void insert_with_query(DynTable_Query_Result result, const K& key, const V& value)
+	{
+		// Find entry to insert
+		DynTable_Entry<K, V>* entry = nullptr;
+		if (result.value_is_in_table) 
+		{
+			// If entry is in table, then we overwrite the value
+			entry = &entries[result.index];
+		}
+		else
+		{
+			assert(result.index >= 0, "Must be true, otherwise we searched without insert query");
+			reserve(element_count + 1);
+			element_count += 1;
+			entry = &entries[hash_to_entry_index(result.hash, result.index)];
+
+			// Check if we need to relocate (Improvement by Brent)
+			if (entry->state == DynSet_Entry_State::OCCUPIED) 
+			{
+				DynTable_Entry<K, V>* relocation_entry = &entries[hash_to_entry_index(entry->hash, entry->sonding_index + 1)];
+				assert(relocation_entry->state != DynSet_Entry_State::OCCUPIED, "Must be true");
+				// Move current entry to other_entry
+				*relocation_entry = *entry;
+				relocation_entry->sonding_index += 1;
+			}
+
+			entry->sonding_index = result.index;
+		}
+
+		entry->hash = result.hash;
+		entry->key = key;
+		entry->value = value;
+		entry->state = DynSet_Entry_State::OCCUPIED;
+	}
+
+	void remove_with_query(DynTable_Query_Result result)
+	{
+		if (!result.value_is_in_table) return;
+		element_count -= 1;
+		assert(entries[result.index].state == DynSet_Entry_State::OCCUPIED, "");
+		entries[result.index].state = DynSet_Entry_State::FREE_AGAIN;
+	}
+
+	K* query_to_key(DynTable_Query_Result result) {
+		assert(result.value_is_in_table, "");
+		return &entries[result.index].key;
+	}
+
+	V* query_to_value(DynTable_Query_Result result) {
+		assert(result.value_is_in_table, "");
+		return &entries[result.index].value;
+	}
+
+
+	// HELPER FUNCTIONS
+	// Crashes if value already exists
+	void insert(const K& key, const V& value)
+	{
+		auto result = query(key);
+		assert(!result.value_is_in_table, "");
+		insert_with_query(result, key, value);
+	}
+
+	// Returns true if value was in table
+	void remove_value(const K& key)
+	{
+		auto result = query(key, false);
+		remove_with_query(result);
+		return result.value_is_in_table;
+	}
+
+	V* find(const K& key) {
+		auto result = query(key, false);
+		if (!result.value_is_in_table) return nullptr;
+		return query_to_value(result);
 	}
 };
-

@@ -845,6 +845,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
         return move_access_to_destination(source);
     }
     case Auto_Cast_Type::INVALID:
+    case Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION:
     case Auto_Cast_Type::UNKNOWN: {
         panic("Should not get to ir-generator");
         return nullptr;
@@ -856,6 +857,15 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
     case Auto_Cast_Type::ADDRESS_OF: 
     {
         return move_access_to_destination(ir_data_access_create_address_of(source));
+    }
+    case Auto_Cast_Type::PRIMITIVE_CAST: 
+    {
+        IR_Instruction instr;
+        instr.type = IR_Instruction_Type::CAST;
+        instr.options.cast.source = source;
+        instr.options.cast.destination = make_destination_access_on_demand(auto_cast_info.result_type);
+        add_instruction(instr);
+        return instr.options.cast.destination;
     }
     case Auto_Cast_Type::DEREFERENCE: 
     {
@@ -904,6 +914,72 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
 
     panic("");
     return nullptr;
+}
+
+IR_Data_Access* ir_generator_generate_overload_access(
+    Custom_Operator_Instance_Value instance, AST::Expression* arg0, AST::Expression* arg1, IR_Data_Access* destination = nullptr)
+{
+    Upp_Function* instance_function = instance.instance_functions[0];
+    assert(instance_function != nullptr, "");
+
+    auto move_access_to_destination = [&](IR_Data_Access* access) -> IR_Data_Access* {
+        if (destination == 0) {
+            destination = access;
+            return access;
+        }
+        IR_Instruction move;
+        move.type = IR_Instruction_Type::MOVE;
+        move.options.move.destination = destination;
+        move.options.move.source = access;
+        add_instruction(move);
+        return destination;
+    };
+    auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
+        if (destination == 0) {
+            destination = ir_data_access_create_intermediate(result_type);
+        }
+        return destination;
+    };
+
+    // Create arguments
+    IR_Data_Access* access0 = nullptr;
+    IR_Data_Access* access1 = nullptr;
+    if (arg0 != nullptr) {
+        access0 = ir_generator_generate_expression(arg0);
+        if (instance.custom_op->parameters[0].by_reference) {
+            access0 = ir_data_access_create_address_of(access0);
+        }
+    }
+    if (arg1 != nullptr) {
+        access1 = ir_generator_generate_expression(arg1);
+        if (instance.custom_op->parameters[1].by_reference) {
+            access1 = ir_data_access_create_address_of(access1);
+        }
+    }
+
+    IR_Instruction instr;
+    instr.type = IR_Instruction_Type::FUNCTION_CALL;
+    instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+    instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(access1 == nullptr ? 1 : 2);
+    if (access0 != nullptr) {
+        dynamic_array_push_back(&instr.options.call.arguments, access0);
+    }
+    if (access1 != nullptr) {
+        dynamic_array_push_back(&instr.options.call.arguments, access1);
+    }
+    if (instance.custom_op->result_by_reference) {
+        instr.options.call.destination = ir_data_access_create_intermediate(instance_function->signature->return_type().value);
+    }
+    else {
+        instr.options.call.destination = make_destination_access_on_demand(instance_function->signature->return_type().value);
+    }
+    instr.options.call.options.function = instance_function;
+    add_instruction(instr);
+
+    if (instance.custom_op->result_by_reference) {
+        return move_access_to_destination(ir_data_access_create_dereference(instr.options.call.destination));
+    }
+    return instr.options.call.destination;
 }
 
 IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expression, IR_Data_Access* destination = 0)
@@ -979,25 +1055,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         auto& binop = expression->options.binop;
 
         // Handle overloads
-        if (info->specifics.overload.function != 0) {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(2);
-            auto left = ir_generator_generate_expression(binop.left);
-            auto right = ir_generator_generate_expression(binop.right);
-            if (info->specifics.overload.switch_left_and_right) {
-                dynamic_array_push_back(&instr.options.call.arguments, right);
-                dynamic_array_push_back(&instr.options.call.arguments, left);
-            }
-            else {
-                dynamic_array_push_back(&instr.options.call.arguments, left);
-                dynamic_array_push_back(&instr.options.call.arguments, right);
-            }
-            instr.options.call.destination = make_destination_access_on_demand(value_type);
-            instr.options.call.options.function = info->specifics.overload.function;
-            add_instruction(instr);
-            return instr.options.call.destination;
+        auto& overload = info->specifics.overload;
+        if (overload.instance_functions[0] != nullptr) {
+            return ir_generator_generate_overload_access(overload, binop.left, binop.right, destination);
         }
 
         auto left = ir_generator_generate_expression(binop.left);
@@ -1063,16 +1123,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         auto& unop = expression->options.unop;
         IR_Data_Access* access = ir_generator_generate_expression(expression->options.unop.expr);
 
-        if (info->specifics.overload.function != 0) {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            dynamic_array_push_back(&instr.options.call.arguments, access);
-            instr.options.call.destination = make_destination_access_on_demand(value_type);
-            instr.options.call.options.function = info->specifics.overload.function;
-            add_instruction(instr);
-            return instr.options.call.destination;
+        auto& overload = info->specifics.overload;
+        if (overload.instance_functions[0] != nullptr) {
+            return ir_generator_generate_overload_access(overload, unop.expr, nullptr, destination);
         }
 
         switch (expression->options.unop.type)
@@ -1488,19 +1541,10 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     }
     case AST::Expression_Type::ARRAY_ACCESS:
     {
-        if (info->specifics.overload.function != 0)
-        {
-            auto& access = expression->options.array_access;
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::FUNCTION_CALL;
-            instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(2);
-            dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(access.array_expr));
-            dynamic_array_push_back(&instr.options.call.arguments, ir_generator_generate_expression(access.index_expr));
-            instr.options.call.destination = make_destination_access_on_demand(value_type);
-            instr.options.call.options.function = info->specifics.overload.function;
-            add_instruction(instr);
-            return instr.options.call.destination;
+        auto& access_node = expression->options.array_access;
+        auto& overload = info->specifics.overload;
+        if (overload.instance_functions[0] != nullptr) {
+            return ir_generator_generate_overload_access(overload, access_node.array_expr, access_node.index_expr, destination);
         }
 
         return move_access_to_destination(ir_data_access_create_array_or_slice_access(
@@ -1688,26 +1732,8 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         add_instruction(increment);
 
         // Update pointer
-        if (foreach.is_custom_iterator)
+        if (!foreach.is_custom_iterator)
         {
-            IR_Instruction next_call;
-            next_call.type = IR_Instruction_Type::FUNCTION_CALL;
-            next_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-            next_call.options.call.destination = foreach.loop_variable_access;
-            next_call.options.call.options.function = foreach.next_function;
-            next_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-            IR_Data_Access* argument_access = foreach.iterator_access;
-            for (int i = 0; i < foreach.iterator_deref_value; i++) {
-                argument_access = ir_data_access_create_dereference(argument_access);
-            }
-            if (foreach.iterator_deref_value == -1) {
-                argument_access = ir_data_access_create_address_of(foreach.iterator_access);
-            }
-            dynamic_array_push_back(&next_call.options.call.arguments, argument_access);
-            add_instruction(next_call);
-            assert(next_call.options.call.options.function != nullptr, "");
-        }
-        else {
             IR_Instruction element_instr;
             element_instr.type = IR_Instruction_Type::MOVE;
             element_instr.options.move.source = ir_data_access_create_address_of(
@@ -1949,6 +1975,8 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     {
         auto& foreach_loop = statement->options.foreach_loop;
         auto& loop_info = get_info(statement)->specifics.foreach_loop;
+        auto& overload = loop_info.overload;
+        bool is_overload = overload.custom_op != nullptr;
 
         // Create and initialize index data-access (Always available)
         IR_Data_Access* index_access = ir_data_access_create_intermediate(upcast(types.usize));
@@ -1972,23 +2000,28 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
         // Create and initialize loop variable
         Datatype* iterator_type = nullptr;
-        IR_Data_Access* iterator_access; // Only valid for custom iterators
+        IR_Data_Access* iterator_access = nullptr; // Only valid for custom iterators
         IR_Data_Access* loop_variable_access = ir_data_access_create_intermediate(upcast(loop_info.loop_variable_symbol->options.variable_type));
         {
             hashtable_insert_element(&ir_generator->variable_mapping, get_info(foreach_loop.loop_variable_definition), loop_variable_access);
 
             // Initialize
-            if (loop_info.is_custom_op) 
+            if (is_overload) 
             {
-                iterator_type = loop_info.custom_op.fn_create->signature->return_type().value;
+                iterator_type = overload.instance_functions[0]->signature->return_type().value;
                 iterator_access = ir_data_access_create_intermediate(iterator_type);
                 IR_Instruction iter_create_instr;
                 iter_create_instr.type = IR_Instruction_Type::FUNCTION_CALL;
                 iter_create_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
                 iter_create_instr.options.call.destination = iterator_access;
-                iter_create_instr.options.call.options.function = loop_info.custom_op.fn_create;
+                iter_create_instr.options.call.options.function = overload.instance_functions[0];
                 iter_create_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-                dynamic_array_push_back(&iter_create_instr.options.call.arguments, iterable_access);
+                if (overload.custom_op->parameters[0].by_reference) {
+                    dynamic_array_push_back(&iter_create_instr.options.call.arguments, ir_data_access_create_address_of(iterable_access));
+                }
+                else {
+                    dynamic_array_push_back(&iter_create_instr.options.call.arguments, iterable_access);
+                }
                 add_instruction(iter_create_instr);
                 assert(iter_create_instr.options.call.options.function != nullptr, "");
             }
@@ -2013,12 +2046,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             increment.options.foreach_loop.index_access = index_access;
             increment.options.foreach_loop.iterable_access = iterable_access;
             increment.options.foreach_loop.loop_variable_access = loop_variable_access;
-            increment.options.foreach_loop.is_custom_iterator = loop_info.is_custom_op;
-            if (loop_info.is_custom_op) {
-                increment.options.foreach_loop.iterator_access = iterator_access;
-                increment.options.foreach_loop.next_function = loop_info.custom_op.fn_next;
-                increment.options.foreach_loop.iterator_deref_value = loop_info.custom_op.next_pointer_diff;
-            }
+            increment.options.foreach_loop.is_custom_iterator   = is_overload;
             hashtable_insert_element(&ir_generator->loop_increment_instructions, foreach_loop.body_block, increment);
         }
 
@@ -2035,24 +2063,27 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 // Create condition code
                 IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
                 IR_Code_Block* condition_code = ir_code_block_create();
-                if (loop_info.is_custom_op)
+                if (is_overload)
                 {
-                    IR_Instruction has_next_call;
-                    has_next_call.type = IR_Instruction_Type::FUNCTION_CALL;
-                    has_next_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                    has_next_call.options.call.destination = condition_access;
-                    has_next_call.options.call.options.function = loop_info.custom_op.fn_has_next;
-                    has_next_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-                    IR_Data_Access* argument_access = iterator_access;
-                    for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
-                        argument_access = ir_data_access_create_dereference(argument_access);
-                    }
-                    if (loop_info.custom_op.has_next_pointer_diff == -1) {
-                        argument_access = ir_data_access_create_address_of(iterator_access);
-                    }
-                    dynamic_array_push_back(&has_next_call.options.call.arguments, argument_access);
-                    add_instruction(has_next_call, condition_code);
-                    assert(has_next_call.options.call.options.function != nullptr, "");
+                    IR_Instruction next_call_instr;
+                    next_call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+                    next_call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                    next_call_instr.options.call.destination = loop_variable_access;
+                    next_call_instr.options.call.options.function = overload.instance_functions[1];
+                    next_call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
+                    dynamic_array_push_back(&next_call_instr.options.call.arguments, ir_data_access_create_address_of(iterator_access));
+                    add_instruction(next_call_instr, condition_code);
+
+                    IR_Instruction test_null_instr;
+                    test_null_instr.type = IR_Instruction_Type::BINARY_OP;
+                    test_null_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
+                    test_null_instr.options.binary_op.destination = condition_access;
+                    test_null_instr.options.binary_op.operand_left  = loop_variable_access;
+                    void* empty = nullptr;
+                    test_null_instr.options.binary_op.operand_right = ir_data_access_create_constant(
+                        loop_variable_access->datatype, array_create_static_as_bytes<void*>(&empty, 1)
+                    );
+                    add_instruction(test_null_instr, condition_code);
                 }
                 else
                 {
@@ -2087,24 +2118,6 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                 auto backup = ir_generator->current_block;
                 ir_generator->current_block = instr.options.while_instr.code;
 
-                if (loop_info.is_custom_op) {
-                    IR_Instruction get_value_call;
-                    get_value_call.type = IR_Instruction_Type::FUNCTION_CALL;
-                    get_value_call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
-                    get_value_call.options.call.destination = loop_variable_access;
-                    get_value_call.options.call.options.function = loop_info.custom_op.fn_get_value;
-                    get_value_call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(1);
-                    IR_Data_Access* argument_access = iterator_access;
-                    for (int i = 0; i < loop_info.custom_op.has_next_pointer_diff; i++) {
-                        argument_access = ir_data_access_create_dereference(argument_access);
-                    }
-                    if (loop_info.custom_op.has_next_pointer_diff == -1) {
-                        argument_access = ir_data_access_create_address_of(iterator_access);
-                    }
-                    dynamic_array_push_back(&get_value_call.options.call.arguments, argument_access);
-                    add_instruction(get_value_call);
-                    assert(get_value_call.options.call.options.function != nullptr, "");
-                }
                 ir_generator_generate_block(instr.options.while_instr.code, foreach_loop.body_block);
 
                 ir_generator->current_block = backup;
@@ -2208,70 +2221,64 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         Datatype* type = left_access->datatype;
         IR_Data_Access* right_access = ir_generator_generate_expression(assign.right_side);
 
-        // Handle binop
-        if (info->specifics.overload.function == 0)
-        {
-            // Handle pointer arithmetic
-            auto left_type = left_access->datatype;
-            if (types_are_equal(left_type, upcast(types.address)))
-            {
-                auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
-                auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
-
-                // Convert left/right to usize, do binop, then convert back to address
-                IR_Instruction cast_instr;
-                cast_instr.type = IR_Instruction_Type::CAST;
-                cast_instr.options.cast.source = left_access;
-                cast_instr.options.cast.destination = left_usize;
-                add_instruction(cast_instr);
-
-                cast_instr.options.cast.source = right_access;
-                cast_instr.options.cast.destination = right_usize;
-                add_instruction(cast_instr);
-
-                // Do binop
-                auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
-                IR_Instruction instr;
-                instr.type = IR_Instruction_Type::BINARY_OP;
-                instr.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
-                instr.options.binary_op.operand_left = left_usize,
-                instr.options.binary_op.operand_right = right_usize;
-                instr.options.binary_op.destination = result_usize;
-                add_instruction(instr);
-
-                // Convert result
-                cast_instr.options.cast.source = result_usize;
-                cast_instr.options.cast.destination = left_access;
-                add_instruction(cast_instr);
-            }
-            else {
-                IR_Instruction binop;
-                binop.type = IR_Instruction_Type::BINARY_OP;
-                binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
-                binop.options.binary_op.destination = left_access;
-                binop.options.binary_op.operand_left = left_access;
-                binop.options.binary_op.operand_right = right_access;
-                add_instruction(binop);
-            }
-        }
-        else
+        // Handle overloads
+        auto& overload = info->specifics.overload;
+        if (overload.instance_functions[0] != nullptr)
         {
             IR_Instruction call;
             call.type = IR_Instruction_Type::FUNCTION_CALL;
             call.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
             call.options.call.destination = left_access;
-            call.options.call.options.function = info->specifics.overload.function;
+            call.options.call.options.function = info->specifics.overload.instance_functions[0];
             call.options.call.arguments = dynamic_array_create<IR_Data_Access*>(2);
-            if (info->specifics.overload.switch_arguments) {
-                dynamic_array_push_back(&call.options.call.arguments, right_access);
-                dynamic_array_push_back(&call.options.call.arguments, left_access);
-            }
-            else {
-                dynamic_array_push_back(&call.options.call.arguments, left_access);
-                dynamic_array_push_back(&call.options.call.arguments, right_access);
-            }
+            dynamic_array_push_back(&call.options.call.arguments, left_access);
+            dynamic_array_push_back(&call.options.call.arguments, right_access);
             add_instruction(call);
-            assert(call.options.call.options.function != nullptr, "");
+            break;
+        }
+
+        // Handle pointer arithmetic
+        auto left_type = left_access->datatype;
+        if (types_are_equal(left_type, upcast(types.address)))
+        {
+            auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
+            auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
+
+            // Convert left/right to usize, do binop, then convert back to address
+            IR_Instruction cast_instr;
+            cast_instr.type = IR_Instruction_Type::CAST;
+            cast_instr.options.cast.source = left_access;
+            cast_instr.options.cast.destination = left_usize;
+            add_instruction(cast_instr);
+
+            cast_instr.options.cast.source = right_access;
+            cast_instr.options.cast.destination = right_usize;
+            add_instruction(cast_instr);
+
+            // Do binop
+            auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
+            IR_Instruction instr;
+            instr.type = IR_Instruction_Type::BINARY_OP;
+            instr.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
+            instr.options.binary_op.operand_left = left_usize,
+            instr.options.binary_op.operand_right = right_usize;
+            instr.options.binary_op.destination = result_usize;
+            add_instruction(instr);
+
+            // Convert result
+            cast_instr.options.cast.source = result_usize;
+            cast_instr.options.cast.destination = left_access;
+            add_instruction(cast_instr);
+        }
+        else 
+        {
+            IR_Instruction binop;
+            binop.type = IR_Instruction_Type::BINARY_OP;
+            binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
+            binop.options.binary_op.destination = left_access;
+            binop.options.binary_op.operand_left = left_access;
+            binop.options.binary_op.operand_right = right_access;
+            add_instruction(binop);
         }
 
         break;

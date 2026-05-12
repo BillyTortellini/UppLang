@@ -768,19 +768,6 @@ namespace AST
 		return 0;
 	}
 
-	void custom_operator_type_append_to_string(Custom_Operator_Type type, String* string)
-	{
-		switch (type)
-		{
-		case Custom_Operator_Type::ARRAY_ACCESS: string_append(string, "ARRAY_ACCESS"); break;
-		case Custom_Operator_Type::BINOP: string_append(string, "BINARY_OPERATOR"); break;
-		case Custom_Operator_Type::UNOP: string_append(string, "UNARY_OPERATOR"); break;
-		case Custom_Operator_Type::AUTO_CAST: string_append(string, "CAST"); break;
-		case Custom_Operator_Type::ITERATOR: string_append(string, "ITERATOR"); break;
-		default: panic("");
-		}
-	}
-
 	void path_lookup_append_to_string(Path_Lookup* path, String* string)
 	{
 		for (int i = 0; i < path->parts.size; i++) {

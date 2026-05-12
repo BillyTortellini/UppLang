@@ -1,8 +1,21 @@
 
 Done:
 -----
+12.05:
+ - More cleanup (Removed comments, Custom_Operator_Query now better)
+ - Iterator overloads
+ - Array-Access overloads
+ - Unop overloads
+ - Test binop simple
+ - Overloads for binop assignments 
+
 05.05:
  - Auto_Cast design rework with polymorphic types
+
+21.04:
+ - Replaced Cast keyword with ~cast_primitive and ~cast_pointer
+ - Display lines now respect continuation
+ - tokens_get_parenthesis range working properly now
 
 18.04:
  - Parsing/lexing update with continuations

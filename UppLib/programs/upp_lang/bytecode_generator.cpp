@@ -606,8 +606,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
     {
         Datatype* reg_datatype = code_block->registers[i].type;
         int reg_offset = bytecode_generator_create_temporary_stack_offset(generator, reg_datatype);
-        bool worked = generator->stack_locations.insert(stack_location_make_register(code_block, i), reg_offset);
-        assert(worked, "");
+        generator->stack_locations.insert(stack_location_make_register(code_block, i), reg_offset);
     }
 
     const int PLACEHOLDER = 0;
@@ -986,8 +985,7 @@ void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp
         {
             if (function->signature->return_type_index == i) continue;
             int param_offset = bytecode_generator_create_temporary_stack_offset(&generator, function_parameters[i].datatype);
-            bool worked = generator.stack_locations.insert(stack_location_make_parameter(function, i), param_offset);
-            assert(worked, "");
+            generator.stack_locations.insert(stack_location_make_parameter(function, i), param_offset);
         }
     }
 

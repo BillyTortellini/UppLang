@@ -93,7 +93,8 @@ Palette_Color syntax_color_to_palette_color(Syntax_Color color)
 
     case Syntax_Color::BG_NORMAL: return Palette_Color::NONE;
     case Syntax_Color::BG_ERROR: return Palette_Color::SLIGHT_DARK_RED;
-    case Syntax_Color::BG_HIGHLIGHT: return Palette_Color::DARK_YELLOW;
+    //case Syntax_Color::BG_HIGHLIGHT: return Palette_Color::DARK_YELLOW;
+    case Syntax_Color::BG_HIGHLIGHT: return Palette_Color::GREY2;
 
     case Syntax_Color::MISSING_PARAM: return Palette_Color::SLIGHT_LIGHT_RED;
     case Syntax_Color::CURRENT_PARAM_BG: return Palette_Color::GREY3;

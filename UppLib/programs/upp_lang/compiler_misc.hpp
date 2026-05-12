@@ -27,10 +27,24 @@ enum class Compile_Type
 enum class Custom_Operator_Type
 {
 	AUTO_CAST,
-	BINOP,
-	UNOP,
 	ARRAY_ACCESS,
 	ITERATOR,
+
+	BINOP_ADDITION,
+	BINOP_SUBTRACTION,
+	BINOP_MULTIPLY,
+	BINOP_DIVIDE,
+	BINOP_MODULO,
+
+	BINOP_EQUAL,
+	BINOP_NOT_EQUAL,
+	BINOP_LESS,
+	BINOP_LESS_EQUAL,
+	BINOP_GREATER,
+	BINOP_GREATER_EQUAL,
+
+	UNOP_NOT,
+	UNOP_NEGATE,
 
 	INVALID, // Invalid identifier given
 
@@ -246,11 +260,7 @@ struct Predefined_IDs
 	String* hashtag_get_overload;
 	String* hashtag_get_overload_poly;
 
-	String* add_binop;
-	String* add_unop;
-	String* add_auto_cast;
-	String* add_iterator;
-	String* add_array_access;
+	String* custom_operator_function_names[(int)Custom_Operator_Type::MAX_ENUM_VALUE];
 
 	String* defer_restore;
 	String* cast;

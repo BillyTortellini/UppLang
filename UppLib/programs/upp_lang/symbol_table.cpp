@@ -16,11 +16,12 @@ Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 	result->parent_access_level = Symbol_Access_Level::GLOBAL;
     result->imports = dynamic_array_create<Symbol_Table_Import>();
 
-	result->contains_operator_type_bitmask = 0;
 	result->custom_operators_workload = nullptr;
-	for (int i = 0; i < (int)Custom_Operator_Type::MAX_ENUM_VALUE; i++) {
-		result->custom_operators_per_type[i] = DynArray<Custom_Operator>::create(&compilation_data->arena);
-	}
+	result->custom_operators = DynArray<Custom_Operator>::create(&compilation_data->arena);
+	result->custom_operator_query_table = DynTable<Custom_Operator_Query_Node, Custom_Operator_Query_Node_Value>::create(
+		&compilation_data->arena, hash_custom_operator_query_node, equals_custom_operator_query_node
+	);
+	result->next_query_node_index = 0;
 
     dynamic_array_push_back(&compilation_data->allocated_symbol_tables, result);
     return result;
@@ -321,45 +322,117 @@ void symbol_table_query_resolve_aliases(DynArray<Symbol*>& symbols)
 
 
 // CUSTOM OPERATORS
-u64 hash_custom_operator(Custom_Operator* op)
+Custom_Operator_Query custom_operator_query_make(
+	Custom_Operator_Type op_type, Datatype* datatype_0, bool arg_0_is_temporary, Datatype* datatype_1, bool arg_1_is_temporary)
+{
+	Custom_Operator_Query query;
+	query.operator_type = op_type;
+	query.argument_datatypes[0] = datatype_0;
+	query.argument_is_temporary[0] = arg_0_is_temporary;
+	query.argument_datatypes[1] = datatype_1;
+	query.argument_is_temporary[1] = arg_1_is_temporary;
+	return query;
+}
+
+u64 hash_custom_operator_instance_key(Custom_Operator_Instance_Key* op)
 {
 	int op_type_int = (int)op->type;
 	u64 hash = hash_i32(&op_type_int);
-	// Note: We don't hash the operator node, so that instances over different nodes are also shared
-	// hash = hash_combine(hash, hash_pointer(op->node));
-	switch (op->type)
-	{
-	case Custom_Operator_Type::AUTO_CAST: 
-	{
-		auto& cast = op->options.custom_cast;
-		hash = hash_combine(hash, hash_pointer(cast.function));
-		hash = hash_combine(hash, hash_pointer(cast.from_type));
-		hash = hash_combine(hash, hash_pointer(cast.to_type));
-		hash = hash_bool(hash, cast.from_by_ref);
-		hash = hash_bool(hash, cast.to_by_ref);
-		break;
-	}
+	for (int i = 0; i < 2; i++) {
+		hash = hash_combine(hash, hash_pointer(op->functions[i]));
+		hash = hash_combine(hash, hash_pointer(op->datatypes[i]));
 	}
 
 	return hash;
 }
 
-bool equals_custom_operator(Custom_Operator* op_a, Custom_Operator* op_b)
+bool equals_custom_operator_instance_key(Custom_Operator_Instance_Key* op_a, Custom_Operator_Instance_Key* op_b)
 {
 	if (op_a->type != op_b->type) return false;
-	switch (op_a->type)
-	{
-	case Custom_Operator_Type::AUTO_CAST: 
-	{
-		auto& cast_a = op_a->options.custom_cast;
-		auto& cast_b = op_b->options.custom_cast;
-		return
-			types_are_equal(cast_a.from_type, cast_b.from_type) &&
-			types_are_equal(cast_a.to_type, cast_b.to_type) &&
-			cast_a.function == cast_b.function &&
-			cast_a.from_by_ref == cast_b.from_by_ref &&
-			cast_a.to_by_ref == cast_b.to_by_ref;
+	for (int i = 0; i < 2; i++) {
+		if (op_a->functions[i] != op_b->functions[i]) return false;
+		if (!types_are_equal(op_a->datatypes[i], op_b->datatypes[i])) return false;
 	}
+	return true;
+}
+
+u64 hash_custom_operator_query_node(Custom_Operator_Query_Node* node)
+{
+	int node_type_int = (int)node->type;
+	u64 hash = hash_i32(&node_type_int);
+	hash = hash_combine(hash, hash_i32(&node->parent_index));
+
+	switch (node->type)
+	{
+	case Custom_Operator_Query_Node_Type::OPERATOR_TYPE: {
+		int op_type_int = (int)node->options.op_type;
+		hash = hash_combine(hash, hash_i32(&op_type_int));
+		break;
+	}
+    case Custom_Operator_Query_Node_Type::NORMAL_DATATYPE:
+	{
+		hash = hash_combine(hash, hash_pointer(node->options.datatype));
+		break;
+	}
+    case Custom_Operator_Query_Node_Type::POLYMORPHIC_DATATYPE_TYPE:
+	{
+		int type_as_int = (int)node->options.poly_datatype_type;
+		hash = hash_combine(hash, hash_i32(&type_as_int));
+		break;
+	}
+    case Custom_Operator_Query_Node_Type::POLYMORPHIC_STRUCT_BASE:
+	{
+		hash = hash_combine(hash, hash_pointer(node->options.poly_struct_base));
+		break;
+	}
+    case Custom_Operator_Query_Node_Type::CUSTOM_OPERATOR:
+	{
+		hash = hash_combine(hash, hash_i32(&node->options.custom_operator_child_index));
+		break;
+	}
+    case Custom_Operator_Query_Node_Type::PATTERN_VARIABLE: {
+		break;
+	}
+	default: panic("");
+	}
+
+	return hash;
+}
+
+bool equals_custom_operator_query_node(Custom_Operator_Query_Node* node_a, Custom_Operator_Query_Node* node_b)
+{
+	if (node_a->type != node_b->type || node_a->parent_index != node_b->parent_index) {
+		return false;
+	}
+
+	switch (node_a->type)
+	{	
+		case Custom_Operator_Query_Node_Type::OPERATOR_TYPE: {
+			if (node_a->options.op_type != node_b->options.op_type) return false;
+			break;
+		}
+		case Custom_Operator_Query_Node_Type::NORMAL_DATATYPE: {
+			if (!types_are_equal(node_a->options.datatype, node_b->options.datatype)) return false;
+			break;
+		}
+		case Custom_Operator_Query_Node_Type::POLYMORPHIC_DATATYPE_TYPE:
+		{
+			if (node_a->options.poly_datatype_type != node_b->options.poly_datatype_type) return false;
+			break;
+		}
+		case Custom_Operator_Query_Node_Type::POLYMORPHIC_STRUCT_BASE:
+		{
+			if (node_a->options.poly_struct_base != node_b->options.poly_struct_base) return false;
+			break;
+		}
+		case Custom_Operator_Query_Node_Type::CUSTOM_OPERATOR: {
+			if (node_a->options.custom_operator_child_index != node_b->options.custom_operator_child_index) return false;
+			break;
+		}
+		case Custom_Operator_Query_Node_Type::PATTERN_VARIABLE: {
+			break;
+		}
+		default: panic("");
 	}
 
 	return true;

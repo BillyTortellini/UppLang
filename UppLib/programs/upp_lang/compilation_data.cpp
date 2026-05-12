@@ -32,8 +32,8 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = false;
-bool output_bytecode = false;
+bool output_ir = true;
+bool output_bytecode = true;
 bool output_timing = true;
 
 // Testcases
@@ -202,7 +202,9 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
 		result->call_signatures = hashset_create_empty<Call_Signature*>(0, hash_call_signature, equals_call_signature);
 		result->bytecode = DynArray<Bytecode_Instruction>::create(&result->arena);
-		result->custom_operator_instances = DynTable<Custom_Operator, Upp_Function*>::create(&result->arena, hash_custom_operator, equals_custom_operator);
+		result->custom_operator_instances = DynTable<Custom_Operator_Instance_Key, Custom_Operator_Instance_Value>::create(
+			&result->arena, hash_custom_operator_instance_key, equals_custom_operator_instance_key
+		);
 
 		result->semantic_infos = dynamic_array_create<Editor_Info>();
 		result->next_analysis_item_index = 0;
@@ -385,31 +387,39 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			context_signatures[(int)Custom_Operator_Type::AUTO_CAST] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("binop"), upcast(types.string), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("commutative"), upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer_for_left"),  upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer_for_right"), upcast(types.bool_type), false, false, false);
-			context_signatures[(int)Custom_Operator_Type::BINOP] = call_signature_register(call_signature, compilation_data);
+			call_signature_add_parameter(call_signature, make_id("left_type"),     upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("right_type"),    upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("function"),      upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("left_by_ref"),   upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("right_by_ref"),  upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("result_by_ref"), upcast(types.bool_type), false, false, false);
+			Call_Signature* binop_signature = call_signature_register(call_signature, compilation_data);
+			for (int i = (int)Custom_Operator_Type::BINOP_ADDITION; i <= (int)Custom_Operator_Type::BINOP_GREATER_EQUAL; i++) {
+				context_signatures[i] = binop_signature;
+			}
 
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("unop"), upcast(types.string), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("datatype"), upcast(types.type_handle), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer"),  upcast(types.bool_type), false, false, false);
-			context_signatures[(int)Custom_Operator_Type::UNOP] = call_signature_register(call_signature, compilation_data);
+			call_signature_add_parameter(call_signature, make_id("value_by_ref"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("result_by_ref"), upcast(types.bool_type), false, false, false);
+			context_signatures[(int)Custom_Operator_Type::UNOP_NEGATE] = call_signature_register(call_signature, compilation_data);
+			context_signatures[(int)Custom_Operator_Type::UNOP_NOT] = context_signatures[(int)Custom_Operator_Type::UNOP_NEGATE];
 
 			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("container_type"), upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("index_type"),     upcast(types.type_handle), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer"), upcast(types.bool_type), false, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer_for_index"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("container_by_ref"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("index_by_ref"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("result_by_ref"), upcast(types.bool_type), false, false, false);
 			context_signatures[(int)Custom_Operator_Type::ARRAY_ACCESS] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("create"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("has_next"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("next"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("get_value"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("use_pointer"), upcast(types.bool_type), false, false, false);
+			call_signature_add_parameter(call_signature, make_id("iterable_type"),   upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("create_function"), upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("next_function"),   upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("iterable_by_ref"), upcast(types.bool_type), false, false, false);
 			context_signatures[(int)Custom_Operator_Type::ITERATOR] = call_signature_register(call_signature, compilation_data);
 
 			context_signatures[(int)Custom_Operator_Type::INVALID] = compilation_data->empty_call_signature;
