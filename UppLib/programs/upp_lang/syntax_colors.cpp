@@ -154,6 +154,7 @@ Syntax_Color symbol_to_color(Symbol* symbol, bool is_definition)
         if (symbol->options.datatype->type == Datatype_Type::PRIMITIVE) {
             return Syntax_Color::PRIMITIVE;
         }
+        return Syntax_Color::DATATYPE;
     }
     case Symbol_Type::VARIABLE:
     case Symbol_Type::VARIABLE_UNDEFINED:

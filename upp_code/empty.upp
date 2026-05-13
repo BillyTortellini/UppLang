@@ -1,4 +1,49 @@
 
+Other :: module
+    Holder :: struct
+        values: [5]int
+    
+    Holder_Operators :: module
+        
+        holder_at :: fn (holder: Holder, index: int) => int
+            return holder.values[index]
+            
+        Holder_Iter :: struct
+            holder: *Holder
+            index: int
+            
+        holder_make_iter :: fn (holder: *Holder) => Holder_Iter
+            return Holder_Iter.(holder, 0)
+        
+        holder_iter_next :: fn (iter: *Holder_Iter) => *int
+            if iter.index >= 5
+                return nil
+            iter.index += 1
+            return iter.holder.values[iter.index - 1]
+        
+        operators add_array_access(Holder, int, holder_at)
+        operators add_iterator(Holder, holder_make_iter, holder_iter_next, true)
+    
+    fib :: fn (n: int) => int
+        if n < 2
+            return 1
+        return fib(n - 1) + fib(n - 2)
+    
+    main :: fn
+        import operators Holder_Operators~*
+        
+        loop (i := 0; i < 10; i += 1)
+            ~print_i32(fib(i))
+            ~print_line()
+        
+        i += 1
+        
+        holder := Holder.(.[1, 2, 3, 4, 5])
+        loop i in holder
+            ~print_i32(i)
+            ~print_line()
+
+
 
 fn add(a: int, b: bool) => int
     if b

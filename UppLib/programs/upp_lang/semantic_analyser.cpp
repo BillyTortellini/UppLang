@@ -1745,7 +1745,7 @@ Symbol* symbol_node_define_symbol(
 	Symbol_Table* symbol_table, Symbol_Access_Level access_level, Semantic_Context* semantic_context)
 {
 	Symbol* symbol = symbol_table_define_symbol(
-		semantic_context->current_symbol_table, symbol_node->name, symbol_type, symbol_node, access_level, semantic_context->compilation_data
+		symbol_table, symbol_node->name, symbol_type, symbol_node, access_level, semantic_context->compilation_data
 	);
 	get_info(symbol_node, semantic_context, true)->symbol = symbol;
 	return symbol;

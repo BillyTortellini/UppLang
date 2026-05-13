@@ -5,33 +5,8 @@ Default-Value Design:
 In normal languages default values are just added to the signature
     foo :: (a: int, flag: bool = false)
 
-
-
-Idea: I do like name-focused syntax, maybe move back for that?
-What about removing the var keyword for variables?
-    a := 10, 
-    a: int = 10, 
-
-    // Qualifier focused for comptime and global
-    a := 10
-    comptime a := 10
-    global a: int = 10
-    thread_local a: int = 10
-    // Why not :: syntax for comptime --> I don't use it as often, and I don't like it...
-
-    Holder :: struct
-    Holder :: union
-    Holder :: enum
-    Something :: module
-    Whatever :: fn (a: int, b: int)
-    import
-    extern
-    operators
-
-    main :: fn
-        a := 10
-
 DONE:
+    Name-Focused syntax
 
 TODO:
 -----

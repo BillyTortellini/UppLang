@@ -67,6 +67,8 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::TILDE_STAR: return "~*";
     case Token_Type::TILDE_STAR_STAR: return "~**";
     case Token_Type::COLON: return ":";
+    case Token_Type::DOUBLE_COLON: return "::";
+    case Token_Type::COLON_EQUALS: return ":=";
     case Token_Type::SEMI_COLON: return ";";
     case Token_Type::APOSTROPHE: return "'";
     case Token_Type::QUESTION_MARK: return "?";
@@ -96,7 +98,6 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::STRUCT: return "struct";
     case Token_Type::UNION: return "union";
     case Token_Type::ENUM: return "enum";
-    case Token_Type::VAR: return "var";
     case Token_Type::GLOBAL_KEYWORD: return "global";
     case Token_Type::CONST_KEYWORD: return "const";
     case Token_Type::OPERATORS: return "operators";
@@ -629,6 +630,8 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::AND:
     case Token_Type::OR:
     case Token_Type::COLON:
+    case Token_Type::DOUBLE_COLON:
+    case Token_Type::COLON_EQUALS:
     case Token_Type::POSTFIX_CALL_ARROW:
     case Token_Type::FUNCTION_ARROW:
 		return continuation_info_make(type, true, true, false, false);
@@ -663,7 +666,6 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::STRUCT:
     case Token_Type::UNION:
     case Token_Type::ENUM:
-    case Token_Type::VAR:
     case Token_Type::GLOBAL_KEYWORD:
     case Token_Type::CONST_KEYWORD:
     case Token_Type::OPERATORS:

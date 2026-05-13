@@ -1944,6 +1944,8 @@ namespace Text_Editing
 		}
 
 		// Operators that always have spaces before and after
+		case Token_Type::DOUBLE_COLON:
+		case Token_Type::COLON_EQUALS:
 		case Token_Type::PLUS:
 		case Token_Type::SLASH:
 		case Token_Type::LESS_THAN:
@@ -1999,24 +2001,12 @@ namespace Text_Editing
 			}
 			break;
 		}
-		case Token_Type::COLON: {
-			out_space_after = true;
-			out_space_before = false;
-			if (token_index + 1 < tokens.size) {
-				auto& next = tokens[token_index + 1];
-				if (next.type == Token_Type::ASSIGN || next.type == Token_Type::COLON) {
-					out_space_after = false;
-					out_ignore_lex_changes = true;
-				}
-			}
-			break;
-		}
 
 		// Only space after
+		case Token_Type::COLON:
 		case Token_Type::GLOBAL_KEYWORD:
 		case Token_Type::CONST_KEYWORD:
 		case Token_Type::MODULE:
-		case Token_Type::VAR:
 		case Token_Type::FUNCTION_KEYWORD:
 		case Token_Type::COMMA:
 		case Token_Type::TILDE_STAR:
@@ -7713,7 +7703,6 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	case Token_Type::UNION:
 	case Token_Type::ENUM:
 	case Token_Type::FUNCTION_KEYWORD:
-	case Token_Type::VAR:
 	case Token_Type::GLOBAL_KEYWORD:
 	case Token_Type::CONST_KEYWORD:
 	case Token_Type::OPERATORS:
@@ -7763,13 +7752,19 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::FUNCTION_KEYWORD, -1)) {
 		return Syntax_Color::FUNCTION;
 	}
-	else if (test_token(Token_Type::MODULE, -1)) {
+	else if (test_token(Token_Type::DOUBLE_COLON, 1) && test_token(Token_Type::MODULE, 2)) {
 		return Syntax_Color::MODULE;
 	}
-	else if (test_token(Token_Type::ENUM, -1) || test_token(Token_Type::STRUCT, -1) || test_token(Token_Type::UNION, -1)) {
+	else if (test_token(Token_Type::DOUBLE_COLON, 1) && test_token(Token_Type::FUNCTION_KEYWORD, 2)) {
+		return Syntax_Color::FUNCTION;
+	}
+	else if (test_token(Token_Type::DOUBLE_COLON, 1) && (test_token(Token_Type::STRUCT, 2) || test_token(Token_Type::UNION, 2))) {
 		return Syntax_Color::DATATYPE;
 	}
-	else if (test_token(Token_Type::VAR, -1) || test_token(Token_Type::CONST_KEYWORD, -1) || test_token(Token_Type::GLOBAL_KEYWORD, -1)) {
+	else if (test_token(Token_Type::GLOBAL_KEYWORD, -1) || test_token(Token_Type::CONST_KEYWORD, -1)) {
+		return Syntax_Color::VALUE_DEFINITION;
+	}
+	else if (test_token(Token_Type::COLON, 1) || test_token(Token_Type::COLON_EQUALS, 1)) {
 		return Syntax_Color::VALUE_DEFINITION;
 	}
 

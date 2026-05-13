@@ -1110,6 +1110,7 @@ namespace Parser
 	{
 		auto node = allocate_base<Symbol_Node>(parent, Node_Type::SYMBOL_NODE);
 		node->is_root_lookup = false;
+		node->is_definition = true;
 		if (test_token(Token_Type::IDENTIFIER)) {
 			node->name = get_token()->options.string_value;
 			advance_token();
@@ -1126,119 +1127,145 @@ namespace Parser
 		auto& ids = *parser.predefined_ids;
 		CHECKPOINT_SETUP;
 
-		Token_Type token_type = get_token()->type;
-		switch (token_type)
+		Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
+
+		// Parse double-colon definitions
+		if (test_token(Token_Type::DOUBLE_COLON) || test_token(Token_Type::IDENTIFIER, Token_Type::DOUBLE_COLON))
 		{
-		case Token_Type::VAR:
-		case Token_Type::CONST_KEYWORD:
-		case Token_Type::GLOBAL_KEYWORD:
-		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
-			advance_token();
-			if (token_type == Token_Type::VAR) {
-				result->type = Definition_Type::VARIABLE;
-			}
-			else if (token_type == Token_Type::CONST_KEYWORD) {
-				result->type = Definition_Type::CONSTANT;
-			}
-			else {
-				result->type = Definition_Type::GLOBAL;
+			// Parse identifier
+			Symbol_Node* symbol_node = parse_symbol_node_or_error(upcast(result));
+			if (test_token(Token_Type::DOUBLE_COLON)) {
+				advance_token();
 			}
 
-			// Parse name, type and value
+			Token_Type token_type = get_token()->type;
+			switch (token_type)
+			{
+			case Token_Type::FUNCTION_KEYWORD:
+			{
+				result->type = Definition_Type::FUNCTION;
+				Definition_Function& function = result->options.function;
+				advance_token();
+
+				function.symbol = symbol_node;
+				skip_tokens_until_token_type_found(Token_Type::PARENTHESIS_OPEN);
+				function.signature = parse_signature(upcast(result), true);
+				if (on_follow_block()) {
+					function.body.is_expression = false;
+					function.body.block = parse_code_block(upcast(result), nullptr);
+				}
+				else
+				{
+					Expression* expr = parse_expression(upcast(result));
+					if (expr != nullptr) {
+						function.body.is_expression = true;
+						function.body.expr = parse_expression_or_error_expr(upcast(result));
+					}
+					else {
+						skip_until_next_follow_block();
+						function.body.is_expression = false;
+						function.body.block = parse_code_block(upcast(result), nullptr);
+					}
+				}
+
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::MODULE:
+			{
+				result->type = Definition_Type::MODULE;
+				Definition_Module& module = result->options.module;
+				module.symbol = optional_make_success(symbol_node);
+				advance_token();
+
+				skip_until_next_follow_block();
+				module.definitions = parse_list_items_as_array<Definition>(upcast(result), wrapper_parse_definition);
+
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::STRUCT:
+			case Token_Type::UNION:
+			{
+				result->type = Definition_Type::STRUCT;
+				Definition_Struct& structure = result->options.structure;
+				structure.symbol = symbol_node;
+				structure.is_union = token_type == Token_Type::UNION;
+				advance_token();
+
+				skip_tokens_until_token_type_found(Token_Type::PARENTHESIS_OPEN);
+				structure.signature = parse_signature(upcast(result), false);
+				skip_until_next_follow_block();
+				structure.members = parse_list_items_as_array<Structure_Member_Node>(upcast(result), wrapper_parse_struct_member);
+
+				PARSE_SUCCESS(result);
+			}
+			case Token_Type::ENUM:
+			{
+				result->type = Definition_Type::ENUM;
+				Definition_Enum& enumeration = result->options.enumeration;
+				enumeration.symbol = symbol_node;
+				advance_token();
+
+				skip_until_next_follow_block();
+				enumeration.members = parse_list_items_as_array<Enum_Member_Node>(upcast(result), wrapper_parse_enum_member);
+
+				PARSE_SUCCESS(result);
+			}
+			}
+
+			EXIT_FAILURE;
+		}
+
+		// Parse value definitions
+		bool is_value =
+			test_token(Token_Type::GLOBAL_KEYWORD) ||
+			test_token(Token_Type::CONST_KEYWORD) ||
+			test_token(Token_Type::IDENTIFIER, Token_Type::COLON) ||
+			test_token(Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS);
+		if (is_value)
+		{
 			Definition_Value& value = result->options.value;
+
+			// Parse qualifiers
+			result->type = Definition_Type::VARIABLE;
+			if (test_token(Token_Type::GLOBAL_KEYWORD)) {
+				result->type = Definition_Type::GLOBAL;
+				advance_token();
+			}
+			else if (test_token(Token_Type::CONST_KEYWORD)) {
+				result->type = Definition_Type::CONSTANT;
+				advance_token();
+			}
+
+			// Parse identifier
 			value.symbol = parse_symbol_node_or_error(upcast(result));
+
+			// Parse type and value
 			value.datatype_expr.available = false;
 			value.value_expr.available = false;
-			skip_tokens_until_token_type_found(Token_Type::COLON);
-			if (test_token(Token_Type::COLON)) {
+			if (test_token(Token_Type::COLON)) 
+			{
 				advance_token();
 				value.datatype_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+				if (test_token(Token_Type::ASSIGN)) {
+					advance_token();
+					value.value_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
+				}
 			}
-			skip_tokens_until_token_type_found(Token_Type::ASSIGN);
-			if (test_token(Token_Type::ASSIGN)) {
+			else if (test_token(Token_Type::COLON_EQUALS))
+			{
 				advance_token();
 				value.value_expr = optional_make_success(parse_expression_or_error_expr(upcast(result)));
 			}
 
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::FUNCTION_KEYWORD:
+
+		// Parse keyword definitions (import, extern, operators)
+		Token_Type token_type = get_token()->type;
+		switch (token_type)
 		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
-			result->type = Definition_Type::FUNCTION;
-			Definition_Function& function = result->options.function;
-			advance_token();
-
-			function.symbol = parse_symbol_node_or_error(upcast(result));
-			skip_tokens_until_token_type_found(Token_Type::PARENTHESIS_OPEN);
-			function.signature = parse_signature(upcast(result), true);
-			if (on_follow_block()) {
-				function.body.is_expression = false;
-				function.body.block = parse_code_block(upcast(result), nullptr);
-			}
-			else
-			{
-				Expression* expr = parse_expression(upcast(result));
-				if (expr != nullptr) {
-					function.body.is_expression = true;
-					function.body.expr = parse_expression_or_error_expr(upcast(result));
-				}
-				else {
-					skip_until_next_follow_block();
-					function.body.is_expression = false;
-					function.body.block = parse_code_block(upcast(result), nullptr);
-				}
-			}
-
-			PARSE_SUCCESS(result);
-		}
-		case Token_Type::MODULE:
-		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
-			result->type = Definition_Type::MODULE;
-			Definition_Module& module = result->options.module;
-			advance_token();
-
-			module.symbol = optional_make_success(parse_symbol_node_or_error(upcast(result)));
-			skip_until_next_follow_block();
-			module.definitions = parse_list_items_as_array<Definition>(upcast(result), wrapper_parse_definition);
-
-			PARSE_SUCCESS(result);
-		}
-		case Token_Type::STRUCT:
-		case Token_Type::UNION:
-		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
-			result->type = Definition_Type::STRUCT;
-			Definition_Struct& structure = result->options.structure;
-			structure.is_union = token_type == Token_Type::UNION;
-			advance_token();
-
-			structure.symbol = parse_symbol_node_or_error(upcast(result));
-			skip_tokens_until_token_type_found(Token_Type::PARENTHESIS_OPEN);
-			structure.signature = parse_signature(upcast(result), false);
-			skip_until_next_follow_block();
-			structure.members = parse_list_items_as_array<Structure_Member_Node>(upcast(result), wrapper_parse_struct_member);
-
-			PARSE_SUCCESS(result);
-		}
-		case Token_Type::ENUM:
-		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
-			result->type = Definition_Type::ENUM;
-			Definition_Enum& enumeration = result->options.enumeration;
-			advance_token();
-
-			enumeration.symbol = parse_symbol_node_or_error(upcast(result));
-			skip_until_next_follow_block();
-			enumeration.members = parse_list_items_as_array<Enum_Member_Node>(upcast(result), wrapper_parse_enum_member);
-
-			PARSE_SUCCESS(result);
-		}
 		case Token_Type::IMPORT:
 		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
 			result->type = Definition_Type::IMPORT;
 			Definition_Import& import_node = result->options.import;
 			advance_token();
@@ -1313,7 +1340,6 @@ namespace Parser
 		}
 		case Token_Type::EXTERN:
 		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
 			result->type = Definition_Type::EXTERN;
 			Definition_Extern_Import& extern_node = result->options.extern_import;
 			int start = parser.pos;
@@ -1400,7 +1426,6 @@ namespace Parser
 		}
 		case Token_Type::OPERATORS:
 		{
-			Definition* result = allocate_base<Definition>(parent, Node_Type::DEFINITION);
 			result->type = Definition_Type::CUSTOM_OPERATOR;
 			Definition_Custom_Operator& custom_op = result->options.custom_operator;
 			custom_op.type = Custom_Operator_Type::INVALID;
@@ -1624,7 +1649,10 @@ namespace Parser
 				test_token(Token_Type::IDENTIFIER, Token_Type::COMMA, Token_Type::IDENTIFIER, Token_Type::IN_KEYWORD)) {
 				result->type = Statement_Type::FOREACH_LOOP;
 			}
-			else if (test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::VAR)) {
+			else if (
+				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON) ||
+				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS) 
+			) {
 				result->type = Statement_Type::FOR_LOOP;
 			}
 
@@ -1658,22 +1686,27 @@ namespace Parser
 				assert(test_token(Token_Type::PARENTHESIS_OPEN), "");
 				List_Iter iter = List_Iter::create(true);
 				assert(iter.is_valid && !iter.on_end_token(), "");
-				assert(test_token(Token_Type::VAR), "");
-				advance_token(); // Skip var
+				assert(test_token(Token_Type::IDENTIFIER), "");
 
 				result->options.for_loop.loop_variable_definition = parse_symbol_node_or_error(upcast(result));
-				if (test_token(Token_Type::COLON)) {
+				if (test_token(Token_Type::COLON)) 
+				{
 					result->options.for_loop.loop_variable_type.available = true;
 					result->options.for_loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
+					if (test_token(Token_Type::EQUALS)) {
+						advance_token();
+						result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
+					}
+					else {
+						log_error_range_offset("Expected = token", 0);
+						result->options.for_loop.initial_value = create_error_expression(upcast(result));
+					}
 				}
-
-				if (test_token(Token_Type::ASSIGN)) {
+				else 
+				{
+					assert(test_token(Token_Type::COLON_EQUALS), "");
 					advance_token();
 					result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
-				}
-				else {
-					log_error_range_offset("Expected = token", 0);
-					result->options.for_loop.initial_value = create_error_expression(upcast(result));
 				}
 
 				// Parse loop condition and increment

@@ -70,6 +70,8 @@ enum class Token_Type
     TILDE_STAR,           // ~*   Import all
     TILDE_STAR_STAR,      // ~**  Transitive import all
     COLON,                // :
+    DOUBLE_COLON,         // ::
+    COLON_EQUALS,         // :=
     SEMI_COLON,           // ;
     APOSTROPHE,           // '
     QUESTION_MARK,        // ?
@@ -101,7 +103,6 @@ enum class Token_Type
     STRUCT,
     UNION,
     ENUM,
-    VAR,
     GLOBAL_KEYWORD,
     CONST_KEYWORD,
     OPERATORS,
