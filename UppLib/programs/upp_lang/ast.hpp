@@ -252,14 +252,14 @@ namespace AST
         Node base;
         Definition_Type type;
         union {
+            Definition_Module module;
             Definition_Function function;
             Definition_Struct structure;
+            Definition_Enum enumeration;
             Definition_Value value; // Global, var or const
             Definition_Custom_Operator custom_operator;
             Definition_Import import;
             Definition_Extern_Import extern_import;
-            Definition_Enum enumeration;
-            Definition_Module module;
         } options;
     };
 

@@ -7910,8 +7910,8 @@ void syntax_editor_render()
 	int cursor_display_line = -1;
 	bool cursor_is_on_fold = Folds::get_fold_info(cursor.line).inside_fold;
 	ivec2 char_size = editor.font_main->char_size;
-	auto& display_lines = editor.display_lines;
 	editor.display_lines = DynArray<Display_Line>::create(&arena);
+	auto& display_lines = editor.display_lines;
 	editor.source_to_display_line_mapping = DynTable<int, int>::create(&editor.arena, hash_i32, equals_i32);
 	auto& main_box = editor.main_box;
 	main_box = ibox2(editor.code_box);
@@ -7939,11 +7939,18 @@ void syntax_editor_render()
 
 		// Create display lines
 		tab.cam_start = start.line_index;
-		while (display_lines.size < max_line_count)
+		display_lines.reset();
+		int prev_line = -1;
+		// Note: start.line_index > prev_line is necessary because of a special case with line inline folds at the end of the file,
+		//		where the line-iter goes backwards to last visible line
+		while (display_lines.size < max_line_count && start.line_index > prev_line)
 		{
+			prev_line = start.line_index;
 			Fold_Info fold_info = Folds::get_fold_info(start.line_index, start.nearby_fold_index);
-			if (syntax_editor.show_folds_inline && fold_info.inside_fold) {
-				if (display_lines.size != 0 && display_lines[display_lines.size - 1].inline_fold_index == -1) {
+			if (syntax_editor.show_folds_inline && fold_info.inside_fold) 
+			{
+				if (display_lines.size != 0 && display_lines[display_lines.size - 1].inline_fold_index == -1) 
+				{
 					display_lines[display_lines.size - 1].inline_fold_index = fold_info.fold_index;
 					start.move(1, true);
 					continue;

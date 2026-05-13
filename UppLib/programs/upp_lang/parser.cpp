@@ -1248,14 +1248,15 @@ namespace Parser
 			import_node.operator_type = Import_Operator::SINGLE_SYMBOL;
 			import_node.options.path = nullptr;
 	
-			if (test_token(Token_Type::IDENTIFIER))
+			if (test_token(Token_Type::OPERATORS))
+			{
+				import_node.import_type = Import_Type::OPERATORS;
+				advance_token();
+			}
+			else if (test_token(Token_Type::IDENTIFIER))
 			{
 				auto id = get_token()->options.string_value;
-				if (id == ids.operators) {
-					import_node.import_type = Import_Type::OPERATORS;
-					advance_token();
-				}
-				else if (id == ids.dot_calls) {
+				if (id == ids.dot_calls) {
 					import_node.import_type = Import_Type::DOT_CALLS;
 					advance_token();
 				}
