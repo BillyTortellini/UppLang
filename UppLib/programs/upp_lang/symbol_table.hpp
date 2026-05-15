@@ -19,6 +19,7 @@ struct Workload_Import_Resolve;
 struct Workload_Structure_Header;
 struct Workload_Custom_Operators;
 struct Custom_Operator;
+struct Reachable_Table;
 
 struct Symbol;
 struct Symbol_Table;
@@ -84,6 +85,7 @@ struct Custom_Operator_Instance_Value
 {
     Custom_Operator* custom_op;
     Upp_Function* instance_functions[2];
+    Workload_Base* instanciation_workload; // If not null, we should wait for this
 };
 
 struct Custom_Operator_Query
@@ -134,6 +136,25 @@ u64 hash_custom_operator_instance_key(Custom_Operator_Instance_Key* op);
 bool equals_custom_operator_instance_key(Custom_Operator_Instance_Key* op_a, Custom_Operator_Instance_Key* op_b);
 u64 hash_custom_operator_query_node(Custom_Operator_Query_Node* node);
 bool equals_custom_operator_query_node(Custom_Operator_Query_Node* node_a, Custom_Operator_Query_Node* node_b);
+
+
+
+// Default values
+struct Default_Value_Query
+{
+    String* name;
+    Datatype* datatype;
+};
+
+struct Default_Value
+{
+    // Name and datatype must not be null, function can be null
+    String* name;
+    Datatype* datatype;
+    Upp_Function* function;
+    Upp_Constant value;
+};
+
 
 
 // SYMBOLS
@@ -193,7 +214,6 @@ struct Symbol
 };
 
 
-
 // SYMBOL TABLE
 struct Symbol_Table_Import
 {
@@ -216,7 +236,13 @@ struct Symbol_Table
     Workload_Custom_Operators* custom_operators_workload;
     DynTable<Custom_Operator_Query_Node, Custom_Operator_Query_Node_Value> custom_operator_query_table;
     DynArray<Custom_Operator> custom_operators;
+    DynTable<Default_Value_Query, DynArray<Default_Value>> default_values;
     int next_query_node_index;
+
+    // Cached reachable operator tables
+    DynArray<Reachable_Table> reachable_operator_table_cache;
+    bool reachable_operator_tables_queried;
+    bool reachable_operator_tables_workloads_finished;
 };
 
 struct Reachable_Table

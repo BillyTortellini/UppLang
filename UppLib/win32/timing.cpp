@@ -10,7 +10,7 @@
 i64 performance_frequency = 1;
 i64 application_start_time = 0;
 
-void timer_initialize() {
+int timer_initialize() {
     bool res = QueryPerformanceFrequency((LARGE_INTEGER*) &performance_frequency);    
     if (!res) {
         helper_print_last_error();
@@ -18,7 +18,10 @@ void timer_initialize() {
     }
     // Again, we expect this call to succeed
     QueryPerformanceCounter((LARGE_INTEGER*)&application_start_time);
+    return 0;
 }
+
+int init_hack = timer_initialize();
 
 i64 timer_current_cpu_tick() {
     return __rdtsc();

@@ -123,7 +123,7 @@ namespace AST
         Array<Symbol_Node*> parts; // Always > 0, because first one may be _root_
         bool is_dot_call_lookup;
 
-        Symbol_Node* last(); // May return nullptr
+        Symbol_Node* last();
     };
 
     enum class Definition_Type

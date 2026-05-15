@@ -1,4 +1,91 @@
 
+Next :: module
+    Hashable :: struct ($T)
+        hash: *fn (a: T) => int
+        equals: *fn (a: T, b: T) => bool
+    
+    Hashtable :: struct ($T, $hashable: Hashable(T))
+        values: T
+    
+    get_hash :: fn (table: Hashtable($T, $hashable)) => int
+        return hashable.hash(table.values)
+    
+    
+    
+    int_hash :: fn (a: int) => int
+        return 15
+    
+    int_equals :: fn (a: int, b: int) => bool
+        return a == b
+    
+    const SIZE: int = 5
+    const INT_HASHABLE := Hashable(int).(
+        int_hash, int_equals
+    )
+    
+    hash_pointer :: fn (value: $T) => int
+        return 3
+    
+    equals_pointer :: fn (a: $T, b: T) => bool
+        return a *== b
+    
+    hashable_make_pointer :: fn () => Hashable($T)
+        return .(
+            #instanciate hash_pointer(value = T),
+            #instanciate equals_pointer(a = T),
+        )
+    
+    
+    
+    main :: fn 
+        operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+        table: Hashtable(int)
+        i := table->get_hash()
+        ~print_i32(i)
+        ~print_line()
+        
+        fn_ptr := #instanciate hash_pointer(T = *int)
+        
+        t2: Hashtable(*int, hashable_make_pointer())
+        i = t2->get_hash()
+        ~print_i32(i)
+        ~print_line()
+        
+        
+
+Hashable :: struct ($T)
+    hash: *fn (a: T) => int
+    equals: *fn (a: T, b: T) => bool
+
+Hashtable :: struct ($T, $hashable: Hashable(T))
+    values: T
+
+get_hash :: fn (table: Hashtable($T, $hashable)) => int
+    return hashable.hash(table.values)
+
+
+
+int_hash :: fn (a: int) => int
+    return 15
+
+int_equals :: fn (a: int, b: int) => bool
+    return a == b
+
+const SIZE: int = 5
+const INT_HASHABLE := Hashable(int).(
+    int_hash, int_equals
+)
+
+
+
+main :: fn ()
+    operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+    table: Hashtable(int)
+    i := table->get_hash()
+    ~print_i32(i)
+
+
+
 Other :: module
     Holder :: struct
         values: [5]int

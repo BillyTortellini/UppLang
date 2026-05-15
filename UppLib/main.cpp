@@ -4,6 +4,10 @@
 #include "programs/console_debugger/console_debugger.hpp"
 #include "programs/test/test.hpp"
 
+#include "programs/upp_lang/compilation_data.hpp"
+#include "programs/upp_lang/compiler_misc.hpp"
+#include"win32/timing.hpp"
+
 #include <cstdio>
 #include "datastructures/string.hpp"
 #include "utility/directory_crawler.hpp"
@@ -340,6 +344,25 @@ int count_lines_of_code()
     return 0;
 }
 
+void performance_test()
+{
+    Fiber_Pool* fiber_pool = fiber_pool_create();
+    SCOPE_EXIT(fiber_pool_destroy(fiber_pool));
+    double start_time = timer_current_time_in_seconds();
+    int RUN_COUNT = 300;
+    for (int i = 0; i < RUN_COUNT; i++)
+    {
+        Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
+        Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, string_create_static("upp_code/editor_text.upp"), true, false);
+        assert(unit != nullptr, "");
+        compilation_data_compile(compilation_data, unit, Compile_Type::BUILD_CODE);
+        compilation_data_destroy(compilation_data);
+    }
+    double elapsed_time = timer_current_time_in_seconds() - start_time;
+    logg("Elapsed time: %6.3fs, per-run: %6.3fms\n\n", (float)elapsed_time, (float)(elapsed_time / RUN_COUNT * 1000));
+    // std::cin.ignore();
+}
+
 int main(int argc, char** argv)
 {
     // count_lines_of_code();
@@ -349,6 +372,9 @@ int main(int argc, char** argv)
     // next_test();
     // arena_test();
     // syntax_renaming();
+    // return 0;
+
+    // performance_test();
     // return 0;
 
     // test_entry();

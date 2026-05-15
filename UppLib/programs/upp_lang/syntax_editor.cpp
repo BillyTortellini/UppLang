@@ -7681,6 +7681,8 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 {
 	auto& token = tokens[index];
 
+	if (token_type_is_keyword(token.type)) return Syntax_Color::KEYWORD;
+
 	// Find default color based on token-type
 	Syntax_Color color = Syntax_Color::TEXT;
 	switch (token.type)
@@ -7688,31 +7690,6 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	case Token_Type::COMMENT: return Syntax_Color::COMMENT;
 	case Token_Type::INVALID: return Syntax_Color::INVALID_TOKEN;
 	case Token_Type::IDENTIFIER: break;
-
-	// Keywords
-	case Token_Type::IF:
-	case Token_Type::ELSE:
-	case Token_Type::LOOP:
-	case Token_Type::MODULE:
-	case Token_Type::DEFER:
-	case Token_Type::DEFER_RESTORE:
-	case Token_Type::IN_KEYWORD:
-	case Token_Type::SWITCH:
-	case Token_Type::DEFAULT:
-	case Token_Type::STRUCT:
-	case Token_Type::UNION:
-	case Token_Type::ENUM:
-	case Token_Type::FUNCTION_KEYWORD:
-	case Token_Type::GLOBAL_KEYWORD:
-	case Token_Type::CONST_KEYWORD:
-	case Token_Type::OPERATORS:
-	case Token_Type::CONTINUE:
-	case Token_Type::RETURN:
-	case Token_Type::BREAK:
-	case Token_Type::EXTERN:
-	case Token_Type::IMPORT:
-	case Token_Type::SCOPE:
-		return Syntax_Color::KEYWORD;
 
 	// Literals
 	case Token_Type::LITERAL_FALSE:
@@ -8813,7 +8790,7 @@ void syntax_editor_render()
 				case Call_Origin_Type::STRUCT_INITIALIZER:
 				{
 					is_struct_init = true;
-					if (call_info->argument_matching_success) {
+					if (call_info->matching_success) {
 						name = call_info->origin.options.structure->name;
 						color = Syntax_Color::DATATYPE;
 						break;

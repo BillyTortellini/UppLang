@@ -476,8 +476,8 @@ struct Call_Info
     Array<Parameter_Value> parameter_values;
 	Array<Argument_Info> argument_infos;
     AST::Call_Node* call_node; // May be null
+	bool matching_success;
 
-	bool argument_matching_success;
 	bool instanciated;
     union 
 	{
@@ -529,6 +529,7 @@ enum class Auto_Cast_Type
     TO_BASE_TYPE,
     PRIMITIVE_CAST, // Only happens in array-access, to cast all integer types to usize
 
+    PATTERN_CAST, // Kinda needed for polymorphic-stuff
     CUSTOM_CAST_INVALID_FUNCTION,
     INVALID, // Src and required destination did not match
     UNKNOWN,

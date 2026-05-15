@@ -844,6 +844,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
     case Auto_Cast_Type::NO_OPERATION: {
         return move_access_to_destination(source);
     }
+    case Auto_Cast_Type::PATTERN_CAST:
     case Auto_Cast_Type::INVALID:
     case Auto_Cast_Type::CUSTOM_CAST_INVALID_FUNCTION:
     case Auto_Cast_Type::UNKNOWN: {

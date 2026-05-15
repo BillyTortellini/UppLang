@@ -1893,7 +1893,8 @@ namespace Parser
 			result->statements = parse_list_items_as_array<Statement>(upcast(result), wrapper_parse_statement);
 		}
 		else {
-			log_error_range_offset("Expected code block", 0);
+			result->statements = array_create_empty<Statement*>();
+			// 	log_error_range_offset("Expected code block", 0);
 		}
 
 		PARSE_SUCCESS(result);
@@ -2025,6 +2026,8 @@ namespace Parser
 		{
 			bool is_asterix = test_token(Token_Type::ASTERIX);
 			if (is_asterix && test_token(Token_Type::FUNCTION_KEYWORD, 1)) { // Function pointer, e.g. *fn(a:int,b:int)=>int
+				advance_token();
+				advance_token();
 				result->type = Expression_Type::FUNCTION_POINTER_TYPE;
 				result->options.function_pointer_signature = parse_signature(upcast(result), true);
 				PARSE_SUCCESS(result);

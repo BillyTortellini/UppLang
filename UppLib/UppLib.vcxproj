@@ -278,6 +278,8 @@
       <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;diaguids.lib;zlibstatic.lib;DXGI.lib;bddisasmd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/ignore:4099 /ignore:4098 %(AdditionalOptions)</AdditionalOptions>
       <SubSystem>NotSet</SubSystem>
+      <Profile>
+      </Profile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -310,6 +312,8 @@
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>Opengl32.lib;Winmm.lib;freetype.lib;diaguids.lib;zlibstatic.lib;DXGI.lib;bddisasm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
+      <Profile>
+      </Profile>
     </Link>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -34,8 +34,6 @@
 
 void imgui_test_entry()
 {
-	timer_initialize();
-
 	// Create window
 	Window* window = window_create("Test", 0);
 	SCOPE_EXIT(window_destroy(window));

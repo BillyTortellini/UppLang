@@ -1,6 +1,16 @@
 
 Done:
 -----
+15.05:
+ - Default-values
+ - Comptime calculate of expression/single return functions
+ - Caching of reachable tables for operators (Custom operators and default-values)
+ - Fixed Polymorphic-instanciation with comptime values
+
+13.05:
+ - Identifier-Focused syntax
+ - Started working on default values
+
 12.05:
  - More cleanup (Removed comments, Custom_Operator_Query now better)
  - Iterator overloads

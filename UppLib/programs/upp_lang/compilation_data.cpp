@@ -32,9 +32,9 @@ bool output_identifiers = false;
 bool output_ast = false;
 bool output_type_system = false;
 bool output_root_table = false;
-bool output_ir = true;
-bool output_bytecode = true;
-bool output_timing = true;
+bool output_ir = false;
+bool output_bytecode = false;
+bool output_timing = false;
 
 // Testcases
 bool enable_testcases = false;
@@ -42,7 +42,7 @@ bool enable_stresstest = false;
 bool run_testcases_compiled = false;
 
 // Execution
-bool enable_output = true;
+bool enable_output = false;
 bool output_only_on_code_gen = false;
 bool enable_execution = true;
 bool execute_binary = false;
@@ -421,6 +421,13 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_parameter(call_signature, make_id("next_function"),   upcast(types.empty_pattern_variable), true, false, false);
 			call_signature_add_parameter(call_signature, make_id("iterable_by_ref"), upcast(types.bool_type), false, false, false);
 			context_signatures[(int)Custom_Operator_Type::ITERATOR] = call_signature_register(call_signature, compilation_data);
+
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("name"),     upcast(types.c_string), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("datatype"), upcast(types.type_handle), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("value"),    upcast(types.empty_pattern_variable), true, false, false);
+			call_signature_add_parameter(call_signature, make_id("function"), upcast(types.empty_pattern_variable), false, false, false);
+			context_signatures[(int)Custom_Operator_Type::DEFAULT_VALUE] = call_signature_register(call_signature, compilation_data);
 
 			context_signatures[(int)Custom_Operator_Type::INVALID] = compilation_data->empty_call_signature;
 

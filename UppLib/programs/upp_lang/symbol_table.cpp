@@ -6,6 +6,16 @@
 #include "parser.hpp"
 #include "ast.hpp"
 
+u64 default_value_query_hash(Default_Value_Query* query) {
+	return hash_combine(hash_pointer(query->name), hash_pointer(query->datatype));
+}
+
+bool default_value_query_equals(Default_Value_Query* a, Default_Value_Query* b) {
+	return types_are_equal(a->datatype, b->datatype) && a->name == b->name;
+}
+
+
+
 // SYMBOL TABLE FUNCTIONS
 Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 {
@@ -22,6 +32,13 @@ Symbol_Table* symbol_table_create(Compilation_Data* compilation_data)
 		&compilation_data->arena, hash_custom_operator_query_node, equals_custom_operator_query_node
 	);
 	result->next_query_node_index = 0;
+	result->default_values = DynTable<Default_Value_Query, DynArray<Default_Value>>::create(
+		&compilation_data->arena, default_value_query_hash, default_value_query_equals
+	);
+
+	result->reachable_operator_table_cache = DynArray<Reachable_Table>::create(&compilation_data->arena);
+	result->reachable_operator_tables_queried = false;
+	result->reachable_operator_tables_workloads_finished = false;
 
     dynamic_array_push_back(&compilation_data->allocated_symbol_tables, result);
     return result;

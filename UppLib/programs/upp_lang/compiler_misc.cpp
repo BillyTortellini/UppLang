@@ -181,6 +181,7 @@ Identifier_Pool identifier_pool_create()
 		ids.custom_operator_function_names[(int)Custom_Operator_Type::ARRAY_ACCESS]      = add_id("add_array_access");
 		ids.custom_operator_function_names[(int)Custom_Operator_Type::AUTO_CAST]         = add_id("add_auto_cast");
 		ids.custom_operator_function_names[(int)Custom_Operator_Type::ITERATOR]          = add_id("add_iterator");
+		ids.custom_operator_function_names[(int)Custom_Operator_Type::DEFAULT_VALUE]     = add_id("add_default_value");
 
 		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_ADDITION]      = add_id("add_binop_addition");
 		ids.custom_operator_function_names[(int)Custom_Operator_Type::BINOP_SUBTRACTION]   = add_id("add_binop_subtraction");

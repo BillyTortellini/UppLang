@@ -36,7 +36,6 @@ void test_entry()
 
 void test_window()
 {
-    timer_initialize();
     Window* window = window_create("Test", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);

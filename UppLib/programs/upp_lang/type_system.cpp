@@ -1398,6 +1398,9 @@ void type_system_finish_struct(Type_System* type_system, Datatype_Struct* struct
 	auto& memory = structure->base.memory_info.value;
 	struct_alignment_finish_recursive(structure);
 	struct_size_finish_recursive(type_system, structure, memory);
+	if (memory.size == 0) { // When analysis fails, we still want to disallow 0-sized structs
+		memory.size = 1;
+	}
 	assert(memory.size % memory.alignment == 0, "Should be true by now");
 	struct_distribute_memory_info_to_subtypes_recursive(structure, memory);
 	internal_type_struct_mirror_recursive(type_system, structure);

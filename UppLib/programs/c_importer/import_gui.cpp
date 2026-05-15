@@ -381,7 +381,6 @@ void output_import_interface(String* output_filename)
 int run_import_gui()
 {
     // Window/Rendering Stuff
-    timer_initialize();
     Window* window = window_create("C-Import GUI", 0);
     SCOPE_EXIT(window_destroy(window));
     Window_State* window_state = window_get_window_state(window);

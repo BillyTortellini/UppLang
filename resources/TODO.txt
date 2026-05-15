@@ -1,12 +1,167 @@
 
+How to do analysis pass?
+    How to divide analysis-blocks:
+        - Thing's that can be analysed multiple times (Function-Body) get their own analysis pass
+        - Top-Level definitions get their own pass (Preparation for incremental analysis)
+        - Nodes that start new pass store an analysis-block-index (Or all nodes store the block index)
+    Per Analysis-Block:
+        - Memory requirement for analysis-infos
+    Per node analysis-block index + offset in analysis-data?
+How to store in analysis-order?
+    - First we do normal parsing, child-indices are probably somewhat wobbly
+    - Maybe re-sort later
+    
+
+// Up to 16 byte maybe?
+union Node_Info
+{
+    AST::Binop binop_type;
+    AST::Unop unop_type;
+    bool has_something;
+    String* identifier
+}
+
+struct AST_Expression_List
+{
+    int child_start;
+    int count;
+    Expression get(AST* ast, int index) 
+}
+
+struct AST
+{
+    Array<Node_Type> node_types; // Sometimes usefull?
+    Array<int> parent_indices;   // Mostly for editor, not for semantic-analysis 
+    Array<int> child_start; // Per node
+    Array<int> child_count; // Per node
+    Array<int> child_indices;
+    Array<Text_Range> node_ranges;
+    Array<Text_Range> bounding_ranges;
+}
+
+What's stored per node:
+    booleans
+    Optional<Expression*>
+    String*
+    Extern_Type
+    Definition_Type
+    Call_Node has 3! child-lists
+
+struct AST_Node 
+{
+    int index;
+}
+struct AST_Expression
+{
+    int index;
+    AST_Node upcast();
+}
+struct AST_Expression_Binop
+{
+    int index;
+    AST_Expression left(AST* ast) {
+        return ast->child_indices[ast->child_start[index]];
+    }
+    AST_Expression right(AST* ast) {
+        return ast->child_indices[ast->child_start[index] + 1];
+    }
+}
+
+switch (node_type)
+{
+    case Node_Type::Expression_Binop:
+        auto binop = Expression_Binop::make(expr);
+        binop->left();
+        binop->right();
+        auto info = binop->to_expression()->get_info(ast, semantic_context->current_pass)
+}
+
+
+What needs rewrite:
+    - AST
+    - Parser
+    - Semantic_Analyser
+    - IR_Generator
+    - Debugger probably
+
+
+
+TODO:
+    scope keyword not working
+
+Hashable :: struct($T)
+    hash: *fn(value: T) => u64
+    equals: *fn(a: T, b: T) => bool
+
+const String_Hashable := Hashable(String).(
+    string_hash,
+    string_equals
+)
+
+Hashtable :: struct($T, $K, hashable: Hashable(T))
+    entries: []T
+
+pointer_hash :: fn (a: *$T) => u64
+    return hash_memory(a-*, 8)
+
+pointer_equals :: fn (a: *$T, b: T) => bool
+    return a *== b
+
+// Macros working with Comptime-evaluation would make a really cool wombo-combombo here
+hashable_make_pointer :: fn($T) => Hashable(T)
+    return .(
+        #instanciate pointer_hash(T), 
+        #instanciate pointer_equals(T)
+    )
+
+create :: fn (arena: *Arena, capacity: int) => Hashtable($K, $V, $hashable)
+
+insert :: fn(table: *Hashtable($K, $V, $hashable), key: K, value: V)
+    hash := hashable.hash(key)
+    entry_index := to_entry_index(hash, 0)
+    entry := table.entries[entry_index]-*
+    if hashable.equals(entry.key, key)
+        return false
+    entry.key = key
+    entry.value = value
+    return true
+
+main :: fn
+    table: Hashtable(string, int, String_Hashable)
+    table: Hashtable(*Node, int, hashable_make_pointer(*Node))
+
+    tmp_arena = Arena~create()
+
+    // Every parameter that needs a Hashable(String) will take this value as default...
+    operators add_default_value(datatype = Hashable(String), value = String_Hashable)
+    operators add_default_value(name = "capacity", datatype = int, value = 0)
+    operators add_default_value(name = "arena", datatype = *Arena, expr = tmp_arena)
+    table: Hashtable(String, int) = create(arena)
+        
+
 
 Default-Value Design:
 ---------------------
 In normal languages default values are just added to the signature
-    foo :: (a: int, flag: bool = false)
+    foo :: (flag: bool = false)
+But we want them to be configurable outside of this
+    foo :: (flag: bool)
+    operators add_default_value("flag", bool, foo)
 
-DONE:
-    Name-Focused syntax
+Design-Space:
+    How are default values queried?
+        - Parameter Name
+        - Datatype
+            --> Can it be polymorphic? --> don't think so
+        - Function
+        - Symbol-Required (e.g. if symbol 'foo' exists, then the default value expression exists)
+    How are the values generated?
+        - Comptime value
+        - Expression (Evaluated once in global scope vs. everytime in calling scope)
+        - Symbol_Lookup (e.g. hoping symbol symbol_table is actually a symbol table...)
+    How do they interact with overloading?
+        - Match arguments/parameters returns Missing_Argument, Too_Many_Arguments, Invalid_Argument_Name
+        - Call_Info can store parameter type, and overloading could be choosen
 
 TODO:
 -----
