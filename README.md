@@ -41,11 +41,19 @@ In this project I wanted to stick to a mostly C-Style programming style and I wa
  The whole project is currently around ~75.000 lines of code handwritten without the use of AI.
 
 # Gallery
+## Code Completion
 ![CodeCompletion](gifs/UppCodeCompletion.gif)
+## Auto Pointesr
 ![AutoPointers](gifs/UppAutoPointers.png)
+## Dot Calls
 ![DotCalls](gifs/UppDotCalls.png)
+## Auto Enum/Struct
 ![AutoEnum](gifs/UppAutoEnumStruct.png)
+# Custom Operators
 ![Operators](gifs/UppOperators.png)
+# Generics
 ![Generics](gifs/UppGenerics.png)
+# Debugger Demo
 ![Debugger](gifs/UppDebugger.gif)
+# Code Folding
 ![Folding](gifs/UppCodeFolding.gif)
