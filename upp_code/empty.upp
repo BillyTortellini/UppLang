@@ -1,4 +1,116 @@
 
+Last_One :: module
+    Overloads :: module
+        Holder :: struct
+            values: [5]int
+        
+        Holder_Operators :: module
+            
+            holder_at :: fn (holder: Holder, index: int) => int
+                return holder.values[index]
+                
+            Holder_Iter :: struct
+                holder: *Holder
+                index: int
+                
+            holder_make_iter :: fn (holder: *Holder) => Holder_Iter
+                return Holder_Iter.(holder, 0)
+            
+            holder_iter_next :: fn (iter: *Holder_Iter) => *int
+                if iter.index >= 5
+                    return nil
+                iter.index += 1
+                return iter.holder.values[iter.index - 1]
+            
+            operators add_array_access(Holder, int, holder_at)
+            operators add_iterator(Holder, holder_make_iter, holder_iter_next, true)
+        
+        test :: fn
+            import operators Holder_Operators~*
+            
+            holder := Holder.(.[1, 2, 3, 4, 5])
+            ~print_i32(holder[2])
+            ~print_line()
+            
+            loop i in holder
+                ~print_i32(i)
+                ~print_line()
+            
+            ~print_line()
+            
+    Poly_Default_Values :: module
+    
+        Hashable :: struct ($T)
+            hash: *fn (a: T) => int
+            equals: *fn (a: T, b: T) => bool
+        
+        Hashtable :: struct ($T, $hashable: Hashable(T))
+            values: T
+        
+        get_hash :: fn (table: Hashtable($T, $hashable)) => int
+            return hashable.hash(table.values)
+        
+        int_hash :: fn (a: int) => int
+            return 15
+        
+        int_equals :: fn (a: int, b: int) => bool
+            return a == b
+        
+        const SIZE: int = 5
+        const INT_HASHABLE := Hashable(int).(
+            int_hash, int_equals
+        )
+        
+        hash_pointer :: fn (value: $T) => int
+            return 3
+        
+        equals_pointer :: fn (a: $T, b: T) => bool
+            return a *== b
+        
+        hashable_make_pointer :: fn () => Hashable($T)
+            return .(
+                #instanciate hash_pointer(T = T),
+                #instanciate equals_pointer(T = T),
+            )
+            
+        test :: fn
+            operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+            table: Hashtable(int)
+            i := table->get_hash()
+            ~print_i32(i)
+            ~print_line()
+            
+            t2: Hashtable(*int, hashable_make_pointer())
+            i = t2->get_hash()
+            ~print_i32(i)
+            ~print_line()
+            
+            j := 0
+            ip1 := i-*
+            ip2 := j-*
+            
+            result := t2.hashable.equals(ip1, ip2)
+            ~print_bool(result)
+            ~print_line()
+            ~print_line()
+    
+    fib :: fn (n: int) => int
+        if n < 2
+            return 1
+        return fib(n - 1) + fib(n - 2)
+    
+    main :: fn 
+        loop (i := 0; i < 10; i += 1)
+            ~print_i32(fib(i))
+            ~print_line()
+        ~print_line()
+        
+        Overloads~test()
+        ~print_line()
+        Poly_Default_Values~test()
+        
+        
+
 Next :: module
     Hashable :: struct ($T)
         hash: *fn (a: T) => int

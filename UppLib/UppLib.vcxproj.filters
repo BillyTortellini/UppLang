@@ -109,6 +109,9 @@
     <Filter Include="Source Files\Programs\Test">
       <UniqueIdentifier>{70188079-535c-47da-abab-f7adc6b52dc9}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Natvis">
+      <UniqueIdentifier>{c352fd7c-1f54-448c-8968-fdb2ba083e38}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="datastructures\array.hpp">
@@ -342,6 +345,9 @@
     <ClInclude Include="rendering\font_renderer.hpp">
       <Filter>Header Files\Rendering\2D</Filter>
     </ClInclude>
+    <ClInclude Include="programs\upp_lang\incremental_parser.hpp">
+      <Filter>Header Files\Programs\Upp_Lang</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="datastructures\array.cpp">
@@ -563,6 +569,9 @@
     <ClCompile Include="rendering\font_renderer.cpp">
       <Filter>Source Files\Rendering\2D</Filter>
     </ClCompile>
+    <ClCompile Include="programs\upp_lang\incremental_parser.cpp">
+      <Filter>Source Files\Programs\Upp_Lang</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\resources\TODO.txt">
@@ -621,5 +630,10 @@
     <None Include="..\resources\shaders\core\raster_font_new.glsl">
       <Filter>Resource Files\Shaders\Core</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="UppVis.natvis">
+      <Filter>Natvis</Filter>
+    </Natvis>
   </ItemGroup>
 </Project>

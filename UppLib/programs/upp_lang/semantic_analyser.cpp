@@ -174,48 +174,43 @@ Analysis_Info* pass_get_base_info(Analysis_Pass* pass, AST::Node* node, Info_Que
     AST_Info_Key key;
     key.pass = pass;
     key.base = node;
-
     auto& info_mapping = compilation_data->ast_to_info_mapping;
+	DynTable_Query_Result query_result = info_mapping.query(key);
+
     switch (query)
     {
-    case Info_Query::CREATE: {
-        Analysis_Info* new_info = new Analysis_Info;
-        memory_zero(new_info);
-        bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
-        assert(inserted, "Must not happen");
-        return new_info;
+    case Info_Query::CREATE: 
+	{
+		assert(!query_result.value_is_in_table, "");
+		break;
     }
-    case Info_Query::CREATE_IF_NULL: {
+    case Info_Query::CREATE_IF_NULL: 
+	{
         // Check if already there
-        Analysis_Info** already_there = hashtable_find_element(&info_mapping, key);
-        if (already_there != 0) {
-            assert(*already_there != 0, "Somewhere nullptr was inserted into hashmap");
-            return *already_there;
-        }
-        // Otherwise create new
-        Analysis_Info* new_info = new Analysis_Info;
-        memory_zero(new_info);
-        bool inserted = hashtable_insert_element(&info_mapping, key, new_info);
-        assert(inserted, "Must not happen");
-        return new_info;
+		if (query_result.value_is_in_table) {
+			return *info_mapping.query_to_value(query_result);
+		}
+		break;
     }
-    case Info_Query::READ_NOT_NULL: {
-        Analysis_Info** result = hashtable_find_element(&info_mapping, key);
-        assert(result != 0, "Not inserted yet");
-        assert(*result != 0, "Somewhere nullptr was inserted into hashmap");
-        return *result;
+    case Info_Query::READ_NOT_NULL: 
+	{
+		assert(query_result.value_is_in_table, "");
+		return *info_mapping.query_to_value(query_result);
     }
-    case Info_Query::TRY_READ: {
-        Analysis_Info** result = hashtable_find_element(&info_mapping, key);
-        if (result == 0) {
-            return 0;
-        }
-        assert(*result != 0, "Somewhere nullptr was inserted into hashmap");
-        return *result;
+    case Info_Query::TRY_READ: 
+	{
+		if (!query_result.value_is_in_table) {
+			return nullptr;
+		}
+		return *info_mapping.query_to_value(query_result);
     }
     default: panic("");
     }
-    return 0;
+
+    Analysis_Info* new_info = new Analysis_Info;
+    memory_zero(new_info);
+	info_mapping.insert_with_query(query_result, key, new_info);
+    return new_info;
 }
 
 Expression_Info* pass_get_node_info(Analysis_Pass* pass, AST::Expression* node, Info_Query query, Compilation_Data* compilation_data) {
@@ -5731,6 +5726,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 		Upp_Module* upp_module = compilation_data->arena.allocate<Upp_Module>();
 		{
 			upp_module->node = module_node;
+			upp_module->is_file_module = false;
 			upp_module->symbol_table = symbol_table_create_with_parent(
 				semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
 			);
@@ -5743,6 +5739,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				assert(compilation_unit->upp_module == nullptr, "Otherwise this was already analysed...");
 				assert(!module_node->symbol.available, "");
 				compilation_unit->upp_module = upp_module;
+				upp_module->is_file_module = true;
 				upp_module->options.compilation_unit = compilation_unit;
 			}
 			else
@@ -5752,8 +5749,10 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 					module_node->symbol.value, Symbol_Type::MODULE, 
 					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
 				);
-				upp_module->options.module_symbol = symbol;
 				symbol->options.upp_module = upp_module;
+
+				upp_module->is_file_module = false;
+				upp_module->options.module_symbol = symbol;
 			}
 		}
 

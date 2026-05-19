@@ -92,7 +92,7 @@ struct Compilation_Data
     Upp_Module* builtin_module;
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
-    Hashtable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
+    DynTable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
     Hashtable<AST::Code_Block*, Symbol_Table*> code_block_comptimes; // To prevent re-analysis of comptime-definitions in code-blocks
     DynTable<Custom_Operator_Instance_Key, Custom_Operator_Instance_Value> custom_operator_instances;
 
