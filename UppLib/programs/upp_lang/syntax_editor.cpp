@@ -2473,7 +2473,6 @@ Editor_Suggestion suggestion_make_enum_member(Datatype_Enum* enum_type, String* 
 
 
 // Tabs
-// Returns new tab index (Or current tab if file cannot be loaded)
 int compilation_unit_find_tab_index(Compilation_Unit* unit)
 {
 	auto& tabs = syntax_editor.tabs;
@@ -2503,6 +2502,7 @@ Compilation_Unit* tab_to_compilation_unit(int tab_index) {
 	return tab_to_compilation_unit(&syntax_editor.tabs[tab_index]);
 }
 
+// Returns new tab index (Or current tab if file cannot be loaded)
 int syntax_editor_add_tab(String file_path)
 {
 	auto& editor = syntax_editor;
@@ -2894,11 +2894,34 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 	// Update editor-compilation-data if we got an compiler update
 	if (got_compiler_update)
 	{
-		compilation_data_destroy(editor.editor_compilation_data);
-		editor.editor_compilation_data = compiler_thread_data.compilation_data;
-		compiler_thread_data.compilation_data = compilation_data_create(editor.fiber_pool);
+		Compilation_Data* old_data = editor.editor_compilation_data;
+		Compilation_Data* updated_data = compiler_thread_data.compilation_data;
+		Compilation_Data* next_compiler_data = compilation_data_create(editor.fiber_pool);
 
-		// Move compilation-units from old data to new data
+		editor.editor_compilation_data = updated_data;
+		compiler_thread_data.compilation_data = next_compiler_data;
+
+		// Destroy old data
+		for (int i = 0; i < old_data->compilation_units.size; i++)
+		{
+			Compilation_Unit* old_unit = old_data->compilation_units[i];
+			bool code_was_transferred = false;
+			for (int j = 0; j < updated_data->compilation_units.size; j++) 
+			{
+				Compilation_Unit* new_unit = old_data->compilation_units[j];
+				if (old_unit->code == new_unit->code) {
+					code_was_transferred = true;
+					break;
+				}
+			}
+
+			if (code_was_transferred) {
+				old_unit->code = nullptr; // So it does not get deleted here
+			}
+		}
+		compilation_data_destroy(old_data);
+
+		// Move compilation-units from updated data to next data
 		for (int i = 0; i < editor.editor_compilation_data->compilation_units.size; i++)
 		{
 			Compilation_Unit* old_unit = editor.editor_compilation_data->compilation_units[i];
@@ -2913,7 +2936,6 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 			Compilation_Unit* new_unit = compilation_data_add_compilation_unit_unique(compiler_thread_data.compilation_data, old_unit->filepath, false, false);
 			assert(new_unit->code == nullptr && old_unit->code != nullptr, "All units from old code should be unique");
 			new_unit->code = old_unit->code;
-			old_unit->code = nullptr; // So it won't get destroyed
 		}
 
 		sort_error_indices();
@@ -2935,6 +2957,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				main_compilation_unit = unit;
 			}
 
+			// Handle first compile of new files
 			if (unit->code == nullptr) 
 			{
 				unit->code = source_code_copy(tab.code);
@@ -2946,20 +2969,17 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				continue;
 			}
 
-			// Update code if necessary
-			auto now = history_get_timestamp(&tab.history);
-			Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
-			SCOPE_EXIT(dynamic_array_destroy(&changes));
-			history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
-
 			// Update compiler source-code version with changes
+			auto now = history_get_timestamp(&tab.history);
 			if (tab.last_compiler_synchronized.node_index != now.node_index || tab.requires_recompile)
 			{
-				for (int i = 0; i < changes.size; i++) 
-				{
-					Code_Change& change = changes[i];
-					code_change_apply(unit->code, &change, true); // Note: This does not go through history
+				Dynamic_Array<Code_Change> changes = dynamic_array_create<Code_Change>();
+				SCOPE_EXIT(dynamic_array_destroy(&changes));
+				history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
+				for (int i = 0; i < changes.size; i++) {
+					code_change_apply(unit->code, &changes[i], true); // Note: This does not go through history
 				}
+
 				tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
 				tab.requires_recompile = false;
 			}

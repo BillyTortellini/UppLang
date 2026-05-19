@@ -48,6 +48,7 @@
     <ClInclude Include="programs\upp_lang\c_backend.hpp" />
     <ClInclude Include="programs\upp_lang\debugger.hpp" />
     <ClInclude Include="programs\upp_lang\compilation_data.hpp" />
+    <ClInclude Include="programs\upp_lang\incremental_parser.hpp" />
     <ClInclude Include="programs\upp_lang\ir_code.hpp" />
     <ClInclude Include="programs\upp_lang\tokenizer.hpp" />
     <ClInclude Include="programs\upp_lang\memory_source.hpp" />
@@ -125,6 +126,7 @@
     <ClCompile Include="programs\upp_lang\c_backend.cpp" />
     <ClCompile Include="programs\upp_lang\debugger.cpp" />
     <ClCompile Include="programs\upp_lang\compilation_data.cpp" />
+    <ClCompile Include="programs\upp_lang\incremental_parser.cpp" />
     <ClCompile Include="programs\upp_lang\ir_code.cpp" />
     <ClCompile Include="programs\upp_lang\tokenizer.cpp" />
     <ClCompile Include="programs\upp_lang\memory_source.cpp" />
@@ -193,6 +195,9 @@
     <None Include="..\resources\shaders\test.glsl" />
     <None Include="..\resources\shaders\upp_lang\background.glsl" />
     <None Include="..\resources\shaders\upp_lang\cursor.glsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="UppVis.natvis" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>

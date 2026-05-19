@@ -350,21 +350,52 @@ void performance_test()
     SCOPE_EXIT(fiber_pool_destroy(fiber_pool));
     double start_time = timer_current_time_in_seconds();
     int RUN_COUNT = 300;
+    float average_sonding_count = 0.0f;
+    float avg_element_count = 0.0f;
     for (int i = 0; i < RUN_COUNT; i++)
     {
         Compilation_Data* compilation_data = compilation_data_create(fiber_pool);
         Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, string_create_static("upp_code/editor_text.upp"), true, false);
         assert(unit != nullptr, "");
         compilation_data_compile(compilation_data, unit, Compile_Type::BUILD_CODE);
+
+        average_sonding_count += compilation_data->ast_to_info_mapping.average_sonding_count();
+        avg_element_count += compilation_data->ast_to_info_mapping.element_count;
+
         compilation_data_destroy(compilation_data);
     }
     double elapsed_time = timer_current_time_in_seconds() - start_time;
-    logg("Elapsed time: %6.3fs, per-run: %6.3fms\n\n", (float)elapsed_time, (float)(elapsed_time / RUN_COUNT * 1000));
-    // std::cin.ignore();
+    logg(
+        "Elapsed time: %6.3fs, per-run: %6.3fms, avg. sonding = %2.2f, avg. element-count: %2.2f\n\n", 
+        (float)elapsed_time, 
+        (float)(elapsed_time / RUN_COUNT * 1000),
+        (float)average_sonding_count / RUN_COUNT,
+        (float)avg_element_count / RUN_COUNT
+    );
+    std::cin.ignore();
+}
+
+void test()
+{
+    Arena arena = Arena::create();
+    SCOPE_EXIT(arena.destroy());
+
+    DynArray<int> values = DynArray<int>::create(&arena);
+    values.push_back(1);
+    values.push_back(2);
+    values.push_back(3);
+    values.push_back(4);
+    values.push_back(5);
+
+    int result = values[0] * values[3];
+    printf("result = %d\n", result);
+    return;
 }
 
 int main(int argc, char** argv)
 {
+    // test();
+
     // count_lines_of_code();
     // std::cin.ignore();
     // return 0 ;

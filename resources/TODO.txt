@@ -1,10 +1,55 @@
 
+Incremental Parsing Design:
+---------------------------
+Probably done on a Per-Line basis?
+    Per line in Source-Code: 
+        Which continuation it belongs to (e.g. tokenization groups multiple lines with continuation)
+        Node which started the line-parse, line-start
+    From Update we get:
+        - Changed lines (text changed)
+        - Added/Deleted lines
+    Also: Cache list-parses on blocks, if the name of the function changes, the children can stay the same
+        - Per Block start (Line with new indentation): Last-list parse type
+    Result should be:
+        - Updated AST with new children
+        - List of added children (new nodes)
+        - List of deleted children (parent nodes)
+
+
+
+Macro Design:
+    - Can access outer variables
+    - Create defers, variables, return
+        outer x: int
+        'defer something
+        'x := 15
+        'return x->foo
+
+Macros: For what?
+    - Automatic Rewind
+        arena->rewind_on_scope_exit()
+    - Defer restore
+        restore_on_scope_exit(a, b)
+    - Maybe some data-setup
+        unpack_compilation_data(compilation_data)
+    - ? Could be used for simpler loops
+
+
+
+
 How to do analysis pass?
     How to divide analysis-blocks:
         - Thing's that can be analysed multiple times (Function-Body) get their own analysis pass
         - Top-Level definitions get their own pass (Preparation for incremental analysis)
         - Nodes that start new pass store an analysis-block-index (Or all nodes store the block index)
     Per Analysis-Block:
+        - Bitmask is_valid (If the analysis was started or not)
+        - Probably per-class items, e.g. 
+            Expression-Info array, 
+                with Specifics index + another array?
+            Statement-Info array,
+            Other-Array,
+            Indices
         - Memory requirement for analysis-infos
     Per node analysis-block index + offset in analysis-data?
 How to store in analysis-order?
@@ -165,8 +210,6 @@ Design-Space:
 
 TODO:
 -----
- - Default-Values
- - Simple Macros
  - Smaller Language Features
     * Ternary operator with .if then else 
        var x = .if a < b then a else b
@@ -174,8 +217,12 @@ TODO:
     * break statement with if, loop, switch, block
         break if, break else, break loop
     * String-Handling
+        UTF-8 ?
+        Normal, built-in strings in the language have char* characters + size
+        How to tag const-strings?
+        For-C-Strings, it's just another datatype for foreign-functions, ~c_string == const char* 
     * Access to normal math functions/built-ins
-        sin, cos, tan, sind, cosd, tand, pow, exp, atan2, and all the others
+        sin, cos, tan, sind, cosd, tand, pow, exp, atan2, min, max, frac, ceil and all the others
  - Fix Testcases
  - Incremental compilation
     * Incremental parsing

@@ -1722,9 +1722,11 @@ namespace Parser
 					}
 				}
 				if (result->options.for_loop.condition == nullptr) {
+					log_error_range_offset("Expected loop condition expression", 0);
 					result->options.for_loop.condition = create_error_expression(upcast(result));
 				}
 				if (result->options.for_loop.increment_statement == nullptr) {
+					log_error_range_offset("Expected loop increment statement", 0);
 					result->options.for_loop.increment_statement = create_error_statement(upcast(result));
 				}
 				iter.finish();

@@ -656,4 +656,16 @@ struct DynTable
 		if (!result.value_is_in_table) return nullptr;
 		return query_to_value(result);
 	}
+
+	float average_sonding_count()
+	{
+		float sum_sonding_counts = 0.0f;
+		for (int i = 0; i < entries.size; i++)
+		{
+			auto& entry = entries[i];
+			if (entry.state != DynSet_Entry_State::OCCUPIED) continue;
+			sum_sonding_counts += entry.sonding_index + 1;
+		}
+		return sum_sonding_counts / (float)element_count;
+	}
 };

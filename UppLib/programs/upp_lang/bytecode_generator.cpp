@@ -532,6 +532,7 @@ Bytecode_Type type_base_to_bytecode_type(Datatype* type)
         else panic("HEY");
         break;
     }
+    case Primitive_Class::BOOLEAN: result = Bytecode_Type::BOOL; break;
     case Primitive_Class::RAWPTR: result = Bytecode_Type::UINT64; break;
     case Primitive_Class::TYPE_HANDLE: result = Bytecode_Type::UINT32; break;
     default: panic("HEY");

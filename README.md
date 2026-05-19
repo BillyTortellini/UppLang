@@ -1,44 +1,51 @@
 # UppLang
-UppLang is a combined IDE and Programming-Language currently under development by myself (Martin R).
-Although my End-Goal with this project is to create a usable language as an replacement for C/C++ for other Hobby-Projects of mine, the focus of UppLang is my personal education and research.
+UppLang is a new programming language that I'm current developing as a hobby.
+Although the goal of this project is to create a usable language as a replacement for C/C++ for other Hobby-Projects of mine, the focus of UppLang is my personal education and research.
 
-The 3 big features I would like to (try) implementing are:
-* Compile-Time Code-Execution
-* Syntax-Guided IDE
-* Integrated Static-Analysis (Experimental)
+![Hello World](gifs/UppHelloWorld.gif)
 
-![Hello World](gifs/Hello_World.gif)
+The project currently includes:
+ * A fully functioning text-editor featuring: 
+    - Full Undo/Redo history
+    - Syntax-Highlighting
+    - Fuzzy Code-Completion
+    - Goto-Definition
+    - Displays Program-Information (Expression Types, Errors, function parameter types, ...)
+    - Fuzzy text search
+    - VIM-keybindings (Not documented, so I'm probably the only person that can use it properly)
+ * The programming language/compiler 
+    - Lexer, Parser, Semantic-Analyser, Intermediate Code Generator, Backend Code Generators
+    - Bytecode generator + bytecode interpreter for fast compile-times and compile time code execution
+    - C-Code backend, which generates C code that is then compiled using msvc for code-optimizations (LLVM backend is planned for the future)
+    - Incremental compilation and hot-code reloading (Currently in development)
+ * An integrated debugger
+    - Step-into, step-out-of, step-over
+    - Breakpoints
+    - Watch window
+    - Call-Stack window
 
-The design of UppLang is strongly influenced by the following other Programming-Languages:
+The design of UppLang is strongly influenced by the following other Programming-Languages (most of which were in very early stages when this project started):
 * Jai (Based on Jonathan Blow's development videos)
 * Odin
 * Zig
+* Go
 
-# Current Features
+In this project I wanted to stick to a mostly C-Style programming style and I wanted to keep external dependencies minimal, so it also includes
+ * Win32 Window handling
+ * Rendering with OpenGL
+ * Custom text rendering (Using TrueType library for font loading)
+ * Custom immediate mode UI
+ * Memory management with custom Allocators (although older parts of the code still use C++ style container classes)
+ * Custom Datastructures (DynArray == std::vector, Hashtable, DependencyGraph) using the custom allocators
 
-Right now the Project contains a functional Text-Editor (Vim-Keybindings), and Source-Code can be compiled and executed as Bytecode, or translated to C and then compiled with the MSVC Compiler (C-Backend will be replaced with LLVM at some point).
-
-Currently there is no documentation about all features of the Language itself, but the Testcases (upp_code/testcases/*) are a starting point for interested readers, some of them also contain comments on different design-decisions. The most interesting testcases probably are:
-* 011_pointer.upp
-* 033_constant_propagation.upp
-* 036_bake.upp
-* 046_types_as_values.upp
-* 047_type_info.upp
-* 050_named_break_continue.upp
-
-At the moment the only way to get proper syntax highlighting for the Test-Case Code is to open it in the editor (Shortcut CTRL+O, open file)
-
-# Progress
-
-Right now I am reworking the Syntax to be more Python-like and creating a Syntax-Guided Editor for the language. Most of the Ideas I have for the editor are based on the 2020 Dion-Systems Demo (https://dion.systems/gallery.html)
-
-![Hello World](gifs/Guided_Editor.gif)
-
-# Running and Building
-To build/run the current state of the Program you need a Windows 10 PC and Visual Studio 2019. If you just want to try out the Program, it is probably better to use one of the prebuilt executables (Folder old_builds). 
-
-!!! Right now no Documentation is available on how to use the Program, only the Comments in  "old_builds/Vim_IDE_Newest"
+ The whole project is currently around ~75.000 lines of code handwritten without the use of AI.
 
 # Gallery
-![Error](gifs/Error.jpg)
-![Fib](gifs/Fib.jpg)
+![CodeCompletion](gifs/UppCodeCompletion.gif)
+![AutoPointers](gifs/UppAutoPointers.png)
+![DotCalls](gifs/UppDotCalls.png)
+![AutoEnum](gifs/UppAutoEnumStruct.png)
+![Operators](gifs/UppOperators.png)
+![Generics](gifs/UppGenerics.png)
+![Debugger](gifs/UppDebugger.gif)
+![Folding](gifs/UppCodeFolding.gif)

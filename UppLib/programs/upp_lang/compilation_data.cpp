@@ -34,7 +34,7 @@ bool output_type_system = false;
 bool output_root_table = false;
 bool output_ir = false;
 bool output_bytecode = false;
-bool output_timing = false;
+bool output_timing = true;
 
 // Testcases
 bool enable_testcases = false;
@@ -175,6 +175,8 @@ Text_Range text_index_to_word_range(Text_Index pos, Source_Code* code)
 Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 {
 	Compilation_Data* result = new Compilation_Data;
+	result->arena = Arena::create(2048);
+	result->tmp_arena = Arena::create(2048);
 	result->fiber_pool = fiber_pool;
 
 	// Create datastructures
@@ -186,7 +188,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->semantic_errors = dynamic_array_create<Semantic_Error>();
 
 		result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
-		result->ast_to_info_mapping = hashtable_create_empty<AST_Info_Key, Analysis_Info*>(16, ast_info_key_hash, ast_info_equals);
+		result->ast_to_info_mapping = DynTable<AST_Info_Key, Analysis_Info*>::create(&result->arena, ast_info_key_hash, ast_info_equals);
 
 		result->error_symbol = nullptr; // Initialized after this block
 		result->code_block_comptimes = hashtable_create_pointer_empty<AST::Code_Block*, Symbol_Table*>(1);
@@ -195,8 +197,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 		// Allocations
 		result->compilation_units = dynamic_array_create<Compilation_Unit*>();
-		result->arena = Arena::create(2048);
-		result->tmp_arena = Arena::create(2048);
 		result->allocated_symbol_tables = dynamic_array_create<Symbol_Table*>();
 		result->allocated_symbols = dynamic_array_create<Symbol*>();
 		result->allocated_passes = dynamic_array_create<Analysis_Pass*>();
@@ -592,14 +592,13 @@ void compilation_data_destroy(Compilation_Data* data)
 	dynamic_array_destroy(&data->semantic_errors);
 
 	{
-		auto iter = hashtable_iterator_create(&data->ast_to_info_mapping);
-		while (hashtable_iterator_has_next(&iter)) {
-			Analysis_Info* info = *iter.value;
-			AST_Info_Key* key = iter.key;
+		for (int i = 0; i < data->ast_to_info_mapping.entries.size; i++)
+		{
+			auto& entry = data->ast_to_info_mapping.entries[i];
+			if (entry.state != DynSet_Entry_State::OCCUPIED) continue;
+			Analysis_Info* info = entry.value;
 			delete info;
-			hashtable_iterator_next(&iter);
 		}
-		hashtable_destroy(&data->ast_to_info_mapping);
 	}
 	{
 		auto iter = hashtable_iterator_create(&data->ast_to_pass_mapping);
