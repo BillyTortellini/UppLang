@@ -43,12 +43,6 @@ Text_Range text_range_make(Text_Index start, Text_Index end);
 bool text_range_contains(Text_Range range, Text_Index index);
 
 
-struct Error_Message
-{
-    const char* msg;
-    Text_Range range;
-};
-
 
 // Analysis Info
 struct Editor_Info_Reference
@@ -59,14 +53,6 @@ struct Editor_Info_Reference
     int editor_info_mapping_start_index;
     int editor_info_mapping_count;
     int item_index;
-};
-
-struct Compiler_Error_Info
-{
-    const char* message;
-    Compilation_Unit* unit;
-    Text_Index text_index; // For goto-error
-    int semantic_error_index; // -1 if parsing error
 };
 
 struct Symbol_Table_Range

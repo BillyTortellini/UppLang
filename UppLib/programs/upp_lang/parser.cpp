@@ -314,6 +314,12 @@ namespace Parser
 		Expression* expr;
 	};
 
+	struct Parser_Error
+	{
+		const char* msg;
+		Text_Range range;
+	};
+
 	struct Parser_Checkpoint
 	{
 		Arena_Checkpoint permanent_arena_checkpoint;
@@ -327,7 +333,7 @@ namespace Parser
 		Arena* permanent_arena;
 		Arena* temporary_arena; // Used for list-parsing
 		DynArray<Token> tokens;
-		DynArray<Error_Message> errors;
+		DynArray<Parser_Error> errors;
 		Compilation_Unit* unit;
 		Predefined_IDs* predefined_ids;
 		Token error_token;
@@ -377,10 +383,10 @@ namespace Parser
 	// Start is inclusive token index, end is exclusive token index
 	void log_error_text_range(const char* msg, Text_Range range)
 	{
-		Error_Message err;
-		err.msg = msg;
-		err.range = range;
-		parser.errors.push_back(err);
+		Parser_Error error;
+		error.msg = msg;
+		error.range = range;
+		parser.errors.push_back(error);
 	}
 
 	void log_error(const char* msg, int start, int end)
@@ -566,10 +572,22 @@ namespace Parser
 		static List_Iter create(bool force_semicolon_as_seperator = false)
 		{
 			List_Iter iter;
-			iter.is_valid = false;
+			iter.is_valid = true;
 			iter.type = get_token()->type;
 			iter.last_item_start = parser.pos;
 			iter.force_semicolon_as_seperator = force_semicolon_as_seperator;
+
+			if (iter.type == Token_Type::SCOPE)
+			{
+				advance_token();
+				if (test_token(Token_Type::IDENTIFIER)) {
+					advance_token();
+				}
+				if (!(test_token(Token_Type::BLOCK_START) || test_token(Token_Type::CURLY_BRACE_OPEN))) {
+					iter.is_valid = false;
+				}
+				iter.type = get_token()->type;
+			}
 
 			switch (iter.type)
 			{
@@ -579,26 +597,6 @@ namespace Parser
 			case Token_Type::BLOCK_START:
 			{
 				advance_token();
-				iter.is_valid = true;
-				break;
-			}
-			case Token_Type::SCOPE:
-			{
-				iter.type = Token_Type::BLOCK_START;
-				if (test_token(Token_Type::BLOCK_START, 1)) {
-					advance_token();
-					advance_token();
-					iter.is_valid = true;
-				}
-				else if (test_token(Token_Type::BLOCK_START, Token_Type::IDENTIFIER, 1)) {
-					advance_token();
-					advance_token();
-					advance_token();
-					iter.is_valid = true;
-				}
-				else {
-					iter.is_valid = false;
-				}
 				break;
 			}
 			default: {
@@ -737,6 +735,10 @@ namespace Parser
 
 		void finish()
 		{
+			if (!is_valid) {
+				return;
+			}
+
 			int& pos = parser.pos;
 			int start_pos = pos;
 			while (!on_end_token()) {
@@ -2520,7 +2522,7 @@ namespace Parser
 		// Note: Another arena is required for errors, because the permanent_arena can be rewinded during parsing
 		Arena error_arena = Arena::create();
 		SCOPE_EXIT(error_arena.destroy());
-		parser.errors = DynArray<Error_Message>::create(&error_arena); // Only temporary, we copy at the end
+		parser.errors = DynArray<Parser_Error>::create(&error_arena); // Only temporary, we copy at the end
 
 		// Initialize parser
 		parser.permanent_arena = permanent_arena;
@@ -2533,7 +2535,7 @@ namespace Parser
 		// Tokenize code
 		compilation_data_switch_timing_task(compilation_data, Timing_Task::LEXING);
 		parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, temporary_arena, identifier_pool);
-		// print_tokens(parser.tokens);
+		print_tokens(parser.tokens);
 
 		// Parse root
 		compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);
@@ -2546,8 +2548,17 @@ namespace Parser
 		unit->root = &root_def->options.module;
 
 		// Copy errors from tmp arena to permanent arena
-		unit->parser_errors = permanent_arena->allocate_array<Error_Message>(parser.errors.size);
-		memory_copy(unit->parser_errors.data, parser.errors.buffer.data, sizeof(Error_Message) * parser.errors.size);
+		for (int i = 0; i < parser.errors.size; i++) 
+		{
+			Parser_Error& parse_error = parser.errors[i];
+			Code_Error error;
+			error.infos = DynArray<Error_Information>::create(&compilation_data->arena);
+			error.ranges = DynArray<Text_Range>::create(&compilation_data->arena);
+			error.ranges.push_back(parse_error.range);
+			error.msg = parse_error.msg;
+			error.unit = unit;
+			compilation_data->code_errors.push_back(error);
+		}
 	}
 
 	// AST queries based on Token-Indices

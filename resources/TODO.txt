@@ -1,4 +1,20 @@
 
+Editor Improvements:
+ - Think about cursor going anywhere in normal mode, and insert spaces if necessary...
+    I guess I use A for insert at end of line, so this should be fine... (Not sure about empty lines)
+
+DONE:
+
+22.05: 
+ - Error Refactor
+ - Scope not working correctly
+
+20.05:
+ - Fix Bugs with auto-format...
+ - Leading/Trailing Whitespaces should be rendered with some indication (dot in the middle)
+ - Remove shift-enter and tab for new indentation stuff
+ - Inside Strings we shouldn't have parenthesis complete...
+
 Incremental Parsing Design:
 ---------------------------
 Probably done on a Per-Line basis?
@@ -128,6 +144,36 @@ What needs rewrite:
     - Semantic_Analyser
     - IR_Generator
     - Debugger probably
+
+
+
+Auto-Formating Thoughts:
+------------------------
+Is auto-formatting while typing even something usefull?
+    The idea being that you don't have to type spaces at all...
+    If you don't type spaces, then you also shouldn't have to delete them
+The whole system of Inserting (Normal Chars, spaces, others) and deleting characters has to work together
+Some properties:
+    - Spaces can either be critical (seperating identifers) or non-critical
+    - Spaces are always between tokens
+Inserting:
+    - Space-inserts need to know some things x| foo --> x | foo
+
+Problems I'm currently having:
+    - x := |10 --> x:|10 --> x|10
+    - (x: i|) --> (x: in| ) --> (x: int) // Because it was an insert, we shouldn't move over...
+    - (x: int|) --> (x: in| )
+
+Auto-format line (bool change_was_insert)
+What do we need to do:
+    Remove non-critical spaces, keep critical spaces
+        integer per character could store the previous char positions --> Could be usefull?
+        integer pre old-char could know where it ends up in new text --> -1 could be removed
+    Tokenize
+    Run through tokenization, check where tokens started/ended previously
+    With tokenization we can know where to add/remove spaces
+
+
 
 
 

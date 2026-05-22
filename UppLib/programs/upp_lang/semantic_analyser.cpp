@@ -312,14 +312,11 @@ void semantic_context_raise_error_flag(bool error_due_to_unknown, Semantic_Conte
 
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section) 
 {
-    Semantic_Error error;
-    error.msg = msg;
-    error.error_node = node;
-    error.section = node_section;
-    error.information = dynamic_array_create<Error_Information>();
-
-	if (semantic_context->error_logging_enabled) {
-		dynamic_array_push_back(&semantic_context->compilation_data->semantic_errors, error);
+	if (semantic_context->error_logging_enabled) 
+	{
+		compilation_data_add_code_error_code_section(
+			semantic_context->compilation_data, msg, node, node_section
+		);
 	}
 	semantic_context_raise_error_flag(false, semantic_context);
 }
@@ -349,9 +346,9 @@ void add_error_info_to_last_error(Semantic_Context* semantic_context, Error_Info
         return;
     }
 
-    auto& errors = semantic_context->compilation_data->semantic_errors;
+    auto& errors = semantic_context->compilation_data->code_errors;
     assert(errors.size > 0, "");
-    dynamic_array_push_back(&errors[errors.size-1].information, info);
+	errors.last().infos.push_back(info);
 }
 
 void log_error_info_argument_count(Semantic_Context* semantic_context, int given_argument_count, int expected_argument_count) {
@@ -11557,9 +11554,9 @@ void error_information_append_to_rich_string(
 	}
 }
 
-void compilation_data_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
+void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation)
 {
-	auto& errors = compilation_data->semantic_errors;
+	auto& errors = compilation_data->code_errors;
 	for (int i = 0; i < errors.size; i++)
 	{
 		auto& e = errors[i];
@@ -11569,8 +11566,8 @@ void compilation_data_append_semantic_errors_to_string(Compilation_Data* compila
 
 		string_append(string, e.msg);
 		string_append(string, "\n");
-		for (int j = 0; j < e.information.size; j++) {
-			auto& info = e.information[j];
+		for (int j = 0; j < e.infos.size; j++) {
+			auto& info = e.infos[j];
 			string_append(string, "\n");
 			for (int k = 0; k < indentation + 1; k++) {
 				string_append(string, "    ");

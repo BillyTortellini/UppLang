@@ -797,21 +797,13 @@ struct Error_Information
     } options;
 };
 
-struct Semantic_Error
-{
-    const char* msg;
-    AST::Node* error_node; // May be null
-    Node_Section section;
-    Dynamic_Array<Error_Information> information;
-};
-
 void log_semantic_error(Semantic_Context* semantic_context, const char* msg, AST::Node* node, Node_Section node_section = Node_Section::WHOLE);
 void semantic_context_raise_error_flag(bool error_due_to_unknown, Semantic_Context* semantic_context);
 void error_information_append_to_rich_string(
     const Error_Information& info, Compilation_Data* compilation_data, String* text, 
     Datatype_Format format = datatype_format_make_default()
 );
-void compilation_data_append_semantic_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
+void compilation_data_append_code_errors_to_string(Compilation_Data* compilation_data, String* string, int indentation);
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 
 const char* auto_cast_type_to_string(Auto_Cast_Type type);

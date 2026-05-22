@@ -181,12 +181,10 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 	// Create datastructures
 	{
-		result->compiler_errors = dynamic_array_create<Compiler_Error_Info>(); // List of parser and semantic errors
+		result->code_errors = DynArray<Code_Error>::create(&result->arena);
 		result->identifier_pool = identifier_pool_create();
 
 		// Initialize Data
-		result->semantic_errors = dynamic_array_create<Semantic_Error>();
-
 		result->ast_to_pass_mapping = hashtable_create_pointer_empty<AST::Node*, Node_Passes>(16);
 		result->ast_to_info_mapping = DynTable<AST_Info_Key, Analysis_Info*>::create(&result->arena, ast_info_key_hash, ast_info_equals);
 
@@ -568,7 +566,6 @@ void compilation_data_destroy(Compilation_Data* data)
 	ir_generator_destroy(data->ir_generator);
 	workload_executer_destroy(data->workload_executer);
 
-	dynamic_array_destroy(&data->compiler_errors);
 	constant_pool_destroy(data->constant_pool);
 	extern_sources_destroy(&data->extern_sources);
 	c_generator_destroy(data->c_generator);
@@ -585,11 +582,6 @@ void compilation_data_destroy(Compilation_Data* data)
 
 	dynamic_array_destroy(&data->semantic_infos);
 	hashtable_destroy(&data->code_block_comptimes);
-
-	for (int i = 0; i < data->semantic_errors.size; i++) {
-		dynamic_array_destroy(&data->semantic_errors[i].information);
-	}
-	dynamic_array_destroy(&data->semantic_errors);
 
 	{
 		for (int i = 0; i < data->ast_to_info_mapping.entries.size; i++)
@@ -679,7 +671,6 @@ Compilation_Unit* compilation_data_add_compilation_unit_unique(Compilation_Data*
 	Compilation_Unit* unit = new Compilation_Unit;
 	unit->filepath = full_file_path;
 	full_file_path.capacity = 0;
-	unit->parser_errors = array_create_empty<Error_Message>();
 
 	unit->code = source_code;
 	unit->root = nullptr;
@@ -1200,8 +1191,6 @@ void find_editor_infos_recursive(
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data)
 {
 	compilation_data->next_analysis_item_index = 0;
-	auto& errors = compilation_data->compiler_errors;
-	dynamic_array_reset(&errors);
 
 	for (int i = 0; i < compilation_data->compilation_units.size; i++)
 	{
@@ -1224,52 +1213,18 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 		SCOPE_EXIT(checkpoint.rewind());
 		DynArray<Analysis_Pass*> active_passes = DynArray<Analysis_Pass*>::create(&compilation_data->tmp_arena);
 		find_editor_infos_recursive(upcast(unit->root), unit, active_passes, 0, compilation_data);
-
-		// Add parser errors
-		for (int i = 0; i < unit->parser_errors.size; i++)
-		{
-			const auto& error = unit->parser_errors[i];
-			Text_Range range = error.range;
-
-			Compiler_Error_Info error_info;
-			error_info.message = error.msg;
-			error_info.unit = unit;
-			error_info.semantic_error_index = -1;
-			error_info.text_index = range.start;
-			dynamic_array_push_back(&errors, error_info);
-
-			int analysis_item_index = add_code_analysis_item(range, unit->code, 0, compilation_data);
-			Editor_Info_Option option;
-			option.error_index = errors.size - 1;
-			add_semantic_info(analysis_item_index, Editor_Info_Type::ERROR_ITEM, option, nullptr, compilation_data);
-		}
 	}
 
-	// Add semantic errors
-	Arena temp_arena = Arena::create();
-	SCOPE_EXIT(temp_arena.destroy());
-	for (int i = 0; i < compilation_data->semantic_errors.size; i++)
+	// Add code errors
+	for (int i = 0; i < compilation_data->code_errors.size; i++)
 	{
-		const auto& error = compilation_data->semantic_errors[i];
-
-		auto unit = compilation_data_ast_node_to_compilation_unit(compilation_data, error.error_node);
-
-		temp_arena.reset(true);
-		DynArray<Text_Range> ranges = Parser::ast_base_get_section_token_range(unit->code, error.error_node, error.section, &temp_arena);
-		assert(ranges.size != 0, "");
-
-		Compiler_Error_Info error_info;
-		error_info.message = error.msg;
-		error_info.unit = unit;
-		error_info.semantic_error_index = i;
-		error_info.text_index = ranges[0].start;
-		dynamic_array_push_back(&errors, error_info);
-
 		// Add visible ranges
-		for (int j = 0; j < ranges.size; j++) {
-			int analysis_item_index = add_code_analysis_item(ranges[j], unit->code, 0, compilation_data);
+		auto& error = compilation_data->code_errors[i];
+		for (int j = 0; j < error.ranges.size; j++) 
+		{
+			int analysis_item_index = add_code_analysis_item(error.ranges[j], error.unit->code, 0, compilation_data);
 			Editor_Info_Option option;
-			option.error_index = errors.size - 1;
+			option.error_index = i;
 			add_semantic_info(analysis_item_index, Editor_Info_Type::ERROR_ITEM, option, nullptr, compilation_data);
 		}
 	}
@@ -1360,6 +1315,19 @@ Exit_Code compiler_execute(Compilation_Data* compilation_data)
     return exit_code_make(Exit_Code_Type::COMPILATION_FAILED);
 }
 
+void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, const char* msg, AST::Node* node, Node_Section section)
+{
+	Code_Error error;
+	error.msg = msg;
+	error.infos = DynArray<Error_Information>::create(&compilation_data->arena);
+	error.unit = compilation_data_ast_node_to_compilation_unit(compilation_data, node);
+	error.ranges = Parser::ast_base_get_section_token_range(
+		error.unit->code, node, section, &compilation_data->arena
+	);
+	compilation_data->code_errors.push_back(error);
+}
+
+
 bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilation_data)
 {
     return
@@ -1374,15 +1342,7 @@ bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilat
 
 bool compilation_data_errors_occured(Compilation_Data* compilation_data)
 {
-    if (compilation_data->semantic_errors.size > 0) return true;
-
-    for (int i = 0; i < compilation_data->compilation_units.size; i++) 
-    {
-        auto unit = compilation_data->compilation_units[i];
-        if (unit->upp_module == nullptr) continue; // Checking if unit was analysed
-        if (unit->parser_errors.size > 0) return true;
-    }
-    return false;
+	return compilation_data->code_errors.size > 0;
 }
 
 Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base)
@@ -1556,17 +1516,7 @@ void compiler_run_testcases(bool force_run)
             string_append_formated(&result, "\n");
             if (exit_code.type == Exit_Code_Type::COMPILATION_FAILED)
             {
-                for (int i = 0; i < compilation_data->compilation_units.size; i++) 
-                {
-                    auto unit = compilation_data->compilation_units[i];
-                    auto parser_errors = unit->parser_errors;
-                    for (int j = 0; j < parser_errors.size; j++) {
-                        auto& e = parser_errors[j];
-                        string_append_formated(&result, "    Parse Error: %s\n", e.msg);
-                    }
-                }
-
-                compilation_data_append_semantic_errors_to_string(compilation_data, &result, 1);
+                compilation_data_append_code_errors_to_string(compilation_data, &result, 1);
                 string_append_character(&result, '\n');
             }
             errors_occured = true;

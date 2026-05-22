@@ -35,11 +35,20 @@ struct Call_Info;
 struct Symbol;
 struct IR_Generator;
 struct C_Generator;
+struct Compilation_Unit;
 
 namespace AST
 {
     struct Definition_Module;
 }
+
+struct Code_Error
+{
+    const char* msg;
+    Compilation_Unit* unit;
+    DynArray<Error_Information> infos;
+    DynArray<Text_Range> ranges;
+};
 
 // COMPILATION_DATA
 struct Compilation_Unit
@@ -50,7 +59,6 @@ struct Compilation_Unit
     Source_Code* code;
     AST::Definition_Module* root;
     Upp_Module* upp_module;
-    Array<Error_Message> parser_errors;
 };
 
 struct Compilation_Data
@@ -59,8 +67,7 @@ struct Compilation_Data
     Compile_Type compile_type;
     Compilation_Unit* main_unit;
     Dynamic_Array<Compilation_Unit*> compilation_units;
-    Dynamic_Array<Compiler_Error_Info> compiler_errors; // List of parser and semantic errors
-    Dynamic_Array<Semantic_Error> semantic_errors;
+    DynArray<Code_Error> code_errors;
 
     // Program
     Dynamic_Array<Upp_Function*> functions;
@@ -136,6 +143,7 @@ void compilation_data_compile(Compilation_Data* compilation_data, Compilation_Un
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data);
 Exit_Code compiler_execute(Compilation_Data* compilation_data);
 
+void compilation_data_add_code_error_code_section(Compilation_Data* compilation_data, const char* msg, AST::Node* node, Node_Section section);
 bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilation_data);
 bool compilation_data_errors_occured(Compilation_Data* compilation_data);
 Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base);
