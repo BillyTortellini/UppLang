@@ -392,3 +392,25 @@ struct ibox2
         return min.x >= max.x || min.y >= max.y;
     }
 };
+
+struct ibox1
+{
+    int min;
+    int max;
+
+    ibox1();
+    ibox1(int min, int max);
+    static ibox1 make_length(int start, int length);
+
+    bool contains(int value);
+    bool contains(ibox1 other); // returns true if it fully contains the interval
+    bool intersects(ibox1 other);
+    bool is_empty();
+    int distance_to(ibox1 other); // returns 0 if intervals intersect
+    int length();
+
+    ibox1 make_union(ibox1 other);
+    ibox1 make_intersection(ibox1 other);
+    ibox1 clamp(int min, int max);
+    ibox1 sanitize();
+};

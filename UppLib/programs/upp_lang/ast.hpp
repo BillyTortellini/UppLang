@@ -67,8 +67,6 @@ namespace AST
         NEGATE,               // -
         ADDRESS_OF,           // -*
         DEREFERENCE,          // -&
-        NULL_CHECK,           // ?
-        OPTIONAL_DEREFERENCE, // -?&
     };
 
     enum class Node_Type
@@ -320,6 +318,7 @@ namespace AST
         BAKE,
         INSTANCIATE,
         GET_OVERLOAD,
+        IF_THEN_ELSE,
 
         // Memory Reads
         PATH_LOOKUP,
@@ -349,8 +348,7 @@ namespace AST
         {
             Symbol_Node* pattern_variable_symbol;
             struct {
-                Expression* child_type; // ?int
-                bool is_optional;
+                Expression* child_type;
             } pointer_type;
             struct {
                 Expression* left;
@@ -408,6 +406,11 @@ namespace AST
                 Array<Get_Overload_Argument*> arguments;
                 bool is_poly;
             } get_overload;
+            struct {
+                Expression* condition;
+                Expression* then_value;
+                Expression* else_value;
+            } if_then_else;
         } options;
     };
 

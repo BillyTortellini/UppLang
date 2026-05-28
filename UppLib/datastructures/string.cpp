@@ -617,3 +617,7 @@ void string_remove_trailing_whitespace(String* str) {
         str->size -= 1;
     }
 }
+char String::at(int index, char backup) {
+    if (index < 0 || index >= (int)size) return backup;
+    return characters[index];
+}

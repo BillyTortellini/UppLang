@@ -152,7 +152,8 @@ LRESULT CALLBACK window_message_callback(HWND hwnd, UINT msg_type, WPARAM wparam
     case WM_CHAR:
     {
         int key = (int)wparam;
-        if (key > 255 || key < 32) { // TODO handle UTF8/UTF16 also, currently we just ignore non-ascii characters
+        // 9 == tab, we want to have a \t char here
+        if (key != 9 && (key > 255 || key < 32)) { // TODO handle UTF8/UTF16 also, currently we just ignore non-ascii characters
             break;
         }
         if (window_for_message_callback->put_next_char_into_last_key_message) {

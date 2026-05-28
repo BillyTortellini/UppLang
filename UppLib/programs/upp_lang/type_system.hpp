@@ -166,7 +166,6 @@ struct Datatype_Pointer
 {
     Datatype base;
     Datatype* element_type;
-    bool is_optional;
 };
 
 struct Datatype_Function_Pointer
@@ -338,7 +337,6 @@ struct Internal_Type_Enum
 struct Internal_Type_Pointer
 {
     Upp_Type_Handle child_type;
-    bool is_optional;
 };
 
 struct Internal_Type_Information
@@ -377,7 +375,6 @@ struct Type_Deduplication
         Datatype* slice_element_type;
         struct {
             Datatype* child_type;
-            bool is_optional;
         } pointer;
         struct {
             Datatype* element_type;
@@ -394,7 +391,6 @@ struct Type_Modifier_Info
 	Datatype* base_type; // Dereferenced/optional base type
 	Datatype_Struct* struct_subtype; // If it's a subtype or a struct at the core, otherwise nullptr
 	int pointer_level;
-	u32 optional_flags;
 };
 
 struct Predefined_Types
@@ -455,12 +451,12 @@ Type_System* type_system_create(Compilation_Data* compilation_data);
 void type_system_print(Type_System* system);
 
 Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Type_System* type_system, Pattern_Variable* pattern_variable);
-Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type, bool is_optional = false);
+Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type);
 Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* element_type);
 // If the element_type is constant, the array type + the element_type will be const
 Datatype* type_system_make_array(Type_System* type_system, Datatype* element_type, bool count_known, int element_count, Datatype_Pattern_Variable* count_variable_type = 0);
 Datatype_Function_Pointer* type_system_make_function_pointer(Type_System* type_system, Call_Signature* signature);
-Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level, u32 optional_flags);
+Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level);
 
 // Note: empty types need to be finished before they are used!
 Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, String* name, AST::Node* definition_node = 0);
@@ -477,10 +473,12 @@ bool datatype_is_unknown(Datatype* a);
 bool type_size_is_unfinished(Datatype* a);
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value);
 Datatype* datatype_get_undecorated(
-    Datatype* datatype, bool remove_pointer = true, bool remove_subtype = true,
-    bool remove_optional_pointer = false, bool struct_pattern_to_base_struct = false
+    Datatype* datatype, 
+    bool remove_pointer = true, 
+    bool remove_subtype = true,
+    bool struct_pattern_to_base_struct = false
 );
-bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional = nullptr);
+bool datatype_is_pointer(Datatype* datatype, bool accept_rawptr);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
 Upp_String upp_string_from_id(String* id);
 Upp_String upp_string_empty();

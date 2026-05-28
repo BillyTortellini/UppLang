@@ -562,3 +562,84 @@ Optional<box2> box2_union(const box2& a, const box2& b)
 }
 
 
+
+ibox1::ibox1(int min, int max) {
+    this->min = min;
+    this->max = max;
+}
+
+ibox1::ibox1() {
+    min = 0;
+    max = 0;
+}
+
+ibox1 ibox1::make_length(int start, int length)
+{
+    ibox1 result;
+    result.min = start;
+    result.max = start + length;
+    return result;
+}
+
+bool ibox1::contains(int value) {
+    return value >= min && value < max;
+}
+
+bool ibox1::contains(ibox1 other) {
+    return other.min >= min && other.max <= max;
+}
+
+bool ibox1::intersects(ibox1 other) {
+    return !(min >= other.max || max <= other.min);
+}
+
+bool ibox1::is_empty() {
+    return min >= max;
+}
+
+int ibox1::distance_to(ibox1 other) 
+{
+    if (intersects(other)) {
+        return 0;
+    }
+    return math_minimum(
+        math_absolute(min - other.max),
+        math_absolute(max - other.min)
+    );
+}
+
+ibox1 ibox1::make_union(ibox1 other) 
+{
+    if (!intersects(other)) {
+        return ibox1(min, min);
+    }
+    return ibox1(
+        math_minimum(min, other.min),
+        math_maximum(max, other.max)
+    );
+}
+
+ibox1 ibox1::make_intersection(ibox1 other) {
+    return ibox1(
+        math_maximum(min, other.min),
+        math_minimum(max, other.max)
+    ).sanitize();
+}
+
+ibox1 ibox1::clamp(int min, int max) {
+    return ibox1(
+        math_clamp(this->min, min, max),
+        math_clamp(this->max, min, max)
+    );
+}
+
+ibox1 ibox1::sanitize() {
+    return ibox1(
+        min,
+        math_maximum(min, max)
+    );
+}
+
+int ibox1::length() {
+    return max - min;
+}

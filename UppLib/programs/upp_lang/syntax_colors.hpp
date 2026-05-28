@@ -111,7 +111,6 @@ enum class Syntax_Color : u8
 
     ERROR_NAVIGATION_BG,
     LINE_EDIT_HIGHLIGHT_BG,
-
 };
 
 Palette_Color syntax_color_to_palette_color(Syntax_Color color);

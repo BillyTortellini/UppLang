@@ -474,7 +474,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     Type_System* type_system = gen.compilation_data->type_system;
 
     Type_Modifier_Info mod_info = datatype_get_modifier_info(type);
-    type = type_system_make_type_with_modifiers(type_system, mod_info.base_type, mod_info.pointer_level, 0); // Remove optional modifiers and subtype modifiers
+    type = type_system_make_type_with_modifiers(type_system, mod_info.base_type, mod_info.pointer_level); // Remove optional modifiers and subtype modifiers
 
     // Check if datatype was already created
     C_Translation translation;
@@ -1798,7 +1798,7 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
 
         // Handle members of struct subtypes
         Datatype* access_type = access->option.member_access.struct_access->datatype;
-        assert(!datatype_is_pointer(access_type), "");
+        assert(!datatype_is_pointer(access_type, true), "");
         if (access_type->type == Datatype_Type::STRUCT)
         {
             Datatype_Struct* structure = downcast<Datatype_Struct>(access_type);

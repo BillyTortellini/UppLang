@@ -570,9 +570,6 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
         break;
     case Datatype_Type::POINTER: {
         auto pointer_type = downcast<Datatype_Pointer>(datatype);
-        if (pointer_type->is_optional) {
-            string->append('?');
-        }
         string->append("*");
         datatype_append_to_string(pointer_type->element_type, string, type_system, format);
         break;
@@ -749,8 +746,7 @@ bool type_deduplication_is_equal(Type_Deduplication* a_ptr, Type_Deduplication* 
 		return a.options.slice_element_type == b.options.slice_element_type;
 	}
 	case Type_Deduplication_Type::POINTER: {
-		return a.options.pointer.child_type == b.options.pointer.child_type &&
-			a.options.pointer.is_optional == b.options.pointer.is_optional;
+		return a.options.pointer.child_type == b.options.pointer.child_type;
 	}
 	case Type_Deduplication_Type::FUNCTION_POINTER:
 	{
@@ -773,7 +769,6 @@ u64 type_deduplication_hash(Type_Deduplication* dedup)
 	{
 	case Type_Deduplication_Type::POINTER: {
 		hash = hash_combine(hash, hash_pointer(dedup->options.pointer.child_type));
-		hash = hash_bool(hash, dedup->options.pointer.is_optional);
 		break;
 	}
 	case Type_Deduplication_Type::SLICE: {
@@ -901,14 +896,13 @@ Datatype_Pattern_Variable* type_system_make_pattern_variable_type(Type_System* t
 	return result;
 }
 
-Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type, bool is_optional)
+Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* child_type)
 {
 	Arena* arena = &type_system->compilation_data->arena;
 
 	Type_Deduplication dedup;
 	dedup.type = Type_Deduplication_Type::POINTER;
 	dedup.options.pointer.child_type = child_type;
-	dedup.options.pointer.is_optional = is_optional;
 
 	// Check if type was already created
 	{
@@ -927,11 +921,9 @@ Datatype_Pointer* type_system_make_pointer(Type_System* type_system, Datatype* c
 	result->base.contains_partial_pattern = child_type->contains_partial_pattern;
 	result->base.contains_pattern_variable_definition = child_type->contains_pattern_variable_definition;
 	result->element_type = child_type;
-	result->is_optional = is_optional;
 
 	auto& internal_info = type_system_register_type(upcast(result), type_system)->options.pointer;
 	internal_info.child_type = child_type->type_handle;
-	internal_info.is_optional = is_optional;
 
 	type_system->deduplication_table.insert(dedup, upcast(result));
 
@@ -1043,7 +1035,7 @@ Datatype_Slice* type_system_make_slice(Type_System* type_system, Datatype* eleme
 	result->base.contains_pattern_variable_definition = element_type->contains_pattern_variable_definition;
 
 	result->element_type = element_type;
-	result->data_member = struct_member_make(upcast(type_system_make_pointer(type_system, element_type, true)), ids.data, nullptr, 0, nullptr);
+	result->data_member = struct_member_make(upcast(type_system_make_pointer(type_system, element_type)), ids.data, nullptr, 0, nullptr);
 	result->size_member = struct_member_make(upcast(types.usize), ids.size, nullptr, 8, nullptr);
 	result->slice_initializer_signature_cached = nullptr;
 
@@ -1111,13 +1103,12 @@ Datatype_Function_Pointer* type_system_make_function_pointer(Type_System* type_s
 	return result;
 }
 
-Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level, u32 optional_flags)
+Datatype* type_system_make_type_with_modifiers(Type_System* type_system, Datatype* base_type, int pointer_level)
 {
 	assert(base_type->type != Datatype_Type::POINTER, "");
 	Datatype* result_type = base_type;
 	for (int i = 0; i < pointer_level; i++) {
-		bool is_opt   = (optional_flags & (1 << (i + 1))) != 0;
-		result_type = upcast(type_system_make_pointer(type_system, result_type, is_opt));
+		result_type = upcast(type_system_make_pointer(type_system, result_type));
 	}
 	return result_type;
 }
@@ -1609,7 +1600,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 	// Allocator + Allocator-Functions
 	{
 		types->allocator = type_system_make_struct_empty(type_system, ids.allocator);
-		Datatype* allocator_pointer = upcast(type_system_make_pointer(type_system, upcast(types->allocator), false));
+		Datatype* allocator_pointer = upcast(type_system_make_pointer(type_system, upcast(types->allocator)));
 
 		Call_Signature* signature = call_signature_create_empty();
 		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
@@ -1803,14 +1794,12 @@ bool type_size_is_unfinished(Datatype* a) {
 }
 
 Datatype* datatype_get_undecorated(
-    Datatype* datatype, bool remove_pointer, bool remove_subtype, 
-	bool remove_optional_pointer, bool struct_pattern_to_base_struct
+    Datatype* datatype, bool remove_pointer, bool remove_subtype, bool struct_pattern_to_base_struct
 )
 {
 	while (remove_pointer && datatype->type == Datatype_Type::POINTER)
 	{
 		Datatype_Pointer* pointer = downcast<Datatype_Pointer>(datatype);
-		if (pointer->is_optional && !remove_optional_pointer) return datatype;
 		datatype = pointer->element_type;
 	}
 	if (datatype->type == Datatype_Type::STRUCT)
@@ -1895,53 +1884,29 @@ bool datatype_type_references_subtypes(Datatype_Type datatype_type)
 	return false;
 }
 
-bool datatype_is_pointer(Datatype* datatype, bool* out_is_optional)
+bool datatype_is_pointer(Datatype* datatype, bool accept_rawptr)
 {
-	if (out_is_optional != nullptr) {
-		*out_is_optional = false;
-	}
-
 	// Note: The decision was made to make datatype address not count as pointer
-	if (datatype->type == Datatype_Type::POINTER) {
-		if (out_is_optional != nullptr) {
-			*out_is_optional = downcast<Datatype_Pointer>(datatype)->is_optional;
-		}
-		return true;
-	}
-	else if (datatype->type == Datatype_Type::FUNCTION_POINTER) {
-		return true;
-	}
-
-	return false;
+	return 
+		datatype->type == Datatype_Type::POINTER || 
+		datatype->type == Datatype_Type::FUNCTION_POINTER ||
+		(accept_rawptr && datatype_is_primitive_class(datatype, Primitive_Class::RAWPTR));
 }
 
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype)
 {
 	Type_Modifier_Info info;
 	info.pointer_level = 0;
-	info.optional_flags = 0;
 
-	while (true)
-	{
-		if (datatype->type == Datatype_Type::POINTER) 
-		{
-			info.pointer_level += 1;
-			info.optional_flags = info.optional_flags << 1;
-
-			auto ptr_type = downcast<Datatype_Pointer>(datatype);
-			if (ptr_type->is_optional) {
-				info.optional_flags = info.optional_flags | 1;
-			}
-			datatype = ptr_type->element_type;
-		}
-		else {
-			break;
-		}
+	while (datatype->type == Datatype_Type::POINTER) {
+		info.pointer_level += 1;
+		datatype = downcast<Datatype_Pointer>(datatype)->element_type;
 	}
 
 	info.base_type = datatype;
 	info.struct_subtype = nullptr;
-	if (datatype->type == Datatype_Type::STRUCT) {
+	if (datatype->type == Datatype_Type::STRUCT) 
+	{
 		Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
 		info.struct_subtype = structure;
 		// Find parent

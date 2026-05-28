@@ -296,6 +296,13 @@ namespace AST
 				FILL(expr->options.function_pointer_signature);
 				break;
 			}
+			case Expression_Type::IF_THEN_ELSE: {
+				auto& if_then = expr->options.if_then_else;
+				FILL(if_then.condition);
+				FILL(if_then.then_value);
+				FILL(if_then.else_value);
+				break;
+			}
 			default: panic("");
 			}
 			break;
@@ -441,8 +448,6 @@ namespace AST
 			case Unop::ADDRESS_OF: string_append(str, "*"); break;
 			case Unop::DEREFERENCE: string_append(str, "&"); break;
 			case Unop::NEGATE: string_append(str, "-"); break;
-			case Unop::NULL_CHECK: string_append(str, "?"); break;
-			case Unop::OPTIONAL_DEREFERENCE: string_append(str, "-?&"); break;
 			default: panic("");
 			}
 			string_append(str, "Unop \""); break;
@@ -454,6 +459,7 @@ namespace AST
 		case Expression_Type::INSTANCIATE: string_append_formated(str, "#instanciate"); break;
 		case Expression_Type::GET_OVERLOAD: string_append_formated(str, "#get_overload"); break;
 		case Expression_Type::PATH_LOOKUP: string_append_formated(str, "Lookup "); break;
+		case Expression_Type::IF_THEN_ELSE: string_append_formated(str, "if then/else "); break;
 		case Expression_Type::LITERAL_READ: {
 			string_append_formated(str, "Literal \"");
 			auto& read = expr->options.literal_read;
@@ -476,15 +482,7 @@ namespace AST
 		case Expression_Type::FUNCTION_POINTER_TYPE: string_append_formated(str, "Function_Signature"); break;
 		case Expression_Type::ARRAY_TYPE: string_append_formated(str, "Array Type"); break;
 		case Expression_Type::SLICE_TYPE: string_append_formated(str, "Slice Type"); break;
-		case Expression_Type::POINTER_TYPE: {
-			if (expr->options.pointer_type.is_optional) {
-				string_append_formated(str, "Optional Pointer Type");
-			}
-			else {
-				string_append_formated(str, "Pointer Type");
-			}
-			break;
-		}
+		case Expression_Type::POINTER_TYPE: string_append_formated(str, "Pointer Type"); break;
 		case Expression_Type::ERROR_EXPR: string_append_formated(str, "Error"); break;
 		case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "Struct Initializer"); break;
 		case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "Array Initializer"); break;
@@ -631,6 +629,7 @@ namespace AST
 			case Expression_Type::INSTANCIATE: string_append_formated(str, "INSTANCIATE"); break;
 			case Expression_Type::GET_OVERLOAD: string_append_formated(str, "GET_OVERLOAD"); break;
 			case Expression_Type::PATH_LOOKUP: string_append_formated(str, "EXPR_LOOKUP "); break;
+			case Expression_Type::IF_THEN_ELSE: string_append_formated(str, "IF_THEN_ELSE"); break;
 			case Expression_Type::LITERAL_READ: {
 				string_append_formated(str, "LITERAL_READ ");
 				auto& read = expr->options.literal_read;
@@ -656,15 +655,7 @@ namespace AST
 			case Expression_Type::FUNCTION_POINTER_TYPE: string_append_formated(str, "FUNCTION_POINTER_TYPE"); break;
 			case Expression_Type::ARRAY_TYPE: string_append_formated(str, "ARRAY_TYPE"); break;
 			case Expression_Type::SLICE_TYPE: string_append_formated(str, "SLICE_TYPE"); break;
-			case Expression_Type::POINTER_TYPE: {
-				if (expr->options.pointer_type.is_optional) {
-					string_append_formated(str, "OPTIONAL_POINTER_TYPE");
-				}
-				else {
-					string_append_formated(str, "POINTER_TYPE");
-				}
-				break;
-			}
+			case Expression_Type::POINTER_TYPE: string_append_formated(str, "PTIONAL_POINTER_TYPE"); break;
 			case Expression_Type::ERROR_EXPR: string_append_formated(str, "ERROR_EXPR"); break;
 			case Expression_Type::STRUCT_INITIALIZER: string_append_formated(str, "STRUCT_INITIALIZER"); break;
 			case Expression_Type::ARRAY_INITIALIZER: string_append_formated(str, "ARRAY_INITIZALIZER"); break;

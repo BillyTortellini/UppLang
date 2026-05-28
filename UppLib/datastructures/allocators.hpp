@@ -122,6 +122,29 @@ struct DynArray
 		buffer[size] = value;
 		size += 1;
 	}
+	
+	void insert_ordered(const T& value, int insert_before_index)
+	{
+		assert(insert_before_index >= 0 && insert_before_index <= size, "");
+		reserve(size + 1);
+		size += 1;
+		for (int i = size - 1; i - 1 >= insert_before_index; i -= 1) {
+			buffer[i] = buffer[i - 1];
+		}
+		buffer[insert_before_index] = value;
+	}
+
+	void remove_range_ordered(int start, int count)
+	{
+		assert(start >= 0 && start <= size, "");
+		count = math_minimum(count, (int)size - start);
+		if (count <= 0) return;
+
+		for (int i = start + count; i < size; i++) {
+			buffer[i - count] = buffer[i];
+		}
+		size -= count;
+	}
 
 	void swap_remove(int index) {
 		assert(index >= 0 && index < size, "");
@@ -136,18 +159,6 @@ struct DynArray
 			buffer.data[i] = buffer.data[i + 1];
 		}
 		size -= 1;
-	}
-
-	void remove_range_ordered(int start_index, int end_index)
-	{
-	    if (size <= 0 || end_index < start_index) { return; }
-	    start_index = math_clamp(start_index, 0, (int)size);
-	    end_index = math_clamp(end_index, 0, (int)size);
-	    int length = end_index - start_index;
-	    for (int i = start_index; i < size - length; i++) {
-			buffer.data[i] = buffer.data[i + length];
-	    }
-	    size = size - length;
 	}
 
 	void rollback_to_size(int new_size)

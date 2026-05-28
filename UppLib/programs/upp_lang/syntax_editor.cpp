@@ -49,19 +49,33 @@ struct Error_Display
     int semantic_error_index; // -1 if parsing error
 };
 
-struct Fold_Info
+// Line area is a contigous number of lines, which are either inside a fold or not
+struct Line_Area
 {
-	int start;
-	int end;
-	int fold_index; // Either current fold or closest previous fold
+	ibox1 interval;
+	int fold_index; // Either current fold or a nearby fold index
 	bool inside_fold;
+
+	static Line_Area make(ibox1 interval, int fold_index, bool inside_fold) 
+	{
+		Line_Area result;
+		result.interval = interval;
+		result.fold_index = fold_index;
+		result.inside_fold = inside_fold;
+		return result;
+	}
+
+	bool contains(int line_index) 
+	{
+		return interval.contains(line_index);
+	}
 };
 	
 struct Display_Line
 {
 	int line_index;
 	int logical_indentation;
-	Fold_Info fold_info;
+	Line_Area fold_info;
 	int inline_fold_index; // If not -1, then this is the fold afterwards
 	u8 symbol_flags;
 };
@@ -75,6 +89,8 @@ enum class Movement_Type
     SEARCH_FORWARDS_FOR, // f
     SEARCH_BACKWARDS_TO, // T
     SEARCH_BACKWARDS_FOR, // F
+	SNEAK_FORWARDS,       // s
+	SNEAK_BACKWARDS,      // S
     REPEAT_TEXT_SEARCH, // n
     REPEAT_TEXT_SEARCH_REVERSE, // N
     REPEAT_LAST_SEARCH, // ;
@@ -84,7 +100,10 @@ enum class Movement_Type
     MOVE_UP, // k
     MOVE_DOWN, //j
     TO_END_OF_LINE, // $
-    TO_START_OF_LINE, // 0
+    TO_TEXT_START_OF_LINE, // 0
+    TO_START_OF_LINE, // Ctrl-0
+	TAB_FORWARDS,     // Tab
+	TAB_BACKWARDS,    // Shift-Tab
     NEXT_WORD, // w
     NEXT_SPACE, // W
     PREVIOUS_WORD, // b
@@ -104,6 +123,7 @@ struct Movement
     Movement_Type type;
     int repeat_count;
     char search_char;
+	char search_char2;
 };
 
 // Missing: <> ''
@@ -235,58 +255,19 @@ enum class Editor_Mode
     ERROR_NAVIGATION,
 };
 
-struct Code_Fold
-{
-    int start;
-    int end; // Exclusive index
-    int indentation;
-};
 
-
-Code_Fold code_fold_make(int start, int end, int indentation) {
+Code_Fold Code_Fold::make(ibox1 interval, int indentation) {
 	Code_Fold result;
-	result.start = start;
-	result.end = end;
+	result.interval = interval;
 	result.indentation = indentation;
+	result.child_folds_start = -1;
+	result.next_index = -1;
 	return result;
 }
 
-struct Line_Breakpoint
-{
-    int line_number;
-    Source_Breakpoint* src_breakpoint; 
-    bool enabled; // This is toggle via UI, but I'm not sure if it's already implemented
-};
-
-struct Editor_Tab
-{
-	String filepath;
-    Source_Code* code; // Note: This is different than the code in the compilation unit
-    Code_History history;
-
-    History_Timestamp last_code_info_synch;
-    History_Timestamp last_compiler_synchronized;
-    int last_code_completion_info_index;
-    Text_Index last_code_completion_query_pos;
-    bool requires_recompile; // E.g. when loaded from a file, or otherwise modified
-
-	// Folds are sorted by line-starts and size, and folds can contain other folds, but they cannot overlap
-    Dynamic_Array<Code_Fold> folds;
-    Dynamic_Array<Line_Breakpoint> breakpoints;
-
-    // Cursor and camera
-    Text_Index cursor;
-    int cam_start;
-    int last_line_x_pos; // Position with indentation * 4 for up/down movements
-
-    History_Timestamp last_render_timestamp;
-    Text_Index last_render_cursor_pos;
-
-	// Note: Jumps are mostly for line-jumping, but we also store the cursor character at the time of the jump,
-	//		but this character does not change if line changes are made, so the index should be sanitized before being used
-    Dynamic_Array<Text_Index> jump_list;
-    int last_jump_index;
-};
+bool Code_Fold::contains(int line_index) {
+	return interval.contains(line_index);
+}
 
 enum class Suggestion_Type
 {
@@ -362,7 +343,7 @@ struct Syntax_Editor
 	Arena arena; // For rendering and other misc things
 
 	// Tabs
-    Dynamic_Array<Editor_Tab> tabs;
+    Dynamic_Array<Editor_Tab*> tabs;
     int open_tab_index;
     int main_tab_index; // If -1, use the currently open tab for compiling
 
@@ -386,6 +367,7 @@ struct Syntax_Editor
     // Movement
     String command_buffer;
     char last_search_char;
+    char last_search_char2;
     bool last_search_was_forward;
     bool last_search_was_to;
 
@@ -452,6 +434,12 @@ struct Syntax_Editor
 	bool auto_format_during_edits;
 	bool show_folds_inline;
 	bool auto_insert_parenthesis;
+	bool show_leading_spaces;
+	bool sneak_search;
+
+	Editor_Tab& open_tab() {
+		return *tabs[open_tab_index];
+	}
 };
 
 
@@ -473,36 +461,175 @@ int line_get_whitespace_indentation(int line_index);
 int line_is_empty_or_comment(int line_index);
 int line_count_leading_spaces(Source_Line* line);
 int line_count_leading_spaces(int line_index);
-void remove_folds_on_line(int line_index);
+
+String line_index_get_text(int line_index, Editor_Tab* tab = nullptr)
+{
+	if (tab == nullptr) {
+		tab = &syntax_editor.open_tab();
+	}
+	auto code = tab->code;
+	if (line_index < 0 || line_index >= code->line_count) return string_create_static("");
+	return source_code_get_line(code, line_index)->text;
+}
 
 
 
-
-
-typedef bool (*line_condition_fn)(Source_Line* line, int cond_value);
 
 namespace Folds
 {
-	int get_largest_enclosing_fold(int fold_index)
+	Line_Area get_line_area(int line_index, int& nearby_fold_index);
+	int find_fold_index_for_line(int line_index);
+	Line_Area get_line_area(int line_index);
+
+	void add_fold(ibox1 interval, int indentation)
 	{
-		auto& folds = syntax_editor.tabs[syntax_editor.open_tab_index].folds;
-		while (fold_index > 0)
+		auto& tab = syntax_editor.open_tab();
+		auto& folds = tab.folds;
+
+		// Find how many folds are children, and check if we overlap but not contain any folds
+		int child_count = 0;
+		int insert_index = find_fold_index_for_line(interval.min);
+		for (int i = insert_index; i < folds.size; i += 1)
 		{
-			Code_Fold& curr = folds[fold_index];
-			Code_Fold& prev = folds[fold_index - 1];
-			assert(prev.start <= curr.start, "");
-			if (prev.end < curr.end) {
-				assert(prev.end < curr.start, "No overlapping folds allowed!");
-				break;
+			Code_Fold& fold = folds[i];
+
+			if (fold.interval.min < interval.min) 
+			{
+				insert_index = i + 1;
+				child_count = 0;
+				if (interval.distance_to(fold.interval) <= 0) {
+					return;
+				}
+				continue;
 			}
-			fold_index -= 1;
+
+			if (interval.intersects(fold.interval)) 
+			{
+				if (interval.contains(fold.interval)) {
+					child_count += 1;
+				}
+				else {
+					// Don't add fold if we don't completely contain the child
+					return;
+				}
+			}
+			else
+			{
+				// Don't add fold if it's directly adjacent to another fold
+				if (interval.distance_to(fold.interval) <= 0) {
+					return;
+				}
+
+				// Stop once we find a fold that is after the current one
+				if (interval.max + 1 < fold.interval.min) {
+					break;
+				}
+			}
 		}
-		return fold_index;
+
+		// Add children
+		int last_child_index = -1;
+		int child_start_index = -1;
+		for (int i = 0; i < child_count; i++) 
+		{
+			Code_Fold child = folds[i];
+
+			// Find next free child index
+			int new_child_index = 1;
+			if (tab.next_free_child_fold != -1) {
+				new_child_index = tab.next_free_child_fold;
+				tab.next_free_child_fold = tab.child_folds[tab.next_free_child_fold].next_index;
+			}
+			else {
+				new_child_index = tab.child_folds.size;
+				tab.child_folds.push_back(Code_Fold::make(ibox1(0, 0), 0));
+			}
+
+			// Add as child
+			tab.child_folds[new_child_index] = child;
+			tab.child_folds[new_child_index].next_index = -1;
+
+			// Add to linked list
+			if (last_child_index != -1) {
+				tab.child_folds[last_child_index].next_index = new_child_index;
+			}
+			last_child_index = new_child_index;
+			if (child_start_index == -1) {
+				child_start_index = new_child_index;
+			}
+		}
+
+		Code_Fold result = Code_Fold::make(interval, indentation);
+		result.next_index = -1;
+		result.child_folds_start = child_start_index;
+		folds.remove_range_ordered(insert_index, child_count);
+		folds.insert_ordered(result, insert_index);
+
+		// Move cursor out of fold if inline-fold
+		if (syntax_editor.show_folds_inline) {
+			Line_Area area = Folds::get_line_area(tab.cursor.line);
+			if (area.inside_fold) {
+				tab.cursor.line = area.interval.min - 1;
+			}
+		}
 	}
 
-	int find_nearby_fold_index(int line_index) 
+	void free_child_fold_recursive(Editor_Tab* tab, int child_index, bool recursive)
 	{
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+		while (child_index != -1)
+		{
+			Code_Fold& fold = tab->child_folds[child_index];
+			int next_child = fold.next_index;
+
+			fold.next_index = tab->next_free_child_fold;
+			tab->next_free_child_fold = child_index;
+
+			if (recursive) {
+				free_child_fold_recursive(tab, fold.child_folds_start, recursive);
+			}
+			child_index = next_child;
+		}
+	}
+
+	void remove_fold(Editor_Tab* editor_tab, int fold_index, bool remove_children)
+	{
+		auto& folds = editor_tab->folds;
+		if (fold_index < 0 || fold_index >= folds.size) return;
+
+		Code_Fold fold = folds[fold_index];
+		folds.remove_ordered(fold_index);
+
+		// Insert children if they aren't removed
+		if (!remove_children) 
+		{
+			int child_index = fold.child_folds_start;
+			while (child_index != -1) {
+				Code_Fold child_fold = editor_tab->child_folds[child_index];
+				folds.insert_ordered(child_fold, fold_index);
+				child_index = child_fold.next_index;
+			}
+		}
+		free_child_fold_recursive(editor_tab, fold.child_folds_start, remove_children);
+	}
+
+	void remove_folds_on_line(int line_index)
+	{
+		Editor_Tab* tab = &syntax_editor.open_tab();
+		auto& folds = tab->folds;
+		for (int i = 0; i < folds.size; i++)
+		{
+			auto& fold = folds[i];
+			if (fold.interval.contains(line_index)) {
+				Folds::remove_fold(tab, i, false);
+				i -= 1;
+			}
+		}
+	}
+
+	// Binary searches closest fold before line-index
+	int find_fold_index_for_line(int line_index) 
+	{
+		Editor_Tab& tab = syntax_editor.open_tab();
 		auto& folds = tab.folds;
 
 		if (folds.size == 0) {
@@ -510,484 +637,350 @@ namespace Folds
 		}
 
 		int min = 0;
-		int max = folds.size - 1;
+		int max = folds.size - 1; // Inclusive
 		while (min != max)
 		{
 			int center = (min + max + 1) / 2;
 			auto& fold = folds[center];
-			if (fold.start <= line_index) {
+			if (fold.interval.min <= line_index) {
 				min = center;
-				continue;
 			}
 			else {
 				max = center - 1;
 			}
 		}
 
-		return get_largest_enclosing_fold(min);
+		return min;
 	}
 
-	Fold_Info fold_info_make(int start, int end, int fold_index, bool inside_fold) {
-		Fold_Info result;
-		result.start = start;
-		result.end = end;
-		result.fold_index = fold_index;
-		result.inside_fold = inside_fold;
-		return result;
-	}
-
-	Fold_Info get_fold_info(int line_index, int& nearby_fold_index) 
+	Line_Area get_line_area(int line_index, int& nearby_fold_index) 
 	{
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
 		auto& folds = tab.folds;
 
 		if (folds.size == 0) {
-			return fold_info_make(0, tab.code->line_count, 0, false);
+			return Line_Area::make(ibox1::make_length(0, tab.code->line_count), -1, false);
 		}
 
-		nearby_fold_index = math_clamp(nearby_fold_index, 0, folds.size - 1);
-		nearby_fold_index = get_largest_enclosing_fold(nearby_fold_index);
+		if (line_index < 0) {
+			nearby_fold_index = 0;
+			return Line_Area::make(ibox1(line_index, 0), 0, false);
+		}
+		else if (line_index >= tab.code->line_count) {
+			nearby_fold_index = folds.size - 1;
+			return Line_Area::make(ibox1(tab.code->line_count, line_index + 1), -1, false);
+		}
+
+		nearby_fold_index = math_clamp(nearby_fold_index, 0, (int)folds.size - 1);
 		while (true)
 		{
 			Code_Fold& fold = folds[nearby_fold_index];
-			if (line_index < fold.start) // Fold is after current line
+			if (line_index < fold.interval.min) // Fold is after current line
 			{
-				if (nearby_fold_index == 0) {
-					return fold_info_make(0, fold.start, 0, false);
+				if (nearby_fold_index == 0) { // There are no previous folds
+					return Line_Area::make(ibox1(0, fold.interval.min), 0, false);
 				}
-				nearby_fold_index = get_largest_enclosing_fold(nearby_fold_index - 1);
+				nearby_fold_index -= 1;
 			}
-			else if (line_index < fold.end) // Current line is inside fold
+			else if (line_index < fold.interval.max) // Current line is inside fold
 			{ 
-				return fold_info_make(fold.start, fold.end, nearby_fold_index, true);
+				return Line_Area::make(fold.interval, nearby_fold_index, true);
 			}
 			else // Current line is after fold
 			{
-				int next_non_nested_fold = nearby_fold_index + 1; // Non-nested
-				while (next_non_nested_fold < folds.size) {
-					Code_Fold& next = folds[next_non_nested_fold];
-					assert(next.start >= fold.start, "");
-					if (next.start >= fold.end) {
-						break;
-					}
-					next_non_nested_fold += 1;
+				// Line is after last fold
+				if (nearby_fold_index + 1 >= folds.size) {
+					return Line_Area::make(ibox1(fold.interval.max, tab.code->line_count), nearby_fold_index, false); 
 				}
 
-				if (next_non_nested_fold >= folds.size) { // Final fold
-					return fold_info_make(fold.end, tab.code->line_count, folds.size -1, false);
+				// Loop stopper, if we are in between folds we return
+				Code_Fold& next_fold = folds[nearby_fold_index + 1];
+				if (line_index < next_fold.interval.min) {
+					return Line_Area::make(ibox1(fold.interval.max, next_fold.interval.min), nearby_fold_index, false);
 				}
 
-				Code_Fold& next_fold = folds[next_non_nested_fold];
-				if (next_fold.start > line_index) {
-					return fold_info_make(fold.end, next_fold.start, nearby_fold_index, false);
-				}
-				nearby_fold_index = next_non_nested_fold;
+				// Otherwise go to next fold
+				nearby_fold_index += 1;
 			}
 		}
 
 		panic("");
-		return fold_info_make(0, tab.code->line_count, 0, false);
+		return Line_Area::make(ibox1(0, 0), 0, false);
 	}
 
-	Fold_Info get_fold_info(int line_index) {
-		int nearby_index = find_nearby_fold_index(line_index);
-		return get_fold_info(line_index, nearby_index);
+	Line_Area get_line_area(int line_index) {
+		int nearby_index = find_fold_index_for_line(line_index);
+		return get_line_area(line_index, nearby_index);
 	}
-};
 
-namespace Line_Movement
-{
-    int move_while_condition(int line_index, int dir, line_condition_fn condition, bool invert_condition, int cond_value, bool move_out_of_condition)
-    {
-        Source_Code* code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
-        line_index = math_clamp(line_index, 0, code->line_count - 1);
-
-        auto line = source_code_get_line(code, line_index);
-        bool cond = condition(line, cond_value);
-        if (invert_condition) {
-            cond = !cond;
-        }
-        if (!cond) return line_index;
-
-        if (dir >= 0) dir = 1;
-        else dir = -1;
-
-        while (true)
-        {
-            int next_line_index = line_index + dir;
-            if (next_line_index < 0 || next_line_index >= code->line_count) {
-                return line_index;
-            }
-
-            auto next_line = source_code_get_line(code, next_line_index);
-            bool cond = condition(next_line, cond_value);
-            if (invert_condition) {
-                cond = !cond;
-            }
-
-            if (!cond) {
-				return move_out_of_condition ? next_line_index : line_index;
-            }
-            line_index = next_line_index;
-        }
-
-        panic("");
-        return line_index;
-    }
-};
-
-struct Line_Iter
-{
-	int line_index;
-	int nearby_fold_index;
-
-	static Line_Iter create(int line_index) 
+	struct Line_Iter
 	{
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-		auto& folds = tab.folds;
-
-		Line_Iter iter;
-		iter.line_index = math_clamp(line_index, 0, tab.code->line_count - 1);
-		iter.nearby_fold_index = Folds::find_nearby_fold_index(iter.line_index);
-		return iter;
-	}
-
-	static Line_Iter create(int line_index, int nearby_fold_index) 
-	{
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-		auto& folds = tab.folds;
-
-		Line_Iter iter;
-		iter.line_index = math_clamp(line_index, 0, tab.code->line_count - 1);
-		iter.nearby_fold_index = Folds::find_nearby_fold_index(iter.line_index);
-		return iter;
-	}
-
-	void move(int steps, bool only_visible) 
-	{
-		if (!only_visible) {
-			auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-			line_index = math_clamp(line_index + steps, 0, tab.code->line_count - 1);
-			return;
-		}
-
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-		auto& folds = tab.folds;
-		bool inline_folds = syntax_editor.show_folds_inline;
-
-		// Move out of fold if we have inline folds
-		if (inline_folds) {
-			Fold_Info fold_info = Folds::get_fold_info(line_index, nearby_fold_index);
-			if (fold_info.inside_fold && fold_info.start != 0) {
-				line_index = fold_info.start - 1;
-			}
-		}
-
-		bool forward = steps > 0;
-		steps = math_absolute(steps);
-		while (steps > 0)
+		int line_index;
+		int nearby_fold_index;
+	
+		static Line_Iter create(int line_index, int nearby_fold_index) 
 		{
-			if ((forward && line_index >= tab.code->line_count - 1) || (!forward && line_index <= 0)) {
-				line_index = math_clamp(line_index, 0, tab.code->line_count - 1);
-				break;
+			Line_Iter iter;
+			iter.line_index = line_index;
+			iter.nearby_fold_index = nearby_fold_index;
+			return iter;
+		}
+	
+		static Line_Iter create(int line_index) {
+			return Line_Iter::create(line_index, Folds::find_fold_index_for_line(line_index));
+		}
+	
+		// Positive steps means moving downwards
+		void move(int steps, bool handle_folds = true) 
+		{
+			auto& tab = syntax_editor.open_tab();
+			auto& folds = tab.folds;
+			bool inline_folds = syntax_editor.show_folds_inline;
+	
+			if (!handle_folds) {
+				line_index = line_index + steps;
+				return;
 			}
-
-			Fold_Info fold_info = Folds::get_fold_info(line_index, nearby_fold_index);
-			// Step out of any fold
-			if (fold_info.inside_fold) 
+	
+			// Move out of fold if we are inside an inline-fold
+			if (inline_folds) 
 			{
-				if (forward) {
-					line_index = fold_info.end;
-					steps -= 1;
+				Line_Area fold_info = Folds::get_line_area(line_index, nearby_fold_index);
+				if (fold_info.inside_fold) {
+					line_index = math_maximum(0, fold_info.interval.min - 1);
 				}
-				else 
-				{
-					line_index = fold_info.start - 1;
-					if (!inline_folds || fold_info.start == 0) {
+			}
+	
+			// Handle going forwards
+			while (steps > 0)
+			{
+				Line_Area fold_info = Folds::get_line_area(line_index, nearby_fold_index);
+	
+				if (line_index >= tab.code->line_count) {
+					line_index += steps;
+					steps = 0;
+					break;
+				}
+	
+				// Step out of fold
+				if (fold_info.inside_fold) {
+					line_index = fold_info.interval.max;
+					if (!inline_folds) { // Stepping over inline folds doesn't decrease step-count
 						steps -= 1;
 					}
+					continue;
 				}
-				continue;
-			}
+	
+				// Check if we can finish traversal by staying inside the area
+				int max_steps_in_area = fold_info.interval.max - line_index; // Taking max steps takes us to first line of next area
+				if (steps <= max_steps_in_area) 
+				{
+					line_index += steps;
+					steps = 0;
 
-			if (forward) 
-			{
-				if (line_index + steps < fold_info.end) {
-					line_index = line_index + steps;
+					// If we stepped on a inline fold, we actually didn't do the last step
+					fold_info = Folds::get_line_area(line_index, nearby_fold_index);
+					if (inline_folds && fold_info.inside_fold) {
+						line_index = fold_info.interval.max;
+					}
 					break;
 				}
-				steps -= fold_info.end - line_index;
-				if (inline_folds) {
-					steps += 1;
-				}
-				line_index = fold_info.end;
+	
+				// Otherwise go as far as we can
+				line_index += max_steps_in_area;
+				steps -= max_steps_in_area;
 			}
-			else
+	
+			// Handle going backwards
+			while (steps < 0)
 			{
-				if (line_index - steps >= fold_info.start) {
-					line_index = line_index - steps;
+				Line_Area fold_info = Folds::get_line_area(line_index, nearby_fold_index);
+	
+				if (line_index < 0) {
+					line_index += steps;
+					steps = 0;
 					break;
 				}
-				steps -= line_index - fold_info.start + 1;
-				line_index = fold_info.start - 1;
+	
+				// Step out of fold
+				if (fold_info.inside_fold) 
+				{
+					line_index = fold_info.interval.min - 1;
+					if (!inline_folds) { // Stepping over inline folds doesn't decrease step-count
+						steps += 1;
+					}
+					continue;
+				}
+	
+				// Check if we can finish traversal by staying inside the area
+				int max_steps_in_area = line_index - fold_info.interval.min + 1; // Taking max steps takes us to first line of next area
+				if (-steps <= max_steps_in_area) {
+					line_index += steps;
+					steps = 0;
+					break;
+				}
+	
+				// Otherwise go as far as we can
+				line_index -= max_steps_in_area;
+				steps += max_steps_in_area;
 			}
 		}
-
-		line_index = math_clamp(line_index, 0, tab.code->line_count - 1);
-		if (inline_folds) {
-			Fold_Info fold_info = Folds::get_fold_info(line_index, nearby_fold_index);
-			if (fold_info.inside_fold && fold_info.start != 0) {
-				line_index = fold_info.start - 1;
-			}
-		}
-		line_index = math_clamp(line_index, 0, tab.code->line_count - 1);
-	}
-
-	int visible_distance_to(int to_line_index)
-	{
-		int _prev_line = line_index;
-		int _prev_nearby = nearby_fold_index;
-		SCOPE_EXIT(nearby_fold_index = _prev_nearby; line_index = _prev_line;);
-
-		// Check current fold info
-		int distance = 0;
-		while (line_index != to_line_index)
+	
+		int visible_distance_to(int to_line_index)
 		{
-			Fold_Info info = Folds::get_fold_info(line_index, nearby_fold_index);
-			// Stop once we are in same 'area' as to_line_index
-			if (info.start <= to_line_index && info.end > to_line_index) {
-				if (info.inside_fold) {
-					break;
-				}
-				distance += math_absolute(to_line_index - line_index);
+			bool inline_folds = syntax_editor.show_folds_inline;
+			DynArray<Code_Fold>& folds = syntax_editor.open_tab().folds;
+	
+			int start = math_minimum(line_index, to_line_index);
+			int end   = math_maximum(line_index, to_line_index);
+			int real_distance = end - start;
+			ibox1 start_end_interval(start, end + 1);
+			for (int fold_index = Folds::find_fold_index_for_line(start); fold_index < folds.size; fold_index += 1)
+			{
+				Code_Fold& fold = folds[fold_index];
+	
+				// Skip fold if it isn't between start and end
+				if (!fold.interval.intersects(start_end_interval)) continue;
+				ibox1 intersection = fold.interval.make_intersection(start_end_interval);
+	
+				// Subtract folded lines from real count
+				real_distance -= intersection.length(); // Remove the whole intersection
+				real_distance += inline_folds ? 0 : 1; // Add one line if it's not an inline fold
+	
+				// Stop if we have already handled all folds
+				if (fold.interval.min > end) break;
+			}
+	
+			return real_distance * (to_line_index > line_index ? 1 : -1);
+		}
+	
+	    void move_to_fold_boundary(int dir, bool move_out_of_fold)
+	    {
+			Line_Area info = Folds::get_line_area(line_index, nearby_fold_index);
+			if (!info.inside_fold) return;
+	
+	        if (dir >= 0) {
+	            line_index = info.interval.max - 1 + (move_out_of_fold ? 1 : 0);
+	        }
+	        else {
+	            line_index = info.interval.min - (move_out_of_fold ? 1 : 0);
+	        }
+	    }
+	};
+};
+
+
+int line_index_move_while_empty(int line_index, int dir, bool move_on_empty, bool move_out_of_condition)
+{
+	int line_count = syntax_editor.open_tab().code->line_count;
+
+	auto line_meets_condition = [&](int line_index) -> bool
+	{
+		String text = line_index_get_text(line_index);
+		bool whitespace_only = true;
+		for (int i = 0; i < text.size; i++) {
+			if (text[i] != ' ') {
+				whitespace_only = false;
 				break;
 			}
-
-			// Otherwise move one fold up/down
-			int prev_index = line_index;
-			line_index = to_line_index < line_index ? info.start - 1 : info.end;
-			if (info.inside_fold) {
-				if (!(syntax_editor.show_folds_inline && info.start != 0 && to_line_index < _prev_line)) {
-					distance += 1;
-				}
-			}
-			else {
-				distance += math_absolute(prev_index - line_index);
-			}
 		}
+		bool result = whitespace_only;
+		if (!move_on_empty) {
+			result = !result;
+		}
+		return result;
+	};
 
-		return distance * (to_line_index > _prev_line ? 1 : -1);
-	}
+	if (!line_meets_condition(line_index)) return line_index;
 
-    void move_to_fold_boundary(int dir, bool move_out_of_fold)
+
+    while (true)
     {
-		Fold_Info info = Folds::get_fold_info(line_index, nearby_fold_index);
-		if (!info.inside_fold) return;
+        int next_line_index = line_index + dir;
+        if (next_line_index < 0 || next_line_index >= line_count) {
+            return line_index;
+        }
 
-        if (dir >= 0) {
-            line_index = info.end - 1 + (move_out_of_fold ? 1 : 0);
-        }
-        else {
-            line_index = info.start - (move_out_of_fold ? 1 : 0);
-        }
+		if (line_meets_condition(next_line_index)) {
+			line_index = next_line_index;
+		}
+		else {
+			return move_out_of_condition ? next_line_index : line_index;
+		}
     }
-};
+
+    panic("");
+    return line_index;
+}
 
 namespace Motions
 {
-    Source_Line* get_line(const Text_Index& pos) {
-        auto& editor = syntax_editor;
-        auto& tab = editor.tabs[editor.open_tab_index];
-        auto code = tab.code;
-
-        if (pos.line >= code->line_count || pos.line < 0) return nullptr;
-        auto line = source_code_get_line(code, pos.line);
-        if (pos.character > line->text.size || pos.character < 0) return nullptr;
-        return line;
-    }
-
-    // Advances horizontally in current line. Returns true if index has changed
-    bool move(Text_Index& pos, int value) {
-        auto line = get_line(pos);
-        if (line == nullptr) return false;
-        int prev = pos.character;
-        pos.character += value;
-        if (pos.character < 0) pos.character = 0;
-        if (pos.character > line->text.size) pos.character = line->text.size;
-        return prev != pos.character;
-    }
-
-    void move_forwards_over_line(Text_Index& pos)
-    {
-        auto& editor = syntax_editor;
-        auto& tab = editor.tabs[editor.open_tab_index];
-        auto code = tab.code;
-
-        auto line = get_line(pos);
-        if (line == nullptr) return;
-
-        if (pos.character < line->text.size) {
-            pos.character += 1;
-            return;
-        }
-
-        if (pos.line + 1 >= code->line_count) {
-            return;
-        }
-
-        pos.character = 0;
-        pos.line += 1;
-    }
-
-    void move_backwards_over_line(Text_Index& pos)
-    {
-        auto& editor = syntax_editor;
-        auto& tab = editor.tabs[editor.open_tab_index];
-        auto code = tab.code;
-
-        if (pos.character > 0) {
-            pos.character -= 1;
-            return;
-        }
-
-        if (pos.line == 0) return;
-        pos = text_index_make_line_end(code, pos.line - 1);
-    }
-
-    int move_while_condition(String text, int char_index, bool forward, char_test_fn condition, void* userdata, bool invert_condition, bool move_out_of_condition)
-    {
-        if (text.size == 0) return 0;
-        char_index = math_clamp(char_index, 0, text.size);
-        bool cond = condition(text.characters[char_index], condition);
-        if (invert_condition) {
-            cond = !cond;
-        }
-        if (!cond) return char_index;
-
-        const int dir = forward ? 1 : -1;
-        while (true)
-        {
-            int next_char_index = char_index + dir;
-            if (next_char_index < 0) {
-                return 0;
-            }
-            else if (next_char_index > text.size) {
-                return text.size;
-            }
-            char next_char = text[next_char_index];
-
-            bool cond = condition(next_char, userdata);
-            if (invert_condition) {
-                cond = !cond;
-            }
-            if (!cond) {
-                return move_out_of_condition ? next_char_index : char_index;
-            }
-            char_index = next_char_index;
-        }
-        return 0;
+    // Advances horizontally in current line
+    void move_horizontal(Text_Index& pos, int value) {
+		pos.character = math_maximum(0, pos.character + value);
     }
 
     char get_char(Text_Index& pos, int offset = 0, char invalid_char = '\0') {
-        Source_Line* line = get_line(pos);
-        if (line == nullptr) return invalid_char;
+        String text = line_index_get_text(pos.line);
         int p = pos.character + offset;
-        if (p < 0 || p >= line->text.size) return invalid_char;
-        return line->text.characters[p];
+        if (p < 0 || p >= text.size) return invalid_char;
+        return text.characters[p];
     }
 
-    // Returns true if a character was found that matched the test_fn
-    bool goto_next_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool forward = true, bool skip_current_char = false)
+    void move_while_in_set(Text_Index& pos, Char_Group group, bool forward = true, bool move_out_of = false)
     {
-        Source_Line* line = get_line(pos);
-        if (line == nullptr) return false;
+		String text = line_index_get_text(pos.line);
+		if (!group.contains(text.at(pos.character))) return;
 
         int dir = forward ? 1 : -1;
-        for (int i = pos.character + (skip_current_char ? dir : 0); i < line->text.size && i >= 0; i += dir)
-        {
-            char c = line->text.characters[i];
-            if (test_fn(c, userdata)) {
-                pos.character = i;
-                return true;
-            }
-        }
+		while (true)
+		{
+			int next_index = pos.character + dir;
+			if (next_index < 0 || next_index > text.size) return;
 
-        return false;
+			if (group.contains(text.at(next_index))) {
+				pos.character = next_index;
+			}
+			else 
+			{
+				if (move_out_of) {
+					pos.character = next_index;
+				}
+				return;
+			}
+		}
     }
 
-    bool move_while_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true)
+    Text_Range text_range_get_island(Text_Index pos, Char_Group group)
     {
-        Source_Line* line = get_line(pos);
-        if (line == nullptr) return false;
-
-        int dir = forward ? 1 : -1;
-        int last_valid = pos.character;
-        for (int i = last_valid; i < line->text.size && i >= 0; i += dir)
-        {
-            char c = line->text.characters[i];
-            bool result = test_fn(c, userdata);
-            if (invert_set) result = !result;
-            if (result) {
-                last_valid = i;
-            }
-            else {
-                break;
-            }
-        }
-
-        pos.character = last_valid;
-        return false;
-    }
-
-    void skip_in_set(Text_Index& pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false, bool forward = true)
-    {
-        Source_Line* line = get_line(pos);
-        if (line == nullptr) return;
-
-        int dir = forward ? 1 : -1;
-        int index = pos.character;
-        while (index >= 0 && index < line->text.size) {
-            char c = line->text.characters[index];
-            bool result = test_fn(c, userdata);
-            if (invert_set) result = !result;
-            if (!result) break;
-            index += dir;
-        }
-
-        pos.character = math_maximum(0, index);
-    }
-
-    Text_Range text_range_get_island(Text_Index pos, char_test_fn test_fn, void* userdata = nullptr, bool invert_set = false)
-    {
-        Text_Index start = pos;
-        move_while_in_set(start, test_fn, userdata, invert_set, false); // Go back to island start
-        Text_Index end = pos;
-        skip_in_set(end, test_fn, userdata, invert_set);
-        return text_range_make(start, end);
+		Text_Range result = text_range_make(pos, pos);
+        move_while_in_set(result.start, group, false, false);
+        move_while_in_set(result.end, group, true, true);
+        return result;
     }
 
     Text_Range text_range_get_word(Text_Index pos)
     {
-        auto line = get_line(pos);
-        if (line == nullptr) return text_range_make(pos, pos);
-        auto text = line->text;
+		Char_Group group_whitespace(Char_Group_Type::WHITESPACE);
+		Char_Group group_identifier(Char_Group_Type::IDENTIFIER);
+		Char_Group group_operator(Char_Group_Type::OPERATOR);
 
         // If char is whitespace, return the whole whitespace as the word
         char c = get_char(pos);
-        if (char_is_whitespace(c)) {
-            return text_range_get_island(pos, char_is_whitespace);
+        if (group_whitespace.contains(c)) {
+            return text_range_get_island(pos, group_whitespace);
         }
 
         // If we are on a identifier word
-        if (char_is_valid_identifier(c)) {
-            return text_range_get_island(pos, char_is_valid_identifier);
+        if (group_identifier.contains(c)) {
+            return text_range_get_island(pos, group_identifier);
         }
-        return text_range_get_island(pos, char_is_operator);
+        return text_range_get_island(pos, group_operator);
     }
 
 	Text_Range text_range_get_string_literal(Text_Index pos)
 	{
-        String text = source_code_get_line(syntax_editor.tabs[syntax_editor.open_tab_index].code, pos.line)->text;
+		String text = line_index_get_text(pos.line);
         int index = 0;
         bool inside_string = false;
         int string_start = -1;
@@ -1017,7 +1010,7 @@ namespace Motions
 
 	Text_Range token_range_to_text_range(Text_Index pos, ivec2 token_range, DynArray<Token> tokens)
 	{
-		auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+		auto code = syntax_editor.open_tab().code;
 		Text_Range range = text_range_make(pos, pos);
 		if (token_range.x != -1) 
 		{
@@ -1042,11 +1035,12 @@ namespace Motions
 
 namespace Parsing
 {
-    Movement movement_make(Movement_Type movement_type, int repeat_count, char search_char = '\0') {
+    Movement movement_make(Movement_Type movement_type, int repeat_count, char search_char = '\0', char search_char2 = '\0') {
         Movement result;
         result.type = movement_type;
         result.repeat_count = repeat_count;
         result.search_char = search_char;
+		result.search_char2 = search_char2;
         return result;
     }
 
@@ -1186,7 +1180,28 @@ namespace Parsing
         case 'l': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_RIGHT, repeat_count));
         case 'j': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_DOWN, repeat_count));
         case 'k': index += 1; return parse_result_success(movement_make(Movement_Type::MOVE_UP, repeat_count));
-        case '0': index += 1; return parse_result_success(movement_make(Movement_Type::TO_START_OF_LINE, repeat_count));
+		case '0': 
+		{
+			index += 1; 
+			return parse_result_success(
+				movement_make(
+					syntax_editor.input->key_down[(int)Key_Code::CTRL] ? 
+						Movement_Type::TO_START_OF_LINE : Movement_Type::TO_TEXT_START_OF_LINE,
+					repeat_count
+				)
+			);
+		}
+		case '\t': 
+		{
+			index += 1;
+			return parse_result_success(
+				movement_make(
+					syntax_editor.input->key_down[(int)Key_Code::SHIFT] ? 
+						Movement_Type::TAB_BACKWARDS : Movement_Type::TAB_FORWARDS,
+					repeat_count
+				)
+			);
+		}
         case '$': index += 1; return parse_result_success(movement_make(Movement_Type::TO_END_OF_LINE, repeat_count));
         case 'w': index += 1; return parse_result_success(movement_make(Movement_Type::NEXT_WORD, repeat_count));
         case 'W': index += 1; return parse_result_success(movement_make(Movement_Type::NEXT_SPACE, repeat_count));
@@ -1206,7 +1221,8 @@ namespace Parsing
         case 'f':
         case 'F':
         case 't':
-        case 'T': {
+        case 'T': 
+		{
             Movement_Type type;
             if (cmd.characters[index] == 'f') {
                 type = Movement_Type::SEARCH_FORWARDS_FOR;
@@ -1225,12 +1241,35 @@ namespace Parsing
                 panic("");
             }
 
+			if (syntax_editor.sneak_search) 
+			{
+				if (index + 2 >= cmd.size) {
+				    return parse_result_completable<Movement>();
+				}
+
+				auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1], cmd.characters[index + 2]));
+				index += 3;
+				return result;
+			}
+
             if (index + 1 >= cmd.size) {
                 return parse_result_completable<Movement>();
             }
 
             auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1]));
             index += 2;
+            return result;
+        }
+        case 's': 
+        case 'S': 
+		{
+            Movement_Type type = cmd.characters[index] == 's' ? Movement_Type::SNEAK_FORWARDS : Movement_Type::SNEAK_BACKWARDS;
+            if (index + 2 >= cmd.size) {
+                return parse_result_completable<Movement>();
+            }
+
+            auto result = parse_result_success(movement_make(type, repeat_count, cmd.characters[index + 1], cmd.characters[index + 2]));
+            index += 3;
             return result;
         }
 
@@ -1368,7 +1407,7 @@ namespace Parsing
             }
         }
         else if (msg.key_down && msg.character != -1) {
-            if (string_contains_character(characters_get_non_identifier_non_whitespace(), msg.character)) {
+            if (char_group_type_contains(msg.character, Char_Group_Type::OPERATOR)) {
                 input.type = Insert_Command_Type::DELIMITER_LETTER;
                 input.letter = msg.character;
             }
@@ -1454,7 +1493,7 @@ namespace Parsing
         case 'I':
             return parse_result_success(normal_mode_command_make_movement(
                 Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT, 1,
-                movement_make(Movement_Type::TO_START_OF_LINE, 1))
+                movement_make(Movement_Type::TO_TEXT_START_OF_LINE, 1))
             );
         case 'a':
             return parse_result_success(normal_mode_command_make_movement(
@@ -1590,10 +1629,60 @@ namespace Parsing
 
 namespace Text_Editing
 {
+	// Lines are added before the line-index
+	void add_lines(int line_index, int line_count);
+	void insert_text_in_line(Text_Index index, String str, bool with_particles);
+
+	Text_Index add_padding_to_index(Text_Index index, bool is_cursor, bool handle_spaces_as_well = true)
+	{
+		auto& tab = syntax_editor.open_tab();
+		auto code = tab.code;
+		history_start_complex_command(&tab.history);
+		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+
+		index.character = math_maximum(0, index.character);
+		if (index.line < 0) 
+		{
+			int line_count = -index.line;
+			Text_Editing::add_lines(0, line_count);
+			index.line = 0;
+			tab.cam_start += line_count;
+		}
+		else if (index.line >= code->line_count)
+		{
+			int line_count = index.line - code->line_count + 1;
+			Text_Editing::add_lines(code->line_count, line_count);
+		}
+
+		String text = line_index_get_text(index.line);
+		int insert_space_count = index.character - text.size;
+		if (syntax_editor.mode != Editor_Mode::INSERT && index.character > 0 && is_cursor) {
+			insert_space_count += 1;
+		}
+		if (insert_space_count > 0 && handle_spaces_as_well) 
+		{
+			auto checkpoint = syntax_editor.arena.make_checkpoint();
+			SCOPE_EXIT(checkpoint.rewind());
+			String str = string_create(&syntax_editor.arena);
+			for (int i = 0; i < insert_space_count; i++) {
+				str.append(' ');
+			}
+			Text_Editing::insert_text_in_line(text_index_make(index.line, text.size), str, true);
+		}
+
+		return index;
+	}
+
+	Text_Index add_padding_to_cursor(bool handle_spaces_as_well = true) {
+		auto& tab = syntax_editor.open_tab();
+		tab.cursor = add_padding_to_index(tab.cursor, true, handle_spaces_as_well);
+		return tab.cursor;
+	}
+
     void particles_add_in_range(Text_Range range, vec3 base_color)
     {
         auto& editor = syntax_editor;
-        auto& tab = editor.tabs[editor.open_tab_index];
+        auto& tab = editor.open_tab();
 
 		auto& display_lines = editor.display_lines;
 		if (display_lines.size == 0) return;
@@ -1608,13 +1697,13 @@ namespace Text_Editing
         for (int display_line_index = display_start; display_line_index < display_lines.size; display_line_index++)
         {
 			Display_Line& display_line = display_lines[display_line_index];
-            Source_Line* line = source_code_get_line(tab.code, display_line.line_index);
+			String line_text = line_index_get_text(display_line.line_index);
 			if (display_line.line_index < range.start.line) continue;
 			if (display_line.line_index > range.end.line) return;
     
 			// Figure out start and end in line
             int start = range.start.line == display_line.line_index ? range.start.character : 0;
-            int end = range.end.line == display_line.line_index ? range.end.character : line->text.size;
+            int end = range.end.line == display_line.line_index ? range.end.character : line_text.size;
             if (display_line.fold_info.inside_fold) {
 				start = 0;
 				end = 4;
@@ -1657,9 +1746,12 @@ namespace Text_Editing
 
     void insert_text_in_line(Text_Index index, String str, bool with_particles)
     {
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
+		history_start_complex_command(&tab.history);
+		SCOPE_EXIT(history_stop_complex_command(&tab.history));
 
 		// Insert text
+		index = add_padding_to_index(index, false);
         history_insert_text(&tab.history, index, str);
 
 		// Add particles
@@ -1674,7 +1766,14 @@ namespace Text_Editing
 
     void delete_text_in_line(Text_Index index, int char_end, bool with_particles)
     {
-		auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
+
+		// Check that range is inside code
+		if (index.line < 0 || index.line >= tab.code->line_count) return;
+		String text = line_index_get_text(index.line);
+		index.character = math_clamp(index.character, 0, text.size);
+		char_end = math_clamp(char_end, 0, text.size);
+		if (char_end <= index.character) return;
 
 		// Delete text
         history_delete_text(&tab.history, index, char_end);
@@ -1686,146 +1785,50 @@ namespace Text_Editing
         }
     }
 
-	void add_lines(int line_index, int line_count, int indentation) // Lines are added before this index
+	void add_lines(int line_index, int line_count) // Lines are added before this index
 	{
-		Editor_Tab* tab = &syntax_editor.tabs[syntax_editor.open_tab_index];
+		Editor_Tab& tab = syntax_editor.open_tab();
+		history_start_complex_command(&tab.history);
+		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+
+		if (line_index < 0 || line_index > tab.code->line_count) {
+			line_index = add_padding_to_index(text_index_make(line_index, 0), false, false).line;
+		}
 
 		// Add lines
-		{
-			auto checkpoint = syntax_editor.arena.make_checkpoint();
-			SCOPE_EXIT(checkpoint.rewind());
-			String indent_text = string_create(&syntax_editor.arena);
-			for (int i = 0; i < indentation; i++) {
-				indent_text.append("    ");
-			}
-			history_start_complex_command(&tab->history);
-			for (int i = 0; i < line_count; i++) {
-				history_insert_line_with_text(&tab->history, line_index, indent_text);
-			}
-			history_stop_complex_command(&tab->history);
-		}
-
-		// Update folds
-		for (int i = 0; i < tab->folds.size; i += 1)
-		{
-			auto& fold = tab->folds[i];
-			if (line_index < fold.start) {
-				fold.start += line_count;
-				fold.end   += line_count;
-			}
-			else if (line_index < fold.end) {
-				fold.end += line_count;
-			}
-		}
-
-		// Update jump indices
-		for (int i = 0; i < tab->jump_list.size; i += 1)
-		{
-			int& jump = tab->jump_list[i].line;
-			if (line_index <= jump) {
-				jump += line_count;
-			}
-		}
-
-		// Update breakpoints
-		for (int i = 0; i < tab->breakpoints.size; i += 1)
-		{
-			Line_Breakpoint& breakpoint = tab->breakpoints[i];
-			if (line_index <= breakpoint.line_number) {
-				breakpoint.line_number += line_count;
-			}
+		for (int i = 0; i < line_count; i++) {
+			history_insert_line(&tab.history, line_index);
 		}
 	}
 
 	void delete_lines(int line_index, int line_count, bool with_particles)
 	{
+        auto& editor = syntax_editor;
+		Editor_Tab& tab = editor.open_tab();
+		history_start_complex_command(&tab.history);
+		SCOPE_EXIT(history_stop_complex_command(&tab.history));
+
+		if (line_index < 0) {
+			line_count += line_index;
+			line_index = 0;
+		}
+		if (line_index + line_count >= tab.code->line_count) {
+			line_count = tab.code->line_count - line_index;
+		}
 		if (line_count <= 0) return;
 
-        auto& editor = syntax_editor;
-		Editor_Tab* tab = &editor.tabs[editor.open_tab_index];
-		history_start_complex_command(&tab->history);
-		for (int i = 0; i < line_count; i++) {
-			history_remove_line(&tab->history, line_index);
-		}
-		history_stop_complex_command(&tab->history);
-
-		// Add particles
+		// Add particles (Before so that we still have the text forms)
         if (with_particles) {
-            Text_Range range = text_range_make(text_index_make(line_index, 0), text_index_make_line_end(tab->code, line_index + line_count));
+            Text_Range range = text_range_make(text_index_make(line_index, 0), text_index_make_line_end(tab.code, line_index + line_count));
             particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
         }
 
-		// Update folds (Intersecting folds are deleted)
-		int insert_at = 0;
-		for (int i = 0; i < tab->folds.size; i += 1)
-		{
-			Code_Fold& fold = tab->folds[i];
-			if (line_index + line_count < fold.start) {
-				fold.start -= line_count;
-				fold.end -= line_count;
-			}
-
-			bool delete_fold = false;
-			int fold_start = fold.start;
-			if (syntax_editor.show_folds_inline && fold_start != 0) {
-				fold_start -= 1;
-			}
-			if (!(line_index + line_count < fold_start || line_index >= fold.end)) {
-				delete_fold = true;
-			}
-
-			if (delete_fold) {
-				continue;
-			}
-
-			tab->folds[insert_at] = fold;
-			insert_at += 1;
+		// Delete lines
+		for (int i = 0; i < line_count; i++) {
+			history_remove_line(&tab.history, line_index);
 		}
-		tab->folds.size = insert_at;
-
-		// Update jump list
-		insert_at = 0;
-		for (int i = 0; i < tab->jump_list.size; i++)
-		{
-			int& jump = tab->jump_list[i].line;
-			if (line_index + line_count < jump) {
-				jump -= line_count;
-			}
-			else if (line_index <= jump) { // Remove if deleted
-				continue;
-			}
-
-			// Remove if this jump is same as previous jump
-			if (insert_at > 0 && tab->jump_list[insert_at - 1].line == jump) {
-				continue;
-			}
-
-			tab->jump_list[insert_at] = tab->jump_list[i];
-			insert_at += 1;
-		}
-		tab->jump_list.size = insert_at;
-
-		// Update breakpoints
-		insert_at = 0;
-		for (int i = 0; i < tab->breakpoints.size; i += 1)
-		{
-			Line_Breakpoint& breakpoint = tab->breakpoints[i];
-
-			if (line_index + line_count < breakpoint.line_number) {
-				breakpoint.line_number -= line_count;
-			}
-			else if (line_index <= breakpoint.line_number) { // Fold and delete intersect
-				continue;
-			}
-
-			tab->breakpoints[insert_at] = breakpoint;
-			insert_at += 1;
-		}
-		tab->breakpoints.size = insert_at;
 	}
 		
-
-
     void insert_char(Text_Index index, char c, bool with_particles) 
     {
 		char buffer[2] = { c, '\0' };
@@ -1840,24 +1843,47 @@ namespace Text_Editing
     void delete_text_range(Text_Range range, bool is_line_motion, bool with_particles)
     {
         auto& editor = syntax_editor;
-        auto& tab = editor.tabs[editor.open_tab_index];
+        auto& tab = syntax_editor.open_tab();
         auto code = tab.code;
         auto history = &tab.history;
     
 		// Add particles
-        if (is_line_motion) {
+        if (is_line_motion) { 
             range.start.character = 0;
-            range.end = text_index_make_line_end(code, range.end.line);
+			range.end = text_index_make(range.end.line, line_index_get_text(range.end.line).size);
         }
         if (with_particles) {
             particles_add_in_range(range, vec3(0.8f, 0.2f, 0.2f));
         }
 
-		// Handle special cases
+		// Handle line motion
         if (is_line_motion) {
 			delete_lines(range.start.line, range.end.line - range.start.line + 1, false);
             return;
         }
+
+		// Clamp text-range to valid code
+		{
+			// Range start
+			if (range.start.line < 0) {
+				range.start = text_index_make(0, 0);
+			}
+			else if (range.start.line >= code->line_count) {
+				return;
+			}
+			String text = line_index_get_text(range.start.line);
+			range.start.character = math_clamp(range.start.character, 0, text.size);
+
+			// Range end
+			if (range.end.line < 0) {
+				return;
+			}
+			else if (range.end.line >= code->line_count) {
+				range.end = text_index_make(code->line_count - 1, line_index_get_text(code->line_count - 1).size);
+			}
+			text = line_index_get_text(range.end.line);
+			range.end.character = math_clamp(range.end.character, 0, text.size);
+		}
     
         // Handle single line case
         if (range.start.line == range.end.line) {
@@ -1869,21 +1895,158 @@ namespace Text_Editing
         SCOPE_EXIT(history_stop_complex_command(history));
     
         // Delete text in first line
-        auto line = Motions::get_line(range.start);
-        auto end_line = Motions::get_line(range.end);
-        if (end_line == nullptr || line == nullptr) return;
-        delete_text_in_line(range.start, line->text.size, false);
+        delete_text_in_line(range.start, line_index_get_text(range.start.line).size, false);
     
         // Append remaining text of last-line into first line
-        String remainder = string_create_substring_static(&end_line->text, range.end.character, end_line->text.size);
+		String end_line_text = line_index_get_text(range.end.line);
+        String remainder = string_create_substring_static(&end_line_text, range.end.character, end_line_text.size);
         insert_text_in_line(range.start, remainder, false);
     
         // Delete all lines inbetween
 		delete_lines(range.start.line + 1, range.end.line - range.start.line, false);
     }
 
+	void update_child_folds_recursive(Editor_Tab* editor_tab, int child_fold_index, int line_offset)
+	{
+		if (child_fold_index == -1) return;
 
+		auto& folds = editor_tab->child_folds;
+		int prev_child_index = -1;
+		while (child_fold_index != -1)
+		{
+			Code_Fold& fold = folds[child_fold_index];
+			SCOPE_EXIT(
+				prev_child_index = child_fold_index;
+				child_fold_index = fold.next_index;
+			);
 
+			fold.interval.min += line_offset;
+			fold.interval.max += line_offset;
+			update_child_folds_recursive(editor_tab, fold.child_folds_start, line_offset);
+		}
+	}
+
+	void update_editor_data_after_line_insert(Editor_Tab* editor_tab, int line_index)
+	{
+		Editor_Tab& tab = *editor_tab;
+
+		// Update folds
+		for (int i = 0; i < tab.folds.size; i += 1)
+		{
+			auto& fold = tab.folds[i];
+			if (line_index <= fold.interval.min) 
+			{
+				fold.interval.min += 1;
+				fold.interval.max += 1;
+				update_child_folds_recursive(editor_tab, fold.child_folds_start, 1);
+			}
+			else if (line_index < fold.interval.max) 
+			{
+				Folds::remove_fold(&tab, i, false);
+				i -= 1;
+				continue;
+			}
+		}
+
+		// Update jump indices
+		for (int i = 0; i < tab.jump_list.size; i += 1)
+		{
+			int& jump = tab.jump_list[i].line;
+			if (line_index <= jump) {
+				jump += 1;
+			}
+		}
+
+		// Update breakpoints
+		for (int i = 0; i < tab.breakpoints.size; i += 1)
+		{
+			Line_Breakpoint& breakpoint = tab.breakpoints[i];
+			if (line_index <= breakpoint.line_number) {
+				breakpoint.line_number += 1;
+			}
+		}
+	}
+
+	void update_editor_data_after_line_delete(Editor_Tab* editor_tab, int line_index)
+	{
+		Editor_Tab& tab = *editor_tab;
+
+		// Handle folds
+		DynArray<Code_Fold>& folds = tab.folds;
+		for (int i = 0; i < folds.size; i += 1)
+		{
+			Code_Fold& fold = folds[i];
+			if (line_index < fold.interval.min) 
+			{
+				fold.interval.min -= 1;
+				fold.interval.max -= 1;
+
+				int child_fold = fold.child_folds_start;
+				update_child_folds_recursive(editor_tab, fold.child_folds_start, 1);
+
+				// Check if fold merged with previous fold
+				if (i > 0)
+				{
+					Code_Fold& prev = folds[i - 1];
+					if (prev.interval.max >= fold.interval.min) {
+						Folds::remove_fold(&tab, i, false);
+						i = i - 1;
+						continue;
+					}
+				}
+			}
+			else if (fold.interval.contains(line_index))
+			{
+				Folds::remove_fold(&tab, i, false);
+				i -= 1;
+				continue;
+			}
+		}
+
+		// Update jump list
+		int insert_at = 0;
+		for (int i = 0; i < tab.jump_list.size; i++)
+		{
+			int& jump = tab.jump_list[i].line;
+			if (line_index < jump) {
+				jump -= 1;
+			}
+			else if (line_index <= jump) { // Remove if deleted
+				continue;
+			}
+
+			// Remove if this jump is same as previous jump
+			if (insert_at > 0 && tab.jump_list[insert_at - 1].line == jump) {
+				continue;
+			}
+
+			tab.jump_list[insert_at] = tab.jump_list[i];
+			insert_at += 1;
+		}
+		tab.jump_list.size = insert_at;
+
+		// Update breakpoints
+		insert_at = 0;
+		for (int i = 0; i < tab.breakpoints.size; i += 1)
+		{
+			Line_Breakpoint& breakpoint = tab.breakpoints[i];
+
+			if (line_index < breakpoint.line_number) {
+				breakpoint.line_number -= 1;
+			}
+			else if (line_index <= breakpoint.line_number) { // Fold and delete intersect
+				continue;
+			}
+
+			tab.breakpoints[insert_at] = breakpoint;
+			insert_at += 1;
+		}
+		tab.breakpoints.size = insert_at;
+	}
+}
+
+namespace Auto_Format
+{
     void token_expects_space_before_or_after (
         DynArray<Token>& tokens, int token_index, bool& out_space_before, bool& out_space_after, bool& out_ignore_lex_changes)
 	{
@@ -1922,6 +2085,11 @@ namespace Text_Editing
 			out_space_before = false;
 			return;
 		}
+		case Token_Type::IF: {
+			out_space_after = true;
+			out_space_before = !test_token(Token_Type::DOT, -1);
+			return;
+		}
 
 		// Keywords
 		case Token_Type::BAKE:
@@ -1929,6 +2097,20 @@ namespace Text_Editing
 		case Token_Type::GET_OVERLOAD:
 		case Token_Type::GET_OVERLOAD_POLY:
 		{
+			out_space_before = false;
+			break;
+		}
+
+		case Token_Type::OR:
+		case Token_Type::AND:
+		{
+			out_space_after = true;
+			out_space_before = true;
+			break;
+		}
+		case Token_Type::NOT:
+		{
+			out_space_after = true;
 			out_space_before = false;
 			break;
 		}
@@ -1946,8 +2128,6 @@ namespace Text_Editing
 		case Token_Type::NOT_EQUALS:
 		case Token_Type::POINTER_EQUALS:
 		case Token_Type::POINTER_NOT_EQUALS:
-		case Token_Type::AND:
-		case Token_Type::OR:
 		case Token_Type::FUNCTION_ARROW:
 		case Token_Type::ASSIGN_ADD:
 		case Token_Type::ASSIGN_SUB:
@@ -1963,14 +2143,10 @@ namespace Text_Editing
 		// No spaces before or after
 		case Token_Type::DOT:
 		case Token_Type::TILDE:
-		case Token_Type::NOT:
 		case Token_Type::APOSTROPHE:
 		case Token_Type::UNINITIALIZED:
-		case Token_Type::QUESTION_MARK:
-		case Token_Type::OPTIONAL_POINTER:
 		case Token_Type::ADDRESS_OF:
 		case Token_Type::DEREFERENCE:
-		case Token_Type::OPTIONAL_DEREFERENCE:
 		case Token_Type::POSTFIX_CALL_ARROW:
 		case Token_Type::DOLLAR: {
 			out_space_after = false;
@@ -2092,11 +2268,12 @@ namespace Text_Editing
 
 	void auto_format_line(int tab_index, int line_index)
 	{
-		if (line_is_empty_or_comment(line_index)) return;
-
 		auto& editor = syntax_editor;
-		auto& tab = editor.tabs[tab_index];
+		auto& tab = syntax_editor.open_tab();
 		auto code = tab.code;
+
+		if (line_index < 0 || line_index > code->line_count) return;
+		if (line_is_empty_or_comment(line_index)) return;
 		Source_Line* line = source_code_get_line(code, line_index);
 
 		Arena* tmp_arena = &editor.arena;
@@ -2106,17 +2283,18 @@ namespace Text_Editing
 		auto& text = line->text;
 		int& cursor = tab.cursor.character;
 		int indentation = line_get_whitespace_indentation(line_index);
+		Char_Group space_critical = Char_Group(Char_Group_Type::SPACE_CRITICAL);
 
 		// 1. Create trimmed string where non-essential spaces are removed
 		String trimmed_text = string_create(tmp_arena, text.size);
 		int cursor_in_trimmed = cursor;
 		{
 			for (int i = 0; i < indentation; i++) {
-				string_append_character(&trimmed_text, '    ');
+				string_append(&trimmed_text, "    ");
 			}
 			for (int i = indentation * 4; i < text.size; i++)
 			{
-				char prev = i - 1 >= 0 ? text[i - 1] : '\0';
+				char prev = trimmed_text.size > 0 ? trimmed_text[trimmed_text.size-1] : '\0';
 				char c = text[i];
 				char next = i + 1 < text.size ? text[i + 1] : '\0';
 
@@ -2153,7 +2331,7 @@ namespace Text_Editing
 				else if (c == ' ')
 				{
 					remove = true;
-					if (char_is_space_critical(prev) && char_is_space_critical(next)) {
+					if (space_critical.contains(prev) && space_critical.contains(next)) {
 						remove = false;
 					}
 					// Remove if we are still on start of line
@@ -2179,7 +2357,7 @@ namespace Text_Editing
 			bool space_after  = string_test_char(text, cursor, ' ');
 			bool space_before = string_test_char(text, cursor - 1, ' ');
 			if (space_after && !string_test_char(trimmed_text, cursor_in_trimmed, ' ')) {
-				string_insert_character_before(&trimmed_text, ' ', cursor_in_trimmed + 1);
+				string_insert_character_before(&trimmed_text, ' ', cursor_in_trimmed);
 			}
 			if (space_before && cursor_in_trimmed > 0 && !string_test_char(trimmed_text, cursor_in_trimmed - 1, ' ')) {
 				string_insert_character_before(&trimmed_text, ' ', cursor_in_trimmed);
@@ -2303,11 +2481,11 @@ namespace Text_Editing
 
 
 // LINE INFOS
-bool line_is_empty_or_comment(Source_Line* line)
+bool line_is_empty_or_comment(String text)
 {
-	for (int i = 0; i < line->text.size; i++) {
-		char c = line->text[i];
-		if (c == '/' && i + 1 < line->text.size && line->text[i + 1] == '/') {
+	for (int i = 0; i < text.size; i++) {
+		char c = text[i];
+		if (c == '/' && i + 1 < text.size && text[i + 1] == '/') {
 			return true;
 		}
 		if (!char_is_whitespace(c)) {
@@ -2317,22 +2495,31 @@ bool line_is_empty_or_comment(Source_Line* line)
 	return true;
 }
 
-int line_is_empty_or_comment(int line_index)  {
-	return line_is_empty_or_comment(source_code_get_line(syntax_editor.tabs[syntax_editor.open_tab_index].code, line_index));
+bool line_is_empty_or_comment(Source_Line* line)
+{
+	return line_is_empty_or_comment(line->text);
 }
 
-int line_count_leading_spaces(Source_Line* line) 
+int line_is_empty_or_comment(int line_index)  {
+	return line_is_empty_or_comment(line_index_get_text(line_index));
+}
+
+int line_count_leading_spaces(String text)
 {
-	int space_count = 0;
 	int index = 0;
-	while (index < line->text.size && line->text[index] == ' ') {
+	while (index < text.size && text[index] == ' ') {
 		index += 1;
 	}
 	return index;
 }
 
+int line_count_leading_spaces(Source_Line* line) 
+{
+	return line_count_leading_spaces(line->text);
+}
+
 int line_count_leading_spaces(int line_index) {
-	return line_count_leading_spaces(source_code_get_line(syntax_editor.tabs[syntax_editor.open_tab_index].code, line_index));
+	return line_count_leading_spaces(line_index_get_text(line_index));
 }
 
 int line_get_whitespace_indentation(Source_Line* line) {
@@ -2340,101 +2527,67 @@ int line_get_whitespace_indentation(Source_Line* line) {
 }
 
 int line_get_whitespace_indentation(int line_index)  {
-	return line_get_whitespace_indentation(source_code_get_line(syntax_editor.tabs[syntax_editor.open_tab_index].code, line_index));
+	return line_count_leading_spaces(line_index_get_text(line_index)) / 4;
 }
 
 int line_get_logical_indentation_ignore_folds(int line_index)
 {
-	auto& folds = syntax_editor.tabs[syntax_editor.open_tab_index].folds;
-	auto& code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+	auto& folds = syntax_editor.open_tab().folds;
+	auto& code = syntax_editor.open_tab().code;
 
-	Source_Line* source_line = source_code_get_line(code, line_index);
-
-	if (!line_is_empty_or_comment(source_line)) {
-		return line_get_whitespace_indentation(source_line);
+	if (!line_is_empty_or_comment(line_index)) {
+		return line_get_whitespace_indentation(line_index);
 	}
 	else if (line_index == 0) {
 		return 0;
 	}
 
-	// Otherwise line is empty and not the first line
-	// int previous_indentation = 0;
-	// for (int i = line_index - 1; i >= 0; i -= 1)
-	// {
-	// 	Source_Line* line = source_code_get_line(code, i);
-	// 	if (!line_is_empty_or_comment(line)) {
-	// 		previous_indentation = line->indentation;
-	// 		break;
-	// 	}
-	// }
 	int next_indentation = 0;
 	for (int i = line_index + 1; i < code->line_count; i += 1)
 	{
-		Source_Line* line = source_code_get_line(code, i);
-		if (!line_is_empty_or_comment(line)) {
-			next_indentation = line_get_whitespace_indentation(line);
+		if (!line_is_empty_or_comment(i)) {
+			next_indentation = line_get_whitespace_indentation(i);
 			break;
 		}
 	}
 
 	// Return result based on prev/next indentation
 	return next_indentation;
-	// return math_minimum(previous_indentation, next_indentation);
 }
 
 int line_get_logical_indentation_with_folds(int line_index, int& nearby_fold_index)
 {
-	auto& folds = syntax_editor.tabs[syntax_editor.open_tab_index].folds;
-	auto& code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
+	auto& folds = syntax_editor.open_tab().folds;
+	auto& code = syntax_editor.open_tab().code;
 
-	Fold_Info fold_info = Folds::get_fold_info(line_index, nearby_fold_index);
-	Source_Line* source_line = source_code_get_line(code, line_index);
+	Line_Area fold_info = Folds::get_line_area(line_index, nearby_fold_index);
 
 	if (fold_info.inside_fold) {
 		return folds[fold_info.fold_index].indentation;
 	}
-	else if (!line_is_empty_or_comment(source_line)) {
-		return line_get_whitespace_indentation(source_line);
+	else if (!line_is_empty_or_comment(line_index)) {
+		return line_get_whitespace_indentation(line_index);
 	}
 	else if (line_index == 0) {
 		return 0;
 	}
 
-	// Otherwise line is empty and not the first line
-	// int previous_indentation = 0;
-	// for (int i = line_index - 1; i >= 0; i -= 1)
-	// {
-	// 	Source_Line* line = source_code_get_line(code, i);
-	// 	Fold_Info fold_info = Folds::get_fold_info(i, nearby_fold_index);
-
-	// 	if (fold_info.inside_fold) {
-	// 		previous_indentation = folds[fold_info.fold_index].indentation;
-	// 		break;
-	// 	}
-	// 	else if (!line_is_empty_or_comment(line)) {
-	// 		previous_indentation = line->indentation;
-	// 		break;
-	// 	}
-	// }
 	int next_indentation = 0;
 	for (int i = line_index + 1; i < code->line_count; i += 1)
 	{
-		Source_Line* line = source_code_get_line(code, i);
-		Fold_Info fold_info = Folds::get_fold_info(i, nearby_fold_index);
-
+		Line_Area fold_info = Folds::get_line_area(i, nearby_fold_index);
 		if (fold_info.inside_fold) {
 			next_indentation = folds[fold_info.fold_index].indentation;
 			break;
 		}
-		else if (!line_is_empty_or_comment(line)) {
-			next_indentation = line_get_whitespace_indentation(line);
+		else if (!line_is_empty_or_comment(i)) {
+			next_indentation = line_get_whitespace_indentation(i);
 			break;
 		}
 	}
 
 	// Return result based on prev/next indentation
 	return next_indentation;
-	// return math_minimum(previous_indentation, next_indentation);
 }
 
 
@@ -2490,7 +2643,7 @@ int compilation_unit_find_tab_index(Compilation_Unit* unit)
 	auto& tabs = syntax_editor.tabs;
 	for (int i = 0; i < tabs.size; i++)
 	{
-		Editor_Tab* tab = &tabs[i];
+		Editor_Tab* tab = tabs[i];
 		if (string_equals(&unit->filepath, &tab->filepath)) {
 			return i;
 		}
@@ -2511,7 +2664,7 @@ Compilation_Unit* tab_to_compilation_unit(Editor_Tab* tab)
 }
 
 Compilation_Unit* tab_to_compilation_unit(int tab_index) {
-	return tab_to_compilation_unit(&syntax_editor.tabs[tab_index]);
+	return tab_to_compilation_unit(syntax_editor.tabs[tab_index]);
 }
 
 // Returns new tab index (Or current tab if file cannot be loaded)
@@ -2521,8 +2674,8 @@ int syntax_editor_add_tab(String file_path)
 
 	// Check if file is already open in another tab
 	for (int i = 0; i < editor.tabs.size; i++) {
-		auto& tab = editor.tabs[i];
-		if (string_equals(&file_path, &tab.filepath)) return i;
+		Editor_Tab* tab = editor.tabs[i];
+		if (string_equals(&file_path, &tab->filepath)) return i;
 	}
 
 	// Return current tab if file cannot be loaded
@@ -2531,64 +2684,42 @@ int syntax_editor_add_tab(String file_path)
 	}
 
 	// Create new tab
-	Editor_Tab tab;
-	tab.filepath = string_copy(file_path);
-	tab.code = source_code_load_from_file(tab.filepath);
+	Editor_Tab* tab = new Editor_Tab;
+	tab->filepath = string_copy(file_path);
+	tab->code = source_code_load_from_file(tab->filepath);
 
-	tab.requires_recompile = true;
-	tab.history = code_history_create(tab.code);
-	tab.folds = dynamic_array_create<Code_Fold>();
-	tab.last_code_info_synch = history_get_timestamp(&tab.history);
-	tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
-	tab.last_code_completion_info_index = -1;
-	tab.last_render_timestamp = history_get_timestamp(&tab.history);
-	tab.last_code_completion_query_pos = text_index_make(-1, -1);
-	tab.last_render_cursor_pos = text_index_make(0, 0);
-	tab.cursor = text_index_make(0, 0);
-	tab.last_line_x_pos = 0;
-	tab.cam_start = 0;
-	tab.breakpoints = dynamic_array_create<Line_Breakpoint>();
-	tab.last_jump_index = -1;
-	tab.jump_list = dynamic_array_create<Text_Index>();
+	tab->requires_recompile = true;
+	tab->history = code_history_create(tab);
+	tab->last_code_info_synch = history_get_timestamp(&tab->history);
+	tab->last_compiler_synchronized = history_get_timestamp(&tab->history);
+	tab->last_code_completion_info_index = -1;
+	tab->last_render_timestamp = history_get_timestamp(&tab->history);
+	tab->last_code_completion_query_pos = text_index_make(-1, -1);
+	tab->last_render_cursor_pos = text_index_make(0, 0);
+	tab->cursor = text_index_make(0, 0);
+	tab->move_cursor_to_last_char_on_vertical_movement = false;
+	tab->cam_start = 0;
+	tab->last_jump_index = -1;
+
+	tab->arena = Arena::create();
+	tab->folds = DynArray<Code_Fold>::create(&tab->arena);
+	tab->next_free_child_fold = -1;
+	tab->child_folds = DynArray<Code_Fold>::create(&tab->arena);
+
+	tab->breakpoints = DynArray<Line_Breakpoint>::create(&tab->arena);
+	tab->jump_list = DynArray<Text_Index>::create(&tab->arena);
+
 	dynamic_array_push_back(&syntax_editor.tabs, tab);
-
 	return syntax_editor.tabs.size - 1;
 }
 
 void editor_tab_destroy(Editor_Tab* tab) 
 {
 	code_history_destroy(&tab->history);
-	dynamic_array_destroy(&tab->folds);
-	dynamic_array_destroy(&tab->jump_list);
-	dynamic_array_destroy(&tab->breakpoints);
+	tab->arena.destroy();
 	source_code_destroy(tab->code);
 	string_destroy(&tab->filepath);
-}
-
-void syntax_editor_add_fold(int line_start, int line_end, int indentation)
-{
-	auto& tab = syntax_editor.tabs[syntax_editor.open_tab_index];
-	auto& folds = tab.folds;
-
-	// Find insertion index
-	int i = 0;
-	for (i = 0; i < folds.size; i++) {
-		auto& fold = folds[i];
-		if (line_start < fold.start) {
-			if (line_end >= fold.start) {
-				assert(line_end >= fold.end, "Folds should not overlap");
-			}
-			break;
-		}
-		else if (line_start == fold.start) {
-			if (line_end == fold.end) return; // Fold already exists
-			if (line_end > fold.end) {
-				break;
-			}
-		}
-	}
-
-	dynamic_array_insert_ordered(&folds, code_fold_make(line_start, line_end, indentation), i);
+	delete tab;
 }
 
 struct Comparator_Compiler_Error
@@ -2636,7 +2767,6 @@ void syntax_editor_switch_tab(int new_tab_index)
 	if (new_tab_index < 0 || new_tab_index >= editor.tabs.size) return;
 
 	editor.open_tab_index = new_tab_index;
-	auto& tab = editor.tabs[editor.open_tab_index];
 	// Re-Sort errors since sorting depends on open tab
 	sort_error_indices();
 }
@@ -2649,8 +2779,8 @@ void syntax_editor_close_tab(int tab_index, bool force_close = false)
 
 	syntax_editor_save_text_file();
 
-	Editor_Tab* tab = &editor.tabs[tab_index];
-	editor_tab_destroy(&editor.tabs[tab_index]);
+	Editor_Tab* tab = editor.tabs[tab_index];
+	editor_tab_destroy(editor.tabs[tab_index]);
 	dynamic_array_remove_ordered(&editor.tabs, tab_index);
 
 	editor.open_tab_index = math_minimum(editor.tabs.size - 1, editor.open_tab_index);
@@ -2719,6 +2849,7 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.mode = Editor_Mode::NORMAL;
 
 	syntax_editor.last_search_char = '\0';
+	syntax_editor.last_search_char2 = '\0';
 	syntax_editor.last_search_was_forward = false;
 	syntax_editor.last_search_was_to = false;
 
@@ -2759,6 +2890,8 @@ void syntax_editor_initialize(Text_Renderer* text_renderer, Renderer_2D* rendere
 	syntax_editor.auto_format_during_edits = true;
 	syntax_editor.show_folds_inline = true;
 	syntax_editor.auto_insert_parenthesis = true;
+	syntax_editor.show_leading_spaces = false;
+	syntax_editor.sneak_search = true;
 }
 
 void syntax_editor_destroy()
@@ -2788,7 +2921,9 @@ void syntax_editor_destroy()
 	dynamic_array_destroy(&editor.last_insert_commands);
 	string_destroy(&editor.last_recorded_code_completion);
 
-	dynamic_array_for_each(editor.tabs, editor_tab_destroy);
+	for (int i = 0; i < editor.tabs.size; i++) {
+		editor_tab_destroy(editor.tabs[i]);
+	}
 	dynamic_array_destroy(&editor.tabs);
 
 	for (int i = 0; i < editor.watch_values.size; i++) {
@@ -2811,11 +2946,11 @@ void syntax_editor_save_text_file()
 	auto& editor = syntax_editor;
 	for (int i = 0; i < editor.tabs.size; i++)
 	{
-		auto& tab = editor.tabs[i];
+		Editor_Tab* tab = editor.tabs[i];
 		String whole_text = string_create(256);
 		SCOPE_EXIT(string_destroy(&whole_text));
-		source_code_append_to_string(tab.code, &whole_text);
-		auto path = tab.filepath;
+		source_code_append_to_string(tab->code, &whole_text);
+		auto path = tab->filepath;
 		auto success = file_io_write_file(path.characters, array_create_static((byte*)whole_text.characters, whole_text.size));
 		if (!success) {
 			logg("Saving file failed for path \"%s\"\n", path.characters);
@@ -2867,12 +3002,12 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 
 	// Check if code has changed
 	int compile_tab_index = editor.main_tab_index == -1 ? editor.open_tab_index : editor.main_tab_index;
-	Editor_Tab& main_tab = syntax_editor.tabs[compile_tab_index];
+	Editor_Tab& main_tab = *syntax_editor.tabs[compile_tab_index];
 	bool should_compile = true;
 	{
 		bool code_has_changed = false;
 		for (int i = 0; i < editor.tabs.size; i++) {
-			auto& tab = editor.tabs[i];
+			auto& tab = *editor.tabs[i];
 			if (tab.history.current != tab.last_compiler_synchronized.node_index || tab.requires_recompile) {
 				code_has_changed = true;
 			}
@@ -2968,7 +3103,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		Compilation_Data* compilation_data = editor.compiler_thread_data.compilation_data;
 		for (int i = 0; i < editor.tabs.size; i++)
 		{
-			auto& tab = editor.tabs[i];
+			Editor_Tab& tab = *editor.tabs[i];
 
 			Compilation_Unit* unit = compilation_data_add_compilation_unit_unique(compilation_data, tab.filepath, false, false);
 			if (i == compile_tab_index) {
@@ -2995,7 +3130,7 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				SCOPE_EXIT(dynamic_array_destroy(&changes));
 				history_get_changes_between(&tab.history, tab.last_compiler_synchronized, now, &changes);
 				for (int i = 0; i < changes.size; i++) {
-					code_change_apply(unit->code, &changes[i], true); // Note: This does not go through history
+					code_change_apply(unit->code, &changes[i], true, nullptr); // Note: This does not go through history
 				}
 
 				tab.last_compiler_synchronized = history_get_timestamp(&tab.history);
@@ -3008,7 +3143,6 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 				Source_Code* swap = tab.code;
 				tab.code = unit->code;
 				unit->code = swap;
-				tab.history.code = tab.code;
 			}
 		}
 	}
@@ -3041,45 +3175,11 @@ void syntax_editor_wait_for_newest_compiler_info(bool build_code)
 	}
 }
 
-void syntax_editor_save_state(String file_path)
-{
-	auto& editor = syntax_editor;
-
-	syntax_editor_save_text_file();
-
-	String output = string_create();
-	SCOPE_EXIT(string_destroy(&output));
-	string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
-	string_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
-
-	for (int i = 0; i < editor.tabs.size; i++)
-	{
-		auto& tab = editor.tabs[i];
-		string_append_formated(&output, "tab=%s\n", tab.filepath.characters);
-		string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
-		string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
-		string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
-		for (int j = 0; j < tab.folds.size; j++) {
-			auto& fold = tab.folds[j];
-			string_append_formated(&output, "fold=%d;%d;%d\n", fold.start, fold.end, fold.indentation);
-		}
-		for (int j = 0; j < tab.breakpoints.size; j++) {
-			auto& bp = tab.breakpoints[j];
-			string_append_formated(&output, "breakpoint=%d\n", bp.line_number);
-		}
-	}
-	for (int i = 0; i < editor.watch_values.size; i++) {
-		string_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
-	}
-
-	file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
-}
-
 // Returns true if breakpoint was removed
 bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 {
 	if (tab_index < 0 || tab_index >= syntax_editor.tabs.size) return false;
-	auto& tab = syntax_editor.tabs[tab_index];
+	auto& tab = *syntax_editor.tabs[tab_index];
 	if (line_index < 0 || line_index >= tab.code->line_count) return false;
 
 	auto& breakpoints = tab.breakpoints;
@@ -3098,7 +3198,7 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 		if (bp.src_breakpoint != nullptr && debugger_running) {
 			debugger_remove_source_breakpoint(syntax_editor.debugger, bp.src_breakpoint);
 		}
-		dynamic_array_swap_remove(&breakpoints, index);
+		breakpoints.swap_remove(index);
 		return true;
 	}
 
@@ -3109,9 +3209,43 @@ bool syntax_editor_toggle_line_breakpoint(int tab_index, int line_index)
 	if (debugger_running) {
 		bp.src_breakpoint = debugger_add_source_breakpoint(syntax_editor.debugger, bp.line_number, tab_to_compilation_unit(tab_index));
 	}
-	dynamic_array_push_back(&breakpoints, bp);
+	breakpoints.push_back(bp);
 
 	return false;
+}
+
+void syntax_editor_save_state(String file_path)
+{
+	auto& editor = syntax_editor;
+
+	syntax_editor_save_text_file();
+
+	String output = string_create();
+	SCOPE_EXIT(string_destroy(&output));
+	string_append_formated(&output, "open_tab=%d\n", editor.open_tab_index);
+	string_append_formated(&output, "main_tab=%d\n", editor.main_tab_index);
+
+	for (int i = 0; i < editor.tabs.size; i++)
+	{
+		auto& tab = *editor.tabs[i];
+		string_append_formated(&output, "tab=%s\n", tab.filepath.characters);
+		string_append_formated(&output, "cursor_line=%d\n", tab.cursor.line);
+		string_append_formated(&output, "cursor_char=%d\n", tab.cursor.character);
+		string_append_formated(&output, "cam_start=%d\n", tab.cam_start);
+		for (int j = 0; j < tab.folds.size; j++) {
+			auto& fold = tab.folds[j];
+			string_append_formated(&output, "fold=%d;%d;%d\n", fold.interval.min, fold.interval.max, fold.indentation);
+		}
+		for (int j = 0; j < tab.breakpoints.size; j++) {
+			auto& bp = tab.breakpoints[j];
+			string_append_formated(&output, "breakpoint=%d\n", bp.line_number);
+		}
+	}
+	for (int i = 0; i < editor.watch_values.size; i++) {
+		string_append_formated(&output, "watch_value=%s\n", editor.watch_values[i].name.characters);
+	}
+
+	file_io_write_file(file_path.characters, array_create_static((byte*)output.characters, output.size));
 }
 
 void syntax_editor_load_state(String file_path)
@@ -3129,8 +3263,7 @@ void syntax_editor_load_state(String file_path)
 	{
 		debugger_reset(editor.debugger);
 		for (int i = 0; i < editor.tabs.size; i++) {
-			auto& tab = editor.tabs[i];
-			dynamic_array_reset(&tab.breakpoints);
+			editor.tabs[i]->breakpoints.reset();
 		}
 		for (int i = 0; i < editor.watch_values.size; i++) {
 			auto& value = editor.watch_values[i];
@@ -3189,17 +3322,17 @@ void syntax_editor_load_state(String file_path)
 		}
 		else if (string_equals_cstring(&setting, "cursor_char")) {
 			if (last_tab_valid) {
-				int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.character;
+				int_value_to_set = &editor.tabs[editor.open_tab_index]->cursor.character;
 			}
 		}
 		else if (string_equals_cstring(&setting, "cursor_line")) {
 			if (last_tab_valid) {
-				int_value_to_set = &editor.tabs[editor.open_tab_index].cursor.line;
+				int_value_to_set = &editor.tabs[editor.open_tab_index]->cursor.line;
 			}
 		}
 		else if (string_equals_cstring(&setting, "cam_start")) {
 			if (last_tab_valid) {
-				int_value_to_set = &editor.tabs[editor.open_tab_index].cam_start;
+				int_value_to_set = &editor.tabs[editor.open_tab_index]->cam_start;
 			}
 		}
 		else if (string_equals_cstring(&setting, "fold"))
@@ -3230,7 +3363,7 @@ void syntax_editor_load_state(String file_path)
 			// Sanity check (File may have been changed since last session)
 			if (success)
 			{
-				auto& tab = editor.tabs[editor.open_tab_index];
+				auto& tab = syntax_editor.open_tab();
 				if (start < 0 || start >= tab.code->line_count) {
 					success = false;
 				}
@@ -3248,13 +3381,13 @@ void syntax_editor_load_state(String file_path)
 			}
 
 			if (success) {
-				syntax_editor_add_fold(start, end, indentation);
+				Folds::add_fold(ibox1(start, end), indentation);
 			}
 		}
 		else if (string_equals_cstring(&setting, "breakpoint"))
 		{
 			if (last_tab_valid) {
-				auto& tab = editor.tabs[editor.open_tab_index];
+				auto& tab = syntax_editor.open_tab();
 
 				auto int_parse = string_parse_int(&value);
 				if (!int_parse.available) {
@@ -3321,44 +3454,33 @@ Error_Display error_display_make(String msg, Text_Range range, Compilation_Unit*
 char get_cursor_char(char dummy_char)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto& c = tab.cursor;
 
 	int index = c.character;
 	if (editor.mode == Editor_Mode::INSERT) {
 		index -= 1;
 	}
-	Source_Line* line = source_code_get_line(tab.code, c.line);
-	if (index >= line->text.size || index < 0) return dummy_char;
-	return line->text.characters[index];
+	String text = line_index_get_text(c.line);
+	if (index >= text.size || index < 0) return dummy_char;
+	return text.characters[index];
 }
 
-Text_Index sanitize_index(Text_Index index) {
+Text_Index sanitize_index(Text_Index index) 
+{
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
-
-	if (index.line < 0) index.line = 0;
-	if (index.line >= code->line_count) {
-		index.line = code->line_count - 1;
-	}
-	auto& text = source_code_get_line(code, index.line)->text;
-	index.character = math_clamp(index.character, 0, text.size);
+	index.character = math_maximum(index.character, 0);
 	return index;
 }
 
-void syntax_editor_sanitize_cursor() {
-	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+void syntax_editor_sanitize_cursor() 
+{
+	auto& tab = syntax_editor.open_tab();
 	auto& code = tab.code;
-	auto& index = tab.cursor;
-
-	if (index.line < 0) index.line = 0;
-	if (index.line >= code->line_count) {
-		index.line = code->line_count - 1;
-	}
-	auto& text = source_code_get_line(code, index.line)->text;
-	index.character = math_clamp(index.character, 0, editor.mode == Editor_Mode::INSERT ? text.size : math_maximum(0, text.size - 1));
+	auto& cursor = tab.cursor;
+	cursor.character = math_maximum(0, cursor.character);
 }
 
 
@@ -3367,37 +3489,37 @@ void syntax_editor_sanitize_cursor() {
 bool syntax_editor_add_position_to_jump_list()
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto& cursor = tab.cursor;
 
 	auto& jump_list = tab.jump_list;
 	auto& last_jump_index = tab.last_jump_index;
 	if (jump_list.size == 0) {
-		dynamic_array_push_back(&jump_list, cursor);
+		jump_list.push_back(cursor);
 		last_jump_index = 0;
 		return true;
 	}
 
 	if (last_jump_index >= 0)
 	{
-		Text_Index last_pos = jump_list.data[last_jump_index];
+		Text_Index last_pos = jump_list[last_jump_index];
 		if (math_absolute(last_pos.line - cursor.line) <= 7) {
 			return false;
 		}
 
 		if (last_jump_index - 1 >= 0) {
-			Text_Index pre_pre_pos = jump_list.data[last_jump_index - 1];
+			Text_Index pre_pre_pos = jump_list[last_jump_index - 1];
 			if (pre_pre_pos.line == cursor.line) {
 				return false;
 			}
 		}
-		dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, last_jump_index + 1));
+		jump_list.rollback_to_size(math_minimum((int)jump_list.size, last_jump_index + 1));
 	}
 	else {
-		dynamic_array_rollback_to_size(&jump_list, math_minimum(jump_list.size, 1));
+		jump_list.rollback_to_size(math_minimum((int)jump_list.size, 1));
 	}
 
-	dynamic_array_push_back(&jump_list, cursor);
+	jump_list.push_back(cursor);
 	last_jump_index = jump_list.size - 1;
 	return true;
 }
@@ -3412,7 +3534,7 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 	int index = syntax_editor_add_tab(unit->filepath); // Doesn't add a tab if already open
 	syntax_editor_switch_tab(index);
 
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	tab.cursor = code_query_text_index_at_last_synchronize(symbol->definition_node->base.range.start, editor.open_tab_index, true);
 	syntax_editor_sanitize_cursor();
 }
@@ -3422,7 +3544,7 @@ void syntax_editor_goto_symbol_definition(Symbol* symbol)
 // Code Queries
 Text_Index code_query_text_index_at_last_synchronize(Text_Index text_index, int tab_index, bool move_forwards_in_time)
 {
-	auto& tab = syntax_editor.tabs[tab_index];
+	auto& tab = *syntax_editor.tabs[tab_index];
 
 	// Get changes since last sync
 	auto now = history_get_timestamp(&tab.history);
@@ -3746,7 +3868,9 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 	result.call_argument_index = -1;
 
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
+
+	if (index.line < 0 || index.line >= tab.code->line_count) return result;
 
 	auto line = source_code_get_line(tab.code, index.line);
 	auto& analysis_items = line->item_infos;
@@ -3851,7 +3975,7 @@ Position_Info code_query_find_position_infos(Text_Index index, DynArray<int>* er
 Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 
 	index = code_query_text_index_at_last_synchronize(index, editor.open_tab_index, false);
 
@@ -3891,7 +4015,7 @@ Symbol_Table* code_query_find_symbol_table_at_position(Text_Index index)
 void suggestions_fill_with_file_directory(String search_path)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 
 	Array<String> path_parts = string_split(search_path, '/');
 	SCOPE_EXIT(string_split_destroy(path_parts));
@@ -3944,8 +4068,7 @@ void suggestions_fill_with_file_directory(String search_path)
 
 bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_inside_literal)
 {
-	auto code = syntax_editor.tabs[syntax_editor.open_tab_index].code;
-	auto line = source_code_get_line(code, index.line);
+	String text = line_index_get_text(index.line);
 	out_inside_literal = false;
 
 	bool in_literal = false;
@@ -3953,7 +4076,7 @@ bool text_index_inside_comment_or_string_literal(Text_Index index, bool& out_ins
 	bool prev_was_slash = false;
 	for (int i = 0; i < index.character; i++)
 	{
-		char curr = line->text.characters[i];
+		char curr = text.characters[i];
 		if (curr == '\"') {
 			if (!prev_was_backslash) {
 				in_literal = !in_literal;
@@ -4053,7 +4176,7 @@ String_Path_Lookup_Info string_path_lookup_resolve(String path_lookup_text, Symb
 void code_completion_find_suggestions()
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto& suggestions = editor.suggestions;
 	auto& cursor = tab.cursor;
 
@@ -4078,7 +4201,7 @@ void code_completion_find_suggestions()
 	// Tokenize code
 	Arena tmp_arena = Arena::create();
 	SCOPE_EXIT(tmp_arena.destroy());
-	auto line = source_code_get_line(tab.code, cursor.line);
+	String line_text = line_index_get_text(tab.cursor.line);
 	int cursor_token_index = 0;
 	DynArray<Token> tokens = tokenize_partial_code(tab.code, cursor, &tmp_arena, cursor_token_index, true, false);
 	// Tokenize partial code prefers later tokens if the text-index is inbetween two tokens, but for completion we want the first token
@@ -4090,7 +4213,7 @@ void code_completion_find_suggestions()
 	}
 
 	auto helper_test_char = [&](int index, char c) -> bool {
-		String& str = line->text;
+		String& str = line_text;
 		if (index < 0 || index >= str.size) return false;
 		return str.characters[index] == c;
 	};
@@ -4106,7 +4229,7 @@ void code_completion_find_suggestions()
 	};
 
 	// Early exit if we aren't in completion context
-	if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || Folds::get_fold_info(cursor.line).inside_fold) {
+	if (editor.mode != Editor_Mode::INSERT || cursor.character == 0 || Folds::get_line_area(cursor.line).inside_fold) {
 		return;
 	}
 	Token cursor_token = helper_get_token(cursor_token_index);
@@ -4121,7 +4244,7 @@ void code_completion_find_suggestions()
 		if (helper_test_token(cursor_token_index - 1, Token_Type::IMPORT) &&
 			cursor.line == cursor_token.line && cursor.character > cursor_token.start && cursor.character < cursor_token.end)
 		{
-			String file_path = string_create_substring_static(&line->text, cursor_token.start + 1, cursor.character);
+			String file_path = string_create_substring_static(&line_text, cursor_token.start + 1, cursor.character);
 			suggestions_fill_with_file_directory(file_path);
 		}
 		return; // Don't show suggestions inside string
@@ -4130,7 +4253,7 @@ void code_completion_find_suggestions()
 	// Start search with partially typed word
 	String fuzzy_search_string = string_create_static("");
 	if (cursor_token.type == Token_Type::IDENTIFIER || token_type_is_keyword(cursor_token.type)) {
-		fuzzy_search_string = string_create_substring_static(&line->text, cursor_token.start, cursor_token.end);
+		fuzzy_search_string = string_create_substring_static(&line_text, cursor_token.start, cursor_token.end);
 	}
 	Dynamic_Array<Editor_Suggestion> unranked_suggestions = dynamic_array_create<Editor_Suggestion>();
 	SCOPE_EXIT(dynamic_array_destroy(&unranked_suggestions));
@@ -4192,7 +4315,7 @@ void code_completion_find_suggestions()
 		// First resolve path
 		Import_Type import_type = Import_Type::SYMBOLS;
 		Token path_start_token = helper_get_token(path_start_index);
-		String path_string = string_create_substring_static(&line->text, path_start_token.start, cursor.character);
+		String path_string = string_create_substring_static(&line_text, path_start_token.start, cursor.character);
 		DynArray<Symbol*> symbols = string_path_lookup_resolve(path_string, symbol_table, import_type, &tmp_arena).symbols;
 
 		// Add symbols to results 
@@ -4502,7 +4625,7 @@ void code_completion_find_suggestions()
 void code_completion_insert_suggestion()
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 
 	String replace_string;
 	if (editor.record_insert_commands)
@@ -4519,14 +4642,15 @@ void code_completion_insert_suggestion()
 	if (replace_string.size == 0) return;
 	if (tab.cursor.character == 0) return;
 
+	Text_Editing::add_padding_to_cursor();
 
 	// Remove current token
-	auto line = source_code_get_line(tab.code, tab.cursor.line);
+	auto line_text = line_index_get_text(tab.cursor.line);
 	int start_pos = tab.cursor.character;
-	if (char_is_valid_identifier(get_cursor_char('!'))) {
-		start_pos = Motions::move_while_condition(line->text, tab.cursor.character - 1, false, char_is_valid_identifier, nullptr, false, false);
-		Text_Editing::delete_text_in_line(text_index_make(tab.cursor.line, start_pos), tab.cursor.character, true);
+	while (char_is_valid_identifier(line_text.at(start_pos - 1))) {
+		start_pos -= 1;
 	}
+	Text_Editing::delete_text_in_line(text_index_make(tab.cursor.line, start_pos), tab.cursor.character, true);
 
 	// Insert suggestion instead
 	tab.cursor.character = start_pos;
@@ -4540,7 +4664,7 @@ void code_completion_insert_suggestion()
 void editor_enter_insert_mode()
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 
 	if (syntax_editor.mode == Editor_Mode::INSERT) {
 		return;
@@ -4555,12 +4679,12 @@ void editor_enter_insert_mode()
 void editor_leave_insert_mode()
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 
 	if (syntax_editor.mode != Editor_Mode::INSERT) {
 		return;
 	}
-	tab.last_line_x_pos = tab.cursor.character;
+	tab.move_cursor_to_last_char_on_vertical_movement = false;
 	syntax_editor.mode = Editor_Mode::NORMAL;
 	history_stop_complex_command(&tab.history);
 	history_set_cursor_pos(&tab.history, tab.cursor);
@@ -4570,21 +4694,21 @@ void editor_leave_insert_mode()
 void editor_split_line_at_cursor(int indentation_offset)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto& mode = editor.mode;
 	auto& cursor = tab.cursor;
 
-	Source_Line* line = source_code_get_line(tab.code, cursor.line);
-	auto& text = line->text;
+	String text = line_index_get_text(cursor.line);
 	int line_size = text.size; // Text may be invalid after applying history changes
 	String cutout = string_create_substring_static(&text, cursor.character, text.size);
 
 	history_start_complex_command(&tab.history);
 	SCOPE_EXIT(history_stop_complex_command(&tab.history));
+	Text_Editing::add_padding_to_cursor();
 
 	int new_line_index = cursor.line + 1;
-	int new_indent = math_maximum(0, line_get_whitespace_indentation(line) + indentation_offset);
-	Text_Editing::add_lines(new_line_index, 1, new_indent);
+	int new_indent = math_maximum(0, line_get_whitespace_indentation(cursor.line) + indentation_offset);
+	Text_Editing::add_lines(new_line_index, 1);
 
 	if (cursor.character != line_size) {
 		Text_Editing::insert_text_in_line(text_index_make(new_line_index, new_indent * 4), cutout, false);
@@ -4593,165 +4717,263 @@ void editor_split_line_at_cursor(int indentation_offset)
 	cursor = text_index_make(new_line_index, new_indent * 4);
 }
 
-Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
+Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_cursor_movement)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	Arena* arena = &syntax_editor.arena;
 	auto checkpoint = arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
 
-	pos = sanitize_index(pos);
-	Source_Line* line = source_code_get_line(code, pos.line);
+	String line_text = line_index_get_text(pos.line);
 
-	auto do_char_search = [&](char c, bool forward, bool search_towards) {
-		auto char_equals = [](char c, void* test_char) -> bool {
-			char other = *(char*)test_char;
-			return c == other;
-			};
+	auto do_char_search = [&](bool forward, bool search_towards, bool sneak_search) 
+	{
 		Text_Index start = pos;
-		bool found = Motions::goto_next_in_set(start, char_equals, (void*)&c, forward, true);
-		if (found) {
-			pos = start;
-			if (search_towards) {
-				pos.character += forward ? -1 : 1;
+
+		char char1 = syntax_editor.last_search_char;
+		char char2 = syntax_editor.last_search_char2;
+
+		if (sneak_search)
+		{
+			if (forward)
+			{
+				for (int i = pos.character + 1; i < line_text.size; i++)
+				{
+					char c = line_text[i];
+					if (c == char1)
+					{
+						// $ and space also match with line-end
+						if (i + 1 >= line_text.size)
+						{
+							if (char2 == ' ' || char2 == '$') {
+								pos.character = i + (search_towards ? -1 : 0);
+							}
+							break;
+						}
+						if (char2 == line_text[i + 1]) {
+							pos.character = i +  (search_towards ? -1 : 0);
+							break;
+						}
+					}
+				}
+			}
+			else
+			{
+				for (int i = math_minimum(line_text.size - 2, pos.character - 1); i >= 0; i -= 1)
+				{
+					if (line_text[i] == char1 && line_text[i + 1] == char2) {
+						pos.character = i;
+						break;
+					}
+				}
 			}
 		}
-		};
+		else
+		{
+			if (forward)
+			{
+				for (int i = pos.character + 1; i < line_text.size; i++)
+				{
+					char c = line_text[i];
+					if (c == char1)
+					{
+						pos.character = i +  (search_towards ? -1 : 0);
+						break;
+					}
+				}
+			}
+			else
+			{
+				for (int i = math_minimum(line_text.size - 1, pos.character - 1); i >= 0; i -= 1)
+				{
+					if (line_text[i] == char1) {
+						pos.character = i;
+						break;
+					}
+				}
+			}
+		}
+	};
 
 	bool repeat_movement = true;
-	bool set_horizontal_pos = true;
+	bool changed_horizontal_pos = true;
 	for (int repeat_index = 0; repeat_index < movement.repeat_count && repeat_movement; repeat_index++)
 	{
 		switch (movement.type)
 		{
 		case Movement_Type::MOVE_DOWN:
-		case Movement_Type::MOVE_UP: {
+		case Movement_Type::MOVE_UP: 
+		{
 			int dir = movement.type == Movement_Type::MOVE_UP ? -1 : 1;
-			pos = sanitize_index(pos);
-			Line_Iter iter = Line_Iter::create(pos.line);
-			iter.move(movement.repeat_count * dir, true);
-			iter.move_to_fold_boundary(-1, false);
+			Folds::Line_Iter iter = Folds::Line_Iter::create(pos.line);
+			iter.move(movement.repeat_count * dir);
+			iter.move_to_fold_boundary(-1, syntax_editor.show_folds_inline);
 			pos.line = iter.line_index;
-			line = source_code_get_line(code, pos.line);
 
 			// Set position on line
-			pos.character = tab.last_line_x_pos;
-			set_horizontal_pos = false;
+			if (tab.move_cursor_to_last_char_on_vertical_movement && is_cursor_movement) {
+				pos.character = math_maximum(0, line_index_get_text(pos.line).size - 1);
+			}
+			changed_horizontal_pos = false;
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::MOVE_LEFT: {
+		case Movement_Type::MOVE_LEFT: 
+		{
 			pos.character -= movement.repeat_count;
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::MOVE_RIGHT: {
+		case Movement_Type::MOVE_RIGHT: 
+		{
 			pos.character += movement.repeat_count;
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::TO_END_OF_LINE: {
-			pos.character = line->text.size;
-			tab.last_line_x_pos = 10000; // Look at jk movements after $ to understand this
-			set_horizontal_pos = false;
+		case Movement_Type::TO_END_OF_LINE: 
+		{
+			pos.character = line_text.size;
+			if (is_cursor_movement && editor.mode != Editor_Mode::INSERT) {
+				pos.character = math_maximum(0, line_text.size - 1);
+			}
+			changed_horizontal_pos = false;
+			tab.move_cursor_to_last_char_on_vertical_movement = true;
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::TO_START_OF_LINE: {
-			int space_count = line_count_leading_spaces(pos.line);
-			pos.character = pos.character <= space_count ? 0 : space_count;
-			tab.last_line_x_pos = pos.character; // Look at jk movements after $ to understand this
-			set_horizontal_pos = false;
+		case Movement_Type::TO_START_OF_LINE: 
+		{
+			pos.character = 0;
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::GOTO_END_OF_TEXT: {
+		case Movement_Type::TO_TEXT_START_OF_LINE: 
+		{
+			pos.character = 0;
+			String text = line_index_get_text(pos.line);
+			while (pos.character + 1 < text.size && text.at(pos.character) == ' ') {
+				pos.character += 1;
+			}
+			repeat_movement = false;
+			break;
+		}
+		case Movement_Type::TAB_FORWARDS: 
+		{
+			pos.character = math_maximum(0, pos.character);
+			pos.character = pos.character - (pos.character % 4);
+			pos.character += movement.repeat_count * 4;
+			repeat_movement = false;
+			break;
+		}
+		case Movement_Type::TAB_BACKWARDS: 
+		{
+			pos.character = math_maximum(0, pos.character);
+			int modulo = pos.character % 4;
+			int repeat_count = movement.repeat_count;
+			if (modulo != 0) {
+				pos.character = pos.character - modulo;
+				repeat_count -= 1;
+			}
+			pos.character -= 4 * repeat_count;
+			repeat_movement = false;
+			break;
+		}
+		case Movement_Type::GOTO_END_OF_TEXT: 
+		{
 			pos = text_index_make(code->line_count - 1, 0);
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::GOTO_START_OF_TEXT: {
-			pos = text_index_make(0, 0);
+		case Movement_Type::GOTO_START_OF_TEXT: 
+		{
+			pos = text_index_make(0, pos.character);
 			repeat_movement = false;
 			break;
 		}
-		case Movement_Type::GOTO_LINE_NUMBER: {
-			pos = text_index_make(movement.repeat_count, 0);
+		case Movement_Type::GOTO_LINE_NUMBER: 
+		{
+			pos = text_index_make(movement.repeat_count, pos.character);
 			repeat_movement = false;
+			changed_horizontal_pos = false;
 			break;
 		}
 		case Movement_Type::NEXT_WORD:
 		{
 			Text_Range range = Motions::text_range_get_word(pos);
 			pos = range.end;
-			Motions::skip_in_set(pos, char_is_whitespace);
+			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE), true, true);
 			break;
 		}
 		case Movement_Type::NEXT_SPACE: {
-			Motions::skip_in_set(pos, char_is_whitespace, nullptr, true); // Skip current non-whitespaces
-			Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE, true), true, true); // Skip current non-whitespaces
+			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE), true, true);
 			break;
 		}
 		case Movement_Type::END_OF_WORD:
 		{
-			if (char_is_whitespace(Motions::get_char(pos))) {
-				Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
-				Text_Range range = Motions::text_range_get_word(pos);
-				pos.character = math_maximum(range.start.character, range.end.character - 1);
-				break;
-			}
-
 			Text_Range range = Motions::text_range_get_word(pos);
-			// Check if we are currently at end of word
-			if (pos.character == range.end.character - 1) {
-				Motions::move(pos, 1);
-				Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
+			if (pos.character == range.end.character - 1) { // If we are at end of current word
+				Motions::move_horizontal(pos, 1);
 				range = Motions::text_range_get_word(pos);
 			}
-			pos.character = math_maximum(range.start.character, range.end.character - 1);
+			if (Motions::get_char(pos) == ' ') { // Skip spaces
+				range = Motions::text_range_get_word(range.end);
+			}
+			pos.character = range.end.character - 1;
 			break;
 		}
 		case Movement_Type::END_OF_WORD_AFTER_SPACE:
 		{
-			if (char_is_whitespace(Motions::get_char(pos))) {
-				Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
-				Text_Range range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
-				pos.character = math_maximum(range.start.character, range.end.character - 1);
+			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
+			Char_Group non_whitespaces = Char_Group(Char_Group_Type::WHITESPACE, true);
+
+			if (whitespaces.contains(Motions::get_char(pos))) 
+			{
+				Motions::move_while_in_set(pos, whitespaces, true, true); // Skip current whitespaces
+				Text_Range range = Motions::text_range_get_island(pos, non_whitespaces);
+				pos.character = range.end.character - 1;
 				break;
 			}
 
-			Text_Range range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+			Text_Range range = Motions::text_range_get_island(pos, non_whitespaces);
 			// Check if we are currently at end of word
 			if (pos.character == range.end.character - 1) {
-				Motions::move(pos, 1);
-				Motions::skip_in_set(pos, char_is_whitespace); // Skip current whitespaces
-				range = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+				Motions::move_horizontal(pos, 1);
+				Motions::move_while_in_set(pos, whitespaces); // Skip current whitespaces
+				range = Motions::text_range_get_island(pos, non_whitespaces);
 			}
 			pos.character = math_maximum(range.start.character, range.end.character - 1);
 			break;
 		}
-		case Movement_Type::PREVIOUS_SPACE: {
+		case Movement_Type::PREVIOUS_SPACE: 
+		{
+			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
+			Char_Group non_whitespaces = Char_Group(Char_Group_Type::WHITESPACE, true);
+
 			int prev = pos.character;
-			Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false);
-			pos = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true).start;
+			Motions::move_while_in_set(pos, whitespaces, false, true);
+			pos = Motions::text_range_get_island(pos, non_whitespaces).start;
 			if (pos.character != prev) break;
 
-			Motions::move(pos, -1);
-			Motions::skip_in_set(pos, char_is_whitespace, nullptr, false, false); // Skip whitespaces
-			Motions::move_while_in_set(pos, char_is_whitespace, nullptr, true, false); // Move backwards until start of word
+			Motions::move_horizontal(pos, -1);
+			Motions::move_while_in_set(pos, whitespaces, false, true);
+			Motions::move_while_in_set(pos, non_whitespaces, false, false);
 			break;
 		}
-		case Movement_Type::PREVIOUS_WORD: {
+		case Movement_Type::PREVIOUS_WORD: 
+		{
+			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
+
 			int prev = pos.character;
-			Motions::move_while_in_set(pos, char_is_whitespace, nullptr, false, false); // Move backwards until start of word
+			Motions::move_while_in_set(pos, whitespaces, false, true); // Move backwards until start of word
 			pos = Motions::text_range_get_word(pos).start;
 			if (pos.character != prev) break;
 
-			Motions::move(pos, -1);
-			Motions::skip_in_set(pos, char_is_whitespace, nullptr, false, false); // Skip whitespaces
+			Motions::move_horizontal(pos, -1);
+			Motions::move_while_in_set(pos, whitespaces, false, true); // Skip whitespaces
 			pos = Motions::text_range_get_word(pos).start;
 			break;
 		}
@@ -4812,30 +5034,25 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 		case Movement_Type::PARAGRAPH_START:
 		case Movement_Type::PARAGRAPH_END:
 		{
-			auto line_is_empty = [](Source_Line* line, int _unused) -> bool { 
-				for (int i = 0; i < line->text.size; i++) {
-					if (!char_is_whitespace(line->text[i])) return false;
-				}
-				return true;
-			};
 			int line_index = pos.line;
 			if (movement.type == Movement_Type::PARAGRAPH_START)
 			{
-				line_index = Line_Movement::move_while_condition(line_index, -1, line_is_empty, false, 0, true); // Skip if we are on empty lines
-				line_index = Line_Movement::move_while_condition(line_index, -1, line_is_empty, true, 0, false); // Goto start
+				line_index = line_index_move_while_empty(line_index, -1, true, true); // Skip if we are on empty lines
+				line_index = line_index_move_while_empty(line_index, -1, false, false); // Goto start
 				if (line_index == pos.line) { // If we are on paragraph start, redo one line backwards
 					line_index = pos.line - 1;
-					line_index = Line_Movement::move_while_condition(line_index, -1, line_is_empty, false, 0, true);
-					line_index = Line_Movement::move_while_condition(line_index, -1, line_is_empty, true, 0, false);
+					line_index = line_index_move_while_empty(line_index, -1, true, true);
+					line_index = line_index_move_while_empty(line_index, -1, false, false);
 				}
 			}
-			else {
-				line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, false, 0, true); // Skip if we are on empty lines
-				line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, true, 0, false); // Goto paragraph end
+			else 
+			{
+				line_index = line_index_move_while_empty(line_index, 1, true, true); // Skip if we are on empty lines
+				line_index = line_index_move_while_empty(line_index, 1, false, false); // Goto paragraph end
 				if (line_index == pos.line) {
 					line_index = pos.line + 1;
-					line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, false, 0, true);
-					line_index = Line_Movement::move_while_condition(line_index, 1, line_is_empty, true, 0, false);
+					line_index = line_index_move_while_empty(line_index, 1, true, true);
+					line_index = line_index_move_while_empty(line_index, 1, false, false);
 				}
 			}
 			pos = text_index_make(line_index, 0);
@@ -4850,21 +5067,32 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			editor.last_search_was_forward = movement.type == Movement_Type::SEARCH_FORWARDS_FOR || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
 			editor.last_search_was_to = movement.type == Movement_Type::SEARCH_BACKWARDS_TO || movement.type == Movement_Type::SEARCH_FORWARDS_TO;
 			editor.last_search_char = movement.search_char;
-			do_char_search(editor.last_search_char, editor.last_search_was_forward, editor.last_search_was_to);
+			editor.last_search_char2 = movement.search_char2;
+			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
 			break;
 		}
 		case Movement_Type::REPEAT_LAST_SEARCH: {
-			do_char_search(editor.last_search_char, editor.last_search_was_forward, editor.last_search_was_to);
+			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
 			break;
 		}
 		case Movement_Type::REPEAT_LAST_SEARCH_REVERSE_DIRECTION: {
-			do_char_search(editor.last_search_char, !editor.last_search_was_forward, editor.last_search_was_to);
+			do_char_search(!editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
+			break;
+		}
+		case Movement_Type::SNEAK_FORWARDS:
+		case Movement_Type::SNEAK_BACKWARDS:
+		{
+			bool forwards = movement.type == Movement_Type::SNEAK_FORWARDS;
+			editor.last_search_char = movement.search_char;
+			editor.last_search_char2 = movement.search_char2;
+			editor.last_search_was_to = false;
+			do_char_search(editor.last_search_was_forward, editor.last_search_was_to, editor.sneak_search);
 			break;
 		}
 		case Movement_Type::REPEAT_TEXT_SEARCH_REVERSE:
 		case Movement_Type::REPEAT_TEXT_SEARCH:
 		{
-			auto& tab = editor.tabs[editor.open_tab_index];
+			auto& tab = syntax_editor.open_tab();
 			auto& search_text = editor.search_text;
 
 			bool search_reverse = editor.search_reverse;
@@ -4883,7 +5111,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 			for (int offset = 0; offset < tab.code->line_count; offset += 1)
 			{
 				int line_index = math_modulo(index.line + offset * (search_reverse ? -1 : 1), tab.code->line_count);
-				auto line = source_code_get_line(tab.code, line_index);
+				String line_text = line_index_get_text(line_index);
 
 				if (search_reverse)
 				{
@@ -4892,17 +5120,17 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 					}
 
 					// Search substrings until last substring is found...
-					int last_substring_start = string_contains_substring(line->text, 0, search_text);
+					int last_substring_start = string_contains_substring(line_text, 0, search_text);
 					if (last_substring_start == -1) {
 						continue;
 					}
 
-					int max = line->text.size;
+					int max = line_text.size;
 					if (index.line == line_index) {
 						max = index.character - 1;
 					}
 					while (last_substring_start + 1 < max) {
-						int substr = string_contains_substring(line->text, last_substring_start + 1, search_text);
+						int substr = string_contains_substring(line_text, last_substring_start + 1, search_text);
 						if (substr == -1 || substr > max) {
 							break;
 						}
@@ -4921,7 +5149,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 					if (line_index == index.line) {
 						pos = index.character + 1;
 					}
-					int start = string_contains_substring(line->text, pos, search_text);
+					int start = string_contains_substring(line_text, pos, search_text);
 					if (start != -1) {
 						index = text_index_make(line_index, start);
 						found = true;
@@ -4939,24 +5167,26 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos)
 		}
 
 		pos = sanitize_index(pos);
-		Source_Line* line = source_code_get_line(code, pos.line);
-		if (set_horizontal_pos) {
-			tab.last_line_x_pos = pos.character;
+		String line_text = line_index_get_text(pos.line);
+		if (is_cursor_movement && changed_horizontal_pos) {
+			tab.move_cursor_to_last_char_on_vertical_movement = false;
 		}
 	}
 
 	return pos;
 }
 
-Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
+Text_Range motion_evaluate(const Motion& motion, Text_Index pos)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	Arena* arena = &syntax_editor.arena;
 	auto checkpoint = arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
+
+	Char_Group whitespaces(Char_Group_Type::WHITESPACE);
 
 	Text_Range result = text_range_make(text_index_make(0, 0), text_index_make(0, 0));
 	switch (motion.motion_type)
@@ -4967,12 +5197,12 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 		assert(motion.repeat_count == 1, "");
 		auto& mov = motion.movement;
 
-		Text_Index end_pos = movement_evaluate(motion.movement, pos);
+		Text_Index end_pos = movement_evaluate(motion.movement, pos, false);
 		if (text_index_in_order(pos, end_pos)) {
 			result = text_range_make(pos, end_pos);
 		}
 		else {
-			Motions::move(pos, 1);
+			Motions::move_horizontal(pos, 1);
 			result = text_range_make(end_pos, pos);
 		}
 
@@ -4990,21 +5220,23 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 		}
 
 		if (add_one_char) {
-			Motions::move(result.end, 1);
+			Motions::move_horizontal(result.end, 1);
 		}
 
 		break;
 	}
-	case Motion_Type::WORD: {
+	case Motion_Type::WORD: 
+	{
 		result = Motions::text_range_get_word(pos);
 
-		if (motion.contains_edges && !text_index_equal(result.start, result.end)) {
+		if (motion.contains_edges && !text_index_equal(result.start, result.end)) 
+		{
 			if (char_is_whitespace(Motions::get_char(result.start, -1))) {
-				Motions::move(result.start, -1);
-				Motions::skip_in_set(result.start, char_is_whitespace, nullptr, false, false);
+				Motions::move_horizontal(result.start, -1);
+				Motions::move_while_in_set(result.start, whitespaces, false, false);
 			}
 			if (char_is_whitespace(Motions::get_char(result.end))) {
-				Motions::skip_in_set(result.end, char_is_whitespace);
+				Motions::move_while_in_set(result.end, whitespaces);
 			}
 		}
 		break;
@@ -5012,19 +5244,19 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 	case Motion_Type::SPACES:
 	{
 		if (char_is_whitespace(Motions::get_char(pos))) {
-			result = Motions::text_range_get_island(pos, char_is_whitespace);
+			result = Motions::text_range_get_island(pos, whitespaces);
 		}
 		else {
-			result = Motions::text_range_get_island(pos, char_is_whitespace, nullptr, true);
+			result = Motions::text_range_get_island(pos, whitespaces.invert());
 		}
 
 		if (motion.contains_edges && !text_index_equal(result.start, result.end)) {
 			if (char_is_whitespace(Motions::get_char(result.start, -1))) {
-				Motions::move(result.start, -1);
-				Motions::skip_in_set(result.start, char_is_whitespace, nullptr, false, false);
+				Motions::move_horizontal(result.start, -1);
+				Motions::move_while_in_set(result.start, whitespaces, false, false);
 			}
 			if (char_is_whitespace(Motions::get_char(result.end))) {
-				Motions::skip_in_set(result.end, char_is_whitespace);
+				Motions::move_while_in_set(result.end, whitespaces);
 			}
 		}
 		break;
@@ -5056,9 +5288,8 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 		result = Motions::token_range_to_text_range(pos, token_range, tokens);
 		if (!motion.contains_edges && !text_index_equal(result.start, result.end)) 
 		{
-			Motions::move(result.start, 1);
-			Source_Line* end_line = source_code_get_line(code, result.end.line);
-			Motions::move(result.end, -1);
+			Motions::move_horizontal(result.start, 1);
+			Motions::move_horizontal(result.end, -1);
 		}
 
 		break;
@@ -5068,8 +5299,8 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 		// Note: Repeat count on "" is ignored, as string literals aren't nestable
 		result = Motions::text_range_get_string_literal(pos);
 		if (!text_index_equal(result.start, result.end) && !motion.contains_edges) {
-			Motions::move(result.start, 1);
-			Motions::move(result.end, -1);
+			Motions::move_horizontal(result.start, 1);
+			Motions::move_horizontal(result.end, -1);
 		}
 
 		break;
@@ -5109,18 +5340,12 @@ Text_Range motion_evaluate(const Motion & motion, Text_Index pos)
 	}
 	case Motion_Type::PARAGRAPH:
 	{
-		auto line_is_empty = [](Source_Line* line, int _unused) -> bool { 
-			for (int i = 0; i < line->text.size; i++) {
-				if (!char_is_whitespace(line->text[i])) return false;
-			}
-			return true;
-		};
-		int line_start = Line_Movement::move_while_condition(pos.line, -1, line_is_empty, true, 0, false);
-		int line_end = Line_Movement::move_while_condition(line_start, 1, line_is_empty, true, 0, false);
+		int line_start = line_index_move_while_empty(pos.line, -1, false, false);
+		int line_end   = line_index_move_while_empty(line_start, 1, false, false);
 
 		if (motion.contains_edges) {
-			line_start = Line_Movement::move_while_condition(line_start - 1, -1, line_is_empty, false, 0, false);
-			line_end = Line_Movement::move_while_condition(line_start + 1, 1, line_is_empty, false, 0, false);
+			line_start = math_maximum(0, line_start - 1);
+			line_end = math_minimum(code->line_count - 1, line_end + 1);
 		}
 
 		result.start = text_index_make(line_start, 0);
@@ -5149,38 +5374,38 @@ bool motion_is_line_motion(const Motion & motion) {
 				motion.movement.type == Movement_Type::MOVE_DOWN));
 }
 
-void text_range_append_to_string(Text_Range range, String * str)
+void text_range_append_to_string(Text_Range range, String* str)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 
 	// Handle single line case first
 	if (range.start.line == range.end.line) {
-		auto line = source_code_get_line(code, range.start.line);
-		String substring = string_create_substring_static(&line->text, range.start.character, range.end.character);
+		String line_text = line_index_get_text(range.start.line);
+		String substring = string_create_substring_static(&line_text, range.start.character, range.end.character);
 		string_append_string(str, &substring);
 		return;
 	}
 
 	// Append first line
-	auto start_line = source_code_get_line(code, range.start.line);
-	String substring = string_create_substring_static(&start_line->text, range.start.character, start_line->text.size);
+	String start_line_text = line_index_get_text(range.start.line);
+	String substring = string_create_substring_static(&start_line_text, range.start.character, start_line_text.size);
 	string_append_string(str, &substring);
 
 	// Append lines until end
 	for (int i = range.start.line + 1; i <= range.end.line && i < code->line_count; i++)
 	{
-		auto line = source_code_get_line(code, i);
+		String line_text = line_index_get_text(i);
 		string_append_character(str, '\n');
 
 		// Append line content
 		if (i == range.end.line) {
-			String substring = string_create_substring_static(&line->text, 0, range.end.character);
+			String substring = string_create_substring_static(&line_text, 0, range.end.character);
 			string_append_string(str, &substring);
 		}
 		else {
-			string_append_string(str, &line->text);
+			string_append_string(str, &line_text);
 		}
 	}
 }
@@ -5196,7 +5421,7 @@ void insert_command_execute(Insert_Command input);
 void syntax_editor_insert_yank(bool before_cursor)
 {
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
 	auto history = &tab.history;
@@ -5204,6 +5429,10 @@ void syntax_editor_insert_yank(bool before_cursor)
 	Arena* temp_arena = &editor.arena;
 	auto checkpoint = temp_arena->make_checkpoint();
 	SCOPE_EXIT(checkpoint.rewind());
+
+	history_start_complex_command(history);
+	SCOPE_EXIT(history_stop_complex_command(history));
+	Text_Editing::add_padding_to_cursor();
 
 	// Parse yanked text into individual lines
 	DynArray<Yank_Line> yank_lines = DynArray<Yank_Line>::create(temp_arena, 1);
@@ -5245,9 +5474,6 @@ void syntax_editor_insert_yank(bool before_cursor)
 		}
 	}
 
-	history_start_complex_command(history);
-	SCOPE_EXIT(history_stop_complex_command(history));
-
 	// Insert text
 	int cursor_line_indent = line_get_whitespace_indentation(cursor.line);
 	if (editor.yank_was_line)
@@ -5256,7 +5482,7 @@ void syntax_editor_insert_yank(bool before_cursor)
 		for (int i = 0; i < yank_lines.size; i++) {
 			auto& yank_line = yank_lines[i];
 			int total_indent = cursor_line_indent + yank_line.indentation;
-			Text_Editing::add_lines(line_insert_index + i, 1, total_indent);
+			Text_Editing::add_lines(line_insert_index + i, 1);
 			Text_Editing::insert_text_in_line(text_index_make(line_insert_index + i, total_indent * 4), yank_line.text, false);
 			auto range = text_range_make(text_index_make(line_insert_index + i, 0), text_index_make(line_insert_index + i, yank_line.text.size + total_indent * 4));
 			Text_Editing::particles_add_in_range(range, vec3(0.2f, 0.5f, 0.2f));
@@ -5278,16 +5504,16 @@ void syntax_editor_insert_yank(bool before_cursor)
 			for (int i = 1; i < yank_lines.size; i++) {
 				const Yank_Line& yank_line = yank_lines[i];
 				int total_indent = cursor_line_indent + yank_line.indentation;
-				Text_Editing::add_lines(pos.line + 1, 1, total_indent);
+				Text_Editing::add_lines(pos.line + 1, 1);
 				Text_Editing::insert_text_in_line(text_index_make(pos.line + i, 0), yank_line.text, false);
 			}
 
 			// Append first line cutoff to last line, e.g. asdf|what and then put needs to add what to the end
-			Source_Line* first = source_code_get_line(code, pos.line);
+			String line_text = line_index_get_text(pos.line);
 			int cutoff_start = pos.character + first_line.text.size;
-			String substring = string_create_substring_static(&first->text, cutoff_start, first->text.size);
+			String substring = string_create_substring_static(&line_text, cutoff_start, line_text.size);
 			Text_Editing::insert_text_in_line(text_index_make_line_end(code, pos.line + yank_lines.size - 1), substring, false);
-			Text_Editing::delete_text_in_line(text_index_make(pos.line, cutoff_start), first->text.size, false);
+			Text_Editing::delete_text_in_line(text_index_make(pos.line, cutoff_start), line_text.size, false);
 		}
 	}
 }
@@ -5306,7 +5532,7 @@ void center_cursor_on_error(int error_index)
 		int tab_index = syntax_editor_add_tab(error.unit->filepath);
 		syntax_editor_switch_tab(tab_index);
 	}
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	tab.cursor = code_query_text_index_at_last_synchronize(error.ranges.last().start, editor.open_tab_index, true);
 	tab.cursor = sanitize_index(tab.cursor);
 	auto cmd = Parsing::normal_mode_command_make(Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER, 1);
@@ -5315,13 +5541,15 @@ void center_cursor_on_error(int error_index)
 
 void normal_command_execute(Normal_Mode_Command & command)
 {
+	using Folds::Line_Iter;
+
 	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
 	auto history = &tab.history;
 
-	auto line = source_code_get_line(code, cursor.line);
+	String line_text = line_index_get_text(cursor.line);
 
 	// Filter commands during debug mode
 	bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
@@ -5390,14 +5618,14 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 	Source_Code* previous_code = tab.code;
 	SCOPE_EXIT(
-		if (previous_code == editor.tabs[editor.open_tab_index].code) {
+		if (previous_code == editor.open_tab().code) {
 			syntax_editor_sanitize_cursor();
 			history_set_cursor_pos(history, cursor);
 		}
-	if (execute_as_complex) {
-		history_stop_complex_command(history);
-	}
-		);
+		if (execute_as_complex) {
+			history_stop_complex_command(history);
+		}
+	);
 
 	switch (command.type)
 	{
@@ -5406,20 +5634,17 @@ void normal_command_execute(Normal_Mode_Command & command)
 		auto movement = command.options.movement;
 
 		// Handle moving into fold
-		if (movement.type == Movement_Type::MOVE_LEFT || movement.type == Movement_Type::MOVE_RIGHT) 
+		if (movement.type == Movement_Type::TO_END_OF_LINE) 
 		{
-			if (Folds::get_fold_info(cursor.line).inside_fold) {
-				remove_folds_on_line(cursor.line);
-				break;
+			if (Folds::get_line_area(cursor.line).inside_fold) {
+				Folds::remove_folds_on_line(cursor.line);
 			}
-			if (movement.type == Movement_Type::MOVE_RIGHT && cursor.character == line->text.size - 1) {
-				if (editor.show_folds_inline && Folds::get_fold_info(cursor.line + 1).inside_fold) {
-					remove_folds_on_line(cursor.line + 1);
-				}
+			else if (syntax_editor.show_folds_inline && cursor.character >= line_text.size - 1) {
+				Folds::remove_folds_on_line(cursor.line + 1);
 			}
 		}
 
-		cursor = movement_evaluate(movement, cursor);
+		cursor = movement_evaluate(movement, cursor, true);
 		syntax_editor_sanitize_cursor();
 
 		if (movement.type == Movement_Type::JUMP_ENCLOSURE || movement.type == Movement_Type::GOTO_LINE_NUMBER ||
@@ -5432,18 +5657,26 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::ENTER_INSERT_MODE_AFTER_MOVEMENT: {
 		editor_enter_insert_mode();
-		cursor = movement_evaluate(command.options.movement, cursor);
+		cursor = movement_evaluate(command.options.movement, cursor, true);
 		syntax_editor_sanitize_cursor();
 		break;
 	}
 	case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW:
 	case Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_ABOVE: 
 	{
+		Text_Editing::add_padding_to_cursor(false);
 		bool below = command.type == Normal_Command_Type::ENTER_INSERT_MODE_NEW_LINE_BELOW;
 		int new_line_index = cursor.line + (below ? 1 : 0);
 
-		int indentation = line_get_whitespace_indentation(source_code_get_line(code, cursor.line));
-		Text_Editing::add_lines(new_line_index, 1, indentation);
+		if (below && syntax_editor.show_folds_inline) {
+			auto area = Folds::get_line_area(cursor.line + 1);
+			if (area.inside_fold) {
+				new_line_index = area.interval.max;
+			}
+		}
+
+		int indentation = line_get_whitespace_indentation(cursor.line);
+		Text_Editing::add_lines(new_line_index, 1);
 		cursor = text_index_make(new_line_index, indentation * 4);
 		editor_enter_insert_mode();
 		break;
@@ -5468,14 +5701,15 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 			string_reset(&editor.yank_string);
 			for (int i = start_line; i <= end_line; i += 1) {
-				auto line = source_code_get_line(code, i);
-				string_append_string(&editor.yank_string, &line->text);
+				auto line_text = line_index_get_text(i);
+				string_append_string(&editor.yank_string, &line_text);
 				if (i != end_line) {
 					string_append_character(&editor.yank_string, '\n');
 				}
 			}
 		}
-		else {
+		else 
+		{
 			editor.yank_was_line = false;
 			auto range = motion_evaluate(command.options.motion, cursor);
 			if (command.type == Normal_Command_Type::YANK_MOTION) {
@@ -5494,7 +5728,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 		}
 		break;
 	}
-	case Normal_Command_Type::CHANGE_MOTION: {
+	case Normal_Command_Type::CHANGE_MOTION: 
+	{
 		auto range = motion_evaluate(command.options.motion, cursor);
 		cursor = range.start;
 		editor_enter_insert_mode();
@@ -5507,14 +5742,18 @@ void normal_command_execute(Normal_Mode_Command & command)
 		syntax_editor_insert_yank(command.type == Normal_Command_Type::PUT_BEFORE_CURSOR);
 		break;
 	}
-	case Normal_Command_Type::REPLACE_CHAR: {
+	case Normal_Command_Type::REPLACE_CHAR: 
+	{
+		Text_Editing::add_padding_to_cursor();
 		auto curr_char = Motions::get_char(cursor);
 		if (curr_char == '\0' || curr_char == command.options.character) break;
 		Text_Editing::delete_char(cursor, true);
 		Text_Editing::insert_char(cursor, command.options.character, true);
 		break;
 	}
-	case Normal_Command_Type::REPLACE_MOTION_WITH_YANK: {
+	case Normal_Command_Type::REPLACE_MOTION_WITH_YANK: 
+	{
+		Text_Editing::add_padding_to_cursor();
 		auto range = motion_evaluate(command.options.motion, cursor);
 		cursor = range.start;
 		if (text_index_equal(range.start, range.end)) {
@@ -5525,58 +5764,61 @@ void normal_command_execute(Normal_Mode_Command & command)
 		syntax_editor_insert_yank(true);
 		break;
 	}
-	case Normal_Command_Type::FORMAT_MOTION: {
+	case Normal_Command_Type::FORMAT_MOTION: 
+	{
 		auto range = motion_evaluate(command.options.motion, cursor);
 		for (int i = range.start.line; i <= range.end.line; i++) {
-			Text_Editing::auto_format_line(editor.open_tab_index, i);
+			Auto_Format::auto_format_line(editor.open_tab_index, i);
 		}
 		break;
 	}
-	case Normal_Command_Type::UNDO: {
+	case Normal_Command_Type::UNDO: 
+	{
 		history_undo(history);
 		auto cursor_history = history_get_cursor_pos(history);
 		if (cursor_history.available) {
 			cursor = cursor_history.value;
-			tab.last_line_x_pos = cursor.character;
 		}
 		break;
 	}
-	case Normal_Command_Type::REDO: {
+	case Normal_Command_Type::REDO: 
+	{
 		history_redo(history);
 		auto cursor_history = history_get_cursor_pos(history);
 		if (cursor_history.available) {
 			cursor = cursor_history.value;
-			tab.last_line_x_pos = cursor.character;
 		}
 		break;
 	}
 	case Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE:
-	case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: {
+	case Normal_Command_Type::SCROLL_UPWARDS_HALF_PAGE: 
+	{
 		int dir = command.type == Normal_Command_Type::SCROLL_DOWNWARDS_HALF_PAGE ? 1 : -1;
 		Line_Iter iter_cam    = Line_Iter::create(tab.cam_start);
 		Line_Iter iter_cursor = Line_Iter::create(tab.cursor.line);
-		iter_cam.move(editor.visible_line_count / 2 * dir, true);
-		iter_cursor.move(editor.visible_line_count / 2 * dir, true);
+		iter_cam.move(editor.visible_line_count / 2 * dir);
+		iter_cursor.move(editor.visible_line_count / 2 * dir);
 		tab.cam_start = iter_cam.line_index;
 		cursor.line = iter_cursor.line_index;
 		syntax_editor_sanitize_cursor();
 		break;
 	}
-	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: {
+	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_TOP: 
+	{
 		Line_Iter iter = Line_Iter::create(tab.cursor.line);
-		iter.move(-MIN_CURSOR_DISTANCE, true);
+		iter.move(-MIN_CURSOR_DISTANCE);
 		tab.cam_start = iter.line_index;
 		break;
 	}
 	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_CENTER: {
 		Line_Iter iter = Line_Iter::create(tab.cursor.line);
-		iter.move(-editor.visible_line_count / 2, true);
+		iter.move(-editor.visible_line_count / 2);
 		tab.cam_start = iter.line_index;
 		break;
 	}
 	case Normal_Command_Type::MOVE_VIEWPORT_CURSOR_BOTTOM: {
 		Line_Iter iter = Line_Iter::create(tab.cursor.line);
-		iter.move(-(editor.visible_line_count - MIN_CURSOR_DISTANCE - 1), true);
+		iter.move(-(editor.visible_line_count - MIN_CURSOR_DISTANCE - 1));
 		tab.cam_start = iter.line_index;
 		break;
 	}
@@ -5590,7 +5832,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_CENTER: {
 		Line_Iter iter = Line_Iter::create(tab.cam_start);
-		iter.move(editor.visible_line_count / 2, true);
+		iter.move(editor.visible_line_count / 2);
 		cursor.line = iter.line_index;
 		cursor.character = 0;
 		syntax_editor_sanitize_cursor();
@@ -5598,7 +5840,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	}
 	case Normal_Command_Type::MOVE_CURSOR_VIEWPORT_BOTTOM: {
 		Line_Iter iter = Line_Iter::create(tab.cam_start);
-		iter.move(editor.visible_line_count - MIN_CURSOR_DISTANCE, true);
+		iter.move(editor.visible_line_count - MIN_CURSOR_DISTANCE);
 		cursor.line = iter.line_index;
 		cursor.character = 0;
 		syntax_editor_sanitize_cursor();
@@ -5647,7 +5889,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		int index = syntax_editor_add_tab(info.member_definition_unit->filepath); // Doesn't add a tab if already open
 		syntax_editor_switch_tab(index);
 
-		auto& tab = editor.tabs[editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
 		tab.cursor = code_query_text_index_at_last_synchronize(old_index, editor.open_tab_index, false);
 		syntax_editor_sanitize_cursor();
 		break;
@@ -5665,7 +5907,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 		editor.record_insert_commands = true;
 		break;
 	}
-	case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION: {
+	case Normal_Command_Type::ENTER_FUZZY_FIND_DEFINITION: 
+	{
 		syntax_editor_wait_for_newest_compiler_info(false);
 		string_reset(&editor.fuzzy_search_text);
 		editor.search_text_edit = line_editor_make();
@@ -5673,7 +5916,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 		editor.mode = Editor_Mode::FUZZY_FIND_DEFINITION;
 		break;
 	}
-	case Normal_Command_Type::ENTER_SHOW_ERROR_MODE: {
+	case Normal_Command_Type::ENTER_SHOW_ERROR_MODE: 
+	{
 		syntax_editor_wait_for_newest_compiler_info(false);
 		if (editor.editor_compilation_data->code_errors.size == 0) {
 			break;
@@ -5687,13 +5931,15 @@ void normal_command_execute(Normal_Mode_Command & command)
 		center_cursor_on_error(editor.error_indices_sorted[editor.navigate_error_index]);
 		break;
 	}
-	case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE: {
+	case Normal_Command_Type::ENTER_VISUAL_BLOCK_MODE: 
+	{
 		editor.mode = Editor_Mode::VISUAL_BLOCK;
 		editor.visual_block_start_line = cursor.line;
 		break;
 	}
 	case Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE:
-	case Normal_Command_Type::ENTER_TEXT_SEARCH: {
+	case Normal_Command_Type::ENTER_TEXT_SEARCH: 
+	{
 		editor.search_text_edit = line_editor_make();
 		editor.search_text_edit.select_start = 0;
 		editor.search_reverse = command.type == Normal_Command_Type::ENTER_TEXT_SEARCH_REVERSE;
@@ -5709,12 +5955,12 @@ void normal_command_execute(Normal_Mode_Command & command)
 		if (text_index_equal(range.start, range.end)) break;
 
 		assert(range.start.line == range.end.line && range.start.line == cursor.line, "");
-		String substr = string_create_substring_static(&line->text, range.start.character, range.end.character);
+		String substr = string_create_substring_static(&line_text, range.start.character, range.end.character);
 		editor.search_reverse = false;
 		string_reset(&editor.search_text);
 		string_append_string(&editor.search_text, &substr);
 
-		cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor);
+		cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), cursor, true);
 		syntax_editor_add_position_to_jump_list();
 		break;
 	}
@@ -5722,6 +5968,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 	{
 		if (command.repeat_count <= 0) break;
 
+		Text_Editing::add_padding_to_cursor();
 		auto checkpoint = editor.arena.make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 		String indent_str = string_create(&editor.arena);
@@ -5742,8 +5989,7 @@ void normal_command_execute(Normal_Mode_Command & command)
 		Text_Range range = motion_evaluate(motion, cursor);
 		for (int i = range.start.line; i <= range.end.line; i++) 
 		{
-			Source_Line* line = source_code_get_line(code, i);
-			int indentation = line_get_whitespace_indentation(line);
+			int indentation = line_get_whitespace_indentation(i);
 			int remove_char_count = math_minimum(indentation, command.repeat_count) * 4;
 			if (remove_char_count == 0) continue;
 			Text_Editing::delete_text_in_line(text_index_make(i, 0), remove_char_count, true);
@@ -5753,22 +5999,23 @@ void normal_command_execute(Normal_Mode_Command & command)
 	case Normal_Command_Type::FOLD_CURRENT_BLOCK: 
 	{
 		// If we are currently in a fold we don't fold
-		if (Folds::get_fold_info(cursor.line).inside_fold) {
+		if (Folds::get_line_area(cursor.line).inside_fold) {
 			break;
 		}
 
 		// Figure out start/end of current block
 		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, command.repeat_count, false), cursor);
+		if (range.start.line <= 0 && range.end.line >= code->line_count - 1) break; // Don't fold whole code
 		if (range.start.line == range.end.line) break;
 		int indent = math_maximum(0, line_get_whitespace_indentation(cursor.line) - math_maximum(0, command.repeat_count - 1));
-		syntax_editor_add_fold(range.start.line, range.end.line + 1, indent);
+		Folds::add_fold(ibox1(range.start.line, range.end.line + 1), indent);
 
 		break;
 	}
 	case Normal_Command_Type::FOLD_HIGHER_INDENT_IN_BLOCK:
 	{
 		// If we are currently in a fold we don't fold
-		if (Folds::get_fold_info(cursor.line).inside_fold) {
+		if (Folds::get_line_area(cursor.line).inside_fold) {
 			break;
 		}
 
@@ -5779,7 +6026,6 @@ void normal_command_execute(Normal_Mode_Command & command)
 		int last_start = -1;
 		for (int i = range.start.line; i <= range.end.line; i++)
 		{
-			Source_Line* line = source_code_get_line(code, i);
 			int line_indent = line_get_logical_indentation_ignore_folds(i);
 			if (last_start == -1) 
 			{
@@ -5789,12 +6035,12 @@ void normal_command_execute(Normal_Mode_Command & command)
 			}
 			else if (line_indent <= target_indent) 
 			{
-				syntax_editor_add_fold(last_start, i, target_indent + 1);
+				Folds::add_fold(ibox1(last_start, i), target_indent + 1);
 				last_start = -1;
 			}
 		}
 		if (last_start != -1 && last_start != range.end.line) {
-			syntax_editor_add_fold(last_start, range.end.line + 1, target_indent + 1);
+			Folds::add_fold(ibox1(last_start, range.end.line + 1), target_indent + 1);
 		}
 
 		break;
@@ -5805,19 +6051,21 @@ void normal_command_execute(Normal_Mode_Command & command)
 
 		Text_Range range = motion_evaluate(Parsing::motion_make(Motion_Type::BLOCK, command.repeat_count, false), cursor);
 		if (range.start.line == range.end.line) break;
+		ibox1 interval(range.start.line, range.end.line + 1);
 
 		auto& folds = tab.folds;
-		for (int i = 0; i < folds.size; i++) {
+		for (int i = 0; i < folds.size; i++) 
+		{
 			auto& fold = folds[i];
-			bool intersects = !(fold.start > range.end.line || fold.end <= range.start.line);
-			if (intersects) {
-				dynamic_array_remove_ordered(&folds, i);
+			if (fold.interval.intersects(interval)) {
+				Folds::remove_fold(&tab, i, true);
 				i = i - 1;
 			}
 		}
 		break;
 	}
-	case Normal_Command_Type::GOTO_LAST_JUMP: {
+	case Normal_Command_Type::GOTO_LAST_JUMP: 
+	{
 		auto& jump_list = tab.jump_list;
 		auto& last_jump_index = tab.last_jump_index;
 		if (jump_list.size <= 0 || last_jump_index < 0) break;
@@ -5837,7 +6085,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 		syntax_editor_sanitize_cursor();
 		break;
 	}
-	case Normal_Command_Type::GOTO_NEXT_JUMP: {
+	case Normal_Command_Type::GOTO_NEXT_JUMP: 
+	{
 		auto& jump_list = tab.jump_list;
 		auto& last_jump_index = tab.last_jump_index;
 		if (jump_list.size <= 0) break;
@@ -5856,7 +6105,8 @@ void normal_command_execute(Normal_Mode_Command & command)
 		syntax_editor_sanitize_cursor();
 		break;
 	}
-	case Normal_Command_Type::VISUALIZE_MOTION: {
+	case Normal_Command_Type::VISUALIZE_MOTION: 
+	{
 		Text_Range range = motion_evaluate(command.options.motion, cursor);
 		if (text_index_equal(range.start, range.end)) {
 			break;
@@ -5878,13 +6128,13 @@ void insert_command_execute(Insert_Command input)
 {
 	auto& editor = syntax_editor;
 	auto& mode = editor.mode;
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto history = &tab.history;
 	auto& cursor = tab.cursor;
 	auto& pos = cursor.character;
-	auto line = source_code_get_line(code, cursor.line);
-	auto& text = line->text;
+
+	String text = line_index_get_text(cursor.line);
 
 	Arena* tmp_arena = &editor.arena;
 	auto checkpoint = tmp_arena->make_checkpoint();
@@ -5900,7 +6150,7 @@ void insert_command_execute(Insert_Command input)
 	bool auto_format = true;
 	SCOPE_EXIT(
 		if (auto_format && editor.auto_format_during_edits) {
-			Text_Editing::auto_format_line(editor.open_tab_index, cursor.line);
+			Auto_Format::auto_format_line(editor.open_tab_index, cursor.line);
 		}
 	);
 
@@ -5936,11 +6186,13 @@ void insert_command_execute(Insert_Command input)
 		break;
 	}
 	case Insert_Command_Type::ENTER: {
+		Text_Editing::add_padding_to_cursor();
 		editor_split_line_at_cursor(0);
 		break;
 	}
 	case Insert_Command_Type::ADD_INDENTATION: 
 	{
+		Text_Editing::add_padding_to_cursor();
 		int space_count = 4 - (pos % 4);
 		String space_str = string_create(tmp_arena);
 		for (int i = 0; i < space_count; i++) {
@@ -5953,8 +6205,9 @@ void insert_command_execute(Insert_Command input)
 	}
 	case Insert_Command_Type::REMOVE_INDENTATION: 
 	{
+		Text_Editing::add_padding_to_cursor();
+		text = line_index_get_text(cursor.line);
 		auto_format = false;
-		String text = line->text;
 		int whitespaces_before = 0;
 		for (int i = cursor.character - 1; i >= 0; i -= 1) {
 			if (text[i] == ' ') {
@@ -5982,11 +6235,12 @@ void insert_command_execute(Insert_Command input)
 		break;
 	}
 	case Insert_Command_Type::MOVE_RIGHT: {
-		pos = math_minimum(line->text.size, pos + 1);
+		pos = math_minimum(text.size, pos + 1);
 		break;
 	}
 	case Insert_Command_Type::DELETE_LAST_WORD: 
 	{
+		Text_Editing::add_padding_to_cursor();
 		int whitespace = line_count_leading_spaces(cursor.line);
 		if (cursor.character <= whitespace) 
 		{
@@ -6003,7 +6257,7 @@ void insert_command_execute(Insert_Command input)
 		}
 
 		Movement movement = Parsing::movement_make(Movement_Type::PREVIOUS_WORD, 1);
-		Text_Index start = movement_evaluate(movement, cursor);
+		Text_Index start = movement_evaluate(movement, cursor, true);
 		if (!text_index_equal(start, cursor)) 
 		{
 			Text_Index end = cursor;
@@ -6015,6 +6269,7 @@ void insert_command_execute(Insert_Command input)
 	case Insert_Command_Type::DELETE_TO_LINE_START: 
 	{
 		if (cursor.character == 0) break;
+		Text_Editing::add_padding_to_cursor();
 
 		int whitespace = line_count_leading_spaces(cursor.line);
 		int start = cursor.character > whitespace ? whitespace : 0;
@@ -6027,6 +6282,7 @@ void insert_command_execute(Insert_Command input)
      // Letters
 	case Insert_Command_Type::DELIMITER_LETTER:
 	{
+		Text_Editing::add_padding_to_cursor();
 		bool do_auto_insert = editor.auto_insert_parenthesis;
 		// Don't do auto-insert if we are inside comment, or inside string literal
 		if (do_auto_insert)
@@ -6039,8 +6295,8 @@ void insert_command_execute(Insert_Command input)
 			}
 			if (!inside_comment && 
 				inside_literal && 
-				!(string_test_char(line->text, cursor.character, '\"') &&
-				 !string_test_char(line->text, cursor.character - 1, '\\'))
+				!(string_test_char(text, cursor.character, '\"') &&
+				 !string_test_char(text, cursor.character - 1, '\\'))
 			){
 				// Don't do auto insert inside string, except if next char is the end of the string, e.g. "foo|"
 				do_auto_insert = false;
@@ -6067,7 +6323,7 @@ void insert_command_execute(Insert_Command input)
 		bool insert_double_after = false;
 		bool skip_auto_input = false;
 		char double_char = ' ';
-		if (char_is_parenthesis(input.letter))
+		if (Char_Group(Char_Group_Type::PARENTHESIS).contains(input.letter))
 		{
 			bool is_open = true;
 			char other = ')';
@@ -6138,27 +6394,15 @@ void insert_command_execute(Insert_Command input)
 	}
 	case Insert_Command_Type::SPACE:
 	{
+		Text_Editing::add_padding_to_cursor();
 		Text_Editing::insert_char(cursor, ' ', true);
 		pos += 1;
 		auto_format = false;
-		// Check if inside comment or string literal
-		// bool _unused;
-		// if (text_index_inside_comment_or_string_literal(cursor, _unused)) {
-		// 	Text_Editing::insert_char(cursor, ' ', true);
-		// 	pos += 1;
-		// 	break;
-		// }
-
-		// char prev = pos == 0 ? '\0' : text[pos - 1];
-		// if (char_is_space_critical(prev) || (pos == text.size && prev != ' ')) {
-		// 	Text_Editing::insert_char(cursor, ' ', true);
-		// 	pos += 1;
-		// }
-
 		break;
 	}
 	case Insert_Command_Type::BACKSPACE:
 	{
+		Text_Editing::add_padding_to_cursor();
 		// Handle start of line
 		if (pos == 0)
 		{
@@ -6166,9 +6410,9 @@ void insert_command_execute(Insert_Command input)
 				// We are at the first line_index in the code
 				break;
 			}
-			auto prev_line = source_code_get_line(code, cursor.line - 1);
+			auto prev_line_text = line_index_get_text(cursor.line - 1);
 			// Merge this line_index with previous one
-			Text_Index insert_index = text_index_make(cursor.line - 1, prev_line->text.size);
+			Text_Index insert_index = text_index_make(cursor.line - 1, prev_line_text.size);
 			history_insert_text(history, insert_index, text);
 			history_remove_line(history, cursor.line);
 			cursor = insert_index;
@@ -6177,7 +6421,7 @@ void insert_command_execute(Insert_Command input)
 
 		// Don't allow deleting of indentation when auto-formating is enabled (Experimental feature)
 		int space_count = line_count_leading_spaces(cursor.line);
-		if (editor.auto_format_during_edits && cursor.character == space_count && cursor.character % 4 == 0 && space_count != line->text.size) {
+		if (editor.auto_format_during_edits && cursor.character == space_count && cursor.character % 4 == 0 && space_count != text.size) {
 			break;
 		}
 
@@ -6185,15 +6429,16 @@ void insert_command_execute(Insert_Command input)
 		if (editor.auto_format_during_edits)
 		{
 			int delete_start = cursor.character - 1;
-			while (delete_start >= 0 && string_test_char(line->text, delete_start, ' ')) {
+			while (delete_start >= 0 && string_test_char(text, delete_start, ' ')) {
 				delete_start -= 1;
 			}
-			if (delete_start >= 0 && cursor.character < line->text.size)
+			if (delete_start >= 0 && cursor.character < text.size)
 			{
 				// Delete the whole whitespace
-				char c = line->text[delete_start];
-				char next = line->text[cursor.character];
-				if (char_is_space_critical(c) && char_is_space_critical(next)) {
+				char c = text[delete_start];
+				char next = text[cursor.character];
+				Char_Group space_critical(Char_Group_Type::SPACE_CRITICAL);
+				if (space_critical.contains(c) && space_critical.contains(next)) {
 					delete_start += 1;
 				}
 				if (delete_start < cursor.character)
@@ -6209,48 +6454,16 @@ void insert_command_execute(Insert_Command input)
 		Text_Editing::delete_char(text_index_make(cursor.line, pos - 1), true);
 		pos -= 1;
 		break;
-
-		// TODO: If auto-format is on, auto delete with last-non whitespace, except if both are space-critical?
-		// if (pos - 2 >= 0 && pos - 1 < text.size) {
-		// 	auto char_on = text.characters[pos - 1];
-		// 	auto char_prev = text.characters[pos - 2];
-		// 	if (char_on == ' ' && char_is_operator(char_prev)) {
-		// 		Text_Editing::delete_char(text_index_make(cursor.line, pos - 2), true);
-		// 		Text_Editing::delete_char(text_index_make(cursor.line, pos - 2), true);
-		// 		pos -= 2;
-		// 		break;
-		// 	}
-		// }
-
-		// Text_Editing::delete_char(text_index_make(cursor.line, pos - 1), true);
-		// pos -= 1;
-		// break;
 	}
 	case Insert_Command_Type::NUMBER_LETTER:
 	case Insert_Command_Type::IDENTIFIER_LETTER:
 	{
+		Text_Editing::add_padding_to_cursor();
 		Text_Editing::insert_char(cursor, input.letter, true);
 		pos += 1;
 		break;
 	}
 	default: panic("");
-	}
-}
-
-void remove_folds_on_line(int line_index)
-{
-	auto& editor = syntax_editor;
-	auto& tab = editor.tabs[editor.open_tab_index];
-	auto& cursor = tab.cursor;
-	auto line = source_code_get_line(tab.code, cursor.line);
-
-	auto& folds = tab.folds;
-	for (int i = 0; i < folds.size; i++) {
-		auto& fold = folds[i];
-		if (fold.start <= line_index && fold.end > line_index) {
-			dynamic_array_remove_ordered(&folds, i);
-			i -= 1;
-		}
 	}
 }
 
@@ -6264,6 +6477,11 @@ void syntax_editor_process_key_message(Key_Message & msg)
 	using Parsing::parse_insert_command;
 	using Parsing::parse_normal_command;
 	using Parsing::parse_repeat_count;
+
+	// Note: Kinda hacky to get Ctrl-0 working, as control disables input of 0
+	if (msg.key_code == Key_Code::NUM_0 && msg.character == 0 && msg.ctrl_down) {
+		msg.character = '0';
+	}
 
 	switch (editor.mode)
 	{
@@ -6289,11 +6507,12 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			return;
 		}
 
-		auto& tab = editor.tabs[editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
 		auto& cursor = tab.cursor;
 
 		// Check if Block-Mode command is executed
 		Normal_Command_Type cmd_type = Normal_Command_Type::MAX_ENUM_VALUE;
+		bool switch_to_normal_after_cmd = true;
 		switch (msg.character)
 		{
 		case 'c':
@@ -6302,8 +6521,14 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		case 'D': cmd_type = Normal_Command_Type::DELETE_MOTION; break;
 		case 'y':
 		case 'Y': cmd_type = Normal_Command_Type::YANK_MOTION; break;
-		case '<': cmd_type = Normal_Command_Type::REMOVE_INDENTATION; break;
-		case '>': cmd_type = Normal_Command_Type::ADD_INDENTATION; break;
+		case '>':
+		case '<': 
+		{
+			cmd_type = msg.character == '>' ? 
+				Normal_Command_Type::ADD_INDENTATION : Normal_Command_Type::REMOVE_INDENTATION;
+			switch_to_normal_after_cmd = false;
+			break;
+		}
 		default: break;
 		}
 		if (cmd_type != Normal_Command_Type::MAX_ENUM_VALUE)
@@ -6318,6 +6543,9 @@ void syntax_editor_process_key_message(Key_Message & msg)
 			auto cmd = Parsing::normal_mode_command_make_motion(cmd_type, 1, Parsing::motion_make_from_movement(movement));
 			editor.mode = Editor_Mode::NORMAL;
 			normal_command_execute(cmd);
+			if (!switch_to_normal_after_cmd) {
+				editor.mode = Editor_Mode::VISUAL_BLOCK;
+			}
 			return;
 		}
 
@@ -6333,7 +6561,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 
 		Parse_Result<Movement> result = Parsing::parse_movement(index);
 		if (result.type == Parse_Result_Type::SUCCESS) {
-			cursor = movement_evaluate(result.result, cursor);
+			cursor = movement_evaluate(result.result, cursor, true);
 			string_reset(&cmd_buffer);
 		}
 		else if (result.type == Parse_Result_Type::FAILURE) {
@@ -6390,7 +6618,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		}
 
 		// Check that character is valid
-		if (msg.character < ' ' || msg.character > 128) {
+		if (msg.character != '\t' && (msg.character < ' ' || msg.character > 128)) {
 			string_reset(&editor.command_buffer);
 			return;
 		}
@@ -6414,7 +6642,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 	case Editor_Mode::TEXT_SEARCH:
 	{
 		auto& search_text = editor.search_text;
-		auto& tab = editor.tabs[editor.open_tab_index];
+		auto& tab = syntax_editor.open_tab();
 
 		// Exit if requested
 		if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
@@ -6439,8 +6667,8 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		}
 
 		// Otherwise go through lines from start and try to find occurance
-		tab.cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), editor.search_start_pos);
-		remove_folds_on_line(tab.cursor.line);
+		tab.cursor = movement_evaluate(Parsing::movement_make(Movement_Type::REPEAT_TEXT_SEARCH, 1), editor.search_start_pos, true);
+		Folds::remove_folds_on_line(tab.cursor.line);
 		break;
 	}
 	case Editor_Mode::FUZZY_FIND_DEFINITION:
@@ -6480,7 +6708,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 				syntax_editor_switch_tab(tab_index);
 			}
 			syntax_editor_add_position_to_jump_list();
-			remove_folds_on_line(editor.tabs[editor.open_tab_index].cursor.line);
+			Folds::remove_folds_on_line(editor.open_tab().cursor.line);
 			return;
 		}
 
@@ -6539,7 +6767,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		// Update suggestions if search changed
 		if (changed)
 		{
-			auto& tab = editor.tabs[editor.open_tab_index];
+			auto& tab = syntax_editor.open_tab();
 
 			// Special code path for file search
 			String search_text = editor.fuzzy_search_text;
@@ -6580,7 +6808,7 @@ void syntax_editor_process_key_message(Key_Message & msg)
 		if (msg.key_code == Key_Code::L && msg.ctrl_down && msg.key_down) {
 			editor.mode = Editor_Mode::NORMAL;
 			editor.open_tab_index = editor.navigate_error_mode_tab_before;
-			editor.tabs[editor.open_tab_index].cursor = editor.navigate_error_mode_cursor_before;
+			editor.open_tab().cursor = editor.navigate_error_mode_cursor_before;
 			return;
 		}
 		if (msg.key_code == Key_Code::RETURN && msg.key_down) {
@@ -6933,13 +7161,13 @@ void cursor_goto_selected_stack_frame()
 	}
 
 	// Move cursor
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	tab.cursor.line = line_index;
 	tab.cursor.character = 0;
 	syntax_editor_sanitize_cursor();
 
 	tab.last_render_cursor_pos.line = -1; // So that camera moves to cursor
-	remove_folds_on_line(tab.cursor.line);
+	Folds::remove_folds_on_line(tab.cursor.line);
 }
 
 void syntax_editor_update(bool& animations_running)
@@ -7128,14 +7356,20 @@ void syntax_editor_update(bool& animations_running)
 			// Show all passes on current line
 			Dynamic_Array<Analysis_Pass*> passes = dynamic_array_create<Analysis_Pass*>();
 			SCOPE_EXIT(dynamic_array_destroy(&passes));
-			auto line = source_code_get_line(editor.tabs[editor.open_tab_index].code, editor.tabs[editor.open_tab_index].cursor.line);
-			for (int i = 0; i < line->item_infos.size; i++) {
-				auto& item = line->item_infos[i];
-				for (int j = 0; j < item.editor_info_mapping_count; j++) {
-					auto& semantic_info = editor.editor_compilation_data->semantic_infos[item.editor_info_mapping_start_index + j];
-					dynamic_array_push_back(&passes, semantic_info.pass);
+
+			auto& tab = editor.open_tab();
+			if (tab.cursor.line >= 0 && tab.cursor.line < tab.code->line_count) 
+			{
+				auto line = source_code_get_line(editor.open_tab().code, editor.open_tab().cursor.line);
+				for (int i = 0; i < line->item_infos.size; i++) {
+					auto& item = line->item_infos[i];
+					for (int j = 0; j < item.editor_info_mapping_count; j++) {
+						auto& semantic_info = editor.editor_compilation_data->semantic_infos[item.editor_info_mapping_start_index + j];
+						dynamic_array_push_back(&passes, semantic_info.pass);
+					}
 				}
 			}
+
 			// Remove duplicates
 			for (int i = 0; i < passes.size; i++) {
 				auto pass = passes[i];
@@ -7291,7 +7525,7 @@ void syntax_editor_update(bool& animations_running)
 			SCOPE_EXIT(ui_system_pop_active_container());
 
 			auto push_tab_breakpoints = [&](int tab_index) {
-				auto& tab = editor.tabs[tab_index];
+				auto& tab = *editor.tabs[tab_index];
 				auto& breakpoints = tab.breakpoints;
 				for (int i = 0; i < breakpoints.size; i++)
 				{
@@ -7310,7 +7544,7 @@ void syntax_editor_update(bool& animations_running)
 					}
 
 					string_reset(&tmp_str);
-					String src_text = source_code_get_line(tab.code, breakpoint.line_number)->text;
+					String src_text = line_index_get_text(breakpoint.line_number, &tab);
 					string_append_formated(&tmp_str, "#%05d, \"%s\"", breakpoint.line_number, src_text.characters);
 					ui_system_push_label(tmp_str.characters, false);
 				}
@@ -7319,7 +7553,7 @@ void syntax_editor_update(bool& animations_running)
 			push_tab_breakpoints(editor.open_tab_index);
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
-				auto& tab = editor.tabs[i];
+				auto& tab = *editor.tabs[i];
 				if (i == editor.open_tab_index) continue;
 				if (tab.breakpoints.size == 0) continue;
 				String name = string_create_filename_from_path_static(&tab.filepath);
@@ -7424,6 +7658,10 @@ void syntax_editor_update(bool& animations_running)
 		editor.show_folds_inline = ui_system_push_checkbox(editor.show_folds_inline);
 		ui_system_push_next_component_label("Auto-Parenthesis");
 		editor.auto_insert_parenthesis = ui_system_push_checkbox(editor.auto_insert_parenthesis);
+		ui_system_push_next_component_label("Display leading spaces");
+		editor.show_leading_spaces = ui_system_push_checkbox(editor.show_leading_spaces);
+		ui_system_push_next_component_label("Sneak search");
+		editor.sneak_search = ui_system_push_checkbox(editor.sneak_search);
 	}
 
 	// Handle Editor inputs
@@ -7444,7 +7682,7 @@ void syntax_editor_update(bool& animations_running)
 			gui_node_set_padding(tabs_container, 2, 2, true);
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
-				auto& tab = editor.tabs[i];
+				auto& tab = *editor.tabs[i];
 				String name = tab.filepath;
 				int start = 0;
 				int end = name.size;
@@ -7555,7 +7793,7 @@ void syntax_editor_update(bool& animations_running)
 
 		// Execute Actions
 		if (action_print_line_info) {
-			auto& tab = editor.tabs[editor.open_tab_index];
+			auto& tab = syntax_editor.open_tab();
 			auto unit = tab_to_compilation_unit(editor.open_tab_index);
 			if (unit != nullptr) {
 				debugger_print_line_translation(editor.debugger, unit, tab.cursor.line, editor.editor_compilation_data);
@@ -7631,7 +7869,7 @@ void syntax_editor_update(bool& animations_running)
 
 			for (int i = 0; i < editor.tabs.size; i++)
 			{
-				auto& tab = editor.tabs[i];
+				auto& tab = *editor.tabs[i];
 				auto unit = tab_to_compilation_unit(&tab);
 				if (unit == nullptr) continue;
 				auto& line_breakpoints = tab.breakpoints;
@@ -7829,7 +8067,7 @@ enum class Line_Symbol_Flag
 	IN_SELECTED_FRAME   = 1 << 4, // Means that the symbol should be drawn greend
 };
 
-Display_Line display_line_make(int line_index, Fold_Info fold_info, int logical_indentation) {
+Display_Line display_line_make(int line_index, Line_Area fold_info, int logical_indentation) {
 	Display_Line result;
 	result.line_index   = line_index;
 	result.fold_info    = fold_info;
@@ -7933,22 +8171,23 @@ void syntax_editor_render()
 		render_pass_draw(pass_particles, shader, mesh, Mesh_Topology::TRIANGLES, {});
 	}
 
-	auto& tab = editor.tabs[editor.open_tab_index];
+	auto& tab = syntax_editor.open_tab();
 	auto code = tab.code;
 	auto& cursor = tab.cursor;
-	bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 
-	// Clamp camera and calculate display lines
-	int cursor_display_line = -1;
-	bool cursor_is_on_fold = Folds::get_fold_info(cursor.line).inside_fold;
-	ivec2 char_size = editor.font_main->char_size;
-	editor.display_lines = DynArray<Display_Line>::create(&arena);
-	auto& display_lines = editor.display_lines;
-	editor.source_to_display_line_mapping = DynTable<int, int>::create(&editor.arena, hash_i32, equals_i32);
+	bool debugger_running = debugger_get_state(editor.debugger).process_state != Debug_Process_State::NO_ACTIVE_PROCESS;
 	auto& main_box = editor.main_box;
 	main_box = ibox2(editor.code_box);
+	ivec2 char_size = editor.font_main->char_size;
+
+	// Clamp camera and calculate display lines
+	editor.display_lines = DynArray<Display_Line>::create(&arena);
+	auto& display_lines = editor.display_lines;
+	int cursor_display_line = -1;
+	bool cursor_is_on_fold = Folds::get_line_area(cursor.line).inside_fold;
+	editor.source_to_display_line_mapping = DynTable<int, int>::create(&editor.arena, hash_i32, equals_i32);
 	{
-		Line_Iter start = Line_Iter::create(tab.cam_start);
+		Folds::Line_Iter start = Folds::Line_Iter::create(tab.cam_start);
 		start.move_to_fold_boundary(-1, false);
 		int max_line_count = ceilf((float)(main_box.max.y - main_box.min.y) / char_size.y);
 		editor.visible_line_count = max_line_count;
@@ -7962,43 +8201,37 @@ void syntax_editor_render()
 
 			int to_cursor_dist = start.visible_distance_to(cursor.line);
 			if (to_cursor_dist < MIN_CURSOR_DISTANCE) { // Cursor before cam-start
-				start.move(to_cursor_dist - MIN_CURSOR_DISTANCE, true);
+				start.move(to_cursor_dist - MIN_CURSOR_DISTANCE);
 			}
 			else if (to_cursor_dist >= max_line_count - MIN_CURSOR_DISTANCE) {
-				start.move(to_cursor_dist - (max_line_count - MIN_CURSOR_DISTANCE), true);
+				start.move(to_cursor_dist - (max_line_count - MIN_CURSOR_DISTANCE));
 			}
 		}
 
 		// Create display lines
 		tab.cam_start = start.line_index;
 		display_lines.reset();
-		int prev_line = -1;
-		// Note: start.line_index > prev_line is necessary because of a special case with line inline folds at the end of the file,
-		//		where the line-iter goes backwards to last visible line
-		while (display_lines.size < max_line_count && start.line_index > prev_line)
+		while (display_lines.size < max_line_count)
 		{
-			prev_line = start.line_index;
-			Fold_Info fold_info = Folds::get_fold_info(start.line_index, start.nearby_fold_index);
-			if (syntax_editor.show_folds_inline && fold_info.inside_fold) 
+			Display_Line display_line = display_line_make(
+				start.line_index, Folds::get_line_area(start.line_index, start.nearby_fold_index),
+				line_get_logical_indentation_with_folds(start.line_index, start.nearby_fold_index)
+			);
+
+			// Check if next line is a fold
+			if (syntax_editor.show_folds_inline)
 			{
-				if (display_lines.size != 0 && display_lines[display_lines.size - 1].inline_fold_index == -1) 
-				{
-					display_lines[display_lines.size - 1].inline_fold_index = fold_info.fold_index;
-					start.move(1, true);
-					continue;
+				Line_Area next_line_area = Folds::get_line_area(start.line_index + 1);
+				if (next_line_area.inside_fold) {
+					display_line.inline_fold_index = next_line_area.fold_index;
 				}
 			}
 
-			Display_Line display_line = display_line_make(
-				start.line_index, fold_info,
-				line_get_logical_indentation_with_folds(start.line_index, start.nearby_fold_index)
-			);
 			display_lines.push_back(display_line);
-
-			if (start.line_index >= tab.code->line_count - 1) {
+			if (start.line_index >= tab.code->line_count - 1 && start.line_index > tab.cursor.line) {
 				break;
 			}
-			start.move(1, !syntax_editor.show_folds_inline || fold_info.inside_fold);
+			start.move(1);
 		}
 
 		// Find cursor display line
@@ -8009,15 +8242,17 @@ void syntax_editor_render()
 				cursor_display_line = i;
 				break;
 			}
-			if (display_line.fold_info.inside_fold) {
-				if (cursor.line >= display_line.fold_info.start && cursor.line < display_line.fold_info.end) {
+			if (display_line.fold_info.inside_fold) 
+			{
+				if (display_line.fold_info.contains(cursor.line)) {
 					cursor_display_line = i;
 					break;
 				}
 			}
-			if (display_line.inline_fold_index != -1) {
+			if (display_line.inline_fold_index != -1) 
+			{
 				auto fold = tab.folds[display_line.inline_fold_index];
-				if (cursor.line >= fold.start && cursor.line < fold.end) {
+				if (fold.interval.contains(cursor.line)) {
 					cursor_display_line = i;
 					break;
 				}
@@ -8040,7 +8275,7 @@ void syntax_editor_render()
 		auto checkpoint = arena.make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 
-		// Set line symbols to display lines
+		// Set line symbol booleans in display lines
 		{
 			auto helper_add_symbol = [&](int line_index, Line_Symbol_Flag flag) {
 				int* display_line = editor.source_to_display_line_mapping.find(line_index);
@@ -8115,51 +8350,78 @@ void syntax_editor_render()
 		}
 
 		// Figure out how much space line-numbers are gonna take
-		auto get_digits = [](int number) -> int {
+		auto get_digits = [](int number) -> int 
+		{
 			int digits = 1;
+			if (number < 0) {
+				digits += 1;
+			}
 			while ((number / 10) != 0) {
 				digits += 1;
 				number = number / 10;
 			}
 			return digits;
 		};
-		const int max_line_num_digits = get_digits(tab.code->line_count);
-		const int line_info_char_count = max_line_num_digits + 3; // Number of line-digits + 1 for offset of current line + 2 for breakpoints/current instr
+
+		int max_line_number = math_maximum(code->line_count + syntax_editor.visible_line_count, math_absolute(cursor.line));
+		int line_number_digits = get_digits(max_line_number);
+		int line_number_characters =
+			line_number_digits +
+			1 + // Negative sign
+			1 + // Left/Right align offset for cursor-line vs normal line
+			1 + // Spacing to code
+			2 + // Line symbols (Breakpoint and instruction pointer)
+			0;
 
 		// Note: this is signed, e.g. first lines may be negative, but we only display positive
-		int first_line_number =
-			cursor_display_line == -1 ?
-			Line_Iter::create(tab.cursor.line).visible_distance_to(display_lines[0].line_index) :
-			-cursor_display_line;
+		int first_line_number = Folds::Line_Iter::create(tab.cursor.line).visible_distance_to(display_lines[0].line_index);
 
 		// Create text-area for line-infos
-		Rich_Text_Area line_info_area = Rich_Text_Area::create(&arena, ivec2(line_info_char_count, display_lines.size));
+		Rich_Text_Area line_info_area = Rich_Text_Area::create(&arena, ivec2(line_number_characters, display_lines.size));
 		for (int i = 0; i < display_lines.size; i++)
 		{
 			Display_Line& display_line = display_lines[i];
 
+			if (display_line.line_index < 0 && display_line.line_index < cursor.line) continue;
+			if (display_line.line_index >= code->line_count && display_line.line_index > cursor.line) continue;
+
 			// Maybe some bg-color?
-			// line_info_area.mark(ivec2(0, i), line_info_char_count, Mark_Type::BACKGROUND_COLOR, Syntax_Color::BLUE);
-			line_info_area.mark(ivec2(0, i), line_info_char_count, Mark_Type::TEXT_COLOR, syntax_color_to_palette_color(Syntax_Color::TEXT));
+			bool line_index_valid = display_line.line_index >= 0 && display_line.line_index < code->line_count;
+			line_info_area.mark(ivec2(0, i), line_number_characters, 
+				Mark_Type::BACKGROUND_COLOR, line_index_valid ? Palette_Color::GREY1 : Palette_Color::DARK_YELLOW
+			);
+			line_info_area.mark(ivec2(0, i), line_number_characters, Mark_Type::TEXT_COLOR, syntax_color_to_palette_color(Syntax_Color::TEXT));
 
 			// Push line number (Current line is left-aligned, others are right aligned)
-			int end = max_line_num_digits + 1;
+			int least_significat_digit_pos = line_number_characters - 2;
 			int display_number = math_absolute(first_line_number + i);
 			Palette_Color num_color = Palette_Color::DARK_CYAN;
-			if (display_number == 0) 
+			if (display_number == 0) // On cursor line
 			{
 				display_number = tab.cursor.line;
-				end = get_digits(tab.cursor.line);
+				least_significat_digit_pos = least_significat_digit_pos - 1;
 				num_color = Palette_Color::CYAN;
 			}
-			for (int j = end - 1; j >= 0; j -= 1) {
+
+			bool is_negative = display_number < 0;
+			if (is_negative) {
+				display_number *= -1;
+			}
+			int char_index = least_significat_digit_pos;
+			for (; char_index >= 0; char_index -= 1) 
+			{
 				char c = '0' + (display_number % 10);
 				display_number = display_number / 10;
-				line_info_area.set_text(ivec2(j, i), string_create_static_with_size(&c, 1));
-				line_info_area.mark(ivec2(j, i), 1, Mark_Type::TEXT_COLOR, num_color);
+				line_info_area.set_text(ivec2(char_index, i), string_create_static_with_size(&c, 1));
+				line_info_area.mark(ivec2(char_index, i), 1, Mark_Type::TEXT_COLOR, num_color);
 				if (display_number == 0) {
+					char_index -= 1;
 					break;
 				}
+			}
+			if (is_negative) {
+				line_info_area.set_text(ivec2(char_index, i), string_create_static("-"));
+				line_info_area.mark(ivec2(char_index, i), 1, Mark_Type::TEXT_COLOR, num_color);
 			}
 
 			// Draw line symbols
@@ -8171,8 +8433,8 @@ void syntax_editor_render()
 
 			// Add breakpoint
 			if (is_breakpoint) {
-				line_info_area.set_text(ivec2(max_line_num_digits + 1, i), string_create_static("o"));
-				line_info_area.mark(ivec2(max_line_num_digits + 1, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::RED);
+				line_info_area.set_text(ivec2(0, i), string_create_static("o"));
+				line_info_area.mark(ivec2(0, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::RED);
 			}
 
 			// Find symbol by priority
@@ -8189,16 +8451,16 @@ void syntax_editor_render()
 			// Add symbol
 			if (c != '\0') 
 			{
-				line_info_area.set_text(ivec2(max_line_num_digits + 2, i), string_create_static_with_size(&c, 1));
+				line_info_area.set_text(ivec2(1, i), string_create_static_with_size(&c, 1));
 				if (in_selected_frame) {
-					line_info_area.mark(ivec2(max_line_num_digits + 2, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::GREEN);
+					line_info_area.mark(ivec2(1, i), 1, Mark_Type::TEXT_COLOR, Palette_Color::GREEN);
 				}
 			}
 		}
 
 		// Draw line-info area
 		line_info_area.render(main_box, editor.font_main, editor.renderer_2D, pass_2D);
-		main_box.min.x += char_size.x * line_info_area.size.x;
+		main_box.min.x += char_size.x * (line_info_area.size.x + 1);
 	}
 
 	// Draw source-code
@@ -8213,7 +8475,7 @@ void syntax_editor_render()
 			for (int i = 0; i < display_lines.size; i++)
 			{
 				Display_Line& display_line = display_lines[i];
-				Source_Line* source_line = source_code_get_line(tab.code, display_line.line_index);
+				String text = line_index_get_text(display_line.line_index);
 
 				// Handle folds
 				int fold_index = -1;
@@ -8227,9 +8489,14 @@ void syntax_editor_render()
 				}
 
 				ivec2 pos = ivec2(0, i);
-				if (fold_index == -1 || is_inline_fold) {
-					main_area.set_text(ivec2(0, i), source_line->text);
-					pos.x += source_line->text.size + 1;
+				if (fold_index == -1 || is_inline_fold) 
+				{
+					main_area.set_text(ivec2(0, i), text);
+					pos.x += text.size + 1;
+					// Handle out-of-bounds cursor and fold display
+					if (cursor.line == display_line.line_index && ibox1::make_length(pos.x - 1, 7).contains(cursor.character)) {
+						pos.x = math_maximum(pos.x, cursor.character + 2);
+					}
 				}
 				if (fold_index != -1)
 				{
@@ -8238,27 +8505,9 @@ void syntax_editor_render()
 						pos.x = fold.indentation * 4;
 					}
 
-					bool contains_errors = false;
-					// {
-					// 	auto& errors = editor.editor_compilation_data->code_errors;
-					// 	auto tab_unit = tab_to_compilation_unit(editor.open_tab_index);
-					// 	for (int i = 0; i < errors.size; i++) 
-					// 	{
-					// 		const auto& error = errors[i];
-					// 		if (error.unit != tab_unit) {
-					// 			continue;
-					// 		}
-					// 		// Check if error range has lines in fold?
-					// 		if (error.text_index.line >= fold.start && error.text_index.line < fold.end) {
-					// 			contains_errors = true;
-					// 			break;
-					// 		}
-					// 	}
-					// }
-
 					main_area.set_text(pos, string_create_static("|...|"));
 					main_area.mark(pos, 5, Mark_Type::TEXT_COLOR, Syntax_Color::TEXT);
-					main_area.mark(pos, 5, Mark_Type::BACKGROUND_COLOR, contains_errors ? Syntax_Color::FOLD_ERROR_BG : Syntax_Color::FOLD_BG);
+					main_area.mark(pos, 5, Mark_Type::BACKGROUND_COLOR, Syntax_Color::FOLD_BG);
 				}
 			}
 		}
@@ -8286,7 +8535,7 @@ void syntax_editor_render()
 			String cursor_token_text = string_create_static("");
 			{
 				int token_index = 0;
-				Source_Line* line = source_code_get_line(code, cursor.line);
+				String line_text = line_index_get_text(cursor.line);
 
 				auto checkpoint = arena.make_checkpoint();
 				SCOPE_EXIT(checkpoint.rewind());
@@ -8296,7 +8545,7 @@ void syntax_editor_render()
 					Token& token = tokens[token_index];
 					if (token.start <= cursor.character && token.end >= cursor.character &&
 						(token_type_is_keyword(token.type) || token.type == Token_Type::IDENTIFIER)) {
-						cursor_token_text = string_create_substring_static(&line->text, token.start, token.end);
+						cursor_token_text = string_create_substring_static(&line_text, token.start, token.end);
 					}
 				}
 			}
@@ -8308,6 +8557,7 @@ void syntax_editor_render()
 			for (int i = 0; i < display_lines.size; i += 1)
 			{
 				Display_Line& display_line = display_lines[i];
+				if (display_line.line_index < 0 || display_line.line_index >= code->line_count) continue;
 				if (display_line.fold_info.inside_fold) continue;
 				Source_Line* line = source_code_get_line(tab.code, display_line.line_index);
 
@@ -8417,7 +8667,6 @@ void syntax_editor_render()
 
 				// Set cursor text-background
 				if (editor.mode == Editor_Mode::NORMAL && !cursor_is_on_fold && cursor.line == display_line.line_index) {
-					auto cursor_line = source_code_get_line(code, cursor.line);
 					main_area.mark(ivec2(cursor.character, i), 1, Mark_Type::BACKGROUND_COLOR, Syntax_Color::CURSOR_BG);
 				}
 			}
@@ -8433,7 +8682,7 @@ void syntax_editor_render()
 			Display_Line& display_line = display_lines[i];
 			if (display_line.fold_info.inside_fold) continue;
 
-			String text = source_code_get_line(code, display_line.line_index)->text;
+			String text = line_index_get_text(display_line.line_index);
 			int leading_whitespaces = 0;
 			while (leading_whitespaces < text.size && text.characters[leading_whitespaces] == ' '){
 				leading_whitespaces += 1;
@@ -8455,8 +8704,10 @@ void syntax_editor_render()
 				);
 			};
 
-			for (int j = 0; j < leading_whitespaces; j++) {
-				helper_draw_dot(ivec2(j, i));
+			if (syntax_editor.show_leading_spaces) {
+				for (int j = 0; j < leading_whitespaces; j++) {
+					helper_draw_dot(ivec2(j, i));
+				}
 			}
 			if (trailing_whitespace_start > leading_whitespaces) {
 				for (int j = trailing_whitespace_start; j < text.size; j++) {
@@ -8469,7 +8720,7 @@ void syntax_editor_render()
 		// Draw Cursor
 		if (cursor_display_line != -1)
 		{
-			Source_Line* cursor_line = source_code_get_line(code, cursor.line);
+			String cursor_line_text = line_index_get_text(cursor.line);
 			Display_Line& display_line = display_lines[cursor_display_line];
 
 			Text_Index pos = cursor;
@@ -8482,14 +8733,15 @@ void syntax_editor_render()
 				main_box.get_corner(Corner::TOP_LEFT) +
 				char_size * ivec2(cursor.character, -cursor_display_line - 1);
 
-			if (display_line.fold_info.inside_fold && cursor.line >= display_line.fold_info.start && cursor.line < display_line.fold_info.end) {
+			if (display_line.fold_info.inside_fold && display_line.fold_info.contains(cursor.line)) {
 				cursor_box.min.x = tab.folds[display_line.fold_info.fold_index].indentation * 4 * char_size.x + main_box.min.x;
 			}
 			else if (display_line.inline_fold_index != -1)
 			{
 				Code_Fold& fold = tab.folds[display_line.inline_fold_index];
-				if (cursor.line >= fold.start && cursor.line < fold.end) {
-					cursor_box.min.x = (source_code_get_line(code, display_line.line_index)->text.size + 1) * char_size.x + main_box.min.x;
+				cursor_line_text = line_index_get_text(display_line.line_index);
+				if (fold.contains(cursor.line)) {
+					cursor_box.min.x = (cursor_line_text.size + 1) * char_size.x + main_box.min.x;
 				}
 			}
 

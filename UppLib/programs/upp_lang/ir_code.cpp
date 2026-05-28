@@ -1157,46 +1157,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             add_instruction(instr);
             return instr.options.unary_op.destination;
         }
-        case AST::Unop::OPTIONAL_DEREFERENCE:
-        {
-            destination = move_access_to_destination(ir_data_access_create_address_of(access));
-
-            // Do null check here
-            IR_Instruction cmp_instr;
-            cmp_instr.type = IR_Instruction_Type::BINARY_OP;
-            cmp_instr.options.binary_op.destination = ir_data_access_create_intermediate(upcast(types.bool_type));
-            cmp_instr.options.binary_op.operand_left = destination;
-            void* null_val = nullptr;
-            cmp_instr.options.binary_op.operand_right = ir_data_access_create_constant(access->datatype, array_create_static_as_bytes(&null_val, 1));
-            cmp_instr.options.binary_op.type = IR_Binop::EQUAL;
-            add_instruction(cmp_instr);
-
-            IR_Instruction if_instr;
-            if_instr.type = IR_Instruction_Type::IF;
-            if_instr.options.if_instr.condition = cmp_instr.options.binary_op.destination;
-            if_instr.options.if_instr.true_branch = ir_code_block_create();
-            if_instr.options.if_instr.false_branch = ir_code_block_create();
-            add_instruction(if_instr);
-
-            IR_Instruction exit_instr;
-            exit_instr.type = IR_Instruction_Type::RETURN;
-            exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
-            exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::EXECUTION_ERROR, "Dereferencing null-pointer");
-            add_instruction(exit_instr, if_instr.options.if_instr.true_branch);
-        }
-        case AST::Unop::NULL_CHECK:
-        {
-            destination = make_destination_access_on_demand(upcast(types.bool_type));
-            IR_Instruction check_instr;
-            check_instr.type = IR_Instruction_Type::BINARY_OP;
-            check_instr.options.binary_op.destination = destination;
-            check_instr.options.binary_op.operand_left = access;
-            void* null_val = nullptr;
-            check_instr.options.binary_op.operand_right = ir_data_access_create_constant(access->datatype, array_create_static_as_bytes(&null_val, 1));
-            check_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-            add_instruction(check_instr);
-            return destination;
-        }
         default: panic("HEY");
         }
         panic("HEY");
@@ -1426,6 +1386,33 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         default: panic("Other Symbol-cases must be handled by analyser or in this function above!");
         }
         return move_access_to_destination(result_access);
+    }
+    case AST::Expression_Type::IF_THEN_ELSE:
+    {
+        auto& if_then_else = expression->options.if_then_else;
+
+        // Create result-register, because both code paths needs to write to it
+        if (destination == nullptr) {
+            destination = ir_data_access_create_intermediate(result_type);
+        }
+
+        // Generate if and code-blocks
+        IR_Instruction if_instr;
+        if_instr.type = IR_Instruction_Type::IF;
+        if_instr.options.if_instr.condition = ir_generator_generate_expression(if_then_else.condition);
+        if_instr.options.if_instr.true_branch = ir_code_block_create();
+        if_instr.options.if_instr.false_branch = ir_code_block_create();
+        {
+            RESTORE_ON_SCOPE_EXIT(ir_generator->current_block, if_instr.options.if_instr.true_branch);
+            destination = ir_generator_generate_expression(if_then_else.then_value, destination);
+        }
+        {
+            RESTORE_ON_SCOPE_EXIT(ir_generator->current_block, if_instr.options.if_instr.false_branch);
+            destination = ir_generator_generate_expression(if_then_else.else_value, destination);
+        }
+        add_instruction(if_instr);
+
+        return destination;
     }
     case AST::Expression_Type::STRUCT_INITIALIZER:
     {

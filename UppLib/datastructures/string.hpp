@@ -21,6 +21,8 @@ struct String
     void append(String* str);
     void append(char c);
     void append_formated(const char* format, ...);
+
+    char at(int index, char backup = '\0');
 };
 
 void string_destroy(String* string);

@@ -53,10 +53,6 @@ enum class Token_Type
     LESS_EQUAL,           // <=
     GREATER_EQUAL,        // >=
 
-    AND,                  // &&
-    OR,                   // ||
-    NOT,                  // !
-
     PARENTHESIS_OPEN,     // (
     PARENTHESIS_CLOSED,   // )
     BRACKET_OPEN,         // [
@@ -74,15 +70,12 @@ enum class Token_Type
     COLON_EQUALS,         // :=
     SEMI_COLON,           // ;
     APOSTROPHE,           // '
-    QUESTION_MARK,        // ?
-    OPTIONAL_POINTER,     // ?*
     POSTFIX_CALL_ARROW,   // ->
     FUNCTION_ARROW,       // =>, note: different to DOT_CALL ->
     SUBTYPE_ACCESS,       // .>
     BASETYPE_ACCESS,      // .<
     ADDRESS_OF,           // -*
     DEREFERENCE,          // -&
-    OPTIONAL_DEREFERENCE, // -?&
     DOLLAR,               // $
     ASSIGN,               // =
     ASSIGN_ADD,           // +=
@@ -111,12 +104,17 @@ enum class Token_Type
 
     // Block statements
     IF,
+    THEN,
     ELSE,
     SWITCH,
     DEFAULT,
     LOOP,
     SCOPE,
     DEFER,
+
+    AND,
+    OR,
+    NOT,
 
     AS,
     IN_KEYWORD,

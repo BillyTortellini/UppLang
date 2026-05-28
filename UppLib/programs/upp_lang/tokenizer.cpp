@@ -50,10 +50,6 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::LESS_EQUAL: return "<=";
     case Token_Type::GREATER_EQUAL: return ">=";
 
-    case Token_Type::AND: return "&&";
-    case Token_Type::OR: return "||";
-    case Token_Type::NOT: return "!";
-
     case Token_Type::PARENTHESIS_OPEN: return "(";
     case Token_Type::PARENTHESIS_CLOSED: return ")";
     case Token_Type::BRACKET_OPEN: return "[";
@@ -71,14 +67,11 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::COLON_EQUALS: return ":=";
     case Token_Type::SEMI_COLON: return ";";
     case Token_Type::APOSTROPHE: return "'";
-    case Token_Type::QUESTION_MARK: return "?";
-    case Token_Type::OPTIONAL_POINTER: return "?*";
     case Token_Type::POSTFIX_CALL_ARROW: return "->";
     case Token_Type::SUBTYPE_ACCESS: return ".>";
     case Token_Type::BASETYPE_ACCESS: return ".<";
     case Token_Type::ADDRESS_OF: return "-*";
     case Token_Type::DEREFERENCE: return "-&";
-    case Token_Type::OPTIONAL_DEREFERENCE: return "-?&";
     case Token_Type::FUNCTION_ARROW: return "=>";
     case Token_Type::DOLLAR: return "$";
     case Token_Type::ASSIGN: return "=";
@@ -108,6 +101,7 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::BREAK: return "break";
     case Token_Type::CONTINUE: return "continue";
     case Token_Type::IF: return "if";
+    case Token_Type::THEN: return "then";
     case Token_Type::ELSE: return "else";
     case Token_Type::LOOP: return "loop";
     case Token_Type::IN_KEYWORD: return "in";
@@ -116,6 +110,10 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";
     case Token_Type::SCOPE: return "scope";
+
+    case Token_Type::AND: return "and";
+    case Token_Type::OR: return "or";
+    case Token_Type::NOT: return "not";
 
     case Token_Type::BAKE: return "#bake";
     case Token_Type::INSTANCIATE: return "#instanciate";
@@ -661,6 +659,11 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::CURLY_BRACE_CLOSED:
 		return continuation_info_make(type, false, false, false, true);
 
+    case Token_Type::ELSE:
+        return continuation_info_make(type, true, false, true, false);
+    case Token_Type::THEN:
+        return continuation_info_make(type, true, true, false, false);
+
     case Token_Type::FUNCTION_KEYWORD:
     case Token_Type::MODULE:
     case Token_Type::STRUCT:
@@ -676,7 +679,6 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::BREAK:
     case Token_Type::CONTINUE:
     case Token_Type::IF:
-    case Token_Type::ELSE:
     case Token_Type::LOOP:
     case Token_Type::IN_KEYWORD:
     case Token_Type::DEFER:

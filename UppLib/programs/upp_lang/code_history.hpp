@@ -8,6 +8,7 @@
 
 // Forward Declarations
 struct Source_Code;
+struct Editor_Tab;
 
 // Code History
 enum class Code_Change_Type
@@ -65,7 +66,7 @@ struct History_Node
 
 struct Code_History
 {
-    Source_Code* code;
+    Editor_Tab* tab;
     Dynamic_Array<History_Node> nodes;
     int current;
 
@@ -73,7 +74,7 @@ struct Code_History
     int complex_start;
 };
 
-Code_History code_history_create(Source_Code* code);
+Code_History code_history_create(Editor_Tab* tab);
 void code_history_reset(Code_History* history);
 void code_history_destroy(Code_History* history);
 
@@ -106,4 +107,4 @@ struct History_Timestamp
 
 History_Timestamp history_get_timestamp(Code_History* history);
 void history_get_changes_between(Code_History* history, History_Timestamp start, History_Timestamp end, Dynamic_Array<Code_Change>* changes);
-void code_change_apply(Source_Code* code, Code_Change* change, bool forwards);
+void code_change_apply(Source_Code* code, Code_Change* change, bool forwards, Editor_Tab* tab);

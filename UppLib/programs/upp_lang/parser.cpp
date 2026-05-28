@@ -2026,7 +2026,6 @@ namespace Parser
 			PARSE_SUCCESS(result);
 		}
 		case Token_Type::ASTERIX:
-		case Token_Type::OPTIONAL_POINTER:
 		{
 			bool is_asterix = test_token(Token_Type::ASTERIX);
 			if (is_asterix && test_token(Token_Type::FUNCTION_KEYWORD, 1)) { // Function pointer, e.g. *fn(a:int,b:int)=>int
@@ -2038,7 +2037,6 @@ namespace Parser
 			}
 
 			result->type = Expression_Type::POINTER_TYPE;
-			result->options.pointer_type.is_optional = !is_asterix;
 			advance_token();
 			result->options.pointer_type.child_type = parse_single_expression_or_error(&result->base);
 			PARSE_SUCCESS(result);
@@ -2164,6 +2162,32 @@ namespace Parser
 				auto& init = result->options.array_initializer;
 				init.type_expr = optional_make_failure<Expression*>();
 				init.values = parse_list_items_as_array<Expression>(upcast(result), wrapper_parse_expression_or_error); // Not sure if _or_error is correct here
+				PARSE_SUCCESS(result);
+			}
+			else if (test_token(Token_Type::IF))
+			{
+				advance_token();
+				result->type = Expression_Type::IF_THEN_ELSE;
+				result->options.if_then_else.condition = parse_expression_or_error_expr(upcast(result));
+				if (!test_token(Token_Type::THEN)) 
+				{
+					log_error_range_offset("Expected then token in if-expression", 0);
+					result->options.if_then_else.then_value = create_error_expression(upcast(result));
+					result->options.if_then_else.else_value = create_error_expression(upcast(result));
+					PARSE_SUCCESS(result);
+				}
+				advance_token();
+
+				result->options.if_then_else.then_value = parse_expression_or_error_expr(upcast(result));
+				if (!test_token(Token_Type::ELSE)) 
+				{
+					log_error_range_offset("Expected else token in if-expression", 0);
+					result->options.if_then_else.else_value = create_error_expression(upcast(result));
+					PARSE_SUCCESS(result);
+				}
+				advance_token();
+
+				result->options.if_then_else.else_value = parse_expression_or_error_expr(upcast(result));
 				PARSE_SUCCESS(result);
 			}
 			else
@@ -2352,8 +2376,6 @@ namespace Parser
 		}
 		case Token_Type::ADDRESS_OF:
 		case Token_Type::DEREFERENCE:
-		case Token_Type::OPTIONAL_DEREFERENCE:
-		case Token_Type::QUESTION_MARK:
 		{
 			Unop unop = (Unop)-1;
 			if (test_token(Token_Type::ADDRESS_OF)) {
@@ -2361,12 +2383,6 @@ namespace Parser
 			}
 			else if (test_token(Token_Type::DEREFERENCE)) {
 				unop = Unop::DEREFERENCE;
-			}
-			else if (test_token(Token_Type::OPTIONAL_DEREFERENCE)) {
-				unop = Unop::OPTIONAL_DEREFERENCE;
-			}
-			else if (test_token(Token_Type::QUESTION_MARK)) {
-				unop = Unop::NULL_CHECK;
 			}
 			else {
 				panic("");
@@ -2535,7 +2551,7 @@ namespace Parser
 		// Tokenize code
 		compilation_data_switch_timing_task(compilation_data, Timing_Task::LEXING);
 		parser.tokens = tokenize_source_code_and_build_hierarchy(unit->code, temporary_arena, identifier_pool);
-		print_tokens(parser.tokens);
+		// print_tokens(parser.tokens);
 
 		// Parse root
 		compilation_data_switch_timing_task(compilation_data, Timing_Task::PARSING);

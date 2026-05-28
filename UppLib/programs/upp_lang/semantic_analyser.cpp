@@ -830,6 +830,20 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 		// Not-set, otherwise expression result-type would be comptime or pattern-type
 		return comptime_result_make_unavailable(result_datatype, "In base analysis the value of the polymorphic symbol is not available!");
 	}
+	case AST::Expression_Type::IF_THEN_ELSE:
+	{
+		auto& if_then_else = expr->options.if_then_else;
+		Comptime_Result condition_result = expression_calculate_comptime_value_internal(if_then_else.condition, semantic_context);
+		if (condition_result.type != Comptime_Result_Type::AVAILABLE) {
+			return condition_result;
+		}
+		bool condition_value = true;
+		memory_copy((void*) &condition_value, condition_result.data, 1);
+
+		return expression_calculate_comptime_value_internal(
+			(condition_value ? if_then_else.then_value : if_then_else.else_value), semantic_context
+		);
+	}
 	case AST::Expression_Type::PATH_LOOKUP:
 	{
 		auto path = expr->options.path_lookup;
@@ -915,7 +929,6 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 		case AST::Unop::ADDRESS_OF: {
 			return comptime_result_make_not_comptime("Address of not supported for comptime values");
 		}
-		case AST::Unop::OPTIONAL_DEREFERENCE:
 		case AST::Unop::DEREFERENCE:
 			return comptime_result_make_not_comptime("Dereferencing not supported for comptime values");
 		default: panic("");
@@ -2862,10 +2875,6 @@ bool pattern_matcher_match_types(Pattern_Matcher& result, Datatype* type_a, Data
 	case Datatype_Type::POINTER: {
 		auto pattern_pointer = downcast<Datatype_Pointer>(type_a);
 		auto match_pointer = downcast<Datatype_Pointer>(type_b);
-		if (pattern_pointer->is_optional != match_pointer->is_optional) {
-			result.success = false;
-			return false;
-		}
 		return pattern_matcher_match_types(result, pattern_pointer->element_type, match_pointer->element_type, match_depth + 1);
 	}
 	case Datatype_Type::FUNCTION_POINTER:
@@ -2978,19 +2987,6 @@ Auto_Cast_Type check_if_type_modifier_update_valid(Type_Modifier_Info src_mods, 
 	}
 	else {
 		cast_type = Auto_Cast_Type::INVALID;
-	}
-
-	// Check optional flags
-	if (cast_type != Auto_Cast_Type::INVALID) 
-	{
-		for (int i = 0; i < src_mods.pointer_level; i++) {
-			bool src_is_optional = (src_mods.optional_flags & (1 << i)) != 0;
-			bool dst_is_optional = (dst_mods.optional_flags & (1 << i)) != 0;
-			if (src_is_optional && !dst_is_optional) {
-				cast_type = Auto_Cast_Type::INVALID;
-				break;
-			}
-		}
 	}
 
 	return cast_type;
@@ -3823,7 +3819,7 @@ Call_Info* overloading_analyse_call_expression_and_resolve_overloads(
 								candidate.poly_type_requires_modifier_update = true;
 							}
 							match_to_type = type_system_make_type_with_modifiers(
-								type_system, src_mods.base_type, dst_mods.pointer_level, dst_mods.optional_flags
+								type_system, src_mods.base_type, dst_mods.pointer_level
 							);
 						}
 
@@ -4834,7 +4830,7 @@ Datatype* datatype_pattern_instanciate(
 			pointer->element_type, states, error_report_node, error_report_section, semantic_context
 		);
 		if (child_type == nullptr) return nullptr;
-		return upcast(type_system_make_pointer(type_system, child_type, pointer->is_optional));
+		return upcast(type_system_make_pointer(type_system, child_type));
 	}
 	default: panic("");
 	}
@@ -5079,7 +5075,7 @@ Poly_Instance* poly_header_instanciate(
 					if (cast_type != Auto_Cast_Type::INVALID) {
 						expr_info->auto_cast_info = auto_cast_info_make(
 							cast_type,
-							type_system_make_type_with_modifiers(type_system, src_info.base_type, dst_info.pointer_level, dst_info.optional_flags)
+							type_system_make_type_with_modifiers(type_system, src_info.base_type, dst_info.pointer_level)
 						);
 					}
 				}
@@ -8289,9 +8285,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 	case AST::Expression_Type::POINTER_TYPE: {
 		auto& ptr = expr->options.pointer_type;
 		auto result = type_system_make_pointer(
-			type_system,
-			semantic_analyser_analyse_expression_type(ptr.child_type, semantic_context), 
-			ptr.is_optional
+			type_system, semantic_analyser_analyse_expression_type(ptr.child_type, semantic_context)
 		);
 		EXIT_TYPE(upcast(result));
 	}
@@ -8593,7 +8587,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 
 			Datatype* result_type = type_system_make_type_with_modifiers(
-				type_system, upcast(result_struct), mods.pointer_level, mods.optional_flags
+				type_system, upcast(result_struct), mods.pointer_level
 			);
 			EXIT_VALUE(result_type, is_temporary);
 		}
@@ -8859,6 +8853,32 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		expression_info_set_constant_enum(info, expected, value, semantic_context);
 		return info;
 	}
+	case AST::Expression_Type::IF_THEN_ELSE:
+	{
+		auto& if_then_else = expr->options.if_then_else;
+		semantic_analyser_analyse_expression_value(
+			if_then_else.condition, expression_context_make_specific_type(upcast(types.bool_type)), semantic_context
+		);
+		Datatype* then_value_type = semantic_analyser_analyse_expression_value(
+			if_then_else.then_value, context, semantic_context
+		);
+		Datatype* else_value_type = semantic_analyser_analyse_expression_value(
+			if_then_else.else_value, context, semantic_context
+		);
+		if (datatype_is_unknown(then_value_type) || datatype_is_unknown(else_value_type)) {
+			EXIT_VALUE(types.unknown_type, false);
+		}
+
+		if (!types_are_equal(then_value_type, else_value_type)) 
+		{
+			log_semantic_error(semantic_context, "Value types in then and else branch don't match!", expr, Node_Section::FIRST_TOKEN);
+			log_error_info_given_type(semantic_context, then_value_type);
+			log_error_info_given_type(semantic_context, else_value_type);
+			EXIT_VALUE(types.unknown_type, false);
+		}
+
+		EXIT_VALUE(then_value_type, true);
+	}
 	case AST::Expression_Type::UNARY_OPERATION:
 	{
 		auto& unary_node = expr->options.unop;
@@ -8935,26 +8955,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			if (value_info.result_value_is_temporary) {
 				log_semantic_error(semantic_context, "Cannot take address of temporary value", expr, Node_Section::WHOLE_NO_CHILDREN);
 			}
-			EXIT_VALUE(upcast(type_system_make_pointer(type_system, datatype, false)), true);
-		}
-		case AST::Unop::NULL_CHECK:
-		{
-			auto datatype = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unspecified(), semantic_context);
-			if (datatype->type != Datatype_Type::POINTER) 
-			{
-				if (!datatype_is_unknown(datatype)) {
-					log_semantic_error(semantic_context, "Null check only valid on pointer types", expr);
-					log_error_info_given_type(semantic_context, datatype);
-				}
-				else {
-					semantic_context_raise_error_flag(true, semantic_context);
-				}
-			}
-
-			EXIT_VALUE(upcast(types.bool_type), false);
+			EXIT_VALUE(upcast(type_system_make_pointer(type_system, datatype)), true);
 		}
 		case AST::Unop::DEREFERENCE:
-		case AST::Unop::OPTIONAL_DEREFERENCE:
 		{
 			auto datatype = semantic_analyser_analyse_expression_value(unary_node.expr, expression_context_make_unspecified(), semantic_context);
 			if (datatype->type != Datatype_Type::POINTER) 
@@ -8970,16 +8973,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 
 			Datatype_Pointer* pointer = downcast<Datatype_Pointer>(datatype);
-			bool is_optional_dereference = unary_node.type == AST::Unop::OPTIONAL_DEREFERENCE;
-			if (pointer->is_optional && !is_optional_dereference) {
-				log_semantic_error(semantic_context, "Cannot dereference optional pointer, use -?& instead", expr);
-				log_error_info_given_type(semantic_context, datatype);
-			}
-			else if (!pointer->is_optional && is_optional_dereference) {
-				log_semantic_error(semantic_context, "Cannot dereference normal pointer with optional dereference, use -& instead", expr);
-				log_error_info_given_type(semantic_context, datatype);
-			}
-
 			EXIT_VALUE(pointer->element_type, false);
 		}
 		default:panic("");
@@ -9292,16 +9285,8 @@ void expression_context_apply(
 	{
 		Datatype* datatype = value_info.initial_type;
 		bool was_pointer = datatype->type == Datatype_Type::POINTER;
-		bool optional_encountered = false;
-		while (datatype->type == Datatype_Type::POINTER)
-		{
-			Datatype_Pointer* pointer = downcast<Datatype_Pointer>(datatype);
-			if (pointer->is_optional && !optional_encountered) {
-				log_semantic_error(semantic_context, "Optional Pointer found in auto-dereference context", expression, error_section);
-				log_error_info_given_type(semantic_context, value_info.initial_type);
-				optional_encountered = true;
-			}
-			datatype = pointer->element_type;
+		while (datatype->type == Datatype_Type::POINTER) {
+			datatype = downcast<Datatype_Pointer>(datatype)->element_type;
 		}
 
 		if (was_pointer) {

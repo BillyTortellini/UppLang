@@ -910,7 +910,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Datatype* operand_types = binary_op->operand_left->datatype;
-            if (datatype_is_pointer(operand_types)) {
+            if (datatype_is_pointer(operand_types, true)) {
                 instr.op4 = (int)Bytecode_Type::INT64;
             }
             else {

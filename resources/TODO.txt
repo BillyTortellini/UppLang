@@ -1,9 +1,75 @@
 
-Editor Improvements:
- - Think about cursor going anywhere in normal mode, and insert spaces if necessary...
-    I guess I use A for insert at end of line, so this should be fine... (Not sure about empty lines)
+TODO:
+-----
+ - Access to normal math functions/built-ins
+     sin, cos, tan, sind, cosd, tand, pow, exp, atan2, min, max, frac, ceil
+     Arguably like kinda hardcoded functions
+ - String-Handling (+ character literal)
+    * Differentiate between:
+        - readonly string (pointer + size, for slices, immutable)
+        - String_Builder  (User defined structures, with arenas, pointer/size/capacity)
+        - string_buffer   (Maybe pointer/size/capacity?)
+     UTF-8? --> Maybe not yet, not quite schure what I wanna do here
+     Normal, built-in strings in the language have char* characters + size
+     How to tag const-strings?
+     For-C-Strings, it's just another datatype for foreign-functions, ~c_string == const char* 
+     Note for C-Backend: char != signed char != unsigned char, so this needs some thought
+ - Fix da testcases
+ - Write standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
+ - Check out extern library interface...
+
+Done:
+-----
+ - Ternary operator with .if then else 
+ - Remove optional pointers (maybe)
+ - Replace &&, ||, ! with and/or/not
+ - Implement sneak as a movement (maybe even replace f, F, t, T)
+ - Auto formating with multiple spaces fixed
+ - Check fold children
+ - Check undo/redo
+ - Multiple folds still weird
+ - Because movement is unbounded, move render-position of fold after cursor if on the same line and cursor > text
+ - If inline-fold, move out of fold after the fold is created
+ - Open fold on current line only if $ is pressed at end of line
+
+
+
+Other things I could do (Design not final):
+ * break statement with if, loop, switch, block
+     break if, break else, break loop
+ * Enums should be smallest fitting enum or explicity set (I think this make sense) Color :: enum(i16)
+    // Should backing type be signed or unsigned? by default signed int I think
+ * Struct members should be in given order (Except if some keyword says otherwise)
+    * Asdf :: struct($T) pack_something
+    * Types: Pack ordered, pack smallest, pack unaligned?
+
+
+
+Odin: string (read-only, non-owning, can be slice), String-builder (Mutates string), string-buffer (Owning, can change string without resizing)
+text := String_Builder::make(arena)
+text + 15 + false + true + 100 + 15->format(5, 3)
+text + "Fib( " + i + ") = " + fib(i) + "\n";
+text.append(.["Fib(", i, ") = ", fib(i), "\n"])
+
+String_Format :: struct
+    Int:
+        num_digits: int
+    Float:
+        pre_comma: int
+        post_comma: int
 
 DONE:
+27.05:
+ - Interval implementation (ibox1)
+ - Fix movements and motions
+ - Tab as movement
+ - Delete should work with outside ranges
+ - Yank/Put also
+ - 0 vs Ctrl-0
+ - Add-Padding should be done on line-insert
+
+Before:
+ - Unbound cursor
 
 22.05: 
  - Error Refactor
