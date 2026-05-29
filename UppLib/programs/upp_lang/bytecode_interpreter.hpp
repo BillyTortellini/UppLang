@@ -21,4 +21,12 @@ void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread);
 bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right);
 void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* operand);
 void bytecode_execute_primitive_cast(void* dest, void* src, Bytecode_Type dest_type, Bytecode_Type src_type);
+
+float bytecode_execute_f32_unop(float value, Hardcoded_Type type);
+float bytecode_execute_f32_binop(float a, float b, Hardcoded_Type type);
+bool bytecode_execute_f32_predicate(float value, Hardcoded_Type type);
+double bytecode_execute_f64_unop(double value, Hardcoded_Type type);
+double bytecode_execute_f64_binop(double a, double b, Hardcoded_Type type);
+bool bytecode_execute_f64_predicate(double value, Hardcoded_Type type);
+
 void bytecode_thread_print_state(Bytecode_Thread* thread);

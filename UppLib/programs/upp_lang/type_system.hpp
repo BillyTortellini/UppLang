@@ -45,11 +45,6 @@ Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* st
 
 
 // TYPE SIGNATURES
-struct Upp_Type_Handle
-{
-    u32 index;
-};
-
 // NOTE: This enum has to be in synch with type_info options, see add_predefined_types
 enum class Datatype_Type
 {
@@ -200,7 +195,9 @@ struct Datatype_Enum
     AST::Node* definition_node;
 
     bool values_are_sequential;
-    int sequence_start_value; // Usually 1
+    int min_value;
+    int max_value;
+    Upp_Function* value_as_string_fn; // Only generated on demand
 };
 
 struct Datatype_Pattern_Variable
@@ -243,41 +240,6 @@ void datatype_append_value_to_string(
 );
 
 
-
-// C++ TYPE REPRESENTATIONS
-// An array as it is currently defined in the upp-language
-template<typename T>
-struct Upp_Slice
-{
-    T* data;
-    u64 size;
-};
-
-struct Upp_Slice_Base
-{
-    void* data;
-    u64 size;
-};
-
-// The 'primitive' string type as it is currently defined in the upp-language
-// The size of the bytes don't include the null-terminator, which is still expected
-struct Upp_String {
-    void* data;
-    usize size;
-};
-
-struct Upp_Any
-{
-    void* data;
-    Upp_Type_Handle type;
-};
-
-struct Upp_Allocator
-{
-    i64 allocate_fn_index_plus_one;
-    i64 free_fn_index_plus_one;
-    i64 resize_fn_index_plus_one;
-};
 
 
 
@@ -409,7 +371,7 @@ struct Predefined_Types
     Datatype_Primitive* f64_type;
 
     Datatype_Primitive* c_char;
-    Datatype_Primitive* address;
+    Datatype_Primitive* rawptr;
     Datatype_Primitive* isize;
     Datatype_Primitive* usize;
     Datatype_Primitive* bool_type;

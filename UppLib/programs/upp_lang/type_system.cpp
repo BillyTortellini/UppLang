@@ -1432,6 +1432,7 @@ Datatype_Enum* type_system_make_enum_empty(Type_System* type_system, String* nam
 	result->name = name;
 	result->members = DynArray<Enum_Member>::create(arena);
 	result->definition_node = definition_node;
+	result->value_as_string_fn = nullptr;
 
 	type_system_register_type(upcast(result), type_system);
 	return result;
@@ -1450,18 +1451,24 @@ void type_system_finish_enum(Type_System* type_system, Datatype_Enum* enum_type)
 	base.memory_info.value.alignment = 4;
 	base.memory_info.value.contains_padding_bytes = false;
 
+	if (members.size == 0) {
+		Enum_Member dummy;
+		dummy.name = type_system->compilation_data->identifier_pool.predefined_ids.empty_string;
+		dummy.value = 0;
+		members.push_back(dummy);
+	}
+
 	enum_type->values_are_sequential = true;
-	enum_type->sequence_start_value = 0;
-	if (members.size > 0)
+	enum_type->min_value = enum_type->members[0].value;
+	enum_type->max_value = enum_type->members[0].value;
+	for (int i = 0; i < members.size; i++) 
 	{
-		enum_type->sequence_start_value = members[0].value;
-		for (int i = 0; i < members.size; i++) {
-			auto value = members[i].value;
-			if (value != enum_type->sequence_start_value + i) {
-				enum_type->values_are_sequential = false;
-				break;
-			}
+		auto value = members[i].value;
+		if (value != enum_type->min_value + i) {
+			enum_type->values_are_sequential = false;
 		}
+		enum_type->min_value = math_minimum(enum_type->min_value, value);
+		enum_type->max_value = math_maximum(enum_type->max_value, value);
 	}
 
 	// Update internal info to mirror enum info
@@ -1521,7 +1528,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 		types->f64_type = type_system_make_primitive(type_system, Primitive_Type::F64, 8, true);
 
 		types->bool_type = type_system_make_primitive(type_system, Primitive_Type::BOOLEAN, 1, false);
-		types->address = type_system_make_primitive(type_system, Primitive_Type::RAWPTR, 8, false);
+		types->rawptr = type_system_make_primitive(type_system, Primitive_Type::RAWPTR, 8, false);
 		types->isize = type_system_make_primitive(type_system, Primitive_Type::ISIZE, 8, true);
 		types->usize = type_system_make_primitive(type_system, Primitive_Type::USIZE, 8, false);
 		types->type_handle = upcast(type_system_make_primitive(type_system, Primitive_Type::TYPE_HANDLE, 4, false));
@@ -1573,7 +1580,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 	// Bytes
 	{
 		types->bytes = type_system_make_struct_empty(type_system, make_id("Bytes"));
-		add_member_cstr(types->bytes, "data", upcast(types->address));
+		add_member_cstr(types->bytes, "data", upcast(types->rawptr));
 		add_member_cstr(types->bytes, "size", upcast(types->usize));
 		type_system_finish_struct(type_system, types->bytes);
 	}
@@ -1581,7 +1588,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 	// String
 	{
 		Datatype_Struct* upp_string = type_system_make_struct_empty(type_system, ids.string);
-		struct_add_member(upp_string, ids.data, upcast(types->address));
+		struct_add_member(upp_string, ids.data, upcast(types->rawptr));
 		struct_add_member(upp_string, ids.size, upcast(types->usize));
 		type_system_finish_struct(type_system, upp_string);
 		types->string = upcast(upp_string);
@@ -1591,7 +1598,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 	// Any
 	{
 		types->any_type = type_system_make_struct_empty(type_system, make_id("Any"));
-		add_member_cstr(types->any_type, "data", upcast(types->address));
+		add_member_cstr(types->any_type, "data", upcast(types->rawptr));
 		add_member_cstr(types->any_type, "type", types->type_handle);
 		type_system_finish_struct(type_system, types->any_type);
 		test_type_similarity<Upp_Any>(upcast(types->any_type));
@@ -1606,18 +1613,18 @@ void type_system_add_predefined_types(Type_System* type_system)
 		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
 		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
 		call_signature_add_parameter(signature, make_id("alignment"), upcast(types->u32_type), true, false, false);
-		call_signature_add_return_type(signature, upcast(types->address), compilation_data);
+		call_signature_add_return_type(signature, upcast(types->rawptr), compilation_data);
 		types->allocate_function = type_system_make_function_pointer(type_system, call_signature_register(signature, compilation_data));
 
 		signature = call_signature_create_empty();
 		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->rawptr), true, false, false);
 		call_signature_add_parameter(signature, make_id("size"),      upcast(types->usize), true, false, false);
 		types->free_function = type_system_make_function_pointer(type_system, call_signature_register(signature, compilation_data));
 
 		signature = call_signature_create_empty();
 		call_signature_add_parameter(signature, make_id("allocator"), upcast(allocator_pointer), true, false, false);
-		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->address), true, false, false);
+		call_signature_add_parameter(signature, make_id("pointer"),   upcast(types->rawptr), true, false, false);
 		call_signature_add_parameter(signature, make_id("old_size"),  upcast(types->usize), true, false, false);
 		call_signature_add_parameter(signature, make_id("new_size"),  upcast(types->usize), true, false, false);
 		call_signature_add_return_type(signature, upcast(types->bool_type), compilation_data);
@@ -1770,7 +1777,7 @@ void type_system_print(Type_System* system)
 Optional<Enum_Member> enum_type_find_member_by_value(Datatype_Enum* enum_type, int value)
 {
 	if (enum_type->values_are_sequential) {
-		int index = value - enum_type->sequence_start_value;
+		int index = value - enum_type->min_value;
 		if (index < 0 || index >= enum_type->members.size) {
 			return optional_make_failure<Enum_Member>();
 		}

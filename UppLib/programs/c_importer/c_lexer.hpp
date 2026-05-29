@@ -14,7 +14,7 @@ enum class C_Token_Type
     MODULE,
     FOR,
     WHILE,
-    SWITCH,
+    MATCH,
     CONTINUE,
     DEFAULT,
     CASE,

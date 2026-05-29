@@ -1501,8 +1501,9 @@ namespace Parser
 		if (test_token(Token_Type::DEFAULT)) {
 			advance_token();
 		}
-		else
+		else if (test_token(Token_Type::CASE))
 		{
+			advance_token();
 			result->value.available = true;
 			result->value.value = parse_expression_or_error_expr(upcast(result));
 			if (test_token(Token_Type::FUNCTION_ARROW))
@@ -1515,6 +1516,10 @@ namespace Parser
 					log_error_range_offset("Expected identifier after arrow", 0);
 				}
 			}
+		}
+		else
+		{
+			log_error_range_offset("Expected switch or default keyword", 0);
 		}
 
 		skip_until_next_follow_block();
@@ -1785,12 +1790,31 @@ namespace Parser
 			result->options.defer_restore.right_side = parse_expression_or_error_expr(upcast(result));
 			PARSE_SUCCESS(result);
 		}
-		case Token_Type::SWITCH:
+		case Token_Type::MATCH:
 		{
 			advance_token();
 			result->type = Statement_Type::SWITCH_STATEMENT;
 			auto& switch_stat = result->options.switch_statement;
 			switch_stat.condition = parse_expression_or_error_expr(&result->base);
+
+			// Switch can either be with block and cases, or just a list of case things
+			if (test_token(Token_Type::LINE_END, Token_Type::CASE) ||
+				test_token(Token_Type::LINE_END, Token_Type::DEFAULT))
+			{
+				auto checkpoint = parser.temporary_arena->make_checkpoint();
+				SCOPE_EXIT(checkpoint.rewind());
+				DynArray<Switch_Case*> cases = DynArray<Switch_Case*>::create(parser.temporary_arena);
+				while (test_token(Token_Type::LINE_END, Token_Type::CASE) ||
+					test_token(Token_Type::LINE_END, Token_Type::DEFAULT))
+				{
+					advance_token();
+					cases.push_back(parse_switch_case(upcast(result)));
+				}
+				switch_stat.cases = parser.permanent_arena->allocate_array<Switch_Case*>(cases.size);
+				memory_copy(switch_stat.cases.data, cases.buffer.data, sizeof(Switch_Case*) * cases.size);
+				PARSE_SUCCESS(result);
+			}
+
 			skip_until_next_follow_block();
 			switch_stat.label = parse_block_label_or_use_related_node_id(upcast(switch_stat.condition));
 			switch_stat.cases = parse_list_items_as_array<Switch_Case>(upcast(result), wrapper_parse_switch_case);

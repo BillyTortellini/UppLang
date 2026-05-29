@@ -2940,7 +2940,7 @@ void source_mapping_generate_ir_instruction_mapping_recursive(IR_Code_Block* blo
 			source_mapping_generate_ir_instruction_mapping_recursive(instr.options.block, debugger);
 			break;
 		}
-		case IR_Instruction_Type::SWITCH: {
+		case IR_Instruction_Type::MATCH: {
 			for (int j = 0; j < instr.options.switch_instr.cases.size; j++) {
 				source_mapping_generate_ir_instruction_mapping_recursive(instr.options.switch_instr.cases[j].block, debugger);
 			}

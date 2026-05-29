@@ -1,9 +1,8 @@
 
 TODO:
 -----
- - Access to normal math functions/built-ins
-     sin, cos, tan, sind, cosd, tand, pow, exp, atan2, min, max, frac, ceil
-     Arguably like kinda hardcoded functions
+ - Bug: Definition colors swithcing between compiles...
+ - Auto complete sometimes not working
  - String-Handling (+ character literal)
     * Differentiate between:
         - readonly string (pointer + size, for slices, immutable)
@@ -14,12 +13,72 @@ TODO:
      How to tag const-strings?
      For-C-Strings, it's just another datatype for foreign-functions, ~c_string == const char* 
      Note for C-Backend: char != signed char != unsigned char, so this needs some thought
+ - Something to think about: Sizes of containers as unsigned or signed int? (Or usize?)
+    * Array size
+    * Slice size
+    * List/DynArray/Hashtable size
+    * String size
+ - Write simple standard library
+    * Arena
+    * DynArray
+    * String_Builder
+ - Remove unnecessary hardcoded types (input, output only as string)
  - Fix da testcases
- - Write standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
+ - Add more stuff to standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
  - Check out extern library interface...
+
+Signed/Unsigned arithmetic/pitfalls:
+ * Comparisons with casts
+ * Less than null check in loops
+ * Modulo arithmetic with signed/unsigned and casting to larger
+ * Integer promotion
+ loop i := 0; i < array.size; i++
+ loop i: isize = array.size - 1; i >= 0; i -= 1
+
+Allocation_Type :: enum
+    ALLOCATE, // Uses new_size, ignores data and prev_size, returns pointer
+    FREE,     // Uses prev_size, ignores new_size, returns nil
+    TRY_RESIZE // Uses both sizes
+
+Allocator :: struct
+    allocate_fn: *fn(allocator: *Allocator, type: Allocation_Type, data: rawptr, new_size: usize, prev_size: usize) -> rawptr
+
+Arena :: struct
+    allocator: Allocator;
+    buffer: rawptr;
+    capacity: usize
+    size: size
+
+DynArray :: struct($T)
+    arena: *Arena
+    buffer: *T
+    capacity: usize
+    size: usize
+
+string :: struct
+    data: rawptr
+    buffer_size: usize // Size of buffer, not character count, includes 0, e.g. "".size = 1
+
+string_buffer :: struct
+    buffer: rawptr
+    capacity: usize
+    size: usize
+
+String_Builder :: struct
+    arena: *Arena
+    buffer: rawptr
+    capacity: usize
+    size: usize
+
 
 Done:
 -----
+29.05:
+ - Switch/Match and enum parsing
+ - Enum utility functions
+ - Math functions as hardcoded functions
+
+28.05:
  - Ternary operator with .if then else 
  - Remove optional pointers (maybe)
  - Replace &&, ||, ! with and/or/not
@@ -42,6 +101,7 @@ Other things I could do (Design not final):
  * Struct members should be in given order (Except if some keyword says otherwise)
     * Asdf :: struct($T) pack_something
     * Types: Pack ordered, pack smallest, pack unaligned?
+ * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values
 
 
 

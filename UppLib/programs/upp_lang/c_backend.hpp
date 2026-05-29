@@ -12,6 +12,7 @@ struct IR_Code_Block;
 struct Datatype;
 struct String;
 struct Upp_Function;
+struct Compilation_Data;
 
 
 // C_COMPILER

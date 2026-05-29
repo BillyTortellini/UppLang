@@ -42,7 +42,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
         ir_code_block_destroy(instruction->options.block);
         break;
     }
-    case IR_Instruction_Type::SWITCH: {
+    case IR_Instruction_Type::MATCH: {
         for (int i = 0; i < instruction->options.switch_instr.cases.size; i++) {
             ir_code_block_destroy(instruction->options.switch_instr.cases[i].block);
         }
@@ -64,7 +64,6 @@ void ir_instruction_destroy(IR_Instruction* instruction)
     }
 }
 
-// Note: We assume that the next instruction in the current block will be associated with this block
 IR_Code_Block* ir_code_block_create(Upp_Function* function = nullptr)
 {
     if (function == nullptr) {
@@ -329,7 +328,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             break;
         case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
             string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
-            hardcoded_type_append_to_string(string, call->options.hardcoded);
+            string->append(hardcoded_type_get_info(call->options.hardcoded).cstring);
             break;
         }
         break;
@@ -355,7 +354,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         ir_data_access_append_to_string(instruction->options.move.destination, string, code_block, compilation_data);
         break;
     }
-    case IR_Instruction_Type::SWITCH: 
+    case IR_Instruction_Type::MATCH: 
     {
         Datatype* value_type = instruction->options.switch_instr.condition_access->datatype;
         Datatype_Enum* enum_type = 0;
@@ -367,7 +366,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             assert(value_type->type == Datatype_Type::ENUM, "If not union, this must be an enum");
             enum_type = downcast<Datatype_Enum>(value_type);
         }
-        string_append_formated(string, "SWITCH\n");
+        string_append_formated(string, "MATCH\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "Condition access: ");
         ir_data_access_append_to_string(instruction->options.switch_instr.condition_access, string, code_block, compilation_data);
@@ -985,10 +984,12 @@ IR_Data_Access* ir_generator_generate_overload_access(
 
 IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expression, IR_Data_Access* destination = 0)
 {
-    auto type_system = ir_generator->compilation_data->type_system;
+    auto compilation_data = ir_generator->compilation_data;
+    Constant_Pool* constant_pool = compilation_data->constant_pool;
+    auto type_system = compilation_data->type_system;
     auto& types = type_system->predefined_types;
     auto& gen = *ir_generator;
-    auto& ids = gen.compilation_data->identifier_pool.predefined_ids;
+    auto& ids = compilation_data->identifier_pool.predefined_ids;
     auto ir_block = gen.current_block;
 
     auto backup_expr = gen.current_expr;
@@ -1065,8 +1066,8 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         auto right = ir_generator_generate_expression(binop.right);
 
         // Custom code-path for pointer-arithmetic
-        bool left_is_address = types_are_equal(left->datatype, upcast(types.address));
-        bool right_is_address = types_are_equal(right->datatype, upcast(types.address));
+        bool left_is_address = types_are_equal(left->datatype, upcast(types.rawptr));
+        bool right_is_address = types_are_equal(right->datatype, upcast(types.rawptr));
 
         // Note: We want comparison binops for two addresse to not use this code-path
         bool is_comparison = 
@@ -1205,6 +1206,96 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::TYPE_OF: {
                 panic("Should be handled in semantic analyser");
                 break;
+            }
+            case Hardcoded_Type::ENUM_VALUE_AS_STRING:
+            {
+                AST::Expression* arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+                Datatype* datatype = expression_info_get_type(get_info(arg_expr), false, type_system);
+                assert(datatype->type == Datatype_Type::ENUM, "");
+                Datatype_Enum* enumeration = downcast<Datatype_Enum>(datatype);
+
+                // Create function if not cached
+                if (enumeration->value_as_string_fn == nullptr)
+                {
+                    Call_Signature* signature = call_signature_create_empty();
+                    call_signature_add_parameter(signature, ids.value, datatype, true, false, false);
+                    call_signature_add_return_type(signature, upcast(types.string), compilation_data);
+                    signature = call_signature_register(signature, compilation_data);
+                    String* name = nullptr;
+                    {
+                        Arena* arena = &compilation_data->tmp_arena;
+                        auto checkpoint = arena->make_checkpoint();
+                        SCOPE_EXIT(checkpoint.rewind());
+                        String buffer = string_create(arena);
+                        static int counter = 0;
+                        buffer.append("_enum_as_string_");
+                        buffer.append(enumeration->name);
+                        buffer.append_formated("_%d", counter);
+                        counter += 1;
+                        name = identifier_pool_add(&compilation_data->identifier_pool, buffer);
+                    }
+
+                    Upp_Function* function = upp_function_create_empty(signature, name, compilation_data);
+                    enumeration->value_as_string_fn = function;
+
+                    function->ir_block = ir_code_block_create(function);
+                    RESTORE_ON_SCOPE_EXIT(ir_generator->current_block, function->ir_block);
+
+                    IR_Instruction switch_instr;
+                    switch_instr.type = IR_Instruction_Type::MATCH;
+                    switch_instr.options.switch_instr.condition_access = ir_data_access_create_parameter(function, 0);
+                    switch_instr.options.switch_instr.default_block = ir_code_block_create(function);
+                    switch_instr.options.switch_instr.cases = dynamic_array_create<IR_Switch_Case>();
+                    {
+                        RESTORE_ON_SCOPE_EXIT(ir_generator->current_block, switch_instr.options.switch_instr.default_block);
+                        IR_Instruction return_instr;
+                        return_instr.type = IR_Instruction_Type::RETURN;
+                        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+                        return_instr.options.return_instr.options.return_value = 
+                            ir_data_access_create_constant(constant_pool->predefined.empty_string);
+                        add_instruction(return_instr);
+                    }
+                    for (int i = 0; i < enumeration->members.size; i++)
+                    {
+                        Enum_Member& member = enumeration->members[i];
+
+                        IR_Switch_Case switch_case;
+                        switch_case.block = ir_code_block_create(function);
+                        switch_case.value = member.value;
+
+                        RESTORE_ON_SCOPE_EXIT(ir_generator->current_block, switch_case.block);
+                        dynamic_array_push_back(&switch_instr.options.switch_instr.cases, switch_case);
+
+                        IR_Instruction return_instr;
+                        return_instr.type = IR_Instruction_Type::RETURN;
+                        return_instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
+                        return_instr.options.return_instr.options.return_value = 
+                            ir_data_access_create_constant(constant_pool->add_string_assume_valid(*member.name));
+                        add_instruction(return_instr);
+                    }
+                    add_instruction(switch_instr);
+
+                    // Usually we shouldn't reach this point, as switch also handles default block
+                    IR_Instruction exit_instr;
+                    exit_instr.type = IR_Instruction_Type::RETURN;
+                    exit_instr.options.return_instr.type = IR_Instruction_Return_Type::EXIT;
+                    exit_instr.options.return_instr.options.exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Enum-value to string invalid case");
+                    add_instruction(exit_instr);
+                }
+
+                // Call function
+                IR_Instruction call_instr;
+                call_instr.type = IR_Instruction_Type::FUNCTION_CALL;
+                call_instr.options.call.call_type = IR_Instruction_Call_Type::FUNCTION_CALL;
+                call_instr.options.call.options.function = enumeration->value_as_string_fn;
+                call_instr.options.call.destination = make_destination_access_on_demand(upcast(types.string));
+                call_instr.options.call.arguments = dynamic_array_create<IR_Data_Access*>();
+                dynamic_array_push_back(
+                    &call_instr.options.call.arguments, ir_generator_generate_expression(arg_expr)
+                );
+                add_instruction(call_instr);
+
+                return destination;
             }
             case Hardcoded_Type::ASSERT_FN:
             {
@@ -1856,7 +1947,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* condition_access = ir_generator_generate_expression(statement->options.switch_statement.condition);
 
         IR_Instruction instr;
-        instr.type = IR_Instruction_Type::SWITCH;
+        instr.type = IR_Instruction_Type::MATCH;
         instr.options.switch_instr.condition_access = condition_access;
         instr.options.switch_instr.cases = dynamic_array_create<IR_Switch_Case>(statement->options.switch_statement.cases.size);
 
@@ -2227,7 +2318,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
         // Handle pointer arithmetic
         auto left_type = left_access->datatype;
-        if (types_are_equal(left_type, upcast(types.address)))
+        if (types_are_equal(left_type, upcast(types.rawptr)))
         {
             auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
             auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));

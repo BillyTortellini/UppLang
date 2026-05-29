@@ -222,7 +222,7 @@ enum class IR_Instruction_Type
     FUNCTION_CALL,
     IF,
     WHILE,
-    SWITCH,
+    MATCH,
     BLOCK,
 
     LABEL,

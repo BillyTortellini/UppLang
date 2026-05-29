@@ -6,7 +6,10 @@
 // --- SCALAR FUNCTIONS ---
 // ------------------------
 // Take one or multiple scalars and produce another scalar
-#define PI 3.14159265359f
+#define PI                   3.14159265359f
+#define PI_DOUBLE            3.14159265358979323846 
+#define EULERS_NUMBER_DOUBLE 2.71828182845904523536
+#define EULERS_NUMBER_FLOAT  2.71828182845f
 
 // Basic functions
 template<typename T>

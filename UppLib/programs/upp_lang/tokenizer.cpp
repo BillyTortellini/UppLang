@@ -105,7 +105,8 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::ELSE: return "else";
     case Token_Type::LOOP: return "loop";
     case Token_Type::IN_KEYWORD: return "in";
-    case Token_Type::SWITCH: return "switch";
+    case Token_Type::MATCH: return "match";
+    case Token_Type::CASE: return "case";
     case Token_Type::DEFAULT: return "default";
     case Token_Type::DEFER: return "defer";
     case Token_Type::DEFER_RESTORE: return "defer_restore";

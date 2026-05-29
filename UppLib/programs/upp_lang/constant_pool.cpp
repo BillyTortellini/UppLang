@@ -24,6 +24,44 @@ Constant_Pool* constant_pool_create(Compilation_Data* compilation_data)
     result->constant_memory = Arena::create(2048);
     result->constants = dynamic_array_create<Upp_Constant>(2048);
     result->deduplication_table = hashtable_create_empty<Deduplication_Info, Upp_Constant>(16, hash_deduplication, deduplication_info_is_equal);
+
+    {
+        auto& types = compilation_data->type_system->predefined_types;
+        auto& predef = result->predefined;
+
+        // Add bool values (Needs to be done here, as add_bool relies on these values)
+        {
+            bool value_bool = false;
+            Constant_Pool_Result add_result = constant_pool_add_constant(
+                result, upcast(types.bool_type), array_create_static_as_bytes<bool>(&value_bool, 1)
+            );
+            assert(add_result.success, "");
+            predef.bool_true = add_result.options.constant;
+
+            value_bool = false;
+            add_result = constant_pool_add_constant(
+                result, upcast(types.bool_type), array_create_static_as_bytes<bool>(&value_bool, 1)
+            );
+            assert(add_result.success, "");
+            predef.bool_false = add_result.options.constant;
+        }
+
+        predef.empty_string = result->add_string_assume_valid(string_create_static(""));
+        predef.i32_zero = result->add_i32(0);
+        predef.i32_one = result->add_i32(1);
+        predef.usize_zero = result->add_usize(0);
+        predef.usize_one = result->add_usize(1);
+        predef.u32_zero = result->add_u32(0);
+        predef.u32_one = result->add_u32(1);
+
+        void* ptr = nullptr;
+        Constant_Pool_Result add_result = constant_pool_add_constant(
+            result, upcast(types.rawptr), array_create_static_as_bytes<void*>(&ptr, 1)
+        );
+        assert(add_result.success, "");
+        predef.nil = add_result.options.constant;
+    }
+
     return result;
 }
 
@@ -298,6 +336,89 @@ Constant_Pool_Result constant_pool_add_constant(Constant_Pool* constant_pool, Da
     hashtable_insert_element(&pool.deduplication_table, deduplication_info, constant);
 
     return constant_pool_result_make_success(constant);
+}
+
+Upp_Constant Constant_Pool::add_i32(i32 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.i32_type), array_create_static_as_bytes<i32>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_u32(u32 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.u32_type), array_create_static_as_bytes<u32>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_usize(usize value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.usize), array_create_static_as_bytes<usize>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_f32(f32 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.f32_type), array_create_static_as_bytes<f32>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_f64(f64 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.f64_type), array_create_static_as_bytes<f64>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_upp_string_assume_valid(Upp_String string) 
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.string), array_create_static_as_bytes<Upp_String>(&string, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_string_assume_valid(String id)
+{
+    Upp_String string;
+    string.data = id.characters;
+    string.size = id.size;
+    return add_upp_string_assume_valid(string);
+}
+
+Upp_Constant Constant_Pool::add_bool(bool value)
+{
+    return value ? predefined.bool_true : predefined.bool_false;
+}
+
+Upp_Constant Constant_Pool::add_enum_value_assume_valid(Datatype_Enum* enum_type, int value)
+{
+    assert(enum_type->base.memory_info.value.size == 4, "");
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(enum_type), array_create_static_as_bytes<int>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
 }
 
 

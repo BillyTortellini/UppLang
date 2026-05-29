@@ -1034,13 +1034,35 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 		Call_Info* call_info = get_info(expr->options.call.call_node, semantic_context, false);
 		if (call_info->origin.type == Call_Origin_Type::HARDCODED) 
 		{
-			switch (call_info->origin.options.hardcoded)
+			Hardcoded_Type hardcoded_type = call_info->origin.options.hardcoded;
+			switch (hardcoded_type)
 			{
+			case Hardcoded_Type::ENUM_VALUE_AS_STRING:
+			{
+				Comptime_Result value_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result;
+				}
+
+				assert(value_result.data_type->memory_info.value.size == 4, "Assuming enums are 4 byte");
+				int enum_value = *(int*)value_result.data;
+				Datatype_Enum* enum_type = downcast<Datatype_Enum>(value_result.data_type);
+				auto result = enum_type_find_member_by_value(enum_type, enum_value);
+				if (!result.available) {
+					return comptime_result_make_not_comptime("Enum value is not a valid enum-member");
+				}
+
+				Upp_String* result_string = arena.allocate<Upp_String>();
+				result_string->data = result.value.name->characters;
+				result_string->size = result.value.name->size;
+				return comptime_result_make_available(result_string, result_datatype);
+			}
 			case Hardcoded_Type::CAST_POINTER:
 			case Hardcoded_Type::CAST_PRIMITIVE:
 			{
 				assert(call_info->instanciated, "");
-				auto& arena = *semantic_context->scratch_arena;
 
 				Comptime_Result value_result = expression_calculate_comptime_value_internal(
 					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
@@ -1055,6 +1077,112 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 					type_base_to_bytecode_type(result_datatype), type_base_to_bytecode_type(value_result.data_type)
 				);
 				return comptime_result_make_available(result_buffer, result_datatype);
+			}
+			}
+
+			// Handle builtin float functions
+			auto hardcoded_info = hardcoded_type_get_info(hardcoded_type);
+			switch (hardcoded_info.type_class)
+			{
+			case Hardcoded_Type_Class::F32_UNARY:
+			{
+				Comptime_Result value_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result;
+				}
+				f32 value = *(f32*)value_result.data;
+
+				f32* result = (f32*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f32_unop(value, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
+			}
+			case Hardcoded_Type_Class::F32_BINARY:
+			{
+				Comptime_Result value_result_left = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result_left.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result_left;
+				}
+				Comptime_Result value_result_right = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression, semantic_context
+				);
+				if (value_result_right.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result_right;
+				}
+
+				f32 value_left  = *(f32*)value_result_left.data;
+				f32 value_right = *(f32*)value_result_right.data;
+
+				f32* result = (f32*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f32_binop(value_left, value_right, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
+			}
+			case Hardcoded_Type_Class::F32_PREDICATE:
+			{
+				Comptime_Result value_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result;
+				}
+				f32 value = *(f32*)value_result.data;
+
+				bool* result = (bool*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f32_predicate(value, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
+			}
+			case Hardcoded_Type_Class::F64_UNARY:
+			{
+				Comptime_Result value_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result;
+				}
+				f64 value = *(f64*)value_result.data;
+
+				f64* result = (f64*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f64_unop(value, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
+			}
+			case Hardcoded_Type_Class::F64_BINARY:
+			{
+				Comptime_Result value_result_left = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result_left.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result_left;
+				}
+				Comptime_Result value_result_right = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression, semantic_context
+				);
+				if (value_result_right.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result_right;
+				}
+
+				f64 value_left  = *(f64*)value_result_left.data;
+				f64 value_right = *(f64*)value_result_right.data;
+
+				f64* result = (f64*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f64_binop(value_left, value_right, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
+			}
+			case Hardcoded_Type_Class::F64_PREDICATE:
+			{
+				Comptime_Result value_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (value_result.type != Comptime_Result_Type::AVAILABLE) {
+					return value_result;
+				}
+				f64 value = *(f64*)value_result.data;
+
+				bool* result = (bool*) arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				*result = bytecode_execute_f64_predicate(value, hardcoded_type);
+				return comptime_result_make_available(result, result_datatype);
 			}
 			}
 		}
@@ -1469,34 +1597,6 @@ void expression_info_set_constant(
 		return;
 	}
 	expression_info_set_constant(info, result.options.constant);
-}
-
-void expression_info_set_constant_enum(Expression_Info* info, Datatype* enum_type, i32 value, Semantic_Context* semantic_context) {
-	expression_info_set_constant(
-		info, enum_type, array_create_static((byte*)&value, sizeof(i32)), nullptr, semantic_context
-	);
-}
-
-void expression_info_set_constant_i32(Expression_Info* info, i32 value, Semantic_Context* semantic_context) {
-	auto& types = semantic_context->compilation_data->type_system->predefined_types;
-	expression_info_set_constant(
-		info, upcast(types.i32_type), array_create_static((byte*)&value, sizeof(i32)), nullptr, semantic_context
-	);
-}
-
-void expression_info_set_constant_usize(Expression_Info* info, usize value, Semantic_Context* semantic_context) {
-	auto& types = semantic_context->compilation_data->type_system->predefined_types;
-	expression_info_set_constant(
-		info, upcast(types.usize), array_create_static((byte*)&value, sizeof(usize)), nullptr, semantic_context
-	);
-}
-
-void expression_info_set_constant_u32(Expression_Info* info, u32 value, Semantic_Context* semantic_context) {
-	auto& types = semantic_context->compilation_data->type_system->predefined_types;
-
-	expression_info_set_constant(
-		info, upcast(types.u32_type), array_create_static((byte*)&value, sizeof(u32)), nullptr, semantic_context
-	);
 }
 
 Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system)
@@ -6035,29 +6135,28 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 		}
 		if (path->parts.size == 1 && import_node->alias_name.available && import_node->alias_name.value->name == path->last()->name) {
 			log_semantic_error(
-				semantic_context, "This does nothing, as available symbol is imported with same name"
-				, upcast(import_node), Node_Section::FIRST_TOKEN
+				semantic_context, "This does nothing, as available symbol is imported with same name", 
+				upcast(import_node), Node_Section::FIRST_TOKEN
 			);
 			continue;
 		}
 
 		// Define new symbol
 		Symbol* new_symbol = nullptr;
-		if (import_node->alias_name.available) {
+		if (import_node->alias_name.available) 
+		{
 			new_symbol = symbol_node_define_symbol(
 				import_node->alias_name.value, Symbol_Type::ALIAS_UNFINISHED, import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
 			);
 		}
-		else {
+		else 
+		{
 			new_symbol = symbol_table_define_symbol(
 				import_symbol_table, path->last()->name, Symbol_Type::ALIAS_UNFINISHED, 
 				path->last(), Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
 			);
 		}
 		new_symbol->options.unfinished_alias_index = (int) symbol_imports.size;
-		if (import_node->alias_name.available) {
-			get_info(import_node->alias_name.value, semantic_context, true)->symbol = new_symbol;
-		}
 
 		Symbol_Import symbol_import;
 		symbol_import.symbol_table = import_symbol_table;
@@ -7012,6 +7111,7 @@ void analyse_function_body(Upp_Function* function, Semantic_Context* semantic_co
 Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* expr, Expression_Context context, Semantic_Context* semantic_context)
 {
 	Compilation_Data* compilation_data = semantic_context->compilation_data;
+	Constant_Pool* constant_pool = compilation_data->constant_pool;
 	auto type_system = compilation_data->type_system;
 	auto& types = type_system->predefined_types;
 	auto& ids = compilation_data->identifier_pool.predefined_ids;
@@ -7106,17 +7206,14 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				assert(call_info->parameter_values.size == 2, "");
 				auto param_value = &call_info->parameter_values[0];
 
+				// On error we return value 1
+				expression_info_set_constant(info, is_size_of ? constant_pool->predefined.usize_one : constant_pool->predefined.u32_one);
+
 				analyse_parameter_value_if_not_already_done(
 					call_info, param_value, semantic_context, expression_context_make_specific_type(types.type_handle)
 				);
 				Datatype* expr_type = parameter_value_get_datatype(*param_value, call_info, semantic_context);
 				if (datatype_is_unknown(expr_type)) {
-					if (is_size_of) {
-						expression_info_set_constant_usize(info, 1, semantic_context);
-					}
-					else {
-						expression_info_set_constant_u32(info, 1, semantic_context);
-					}
 					return info;
 				}
 
@@ -7124,12 +7221,6 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				auto value_expr = call_info->argument_infos[param_value->options.argument_index].expression;
 				auto result = expression_calculate_comptime_value(value_expr, "size_of/align_of requires comptime type-handle", semantic_context);
 				if (!result.available) {
-					if (is_size_of) {
-						expression_info_set_constant_usize(info, 1, semantic_context);
-					}
-					else {
-						expression_info_set_constant_u32(info, 1, semantic_context);
-					}
 					return info;
 				}
 
@@ -7138,24 +7229,15 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (handle.index >= (u32)types_array.size)
 				{
 					log_semantic_error(semantic_context, "Invalid type-handle value", value_expr);
-					if (is_size_of) {
-						expression_info_set_constant_usize(info, 1, semantic_context);
-					}
-					else {
-						expression_info_set_constant_u32(info, 1, semantic_context);
-					}
 					return info;
 				}
 
 				auto type = types_array[handle.index];
 				type_wait_for_size_info_to_finish(type, semantic_context);
 				auto& memory = type->memory_info.value;
-				if (is_size_of) {
-					expression_info_set_constant_usize(info, memory.size, semantic_context);
-				}
-				else {
-					expression_info_set_constant_u32(info, memory.alignment, semantic_context);
-				}
+				expression_info_set_constant(
+					info, is_size_of ? constant_pool->add_usize(memory.size) : constant_pool->add_u32(memory.alignment)
+				);
 				return info;
 			}
 			case Hardcoded_Type::RETURN_TYPE:
@@ -7202,6 +7284,64 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 					EXIT_ERROR(types.unknown_type);
 				}
 				EXIT_VALUE(structure->tag_member.datatype, is_temporary);
+			}
+			case Hardcoded_Type::ENUM_VALUE_AS_STRING:
+			{
+				assert(call_info->parameter_values.size == 2, "");
+				auto& param_value = call_info->parameter_values[0];
+				analyse_parameter_value_if_not_already_done(call_info, &param_value, semantic_context, expression_context_make_dereference());
+				Datatype* datatype = parameter_value_get_datatype(param_value, call_info, semantic_context);
+				if (datatype->type != Datatype_Type::ENUM) 
+				{
+					log_semantic_error(semantic_context, "enum_value_as_string() expected an enum value", expr, Node_Section::ENCLOSURE);
+					log_error_info_given_type(semantic_context, datatype);
+					EXIT_ERROR(types.unknown_type);
+				}
+
+				EXIT_VALUE(upcast(types.string), true);
+			}
+			case Hardcoded_Type::ENUM_TYPE_IS_CONTINOUS:
+			case Hardcoded_Type::ENUM_TYPE_MIN_VALUE:
+			case Hardcoded_Type::ENUM_TYPE_MAX_VALUE:
+			{
+				assert(call_info->parameter_values.size == 2, "");
+
+				// Analyse argument (Handle case where argument was already analysed)
+				AST::Expression* expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+				Datatype* datatype = nullptr;
+				Expression_Info* expr_info = pass_get_node_info(
+					semantic_context->current_pass, expr, Info_Query::TRY_READ, semantic_context->compilation_data
+				);
+				if (expr_info != nullptr) 
+				{
+					if (expr_info->result_type != Expression_Result_Type::DATATYPE) {
+						log_semantic_error(semantic_context, "Expression must be an enum type", expr, Node_Section::ENCLOSURE);
+						EXIT_ERROR(types.unknown_type);
+					}
+					datatype = expr_info->options.datatype;
+				}
+				else {
+					datatype = semantic_analyser_analyse_expression_type(expr, semantic_context);
+				}
+
+				if (datatype->type != Datatype_Type::ENUM) 
+				{
+					log_semantic_error(semantic_context, "Expected an enum datatype as argument", expr, Node_Section::ENCLOSURE);
+					log_error_info_given_type(semantic_context, datatype);
+					EXIT_ERROR(types.unknown_type);
+				}
+
+				Datatype_Enum* enumeration = downcast<Datatype_Enum>(datatype);
+				if (hardcoded_type == Hardcoded_Type::ENUM_TYPE_MAX_VALUE) {
+					expression_info_set_constant(info, constant_pool->add_i32(enumeration->max_value));
+				}
+				else if (hardcoded_type == Hardcoded_Type::ENUM_TYPE_MIN_VALUE) {
+					expression_info_set_constant(info, constant_pool->add_i32(enumeration->min_value));
+				}
+				else {
+					expression_info_set_constant(info, constant_pool->add_bool(enumeration->values_are_sequential));
+				}
+				return info;
 			}
 			case Hardcoded_Type::BITWISE_NOT:
 			{
@@ -7418,7 +7558,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 						return 
 							datatype->type == Datatype_Type::POINTER || 
 							datatype->type == Datatype_Type::FUNCTION_POINTER ||
-							types_are_equal(datatype, upcast(types.address));
+							types_are_equal(datatype, upcast(types.rawptr));
 					};
 					if (!helper_is_pointer_type(src)) 
 					{
@@ -7978,7 +8118,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		}
 		case Literal_Type::NULL_VAL:
 		{
-			literal_type = upcast(types.address);
+			literal_type = upcast(types.rawptr);
 			dummy.value_nullptr = nullptr;
 			value_ptr = &dummy.value_nullptr;
 			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED)
@@ -8688,7 +8828,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			auto enum_type = downcast<Datatype_Enum>(datatype);
 			auto& members = enum_type->members;
 
-			Enum_Member* found = 0;
+			Enum_Member* found = nullptr;
 			for (int i = 0; i < members.size; i++) {
 				auto member = &members[i];
 				if (member->name == member_node.name) {
@@ -8697,15 +8837,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 			}
 
-			int value = 0;
-			if (found == 0) {
+			if (found == nullptr) {
 				log_semantic_error(semantic_context, "Enum/Union does not contain this member", member_node.expr);
 				log_error_info_id(semantic_context, member_node.name);
+				EXIT_VALUE(upcast(enum_type), true);
 			}
-			else {
-				value = found->value;
-			}
-			expression_info_set_constant_enum(info, upcast(enum_type), value, semantic_context);
+
+			expression_info_set_constant(info, constant_pool->add_enum_value_assume_valid(enum_type, found->value));
 			return info;
 		}
 		case Expression_Result_Type::NOTHING: {
@@ -8772,13 +8910,12 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (datatype->type == Datatype_Type::ARRAY)
 				{
 					auto array = downcast<Datatype_Array>(datatype);
-					if (member_node.name == ids.size) {
-						if (array->count_known) {
-							expression_info_set_constant_usize(info, array->element_count, semantic_context);
-						}
-						else {
+					if (member_node.name == ids.size) 
+					{
+						if (!array->count_known) {
 							EXIT_ERROR(upcast(types.usize));
 						}
+						expression_info_set_constant(info, constant_pool->add_usize(array->element_count));
 						return info;
 					}
 					else
@@ -8831,7 +8968,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			EXIT_ERROR(types.unknown_type);
 		}
 
-		auto& members = downcast<Datatype_Enum>(expected)->members;
+		Datatype_Enum* enum_type = downcast<Datatype_Enum>(expected);
+		auto& members = enum_type->members;
 		Enum_Member* found = 0;
 		for (int i = 0; i < members.size; i++) {
 			auto member = &members[i];
@@ -8841,16 +8979,13 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 		}
 
-		int value = 0;
 		if (found == 0) {
 			log_semantic_error(semantic_context, "Enum does not contain this member", expr);
 			log_error_info_id(semantic_context, id);
-		}
-		else {
-			value = found->value;
+			EXIT_ERROR(upcast(enum_type), true);
 		}
 
-		expression_info_set_constant_enum(info, expected, value, semantic_context);
+		expression_info_set_constant(info, constant_pool->add_enum_value_assume_valid(enum_type, found->value));
 		return info;
 	}
 	case AST::Expression_Type::IF_THEN_ELSE:
@@ -9036,7 +9171,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 				else 
 				{
-					if (types_are_equal(upcast(types.address), right_type)) {
+					if (types_are_equal(upcast(types.rawptr), right_type)) {
 						left_type = semantic_analyser_analyse_expression_value(
 							binop_node.left, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
 					}
@@ -9056,7 +9191,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				}
 				else 
 				{
-					if (types_are_equal(upcast(types.address), left_type)) {
+					if (types_are_equal(upcast(types.rawptr), left_type)) {
 						right_type = semantic_analyser_analyse_expression_value(
 							binop_node.right, expression_context_make_specific_type(upcast(types.isize)), semantic_context);
 					}
@@ -9174,8 +9309,8 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 		// Handle pointer-arithmetic (address +/- isize/usize, address - address)
 		{
 			// Note: IR-Generator has code path that checks for these cases, and handles them seperately
-			bool left_is_address = types_are_equal(left_type, upcast(types.address));
-			bool right_is_address = types_are_equal(right_type, upcast(types.address));
+			bool left_is_address = types_are_equal(left_type, upcast(types.rawptr));
+			bool right_is_address = types_are_equal(right_type, upcast(types.rawptr));
 			bool left_is_int =
 				left_type->type == Datatype_Type::PRIMITIVE &&
 				downcast<Datatype_Primitive>(left_type)->get_class() == Primitive_Class::INTEGER;
@@ -9190,7 +9325,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			else if ((left_is_address && right_is_int) || (right_is_address && left_is_int)) {
 				if (binop_node.type == AST::Binop::ADDITION || binop_node.type == AST::Binop::SUBTRACTION) {
-					EXIT_VALUE(upcast(types.address), true);
+					EXIT_VALUE(upcast(types.rawptr), true);
 				}
 			}
 		}
@@ -11205,7 +11340,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		}
 
 		// Check for pointer-arithmetic
-		if (types_are_equal(left_type, upcast(types.address)))
+		if (types_are_equal(left_type, upcast(types.rawptr)))
 		{
 			bool right_is_integer = types_are_equal(right_type, upcast(types.usize)) || types_are_equal(right_type, upcast(types.isize));
 			if (right_is_integer && (assignment.binop == AST::Binop::ADDITION || assignment.binop == AST::Binop::SUBTRACTION)) {

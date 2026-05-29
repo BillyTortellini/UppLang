@@ -28,7 +28,7 @@ bool token_type_is_keyword(C_Token_Type type)
     case C_Token_Type::ELSE: return true;
     case C_Token_Type::FOR: return true;
     case C_Token_Type::WHILE: return true;
-    case C_Token_Type::SWITCH: return true;
+    case C_Token_Type::MATCH: return true;
     case C_Token_Type::CONTINUE: return true;
     case C_Token_Type::DEFAULT: return true;
     case C_Token_Type::CASE: return true;
@@ -58,7 +58,7 @@ const char* token_type_to_string(C_Token_Type type)
     case C_Token_Type::ELSE: return "ELSE";
     case C_Token_Type::FOR: return "FOR";
     case C_Token_Type::WHILE: return "WHILE";
-    case C_Token_Type::SWITCH: return "SWITCH";
+    case C_Token_Type::MATCH: return "SWITCH";
     case C_Token_Type::CONTINUE: return "CONTINUE";
     case C_Token_Type::DEFAULT: return "DEFAULT";
     case C_Token_Type::CASE: return "CASE";
@@ -312,7 +312,7 @@ C_Lexer c_lexer_create()
     hashtable_insert_element(&lexer.keywords, string_create_static("else"), C_Token_Type::ELSE);
     hashtable_insert_element(&lexer.keywords, string_create_static("for"), C_Token_Type::FOR);
     hashtable_insert_element(&lexer.keywords, string_create_static("while"), C_Token_Type::WHILE);
-    hashtable_insert_element(&lexer.keywords, string_create_static("switch"), C_Token_Type::SWITCH);
+    hashtable_insert_element(&lexer.keywords, string_create_static("switch"), C_Token_Type::MATCH);
     hashtable_insert_element(&lexer.keywords, string_create_static("continue"), C_Token_Type::CONTINUE);
     hashtable_insert_element(&lexer.keywords, string_create_static("default"), C_Token_Type::DEFAULT);
     hashtable_insert_element(&lexer.keywords, string_create_static("case"), C_Token_Type::CASE);

@@ -789,7 +789,7 @@ void c_generator_generate(C_Generator* generator)
         {
             C_Translation translation;
             translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = upcast(types.address);
+            translation.options.datatype = upcast(types.rawptr);
             String name = string_create("_void_ptr"); // See hardcoded_functions.h
             hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
         }
@@ -1983,49 +1983,11 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 c_generator_output_data_access(generator, call->options.pointer_access);
                 break;
             }
-            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: {
-                switch (call->options.hardcoded)
-                {
-                case Hardcoded_Type::PRINT_I32:
-                    string_append_formated(gen.text, "print_i32");
-                    break;
-                case Hardcoded_Type::PRINT_F32:
-                    string_append_formated(gen.text, "print_f32");
-                    break;
-                case Hardcoded_Type::PRINT_BOOL:
-                    string_append_formated(gen.text, "print_bool");
-                    break;
-                case Hardcoded_Type::PRINT_LINE:
-                    string_append_formated(gen.text, "print_line");
-                    break;
-                case Hardcoded_Type::PRINT_STRING:
-                    string_append_formated(gen.text, "print_string");
-                    break;
-                case Hardcoded_Type::READ_I32:
-                    string_append_formated(gen.text, "read_i32");
-                    break;
-                case Hardcoded_Type::READ_F32:
-                    string_append_formated(gen.text, "read_f32");
-                    break;
-                case Hardcoded_Type::READ_BOOL:
-                    string_append_formated(gen.text, "read_bool");
-                    break;
-                case Hardcoded_Type::SYSTEM_ALLOC:
-                    string_append_formated(gen.text, "malloc_size_u64");
-                    break;
-                case Hardcoded_Type::SYSTEM_FREE:
-                    string_append_formated(gen.text, "free_pointer");
-                    break;
-                case Hardcoded_Type::MEMORY_COPY:
-                    string_append_formated(gen.text, "memory_copy");
-                    break;
-                case Hardcoded_Type::MEMORY_COMPARE:
-                    string_append_formated(gen.text, "memory_compare");
-                    break;
-                case Hardcoded_Type::MEMORY_ZERO:
-                    string_append_formated(gen.text, "memory_zero");
-                    break;
-                case Hardcoded_Type::TYPE_INFO:
+            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: 
+            {
+                Hardcoded_Type type = call->options.hardcoded;
+
+                if (type == Hardcoded_Type::TYPE_INFO)
                 {
                     string_append(gen.text, "&type_infos_.infos[");
                     assert(call->arguments.size == 1, "");
@@ -2034,8 +1996,9 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                     call_handled = true;
                     break;
                 }
-                default: panic("What");
-                }
+
+                string_append(gen.text, hardcoded_type_get_info(type).c_impl_name);
+
                 break;
             }
             default: panic("What");
@@ -2056,7 +2019,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             string_append_formated(gen.text, ");\n");
             break;
         }
-        case IR_Instruction_Type::SWITCH:
+        case IR_Instruction_Type::MATCH:
         {
             IR_Instruction_Switch* switch_instr = &instr->options.switch_instr;
             string_append_formated(gen.text, "switch ((int) ");

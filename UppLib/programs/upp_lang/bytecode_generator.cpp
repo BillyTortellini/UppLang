@@ -206,7 +206,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     // Check if it's on stack
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
         int stack_offset = data_access_is_completely_on_stack(generator, access);
         if (stack_offset != -1) {
@@ -225,7 +225,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::CONSTANT: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
         bytecode_generator_add_instruction(
             generator, instruction_make_2(Instruction_Type::LOAD_CONSTANT_ADDRESS, pointer_stack_offset, access->option.constant_index)
@@ -235,7 +235,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::GLOBAL_DATA: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
         bytecode_generator_add_instruction(
             generator, instruction_make_2(Instruction_Type::LOAD_GLOBAL_ADDRESS, pointer_stack_offset, access->option.global_index)
@@ -245,7 +245,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::ADDRESS_OF_VALUE: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
 
         // This is a little weird, as we seem to want a pointer to a pointer now...
@@ -263,7 +263,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::MEMBER_ACCESS: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
 
         data_access_get_pointer_to_value(generator, access->option.member_access.struct_access, pointer_stack_offset);
@@ -275,7 +275,7 @@ int data_access_get_pointer_to_value(Bytecode_Generator* generator, IR_Data_Acce
     case IR_Data_Access_Type::ARRAY_ELEMENT_ACCESS: 
     {
         if (pointer_stack_offset == -1) {
-            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address));
+            pointer_stack_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr));
         }
 
         auto& array_access = access->option.array_access;
@@ -652,8 +652,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             // Prepare new stack frame
             int& stack_offset = generator->current_stack_offset;
             stack_offset = align_offset_next_multiple(stack_offset, 16); // Just to be sure that all parameters will be aligned correctly
-            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // Return instruction-index
-            bytecode_generator_create_temporary_stack_offset(generator, upcast(types.address)); // Previous stack-frame
+            int stack_frame_start_offset = bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr)); // Return instruction-index
+            bytecode_generator_create_temporary_stack_offset(generator, upcast(types.rawptr)); // Previous stack-frame
 
             // Allocate buffer for return-value
             int return_value_stack_offset = stack_offset;
@@ -713,7 +713,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             break;
         }
-        case IR_Instruction_Type::SWITCH:
+        case IR_Instruction_Type::MATCH:
         {
             /*
                 Current switch implementation is just a linear search through the values.
@@ -1059,7 +1059,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::CALL_HARDCODED_FUNCTION:
         string_append_formated(string, "CALL_HARDCODED_FUNCTION      hardcoded_func_type:");
-        hardcoded_type_append_to_string(string, (Hardcoded_Type)i.op1);
+        string->append(hardcoded_type_get_info((Hardcoded_Type)i.op1).cstring);
         string_append_formated(string, ", new-frame-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:

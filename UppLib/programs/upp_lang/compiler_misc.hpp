@@ -4,7 +4,6 @@
 #include "../../datastructures/hashtable.hpp"
 #include "../../datastructures/string.hpp"
 #include "../../win32/process.hpp"
-#include "constant_pool.hpp"
 
 struct Datatype;
 struct String;
@@ -114,24 +113,23 @@ enum class Hardcoded_Type
 	PANIC_FN,
 	RETURN_TYPE,
 	STRUCT_TAG,
+	ENUM_VALUE_AS_STRING,
+	ENUM_TYPE_MIN_VALUE,
+	ENUM_TYPE_MAX_VALUE,
+	ENUM_TYPE_IS_CONTINOUS,
 
 	CAST_PRIMITIVE,
 	CAST_POINTER,
 
 	MEMORY_COPY,
+	MEMORY_COPY_NO_OVERLAP,
 	MEMORY_ZERO,
 	MEMORY_COMPARE,
 
 	SYSTEM_ALLOC,
 	SYSTEM_FREE,
 
-	BITWISE_NOT,
-	BITWISE_AND,
-	BITWISE_OR,
-	BITWISE_XOR,
-	BITWISE_SHIFT_LEFT,
-	BITWISE_SHIFT_RIGHT,
-
+	// Hardcoded IO
 	PRINT_I32,
 	PRINT_F32,
 	PRINT_BOOL,
@@ -141,9 +139,109 @@ enum class Hardcoded_Type
 	READ_F32,
 	READ_BOOL,
 
+	BITWISE_NOT,
+	BITWISE_AND,
+	BITWISE_OR,
+	BITWISE_XOR,
+	BITWISE_SHIFT_LEFT,
+	BITWISE_SHIFT_RIGHT,
+
+	// Floating point math starts here
+	F32_ABSOLUTE,
+	F32_MODULO,
+	F32_REMAINDER,
+	F32_CEIL,     // Rounds towards infinity
+	F32_FLOOR,    // Rounds towards negative infinity
+	F32_TRUNCATE, // Rounds towards 0
+	F32_ROUND_NEAREST, // Rounds towards nearest int, away from 0 in halfway cases
+
+	F32_EXP,
+	F32_LN, // base e
+	F32_LOG10,
+	F32_LOG2,
+	F32_POW,
+	F32_SQUARE_ROOT,
+	F32_CUBE_ROOT,
+
+	F32_SIN,
+	F32_COS,
+	F32_TAN,
+	F32_ASIN,
+	F32_ACOS,
+	F32_ATAN,
+	F32_ATAN2,
+
+	F32_SINH,
+	F32_COSH,
+	F32_TANH,
+	F32_ASINH,
+	F32_ACOSH,
+	F32_ATANH,
+
+	F32_IS_NAN,
+	F32_IS_FINITE,
+	F32_IS_INFINITE,
+
+	F64_ABSOLUTE,
+	F64_MODULO,
+	F64_REMAINDER,
+	F64_CEIL,     // Rounds towards infinity
+	F64_FLOOR,    // Rounds towards negative infinity
+	F64_TRUNCATE, // Rounds towards 0
+	F64_ROUND_NEAREST, // Rounds towards nearest int, away from 0 in halfway cases
+
+	F64_EXP,
+	F64_LN, // base e
+	F64_LOG10,
+	F64_LOG2,
+	F64_POW,
+	F64_SQUARE_ROOT,
+	F64_CUBE_ROOT,
+
+	F64_SIN,
+	F64_COS,
+	F64_TAN,
+	F64_ASIN,
+	F64_ACOS,
+	F64_ATAN,
+	F64_ATAN2,
+
+	F64_SINH,
+	F64_COSH,
+	F64_TANH,
+	F64_ASINH,
+	F64_ACOSH,
+	F64_ATANH,
+
+	F64_IS_NAN,
+	F64_IS_FINITE,
+	F64_IS_INFINITE,
+
 	MAX_ENUM_VALUE
 };
-void hardcoded_type_append_to_string(String* string, Hardcoded_Type hardcoded);
+
+enum class Hardcoded_Type_Class
+{
+	UTILITY,
+	INPUT,
+	OUTPUT,
+	BITWISE_OPERATION,
+	F32_UNARY,
+	F32_BINARY,
+	F32_PREDICATE,
+	F64_UNARY,
+	F64_BINARY,
+	F64_PREDICATE,
+};
+
+struct Hardcoded_Type_Info
+{
+	Hardcoded_Type_Class type_class;
+	const char* cstring;
+	const char* symbol_name;
+	const char* c_impl_name;
+};
+Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type);
 
 enum class Member_Access_Type
 {
@@ -152,7 +250,6 @@ enum class Member_Access_Type
 	ENUM_MEMBER_ACCESS
 };
 
-
 struct Function_Body
 {
     bool is_expression;
@@ -160,6 +257,39 @@ struct Function_Body
         AST::Expression* expr;
         AST::Code_Block* block;
     };
+};
+
+
+// C++ TYPE REPRESENTATIONS
+template<typename T>
+struct Upp_Slice
+{
+    T* data;
+    usize size;
+};
+
+struct Upp_Slice_Base
+{
+    void* data;
+    usize size;
+};
+
+// The 'primitive' string type as it is currently defined in the upp-language
+// The size of the bytes don't include the null-terminator, which is still expected
+struct Upp_String {
+    void* data;
+    usize size;
+};
+
+struct Upp_Type_Handle
+{
+    u32 index;
+};
+
+struct Upp_Any
+{
+    void* data;
+    Upp_Type_Handle type;
 };
 
 

@@ -45,6 +45,127 @@ Bytecode_Thread* bytecode_thread_create(
     return result;
 }
 
+float bytecode_execute_f32_unop(float value, Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F32_ABSOLUTE: return fabsf(value);
+    case Hardcoded_Type::F32_CEIL:     return ceilf(value);
+	case Hardcoded_Type::F32_FLOOR:    return floorf(value);
+	case Hardcoded_Type::F32_TRUNCATE: return truncf(value);
+	case Hardcoded_Type::F32_ROUND_NEAREST: return roundf(value);
+	case Hardcoded_Type::F32_EXP: return expf(value);
+	case Hardcoded_Type::F32_LN: return logf(value);
+	case Hardcoded_Type::F32_LOG10: return log10f(value);
+	case Hardcoded_Type::F32_LOG2: return log2f(value);
+	case Hardcoded_Type::F32_SQUARE_ROOT:  return sqrtf(value);
+	case Hardcoded_Type::F32_CUBE_ROOT: return cbrtf(value);
+	case Hardcoded_Type::F32_SIN: return sinf(value);
+	case Hardcoded_Type::F32_COS: return cosf(value);
+	case Hardcoded_Type::F32_TAN: return tanf(value);
+	case Hardcoded_Type::F32_ASIN: return asinf(value);
+	case Hardcoded_Type::F32_ACOS: return acosf(value);
+	case Hardcoded_Type::F32_ATAN: return atanf(value);
+	case Hardcoded_Type::F32_SINH: return sinhf(value);
+	case Hardcoded_Type::F32_COSH: return coshf(value);
+	case Hardcoded_Type::F32_TANH: return tanhf(value);
+	case Hardcoded_Type::F32_ASINH: return asinhf(value);
+	case Hardcoded_Type::F32_ACOSH: return acoshf(value);
+	case Hardcoded_Type::F32_ATANH: return atanhf(value);
+    }
+
+    panic("");
+    return 0.0f;
+}
+
+float bytecode_execute_f32_binop(float a, float b, Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F32_MODULO: return fmodf(a, b);
+    case Hardcoded_Type::F32_REMAINDER: return remainderf(a, b);
+	case Hardcoded_Type::F32_POW: return powf(a, b);
+	case Hardcoded_Type::F32_ATAN2: return atan2f(a, b);
+    }
+
+    panic("");
+    return 0.0f;
+}
+
+bool bytecode_execute_f32_predicate(float value,Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F32_IS_FINITE: return isfinite(value);
+    case Hardcoded_Type::F32_IS_INFINITE: return isinf(value);
+	case Hardcoded_Type::F32_IS_NAN: return isnan(value);
+    }
+
+    panic("");
+    return true;
+}
+
+double bytecode_execute_f64_unop(double value, Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F64_ABSOLUTE: return fabs(value);
+    case Hardcoded_Type::F64_CEIL:     return ceil(value);
+	case Hardcoded_Type::F64_FLOOR:    return floor(value);
+	case Hardcoded_Type::F64_TRUNCATE: return round(value);
+	case Hardcoded_Type::F64_ROUND_NEAREST: return trunc(value);
+	case Hardcoded_Type::F64_EXP: return exp(value);
+	case Hardcoded_Type::F64_LN: return log(value);
+	case Hardcoded_Type::F64_LOG10: return log10(value);
+	case Hardcoded_Type::F64_LOG2: return log2(value);
+	case Hardcoded_Type::F64_SQUARE_ROOT:  return sqrt(value);
+	case Hardcoded_Type::F64_CUBE_ROOT: return cbrt(value);
+	case Hardcoded_Type::F64_SIN: return sin(value);
+	case Hardcoded_Type::F64_COS: return cos(value);
+	case Hardcoded_Type::F64_TAN: return tan(value);
+	case Hardcoded_Type::F64_ASIN: return asin(value);
+	case Hardcoded_Type::F64_ACOS: return acos(value);
+	case Hardcoded_Type::F64_ATAN: return atan(value);
+	case Hardcoded_Type::F64_SINH: return sinh(value);
+	case Hardcoded_Type::F64_COSH: return cosh(value);
+	case Hardcoded_Type::F64_TANH: return tanh(value);
+	case Hardcoded_Type::F64_ASINH: return asinh(value);
+	case Hardcoded_Type::F64_ACOSH: return acosh(value);
+	case Hardcoded_Type::F64_ATANH: return atanh(value);
+    }
+
+    panic("");
+    return 0.0f;
+}
+
+double bytecode_execute_f64_binop(double a, double b, Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F64_MODULO: return fmod(a, b);
+    case Hardcoded_Type::F64_REMAINDER: return remainder(a, b);
+	case Hardcoded_Type::F64_POW: return pow(a, b);
+	case Hardcoded_Type::F64_ATAN2: return atan2(a, b);
+    }
+
+    panic("");
+    return 0.0f;
+}
+
+bool bytecode_execute_f64_predicate(double value, Hardcoded_Type type)
+{
+    switch (type)
+    {
+    case Hardcoded_Type::F64_IS_FINITE: return isfinite(value);
+    case Hardcoded_Type::F64_IS_INFINITE: return isinf(value);
+	case Hardcoded_Type::F64_IS_NAN: return isnan(value);
+    }
+
+    panic("");
+    return true;
+}
+
+
 void bytecode_execute_primitive_cast(void* dst, void* src, Bytecode_Type dst_type, Bytecode_Type src_type)
 {
     assert(dst_type != Bytecode_Type::BOOL && src_type != Bytecode_Type::BOOL, "");
@@ -830,6 +951,61 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         Call_Signature* hardcoded_signature = compilation_data->hardcoded_function_signatures[(int)hardcoded_type];
 
         byte* return_buffer = thread->stack_pointer + i->op2 + 16; // Return buffer is after [return_instruction] [prev_stack_frame] [return_buffer] [params]...
+        Hardcoded_Type_Info info = hardcoded_type_get_info(hardcoded_type);
+        bool handled = true;
+        switch (info.type_class)
+        {
+        case Hardcoded_Type_Class::F32_UNARY: 
+        {
+            f32* value = (f32*)(return_buffer + sizeof(f32));
+            f32* return_value = (f32*)return_buffer;
+            *return_value = bytecode_execute_f32_unop(*value, hardcoded_type);
+            break;
+        }
+        case Hardcoded_Type_Class::F32_BINARY:
+        {
+            f32* value_a = (f32*)(return_buffer + sizeof(f32));
+            f32* value_b = (f32*)(return_buffer + 2 * sizeof(f32));
+            f32* return_value = (f32*)return_buffer;
+            *return_value = bytecode_execute_f32_binop(*value_a, *value_b, hardcoded_type);
+            break;
+        }
+        case Hardcoded_Type_Class::F32_PREDICATE:
+        {
+            f32* value = (f32*)(return_buffer + sizeof(f32));
+            bool* return_value = (bool*)return_buffer;
+            *return_value = bytecode_execute_f32_predicate(*value, hardcoded_type);
+            break;
+        }
+        case Hardcoded_Type_Class::F64_UNARY:
+        {
+            f64* value = (f64*)(return_buffer + sizeof(f64));
+            f64* return_value = (f64*)return_buffer;
+            *return_value = bytecode_execute_f64_unop(*value, hardcoded_type);
+            break;
+        }
+        case Hardcoded_Type_Class::F64_BINARY:
+        {
+            f64* value_a = (f64*)(return_buffer + sizeof(f64));
+            f64* value_b = (f64*)(return_buffer + 2 * sizeof(f64));
+            f64* return_value = (f64*)return_buffer;
+            *return_value = bytecode_execute_f64_binop(*value_a, *value_b, hardcoded_type);
+            break;
+
+        }
+        case Hardcoded_Type_Class::F64_PREDICATE:
+        {
+            f64* value = (f64*)(return_buffer + sizeof(f64));
+            bool* return_value = (bool*)return_buffer;
+            *return_value = bytecode_execute_f64_predicate(*value, hardcoded_type);
+            break;
+        }
+        default: handled = false; break;
+        }
+        if (handled) {
+            break;
+        }
+
         switch (hardcoded_type)
         {
         case Hardcoded_Type::SYSTEM_ALLOC: 
