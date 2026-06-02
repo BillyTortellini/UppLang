@@ -1,3 +1,30 @@
+Test :: module
+    Arena :: module
+        import ~rawptr
+        import ~usize
+    
+        Arena :: struct
+            buffer: rawptr
+            capacity: usize
+            size: usize
+            
+        create :: fn (capacity: usize) => Arena
+            arena: Arena
+            if capacity == 0
+                
+            arena.
+            
+    
+    
+    string_at :: fn (str: string, index: int) => int
+        import ~u8
+        buffer := ([]u8).(str.data->~cast_pointer(), str.size)
+        return buffer[index]->~cast_primitive(int)
+    
+    main :: fn
+        str := "Hello World!\n"
+        ~print_string(str)
+        ~print_i32(str->string_at(7))
 
 Last_One :: module
     Overloads :: module

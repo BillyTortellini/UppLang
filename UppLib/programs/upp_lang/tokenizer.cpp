@@ -92,7 +92,7 @@ const char* token_type_as_cstring(Token_Type token_type)
     case Token_Type::UNION: return "union";
     case Token_Type::ENUM: return "enum";
     case Token_Type::GLOBAL_KEYWORD: return "global";
-    case Token_Type::CONST_KEYWORD: return "const";
+    case Token_Type::COMPTIME_KEYWORD: return "comptime";
     case Token_Type::OPERATORS: return "operators";
     case Token_Type::IMPORT: return "import";
     case Token_Type::AS: return "as";
@@ -671,7 +671,7 @@ Continuation_Info token_type_get_continuation_info(Token_Type type)
     case Token_Type::UNION:
     case Token_Type::ENUM:
     case Token_Type::GLOBAL_KEYWORD:
-    case Token_Type::CONST_KEYWORD:
+    case Token_Type::COMPTIME_KEYWORD:
     case Token_Type::OPERATORS:
     case Token_Type::IMPORT:
     case Token_Type::AS:

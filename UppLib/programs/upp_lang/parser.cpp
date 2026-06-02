@@ -1220,7 +1220,7 @@ namespace Parser
 		// Parse value definitions
 		bool is_value =
 			test_token(Token_Type::GLOBAL_KEYWORD) ||
-			test_token(Token_Type::CONST_KEYWORD) ||
+			test_token(Token_Type::COMPTIME_KEYWORD) ||
 			test_token(Token_Type::IDENTIFIER, Token_Type::COLON) ||
 			test_token(Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS);
 		if (is_value)
@@ -1233,7 +1233,7 @@ namespace Parser
 				result->type = Definition_Type::GLOBAL;
 				advance_token();
 			}
-			else if (test_token(Token_Type::CONST_KEYWORD)) {
+			else if (test_token(Token_Type::COMPTIME_KEYWORD)) {
 				result->type = Definition_Type::CONSTANT;
 				advance_token();
 			}

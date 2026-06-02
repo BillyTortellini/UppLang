@@ -220,6 +220,7 @@ Identifier_Pool identifier_pool_create()
 
 		ids.size = add_id("size");
 		ids.data = add_id("data");
+		ids.type = add_id("type");
 		ids.tag = add_id("tag");
 		ids.anon_struct = add_id("Anonymous");
 		ids.anon_enum = add_id("Anon_Enum");

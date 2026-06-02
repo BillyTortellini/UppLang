@@ -107,7 +107,7 @@ struct Compilation_Data
 
     // Editor_Info
     Dynamic_Array<Editor_Info> semantic_infos;
-    int next_analysis_item_index;
+    int next_editor_info_index;
 
     // Call_Signatures and callables
     Hashset<Call_Signature*> call_signatures; // Callables get duplicated

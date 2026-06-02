@@ -1,6 +1,49 @@
 
 Done:
 -----
+02.06:
+ - Integer types/Builtin-types refactor (usize/isize + what we should do with sizes in general)
+
+29.05:
+ - Switch/Match and enum parsing
+ - Enum utility functions
+ - Math functions as hardcoded functions
+
+28.05:
+ - Ternary operator with .if then else 
+ - Remove optional pointers (maybe)
+ - Replace &&, ||, ! with and/or/not
+ - Implement sneak as a movement (maybe even replace f, F, t, T)
+ - Auto formating with multiple spaces fixed
+ - Check fold children
+ - Check undo/redo
+ - Multiple folds still weird
+ - Because movement is unbounded, move render-position of fold after cursor if on the same line and cursor > text
+ - If inline-fold, move out of fold after the fold is created
+ - Open fold on current line only if $ is pressed at end of line
+
+27.05:
+ - Interval implementation (ibox1)
+ - Fix movements and motions
+ - Tab as movement
+ - Delete should work with outside ranges
+ - Yank/Put also
+ - 0 vs Ctrl-0
+ - Add-Padding should be done on line-insert
+
+26.05:
+ - Unbound cursor
+
+22.05: 
+ - Error Refactor
+ - Scope not working correctly
+
+20.05:
+ - Fix Bugs with auto-format...
+ - Leading/Trailing Whitespaces should be rendered with some indication (dot in the middle)
+ - Remove shift-enter and tab for new indentation stuff
+ - Inside Strings we shouldn't have parenthesis complete...
+
 15.05:
  - Default-values
  - Comptime calculate of expression/single return functions

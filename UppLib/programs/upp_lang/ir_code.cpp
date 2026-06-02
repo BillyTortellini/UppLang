@@ -3,7 +3,6 @@
 #include "bytecode_generator.hpp"
 #include "ast.hpp"
 #include "symbol_table.hpp"
-#include "compilation_data.hpp"
 #include "memory_source.hpp"
 
 void ir_generator_generate_block(IR_Code_Block* ir_block, AST::Code_Block* ast_block);
@@ -997,7 +996,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     SCOPE_EXIT(gen.current_expr = expression);
 
     auto info = get_info(expression);
-    auto result_type = expression_info_get_type(info, true, type_system);
+    auto result_type = expression_info_get_datatype(info, true, type_system);
     if (info->result_type == Expression_Result_Type::VALUE) {
         result_type = info->options.value.datatype;
     }
@@ -1064,52 +1063,6 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
         auto left = ir_generator_generate_expression(binop.left);
         auto right = ir_generator_generate_expression(binop.right);
-
-        // Custom code-path for pointer-arithmetic
-        bool left_is_address = types_are_equal(left->datatype, upcast(types.rawptr));
-        bool right_is_address = types_are_equal(right->datatype, upcast(types.rawptr));
-
-        // Note: We want comparison binops for two addresse to not use this code-path
-        bool is_comparison = 
-            binop.type == AST::Binop::EQUAL || 
-            binop.type == AST::Binop::NOT_EQUAL || 
-            binop.type == AST::Binop::POINTER_EQUAL || 
-            binop.type == AST::Binop::POINTER_NOT_EQUAL || 
-            binop.type == AST::Binop::LESS || 
-            binop.type == AST::Binop::LESS_OR_EQUAL || 
-            binop.type == AST::Binop::GREATER || 
-            binop.type == AST::Binop::GREATER_OR_EQUAL;
-        if ((left_is_address || right_is_address) && !(left_is_address && right_is_address && is_comparison))
-        {
-            auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
-            auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
-
-            // Convert left/right to usize, do binop, then convert back to address
-            IR_Instruction cast_instr;
-            cast_instr.type = IR_Instruction_Type::CAST;
-            cast_instr.options.cast.source = left;
-            cast_instr.options.cast.destination = left_usize;
-            add_instruction(cast_instr);
-
-            cast_instr.options.cast.source = right;
-            cast_instr.options.cast.destination = right_usize;
-            add_instruction(cast_instr);
-
-            auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::BINARY_OP;
-            instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
-            instr.options.binary_op.operand_left = left_usize,
-            instr.options.binary_op.operand_right = right_usize;
-            instr.options.binary_op.destination = result_usize;
-            add_instruction(instr);
-
-            // Convert result
-            cast_instr.options.cast.source = result_usize;
-            cast_instr.options.cast.destination = make_destination_access_on_demand(value_type);
-            add_instruction(cast_instr);
-            return cast_instr.options.cast.destination;
-        }
 
         IR_Instruction instr;
         instr.type = IR_Instruction_Type::BINARY_OP;
@@ -1210,7 +1163,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             case Hardcoded_Type::ENUM_VALUE_AS_STRING:
             {
                 AST::Expression* arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
-                Datatype* datatype = expression_info_get_type(get_info(arg_expr), false, type_system);
+                Datatype* datatype = expression_info_get_datatype(get_info(arg_expr), false, type_system);
                 assert(datatype->type == Datatype_Type::ENUM, "");
                 Datatype_Enum* enumeration = downcast<Datatype_Enum>(datatype);
 
@@ -1684,7 +1637,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
     case AST::Expression_Type::MEMBER_ACCESS:
     {
         auto mem_access = expression->options.member_access;
-        auto src_type = expression_info_get_type(get_info(mem_access.expr), false, type_system);
+        auto src_type = expression_info_get_datatype(get_info(mem_access.expr), false, type_system);
 
         // Handle special case of array.data, which basically becomes an address of, but has the type of element pointer
         auto source = ir_generator_generate_expression(mem_access.expr);

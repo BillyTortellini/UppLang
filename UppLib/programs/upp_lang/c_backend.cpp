@@ -472,6 +472,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
 {
     auto& gen = *generator;
     Type_System* type_system = gen.compilation_data->type_system;
+    auto& types = type_system->predefined_types;
 
     Type_Modifier_Info mod_info = datatype_get_modifier_info(type);
     type = type_system_make_type_with_modifiers(type_system, mod_info.base_type, mod_info.pointer_level); // Remove optional modifiers and subtype modifiers
@@ -504,10 +505,6 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
     {
         auto primitive = downcast<Datatype_Primitive>(type);
         int type_size = type->memory_info.value.size;
-        if (primitive->primitive_type == Primitive_Type::C_CHAR) {
-            string_append(&access_name, "char");
-            break;
-        }
 
         switch (primitive->primitive_type)
         {
@@ -519,18 +516,29 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         case Primitive_Type::U16: string_append(&access_name, "u16"); break;
         case Primitive_Type::U32: string_append(&access_name, "u32"); break;
         case Primitive_Type::U64: string_append(&access_name, "u64"); break;
-        case Primitive_Type::RAWPTR: string_append(&access_name, "_void_ptr"); break; // See datatypes.h
-        case Primitive_Type::ISIZE: string_append(&access_name, "i64"); break;
-        case Primitive_Type::USIZE: string_append(&access_name, "u64"); break;
-        case Primitive_Type::TYPE_HANDLE: string_append(&access_name, "Type_Handle_"); break; // See hardcoded_functions.h for definition
-        case Primitive_Type::C_CHAR: string_append(&access_name, "char"); break;
-        case Primitive_Type::C_STRING: string_append(&access_name, "const char*"); break;
         case Primitive_Type::F32: string_append(&access_name, "f32"); break;
         case Primitive_Type::F64: string_append(&access_name, "f64"); break;
         case Primitive_Type::BOOLEAN: string_append(&access_name, "bool"); break;
         default: break;
         }
         break;
+    }
+    case Datatype_Type::BUILT_IN:
+    {
+        auto builtin = downcast<Datatype_Builtin>(type);
+        switch (builtin->builtin_type)
+        {
+        case Builtin_Type::RAWPTR:      string_append(&access_name, "_void_ptr"); break; // See datatypes.h
+        case Builtin_Type::TYPE_HANDLE: string_append(&access_name, "Type_Handle_"); break; // See hardcoded_functions.h for definition
+        case Builtin_Type::ANY:         string_append(&access_name, "Upp_Any_"); break;
+        case Builtin_Type::STRING:      string_append(&access_name, "Upp_String_"); break;
+        case Builtin_Type::C_STRING:    string_append(&access_name, "const char*"); break;
+        case Builtin_Type::C_CHAR:      string_append(&access_name, "char"); break;
+        case Builtin_Type::USIZE:       string_append(&access_name, "u64"); break;
+        case Builtin_Type::ISIZE:       string_append(&access_name, "i64"); break;
+        case Builtin_Type::CODE_POINT:  string_append(&access_name, "u32"); break;
+        default: panic("");
+        }
     }
     case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE:
@@ -759,50 +767,6 @@ void c_generator_generate(C_Generator* generator)
         gen.name_counter = 0;
     }
 
-    // Define translations for hardcoded types (Because we don't want to have 2 definitons for those, and they are already defined in the header)
-    {
-        // String
-        {
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.string;
-            String name = string_create("Upp_String_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
-        // C-String
-        {
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.c_string;
-            String name = string_create("const char*"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
-        // Type_Handle
-        {
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = types.type_handle;
-            String name = string_create("Type_Handle_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
-        // Byte_Pointer
-        {
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = upcast(types.rawptr);
-            String name = string_create("_void_ptr"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
-        // Any
-        {
-            C_Translation translation;
-            translation.type = C_Translation_Type::DATATYPE;
-            translation.options.datatype = upcast(types.any_type);
-            String name = string_create("Upp_Any_"); // See hardcoded_functions.h
-            hashtable_insert_element(&gen.program_translation.name_mapping, translation, name);
-        }
-    }
-
     // Create globals Translations
     {
         gen.text = &gen.sections[(int)Generator_Section::GLOBALS];
@@ -978,7 +942,7 @@ void c_generator_generate(C_Generator* generator)
             output_memory_as_new_constant(
                 generator, 
                 (byte*)&type_system->types[i]->internal_info->tag, 
-                types.type_information_type->tag_member.datatype, false, 1
+                downcast<Datatype_Struct>(types.type_information_type)->tag_member.datatype, false, 1
             );
             string_append(gen.text, ";\n");
 
@@ -1015,7 +979,7 @@ void c_generator_generate(C_Generator* generator)
                 auto enumeration = downcast<Datatype_Enum>(type);
                 auto& internal_info = type_system->types[i]->internal_info->options.enumeration;
                 string_append_formated(gen.text, "info->subtypes_.Enum.name = ");
-                output_memory_as_new_constant(generator, (byte*)&internal_info.name, types.string, false, 1);
+                output_memory_as_new_constant(generator, (byte*)&internal_info.name, types.string->upcast(), false, 1);
                 string_append(gen.text, ";\n");
 
                 string_add_indentation(gen.text, 1);
@@ -1030,7 +994,7 @@ void c_generator_generate(C_Generator* generator)
                         auto& member = internal_info.members.data[j];
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].name = ", j);
-                        output_memory_as_new_constant(generator, (byte*)&member.name, types.string, false, 1);
+                        output_memory_as_new_constant(generator, (byte*)&member.name, types.string->upcast(), false, 1);
                         string_append(gen.text, ";\n");
                         string_add_indentation(gen.text, 1);
                         string_append_formated(gen.text, "info->subtypes_.Enum.members.data[%d].value = %d;\n", j, member.value);
@@ -1057,7 +1021,7 @@ void c_generator_generate(C_Generator* generator)
                 {
                     string_add_indentation(gen.text, 1);
                     string_append_formated(gen.text, "info->subtypes_.Function_Pointer.parameter_types.data = new ");
-                    c_generator_output_type_reference(generator, types.type_handle); // Check if this works
+                    c_generator_output_type_reference(generator, upcast(types.type_handle)); // Check if this works
                     string_append_formated(gen.text, "[%d];\n", parameters.size);
                     for (int j = 0; j < parameters.size; j++) {
                         auto& param = parameters[j];
@@ -1083,7 +1047,7 @@ void c_generator_generate(C_Generator* generator)
 
                 string_append_formated(gen.text, "%s.name = ", access_prefix);
                 Upp_String upp_string = upp_string_from_id(structure->name);
-                output_memory_as_new_constant(generator, (byte*)&upp_string, types.string, false, 1);
+                output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                 string_append(gen.text, ";\n");
 
                 // Generate tag member info
@@ -1093,7 +1057,7 @@ void c_generator_generate(C_Generator* generator)
                     string_add_indentation(gen.text, indentation_level);
                     string_append_formated(gen.text, "%s.name = ", access_prefix);
                     upp_string = upp_string_from_id(structure->tag_member.name);
-                    output_memory_as_new_constant(generator, (byte*)&upp_string, types.string, false, 1);
+                    output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                     string_append(gen.text, ";\n");
                     string_add_indentation(gen.text, indentation_level);
                     string_append_formated(gen.text, "%s.type = %d;\n", access_prefix, structure->tag_member.datatype->type_handle.index);
@@ -1115,7 +1079,7 @@ void c_generator_generate(C_Generator* generator)
                         string_add_indentation(gen.text, indentation_level);
                         string_append_formated(gen.text, "%s.members.data[%d].name = ", access_prefix, i);
                         upp_string = upp_string_from_id(member.name);
-                        output_memory_as_new_constant(generator, (byte*)&upp_string, types.string, false, 1);
+                        output_memory_as_new_constant(generator, (byte*)&upp_string, types.string->upcast(), false, 1);
                         string_append(gen.text, ";\n");
 
                         string_add_indentation(gen.text, indentation_level);
@@ -1215,7 +1179,7 @@ void c_generator_generate(C_Generator* generator)
     {
         string_append(
             &gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION],
-            "\nint main(int argc, char** argv) {\n    random_initialize(); \n    inititalize_type_infos_global_(); \n    upp_entry_();\n"
+            "\nint main(int argc, char** argv) {\n    inititalize_type_infos_global_(); \n    upp_entry_();\n"
         );
         if (ADD_WAIT_BEFORE_EXIT) {
             string_append(&gen.sections[(int)Generator_Section::FUNCTION_IMPLEMENTATION], "    printf(\"\\n\\nEND OF PROGRAM\");\n");
@@ -1445,64 +1409,98 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
         int type_size = type->memory_info.value.size;
         switch (type->type)
         {
-            // Simple cases first
-        case Datatype_Type::PRIMITIVE:
+        case Datatype_Type::BUILT_IN:
         {
-            auto primitive = downcast<Datatype_Primitive>(type);
-            int type_size = type->memory_info.value.size;
-            byte* memory = base_memory;
-            switch (primitive->get_class())
+            Datatype_Builtin* builtin = downcast<Datatype_Builtin>(type);
+            switch (builtin->builtin_type)
             {
-            case Primitive_Class::BOOLEAN: {
-                bool* value_ptr = (bool*)memory;
-                string_append(gen.text, *value_ptr ? "true" : "false");
-                break;
-            }
-            case Primitive_Class::TYPE_HANDLE: {
-                string_append_formated(gen.text, "%u", (u32)(*(u32*)memory));
-                break;
-            }
-            case Primitive_Class::RAWPTR: {
-                byte* pointer = *(byte**)memory;
+            case Builtin_Type::RAWPTR: {
+                byte* pointer = *(byte**)base_memory;
                 assert(pointer == 0, "Pointers must be null in constant memory");
                 string_append(gen.text, "nullptr");
                 break;
             }
-            case Primitive_Class::C_STRING: {
-                panic("C-strings should not happen");
+            case Builtin_Type::TYPE_HANDLE: {
+                string_append_formated(gen.text, "%u", *(u32*)base_memory);
                 break;
             }
-            case Primitive_Class::INTEGER: {
-                if (primitive->is_signed) {
-                    switch (type_size)
-                    {
-                    case 1: string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
-                    case 2: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
-                    case 4: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
-                    case 8: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
-                    default: panic("HEY");
-                    }
-                }
-                else {
-                    switch (type_size)
-                    {
-                    case 1: string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
-                    case 2: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
-                    case 4: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
-                    case 8: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
-                    default: panic("HEY");
-                    }
-                }
+            case Builtin_Type::ANY: 
+            {
+                // Any in constant-pool only works
+                Upp_Any* any = (Upp_Any*)base_memory;
+                assert(any->data == nullptr, "Any in constnat pool cannot work with pointers");
+                string_append_formated(gen.text, "upp_any_make_(nullptr, %u)", any->type.index);
                 break;
             }
-            case Primitive_Class::FLOAT:
-                switch (type_size)
-                {
-                case 4: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
-                case 8: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
-                default: panic("HEY");
+            case Builtin_Type::STRING: 
+            {
+                // Note: Maybe we need something smarter in the future to handle multi-line strings 
+                Upp_String string = *(Upp_String*)base_memory;
+                string_append_formated(gen.text, "{.data = (void*) \"");
+
+                // Note: I need to escape escape sequences, so this is what i'm doing now...
+                String escaped = string_create(16);
+                SCOPE_EXIT(string_destroy(&escaped));
+                for (int i = 0; i < string.size; i++) {
+                    char c = ((const char*)string.data)[i];
+                    switch (c)
+                    {
+                    case '\n': string_append(&escaped, "\\n"); break;
+                    case '\r': string_append(&escaped, "\\r"); break;
+                    case '\t': string_append(&escaped, "\\t"); break;
+                    case '\\': string_append(&escaped, "\\\\"); break;
+                    case '\"': string_append(&escaped, "\\\""); break;
+                    case '\'': string_append(&escaped, "\\\'"); break;
+                    default: string_append_character(&escaped, c); break;
+                    }
                 }
+
+                string_append(gen.text, escaped.characters);
+                string_append_formated(gen.text, "\", .size = %d }", string.size);
                 break;
+            }
+            case Builtin_Type::C_STRING: {
+                panic("C-strings should not end up in constant pool");
+                break;
+            }
+            case Builtin_Type::C_CHAR: {
+                u8* value = (u8*)base_memory;
+                string_append_formated(gen.text, "((char)%d)", *value);
+                break;
+            }
+            case Builtin_Type::USIZE: {
+                string_append_formated(gen.text, "%llu", *(u64*)base_memory);
+                break;
+            }
+            case Builtin_Type::ISIZE: {
+                string_append_formated(gen.text, "%lld", *(i64*)base_memory);
+                break;
+            }
+            case Builtin_Type::CODE_POINT: {
+                string_append_formated(gen.text, "%u", *(u32*)base_memory);
+                break;
+            }
+            default: panic("");
+            }
+            break;
+        }
+        case Datatype_Type::PRIMITIVE:
+        {
+            auto primitive = downcast<Datatype_Primitive>(type);
+            byte* memory = base_memory;
+            switch (primitive->primitive_type)
+            {
+            case Primitive_Type::I8:  string_append_formated(gen.text, "%d", (int)(*(i8*)memory)); break;
+            case Primitive_Type::I16: string_append_formated(gen.text, "%d", (int)(*(i16*)memory)); break;
+            case Primitive_Type::I32: string_append_formated(gen.text, "%d", (int)(*(i32*)memory)); break;
+            case Primitive_Type::I64: string_append_formated(gen.text, "%lld", (i64)(*(i64*)memory)); break;
+            case Primitive_Type::U8:  string_append_formated(gen.text, "%u", (u32)(*(u8*)memory)); break;
+            case Primitive_Type::U16: string_append_formated(gen.text, "%u", (u32)(*(u16*)memory)); break;
+            case Primitive_Type::U32: string_append_formated(gen.text, "%u", (u32)(*(u32*)memory)); break;
+            case Primitive_Type::U64: string_append_formated(gen.text, "%llu", (u64)(*(u64*)memory)); break;
+            case Primitive_Type::F32: string_append_formated(gen.text, "%f", (double)(*(float*)memory)); break;
+            case Primitive_Type::F64: string_append_formated(gen.text, "%f", (double)(*(double*)memory)); break;
+            case Primitive_Type::BOOLEAN: string_append(gen.text, ((*(bool*)memory) ? "true" : "false")); break;
             default: panic("What");
             }
             break;
@@ -1582,40 +1580,9 @@ void c_generator_output_constant_access(C_Generator* generator, Upp_Constant& co
         }
         case Datatype_Type::STRUCT:
         {
-            // Handle c_string
-            if (types_are_equal(type, types.string))
-            {
-                // Note: Maybe we need something smarter in the future to handle multi-line strings 
-                Upp_String string = *(Upp_String*)base_memory;
-                string_append_formated(gen.text, "{.data = (void*) \"");
-
-                // Note: I need to escape escape sequences, so this is what i'm doing now...
-                String escaped = string_create(16);
-                SCOPE_EXIT(string_destroy(&escaped));
-                for (int i = 0; i < string.size; i++) {
-                    char c = ((const char*)string.data)[i];
-                    switch (c)
-                    {
-                    case '\n': string_append(&escaped, "\\n"); break;
-                    case '\r': string_append(&escaped, "\\r"); break;
-                    case '\t': string_append(&escaped, "\\t"); break;
-                    case '\\': string_append(&escaped, "\\\\"); break;
-                    case '\"': string_append(&escaped, "\\\""); break;
-                    case '\'': string_append(&escaped, "\\\'"); break;
-                    default: string_append_character(&escaped, c); break;
-                    }
-                }
-
-                string_append(gen.text, escaped.characters);
-                string_append_formated(gen.text, "\", .size = %d }", string.size);
-                break;
-            }
-
-            // Handle structure
             Datatype_Struct* structure = downcast<Datatype_Struct>(type);
             assert(!structure->upp_struct->is_union, "Must not happen, as normal unions cannot get serialized in constant pool");
             output_struct_content_block_recursive(generator, structure, base_memory, indentation_level);
-
             break;
         }
         case Datatype_Type::PATTERN_VARIABLE:
@@ -1798,7 +1765,7 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
 
         // Handle members of struct subtypes
         Datatype* access_type = access->option.member_access.struct_access->datatype;
-        assert(!datatype_is_pointer(access_type, true), "");
+        assert(!datatype_is_pointer(access_type, true, true, true), "");
         if (access_type->type == Datatype_Type::STRUCT)
         {
             Datatype_Struct* structure = downcast<Datatype_Struct>(access_type);

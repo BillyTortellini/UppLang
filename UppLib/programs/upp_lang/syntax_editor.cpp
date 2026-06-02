@@ -2171,7 +2171,7 @@ namespace Auto_Format
 		// Only space after
 		case Token_Type::COLON:
 		case Token_Type::GLOBAL_KEYWORD:
-		case Token_Type::CONST_KEYWORD:
+		case Token_Type::COMPTIME_KEYWORD:
 		case Token_Type::MODULE:
 		case Token_Type::FUNCTION_KEYWORD:
 		case Token_Type::COMMA:
@@ -3158,6 +3158,35 @@ void syntax_editor_synchronize_with_compiler(bool generate_code)
 		compiler_thread_data.work_started = true;
 		semaphore_increment(compiler_thread_data.compiler_wait_semaphore, 1);
 	}
+
+	// Debug output
+	// {
+	// 	auto& tab = editor.open_tab();
+	// 	if (tab.cursor.line >= 0 && tab.cursor.line < tab.code->line_count) 
+	// 	{
+	// 		Source_Line* line = source_code_get_line(tab.code, tab.cursor.line);
+	// 		logg("Line %3d, item count #%3d:\n", tab.cursor.line, line->item_infos.size);
+	// 		for (int i = 0; i < line->item_infos.size; i++)
+	// 		{
+	// 			Editor_Info_Reference ref = line->item_infos[i];
+	// 			logg("  Item #%d, start: %d, end: %d:, passes: %d\n", i, ref.start_char, ref.end_char, ref.editor_info_mapping_count);
+	// 			for (int j = 0; j < ref.editor_info_mapping_count; j++)
+	// 			{
+	// 				Editor_Info& info = editor.editor_compilation_data->semantic_infos[ref.editor_info_mapping_start_index + j];
+	// 				switch (info.type)
+	// 				{
+	// 				case Editor_Info_Type::ARGUMENT:         printf("    ARGUMENT\n"); break;
+	// 				case Editor_Info_Type::EXPRESSION_INFO:  printf("    EXPRESSION_INFO\n"); break;
+	// 				case Editor_Info_Type::SYMBOL_LOOKUP:    printf("    SYMBOL_LOOKUP\n"); break;
+	// 				case Editor_Info_Type::CALL_INFORMATION: printf("    CALL_INFORMATION\n"); break;
+	// 				case Editor_Info_Type::MARKUP:           printf("    MARKUP\n"); break;
+	// 				case Editor_Info_Type::ERROR_ITEM:       printf("    ERROR_ITEM\n"); break;
+	// 				default: panic("");
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 }
 
 void syntax_editor_wait_for_newest_compiler_info(bool build_code)
@@ -4261,21 +4290,6 @@ void code_completion_find_suggestions()
 	fuzzy_search_start_search(fuzzy_search_string, 10);
 	Symbol_Table* symbol_table = code_query_find_symbol_table_at_position(cursor);
 
-	// Add parameter names in function call
-	{
-		Text_Index before_cursor_index = text_index_make(cursor.line, math_maximum(0, cursor.character - 1));
-		Position_Info position_info = code_query_find_position_infos(before_cursor_index, nullptr);
-		if (position_info.call_info != nullptr)
-		{
-			auto signature = position_info.call_info->callable_call->origin.signature;
-			for (int i = 0; i < signature->parameters.size; i++) {
-				auto param_info = signature->parameters[i];
-				fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
-				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
-			}
-		}
-	}
-
 	// Hashtag completion
 	if (helper_test_char(cursor.character - 1, '#'))
 	{
@@ -4348,6 +4362,30 @@ void code_completion_find_suggestions()
 			type = datatype_get_undecorated(type, true, false, true);
 			switch (type->type)
 			{
+			case Datatype_Type::BUILT_IN:
+			{
+				Datatype_Builtin* builtin = downcast<Datatype_Builtin>(type);
+				switch (builtin->builtin_type)
+				{
+				case Builtin_Type::STRING: 
+				{
+					fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
+					fuzzy_search_add_item(string_create_static("size"), unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
+					break;
+				}
+				case Builtin_Type::ANY: 
+				{
+					fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.data));
+					fuzzy_search_add_item(string_create_static("type"), unranked_suggestions.size);
+					dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.size));
+					break;
+				}
+				}
+				break;
+			}
 			case Datatype_Type::ARRAY:
 			case Datatype_Type::SLICE: {
 				fuzzy_search_add_item(string_create_static("data"), unranked_suggestions.size);
@@ -4604,11 +4642,26 @@ void code_completion_find_suggestions()
 		// Experimental: Add longer keywords to suggestions
 		fuzzy_search_add_item(*ids.defer_restore, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer_restore, Syntax_Color::KEYWORD));
-		fuzzy_search_add_item(*ids.cast, unranked_suggestions.size);
-		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.cast, Syntax_Color::KEYWORD));
 		fuzzy_search_add_item(*ids.defer, unranked_suggestions.size);
 		dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(ids.defer, Syntax_Color::KEYWORD));
 	}
+
+	// Add parameter names in function call (After adding normal symbol table things)
+	{
+		Text_Index before_cursor_index = text_index_make(cursor.line, math_maximum(0, cursor.character - 1));
+		Position_Info position_info = code_query_find_position_infos(before_cursor_index, nullptr);
+		if (position_info.call_info != nullptr)
+		{
+			auto signature = position_info.call_info->callable_call->origin.signature;
+			for (int i = 0; i < signature->parameters.size; i++) {
+				auto param_info = signature->parameters[i];
+				if (i == signature->return_type_index) continue;
+				fuzzy_search_add_item(*param_info.name, unranked_suggestions.size);
+				dynamic_array_push_back(&unranked_suggestions, suggestion_make_id(param_info.name));
+			}
+		}
+	}
+
 
 	// Exit if nothing specific was found
 	if (unranked_suggestions.size == 0 && fuzzy_search_string.size == 0) {
@@ -8036,7 +8089,7 @@ Syntax_Color token_get_syntax_color_based_on_surrounding(DynArray<Token> tokens,
 	else if (test_token(Token_Type::DOUBLE_COLON, 1) && (test_token(Token_Type::STRUCT, 2) || test_token(Token_Type::UNION, 2))) {
 		return Syntax_Color::DATATYPE;
 	}
-	else if (test_token(Token_Type::GLOBAL_KEYWORD, -1) || test_token(Token_Type::CONST_KEYWORD, -1)) {
+	else if (test_token(Token_Type::GLOBAL_KEYWORD, -1) || test_token(Token_Type::COMPTIME_KEYWORD, -1)) {
 		return Syntax_Color::VALUE_DEFINITION;
 	}
 	else if (test_token(Token_Type::COLON, 1) || test_token(Token_Type::COLON_EQUALS, 1)) {

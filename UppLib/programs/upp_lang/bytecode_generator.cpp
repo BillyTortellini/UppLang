@@ -495,49 +495,49 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Acc
 
 
 // Code Generation
-Bytecode_Type type_base_to_bytecode_type(Datatype* type)
+Bytecode_Type type_base_to_bytecode_type(Datatype* datatype)
 {
-    assert(type->type == Datatype_Type::PRIMITIVE || type->type == Datatype_Type::ENUM, "HEY");
-    if (type->type == Datatype_Type::ENUM) {
-        return Bytecode_Type::INT32;
+    if (datatype->type == Datatype_Type::PRIMITIVE)
+    {
+        switch (downcast<Datatype_Primitive>(datatype)->primitive_type)
+        {
+        case Primitive_Type::I8:  return Bytecode_Type::INT8;
+        case Primitive_Type::I16: return Bytecode_Type::INT16;
+        case Primitive_Type::I32: return Bytecode_Type::INT32;
+        case Primitive_Type::I64: return Bytecode_Type::INT64;
+        case Primitive_Type::U8:  return Bytecode_Type::UINT8;
+        case Primitive_Type::U16: return Bytecode_Type::UINT16;
+        case Primitive_Type::U32: return Bytecode_Type::UINT32;
+        case Primitive_Type::U64: return Bytecode_Type::UINT64;
+        case Primitive_Type::F32: return Bytecode_Type::FLOAT32;
+        case Primitive_Type::F64: return Bytecode_Type::FLOAT64;
+        case Primitive_Type::BOOLEAN: return Bytecode_Type::BOOL;
+        default: panic("");
+        }
+    }
+    else if (datatype->type == Datatype_Type::ENUM)
+    {
+        return Bytecode_Type::INT32; // Not sure if uint or int should be preferred
+    }
+    else if (datatype->type == Datatype_Type::BUILT_IN)
+    {
+        switch (downcast<Datatype_Builtin>(datatype)->builtin_type)
+        {
+        case Builtin_Type::RAWPTR:      return Bytecode_Type::UINT64;
+        case Builtin_Type::CODE_POINT:  return Bytecode_Type::UINT32;
+        case Builtin_Type::C_CHAR:      return Bytecode_Type::UINT8;
+        case Builtin_Type::ISIZE:       return Bytecode_Type::INT64;
+        case Builtin_Type::USIZE:       return Bytecode_Type::UINT64;
+        case Builtin_Type::TYPE_HANDLE: return Bytecode_Type::UINT32;
+        default: break;
+        }
+    }
+    else if (datatype_is_pointer(datatype, true, true, true)) {
+        return Bytecode_Type::UINT64;
     }
 
-    auto primitive = downcast<Datatype_Primitive>(type);
-    int type_size = type->memory_info.value.size;
-    Bytecode_Type result;
-    switch (primitive_type_get_class(primitive->primitive_type))
-    {
-    case Primitive_Class::INTEGER: 
-    {
-        switch (type_size) {
-        case 1: result = Bytecode_Type::INT8; break;
-        case 2: result = Bytecode_Type::INT16; break;
-        case 4: result = Bytecode_Type::INT32; break;
-        case 8: result = Bytecode_Type::INT64; break;
-        default: panic("HEY");
-        }
-        if (!primitive->is_signed) {
-            result = (Bytecode_Type)((int)result + 4);
-        }
-        break;
-    }
-    case Primitive_Class::FLOAT: 
-    {
-        if (type_size == 4) {
-            result = Bytecode_Type::FLOAT32; break;
-        }
-        else if (type_size == 8) {
-            result = Bytecode_Type::FLOAT64; break;
-        }
-        else panic("HEY");
-        break;
-    }
-    case Primitive_Class::BOOLEAN: result = Bytecode_Type::BOOL; break;
-    case Primitive_Class::RAWPTR: result = Bytecode_Type::UINT64; break;
-    case Primitive_Class::TYPE_HANDLE: result = Bytecode_Type::UINT32; break;
-    default: panic("HEY");
-    }
-    return result;
+    panic("HEY");
+    return Bytecode_Type::INT32;
 }
 
 const char* bytecode_type_as_string(Bytecode_Type type) 
@@ -910,8 +910,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Datatype* operand_types = binary_op->operand_left->datatype;
-            if (datatype_is_pointer(operand_types, true)) {
-                instr.op4 = (int)Bytecode_Type::INT64;
+            if (datatype_is_pointer(operand_types, true, true, true)) {
+                instr.op4 = (int)Bytecode_Type::UINT64;
             }
             else {
                 instr.op4 = (int)type_base_to_bytecode_type(operand_types);
@@ -940,7 +940,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Datatype* operand_type = unary_op->source->datatype;
-            assert(operand_type->type == Datatype_Type::PRIMITIVE, "Should not happen");
             instr.op3 = (int)type_base_to_bytecode_type(operand_type);
             instr.op2 = data_access_read_value(generator, unary_op->source);
             bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);

@@ -484,7 +484,7 @@ struct Call_Info
         Upp_Function* function;
 		Upp_Struct* struct_instance;
 		Upp_Struct* struct_pattern;
-		Datatype_Primitive* bitwise_primitive_type; // For bitwise hardcoded functions
+		Datatype* bitwise_primitive_type; // For bitwise hardcoded functions, could also be usize or isize
 		struct 
 		{
 			bool subtype_valid;
@@ -685,7 +685,7 @@ struct Expression_Value_Info
 };
 
 Expression_Value_Info expression_info_get_value_info(Expression_Info* info, Type_System* type_system);
-Datatype* expression_info_get_type(Expression_Info* info, bool before_context_is_applied, Type_System* type_system);
+Datatype* expression_info_get_datatype(Expression_Info* info, bool before_context_is_applied, Type_System* type_system);
 bool expression_has_memory_address(AST::Expression* expr, Semantic_Context* semantic_context);
 
 

@@ -48,21 +48,19 @@ Struct_Member struct_member_make(Datatype* type, String* id, Datatype_Struct* st
 // NOTE: This enum has to be in synch with type_info options, see add_predefined_types
 enum class Datatype_Type
 {
-    PRIMITIVE = 1, // Int, float, bool, type_handle, address, isize, usize
-    ARRAY, // Array with compile-time known size, like [5]int
-    SLICE, // Pointer + size
+    PRIMITIVE = 1,    // int, float, bool
+    BUILT_IN,         // Type_Handle, string, c_string, Any...
+    ARRAY,            // Array with compile-time known size, like [5]int
+    SLICE,            // Pointer + size
     POINTER,
     FUNCTION_POINTER,
     STRUCT,
     ENUM,
-
+    PATTERN_VARIABLE, // For polymorphism
     UNKNOWN_TYPE, // For error propagation
-    // Unlike unknown, invalid will always lead to errors 
+    // Accessing invalids in compiler should crash the compiler
     //   Created by expressions that don't really have a type, like Poly_Struct/Poly_Function/Nothing...
     INVALID_TYPE,
-
-    // Types for polymorphism
-    PATTERN_VARIABLE,
 };
 
 struct Datatype_Memory_Info
@@ -88,6 +86,8 @@ struct Datatype
     bool contains_pattern;
     bool contains_partial_pattern;
     bool contains_pattern_variable_definition;
+
+    Datatype* upcast();
 };
 
 enum class Primitive_Type
@@ -101,21 +101,11 @@ enum class Primitive_Type
     U16,
     U32,
     U64,
-
-    // 'Integer-Aliases'
-    RAWPTR, // translates to void* in c-generator
-    ISIZE,
-    USIZE,
-    TYPE_HANDLE, // 32-bit unsigned int
-    C_CHAR,      // Exists for c-compatability, because c differentiates 3! different char types (signed, unsigned and non-specified)
-    C_STRING,    // translates to const char*, because upp does not support const types
-
     // Floats
     F32,
     F64,
-
     // Boolean
-    BOOLEAN
+    BOOLEAN,
 };
 
 enum class Primitive_Class
@@ -123,19 +113,37 @@ enum class Primitive_Class
     INTEGER = 1,
     FLOAT,
     BOOLEAN,
-    RAWPTR,
-    TYPE_HANDLE,
-    C_STRING,
 };
 
 struct Datatype_Primitive
 {
     Datatype base;
-    // Note: Size of primitive (e.g. 16 or 32 bit) is determined by type size, e.g. base.size
     Primitive_Type primitive_type;
-    bool is_signed; // True for all non-unsigned integers, on c_char this is set to false
 
+    bool is_signed();
     Primitive_Class get_class();
+    Datatype* upcast();
+};
+
+enum class Builtin_Type
+{
+    RAWPTR = 1,
+    TYPE_HANDLE,
+    ANY,
+    STRING,
+    C_STRING,
+    C_CHAR,
+    USIZE,
+    ISIZE,
+    CODE_POINT,
+};
+
+struct Datatype_Builtin
+{
+    Datatype base;
+    Builtin_Type builtin_type;
+
+    Datatype* upcast();
 };
 
 struct Datatype_Array
@@ -147,26 +155,35 @@ struct Datatype_Array
     usize element_count;
 
     Datatype_Pattern_Variable* count_variable_type; // May be null if it doesn't exist
+
+    Datatype* upcast();
 };
 
-struct Datatype_Slice {
+struct Datatype_Slice 
+{
     Datatype base;
     Datatype* element_type;
     Struct_Member data_member; // This may be problematic, as struct member doesn't have pointer to struct-content
     Struct_Member size_member;
     Call_Signature* slice_initializer_signature_cached; // Is null until used
+
+    Datatype* upcast();
 };
 
 struct Datatype_Pointer 
 {
     Datatype base;
     Datatype* element_type;
+
+    Datatype* upcast();
 };
 
 struct Datatype_Function_Pointer
 {
     Datatype base;
     Call_Signature* signature;
+
+    Datatype* upcast();
 };
 
 struct Datatype_Struct 
@@ -185,6 +202,8 @@ struct Datatype_Struct
     String* name; // Subtype-name or for base another name
     AST::Node* definition_node; // Null for pre-defined structs, used for Goto-Definition in Editor
     Call_Signature* initializer_signature_cached;
+
+    Datatype* upcast();
 };
 
 struct Datatype_Enum
@@ -198,6 +217,8 @@ struct Datatype_Enum
     int min_value;
     int max_value;
     Upp_Function* value_as_string_fn; // Only generated on demand
+
+    Datatype* upcast();
 };
 
 struct Datatype_Pattern_Variable
@@ -207,37 +228,9 @@ struct Datatype_Pattern_Variable
 
     bool is_reference;
     Datatype_Pattern_Variable* mirrored_type; // Pointer to either the reference type or the "base" variable
+
+    Datatype* upcast();
 };
-
-struct Datatype_Format
-{
-    int highlight_parameter_index; // -1 If invalid
-    Syntax_Color highlight_color;
-    bool append_struct_poly_parameter_values;
-};
-
-struct Datatype_Value_Format
-{
-    bool single_line; // If structs etc should use lines and indentation, or comma seperated values
-    bool show_datatype; // E.g. Node{15, 12} vs {15, 12}, or Color.RED vs .RED (enums)
-    Datatype_Format datatype_format;
-    bool show_member_names; // E.g. Node{value = 15, alive = 10) vs Node{15, 10}
-    int max_array_display_size; // -1 to disable, limits arrays like int.[#20, 10, 20, 30, ...]
-    bool follow_pointers; // 
-    int max_indentation_before_single_line; // -1 to disable, otherwise we format as single line at a specific indentation
-    int max_indentation; // Should always be used, as we could have recursive datastructures
-    int indentation_spaces;
-};
-
-Datatype_Format datatype_format_make_default();
-Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int max_indentation_before_single_line);
-Datatype_Value_Format datatype_value_format_single_line();
-
-void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format = datatype_format_make_default());
-void datatype_append_value_to_string(
-    Datatype* type, String* string, byte* value_ptr, Datatype_Value_Format format,
-    int indentation, Memory_Source local_memory, Memory_Source pointer_memory, Type_System* type_system
-);
 
 
 
@@ -247,6 +240,11 @@ void datatype_append_value_to_string(
 struct Internal_Type_Primitive
 {
     Primitive_Type type;
+};
+
+struct Internal_Type_Builtin
+{
+    Builtin_Type type;
 };
 
 struct Internal_Type_Function
@@ -307,11 +305,13 @@ struct Internal_Type_Information
     int size;
     int alignment;
 
-    union {
+    union 
+    {
         Internal_Type_Pointer pointer;
         Internal_Type_Array array;
         Internal_Type_Slice slice;
         Internal_Type_Primitive primitive;
+        Internal_Type_Builtin builtin;
         Internal_Type_Function function;
         Internal_Type_Struct structure;
         Internal_Type_Enum enumeration;
@@ -366,38 +366,32 @@ struct Predefined_Types
     Datatype_Primitive* u16_type;
     Datatype_Primitive* u32_type;
     Datatype_Primitive* u64_type;
-
     Datatype_Primitive* f32_type;
     Datatype_Primitive* f64_type;
-
-    Datatype_Primitive* c_char;
-    Datatype_Primitive* rawptr;
-    Datatype_Primitive* isize;
-    Datatype_Primitive* usize;
     Datatype_Primitive* bool_type;
-    Datatype*           type_handle;
-    Datatype*           c_string;
 
-    // Prebuilt structs/types used by compiler
-    Datatype* string;
-    Datatype_Struct* bytes;
+    // Builin types
+    Datatype_Builtin* rawptr;
+    Datatype_Builtin* c_string;
+    Datatype_Builtin* type_handle;
+    Datatype_Builtin* isize;       // either i32 or i64
+    Datatype_Builtin* usize;       // either u32 or u64
+    Datatype_Builtin* c_char;      // For c-interoperability, this is the char type
+    Datatype_Builtin* code_point;  // UTF-8 code-point, distinct u32
+    Datatype_Builtin* string;
+    Datatype_Builtin* any_type;
+
     Datatype* unknown_type;
     Datatype* invalid_type;
-    Datatype_Struct* any_type;
-    Datatype_Struct* type_information_type;
-    Datatype_Struct* internal_struct_info_type;
-    Datatype_Struct* internal_member_info_type;
-    Datatype_Struct* internal_enum_member_info_type;
-
-    Datatype_Struct* empty_struct_type; // Required for now 
+    Datatype* empty_struct_type; // Required for now as empty return type
     Datatype* empty_pattern_variable;
 
-    Datatype_Enum* primitive_type_enum;
-
-    Datatype_Struct* allocator;
-    Datatype_Function_Pointer* allocate_function;
-    Datatype_Function_Pointer* free_function;
-    Datatype_Function_Pointer* resize_function;
+    // Prebuilt structs/types used by compiler
+    Datatype* type_information_type;
+    Datatype* internal_struct_info_type;
+    Datatype* internal_member_info_type;
+    Datatype* internal_enum_member_info_type;
+    Datatype* primitive_type_enum;
 };
 
 // TYPE SYSTEM
@@ -440,13 +434,15 @@ Datatype* datatype_get_undecorated(
     bool remove_subtype = true,
     bool struct_pattern_to_base_struct = false
 );
-bool datatype_is_pointer(Datatype* datatype, bool accept_rawptr);
+bool datatype_is_pointer(Datatype* datatype, bool accept_rawptr, bool accept_function_pointer, bool accept_c_string);
 Type_Modifier_Info datatype_get_modifier_info(Datatype* datatype);
 Upp_String upp_string_from_id(String* id);
 Upp_String upp_string_empty();
 
 Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);
+bool datatype_is_builtin_type(Datatype* datatype, Builtin_Type builtin_type);
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
+bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled);
 bool datatype_type_references_subtypes(Datatype_Type datatype_type);
 
 
@@ -461,6 +457,7 @@ inline Datatype* upcast(Datatype_Slice* value)     { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Primitive* value) { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pointer* value)   { return (Datatype*)value; }
 inline Datatype* upcast(Datatype_Pattern_Variable* value)   { return (Datatype*)value; }
+inline Datatype* upcast(Datatype_Builtin* value)   { return (Datatype*)value; }
 
 inline Datatype_Type get_datatype_type(Datatype_Struct* unused) { return Datatype_Type::STRUCT; }
 inline Datatype_Type get_datatype_type(Datatype_Function_Pointer* unused) { return Datatype_Type::FUNCTION_POINTER; }
@@ -470,6 +467,7 @@ inline Datatype_Type get_datatype_type(Datatype_Slice* unused) { return Datatype
 inline Datatype_Type get_datatype_type(Datatype_Primitive* unused) { return Datatype_Type::PRIMITIVE; }
 inline Datatype_Type get_datatype_type(Datatype_Pointer* unused) { return Datatype_Type::POINTER; }
 inline Datatype_Type get_datatype_type(Datatype_Pattern_Variable* unused) { return Datatype_Type::PATTERN_VARIABLE; }
+inline Datatype_Type get_datatype_type(Datatype_Builtin* unused) { return Datatype_Type::BUILT_IN; }
 inline Datatype_Type get_datatype_type(Datatype* base) { return base->type; }
 
 template<typename T>
@@ -478,4 +476,37 @@ T* downcast(Datatype* base) {
     assert(get_datatype_type(&empty) == base->type, "Downcast failed!");
     return (T*)base;
 }
+
+
+
+// printing
+struct Datatype_Format
+{
+    int highlight_parameter_index; // -1 If invalid
+    Syntax_Color highlight_color;
+    bool append_struct_poly_parameter_values;
+};
+
+struct Datatype_Value_Format
+{
+    bool single_line; // If structs etc should use lines and indentation, or comma seperated values
+    bool show_datatype; // E.g. Node{15, 12} vs {15, 12}, or Color.RED vs .RED (enums)
+    Datatype_Format datatype_format;
+    bool show_member_names; // E.g. Node{value = 15, alive = 10) vs Node{15, 10}
+    int max_array_display_size; // -1 to disable, limits arrays like int.[#20, 10, 20, 30, ...]
+    bool follow_pointers; // 
+    int max_indentation_before_single_line; // -1 to disable, otherwise we format as single line at a specific indentation
+    int max_indentation; // Should always be used, as we could have recursive datastructures
+    int indentation_spaces;
+};
+
+Datatype_Format datatype_format_make_default();
+Datatype_Value_Format datatype_value_format_multi_line(int max_array_values, int max_indentation_before_single_line);
+Datatype_Value_Format datatype_value_format_single_line();
+
+void datatype_append_to_string(Datatype* datatype, String* string, Type_System* type_system, Datatype_Format format = datatype_format_make_default());
+void datatype_append_value_to_string(
+    Datatype* type, String* string, byte* value_ptr, Datatype_Value_Format format,
+    int indentation, Memory_Source local_memory, Memory_Source pointer_memory, Type_System* type_system
+);
 

@@ -12,7 +12,6 @@
 #include <bddisasm.h>
 #include "compilation_data.hpp"
 #include "c_backend.hpp"
-#include "compilation_data.hpp"
 #include "ir_code.hpp"
 #include "memory_source.hpp"
 

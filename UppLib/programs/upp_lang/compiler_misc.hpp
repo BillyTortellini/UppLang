@@ -275,7 +275,7 @@ struct Upp_Slice_Base
 };
 
 // The 'primitive' string type as it is currently defined in the upp-language
-// The size of the bytes don't include the null-terminator, which is still expected
+// There is no null-terminator after data, and the size is just the number of bytes, not the character count
 struct Upp_String {
     void* data;
     usize size;
@@ -426,6 +426,7 @@ struct Predefined_IDs
 	String* type_info;
 
 	// Members
+	String* type; // Any.type
 	String* data;
 	String* size;
 	String* tag;

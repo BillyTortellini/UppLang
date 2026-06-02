@@ -64,6 +64,7 @@ struct Constant_Pool
     Upp_Constant add_string_assume_valid(String string);
     Upp_Constant add_bool(bool value);
     Upp_Constant add_enum_value_assume_valid(Datatype_Enum* enum_type, int value);
+    Upp_Constant add_type_handle_assume_valid(Upp_Type_Handle type_handle);
 };
 
 Constant_Pool* constant_pool_create(Compilation_Data* compilation_data);

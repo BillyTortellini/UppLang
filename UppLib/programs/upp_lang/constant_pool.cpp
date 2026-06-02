@@ -155,14 +155,14 @@ void struct_memory_set_padding_to_zero_recursive(
 }
 
 void datatype_memory_check_correctness_and_set_padding_bytes_zero(
-    Datatype* signature, byte* memory, Constant_Pool_Result& result, Compilation_Data* compilation_data)
+    Datatype* datatype, byte* memory, Constant_Pool_Result& result, Compilation_Data* compilation_data)
 {
     Type_System* type_system = compilation_data->type_system;
     auto& types = type_system->predefined_types;
-    assert(signature->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
-    auto& memory_info = signature->memory_info.value;
+    assert(datatype->memory_info.available, "Otherwise how could the bytes have been generated without knowing size of type?");
+    auto& memory_info = datatype->memory_info.value;
 
-    switch (signature->type)
+    switch (datatype->type)
     {
     case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE: {
@@ -170,24 +170,72 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
         return;
     }
     case Datatype_Type::ENUM: return;
-    case Datatype_Type::PRIMITIVE: 
+    case Datatype_Type::BUILT_IN:
     {
-        auto primitive = downcast<Datatype_Primitive>(signature);
-        if (primitive->get_class() == Primitive_Class::TYPE_HANDLE) {
+        auto builtin= downcast<Datatype_Builtin>(datatype);
+        switch (builtin->builtin_type)
+        {
+        case Builtin_Type::RAWPTR:
+        {
+            void* pointer = *(void**)memory;
+            if (pointer != nullptr) {
+                result = constant_pool_result_make_error("Found pointer that isn't nullptr");
+                return;
+            }
+            return;
+        }
+        case Builtin_Type::TYPE_HANDLE:
+        {
             Upp_Type_Handle handle;
             memory_copy(&handle, memory, sizeof(Upp_Type_Handle));
             if (handle.index >= (u32)type_system->types.size) {
                 result = constant_pool_result_make_error("Invalid type handle found");
+            }
+            return;
+        }
+        case Builtin_Type::ANY:
+        {
+            Upp_Any any = *(Upp_Any*)memory;
+            if (any.type.index >= (u32)type_system->types.size) {
+                result = constant_pool_result_make_error("Found any type with invalid type-handle index");
                 return;
             }
+            result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
+            return;
         }
-        if (primitive->primitive_type == Primitive_Type::RAWPTR) {
-            void* pointer = *(void**)memory;
-            if (pointer != nullptr) {
-                result = constant_pool_result_make_error("Found address that isn't nullptr");
+        case Builtin_Type::STRING:
+        {
+            // Note: We don't store c-strings in constant-pool, only upp-strings
+            Upp_String string = *(Upp_String*)memory;
+
+            // Check if memory is readable
+            if (!memory_is_readable((void*)string.data, string.size)) {
+                result = constant_pool_result_make_error("Value contains string with unreadable memory");
                 return;
             }
+
+            // Create c_string value pointing to identifier pool (Always null terminated)
+            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_create_static((const char*)string.data));
+            memory_set_bytes(&string, sizeof(Upp_String), 0);
+            *(Upp_String*)memory = upp_string_from_id(id);;
+            return;
         }
+        case Builtin_Type::C_STRING: {
+            result = constant_pool_result_make_error("C_String cannot be added to constant pool");
+            return;
+        }
+        case Builtin_Type::C_CHAR:
+        case Builtin_Type::USIZE:
+        case Builtin_Type::ISIZE:
+        case Builtin_Type::CODE_POINT:
+            return;
+        default: panic("");
+        }
+        break;
+    }
+    case Datatype_Type::PRIMITIVE: 
+    {
+        // Primitives never have padding
         return;
     }
     case Datatype_Type::FUNCTION_POINTER: {
@@ -210,7 +258,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     }
     case Datatype_Type::SLICE:
     {
-        Datatype* points_to = downcast<Datatype_Slice>(signature)->element_type;
+        Datatype* points_to = downcast<Datatype_Slice>(datatype)->element_type;
         Upp_Slice_Base slice = *(Upp_Slice_Base*)memory;
 
         if (slice.data != nullptr || slice.size != 0) {
@@ -223,7 +271,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     }
     case Datatype_Type::ARRAY:
     {
-        auto array = downcast<Datatype_Array>(signature);
+        auto array = downcast<Datatype_Array>(datatype);
         if (!array->count_known) {
             result = constant_pool_result_make_error("Value contains array with unknown-count");
             return;
@@ -239,36 +287,7 @@ void datatype_memory_check_correctness_and_set_padding_bytes_zero(
     }
     case Datatype_Type::STRUCT:
     {
-        // Check if it's Any-type or string
-        if (types_are_equal(signature, upcast(types.any_type)))
-        {
-            Upp_Any any = *(Upp_Any*)memory;
-            if (any.type.index >= (u32)type_system->types.size) {
-                result = constant_pool_result_make_error("Found any type with invalid type-handle index");
-                return;
-            }
-            result = constant_pool_result_make_error("Value contains any-type, which is the same as a pointer");
-            return;
-        }
-        else if (types_are_equal(signature, types.string))
-        {
-            // Note: We don't store c-strings in constant-pool, only upp-strings
-            Upp_String string = *(Upp_String*)memory;
-
-            // Check if memory is readable
-            if (!memory_is_readable((void*)string.data, string.size)) {
-                result = constant_pool_result_make_error("Value contains string with unreadable memory");
-                return;
-            }
-
-            // Create c_string value pointing to identifier pool (Always null terminated)
-            auto id = identifier_pool_add(&compilation_data->identifier_pool, string_create_static((const char*)string.data));
-            memory_set_bytes(&string, sizeof(Upp_String), 0);
-            *(Upp_String*)memory = upp_string_from_id(id);;
-            return;
-        }
-
-        Datatype_Struct* structure = downcast<Datatype_Struct>(signature);
+        Datatype_Struct* structure = downcast<Datatype_Struct>(datatype);
         if (structure->upp_struct->is_union) {
             result = constant_pool_result_make_error("Found Union");
             return;
@@ -416,6 +435,16 @@ Upp_Constant Constant_Pool::add_enum_value_assume_valid(Datatype_Enum* enum_type
     assert(enum_type->base.memory_info.value.size == 4, "");
     Constant_Pool_Result result = constant_pool_add_constant(
         this, upcast(enum_type), array_create_static_as_bytes<int>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_type_handle_assume_valid(Upp_Type_Handle type_handle)
+{
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, compilation_data->type_system->predefined_types.type_handle->upcast(), 
+        array_create_static_as_bytes<Upp_Type_Handle>(&type_handle, 1)
     );
     assert(result.success, "");
     return result.options.constant;

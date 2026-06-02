@@ -97,7 +97,7 @@ enum class Token_Type
     UNION,
     ENUM,
     GLOBAL_KEYWORD,
-    CONST_KEYWORD,
+    COMPTIME_KEYWORD,
     OPERATORS,
     IMPORT,
     EXTERN,

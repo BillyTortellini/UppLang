@@ -205,7 +205,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		);
 
 		result->semantic_infos = dynamic_array_create<Editor_Info>();
-		result->next_analysis_item_index = 0;
+		result->next_editor_info_index = 0;
 
 		// Initialize stages
 		result->type_system = type_system_create(result);
@@ -299,28 +299,27 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				return result;
 			};
 
-			define_type_symbol("c_char", upcast(types.c_char));
-			define_type_symbol("c_string", upcast(types.c_string));
-			define_type_symbol("u8", upcast(types.u8_type));
-			define_type_symbol("u16", upcast(types.u16_type));
-			define_type_symbol("u32", upcast(types.u32_type));
-			define_type_symbol("u64", upcast(types.u64_type));
-			define_type_symbol("i8", upcast(types.i8_type));
-			define_type_symbol("i16", upcast(types.i16_type));
-			define_type_symbol("i32", upcast(types.i32_type));
-			define_type_symbol("i64", upcast(types.i64_type));
-			define_type_symbol("f32", upcast(types.f32_type));
-			define_type_symbol("f64", upcast(types.f64_type));
-			define_type_symbol("string", types.string);
-			define_type_symbol("Allocator", upcast(types.allocator));
-			define_type_symbol("Type_Handle", types.type_handle);
-			define_type_symbol("Type_Info", upcast(types.type_information_type));
-			define_type_symbol("Any", upcast(types.any_type));
-			// define_type_symbol("_", upcast(types.empty_struct_type)); // Why was this here?
-			define_type_symbol("rawptr", upcast(types.rawptr));
-			define_type_symbol("isize", upcast(types.isize));
-			define_type_symbol("usize", upcast(types.usize));
-			define_type_symbol("bytes", upcast(types.bytes));
+			define_type_symbol("u8", types.u8_type->upcast());
+			define_type_symbol("u16", types.u16_type->upcast());
+			define_type_symbol("u32", types.u32_type->upcast());
+			define_type_symbol("u64", types.u64_type->upcast());
+			define_type_symbol("i8", types.i8_type->upcast());
+			define_type_symbol("i16", types.i16_type->upcast());
+			define_type_symbol("i32", types.i32_type->upcast());
+			define_type_symbol("i64", types.i64_type->upcast());
+			define_type_symbol("f32", types.f32_type->upcast());
+			define_type_symbol("f64", types.f64_type->upcast());
+
+			define_type_symbol("rawptr", types.rawptr->upcast());
+			define_type_symbol("isize", types.isize->upcast());
+			define_type_symbol("usize", types.usize->upcast());
+			define_type_symbol("string", types.string->upcast());
+			define_type_symbol("c_string", types.c_string->upcast());
+			define_type_symbol("c_char", types.c_char->upcast());
+			define_type_symbol("code_point", types.code_point->upcast());
+			define_type_symbol("Any", types.any_type->upcast());
+			define_type_symbol("Type_Handle", types.type_handle->upcast());
+			define_type_symbol("Type_Info", types.type_information_type->upcast());
 
 			// Define math constants
 			{
@@ -487,7 +486,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_return_type(call_signature, types.type_handle, compilation_data);
+			call_signature_add_return_type(call_signature, upcast(types.type_handle), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::TYPE_OF] = call_signature_register(call_signature, compilation_data);
 
 			call_signature = call_signature_create_empty();
@@ -975,8 +974,8 @@ void add_semantic_info(
 
 int add_code_analysis_item(Text_Range range, Source_Code* code, int tree_depth, Compilation_Data* compilation_data)
 {
-	int analysis_item_index = compilation_data->next_analysis_item_index;
-	compilation_data->next_analysis_item_index += 1;
+	int analysis_item_index = compilation_data->next_editor_info_index;
+	compilation_data->next_editor_info_index += 1;
 
     for (int i = range.start.line; i <= range.end.line; i++)
     {
@@ -1137,8 +1136,9 @@ void find_editor_infos_recursive(
 
 			if (expr->type == AST::Expression_Type::AUTO_ENUM)
 			{
-				auto type = expression_info_get_type(info, true, type_system);
-				if (type->type == Datatype_Type::ENUM) {
+				auto type = expression_info_get_datatype(info, true, type_system);
+				if (type->type == Datatype_Type::ENUM) 
+				{
 					option.expression.is_member_access = true;
 					option.expression.member_access_info.value_type = type;
 					option.expression.member_access_info.has_definition = false;
@@ -1291,7 +1291,8 @@ void find_editor_infos_recursive(
 				option.symbol_info.add_color = !symbol_node->is_root_lookup;
 				add_semantic_info(analysis_item_index, Editor_Info_Type::SYMBOL_LOOKUP, option, pass, compilation_data);
 			}
-			else if (symbol_node->is_definition) 
+			// Active passes also include passes that don't analyse the node, like the whole module-analysis 
+			else if (symbol_node->is_definition && active_passes.size == 0)
 			{
 				Editor_Info_Option option;
 				option.markup_color = Syntax_Color::VALUE_DEFINITION;
@@ -1316,7 +1317,7 @@ void find_editor_infos_recursive(
 
 void compilation_data_update_source_code_information(Compilation_Data* compilation_data)
 {
-	compilation_data->next_analysis_item_index = 0;
+	compilation_data->next_editor_info_index = 0;
 
 	for (int i = 0; i < compilation_data->compilation_units.size; i++)
 	{
@@ -1359,7 +1360,7 @@ void compilation_data_update_source_code_information(Compilation_Data* compilati
 	{
 		// Sort semantic-infos, so that same analysis-items are next to each other
 		auto& semantic_infos = compilation_data->semantic_infos;
-		const int analysis_item_count = compilation_data->next_analysis_item_index;
+		const int analysis_item_count = compilation_data->next_editor_info_index;
 		dynamic_array_sort(&compilation_data->semantic_infos, Semantic_Info_Comparator());
 
 		// Find start and length of all semantic infos

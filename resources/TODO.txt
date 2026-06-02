@@ -1,23 +1,8 @@
 
 TODO:
 -----
- - Bug: Definition colors swithcing between compiles...
- - Auto complete sometimes not working
  - String-Handling (+ character literal)
-    * Differentiate between:
-        - readonly string (pointer + size, for slices, immutable)
-        - String_Builder  (User defined structures, with arenas, pointer/size/capacity)
-        - string_buffer   (Maybe pointer/size/capacity?)
-     UTF-8? --> Maybe not yet, not quite schure what I wanna do here
-     Normal, built-in strings in the language have char* characters + size
-     How to tag const-strings?
-     For-C-Strings, it's just another datatype for foreign-functions, ~c_string == const char* 
-     Note for C-Backend: char != signed char != unsigned char, so this needs some thought
- - Something to think about: Sizes of containers as unsigned or signed int? (Or usize?)
-    * Array size
-    * Slice size
-    * List/DynArray/Hashtable size
-    * String size
+    * Character literal
  - Write simple standard library
     * Arena
     * DynArray
@@ -26,72 +11,6 @@ TODO:
  - Fix da testcases
  - Add more stuff to standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
  - Check out extern library interface...
-
-Signed/Unsigned arithmetic/pitfalls:
- * Comparisons with casts
- * Less than null check in loops
- * Modulo arithmetic with signed/unsigned and casting to larger
- * Integer promotion
- loop i := 0; i < array.size; i++
- loop i: isize = array.size - 1; i >= 0; i -= 1
-
-Allocation_Type :: enum
-    ALLOCATE, // Uses new_size, ignores data and prev_size, returns pointer
-    FREE,     // Uses prev_size, ignores new_size, returns nil
-    TRY_RESIZE // Uses both sizes
-
-Allocator :: struct
-    allocate_fn: *fn(allocator: *Allocator, type: Allocation_Type, data: rawptr, new_size: usize, prev_size: usize) -> rawptr
-
-Arena :: struct
-    allocator: Allocator;
-    buffer: rawptr;
-    capacity: usize
-    size: size
-
-DynArray :: struct($T)
-    arena: *Arena
-    buffer: *T
-    capacity: usize
-    size: usize
-
-string :: struct
-    data: rawptr
-    buffer_size: usize // Size of buffer, not character count, includes 0, e.g. "".size = 1
-
-string_buffer :: struct
-    buffer: rawptr
-    capacity: usize
-    size: usize
-
-String_Builder :: struct
-    arena: *Arena
-    buffer: rawptr
-    capacity: usize
-    size: usize
-
-
-Done:
------
-29.05:
- - Switch/Match and enum parsing
- - Enum utility functions
- - Math functions as hardcoded functions
-
-28.05:
- - Ternary operator with .if then else 
- - Remove optional pointers (maybe)
- - Replace &&, ||, ! with and/or/not
- - Implement sneak as a movement (maybe even replace f, F, t, T)
- - Auto formating with multiple spaces fixed
- - Check fold children
- - Check undo/redo
- - Multiple folds still weird
- - Because movement is unbounded, move render-position of fold after cursor if on the same line and cursor > text
- - If inline-fold, move out of fold after the fold is created
- - Open fold on current line only if $ is pressed at end of line
-
-
 
 Other things I could do (Design not final):
  * break statement with if, loop, switch, block
@@ -102,44 +21,6 @@ Other things I could do (Design not final):
     * Asdf :: struct($T) pack_something
     * Types: Pack ordered, pack smallest, pack unaligned?
  * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values
-
-
-
-Odin: string (read-only, non-owning, can be slice), String-builder (Mutates string), string-buffer (Owning, can change string without resizing)
-text := String_Builder::make(arena)
-text + 15 + false + true + 100 + 15->format(5, 3)
-text + "Fib( " + i + ") = " + fib(i) + "\n";
-text.append(.["Fib(", i, ") = ", fib(i), "\n"])
-
-String_Format :: struct
-    Int:
-        num_digits: int
-    Float:
-        pre_comma: int
-        post_comma: int
-
-DONE:
-27.05:
- - Interval implementation (ibox1)
- - Fix movements and motions
- - Tab as movement
- - Delete should work with outside ranges
- - Yank/Put also
- - 0 vs Ctrl-0
- - Add-Padding should be done on line-insert
-
-Before:
- - Unbound cursor
-
-22.05: 
- - Error Refactor
- - Scope not working correctly
-
-20.05:
- - Fix Bugs with auto-format...
- - Leading/Trailing Whitespaces should be rendered with some indication (dot in the middle)
- - Remove shift-enter and tab for new indentation stuff
- - Inside Strings we shouldn't have parenthesis complete...
 
 Incremental Parsing Design:
 ---------------------------
@@ -298,94 +179,10 @@ What do we need to do:
     Tokenize
     Run through tokenization, check where tokens started/ended previously
     With tokenization we can know where to add/remove spaces
-
-
-
-
-
-TODO:
-    scope keyword not working
-
-Hashable :: struct($T)
-    hash: *fn(value: T) => u64
-    equals: *fn(a: T, b: T) => bool
-
-const String_Hashable := Hashable(String).(
-    string_hash,
-    string_equals
-)
-
-Hashtable :: struct($T, $K, hashable: Hashable(T))
-    entries: []T
-
-pointer_hash :: fn (a: *$T) => u64
-    return hash_memory(a-*, 8)
-
-pointer_equals :: fn (a: *$T, b: T) => bool
-    return a *== b
-
-// Macros working with Comptime-evaluation would make a really cool wombo-combombo here
-hashable_make_pointer :: fn($T) => Hashable(T)
-    return .(
-        #instanciate pointer_hash(T), 
-        #instanciate pointer_equals(T)
-    )
-
-create :: fn (arena: *Arena, capacity: int) => Hashtable($K, $V, $hashable)
-
-insert :: fn(table: *Hashtable($K, $V, $hashable), key: K, value: V)
-    hash := hashable.hash(key)
-    entry_index := to_entry_index(hash, 0)
-    entry := table.entries[entry_index]-*
-    if hashable.equals(entry.key, key)
-        return false
-    entry.key = key
-    entry.value = value
-    return true
-
-main :: fn
-    table: Hashtable(string, int, String_Hashable)
-    table: Hashtable(*Node, int, hashable_make_pointer(*Node))
-
-    tmp_arena = Arena~create()
-
-    // Every parameter that needs a Hashable(String) will take this value as default...
-    operators add_default_value(datatype = Hashable(String), value = String_Hashable)
-    operators add_default_value(name = "capacity", datatype = int, value = 0)
-    operators add_default_value(name = "arena", datatype = *Arena, expr = tmp_arena)
-    table: Hashtable(String, int) = create(arena)
         
-
-
-Default-Value Design:
----------------------
-In normal languages default values are just added to the signature
-    foo :: (flag: bool = false)
-But we want them to be configurable outside of this
-    foo :: (flag: bool)
-    operators add_default_value("flag", bool, foo)
-
-Design-Space:
-    How are default values queried?
-        - Parameter Name
-        - Datatype
-            --> Can it be polymorphic? --> don't think so
-        - Function
-        - Symbol-Required (e.g. if symbol 'foo' exists, then the default value expression exists)
-    How are the values generated?
-        - Comptime value
-        - Expression (Evaluated once in global scope vs. everytime in calling scope)
-        - Symbol_Lookup (e.g. hoping symbol symbol_table is actually a symbol table...)
-    How do they interact with overloading?
-        - Match arguments/parameters returns Missing_Argument, Too_Many_Arguments, Invalid_Argument_Name
-        - Call_Info can store parameter type, and overloading could be choosen
-
 TODO:
 -----
  - Smaller Language Features
-    * Ternary operator with .if then else 
-       var x = .if a < b then a else b
-    * Remove optional pointers (maybe)
     * break statement with if, loop, switch, block
         break if, break else, break loop
     * String-Handling
@@ -393,8 +190,6 @@ TODO:
         Normal, built-in strings in the language have char* characters + size
         How to tag const-strings?
         For-C-Strings, it's just another datatype for foreign-functions, ~c_string == const char* 
-    * Access to normal math functions/built-ins
-        sin, cos, tan, sind, cosd, tand, pow, exp, atan2, min, max, frac, ceil and all the others
  - Fix Testcases
  - Incremental compilation
     * Incremental parsing
@@ -487,16 +282,6 @@ Symbol aliasing should kinda be handled somehow...
     import X as B
     B :: X // Kinda the same thing, no?
 
-Const inferred definitions:
-    Adding const in front of a definition makes it const...
-        const x, y, z := 15
-    This is similar to having mut/mutable in parameter definitions
-        foo :: (mut a: int)
-    x: const int = 15
-    x: int = 15
-Auto-Pointer handling
-    Disable auto-pointers when * or & are used
-    Inferred definitions and assignments should be thought over
 Casts:
     After casts other casts should not be valid...
     Can we replace * and & operations with casts, as they aren't needed as much anymore?
@@ -506,21 +291,14 @@ I don't really like the name polymorphic,
     I kinda like parameterized generic more than polymorphic.
     Generic_Struct
     Generic_Function
-Datatypes/Type-System:
-    Removing the sub-types/type-mods things would be nice
-Global-Handling in Bakes?
 AST/Parsing
     Switch syntax with 2 indentations, case variable definition
     Named blocks syntax should be on line before?
     Parser using Token-Index instead of Text-Index, why?
     Parser to Analysis-Info mapping is currently hashtable-based
     Editor-Analysis Info is kinda complicated, which is yet another mapping
-Features:
-    Do I need optional values?
-    new/delete operator/allocator? --> probably just hardcoded function
 Source_Code / Code-History:
     Sparse Array_List should be used for Line-Bundles
-    Comment and Indent handling should probably be different
 Parser:
     Each node is allocated individually
     We should know which nodes belong to analysis-passes,
@@ -535,74 +313,6 @@ Syntax-Editor:
     But I think I'm fine with most of the things...
 IR-Generator:
     IR-Data Access with destination is confusing for me
-
-
-
-Questions: 
-    4831, #instanciate inside function-signature inside poly-header, test this
-        test :: (x: (a: $T, b: (#instanciate Node(T = T)).T)
-        I think this would cause the panic to be triggered, what is the solution here...
-
-
-
-TODO:
- * Polymorphism upgrades:
-    - Poly struct parameters without types are assumed to be types, e.g. 
-           Node :: struct($K, $V) 
-           foo :: (x: T, $V)
-    - Struct instance templates with ignored values, e.g.
-       A :: struct($X: int, $Y: int, $Z: int)
-       foo :: (x: A(Z = $Z, _)), remove implicit polymorphism and add this instead...
-            e.g. we don't need all parameters for implicit polymorphism...
- * Context default parameters
-    - Add default values to context, which are used when calling functions
-    - Default value evaluation order?
-        By default evaluates in current context, Symbol-Lookups with 'Foo~bar~baz
-        use caller's current symbol table, which can be somewhat more complicated...
- * Access to normal math functions/built-ins
-      sin, cos, tan, exp, sqrt, others?
-      Things like floor, ceil...
-      Upp~Math~Trigonomety
-      Upp~Math~xor(a, b)
- * String handling, primitive datatypes address and usize/isize, character literal
-    c_char? c_string?
- * Write Base-Library
-    - Arena allocator 
-        based on bin allocator based on virtual arena allocator, (Also for learning...)
-        2 global scratch_allocator, get scratch (See ryan fleury thingy...) (per_thread)
-    - Dynamic_Array
-    - Hashtable/set
-    - Free_List for normal allocations + list implementation
-    - Doubly-Linked list?
-    - String formating (simple)
-    - String_Builder
-    - String_List
- * Vector math (Generic)
-      vec2, vec3, vec4, mat2, mat3, mat4 (Constructors?)
- * Game-Window and OpenGL functions
-
-Testcases:
-    * Parser with lists/without lists and general syntax things
-    * Optional with operator
-    * Implicit polymorphism
-
-Others:
-    Project structure.... Multiple files, imports, versions......
-
-Base-Library:
- * Write testcases --> 
-    I think I added implicit polymorphism, how I wanted to...
-    But I didn't add testcases for this, so I'm not even sure it works correctly.
-    Also not sure if I want it this way, as this could cause problems because it's not very visible...
-    I don't remember what I did last, LOL
-
-    Also list item parsing stuff...
-
-So I guess we have the special primitives:
-    usize
-    isize
-    address (cast_pointer)
-    Bytes
 
 
 
@@ -717,21 +427,6 @@ ISSUE-TRACKER:
 
 
 
-Language/Editor Upgrades:
--------------------------
- * Raw-Equals ~== and ~!=, like *== and *!=
- * Generated C-Code should be more readable
- * struct-initializer with hierarchy suggestions aren't shown correctly
- * .? for Optional value access
- * Comment in/out range of lines
- * Alias handling in editor
- * Folds on end of line instead of next line?
-
-Missing Testcases:
- * defer_restore
- * new hardcoded functions
-
-
 --------------------
 - MISSING FEATURES -
 --------------------
@@ -748,7 +443,6 @@ Missing Testcases:
             * Analyse header needs to analyse parameters + If one contains template type, make template...
             * Handle polymorphic struct types as template instances?
         - Block-Expressions (Expressions which may include statements + return), something like ternary operator
-        - Auto function? .-> e.g. search(array, .-> x.name == "What")
         - Varargs (Other syntax for pass as slice...)
         - Using on structs
         - Location information (Mostly for logging)
