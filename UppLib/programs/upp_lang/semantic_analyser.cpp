@@ -738,7 +738,7 @@ Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* ex
 		void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
 		bytecode_execute_primitive_cast(
 			result_buffer, result.data,
-			type_base_to_bytecode_type(value_info.result_type), type_base_to_bytecode_type(value_info.initial_type)
+			datatype_to_bytecode_type(value_info.result_type), datatype_to_bytecode_type(value_info.initial_type)
 		);
 		return comptime_result_make_available(result_buffer, value_info.result_type);
 	}
@@ -903,7 +903,7 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 		}
 
 		void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
-		if (bytecode_execute_binary_instr(instr_type, type_base_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
+		if (bytecode_execute_binary_instr(instr_type, datatype_to_bytecode_type(left_val.data_type), result_buffer, left_val.data, right_val.data)) {
 			return comptime_result_make_available(result_buffer, result_datatype);
 		}
 		else {
@@ -943,7 +943,7 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 		}
 
 		void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
-		bytecode_execute_unary_instr(instr_type, type_base_to_bytecode_type(value.data_type), result_buffer, value.data);
+		bytecode_execute_unary_instr(instr_type, datatype_to_bytecode_type(value.data_type), result_buffer, value.data);
 		return comptime_result_make_available(result_buffer, result_datatype);
 	}
 	case AST::Expression_Type::ARRAY_ACCESS:
@@ -1074,7 +1074,84 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 				void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
 				bytecode_execute_primitive_cast(
 					result_buffer, value_result.data, 
-					type_base_to_bytecode_type(result_datatype), type_base_to_bytecode_type(value_result.data_type)
+					datatype_to_bytecode_type(result_datatype), datatype_to_bytecode_type(value_result.data_type)
+				);
+				return comptime_result_make_available(result_buffer, result_datatype);
+			}
+			case Hardcoded_Type::BITWISE_AND:
+			case Hardcoded_Type::BITWISE_OR:
+			case Hardcoded_Type::BITWISE_XOR:
+			case Hardcoded_Type::BITWISE_SHIFT_LEFT:
+			case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
+			{
+				Comptime_Result left_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (left_result.type != Comptime_Result_Type::AVAILABLE) {
+					return left_result;
+				}
+
+				Comptime_Result right_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression, semantic_context
+				);
+				if (right_result.type != Comptime_Result_Type::AVAILABLE) {
+					return right_result;
+				}
+
+				Instruction_Type binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND;
+				switch (hardcoded_type)
+				{
+				case Hardcoded_Type::BITWISE_AND: binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+				case Hardcoded_Type::BITWISE_OR: binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+				case Hardcoded_Type::BITWISE_XOR: binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+				case Hardcoded_Type::BITWISE_SHIFT_LEFT: binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+				case Hardcoded_Type::BITWISE_SHIFT_RIGHT: binary_instr = Instruction_Type::BINARY_OP_BITWISE_AND; break;
+				default: panic("");
+				}
+
+				void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				bytecode_execute_binary_instr(
+					binary_instr, datatype_to_bytecode_type(left_result.data_type), result_buffer, left_result.data, right_result.data
+				);
+				return comptime_result_make_available(result_buffer, result_datatype);
+			}
+			case Hardcoded_Type::BITWISE_NOT:
+			{
+				Comptime_Result argument_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (argument_result.type != Comptime_Result_Type::AVAILABLE) {
+					return argument_result;
+				}
+
+				void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				bytecode_execute_unary_instr(
+					Instruction_Type::UNARY_OP_NEGATE, datatype_to_bytecode_type(argument_result.data_type), 
+					result_buffer, argument_result.data
+				);
+				return comptime_result_make_available(result_buffer, result_datatype);
+			}
+			case Hardcoded_Type::HIGHEST_SET_BIT_U32:
+			case Hardcoded_Type::HIGHEST_SET_BIT_U64:
+			case Hardcoded_Type::LOWEST_SET_BIT_U32:
+			case Hardcoded_Type::LOWEST_SET_BIT_U64:
+			{
+				Comptime_Result argument_result = expression_calculate_comptime_value_internal(
+					call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression, semantic_context
+				);
+				if (argument_result.type != Comptime_Result_Type::AVAILABLE) {
+					return argument_result;
+				}
+
+				Instruction_Type instruction_type = Instruction_Type::UNARY_OP_HIGHEST_SET_BIT;
+				if (hardcoded_type == Hardcoded_Type::LOWEST_SET_BIT_U32 || hardcoded_type == Hardcoded_Type::LOWEST_SET_BIT_U64) {
+					instruction_type = Instruction_Type::UNARY_OP_LOWEST_SET_BIT;
+				}
+
+				void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
+				bytecode_execute_unary_instr(
+					instruction_type, datatype_to_bytecode_type(argument_result.data_type), 
+					result_buffer, argument_result.data
 				);
 				return comptime_result_make_available(result_buffer, result_datatype);
 			}
@@ -7875,10 +7952,18 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 
 		switch (read.type)
 		{
-		case Literal_Type::BOOLEAN:
+		case Literal_Type::BOOLEAN: 
+		{
 			literal_type = upcast(types.bool_type);
 			value_ptr = &read.options.boolean;
 			break;
+		}
+		case Literal_Type::CODE_POINT: 
+		{
+			literal_type = types.code_point->upcast();
+			value_ptr = &read.options.code_point;
+			break;
+		}
 		case Literal_Type::FLOAT_VAL:
 		{
 			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && types_are_equal(context.datatype, upcast(types.f64_type)))
@@ -8034,9 +8119,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			}
 			else
 			{
-				literal_type = upcast(types.isize);
-				dummy.value_i64 = read.options.int_val;
-				value_ptr = &dummy.value_i64;
+				literal_type = upcast(types.i32_type);
+				dummy.value_i32 = read.options.int_val;
+				value_ptr = &dummy.value_i32;
 			}
 			break;
 		}

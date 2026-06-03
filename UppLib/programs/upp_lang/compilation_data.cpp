@@ -570,7 +570,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_parameter(call_signature, make_id("data"), upcast(types.rawptr), true, false, false);
 			hardcoded_signatures[(int)Hardcoded_Type::SYSTEM_FREE] = call_signature_register(call_signature, compilation_data);
 
-
 			// Basic IO-Functions
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.bool_type), true, false, false);
@@ -603,7 +602,20 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::READ_BOOL] = call_signature_register(call_signature, compilation_data);
 
+			// More bit functions
+			auto highest_set_bit_u32 = call_signature_create_empty();
+			call_signature_add_parameter(highest_set_bit_u32, make_id("value"), upcast(types.u32_type), true, false, false);
+			call_signature_add_return_type(highest_set_bit_u32, types.i8_type->upcast(), compilation_data);
+			highest_set_bit_u32 = call_signature_register(highest_set_bit_u32, compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::HIGHEST_SET_BIT_U32] = highest_set_bit_u32;
+			hardcoded_signatures[(int)Hardcoded_Type::LOWEST_SET_BIT_U32]  = highest_set_bit_u32;
 
+			auto highest_set_bit_u64 = call_signature_create_empty();
+			call_signature_add_parameter(highest_set_bit_u64, make_id("value"), upcast(types.u64_type), true, false, false);
+			call_signature_add_return_type(highest_set_bit_u64, types.i8_type->upcast(), compilation_data);
+			highest_set_bit_u64 = call_signature_register(highest_set_bit_u64, compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::HIGHEST_SET_BIT_U64] = highest_set_bit_u64;
+			hardcoded_signatures[(int)Hardcoded_Type::LOWEST_SET_BIT_U64]  = highest_set_bit_u64;
 
 			// Bitwise functions
 			auto bitwise_binop = call_signature_create_empty();

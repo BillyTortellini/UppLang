@@ -24,11 +24,10 @@ namespace Text_Editing
 struct Code_Fold
 {
     ibox1 interval;
-    int indentation;
 	int child_folds_start; // -1 If no child
     int next_index;
 
-    static Code_Fold make(ibox1 interval, int indentation);
+    static Code_Fold make(ibox1 interval);
     bool contains(int line_index);
 };
 
@@ -65,7 +64,8 @@ struct Editor_Tab
     // Cursor and camera
     Text_Index cursor;
     int cam_start;
-    bool move_cursor_to_last_char_on_vertical_movement;
+    bool move_cursor_horizontal_on_vertical_movement;
+    bool move_to_horizontal_start;
 
     History_Timestamp last_render_timestamp;
     Text_Index last_render_cursor_pos;

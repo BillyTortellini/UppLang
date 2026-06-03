@@ -469,6 +469,7 @@ namespace AST
 			case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
 			case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
 			case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
+			case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.code_point); break;
 			default: panic("");
 			}
 			string_append_formated(str, "\"");
@@ -639,6 +640,7 @@ namespace AST
 				case Literal_Type::FLOAT_VAL: string_append_formated(str, "%f", read.options.float_val); break;
 				case Literal_Type::NULL_VAL: string_append_formated(str, "null"); break;
 				case Literal_Type::STRING: string_append_formated(str, "%s", read.options.string->characters); break;
+				case Literal_Type::CODE_POINT: string_append_formated(str, "'#%d'", read.options.code_point); break;
 				default: panic("");
 				}
 				break;

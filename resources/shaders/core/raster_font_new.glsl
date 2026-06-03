@@ -35,7 +35,7 @@ void main()
 	float alpha = texture(sampler, f_uv).r;
 	// The 1.8 is pretty random, if we would do this completely correct, we would
 	// need to do alpha-blending in linear colors, and then have gamma-correction afterwards on the whole image
-	alpha = pow(alpha, 1 / 1.8);
+	alpha = pow(alpha, 1 / 2.2);
 
 	vec4 color = vec4(
 		float((f_color >> 24) & 0xFF),

@@ -63,6 +63,15 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::SYSTEM_ALLOC: return make_info(Hardcoded_Type_Class::UTILITY, "system_allocate", "SYSTEM_ALLOC", "malloc_size_u64");
 	case Hardcoded_Type::SYSTEM_FREE: return make_info(Hardcoded_Type_Class::UTILITY, "system_free", "SYSTEM_FREE", "free_pointer");
 
+	case Hardcoded_Type::HIGHEST_SET_BIT_U32: return make_info(
+		Hardcoded_Type_Class::BITWISE_OPERATION, "hightest_set_bit_u32", "HIGHEST_SET_BIT_U32", "highest_set_bit_u32");
+	case Hardcoded_Type::HIGHEST_SET_BIT_U64: 
+		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "hightest_set_bit_u64", "HIGHEST_SET_BIT_U64", "highest_set_bit_u64");
+	case Hardcoded_Type::LOWEST_SET_BIT_U32:  
+		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "lowest_set_bit_u32", "LOWEST_SET_BIT_U32", "lowest_set_bit_u32");
+	case Hardcoded_Type::LOWEST_SET_BIT_U64:  
+		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "lowest_set_bit_u64", "LOWEST_SET_BIT_U64", "lowest_set_bit_u64");
+
 	case Hardcoded_Type::BITWISE_NOT: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_not", "BITWISE_NOT", "_");
 	case Hardcoded_Type::BITWISE_AND: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_and", "BITWISE_AND", "_");
 	case Hardcoded_Type::BITWISE_OR: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_or", "BITWISE_OR", "_");

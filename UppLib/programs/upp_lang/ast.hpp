@@ -16,6 +16,7 @@ enum class Literal_Type
     BOOLEAN,
     STRING,
     NULL_VAL,
+    CODE_POINT,
 };
 
 struct Literal_Value
@@ -27,6 +28,7 @@ struct Literal_Value
         f64 float_val;
         bool boolean;
         void* null_ptr;
+        u32 code_point;
     } options;
 };
 

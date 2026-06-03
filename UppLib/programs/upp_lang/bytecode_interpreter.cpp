@@ -321,9 +321,36 @@ void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type typ
         }
         break;
     }
-    case Instruction_Type::UNARY_OP_NOT:
+    case Instruction_Type::UNARY_OP_NOT: {
         *(bool*)(dest) = !*(bool*)(operand);
         break;
+    }
+    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
+    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
+    {
+        u64 value = 0;
+        switch (type)
+        {
+        case Bytecode_Type::INT8:    value = (u64) *(i8*)operand; break;
+        case Bytecode_Type::INT16:   value = (u64) *(i16*)operand; break;
+        case Bytecode_Type::INT32:   value = (u64) *(i32*)operand; break;
+        case Bytecode_Type::INT64:   value = (u64) *(i64*)operand; break;
+        case Bytecode_Type::UINT8:   value = (u64) *(u8*)operand; break;
+        case Bytecode_Type::UINT16:  value = (u64) *(u16*)operand; break;
+        case Bytecode_Type::UINT32:  value = (u64) *(u32*)operand; break;
+        case Bytecode_Type::UINT64:  value = (u64) *(u64*)operand; break;
+        default: panic(""); return;
+        }
+
+        i8 result = -1;
+        if (value != 0) 
+        {
+            result = instr_type == Instruction_Type::UNARY_OP_HIGHEST_SET_BIT ?
+                integer_highest_set_bit_index(value) : integer_lowest_set_bit_index(value);
+        }
+        *(i8*)dest = result;
+        break;
+    }
     default: panic("");
     }
 }
@@ -1257,6 +1284,8 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::UNARY_OP_NOT:
     case Instruction_Type::UNARY_OP_BITWISE_NOT:
     case Instruction_Type::UNARY_OP_NEGATE:
+    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
+    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
         bytecode_execute_unary_instr(
             i->instruction_type,
             (Bytecode_Type)i->op3,

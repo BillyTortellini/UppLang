@@ -32,7 +32,7 @@ enum class Bytecode_Type
     FLOAT64,
     BOOL
 };
-Bytecode_Type type_base_to_bytecode_type(Datatype* primitive);
+Bytecode_Type datatype_to_bytecode_type(Datatype* primitive);
 
 enum class Instruction_Type
 {
@@ -87,7 +87,9 @@ enum class Instruction_Type
     // Unary operations work the following: op1 = dest_byte_offset, op2 = operand_offset, op3 = bytecode_type
     UNARY_OP_NEGATE,
     UNARY_OP_NOT,
-    UNARY_OP_BITWISE_NOT
+    UNARY_OP_BITWISE_NOT,
+    UNARY_OP_HIGHEST_SET_BIT,
+    UNARY_OP_LOWEST_SET_BIT,
 };
 
 struct Bytecode_Instruction

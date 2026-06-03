@@ -1,8 +1,11 @@
 
+
+
+DONE:
+
+
 TODO:
 -----
- - String-Handling (+ character literal)
-    * Character literal
  - Write simple standard library
     * Arena
     * DynArray
@@ -11,6 +14,8 @@ TODO:
  - Fix da testcases
  - Add more stuff to standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
  - Check out extern library interface...
+
+
 
 Other things I could do (Design not final):
  * break statement with if, loop, switch, block
@@ -21,6 +26,8 @@ Other things I could do (Design not final):
     * Asdf :: struct($T) pack_something
     * Types: Pack ordered, pack smallest, pack unaligned?
  * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values
+
+
 
 Incremental Parsing Design:
 ---------------------------

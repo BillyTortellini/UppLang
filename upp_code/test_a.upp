@@ -1,12 +1,12 @@
-
 import Upp~Type_Handle
-
+what
 Foo :: struct (T: Type_Handle)
-	data: T
+    data: T
+
 
 bar :: (x: Foo($T))
-	
+    
 
 main :: ()
-	x: Foo(int)
-	bar(x)
+    x: Foo(int)
+    bar(x)

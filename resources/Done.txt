@@ -1,6 +1,29 @@
 
 Done:
 -----
+03.06:
+ * Lowest/highest set bit functions
+ * Comptime calculation of bitwise function
+ * Character literal ."F"
+ * Syntax Editor better feels
+    * fixed block outline estimate at line 1/0
+    * Yank and put lines use estimated indentation
+    * visual line-mode m command to execute motion
+    * Tab/Shift tab in visual line mode should do the same as <>
+    * Folds with motions (gf and gb swapped, gf now requires motion)
+    * () Movement for blocks
+    * Remove indentation from fold, and inline display is always previous non-empty indentaiton + 1
+    * Fixed child fold unfolding (child insertion order was wrong)
+    * Single line block folds
+    * Fxied backspace inside string literal
+    * Auto-Format motion should remove empty line spaces + trailing spaces (comments)
+    * $, 0, I, A now estimate the indentation on empty lines
+    * 0 behaves similar to $ for vertical movements afterwards
+    * Enter does not insert spaces anymore if it ain't necessary
+    * Remove particles when padding cursor
+    * Ctrl-4 should be with spaces
+    * Shift-D should remove to end of line...
+
 02.06:
  - Integer types/Builtin-types refactor (usize/isize + what we should do with sizes in general)
 

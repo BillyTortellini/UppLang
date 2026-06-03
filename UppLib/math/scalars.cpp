@@ -77,38 +77,54 @@ float math_degree_to_radians(float degree) {
 }
 
 
-
-u8 integer_highest_set_bit_index(u32 value)
+i8 integer_lowest_set_bit_index(u64 value)
 {
-    if (value == 0) return 0;
+    if (value == 0) return -1;
+	unsigned long index;
+	unsigned char ret_val = _BitScanForward(&index, value);
+	assert(ret_val != 0, "Should be the case");
+	return (i8)index;
+}
+
+i8 integer_highest_set_bit_index(u32 value)
+{
+    if (value == 0) return -1;
 	unsigned long index;
 	unsigned char ret_val = _BitScanReverse(&index, value);
 	assert(ret_val != 0, "Should be the case");
-	return (u8)index;
+	return (i8)index;
 }
 
-u8 integer_highest_set_bit_index(u64 value)
+i8 integer_highest_set_bit_index(u64 value)
 {
-    if (value == 0) return 0;
+    if (value == 0) return -1;
 	unsigned long index;
 	unsigned char ret_val = _BitScanReverse64(&index, value);
 	assert(ret_val != 0, "Should be the case");
-	return (u8)index;
+	return (i8)index;
 }
 
 u32 integer_next_power_of_2(u32 value)
 {
-    if (value == 0) return 1;
-	u8 highest_bit = integer_highest_set_bit_index(value);
-	if ((1ul << highest_bit) == value) return value;
-	return 1ul << (highest_bit + 1);
+    if (value <= 1) return 1;
+	i8 highest_bit = integer_highest_set_bit_index(value);
+    u32 result = value;
+    if ((1ul << highest_bit) != value) {
+        result = result << 1;
+    }
+    assert(result >= value, "");
+    return result;
 }
 
 u64 integer_next_power_of_2(u64 value)
 {
-    if (value == 0) return 1;
-	u8 highest_bit = integer_highest_set_bit_index(value);
-	if ((1ull << highest_bit) == value) return value;
-	return 1ull << (highest_bit + 1);
+    if (value <= 1) return 1;
+	i8 highest_bit = integer_highest_set_bit_index(value);
+    u64 result = value;
+    if ((1ull << highest_bit) != value) {
+        result = result << 1;
+    }
+    assert(result >= value, "");
+    return result;
 }
 

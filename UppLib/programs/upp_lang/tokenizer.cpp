@@ -436,8 +436,10 @@ void tokenizer_parse_string_literal(String literal, String* append_to)
 			case '\n':
 				break;
 			default:
-                panic("Shouldnt happen if we got this from previous tokenization");
-				break;
+                // This means we got a \ + wrong sequence, so an error should already have been logged
+                // panic("Shouldnt happen if we got this from previous tokenization");
+				// string_append_character(append_to, '\\');
+                break;
 			}
 
             i += 1; // Character was already used

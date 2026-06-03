@@ -495,7 +495,7 @@ void bytecode_generator_move_accesses(Bytecode_Generator* generator, IR_Data_Acc
 
 
 // Code Generation
-Bytecode_Type type_base_to_bytecode_type(Datatype* datatype)
+Bytecode_Type datatype_to_bytecode_type(Datatype* datatype)
 {
     if (datatype->type == Datatype_Type::PRIMITIVE)
     {
@@ -631,8 +631,10 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         case IR_Instruction_Type::FUNCTION_CALL:
         {
             IR_Instruction_Call* call = &instr->options.call;
-            Call_Signature* signature = 0;
+
+            bool call_handled = false;
             int function_pointer_stack_offset = -1;
+            Call_Signature* signature = 0;
             switch (call->call_type)
             {
             case IR_Instruction_Call_Type::FUNCTION_CALL:
@@ -643,10 +645,56 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_pointer_stack_offset = data_access_read_value(generator, call->options.pointer_access);
                 break;
             case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+            {
                 signature = compilation_data->hardcoded_function_signatures[(int)call->options.hardcoded];
+                Instruction_Type instruction_type = (Instruction_Type)-1;
+                Bytecode_Type bytecode_type = Bytecode_Type::UINT32;
+                switch (call->options.hardcoded)
+                {
+                case Hardcoded_Type::HIGHEST_SET_BIT_U32: {
+                    instruction_type = Instruction_Type::UNARY_OP_HIGHEST_SET_BIT;
+                    bytecode_type = Bytecode_Type::UINT32;
+                    break;
+                }
+                case Hardcoded_Type::LOWEST_SET_BIT_U32:  {
+                    instruction_type = Instruction_Type::UNARY_OP_LOWEST_SET_BIT;
+                    bytecode_type = Bytecode_Type::UINT32;
+                    break;
+                }
+                case Hardcoded_Type::HIGHEST_SET_BIT_U64:  {
+                    instruction_type = Instruction_Type::UNARY_OP_HIGHEST_SET_BIT;
+                    bytecode_type = Bytecode_Type::UINT64;
+                    break;
+                }
+                case Hardcoded_Type::LOWEST_SET_BIT_U64:  {
+                    instruction_type = Instruction_Type::UNARY_OP_LOWEST_SET_BIT;
+                    bytecode_type = Bytecode_Type::UINT64;
+                    break;
+                }
+                default: break;
+                }
+
+                if ((int)instruction_type != -1)
+                { 
+                    call_handled = true;
+                    bytecode_generator_add_instruction_and_set_destination(
+                        generator, call->destination,
+                        instruction_make_3(
+                            instruction_type,
+                            PLACEHOLDER, // Set to call->destination
+                            data_access_read_value(generator, call->arguments[0]),
+                            (int)bytecode_type
+                        )
+                    );
+                }
                 break;
+            }
             default: panic("Error");
             }
+            if (call_handled) {
+                break;
+            }
+
             Optional<Datatype*> return_type = signature->return_type();
 
             // Prepare new stack frame
@@ -866,8 +914,8 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 instruction_make_4(
                     Instruction_Type::CAST_PRIMITIVE_TYPES, PLACEHOLDER,
                     data_access_read_value(generator, cast->source),
-                    (int)type_base_to_bytecode_type(cast->destination->datatype), 
-                    (int)type_base_to_bytecode_type(cast->source->datatype)
+                    (int)datatype_to_bytecode_type(cast->destination->datatype), 
+                    (int)datatype_to_bytecode_type(cast->source->datatype)
                 )
             );
             break;
@@ -914,7 +962,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 instr.op4 = (int)Bytecode_Type::UINT64;
             }
             else {
-                instr.op4 = (int)type_base_to_bytecode_type(operand_types);
+                instr.op4 = (int)datatype_to_bytecode_type(operand_types);
             }
             instr.op2 = data_access_read_value(generator, binary_op->operand_left);
             instr.op3 = data_access_read_value(generator, binary_op->operand_right);
@@ -940,7 +988,7 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
 
             Datatype* operand_type = unary_op->source->datatype;
-            instr.op3 = (int)type_base_to_bytecode_type(operand_type);
+            instr.op3 = (int)datatype_to_bytecode_type(operand_type);
             instr.op2 = data_access_read_value(generator, unary_op->source);
             bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);
             break;
@@ -1181,6 +1229,16 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 
     case Instruction_Type::UNARY_OP_BITWISE_NOT:
         string_append_formated(string, "UNARY_OP_BITWISE_NOT         dst: %d, src: %d, type: %s",
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
+        );
+        break;
+    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
+        string_append_formated(string, "UNARY_OP_HIGHEST_SET_BIT     dst: %d, src: %d, type: %s",
+            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
+        );
+        break;
+    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
+        string_append_formated(string, "UNARY_OP_LOWEST_SET_BIT      dst: %d, src: %d, type: %s",
             i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
         );
         break;

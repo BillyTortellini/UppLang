@@ -2158,7 +2158,9 @@ namespace Parser
 		case Token_Type::DOT:
 		{
 			advance_token();
-			if (test_token(Token_Type::FUNCTION_KEYWORD))
+			switch (get_token(0)->type)
+			{
+			case Token_Type::FUNCTION_KEYWORD: 
 			{
 				result->type = Expression_Type::INFERRED_FUNCTION;
 				advance_token();
@@ -2168,11 +2170,14 @@ namespace Parser
 					result->options.inferred_function_body.block = parse_code_block(&result->base, 0);
 					PARSE_SUCCESS(result);
 				}
+				if (test_token(Token_Type::RETURN)) {
+					advance_token();
+				}
 				result->options.inferred_function_body.is_expression = true;
 				result->options.inferred_function_body.expr = parse_expression_or_error_expr(upcast(result));
 				PARSE_SUCCESS(result);
 			}
-			else if (test_token(Token_Type::PARENTHESIS_OPEN)) // Struct Initializer
+			case Token_Type::PARENTHESIS_OPEN:  // Struct Initializer
 			{
 				result->type = Expression_Type::STRUCT_INITIALIZER;
 				auto& init = result->options.struct_initializer;
@@ -2180,7 +2185,7 @@ namespace Parser
 				init.call_node = parse_call_node(upcast(result));
 				PARSE_SUCCESS(result);
 			}
-			else if (test_token(Token_Type::BRACKET_OPEN)) // Array Initializer
+			case Token_Type::BRACKET_OPEN:  // Array Initializer
 			{
 				result->type = Expression_Type::ARRAY_INITIALIZER;
 				auto& init = result->options.array_initializer;
@@ -2188,7 +2193,7 @@ namespace Parser
 				init.values = parse_list_items_as_array<Expression>(upcast(result), wrapper_parse_expression_or_error); // Not sure if _or_error is correct here
 				PARSE_SUCCESS(result);
 			}
-			else if (test_token(Token_Type::IF))
+			case Token_Type::IF: // expression if
 			{
 				advance_token();
 				result->type = Expression_Type::IF_THEN_ELSE;
@@ -2214,20 +2219,40 @@ namespace Parser
 				result->options.if_then_else.else_value = parse_expression_or_error_expr(upcast(result));
 				PARSE_SUCCESS(result);
 			}
-			else
+			case Token_Type::LITERAL_STRING: // Character literal, ."H"
 			{
-				result->type = Expression_Type::AUTO_ENUM;
-				if (test_token(Token_Type::IDENTIFIER)) {
-					result->options.auto_enum = get_token(0)->options.string_value;
-					advance_token();
+				result->type = AST::Expression_Type::LITERAL_READ;
+				result->options.literal_read.type = Literal_Type::CODE_POINT;
+				result->options.literal_read.options.code_point = 0;
+
+				String* string = get_token()->options.string_value;
+				if (string->size <= 0) {
+					log_error_range_offset("Character literal requires a non-empty string after dot", 1);
+				}
+				else if (string->size > 1) {
+					log_error_range_offset("Character literal string must be exactly one character long", 1);
 				}
 				else {
-					log_error("Missing member name", parser.pos - 1, parser.pos);
-					result->options.auto_enum = ids.empty_string;
+					result->options.literal_read.options.code_point = string->at(0);
 				}
+
+				advance_token();
 				PARSE_SUCCESS(result);
 			}
-			CHECKPOINT_EXIT;
+			default: break;
+			}
+
+			// Otherwise we assume that we wanted an auto-enum
+			result->type = Expression_Type::AUTO_ENUM;
+			if (test_token(Token_Type::IDENTIFIER)) {
+				result->options.auto_enum = get_token(0)->options.string_value;
+				advance_token();
+			}
+			else {
+				log_error("Missing member name", parser.pos - 1, parser.pos);
+				result->options.auto_enum = ids.empty_string;
+			}
+			PARSE_SUCCESS(result);
 		}
 		case Token_Type::LITERAL_STRING:
 		{

@@ -23,7 +23,7 @@ static bool arena_reserve_buffer_capacity(Arena* arena, usize new_capacity)
 
 	// Store new buffer in arena
 	arena->buffer = new_buffer;
-	arena->next = (void*) ((usize)new_buffer.data + sizeof(Arena_Buffer));
+	arena->next = (void*) (((usize)new_buffer.data) + sizeof(Arena_Buffer));
 
 	return true;
 }

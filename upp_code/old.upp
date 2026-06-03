@@ -1,0 +1,342 @@
+Test :: module
+    Arena :: module
+        import ~rawptr
+        import ~usize
+    
+        Arena :: struct
+            buffer: rawptr
+            capacity: usize
+            size: usize
+     
+        create :: fn (capacity: usize) => Arena
+            return .(
+                buffer = .if capacity == 0
+                    then nil
+                    else ~system_allocate(capacity),
+                capacity = capacity,
+                size = 0
+            )
+            if true
+    
+        resize :: fn (arena: *Arena, required_capacity: usize)
+            if arena.capacity >= required_capacity
+                return
+     
+            if arena.capacity == 0
+                arena.buffer = ~system_allocate(required_capacity)
+                arena.capacity = required_capacity
+                return
+     
+            ~system_reallocate
+    
+        allocate_raw :: fn (arena: *Arena, size: usize) => rawptr
+            return nil
+    
+    string_at :: fn (str: string, index: int) => int
+        import ~u8
+        buffer := ([]u8).(str.data->~cast_pointer(), str.size)
+        return buffer[index]->~cast_primitive(int)
+    
+    main :: fn
+        str := "Hello World!\n"
+        ~print_string(str)
+        ~print_i32(str->string_at(7))
+Last_One :: module
+    Overloads :: module
+        Holder :: struct
+            values: [5]int
+        
+        Holder_Operators :: module
+            
+            holder_at :: fn (holder: Holder, index: int) => int
+                return holder.values[index]
+                
+            Holder_Iter :: struct
+                holder: *Holder
+                index: int
+                
+            holder_make_iter :: fn (holder: *Holder) => Holder_Iter
+                return Holder_Iter.(holder, 0)
+            
+            holder_iter_next :: fn (iter: *Holder_Iter) => *int
+                if iter.index >= 5
+                    return nil
+                iter.index += 1
+                return iter.holder.values[iter.index - 1]
+            
+            operators add_array_access(Holder, int, holder_at)
+            operators add_iterator(Holder, holder_make_iter, holder_iter_next, true)
+        
+        test :: fn
+            import operators Holder_Operators~*
+            
+            holder := Holder.(.[1, 2, 3, 4, 5])
+            ~print_i32(holder[2])
+            ~print_line()
+            
+            loop i in holder
+                ~print_i32(i)
+                ~print_line()
+            
+            ~print_line()
+            
+    Poly_Default_Values :: module
+    
+        Hashable :: struct ($T)
+            hash: *fn (a: T) => int
+            equals: *fn (a: T, b: T) => bool
+        
+        Hashtable :: struct ($T, $hashable: Hashable(T))
+            values: T
+        
+        get_hash :: fn (table: Hashtable($T, $hashable)) => int
+            return hashable.hash(table.values)
+        
+        int_hash :: fn (a: int) => int
+            return 15
+        
+        int_equals :: fn (a: int, b: int) => bool
+            return a == b
+        
+        const SIZE: int = 5
+        const INT_HASHABLE := Hashable(int).(
+            int_hash, int_equals
+        )
+        
+        hash_pointer :: fn (value: $T) => int
+            return 3
+        
+        equals_pointer :: fn (a: $T, b: T) => bool
+            return a *== b
+        
+        hashable_make_pointer :: fn () => Hashable($T)
+            return .(
+                #instanciate hash_pointer(T = T),
+                #instanciate equals_pointer(T = T),
+            )
+            
+        test :: fn
+            operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+            table: Hashtable(int)
+            i := table->get_hash()
+            ~print_i32(i)
+            ~print_line()
+            
+            t2: Hashtable(*int, hashable_make_pointer())
+            i = t2->get_hash()
+            ~print_i32(i)
+            ~print_line()
+            
+            j := 0
+            ip1 := i-*
+            ip2 := j-*
+            
+            result := t2.hashable.equals(ip1, ip2)
+            ~print_bool(result)
+            ~print_line()
+            ~print_line()
+    
+    fib :: fn (n: int) => int
+        if n < 2
+            return 1
+        return fib(n - 1) + fib(n - 2)
+    
+    main :: fn 
+        loop (i := 0; i < 10; i += 1)
+            ~print_i32(fib(i))
+            ~print_line()
+        ~print_line()
+        
+        Overloads~test()
+        ~print_line()
+        Poly_Default_Values~test()
+        
+        
+
+Next :: module
+    Hashable :: struct ($T)
+        hash: *fn (a: T) => int
+        equals: *fn (a: T, b: T) => bool
+    
+    Hashtable :: struct ($T, $hashable: Hashable(T))
+        values: T
+    
+    get_hash :: fn (table: Hashtable($T, $hashable)) => int
+        return hashable.hash(table.values)
+    
+    
+    
+    int_hash :: fn (a: int) => int
+        return 15
+    
+    int_equals :: fn (a: int, b: int) => bool
+        return a == b
+    
+    const SIZE: int = 5
+    const INT_HASHABLE := Hashable(int).(
+        int_hash, int_equals
+    )
+    
+    hash_pointer :: fn (value: $T) => int
+        return 3
+    
+    equals_pointer :: fn (a: $T, b: T) => bool
+        return a *== b
+    
+    hashable_make_pointer :: fn () => Hashable($T)
+        return .(
+            #instanciate hash_pointer(value = T),
+            #instanciate equals_pointer(a = T),
+        )
+    
+    
+    
+    main :: fn 
+        operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+        table: Hashtable(int)
+        i := table->get_hash()
+        ~print_i32(i)
+        ~print_line()
+        
+        fn_ptr := #instanciate hash_pointer(T = *int)
+        
+        t2: Hashtable(*int, hashable_make_pointer())
+        i = t2->get_hash()
+        ~print_i32(i)
+        ~print_line()
+        
+        
+
+Hashable :: struct ($T)
+    hash: *fn (a: T) => int
+    equals: *fn (a: T, b: T) => bool
+
+Hashtable :: struct ($T, $hashable: Hashable(T))
+    values: T
+
+get_hash :: fn (table: Hashtable($T, $hashable)) => int
+    return hashable.hash(table.values)
+
+
+
+int_hash :: fn (a: int) => int
+    return 15
+
+int_equals :: fn (a: int, b: int) => bool
+    return a == b
+
+const SIZE: int = 5
+const INT_HASHABLE := Hashable(int).(
+    int_hash, int_equals
+)
+
+
+
+main :: fn ()
+    operators add_default_value("hashable", Hashable(int), INT_HASHABLE)
+    table: Hashtable(int)
+    i := table->get_hash()
+    ~print_i32(i)
+
+
+
+Other :: module
+    Holder :: struct
+        values: [5]int
+    
+    Holder_Operators :: module
+        
+        holder_at :: fn (holder: Holder, index: int) => int
+            return holder.values[index]
+            
+        Holder_Iter :: struct
+            holder: *Holder
+            index: int
+            
+        holder_make_iter :: fn (holder: *Holder) => Holder_Iter
+            return Holder_Iter.(holder, 0)
+        
+        holder_iter_next :: fn (iter: *Holder_Iter) => *int
+            if iter.index >= 5
+                return nil
+            iter.index += 1
+            return iter.holder.values[iter.index - 1]
+        
+        operators add_array_access(Holder, int, holder_at)
+        operators add_iterator(Holder, holder_make_iter, holder_iter_next, true)
+    
+    fib :: fn (n: int) => int
+        if n < 2
+            return 1
+        return fib(n - 1) + fib(n - 2)
+    
+    main :: fn
+        import operators Holder_Operators~*
+        
+        loop (i := 0; i < 10; i += 1)
+            ~print_i32(fib(i))
+            ~print_line()
+        
+        i += 1
+        
+        holder := Holder.(.[1, 2, 3, 4, 5])
+        loop i in holder
+            ~print_i32(i)
+            ~print_line()
+
+
+
+fn add(a: int, b: bool) => int
+    if b
+        return a + 1
+    return a
+
+struct Node
+    value: int
+
+fn node_negate(n: Node) => Node
+    return .(-n.value)
+
+struct Holder
+    values: [5]int
+
+fn holder_at(holder: Holder, index: int) => int
+    return holder.values[index]
+    
+struct Holder_Iter
+    holder: *Holder
+    index: int
+    
+fn holder_make_iter(holder: *Holder) => Holder_Iter
+    return Holder_Iter.(holder, 0)
+
+fn holder_iter_next(iter: *Holder_Iter) => *int
+    if iter.index >= 5
+        return nil
+    iter.index += 1
+    return iter.holder.values[iter.index - 1]
+
+operators add_binop_addition(int, bool, add) 
+operators add_unop_negate(Node, node_negate)
+operators add_array_access(Holder, int, holder_at)
+
+fn main()
+    var x: int = 5
+    var b: bool = true
+    x = x + b
+    x += true
+    x += false
+    ~print_i32(x)
+    ~print_line()
+    ~print_line()
+    
+    var node = Node.(5)
+    var n2 = -node
+    ~print_i32(n2.value)
+    ~print_line()
+    ~print_line()
+    
+    var holder = Holder.(.[1, 2, 3, 4, 5])
+    ~print_i32(holder[1])
+    ~print_line()
+    ~print_i32(holder[2])
