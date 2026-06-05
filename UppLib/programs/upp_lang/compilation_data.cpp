@@ -259,8 +259,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			// Create builtin modules
 			Symbol_Table* builtin_table = nullptr;
-			Symbol_Table* table_math_f32 = nullptr;
-			Symbol_Table* table_math_f64 = nullptr;
+			Symbol_Table* table_math = nullptr;
 			{
 				auto helper_make_module = [&](const char* name, Symbol_Table* parent) -> Upp_Module*
 				{
@@ -284,8 +283,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 				compilation_data->builtin_module = helper_make_module("_BUILTIN_MODULE", nullptr);
 				builtin_table = compilation_data->builtin_module->symbol_table;
-				table_math_f32 = helper_make_module("math_f32", builtin_table)->symbol_table;
-				table_math_f64 = helper_make_module("math_f64", builtin_table)->symbol_table;
+				table_math = helper_make_module("math", builtin_table)->symbol_table;
 			}
 
 			// Create symbols in builtin table
@@ -323,47 +321,32 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			// Define math constants
 			{
-				auto define_constant_f32 = [&](f32 value, const char* name)
-				{
-					Constant_Pool_Result result = constant_pool_add_constant(
-						compilation_data->constant_pool,
-						upcast(types.f32_type),
-						array_create_static<byte>((byte*)&value, sizeof(value))
-					);
-					assert(result.success, "");
-					Symbol* symbol = symbol_table_define_symbol(
-						table_math_f32,
-						identifier_pool_add(id_pool, string_create_static(name)),
-						Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, compilation_data
-					);
-					symbol->options.constant = result.options.constant;
-				};
-				auto define_constant_f64 = [&](f64 value, const char* name)
-				{
-					Constant_Pool_Result result = constant_pool_add_constant(
-						compilation_data->constant_pool,
-						upcast(types.f64_type),
-						array_create_static<byte>((byte*)&value, sizeof(value))
-					);
-					assert(result.success, "");
-					Symbol* symbol = symbol_table_define_symbol(
-						table_math_f64,
-						identifier_pool_add(id_pool, string_create_static(name)),
-						Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, compilation_data
-					);
-					symbol->options.constant = result.options.constant;
-				};
+				// auto define_constant_f32 = [&](f32 value, const char* name)
+				// {
+				// 	Constant_Pool_Result result = constant_pool_add_constant(
+				// 		compilation_data->constant_pool,
+				// 		upcast(types.f32_type),
+				// 		array_create_static<byte>((byte*)&value, sizeof(value))
+				// 	);
+				// 	assert(result.success, "");
+				// 	Symbol* symbol = symbol_table_define_symbol(
+				// 		table_math,
+				// 		identifier_pool_add(id_pool, string_create_static(name)),
+				// 		Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, compilation_data
+				// 	);
+				// 	symbol->options.constant = result.options.constant;
+				// };
 
-				define_constant_f32(PI, "PI");
-				define_constant_f64(PI_DOUBLE, "PI");
-				define_constant_f32(EULERS_NUMBER_FLOAT, "EULERS_NUMBER");
-				define_constant_f64(EULERS_NUMBER_DOUBLE, "EULERS_NUMBER");
-				define_constant_f32(INFINITY, "POSITIVE_INFINITY");
-				define_constant_f64(INFINITY, "POSITIVE_INFINITY");
-				define_constant_f32(-INFINITY, "NEGATIVE_INFINITY");
-				define_constant_f64(-INFINITY, "NEGATIVE_INFINITY");
-				define_constant_f32(NAN, "NAN");
-				define_constant_f64(NAN, "NAN");
+				// define_constant_f32(PI, "PI");
+				// define_constant_f64(PI_DOUBLE, "PI");
+				// define_constant_f32(EULERS_NUMBER_FLOAT, "EULERS_NUMBER");
+				// define_constant_f64(EULERS_NUMBER_DOUBLE, "EULERS_NUMBER");
+				// define_constant_f32(INFINITY, "POSITIVE_INFINITY");
+				// define_constant_f64(INFINITY, "POSITIVE_INFINITY");
+				// define_constant_f32(-INFINITY, "NEGATIVE_INFINITY");
+				// define_constant_f64(-INFINITY, "NEGATIVE_INFINITY");
+				// define_constant_f32(NAN, "NAN");
+				// define_constant_f64(NAN, "NAN");
 			}
 
 			// Define hardcoded functions
@@ -372,17 +355,11 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				Hardcoded_Type type = (Hardcoded_Type)i;
 				auto info = hardcoded_type_get_info(type);
 				Symbol_Table* symbol_table = builtin_table;
-				if (info.type_class == Hardcoded_Type_Class::F32_UNARY || 
-					info.type_class == Hardcoded_Type_Class::F32_BINARY || 
-					info.type_class == Hardcoded_Type_Class::F32_PREDICATE) 
+				if (info.type_class == Hardcoded_Type_Class::FLOAT_BINARY || 
+					info.type_class == Hardcoded_Type_Class::FLOAT_PREDICATE || 
+					info.type_class == Hardcoded_Type_Class::FLOAT_UNARY) 
 				{
-					symbol_table = table_math_f32;
-				}
-				if (info.type_class == Hardcoded_Type_Class::F64_UNARY || 
-					info.type_class == Hardcoded_Type_Class::F64_BINARY || 
-					info.type_class == Hardcoded_Type_Class::F64_PREDICATE) 
-				{
-					symbol_table = table_math_f64;
+					symbol_table = table_math;
 				}
 
 				Symbol* result = symbol_table_define_symbol(
@@ -602,83 +579,68 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::READ_BOOL] = call_signature_register(call_signature, compilation_data);
 
-			// More bit functions
-			auto highest_set_bit_u32 = call_signature_create_empty();
-			call_signature_add_parameter(highest_set_bit_u32, make_id("value"), upcast(types.u32_type), true, false, false);
-			call_signature_add_return_type(highest_set_bit_u32, types.i8_type->upcast(), compilation_data);
-			highest_set_bit_u32 = call_signature_register(highest_set_bit_u32, compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::HIGHEST_SET_BIT_U32] = highest_set_bit_u32;
-			hardcoded_signatures[(int)Hardcoded_Type::LOWEST_SET_BIT_U32]  = highest_set_bit_u32;
 
-			auto highest_set_bit_u64 = call_signature_create_empty();
-			call_signature_add_parameter(highest_set_bit_u64, make_id("value"), upcast(types.u64_type), true, false, false);
-			call_signature_add_return_type(highest_set_bit_u64, types.i8_type->upcast(), compilation_data);
-			highest_set_bit_u64 = call_signature_register(highest_set_bit_u64, compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::HIGHEST_SET_BIT_U64] = highest_set_bit_u64;
-			hardcoded_signatures[(int)Hardcoded_Type::LOWEST_SET_BIT_U64]  = highest_set_bit_u64;
-
-			// Bitwise functions
-			auto bitwise_binop = call_signature_create_empty();
-			call_signature_add_parameter(bitwise_binop, make_id("a"), upcast(types.empty_pattern_variable), true, false, false);
-			call_signature_add_parameter(bitwise_binop, make_id("b"), upcast(types.empty_pattern_variable), true, false, false);
-			bitwise_binop = call_signature_register(bitwise_binop, compilation_data);
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_AND] = bitwise_binop;
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_OR] = bitwise_binop;
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_XOR] = bitwise_binop;
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_SHIFT_LEFT] = bitwise_binop;
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_SHIFT_RIGHT] = bitwise_binop;
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.empty_pattern_variable), true, false, false);
-			hardcoded_signatures[(int)Hardcoded_Type::BITWISE_NOT] = call_signature_register(call_signature, compilation_data);
-
-
-
-			// Float math functions
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.f32_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.f32_type), compilation_data);
-			Call_Signature* signature_float_to_float = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("a"), upcast(types.f32_type), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("b"), upcast(types.f32_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.f32_type), compilation_data);
-			Call_Signature* signature_float_binop = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("a"), upcast(types.f32_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
-			Call_Signature* signature_float_predicate = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.f64_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.f64_type), compilation_data);
-			Call_Signature* signature_double_to_double = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("a"), upcast(types.f64_type), true, false, false);
-			call_signature_add_parameter(call_signature, make_id("b"), upcast(types.f64_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.f64_type), compilation_data);
-			Call_Signature* signature_double_binop = call_signature_register(call_signature, compilation_data);
-
-			call_signature = call_signature_create_empty();
-			call_signature_add_parameter(call_signature, make_id("a"), upcast(types.f64_type), true, false, false);
-			call_signature_add_return_type(call_signature, upcast(types.bool_type), compilation_data);
-			Call_Signature* signature_double_predicate = call_signature_register(call_signature, compilation_data);
-
-			for (int i = 0; i < (int)Hardcoded_Type::MAX_ENUM_VALUE; i++) 
+			// Set hardcoded class signatures
 			{
-				Hardcoded_Type type = (Hardcoded_Type)i;
-				auto info = hardcoded_type_get_info(type);
-				switch (info.type_class)
+				Call_Signature* hardcoded_class_signatures[(int)Hardcoded_Type_Class::MAX_ENUM_VALUE];
+				for (int i = 0; i < (int)Hardcoded_Type_Class::MAX_ENUM_VALUE; i++) {
+					hardcoded_class_signatures[i] = nullptr;
+				}
+
+				// Bitshift
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_parameter(call_signature, make_id("count"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BITSHIFT] = call_signature_register(call_signature, compilation_data);
+				
+				// Bitwise not
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BITWISE_NOT] = call_signature_register(call_signature, compilation_data);
+
+				// Bitwise binop
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("a"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_parameter(call_signature, make_id("b"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BITWISE_BINOP] = call_signature_register(call_signature, compilation_data);
+
+				// Bit-index
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.u32_type->upcast(), compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::BIT_INDEX] = call_signature_register(call_signature, compilation_data);
+
+				// Float unop
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::FLOAT_UNARY] = call_signature_register(call_signature, compilation_data);
+
+				// Float predicate
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("value"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.bool_type->upcast(), compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::FLOAT_PREDICATE] = call_signature_register(call_signature, compilation_data);
+
+				// Float binop
+				call_signature = call_signature_create_empty();
+				call_signature_add_parameter(call_signature, make_id("a"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_parameter(call_signature, make_id("b"), types.empty_pattern_variable, true, false, false);
+				call_signature_add_return_type(call_signature, types.empty_pattern_variable, compilation_data);
+				hardcoded_class_signatures[(int)Hardcoded_Type_Class::FLOAT_BINARY] = call_signature_register(call_signature, compilation_data);
+
+				for (int i = 0; i < (int)Hardcoded_Type::MAX_ENUM_VALUE; i++)
 				{
-				case Hardcoded_Type_Class::F32_UNARY:     hardcoded_signatures[i] = signature_float_to_float; break;
-				case Hardcoded_Type_Class::F32_BINARY:    hardcoded_signatures[i] = signature_float_binop; break;
-				case Hardcoded_Type_Class::F32_PREDICATE: hardcoded_signatures[i] = signature_float_predicate; break;
-				case Hardcoded_Type_Class::F64_UNARY:     hardcoded_signatures[i] = signature_double_to_double; break;
-				case Hardcoded_Type_Class::F64_BINARY:    hardcoded_signatures[i] = signature_double_binop; break;
-				case Hardcoded_Type_Class::F64_PREDICATE: hardcoded_signatures[i] = signature_double_predicate; break;
+					Hardcoded_Type_Info info = hardcoded_type_get_info((Hardcoded_Type)i);
+					Call_Signature* signature = hardcoded_class_signatures[(int)info.type_class];
+					if (signature == nullptr) {
+						assert(hardcoded_signatures[i] != nullptr, "Should be set already");
+						continue;
+					}
+					hardcoded_signatures[i] = signature;
 				}
 			}
 
@@ -1035,6 +997,8 @@ void find_editor_infos_recursive(
 	if (node_passes_opt != nullptr) {
 		auto new_passes = node_passes_opt->passes;
 		for (int i = 0; i < new_passes.size; i++) {
+			Analysis_Pass* pass = new_passes[i];
+			assert(pass != nullptr, "");
 			active_passes.push_back(new_passes[i]);
 		}
 	}

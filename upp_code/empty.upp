@@ -1,2 +1,9 @@
+import ~usize
+
+Buffer :: struct
+    ptr: ~rawptr
+    x: usize
+
 main :: fn ()
-    ~print_string("Hello world!\n")
+    x := 10 + 5 * 2
+    ~print_i32(x)

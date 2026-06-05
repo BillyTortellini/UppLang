@@ -1116,7 +1116,7 @@ void c_generator_generate(C_Generator* generator)
             }
             case Datatype_Type::UNKNOWN_TYPE:
             case Datatype_Type::PATTERN_VARIABLE:
-            case Datatype_Type::INVALID_TYPE:
+            case Datatype_Type::VOID_TYPE:
                 break; // Nothing to do on these types
             default: panic("");
             }
@@ -1831,15 +1831,14 @@ void c_generator_output_data_access(C_Generator* generator, IR_Data_Access* acce
     return;
 }
 
-void c_generator_output_cast_if_necessary(C_Generator* generator, IR_Data_Access* write_to_access, Datatype* value_type)
+void c_generator_output_cast_if_necessary(C_Generator* generator, Datatype* dst_type, Datatype* src_type)
 {
     auto& gen = *generator;
 
-    Datatype* write_to_type = write_to_access->datatype;
-    if (types_are_equal(write_to_type, value_type)) return;
+    if (types_are_equal(dst_type, src_type)) return;
 
     string_append_formated(gen.text, "(");
-    c_generator_output_type_reference(generator, write_to_type);
+    c_generator_output_type_reference(generator, dst_type);
     string_append_formated(gen.text, ") ");
 }
 
@@ -1922,15 +1921,17 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             case IR_Instruction_Call_Type::FUNCTION_POINTER_CALL:
                 signature = downcast<Datatype_Function_Pointer>(call->options.pointer_access->datatype)->signature;
                 break;
-            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-                signature = generator->compilation_data->hardcoded_function_signatures[(int)call->options.hardcoded];
+            case IR_Instruction_Call_Type::BUILTIN_CALL:
+                signature = generator->compilation_data->hardcoded_function_signatures[
+                    (int)ir_builtin_fn_to_hardcoded_type(call->options.builtin_fn)
+                ];
                 break;
             default: panic("hey");
             }
             if (signature->return_type().available) {
                 c_generator_output_data_access(generator, call->destination);
                 string_append_formated(gen.text, " = ");
-                c_generator_output_cast_if_necessary(generator, call->destination, signature->return_type().value);
+                c_generator_output_cast_if_necessary(generator, call->destination->datatype, signature->return_type().value);
             }
 
             bool call_handled = false;
@@ -1950,11 +1951,12 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 c_generator_output_data_access(generator, call->options.pointer_access);
                 break;
             }
-            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL: 
+            case IR_Instruction_Call_Type::BUILTIN_CALL: 
             {
-                Hardcoded_Type type = call->options.hardcoded;
-
-                if (type == Hardcoded_Type::TYPE_INFO)
+                const char* impl_name = nullptr;
+                switch (call->options.builtin_fn)
+                {
+                case IR_Builtin_Function::TYPE_INFO:
                 {
                     string_append(gen.text, "&type_infos_.infos[");
                     assert(call->arguments.size == 1, "");
@@ -1963,8 +1965,25 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                     call_handled = true;
                     break;
                 }
-
-                string_append(gen.text, hardcoded_type_get_info(type).c_impl_name);
+                case IR_Builtin_Function::MEMORY_COPY: impl_name = "memory_copy"; break;
+                case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: impl_name = "memory_copy_no_overlap"; break;
+                case IR_Builtin_Function::MEMORY_ZERO: impl_name = "memory_zero"; break;
+                case IR_Builtin_Function::MEMORY_COMPARE: impl_name = "memory_compare"; break;
+                case IR_Builtin_Function::SYSTEM_ALLOC: impl_name = "malloc_size_u64"; break;
+                case IR_Builtin_Function::SYSTEM_FREE: impl_name = "free_pointer"; break;
+                case IR_Builtin_Function::PRINT_I32: impl_name = "print_i32"; break;
+                case IR_Builtin_Function::PRINT_F32: impl_name = "print_f32"; break;
+                case IR_Builtin_Function::PRINT_BOOL: impl_name = "print_bool"; break;
+                case IR_Builtin_Function::PRINT_LINE: impl_name = "print_line"; break;
+                case IR_Builtin_Function::PRINT_STRING: impl_name = "print_string"; break;
+                case IR_Builtin_Function::READ_I32: impl_name = "read_i32"; break;
+                case IR_Builtin_Function::READ_F32: impl_name = "read_f32"; break;
+                case IR_Builtin_Function::READ_BOOL: impl_name = "read_bool"; break;
+                default: panic("");
+                }
+                if (!call_handled) {
+                    string_append(gen.text, impl_name);
+                }
 
                 break;
             }
@@ -2068,7 +2087,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             }
             case IR_Instruction_Return_Type::RETURN_DATA: {
                 string_append_formated(gen.text, "return ");
-                c_generator_output_cast_if_necessary(generator, return_instr->options.return_value, code_block->function->signature->return_type().value);
+                c_generator_output_cast_if_necessary(generator, return_instr->options.return_value->datatype, code_block->function->signature->return_type().value);
                 c_generator_output_data_access(generator, return_instr->options.return_value);
                 string_append_formated(gen.text, ";\n");
                 break;
@@ -2079,14 +2098,6 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             }
             default: panic("What");
             }
-            break;
-        }
-        case IR_Instruction_Type::MOVE: {
-            c_generator_output_data_access(generator, instr->options.move.destination);
-            string_append_formated(gen.text, " = ");
-            c_generator_output_cast_if_necessary(generator, instr->options.move.destination, instr->options.move.source->datatype);
-            c_generator_output_data_access(generator, instr->options.move.source);
-            string_append_formated(gen.text, ";\n");
             break;
         }
         case IR_Instruction_Type::VARIABLE_DEFINITION:
@@ -2104,16 +2115,6 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             string_append(gen.text, "; \n");
             break;
         }
-        case IR_Instruction_Type::CAST:
-        {
-            IR_Instruction_Primitive_Cast* cast = &instr->options.cast;
-            c_generator_output_data_access(generator, cast->destination);
-            string_append_formated(gen.text, " = ");
-            c_generator_output_cast_if_necessary(generator, cast->destination, cast->source->datatype);
-            c_generator_output_data_access(generator, cast->source);
-            string_append_formated(gen.text, ";\n");
-            break;
-        }
         case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
             IR_Instruction_Function_Address* addr_of = &instr->options.function_address;
@@ -2128,65 +2129,153 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             string_append_formated(gen.text, "&%s;\n", fn_name->characters);
             break;
         }
-        case IR_Instruction_Type::UNARY_OP:
+        case IR_Instruction_Type::OPERATION:
         {
-            IR_Instruction_Unary_OP* unary = &instr->options.unary_op;
-            c_generator_output_data_access(generator, unary->destination);
-            string_append_formated(gen.text, " = ");
-            switch (unary->type)
+            auto& operation = instr->options.operation;
+
+            bool op_handled = false;
+            const char* binop_str = nullptr;
+            const char* unop_str  = nullptr;
+            const char* float_fn_name = nullptr;
+            bool append_f_for_f32_version = true;
+            switch (operation.type)
             {
-            case IR_Unop::NEGATE: {
-                string_append_formated(gen.text, "-");
-                break;
-            }
-            case IR_Unop::NOT: {
-                string_append_formated(gen.text, "!");
-                break;
-            }
-            case IR_Unop::BITWISE_NOT: {
-                string_append_formated(gen.text, "~");
-                break;
-            }
-            default: panic("Hey");
-            }
-            string_append_formated(gen.text, "(");
-            c_generator_output_data_access(generator, unary->source);
-            string_append_formated(gen.text, ");\n");
-            break;
-        }
-        case IR_Instruction_Type::BINARY_OP:
-        {
-            IR_Instruction_Binary_OP* binary = &instr->options.binary_op;
-            c_generator_output_data_access(generator, binary->destination);
-            string_append_formated(gen.text, " = ");
-            c_generator_output_data_access(generator, binary->operand_left);
-            string_append_formated(gen.text, " ");
-            const char* binary_str = "";
-            switch (binary->type)
+            case IR_Operation::MOVE:
+            case IR_Operation::PRIMITIVE_CAST: 
             {
-            case IR_Binop::ADDITION:            binary_str = "+"; break;
-            case IR_Binop::SUBTRACTION:         binary_str = "-"; break;
-            case IR_Binop::DIVISION:            binary_str = "/"; break;
-            case IR_Binop::MULTIPLICATION:      binary_str = "*"; break;
-            case IR_Binop::MODULO:              binary_str = "%"; break;
-            case IR_Binop::AND:                 binary_str = "&&"; break;
-            case IR_Binop::OR:                  binary_str = "||"; break;
-            case IR_Binop::BITWISE_AND:         binary_str = "&"; break;
-            case IR_Binop::BITWISE_OR:          binary_str = "|"; break;
-            case IR_Binop::BITWISE_XOR:         binary_str = "^"; break;
-            case IR_Binop::BITWISE_SHIFT_LEFT:  binary_str = "<<"; break;
-            case IR_Binop::BITWISE_SHIFT_RIGHT: binary_str = ">>"; break;
-            case IR_Binop::EQUAL:               binary_str = "=="; break;
-            case IR_Binop::NOT_EQUAL:           binary_str = "!="; break;
-            case IR_Binop::LESS:                binary_str = "<"; break;
-            case IR_Binop::LESS_OR_EQUAL:       binary_str = "<="; break;
-            case IR_Binop::GREATER:             binary_str = ">"; break;
-            case IR_Binop::GREATER_OR_EQUAL:    binary_str = ">="; break;
-            default: panic("Hey");
+                op_handled = true;
+                c_generator_output_data_access(generator, operation.destination);
+                string_append_formated(gen.text, " = ");
+                c_generator_output_cast_if_necessary(generator, operation.destination->datatype, operation.operand_1->datatype);
+                c_generator_output_data_access(generator, operation.operand_1);
+                string_append_formated(gen.text, ";\n");
+                break;
             }
-            string_append_formated(gen.text, "%s ", binary_str);
-            c_generator_output_data_access(generator, binary->operand_right);
-            string_append_formated(gen.text, ";\n");
+            case IR_Operation::HIGHEST_SET_BIT:
+            case IR_Operation::LOWEST_SET_BIT:
+            {
+                op_handled = true;
+                assert(datatype_is_integer(operation.operand_1->datatype, true) && datatype_is_unsigned_int(operation.operand_1->datatype), "");
+
+                const char* fn_name = operation.type == IR_Operation::HIGHEST_SET_BIT ? "highest_set_bit_" : "lowest_set_bit_";
+                const char* postfix = "";
+                switch (operation.operand_1->datatype->memory_info.value.size)
+                {
+                case 1:
+                case 2:
+                case 4: postfix = "u32"; break;
+                case 8: postfix = "u62"; break;
+                default: panic("");
+                }
+
+                c_generator_output_data_access(generator, operation.destination);
+                string_append_formated(gen.text, " = %s%s(", fn_name, postfix);
+                c_generator_output_data_access(generator, operation.operand_1);
+                string_append_formated(gen.text, ");\n");
+                break;
+            }
+
+            case IR_Operation::ADDITION:               binop_str = "+"; break;
+            case IR_Operation::SUBTRACTION:            binop_str = "-"; break;
+            case IR_Operation::DIVISION:               binop_str = "/"; break;
+            case IR_Operation::MULTIPLICATION:         binop_str = "*"; break;
+            case IR_Operation::MODULO:                 binop_str = "%"; break;
+            case IR_Operation::NEGATE:                 unop_str = "!"; break;
+            case IR_Operation::EQUAL:                  binop_str = "=="; break;
+            case IR_Operation::NOT_EQUAL:              binop_str = "!="; break;
+            case IR_Operation::LESS:                   binop_str = "<"; break;
+            case IR_Operation::LESS_OR_EQUAL:          binop_str = "<="; break;
+            case IR_Operation::GREATER:                binop_str = ">"; break;
+            case IR_Operation::GREATER_OR_EQUAL:       binop_str = ">="; break;
+            case IR_Operation::AND:                    binop_str = "&&"; break;
+            case IR_Operation::OR:                     binop_str = "||"; break;
+            case IR_Operation::NOT:                    unop_str = "!"; break;
+            case IR_Operation::BITWISE_NOT:            binop_str = "~"; break;
+            case IR_Operation::BITWISE_AND:            binop_str = "&"; break;
+            case IR_Operation::BITWISE_OR:             binop_str = "|"; break;
+            case IR_Operation::BITWISE_XOR:            binop_str = "^"; break;
+            case IR_Operation::BITWISE_SHIFT_LEFT:     binop_str = "<<"; break;
+            case IR_Operation::BITWISE_SHIFT_RIGHT:    binop_str = ">>"; break;
+
+            case IR_Operation::FLOAT_ABS:       float_fn_name = "fabsf"; break;
+            case IR_Operation::FLOAT_MODULO:         float_fn_name = "fmod";  break;
+            case IR_Operation::FLOAT_REMAINDER:      float_fn_name = "remainder"; break;
+            case IR_Operation::ROUND_UP:             float_fn_name = "ceil"; break;
+            case IR_Operation::ROUND_DOWN:           float_fn_name = "floor"; break;
+            case IR_Operation::ROUND_TOWARDS_ZERO:   float_fn_name = "trunc"; break;
+            case IR_Operation::ROUND_NEAREST:        float_fn_name = "round"; break;
+
+            case IR_Operation::EXP:                  float_fn_name = "exp"; break;
+            case IR_Operation::LN:                   float_fn_name = "log"; break;
+            case IR_Operation::LOG10:                float_fn_name = "log10"; break;
+            case IR_Operation::LOG2:                 float_fn_name = "log2"; break;
+            case IR_Operation::POW:                  float_fn_name = "pow"; break;
+            case IR_Operation::SQUARE_ROOT:          float_fn_name = "sqrt"; break;
+            case IR_Operation::CUBE_ROOT:            float_fn_name = "cbrt"; break;
+
+            case IR_Operation::SIN:                  float_fn_name = "sin"; break;
+            case IR_Operation::COS:                  float_fn_name = "cos"; break;
+            case IR_Operation::TAN:                  float_fn_name = "tan"; break;
+            case IR_Operation::ASIN:                 float_fn_name = "asin"; break;
+            case IR_Operation::ACOS:                 float_fn_name = "acos"; break;
+            case IR_Operation::ATAN:                 float_fn_name = "atan"; break;
+            case IR_Operation::ATAN2:                float_fn_name = "atan2"; break;
+
+            case IR_Operation::SINH:                 float_fn_name = "sinh"; break;
+            case IR_Operation::COSH:                 float_fn_name = "cosh"; break;
+            case IR_Operation::TANH:                 float_fn_name = "tanh"; break;
+            case IR_Operation::ASINH:                float_fn_name = "asinh"; break;
+            case IR_Operation::ACOSH:                float_fn_name = "acosh"; break;
+            case IR_Operation::ATANH:                float_fn_name = "atanh"; break;
+
+            case IR_Operation::IS_NAN:               float_fn_name = "isnan"; append_f_for_f32_version = false; break;
+            case IR_Operation::IS_FINITE:            float_fn_name = "isinf"; append_f_for_f32_version = false; break;
+            case IR_Operation::IS_INFINITE:          float_fn_name = "isfinite"; append_f_for_f32_version = false; break;
+            default: panic("");
+            }
+
+            if (op_handled) {
+                break;
+            }
+            else if (binop_str != nullptr)
+            {
+                c_generator_output_data_access(generator, operation.destination);
+                string_append_formated(gen.text, " = ");
+                c_generator_output_data_access(generator, operation.operand_1);
+                string_append_formated(gen.text, " %s ", binop_str);
+                c_generator_output_data_access(generator, operation.operand_2);
+                string_append_formated(gen.text, ";\n");
+            }
+            else if (unop_str != nullptr)
+            {
+                c_generator_output_data_access(generator, operation.destination);
+                string_append_formated(gen.text, " = ");
+                string_append_formated(gen.text, "%s", unop_str);
+                c_generator_output_data_access(generator, operation.operand_1);
+                string_append_formated(gen.text, ";\n");
+            }
+            else if (float_fn_name != nullptr)
+            {
+                int param_count = ir_operation_parameter_count(operation.type);
+                c_generator_output_data_access(generator, operation.destination);
+                string_append_formated(gen.text, " = ");
+                string_append_formated(gen.text, "%s");
+                if (append_f_for_f32_version && downcast<Datatype_Primitive>(operation.operand_1->datatype)->primitive_type == Primitive_Type::F32)
+                {
+                    string_append_formated(gen.text, "f");
+                }
+                string_append(gen.text, "(");
+                c_generator_output_data_access(generator, operation.operand_1);
+                if (param_count == 2) {
+                    string_append(gen.text, ", ");
+                    c_generator_output_data_access(generator, operation.operand_2);
+                }
+                string_append_formated(gen.text, ");\n");
+            }
+            else {
+                panic("operation was not handled");
+            }
+
             break;
         }
         default: panic("Hey");

@@ -45,762 +45,6 @@ Bytecode_Thread* bytecode_thread_create(
     return result;
 }
 
-float bytecode_execute_f32_unop(float value, Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F32_ABSOLUTE: return fabsf(value);
-    case Hardcoded_Type::F32_CEIL:     return ceilf(value);
-	case Hardcoded_Type::F32_FLOOR:    return floorf(value);
-	case Hardcoded_Type::F32_TRUNCATE: return truncf(value);
-	case Hardcoded_Type::F32_ROUND_NEAREST: return roundf(value);
-	case Hardcoded_Type::F32_EXP: return expf(value);
-	case Hardcoded_Type::F32_LN: return logf(value);
-	case Hardcoded_Type::F32_LOG10: return log10f(value);
-	case Hardcoded_Type::F32_LOG2: return log2f(value);
-	case Hardcoded_Type::F32_SQUARE_ROOT:  return sqrtf(value);
-	case Hardcoded_Type::F32_CUBE_ROOT: return cbrtf(value);
-	case Hardcoded_Type::F32_SIN: return sinf(value);
-	case Hardcoded_Type::F32_COS: return cosf(value);
-	case Hardcoded_Type::F32_TAN: return tanf(value);
-	case Hardcoded_Type::F32_ASIN: return asinf(value);
-	case Hardcoded_Type::F32_ACOS: return acosf(value);
-	case Hardcoded_Type::F32_ATAN: return atanf(value);
-	case Hardcoded_Type::F32_SINH: return sinhf(value);
-	case Hardcoded_Type::F32_COSH: return coshf(value);
-	case Hardcoded_Type::F32_TANH: return tanhf(value);
-	case Hardcoded_Type::F32_ASINH: return asinhf(value);
-	case Hardcoded_Type::F32_ACOSH: return acoshf(value);
-	case Hardcoded_Type::F32_ATANH: return atanhf(value);
-    }
-
-    panic("");
-    return 0.0f;
-}
-
-float bytecode_execute_f32_binop(float a, float b, Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F32_MODULO: return fmodf(a, b);
-    case Hardcoded_Type::F32_REMAINDER: return remainderf(a, b);
-	case Hardcoded_Type::F32_POW: return powf(a, b);
-	case Hardcoded_Type::F32_ATAN2: return atan2f(a, b);
-    }
-
-    panic("");
-    return 0.0f;
-}
-
-bool bytecode_execute_f32_predicate(float value,Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F32_IS_FINITE: return isfinite(value);
-    case Hardcoded_Type::F32_IS_INFINITE: return isinf(value);
-	case Hardcoded_Type::F32_IS_NAN: return isnan(value);
-    }
-
-    panic("");
-    return true;
-}
-
-double bytecode_execute_f64_unop(double value, Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F64_ABSOLUTE: return fabs(value);
-    case Hardcoded_Type::F64_CEIL:     return ceil(value);
-	case Hardcoded_Type::F64_FLOOR:    return floor(value);
-	case Hardcoded_Type::F64_TRUNCATE: return round(value);
-	case Hardcoded_Type::F64_ROUND_NEAREST: return trunc(value);
-	case Hardcoded_Type::F64_EXP: return exp(value);
-	case Hardcoded_Type::F64_LN: return log(value);
-	case Hardcoded_Type::F64_LOG10: return log10(value);
-	case Hardcoded_Type::F64_LOG2: return log2(value);
-	case Hardcoded_Type::F64_SQUARE_ROOT:  return sqrt(value);
-	case Hardcoded_Type::F64_CUBE_ROOT: return cbrt(value);
-	case Hardcoded_Type::F64_SIN: return sin(value);
-	case Hardcoded_Type::F64_COS: return cos(value);
-	case Hardcoded_Type::F64_TAN: return tan(value);
-	case Hardcoded_Type::F64_ASIN: return asin(value);
-	case Hardcoded_Type::F64_ACOS: return acos(value);
-	case Hardcoded_Type::F64_ATAN: return atan(value);
-	case Hardcoded_Type::F64_SINH: return sinh(value);
-	case Hardcoded_Type::F64_COSH: return cosh(value);
-	case Hardcoded_Type::F64_TANH: return tanh(value);
-	case Hardcoded_Type::F64_ASINH: return asinh(value);
-	case Hardcoded_Type::F64_ACOSH: return acosh(value);
-	case Hardcoded_Type::F64_ATANH: return atanh(value);
-    }
-
-    panic("");
-    return 0.0f;
-}
-
-double bytecode_execute_f64_binop(double a, double b, Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F64_MODULO: return fmod(a, b);
-    case Hardcoded_Type::F64_REMAINDER: return remainder(a, b);
-	case Hardcoded_Type::F64_POW: return pow(a, b);
-	case Hardcoded_Type::F64_ATAN2: return atan2(a, b);
-    }
-
-    panic("");
-    return 0.0f;
-}
-
-bool bytecode_execute_f64_predicate(double value, Hardcoded_Type type)
-{
-    switch (type)
-    {
-    case Hardcoded_Type::F64_IS_FINITE: return isfinite(value);
-    case Hardcoded_Type::F64_IS_INFINITE: return isinf(value);
-	case Hardcoded_Type::F64_IS_NAN: return isnan(value);
-    }
-
-    panic("");
-    return true;
-}
-
-
-void bytecode_execute_primitive_cast(void* dst, void* src, Bytecode_Type dst_type, Bytecode_Type src_type)
-{
-    assert(dst_type != Bytecode_Type::BOOL && src_type != Bytecode_Type::BOOL, "");
-
-    auto is_int = [](Bytecode_Type type) {
-        return type != Bytecode_Type::FLOAT32 && type != Bytecode_Type::FLOAT64;
-    };
-
-    if (is_int(src_type) && is_int(dst_type)) // Int to int
-    {
-        u64 source_unsigned = 0;
-        i64 source_signed = 0;
-        bool source_is_signed = false;
-        switch (src_type) {
-        case Bytecode_Type::INT8: source_is_signed = true; source_signed = *(i8*)(src); break;
-        case Bytecode_Type::INT16: source_is_signed = true; source_signed = *(i16*)(src); break;
-        case Bytecode_Type::INT32: source_is_signed = true; source_signed = *(i32*)(src); break;
-        case Bytecode_Type::INT64: source_is_signed = true; source_signed = *(i64*)(src); break;
-        case Bytecode_Type::UINT8: source_is_signed = false; source_unsigned = *(u8*)(src); break;
-        case Bytecode_Type::UINT16: source_is_signed = false; source_unsigned = *(u16*)(src); break;
-        case Bytecode_Type::UINT32: source_is_signed = false; source_unsigned = *(u32*)(src); break;
-        case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src); break;
-        default: panic("what the frigg\n");
-        }
-
-        switch (dst_type) {
-        case Bytecode_Type::INT8:   *(i8*)(dst)  = (i8) (source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT8:  *(u8*)(dst)  = (u8) (source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)(source_is_signed ? source_signed : source_unsigned); break;
-        default: panic("what the frigg\n");
-        }
-    }
-    else if (is_int(src_type)) // Int to float
-    {
-        u64 source_unsigned;
-        i64 source_signed;
-        bool source_is_signed = false;
-        switch (src_type) {
-        case Bytecode_Type::INT8:   source_is_signed = true; source_signed = *(i8*)(src); break;
-        case Bytecode_Type::INT16:  source_is_signed = true; source_signed = *(i16*)(src); break;
-        case Bytecode_Type::INT32:  source_is_signed = true; source_signed = *(i32*)(src); break;
-        case Bytecode_Type::INT64:  source_is_signed = true; source_signed = *(i64*)(src); break;
-        case Bytecode_Type::UINT8:  source_is_signed = false; source_unsigned = *(u8*)(src); break;
-        case Bytecode_Type::UINT16: source_is_signed = false; source_unsigned = *(u16*)(src); break;
-        case Bytecode_Type::UINT32: source_is_signed = false; source_unsigned = *(u32*)(src); break;
-        case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src); break;
-        default: panic("what the frigg\n");
-        }
-
-        switch (dst_type) {
-        case Bytecode_Type::FLOAT32: *(float*)(dst) = (float)(source_is_signed ? source_signed : source_unsigned); break;
-        case Bytecode_Type::FLOAT64: *(double*)(dst) = (double)(source_is_signed ? source_signed : source_unsigned); break;
-        default: panic("what the frigg\n");
-        }
-    }
-    else if (is_int(dst_type)) // Float to int
-    {
-        double source = 0.0;
-        switch (src_type) {
-        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
-        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
-        default: panic("what the frigg\n");
-        }
-
-        switch (dst_type) {
-        case Bytecode_Type::INT8:   *(i8*)(dst) = (i8)source; break;
-        case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)source; break;
-        case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)source; break;
-        case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)source; break;
-        case Bytecode_Type::UINT8:  *(u8*)(dst) = (u8)source; break;
-        case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)source; break;
-        case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)source; break;
-        case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)source; break;
-        default: panic("what the frigg\n");
-        }
-    }
-    else
-    {
-        double source = 0.0;
-        switch (src_type) {
-        case Bytecode_Type::FLOAT32: source = *(float*)(src); break;
-        case Bytecode_Type::FLOAT64: source = *(double*)(src); break;
-        default: panic("what the frigg\n");
-        }
-
-        switch (dst_type) {
-        case Bytecode_Type::FLOAT32: *(float*)(dst) = (float)source; break;
-        case Bytecode_Type::FLOAT64: *(double*)(dst) = (double)source; break;
-        default: panic("what the frigg\n");
-        }
-    }
-}
-
-void bytecode_execute_unary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* operand)
-{
-    switch (instr_type)
-    {
-    case Instruction_Type::UNARY_OP_NEGATE: {
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            panic("What");
-            break;
-        case Bytecode_Type::INT8:
-            *(i8*)(dest) = -*(i8*)(operand);
-            break;
-        case Bytecode_Type::INT16:
-            *(i16*)(dest) = -*(i16*)(operand);
-            break;
-        case Bytecode_Type::INT32:
-            *(i32*)(dest) = -*(i32*)(operand);
-            break;
-        case Bytecode_Type::INT64:
-            *(i64*)(dest) = -*(i64*)(operand);
-            break;
-        case Bytecode_Type::UINT8:
-        case Bytecode_Type::UINT16:
-        case Bytecode_Type::UINT32:
-        case Bytecode_Type::UINT64:
-            panic("Should not happen?");
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(f32*)(dest) = -*(f32*)(operand);
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(f64*)(dest) = -*(f64*)(operand);
-            break;
-        default: panic("");
-        }
-        break;
-    }
-    case Instruction_Type::UNARY_OP_BITWISE_NOT: 
-    {
-        switch (type)
-        {
-        case Bytecode_Type::INT8:   *(i8*) (dest) = ~*(i8*) (operand); break;
-        case Bytecode_Type::INT16:  *(i16*)(dest) = ~*(i16*)(operand); break;
-        case Bytecode_Type::INT32:  *(i32*)(dest) = ~*(i32*)(operand); break;
-        case Bytecode_Type::INT64:  *(i64*)(dest) = ~*(i64*)(operand); break;
-        case Bytecode_Type::UINT8:  *(u8*) (dest) = ~*(u8*) (operand); break;
-        case Bytecode_Type::UINT16: *(u16*)(dest) = ~*(u16*)(operand); break;
-        case Bytecode_Type::UINT32: *(u32*)(dest) = ~*(u32*)(operand); break;
-        case Bytecode_Type::UINT64: *(u64*)(dest) = ~*(u64*)(operand); break;
-        case Bytecode_Type::BOOL:
-        case Bytecode_Type::FLOAT32:
-        case Bytecode_Type::FLOAT64: panic("What"); break;
-        default: panic("");
-        }
-        break;
-    }
-    case Instruction_Type::UNARY_OP_NOT: {
-        *(bool*)(dest) = !*(bool*)(operand);
-        break;
-    }
-    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
-    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
-    {
-        u64 value = 0;
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    value = (u64) *(i8*)operand; break;
-        case Bytecode_Type::INT16:   value = (u64) *(i16*)operand; break;
-        case Bytecode_Type::INT32:   value = (u64) *(i32*)operand; break;
-        case Bytecode_Type::INT64:   value = (u64) *(i64*)operand; break;
-        case Bytecode_Type::UINT8:   value = (u64) *(u8*)operand; break;
-        case Bytecode_Type::UINT16:  value = (u64) *(u16*)operand; break;
-        case Bytecode_Type::UINT32:  value = (u64) *(u32*)operand; break;
-        case Bytecode_Type::UINT64:  value = (u64) *(u64*)operand; break;
-        default: panic(""); return;
-        }
-
-        i8 result = -1;
-        if (value != 0) 
-        {
-            result = instr_type == Instruction_Type::UNARY_OP_HIGHEST_SET_BIT ?
-                integer_highest_set_bit_index(value) : integer_lowest_set_bit_index(value);
-        }
-        *(i8*)dest = result;
-        break;
-    }
-    default: panic("");
-    }
-}
-
-bool bytecode_execute_binary_instr(Instruction_Type instr_type, Bytecode_Type type, void* dest, void* op_left, void* op_right)
-{
-    switch (instr_type)
-    {
-    case Instruction_Type::BINARY_OP_ADDITION:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) + *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) + *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) + *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) + *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) + *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) + *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) + *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) + *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) + *(f32*)(op_right); break;
-        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) + *(f64*)(op_right); break;
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_SUBTRACTION:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) - *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) - *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) - *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) - *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) - *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) - *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) - *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) - *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) - *(f32*)(op_right); break;
-        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) - *(f64*)(op_right); break;
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_MULTIPLICATION:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) * *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) * *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) * *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) * *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) * *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) * *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) * *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) * *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) * *(f32*)(op_right); break;
-        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) * *(f64*)(op_right); break;
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_DIVISION:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) / *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) / *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) / *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) / *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) / *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) / *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) / *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) / *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: *(f32*)(dest) = *(f32*)(op_left) / *(f32*)(op_right); break;
-        case Bytecode_Type::FLOAT64: *(f64*)(dest) = *(f64*)(op_left) / *(f64*)(op_right); break;
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_EQUAL:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            *(u8*)(dest) = *(bool*)(op_left) == *(bool*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) == *(i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) == *(i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) == *(i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) == *(i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) == *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) == *(u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) == *(u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) == *(u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) == *(f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) == *(f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_NOT_EQUAL:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            *(u8*)(dest) = *(u8*)(op_left) != *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) != *(i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) != *(i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) != *(i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) != *(i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) != *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) != *(u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) != *(u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) != *(u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) != *(f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) != *(f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_GREATER_THAN:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) > * (i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) > * (i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) > * (i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) > * (i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) > * (u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) > * (u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) > * (u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) > * (u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) > * (f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) > * (f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_GREATER_EQUAL:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) >= *(i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) >= *(i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) >= *(i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) >= *(i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) >= *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) >= *(u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) >= *(u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) >= *(u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) >= *(f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) >= *(f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_LESS_THAN:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            return false;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) < *(i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) < *(i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) < *(i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) < *(i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) < *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) < *(u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) < *(u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) < *(u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) < *(f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) < *(f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_LESS_EQUAL:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            return false;
-            break;
-        case Bytecode_Type::INT8:
-            *(u8*)(dest) = *(i8*)(op_left) <= *(i8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT16:
-            *(u8*)(dest) = *(i16*)(op_left) <= *(i16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT32:
-            *(u8*)(dest) = *(i32*)(op_left) <= *(i32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::INT64:
-            *(u8*)(dest) = *(i64*)(op_left) <= *(i64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT8:
-            *(u8*)(dest) = *(u8*)(op_left) <= *(u8*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT16:
-            *(u8*)(dest) = *(u16*)(op_left) <= *(u16*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT32:
-            *(u8*)(dest) = *(u32*)(op_left) <= *(u32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::UINT64:
-            *(u8*)(dest) = *(u64*)(op_left) <= *(u64*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT32:
-            *(u8*)(dest) = *(f32*)(op_left) <= *(f32*)(op_right) ? 1 : 0;
-            break;
-        case Bytecode_Type::FLOAT64:
-            *(u8*)(dest) = *(f64*)(op_left) <= *(f64*)(op_right) ? 1 : 0;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_MODULO:
-        switch (type)
-        {
-        case Bytecode_Type::BOOL:
-            return false;
-            break;
-        case Bytecode_Type::INT8:
-            if (*(i8*)op_right == 0) return false;
-            *(i8*)(dest) = *(i8*)(op_left) % *(i8*)(op_right);
-            break;
-        case Bytecode_Type::INT16:
-            if (*(i16*)op_right == 0) return false;
-            *(i16*)(dest) = *(i16*)(op_left) % *(i16*)(op_right);
-            break;
-        case Bytecode_Type::INT32:
-            if (*(i32*)op_right == 0) return false;
-            *(i32*)(dest) = *(i32*)(op_left) % *(i32*)(op_right);
-            break;
-        case Bytecode_Type::INT64:
-            if (*(i64*)op_right == 0) return false;
-            *(i64*)(dest) = *(i64*)(op_left) % *(i64*)(op_right);
-            break;
-        case Bytecode_Type::UINT8:
-            if (*(u8*)op_right == 0) return false;
-            *(u8*)(dest) = *(u8*)(op_left) % *(u8*)(op_right);
-            break;
-        case Bytecode_Type::UINT16:
-            if (*(u16*)op_right == 0) return false;
-            *(u16*)(dest) = *(u16*)(op_left) % *(u16*)(op_right);
-            break;
-        case Bytecode_Type::UINT32:
-            if (*(u32*)op_right == 0) return false;
-            *(u32*)(dest) = *(u32*)(op_left) % *(u32*)(op_right);
-            break;
-        case Bytecode_Type::UINT64:
-            if (*(u64*)op_right == 0) return false;
-            *(u64*)(dest) = *(u64*)(op_left) % *(u64*)(op_right);
-            break;
-        case Bytecode_Type::FLOAT32:
-            return false;
-            break;
-        case Bytecode_Type::FLOAT64:
-            return false;
-            break;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_AND:
-        *(bool*)(dest) = *(bool*)(op_left) && *(bool*)(op_right);
-        break;
-    case Instruction_Type::BINARY_OP_OR:
-        *(bool*)(dest) = *(bool*)(op_left) || *(bool*)(op_right);
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_AND:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) & *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) & *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) & *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) & *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) & *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) & *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) & *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) & *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: 
-        case Bytecode_Type::FLOAT64:
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_OR:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) | *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) | *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) | *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) | *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) | *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) | *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) | *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) | *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: 
-        case Bytecode_Type::FLOAT64:
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_XOR:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) ^ *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) ^ *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) ^ *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) ^ *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) ^ *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) ^ *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) ^ *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) ^ *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: 
-        case Bytecode_Type::FLOAT64:
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) << *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) << *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) << *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) << *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) << *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) << *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) << *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) << *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: 
-        case Bytecode_Type::FLOAT64:
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
-        switch (type)
-        {
-        case Bytecode_Type::INT8:    *(i8*) (dest) = *(i8*) (op_left) >> *(i8*) (op_right); break;
-        case Bytecode_Type::INT16:   *(i16*)(dest) = *(i16*)(op_left) >> *(i16*)(op_right); break;
-        case Bytecode_Type::INT32:   *(i32*)(dest) = *(i32*)(op_left) >> *(i32*)(op_right); break;
-        case Bytecode_Type::INT64:   *(i64*)(dest) = *(i64*)(op_left) >> *(i64*)(op_right); break;
-        case Bytecode_Type::UINT8:   *(u8*) (dest) = *(u8*) (op_left) >> *(u8*) (op_right); break;
-        case Bytecode_Type::UINT16:  *(u16*)(dest) = *(u16*)(op_left) >> *(u16*)(op_right); break;
-        case Bytecode_Type::UINT32:  *(u32*)(dest) = *(u32*)(op_left) >> *(u32*)(op_right); break;
-        case Bytecode_Type::UINT64:  *(u64*)(dest) = *(u64*)(op_left) >> *(u64*)(op_right); break;
-        case Bytecode_Type::FLOAT32: 
-        case Bytecode_Type::FLOAT64:
-        case Bytecode_Type::BOOL: return false;
-        default: return false;
-        }
-        break;
-    default: return false;
-    }
-    return true;
-}
-
 void interpreter_safe_memcopy(Bytecode_Thread* thread, void* dst, void* src, int size)
 {
     if (memory_is_readable(dst, size) && memory_is_readable(src, size)) {
@@ -971,71 +215,15 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         thread->exit_code = exit_code_from_exit_instruction(*i);
         return;
     }
-    case Instruction_Type::CALL_HARDCODED_FUNCTION:
+    case Instruction_Type::CALL_BUILTIN_FUNCTION:
     {
-        Hardcoded_Type hardcoded_type = (Hardcoded_Type)i->op1;
-        assert((u32)hardcoded_type < (int)Hardcoded_Type::MAX_ENUM_VALUE, "");
-        Call_Signature* hardcoded_signature = compilation_data->hardcoded_function_signatures[(int)hardcoded_type];
+        IR_Builtin_Function builtin_type = (IR_Builtin_Function)i->op1;
+        assert((u32)builtin_type < (int)IR_Builtin_Function::MAX_ENUM_VALUE, "");
 
         byte* return_buffer = thread->stack_pointer + i->op2 + 16; // Return buffer is after [return_instruction] [prev_stack_frame] [return_buffer] [params]...
-        Hardcoded_Type_Info info = hardcoded_type_get_info(hardcoded_type);
-        bool handled = true;
-        switch (info.type_class)
+        switch (builtin_type)
         {
-        case Hardcoded_Type_Class::F32_UNARY: 
-        {
-            f32* value = (f32*)(return_buffer + sizeof(f32));
-            f32* return_value = (f32*)return_buffer;
-            *return_value = bytecode_execute_f32_unop(*value, hardcoded_type);
-            break;
-        }
-        case Hardcoded_Type_Class::F32_BINARY:
-        {
-            f32* value_a = (f32*)(return_buffer + sizeof(f32));
-            f32* value_b = (f32*)(return_buffer + 2 * sizeof(f32));
-            f32* return_value = (f32*)return_buffer;
-            *return_value = bytecode_execute_f32_binop(*value_a, *value_b, hardcoded_type);
-            break;
-        }
-        case Hardcoded_Type_Class::F32_PREDICATE:
-        {
-            f32* value = (f32*)(return_buffer + sizeof(f32));
-            bool* return_value = (bool*)return_buffer;
-            *return_value = bytecode_execute_f32_predicate(*value, hardcoded_type);
-            break;
-        }
-        case Hardcoded_Type_Class::F64_UNARY:
-        {
-            f64* value = (f64*)(return_buffer + sizeof(f64));
-            f64* return_value = (f64*)return_buffer;
-            *return_value = bytecode_execute_f64_unop(*value, hardcoded_type);
-            break;
-        }
-        case Hardcoded_Type_Class::F64_BINARY:
-        {
-            f64* value_a = (f64*)(return_buffer + sizeof(f64));
-            f64* value_b = (f64*)(return_buffer + 2 * sizeof(f64));
-            f64* return_value = (f64*)return_buffer;
-            *return_value = bytecode_execute_f64_binop(*value_a, *value_b, hardcoded_type);
-            break;
-
-        }
-        case Hardcoded_Type_Class::F64_PREDICATE:
-        {
-            f64* value = (f64*)(return_buffer + sizeof(f64));
-            bool* return_value = (bool*)return_buffer;
-            *return_value = bytecode_execute_f64_predicate(*value, hardcoded_type);
-            break;
-        }
-        default: handled = false; break;
-        }
-        if (handled) {
-            break;
-        }
-
-        switch (hardcoded_type)
-        {
-        case Hardcoded_Type::SYSTEM_ALLOC: 
+        case IR_Builtin_Function::SYSTEM_ALLOC: 
         {
             // System-alloc (u64 size) => address
             byte* argument_start = return_buffer + 8;
@@ -1056,7 +244,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             memory_copy(return_buffer, &alloc_data, sizeof(void*));
             break;
         }
-        case Hardcoded_Type::SYSTEM_FREE: 
+        case IR_Builtin_Function::SYSTEM_FREE: 
         {
             // System-free fn (ptr: address)
             byte* argument_start = return_buffer;
@@ -1070,7 +258,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             // logg("Interpreter Free pointer: %p\n", free_data);
             break;
         }
-        case Hardcoded_Type::MEMORY_COPY: 
+        case IR_Builtin_Function::MEMORY_COPY: 
         {
             // fn (dst: address, src: address, size: usize)
             byte* argument_start = return_buffer;
@@ -1080,7 +268,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             interpreter_safe_memcopy(thread, destination, source, size);
             break;
         }
-        case Hardcoded_Type::MEMORY_COMPARE: 
+        case IR_Builtin_Function::MEMORY_COMPARE: 
         {
             // fn (a: address, b: address, size: usize) => bool
             byte* argument_start = return_buffer + 8; // 1 byte for return-buffer, 7 byte alignment
@@ -1095,7 +283,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             *return_buffer = cmp == 0;
             break;
         }
-        case Hardcoded_Type::MEMORY_ZERO: 
+        case IR_Builtin_Function::MEMORY_ZERO: 
         {
             // fn (a: address, size: usize)
             byte* argument_start = return_buffer;
@@ -1108,20 +296,21 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             memset(destination, 0, size);
             break;
         }
-        case Hardcoded_Type::PRINT_I32: {
+        case IR_Builtin_Function::PRINT_I32: {
             byte* argument_start = return_buffer;
             i32 value = *(i32*)(argument_start);
             logg("%d", value); break;
         }
-        case Hardcoded_Type::PRINT_F32: {
+        case IR_Builtin_Function::PRINT_F32: {
             byte* argument_start = return_buffer;
             logg("%3.2f", *(f32*)(argument_start)); break;
         }
-        case Hardcoded_Type::PRINT_BOOL: {
+        case IR_Builtin_Function::PRINT_BOOL: {
             byte* argument_start = return_buffer;
             logg("%s", *(argument_start) == 0 ? "FALSE" : "TRUE"); break;
         }
-        case Hardcoded_Type::PRINT_STRING: {
+        case IR_Builtin_Function::PRINT_STRING: 
+        {
             byte* argument_start = return_buffer;
             Upp_String string = *(Upp_String*)argument_start;
 
@@ -1144,10 +333,10 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             logg("%.*s", string.size, (const char*) string.data);
             break;
         }
-        case Hardcoded_Type::PRINT_LINE: {
+        case IR_Builtin_Function::PRINT_LINE: {
             logg("\n"); break;
         }
-        case Hardcoded_Type::READ_I32: {
+        case IR_Builtin_Function::READ_I32: {
             logg("Please input an i32: ");
             i32 num;
             std::cin >> num;
@@ -1159,7 +348,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             interpreter_safe_memcopy(thread, return_buffer, &num, 4);
             break;
         }
-        case Hardcoded_Type::READ_F32: {
+        case IR_Builtin_Function::READ_F32: {
             logg("Please input an f32: ");
             f32 num;
             std::cin >> num;
@@ -1171,7 +360,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             interpreter_safe_memcopy(thread, return_buffer, &num, 4);
             break;
         }
-        case Hardcoded_Type::READ_BOOL: {
+        case IR_Builtin_Function::READ_BOOL: {
             logg("Please input an bool (As int): ");
             i32 num;
             std::cin >> num;
@@ -1188,7 +377,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             }
             break;
         }
-        case Hardcoded_Type::TYPE_INFO: 
+        case IR_Builtin_Function::TYPE_INFO: 
         {
             auto& type_system = thread->compilation_data->type_system;
 
@@ -1235,64 +424,21 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         *(i64*)(thread->stack_pointer + i->op1) = (i64)(i->op2 + 1); // Note: Function pointers are encoded as function indices in interpreter
         break;
-    case Instruction_Type::CAST_PRIMITIVE_TYPES: 
+    case Instruction_Type::IR_OPERATION: 
     {
-        bytecode_execute_primitive_cast(
-            thread->stack_pointer + i->op1,
-            thread->stack_pointer + i->op2,
-            (Bytecode_Type)i->op3,
-            (Bytecode_Type)i->op4
-        );
-        break;
-    }
+        void* dst = thread->stack_pointer + i->op1;
+        void* src1 = thread->stack_pointer + i->op2;
+        void* src2 = thread->stack_pointer + i->op3;
 
-    /*
-    -------------------------
-    --- BINARY_OPERATIONS ---
-    -------------------------
-    */
-    case Instruction_Type::BINARY_OP_ADDITION:
-    case Instruction_Type::BINARY_OP_SUBTRACTION:
-    case Instruction_Type::BINARY_OP_MULTIPLICATION:
-    case Instruction_Type::BINARY_OP_DIVISION:
-    case Instruction_Type::BINARY_OP_EQUAL:
-    case Instruction_Type::BINARY_OP_NOT_EQUAL:
-    case Instruction_Type::BINARY_OP_GREATER_THAN:
-    case Instruction_Type::BINARY_OP_GREATER_EQUAL:
-    case Instruction_Type::BINARY_OP_LESS_THAN:
-    case Instruction_Type::BINARY_OP_LESS_EQUAL:
-    case Instruction_Type::BINARY_OP_MODULO:
-    case Instruction_Type::BINARY_OP_BITWISE_AND:
-    case Instruction_Type::BINARY_OP_BITWISE_OR:
-    case Instruction_Type::BINARY_OP_BITWISE_XOR:
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
-    case Instruction_Type::BINARY_OP_AND:
-    case Instruction_Type::BINARY_OP_OR: 
-    {
-        if (!bytecode_execute_binary_instr(
-            i->instruction_type,
-            (Bytecode_Type)i->op4,
-            thread->stack_pointer + i->op1,
-            thread->stack_pointer + i->op2,
-            thread->stack_pointer + i->op3
-        )) {
-            thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Binary op execution failed");
+        Bytecode_Type dst_type, left_type, right_type;
+        IR_Operation ir_op;
+        bytecode_unpack_operation_and_types_from_int(i->op4, ir_op, dst_type, left_type, right_type);
+        bool success = bytecode_execute_ir_operation(ir_op, dst, src1, src2, dst_type, left_type, right_type);
+        if (!success) {
+            thread->exit_code = exit_code_make(Exit_Code_Type::CODE_ERROR, "Division or modulo by 0");
         }
         break;
     }
-    case Instruction_Type::UNARY_OP_NOT:
-    case Instruction_Type::UNARY_OP_BITWISE_NOT:
-    case Instruction_Type::UNARY_OP_NEGATE:
-    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
-    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
-        bytecode_execute_unary_instr(
-            i->instruction_type,
-            (Bytecode_Type)i->op3,
-            thread->stack_pointer + i->op1,
-            thread->stack_pointer + i->op2
-        );
-        break;
     default: {
         panic("Should not happen!\n");
     }
@@ -1414,3 +560,446 @@ Exit_Code bytecode_thread_execute(Bytecode_Thread* thread)
 void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread) {
     return &thread->stack[16]; // Return value starts at offset 16 in stack frame
 }
+
+
+
+// IR-Operation execute
+template<typename T>
+void handle_ir_operation_arithmetic(IR_Operation operation, T* dst, T* src1, T* src2)
+{
+    switch (operation)
+    {
+    case IR_Operation::ADDITION:         *dst = (*src1 + *src2); break;
+    case IR_Operation::SUBTRACTION:      *dst = (*src1 - *src2); break;
+    case IR_Operation::MULTIPLICATION:   *dst = (*src1 * *src2); break;
+    case IR_Operation::NEGATE:           *dst = -(*src1); break;
+    default: panic("");
+    }
+}
+
+template<typename T>
+void handle_ir_operation_order_comparison(IR_Operation operation, bool* dst, T* src1, T* src2)
+{
+    switch (operation)
+    {
+    case IR_Operation::LESS:             *dst = (*src1 < *src2); break;
+    case IR_Operation::LESS_OR_EQUAL:    *dst = (*src1 <= *src2); break;
+    case IR_Operation::GREATER:          *dst = (*src1 > *src2); break;
+    case IR_Operation::GREATER_OR_EQUAL: *dst = (*src1 >= *src2); break;
+    default: panic("");
+    }
+}
+
+template<typename T>
+void handle_ir_operation_equals(IR_Operation operation, bool* dst, T* src1, T* src2)
+{
+    switch (operation)
+    {
+    case IR_Operation::EQUAL:     *dst = (*src1 == *src2); break;
+    case IR_Operation::NOT_EQUAL: *dst = (*src1 != *src2); break;
+    default: panic("");
+    }
+}
+
+// Note: right-type/dst_type get ignored by a lot of operations, which assume that all types are the same
+bool bytecode_execute_ir_operation(
+    IR_Operation operation, void* dst, void* src1, void* src2, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
+{
+    Bytecode_Type src_type = left_type;
+    auto argument_count = ir_operation_parameter_count(operation);
+    switch (operation)
+    {
+    case IR_Operation::MOVE: {
+        memmove(dst, src1, bytecode_type_get_byte_size(src_type));
+        break;
+    }
+    case IR_Operation::PRIMITIVE_CAST: 
+    {
+        assert(dst_type != Bytecode_Type::BOOL && src_type != Bytecode_Type::BOOL, "");
+
+        auto is_int = [](Bytecode_Type type) {
+            return type != Bytecode_Type::FLOAT32 && type != Bytecode_Type::FLOAT64;
+        };
+
+        if (is_int(src_type) && is_int(dst_type)) // Int to int
+        {
+            u64 source_unsigned = 0;
+            i64 source_signed = 0;
+            bool source_is_signed = false;
+            switch (src_type) {
+            case Bytecode_Type::INT8: source_is_signed = true; source_signed = *(i8*)(src1); break;
+            case Bytecode_Type::INT16: source_is_signed = true; source_signed = *(i16*)(src1); break;
+            case Bytecode_Type::INT32: source_is_signed = true; source_signed = *(i32*)(src1); break;
+            case Bytecode_Type::INT64: source_is_signed = true; source_signed = *(i64*)(src1); break;
+            case Bytecode_Type::UINT8: source_is_signed = false; source_unsigned = *(u8*)(src1); break;
+            case Bytecode_Type::UINT16: source_is_signed = false; source_unsigned = *(u16*)(src1); break;
+            case Bytecode_Type::UINT32: source_is_signed = false; source_unsigned = *(u32*)(src1); break;
+            case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src1); break;
+            default: panic("what the frigg\n");
+            }
+
+            switch (dst_type) {
+            case Bytecode_Type::INT8:   *(i8*)(dst)  = (i8) (source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::UINT8:  *(u8*)(dst)  = (u8) (source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)(source_is_signed ? source_signed : source_unsigned); break;
+            default: panic("what the frigg\n");
+            }
+        }
+        else if (is_int(src_type)) // Int to float
+        {
+            u64 source_unsigned;
+            i64 source_signed;
+            bool source_is_signed = false;
+            switch (src_type) {
+            case Bytecode_Type::INT8:   source_is_signed = true; source_signed = *(i8*)(src1); break;
+            case Bytecode_Type::INT16:  source_is_signed = true; source_signed = *(i16*)(src1); break;
+            case Bytecode_Type::INT32:  source_is_signed = true; source_signed = *(i32*)(src1); break;
+            case Bytecode_Type::INT64:  source_is_signed = true; source_signed = *(i64*)(src1); break;
+            case Bytecode_Type::UINT8:  source_is_signed = false; source_unsigned = *(u8*)(src1); break;
+            case Bytecode_Type::UINT16: source_is_signed = false; source_unsigned = *(u16*)(src1); break;
+            case Bytecode_Type::UINT32: source_is_signed = false; source_unsigned = *(u32*)(src1); break;
+            case Bytecode_Type::UINT64: source_is_signed = false; source_unsigned = *(u64*)(src1); break;
+            default: panic("what the frigg\n");
+            }
+
+            switch (dst_type) {
+            case Bytecode_Type::FLOAT32: *(f32*)(dst) = (f32)(source_is_signed ? source_signed : source_unsigned); break;
+            case Bytecode_Type::FLOAT64: *(f64*)(dst) = (f64)(source_is_signed ? source_signed : source_unsigned); break;
+            default: panic("what the frigg\n");
+            }
+        }
+        else if (is_int(dst_type)) // Float to int
+        {
+            double source = 0.0;
+            switch (src_type) {
+            case Bytecode_Type::FLOAT32: source = *(f32*)(src1); break;
+            case Bytecode_Type::FLOAT64: source = *(f64*)(src1); break;
+            default: panic("what the frigg\n");
+            }
+
+            switch (dst_type) {
+            case Bytecode_Type::INT8:   *(i8*)(dst) = (i8)source; break;
+            case Bytecode_Type::INT16:  *(i16*)(dst) = (i16)source; break;
+            case Bytecode_Type::INT32:  *(i32*)(dst) = (i32)source; break;
+            case Bytecode_Type::INT64:  *(i64*)(dst) = (i64)source; break;
+            case Bytecode_Type::UINT8:  *(u8*)(dst) = (u8)source; break;
+            case Bytecode_Type::UINT16: *(u16*)(dst) = (u16)source; break;
+            case Bytecode_Type::UINT32: *(u32*)(dst) = (u32)source; break;
+            case Bytecode_Type::UINT64: *(u64*)(dst) = (u64)source; break;
+            default: panic("what the frigg\n");
+            }
+        }
+        else // Float to float
+        {
+            f64 source = 0.0;
+            switch (src_type) {
+            case Bytecode_Type::FLOAT32: source = *(f32*)(src1); break;
+            case Bytecode_Type::FLOAT64: source = *(f64*)(src1); break;
+            default: panic("what the frigg\n");
+            }
+
+            switch (dst_type) {
+            case Bytecode_Type::FLOAT32: *(f32*)(dst) = (f32)source; break;
+            case Bytecode_Type::FLOAT64: *(f64*)(dst) = (f64)source; break;
+            default: panic("what the frigg\n");
+            }
+        }
+
+        break;
+    }
+
+    // Arithmetics
+    case IR_Operation::ADDITION:
+    case IR_Operation::SUBTRACTION:
+    case IR_Operation::MULTIPLICATION:
+    case IR_Operation::NEGATE:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::INT8:    handle_ir_operation_arithmetic(operation, (i8*)dst, (i8*)src1, (i8*)src2); break;
+        case Bytecode_Type::INT16:   handle_ir_operation_arithmetic(operation, (i16*)dst, (i16*)src1, (i16*)src2); break;
+        case Bytecode_Type::INT32:   handle_ir_operation_arithmetic(operation, (i32*)dst, (i32*)src1, (i32*)src2); break;
+        case Bytecode_Type::INT64:   handle_ir_operation_arithmetic(operation, (i64*)dst, (i64*)src1, (i64*)src2); break;
+        case Bytecode_Type::UINT8:   handle_ir_operation_arithmetic(operation, (u8*)dst,  (u8*)src1,  (u8*)src2); break;
+        case Bytecode_Type::UINT16:  handle_ir_operation_arithmetic(operation, (u16*)dst, (u16*)src1, (u16*)src2); break;
+        case Bytecode_Type::UINT32:  handle_ir_operation_arithmetic(operation, (u32*)dst, (u32*)src1, (u32*)src2); break;
+        case Bytecode_Type::UINT64:  handle_ir_operation_arithmetic(operation, (u64*)dst, (u64*)src1, (u64*)src2); break;
+        case Bytecode_Type::FLOAT32: handle_ir_operation_arithmetic(operation, (f32*)dst, (f32*)src1, (f32*)src2); break;
+        case Bytecode_Type::FLOAT64: handle_ir_operation_arithmetic(operation, (f64*)dst, (f64*)src1, (f64*)src2); break;
+        default: panic("");
+        }
+        break;
+    }
+
+    case IR_Operation::LESS:
+    case IR_Operation::LESS_OR_EQUAL:
+    case IR_Operation::GREATER:
+    case IR_Operation::GREATER_OR_EQUAL:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::INT8:    handle_ir_operation_order_comparison(operation, (bool*)dst, (i8*)src1, (i8*)src2); break;
+        case Bytecode_Type::INT16:   handle_ir_operation_order_comparison(operation, (bool*)dst, (i16*)src1, (i16*)src2); break;
+        case Bytecode_Type::INT32:   handle_ir_operation_order_comparison(operation, (bool*)dst, (i32*)src1, (i32*)src2); break;
+        case Bytecode_Type::INT64:   handle_ir_operation_order_comparison(operation, (bool*)dst, (i64*)src1, (i64*)src2); break;
+        case Bytecode_Type::UINT8:   handle_ir_operation_order_comparison(operation, (bool*)dst, (u8*)src1, (u8*)src2); break;
+        case Bytecode_Type::UINT16:  handle_ir_operation_order_comparison(operation, (bool*)dst, (u16*)src1, (u16*)src2); break;
+        case Bytecode_Type::UINT32:  handle_ir_operation_order_comparison(operation, (bool*)dst, (u32*)src1, (u32*)src2); break;
+        case Bytecode_Type::UINT64:  handle_ir_operation_order_comparison(operation, (bool*)dst, (u64*)src1, (u64*)src2); break;
+        case Bytecode_Type::FLOAT32: handle_ir_operation_order_comparison(operation, (bool*)dst, (f32*)src1, (f32*)src2); break;
+        case Bytecode_Type::FLOAT64: handle_ir_operation_order_comparison(operation, (bool*)dst, (f64*)src1, (f64*)src2); break;
+        default: panic("");
+        }
+        break;
+    }
+    
+    case IR_Operation::EQUAL:
+    case IR_Operation::NOT_EQUAL:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::INT8:    handle_ir_operation_equals(operation, (bool*)dst, (i8*)src1, (i8*)src2); break;
+        case Bytecode_Type::INT16:   handle_ir_operation_equals(operation, (bool*)dst, (i16*)src1, (i16*)src2); break;
+        case Bytecode_Type::INT32:   handle_ir_operation_equals(operation, (bool*)dst, (i32*)src1, (i32*)src2); break;
+        case Bytecode_Type::INT64:   handle_ir_operation_equals(operation, (bool*)dst, (i64*)src1, (i64*)src2); break;
+        case Bytecode_Type::UINT8:   handle_ir_operation_equals(operation, (bool*)dst, (u8*)src1, (u8*)src2); break;
+        case Bytecode_Type::UINT16:  handle_ir_operation_equals(operation, (bool*)dst, (u16*)src1, (u16*)src2); break;
+        case Bytecode_Type::UINT32:  handle_ir_operation_equals(operation, (bool*)dst, (u32*)src1, (u32*)src2); break;
+        case Bytecode_Type::UINT64:  handle_ir_operation_equals(operation, (bool*)dst, (u64*)src1, (u64*)src2); break;
+        case Bytecode_Type::FLOAT32: handle_ir_operation_equals(operation, (bool*)dst, (f32*)src1, (f32*)src2); break;
+        case Bytecode_Type::FLOAT64: handle_ir_operation_equals(operation, (bool*)dst, (f64*)src1, (f64*)src2); break;
+        default: panic("");
+        }
+        break;
+    }
+
+    case IR_Operation::AND: { *(bool*)dst = *(bool*)src1 && *(bool*)src2; break; }
+    case IR_Operation::OR:  { *(bool*)dst = *(bool*)src1 || *(bool*)src2; break; }
+    case IR_Operation::NOT: { *(bool*)dst = !(*(bool*)src1); break; }
+
+    case IR_Operation::DIVISION:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::INT8:   if ( *(i8*)src2 == 0) { return false; } *(i8*)dst  =  *(i8*)src1 / *(i8*)src2; break;
+        case Bytecode_Type::INT16:  if (*(i16*)src2 == 0) { return false; } *(i16*)dst = *(i16*)src1 / *(i16*)src2; break;
+        case Bytecode_Type::INT32:  if (*(i32*)src2 == 0) { return false; } *(i32*)dst = *(i32*)src1 / *(i32*)src2; break; 
+        case Bytecode_Type::INT64:  if (*(i64*)src2 == 0) { return false; } *(i64*)dst = *(i64*)src1 / *(i64*)src2; break;
+        case Bytecode_Type::UINT8:  if ( *(u8*)src2 == 0) { return false; } *(u8*)dst  =  *(u8*)src1 / *(u8*)src2; break;
+        case Bytecode_Type::UINT16: if (*(u16*)src2 == 0) { return false; } *(u16*)dst = *(u16*)src1 / *(u16*)src2; break;
+        case Bytecode_Type::UINT32: if (*(u32*)src2 == 0) { return false; } *(u32*)dst = *(u32*)src1 / *(u32*)src2; break;
+        case Bytecode_Type::UINT64: if (*(u64*)src2 == 0) { return false; } *(u64*)dst = *(u64*)src1 / *(u64*)src2; break;
+        case Bytecode_Type::FLOAT32:  *(f32*)dst = *(f32*)src1 / *(f32*)src2; break;
+        case Bytecode_Type::FLOAT64:  *(f64*)dst = *(f64*)src1 / *(f64*)src2; break;
+        default: panic("");
+        }
+        break;
+    }
+    case IR_Operation::MODULO:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::INT8:   if ( *(i8*)src2 == 0) { return false; } *(i8*)dst  =  *(i8*)src1 % *(i8*)src2; break;
+        case Bytecode_Type::INT16:  if (*(i16*)src2 == 0) { return false; } *(i16*)dst = *(i16*)src1 % *(i16*)src2; break;
+        case Bytecode_Type::INT32:  if (*(i32*)src2 == 0) { return false; } *(i32*)dst = *(i32*)src1 % *(i32*)src2; break; 
+        case Bytecode_Type::INT64:  if (*(i64*)src2 == 0) { return false; } *(i64*)dst = *(i64*)src1 % *(i64*)src2; break;
+        case Bytecode_Type::UINT8:  if ( *(u8*)src2 == 0) { return false; } *(u8*)dst  =  *(u8*)src1 % *(u8*)src2; break;
+        case Bytecode_Type::UINT16: if (*(u16*)src2 == 0) { return false; } *(u16*)dst = *(u16*)src1 % *(u16*)src2; break;
+        case Bytecode_Type::UINT32: if (*(u32*)src2 == 0) { return false; } *(u32*)dst = *(u32*)src1 % *(u32*)src2; break;
+        case Bytecode_Type::UINT64: if (*(u64*)src2 == 0) { return false; } *(u64*)dst = *(u64*)src1 % *(u64*)src2; break;
+        default: panic("");
+        }
+        break;
+    }
+
+    case IR_Operation::BITWISE_NOT:
+    case IR_Operation::BITWISE_AND:
+    case IR_Operation::BITWISE_OR:
+    case IR_Operation::BITWISE_XOR:
+    case IR_Operation::BITWISE_SHIFT_LEFT:
+    case IR_Operation::BITWISE_SHIFT_RIGHT:
+	case IR_Operation::HIGHEST_SET_BIT:
+	case IR_Operation::LOWEST_SET_BIT:
+    {
+        u64 value1 = 0;
+        switch (src_type)
+        {
+        case Bytecode_Type::UINT8:  value1 = *(u8*)src1; break;
+        case Bytecode_Type::UINT16: value1 = *(u16*)src1; break;
+        case Bytecode_Type::UINT32: value1 = *(u32*)src1; break;
+        case Bytecode_Type::UINT64: value1 = *(u64*)src1; break;
+        default: panic("");
+        }
+
+        u64 value2 = 0;
+        if (argument_count == 2) 
+        {
+            switch (right_type)
+            {
+            case Bytecode_Type::UINT8:  value2 = *(u8*)src2; break;
+            case Bytecode_Type::UINT16: value2 = *(u16*)src2; break;
+            case Bytecode_Type::UINT32: value2 = *(u32*)src2; break;
+            case Bytecode_Type::UINT64: value2 = *(u64*)src2; break;
+            default: panic("");
+            }
+        }
+
+        u64 result = 0;
+        switch (operation)
+        {
+        case IR_Operation::BITWISE_NOT:         result = ~value1; break;
+        case IR_Operation::BITWISE_AND:         result = value1 & value2; break;
+        case IR_Operation::BITWISE_OR:          result = value1 | value2; break;
+        case IR_Operation::BITWISE_XOR:         result = value1 ^ value2; break;
+        case IR_Operation::BITWISE_SHIFT_LEFT:  result = value1 << value2; break;
+        case IR_Operation::BITWISE_SHIFT_RIGHT: result = value1 >> value2; break;
+	    case IR_Operation::HIGHEST_SET_BIT:     result = integer_highest_set_bit_index(value1); break;
+        case IR_Operation::LOWEST_SET_BIT:      result = integer_lowest_set_bit_index(value1); break;
+        default: panic("");
+        }
+
+        switch (dst_type)
+        {
+        case Bytecode_Type::UINT8:  *(i8*)dst  = result; break;
+        case Bytecode_Type::UINT16: *(i16*)dst = result; break;
+        case Bytecode_Type::UINT32: *(i32*)dst = result; break;
+        case Bytecode_Type::UINT64: *(i64*)dst = result; break;
+        default: panic("");
+        }
+
+        break;
+    }
+
+    // Float binops
+	case IR_Operation::FLOAT_MODULO:
+	case IR_Operation::FLOAT_REMAINDER:
+	case IR_Operation::ATAN2:
+	case IR_Operation::POW:
+    {
+        f32(*binop_fn_f32)(f32 a, f32 b) = nullptr;
+        f64(*binop_fn_f64)(f64 a, f64 b) = nullptr;
+
+        switch (operation)
+        {
+        case IR_Operation::FLOAT_MODULO:    binop_fn_f64 = fmod; binop_fn_f32 = fmodf; break;
+	    case IR_Operation::FLOAT_REMAINDER: binop_fn_f64 = remainder; binop_fn_f32 = remainderf; break;
+	    case IR_Operation::ATAN2:           binop_fn_f64 = atan2; binop_fn_f32 = atan2f; break;
+	    case IR_Operation::POW:             binop_fn_f64 = pow; binop_fn_f32 = powf; break;
+        default: panic("");
+        }
+
+        switch (src_type)
+        {
+        case Bytecode_Type::FLOAT32: *(f32*)dst = binop_fn_f32(*(f32*)src1, *(f32*)src2); break;
+        case Bytecode_Type::FLOAT64: *(f32*)dst = binop_fn_f64(*(f32*)src1, *(f32*)src2); break;
+        default: panic("");
+        }
+        break;
+    }
+
+    case IR_Operation::FLOAT_ABS: 
+	case IR_Operation::ROUND_UP:       
+	case IR_Operation::ROUND_DOWN:        
+	case IR_Operation::ROUND_TOWARDS_ZERO:
+	case IR_Operation::ROUND_NEAREST:
+	case IR_Operation::EXP:
+	case IR_Operation::LN:
+	case IR_Operation::LOG10:
+	case IR_Operation::LOG2:
+	case IR_Operation::SQUARE_ROOT:
+	case IR_Operation::CUBE_ROOT:
+	case IR_Operation::SIN:
+	case IR_Operation::COS:
+	case IR_Operation::TAN:
+	case IR_Operation::ASIN:
+	case IR_Operation::ACOS:
+	case IR_Operation::ATAN:
+	case IR_Operation::SINH:
+	case IR_Operation::COSH:
+	case IR_Operation::TANH:
+	case IR_Operation::ASINH:
+	case IR_Operation::ACOSH:
+	case IR_Operation::ATANH:
+    {
+        f32(*unop_fn_f32)(f32 a) = nullptr;
+        f64(*unop_fn_f64)(f64 a) = nullptr;
+
+        switch (operation)
+        {
+        case IR_Operation::FLOAT_ABS:     unop_fn_f64 = fabs;  unop_fn_f32 = fabsf; break;
+	    case IR_Operation::ROUND_UP:           unop_fn_f64 = ceil;  unop_fn_f32 = ceilf; break;
+	    case IR_Operation::ROUND_DOWN:         unop_fn_f64 = floor; unop_fn_f32 = floorf; break;
+	    case IR_Operation::ROUND_TOWARDS_ZERO: unop_fn_f64 = trunc; unop_fn_f32 = truncf; break;
+	    case IR_Operation::ROUND_NEAREST:      unop_fn_f64 = round; unop_fn_f32 = roundf; break;
+	    case IR_Operation::EXP:                unop_fn_f64 = exp;   unop_fn_f32 = expf; break;
+	    case IR_Operation::LN:                 unop_fn_f64 = log;   unop_fn_f32 = logf; break;
+	    case IR_Operation::LOG10:              unop_fn_f64 = log10; unop_fn_f32 = log10f; break;
+	    case IR_Operation::LOG2:               unop_fn_f64 = log2;  unop_fn_f32 = log2f; break;
+	    case IR_Operation::SQUARE_ROOT:        unop_fn_f64 = sqrt;  unop_fn_f32 = sqrtf; break;
+	    case IR_Operation::CUBE_ROOT:          unop_fn_f64 = cbrt;  unop_fn_f32 = cbrtf; break;
+	    case IR_Operation::SIN:                unop_fn_f64 = sin;   unop_fn_f32 = sinf; break;
+	    case IR_Operation::COS:                unop_fn_f64 = cos;   unop_fn_f32 = cosf; break;
+	    case IR_Operation::TAN:                unop_fn_f64 = tan;   unop_fn_f32 = tanf; break;
+	    case IR_Operation::ASIN:               unop_fn_f64 = asin;  unop_fn_f32 = asinf; break;
+	    case IR_Operation::ACOS:               unop_fn_f64 = acos;  unop_fn_f32 = acosf; break;
+	    case IR_Operation::ATAN:               unop_fn_f64 = atan;  unop_fn_f32 = atanf; break;
+	    case IR_Operation::SINH:               unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
+	    case IR_Operation::COSH:               unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
+	    case IR_Operation::TANH:               unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
+	    case IR_Operation::ASINH:              unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
+	    case IR_Operation::ACOSH:              unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
+	    case IR_Operation::ATANH:              unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
+        default: panic("");
+        }
+
+        switch (src_type)
+        {
+        case Bytecode_Type::FLOAT32: *(f32*)dst = unop_fn_f32(*(f32*)src1); break;
+        case Bytecode_Type::FLOAT64: *(f32*)dst = unop_fn_f64(*(f32*)src1); break;
+        default: panic("");
+        }
+        break;
+
+        break;
+    }
+	case IR_Operation::IS_NAN:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::FLOAT32: *(bool*)dst = isnan(*(f32*)src1); break;
+        case Bytecode_Type::FLOAT64: *(bool*)dst = isnan(*(f64*)src1); break;
+        default: panic("");
+        }
+        break;
+    }
+	case IR_Operation::IS_FINITE:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::FLOAT32: *(bool*)dst = isfinite(*(f32*)src1); break;
+        case Bytecode_Type::FLOAT64: *(bool*)dst = isfinite(*(f64*)src1); break;
+        default: panic("");
+        }
+        break;
+    }
+	case IR_Operation::IS_INFINITE:
+    {
+        switch (src_type)
+        {
+        case Bytecode_Type::FLOAT32: *(bool*)dst = isinf(*(f32*)src1); break;
+        case Bytecode_Type::FLOAT64: *(bool*)dst = isinf(*(f64*)src1); break;
+        default: panic("");
+        }
+        break;
+    }
+    default: panic("");
+    }
+
+    return true;
+}
+

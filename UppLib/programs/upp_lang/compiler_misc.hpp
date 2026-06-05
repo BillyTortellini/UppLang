@@ -103,6 +103,105 @@ enum class Extern_Compiler_Setting
 	MAX_ENUM_VALUE
 };
 
+enum class IR_Operation
+{
+    MOVE,
+    PRIMITIVE_CAST, // Also includes pointer casts and rawptr <-> usize
+
+    // Arithmetic
+    ADDITION,
+    SUBTRACTION,
+    DIVISION,
+    MULTIPLICATION,
+    MODULO,
+    NEGATE,
+
+    // Comparisons
+    EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_OR_EQUAL,
+    GREATER,
+    GREATER_OR_EQUAL,
+
+    // Logic
+    AND,
+    OR,
+    NOT,
+
+    // Bit-Operations
+    BITWISE_NOT,
+    BITWISE_AND,
+    BITWISE_OR,
+    BITWISE_XOR,
+    BITWISE_SHIFT_LEFT,
+    BITWISE_SHIFT_RIGHT,
+	HIGHEST_SET_BIT,
+	LOWEST_SET_BIT,
+
+    // Floating-point math
+	FLOAT_ABS,
+	FLOAT_MODULO,
+	FLOAT_REMAINDER,
+	ROUND_UP,        // Rounds towards infinity
+	ROUND_DOWN,        // Rounds towards negative infinity
+	ROUND_TOWARDS_ZERO,   // Rounds towards 0
+	ROUND_NEAREST,        // Rounds towards nearest int, away from 0 in halfway cases
+
+	EXP,
+	LN, // base e
+	LOG10,
+	LOG2,
+	POW,
+	SQUARE_ROOT,
+	CUBE_ROOT,
+
+	SIN,
+	COS,
+	TAN,
+	ASIN,
+	ACOS,
+	ATAN,
+	ATAN2,
+
+	SINH,
+	COSH,
+	TANH,
+	ASINH,
+	ACOSH,
+	ATANH,
+
+	IS_NAN,
+	IS_FINITE,
+	IS_INFINITE,
+
+	MAX_ENUM_VALUE
+};
+
+enum class IR_Builtin_Function
+{
+	TYPE_INFO,
+
+	MEMORY_COPY,
+	MEMORY_COPY_NO_OVERLAP,
+	MEMORY_ZERO,
+	MEMORY_COMPARE,
+
+	SYSTEM_ALLOC,
+	SYSTEM_FREE,
+
+	PRINT_I32,
+	PRINT_F32,
+	PRINT_BOOL,
+	PRINT_LINE,
+	PRINT_STRING,
+	READ_I32,
+	READ_F32,
+	READ_BOOL,
+
+	MAX_ENUM_VALUE
+};
+
 enum class Hardcoded_Type
 {
 	TYPE_OF,
@@ -129,11 +228,6 @@ enum class Hardcoded_Type
 	SYSTEM_ALLOC,
 	SYSTEM_FREE,
 
-	HIGHEST_SET_BIT_U32,
-	HIGHEST_SET_BIT_U64,
-	LOWEST_SET_BIT_U32,
-	LOWEST_SET_BIT_U64,
-
 	// Hardcoded IO
 	PRINT_I32,
 	PRINT_F32,
@@ -144,83 +238,51 @@ enum class Hardcoded_Type
 	READ_F32,
 	READ_BOOL,
 
+	// Unsigned integer functions
 	BITWISE_NOT,
+	HIGHEST_SET_BIT, // Always returns u32, 0 if input is 0
+	LOWEST_SET_BIT,
 	BITWISE_AND,
 	BITWISE_OR,
 	BITWISE_XOR,
-	BITWISE_SHIFT_LEFT,
-	BITWISE_SHIFT_RIGHT,
+	BITSHIFT_LEFT, 
+	BITSHIFT_RIGHT,
 
 	// Floating point math starts here
-	F32_ABSOLUTE,
-	F32_MODULO,
-	F32_REMAINDER,
-	F32_CEIL,     // Rounds towards infinity
-	F32_FLOOR,    // Rounds towards negative infinity
-	F32_TRUNCATE, // Rounds towards 0
-	F32_ROUND_NEAREST, // Rounds towards nearest int, away from 0 in halfway cases
+	FLOAT_ABS,
+	FLOAT_MODULO,
+	FLOAT_REMAINDER,
+	CEIL,     // Rounds towards infinity
+	FLOOR,    // Rounds towards negative infinity
+	TRUNCATE, // Rounds towards 0
+	ROUND_NEAREST, // Rounds towards nearest int, away from 0 in halfway cases
 
-	F32_EXP,
-	F32_LN, // base e
-	F32_LOG10,
-	F32_LOG2,
-	F32_POW,
-	F32_SQUARE_ROOT,
-	F32_CUBE_ROOT,
+	EXP,
+	LN, // base e
+	LOG10,
+	LOG2,
+	POW,
+	SQUARE_ROOT,
+	CUBE_ROOT,
 
-	F32_SIN,
-	F32_COS,
-	F32_TAN,
-	F32_ASIN,
-	F32_ACOS,
-	F32_ATAN,
-	F32_ATAN2,
+	SIN,
+	COS,
+	TAN,
+	ASIN,
+	ACOS,
+	ATAN,
+	ATAN2,
 
-	F32_SINH,
-	F32_COSH,
-	F32_TANH,
-	F32_ASINH,
-	F32_ACOSH,
-	F32_ATANH,
+	SINH,
+	COSH,
+	TANH,
+	ASINH,
+	ACOSH,
+	ATANH,
 
-	F32_IS_NAN,
-	F32_IS_FINITE,
-	F32_IS_INFINITE,
-
-	F64_ABSOLUTE,
-	F64_MODULO,
-	F64_REMAINDER,
-	F64_CEIL,     // Rounds towards infinity
-	F64_FLOOR,    // Rounds towards negative infinity
-	F64_TRUNCATE, // Rounds towards 0
-	F64_ROUND_NEAREST, // Rounds towards nearest int, away from 0 in halfway cases
-
-	F64_EXP,
-	F64_LN, // base e
-	F64_LOG10,
-	F64_LOG2,
-	F64_POW,
-	F64_SQUARE_ROOT,
-	F64_CUBE_ROOT,
-
-	F64_SIN,
-	F64_COS,
-	F64_TAN,
-	F64_ASIN,
-	F64_ACOS,
-	F64_ATAN,
-	F64_ATAN2,
-
-	F64_SINH,
-	F64_COSH,
-	F64_TANH,
-	F64_ASINH,
-	F64_ACOSH,
-	F64_ATANH,
-
-	F64_IS_NAN,
-	F64_IS_FINITE,
-	F64_IS_INFINITE,
+	IS_NAN,
+	IS_FINITE,
+	IS_INFINITE,
 
 	MAX_ENUM_VALUE
 };
@@ -230,21 +292,23 @@ enum class Hardcoded_Type_Class
 	UTILITY,
 	INPUT,
 	OUTPUT,
-	BITWISE_OPERATION,
-	F32_UNARY,
-	F32_BINARY,
-	F32_PREDICATE,
-	F64_UNARY,
-	F64_BINARY,
-	F64_PREDICATE,
+	BITWISE_BINOP,
+	BITWISE_NOT,
+	BITSHIFT,
+	BIT_INDEX,
+	FLOAT_UNARY,
+	FLOAT_BINARY,
+	FLOAT_PREDICATE,
+
+	MAX_ENUM_VALUE
 };
 
 struct Hardcoded_Type_Info
 {
 	Hardcoded_Type_Class type_class;
-	const char* cstring;
 	const char* symbol_name;
-	const char* c_impl_name;
+	IR_Operation ir_operation; // -1 if no op exists
+	IR_Builtin_Function builtin_fn; // -1 if not a builtin
 };
 Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type);
 

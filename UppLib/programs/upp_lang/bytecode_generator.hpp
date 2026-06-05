@@ -33,6 +33,7 @@ enum class Bytecode_Type
     BOOL
 };
 Bytecode_Type datatype_to_bytecode_type(Datatype* primitive);
+int bytecode_type_get_byte_size(Bytecode_Type type);
 
 enum class Instruction_Type
 {
@@ -52,7 +53,7 @@ enum class Instruction_Type
     JUMP_ON_INT_EQUAL, // op1 = instruction_index, op2 = cnd_reg, op3 = int_value
     CALL_FUNCTION, // Pushes return address, op1 = function_index+1, op2 = stack_offset for new frame
     CALL_FUNCTION_POINTER, // op1 = src_reg, op2 = stack_offset for new frame
-    CALL_HARDCODED_FUNCTION, // op1 = hardcoded_function_type, op2 = stack_offset for new frame
+    CALL_BUILTIN_FUNCTION, // op1 = builtin_function, op2 = stack_offset for new frame (Parameter locations)
     RETURN, // Returns to previously called function, return-value should be stored on correct place on the stack by this point
     EXIT, // op1 = exit_code, op2 + op3 = Encoded pointer to error msg, see 
 
@@ -61,35 +62,8 @@ enum class Instruction_Type
     LOAD_FUNCTION_LOCATION, // op1 = dest_reg, op2 = function_slot_index (Update: Only puts function_slot_index + 1 as i64 into dest_reg)
     LOAD_CONSTANT_ADDRESS, // op1 = dest_reg, op2 = constant index
 
-    CAST_PRIMITIVE_TYPES,  // op1 = dst_reg, op2 = src_reg, op3 = dst_type, op4 = src_type
-
-    // Binary operations work the following: op1 = dest_byte_offset, op2 = left_byte_offset, op3 = right_byte_offset, op4 = bytecode_type
-    BINARY_OP_ADDITION,
-    BINARY_OP_SUBTRACTION,
-    BINARY_OP_MULTIPLICATION,
-    BINARY_OP_DIVISION,
-    BINARY_OP_EQUAL,
-    BINARY_OP_NOT_EQUAL,
-    BINARY_OP_GREATER_THAN,
-    BINARY_OP_GREATER_EQUAL,
-    BINARY_OP_LESS_THAN,
-    BINARY_OP_LESS_EQUAL,
-    BINARY_OP_MODULO,
-    BINARY_OP_AND,
-    BINARY_OP_OR,
-
-    BINARY_OP_BITWISE_AND,
-    BINARY_OP_BITWISE_OR,
-    BINARY_OP_BITWISE_XOR,
-    BINARY_OP_BITWISE_SHIFT_LEFT,
-    BINARY_OP_BITWISE_SHIFT_RIGHT,
-
-    // Unary operations work the following: op1 = dest_byte_offset, op2 = operand_offset, op3 = bytecode_type
-    UNARY_OP_NEGATE,
-    UNARY_OP_NOT,
-    UNARY_OP_BITWISE_NOT,
-    UNARY_OP_HIGHEST_SET_BIT,
-    UNARY_OP_LOWEST_SET_BIT,
+    // op1 = dst_reg, op2 = src1, op3 = src2, op4 = packed operation_type + src/dst-type
+    IR_OPERATION, 
 };
 
 struct Bytecode_Instruction
@@ -105,3 +79,8 @@ void bytecode_generator_compile_function(Compilation_Data* compilation_data, Upp
 void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction instruction);
 void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string);
 Exit_Code exit_code_from_exit_instruction(Bytecode_Instruction& exit_instr);
+
+int bytecode_pack_operation_and_types_to_int(IR_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type);
+void bytecode_unpack_operation_and_types_from_int(
+    int value, IR_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right
+);

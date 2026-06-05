@@ -484,7 +484,6 @@ struct Call_Info
         Upp_Function* function;
 		Upp_Struct* struct_instance;
 		Upp_Struct* struct_pattern;
-		Datatype* bitwise_primitive_type; // For bitwise hardcoded functions, could also be usize or isize
 		struct 
 		{
 			bool subtype_valid;
@@ -504,6 +503,7 @@ enum class Expression_Context_Type
 struct Expression_Context
 {
     Expression_Context_Type type;
+    bool error_if_type_not_matched;
     Datatype* datatype;
 };
 

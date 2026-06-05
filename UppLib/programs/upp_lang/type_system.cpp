@@ -217,8 +217,8 @@ void datatype_append_value_to_string(
         string_append(string, "UNKNOWN_TYPE");
         break;
     }
-    case Datatype_Type::INVALID_TYPE: {
-        string_append(string, "INVALID_TYPE");
+    case Datatype_Type::VOID_TYPE: {
+        string_append(string, "VOID_TYPE");
         break;
     }
     case Datatype_Type::PATTERN_VARIABLE: {
@@ -453,78 +453,28 @@ void datatype_append_value_to_string(
         auto primitive = downcast<Datatype_Primitive>(type);
         int size = primitive->base.memory_info.value.size;
 
-        switch (primitive_type_get_class(primitive->primitive_type))
-        {
-        case Primitive_Class::BOOLEAN: {
-            bool val = false;
-            if (!local_memory.read_single_value(value_ptr, &val)) {
-                string_append(string, "PRIMITIVE_ACCESS_ERROR");
-                break;
-            }
-            string_append_formated(string, "%s", val ? "TRUE" : "FALSE");
+		char value_buffer[8];
+		void* data = &value_buffer[0];
+        if (!local_memory.read(data, value_ptr, size)) {
+            string_append(string, "PRIMITIVE_ACCESS_ERROR");
             break;
         }
-        case Primitive_Class::INTEGER: {
-            int value = 0;
-            bool success = true;
 
-            u8 buffer[8];
-            void* buffer_ptr = &buffer[0];
-
-            if (!local_memory.read(buffer_ptr, value_ptr, size)) {
-                string_append(string, "PRIMITIVE_ACCESS_ERROR");
-                break;
-            }
-            if (primitive->is_signed())
-            {
-                switch (size)
-                {
-                case 1: value = (i32) * (i8*)buffer_ptr; break;
-                case 2: value = (i32) * (i16*)buffer_ptr; break;
-                case 4: value = (i32) * (i32*)buffer_ptr; break;
-                case 8: value = (i32) * (i64*)buffer_ptr; break;
-                default: panic("HEY");
-                }
-            }
-            else
-            {
-                switch (size)
-                {
-                case 1: value = (i32) * (u8*)buffer_ptr; break;
-                case 2: value = (i32) * (u16*)buffer_ptr; break;
-                case 4: value = (i32) * (u32*)buffer_ptr; break;
-                case 8: value = (i32) * (u64*)buffer_ptr; break;
-                default: panic("HEY");
-                }
-            }
-            string_append_formated(string, "%d", value);
-            break;
-        }
-        case Primitive_Class::FLOAT: 
+		switch (primitive->primitive_type)
 		{
-            if (size == 4) {
-                float value = 0.0f;
-                if (!local_memory.read_single_value(value_ptr, &value)) {
-                    string_append(string, "PRIMITIVE_ACCESS_ERROR");
-                    break;
-                }
-                string_append_formated(string, "%4.3f", value);
-            }
-            else if (size == 8) {
-                double value = 0.0f;
-                if (!local_memory.read_single_value(value_ptr, &value)) {
-                    string_append(string, "PRIMITIVE_ACCESS_ERROR");
-                    break;
-                }
-                string_append_formated(string, "%4.3f", value);
-            }
-            else {
-                panic("HEY"); 
-            }
-            break;
-        }
-        default: panic("HEY");
-        }
+		case Primitive_Type::I8:  string->append_formated("%d",   *(i8*)data); break;
+		case Primitive_Type::I16: string->append_formated("%d",   *(i16*)data); break;
+		case Primitive_Type::I32: string->append_formated("%d",   *(i32*)data); break;
+		case Primitive_Type::I64: string->append_formated("%lld", *(i64*)data); break;
+		case Primitive_Type::U8:  string->append_formated("%u",   *(u8*)data); break;
+		case Primitive_Type::U16: string->append_formated("%u",   *(u16*)data); break;
+		case Primitive_Type::U32: string->append_formated("%u",   *(u32*)data); break;
+		case Primitive_Type::U64: string->append_formated("%llu", *(u64*)data); break;
+		case Primitive_Type::F32: string->append_formated("%f",   *(f32*)data); break;
+		case Primitive_Type::F64: string->append_formated("%f",   *(f64*)data); break;
+		case Primitive_Type::BOOLEAN: string->append((*(bool*)data) ? "TRUE" : "FALSE"); break;
+		default: panic("");
+		}
         break;
     }
     default: panic("HEY");
@@ -625,8 +575,8 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
     case Datatype_Type::UNKNOWN_TYPE:
         string->append("Unknown-Type");
         break;
-    case Datatype_Type::INVALID_TYPE:
-        string->append("Invalid-Type");
+    case Datatype_Type::VOID_TYPE:
+        string->append("Void-Type");
         break;
     case Datatype_Type::POINTER: {
         auto pointer_type = downcast<Datatype_Pointer>(datatype);
@@ -645,7 +595,7 @@ void datatype_append_to_string(Datatype* datatype, String* string, Type_System* 
         {
         case Primitive_Class::BOOLEAN: string->append("bool"); break;
         case Primitive_Class::INTEGER: {
-            string->append_formated("%s%d", (primitive->is_signed() ? "i" : "u"), memory.size * 8); break;
+            string->append_formated("%s%d", (datatype_is_unsigned_int(datatype) ? "u" : "i"), memory.size * 8); break;
             break;
         }
         case Primitive_Class::FLOAT: {
@@ -1590,9 +1540,9 @@ void type_system_add_predefined_types(Type_System* type_system)
 		*types->unknown_type = datatype_make_simple_base(Datatype_Type::UNKNOWN_TYPE, 1, 1);
 		type_system_register_type(types->unknown_type, type_system);
 
-		types->invalid_type = arena->allocate<Datatype>();
-		*types->invalid_type = datatype_make_simple_base(Datatype_Type::INVALID_TYPE, 1, 1);
-		type_system_register_type(types->invalid_type, type_system);
+		types->void_type = arena->allocate<Datatype>();
+		*types->void_type = datatype_make_simple_base(Datatype_Type::VOID_TYPE, 1, 1);
+		type_system_register_type(types->void_type, type_system);
 
 		types->empty_pattern_variable = upcast(type_system_make_pattern_variable_type(type_system, nullptr));
 	}
@@ -1882,6 +1832,26 @@ bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled)
 		));
 }
 
+bool datatype_is_unsigned_int(Datatype* datatype)
+{
+	if (datatype->type == Datatype_Type::PRIMITIVE)
+	{
+		auto primitive_type = downcast<Datatype_Primitive>(datatype)->primitive_type;
+		return
+			primitive_type == Primitive_Type::U8 ||
+			primitive_type == Primitive_Type::U16 ||
+			primitive_type == Primitive_Type::U32 ||
+			primitive_type == Primitive_Type::U64;
+	}
+
+	return
+		datatype_is_builtin_type(datatype, Builtin_Type::USIZE) ||
+		datatype_is_builtin_type(datatype, Builtin_Type::C_CHAR) ||
+		datatype_is_builtin_type(datatype, Builtin_Type::CODE_POINT) ||
+		datatype_is_builtin_type(datatype, Builtin_Type::TYPE_HANDLE);
+		// datatype->type == Datatype_Type::ENUM // Not sure about enums...
+}
+
 bool datatype_is_builtin_type(Datatype* datatype, Builtin_Type builtin_type)
 {
 	if (datatype->type != Datatype_Type::BUILT_IN) return false;
@@ -1896,7 +1866,7 @@ bool datatype_type_references_subtypes(Datatype_Type datatype_type)
 		case Datatype_Type::BUILT_IN:
 		case Datatype_Type::ENUM:
 		case Datatype_Type::UNKNOWN_TYPE:
-		case Datatype_Type::INVALID_TYPE:
+		case Datatype_Type::VOID_TYPE:
 			return false;
 		case Datatype_Type::ARRAY:
 		case Datatype_Type::SLICE:
@@ -1959,16 +1929,6 @@ Upp_String upp_string_empty() {
 	result.data = nullptr;
 	result.size = 0;
 	return result;
-}
-
-bool Datatype_Primitive::is_signed()
-{
-	return !(
-		primitive_type == Primitive_Type::U8 ||
-		primitive_type == Primitive_Type::U16 ||
-		primitive_type == Primitive_Type::U32 ||
-		primitive_type == Primitive_Type::U64 
-	);
 }
 
 Primitive_Class Datatype_Primitive::get_class() {

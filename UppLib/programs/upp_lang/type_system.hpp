@@ -58,9 +58,8 @@ enum class Datatype_Type
     ENUM,
     PATTERN_VARIABLE, // For polymorphism
     UNKNOWN_TYPE, // For error propagation
-    // Accessing invalids in compiler should crash the compiler
-    //   Created by expressions that don't really have a type, like Poly_Struct/Poly_Function/Nothing...
-    INVALID_TYPE,
+    // For the result-type of expressions without results
+    VOID_TYPE,
 };
 
 struct Datatype_Memory_Info
@@ -120,7 +119,6 @@ struct Datatype_Primitive
     Datatype base;
     Primitive_Type primitive_type;
 
-    bool is_signed();
     Primitive_Class get_class();
     Datatype* upcast();
 };
@@ -382,7 +380,7 @@ struct Predefined_Types
     Datatype_Builtin* any_type;
 
     Datatype* unknown_type;
-    Datatype* invalid_type;
+    Datatype* void_type;
     Datatype* empty_struct_type; // Required for now as empty return type
     Datatype* empty_pattern_variable;
 
@@ -443,6 +441,7 @@ Primitive_Class primitive_type_get_class(Primitive_Type primitive_type);
 bool datatype_is_builtin_type(Datatype* datatype, Builtin_Type builtin_type);
 bool datatype_is_primitive_class(Datatype* datatype, Primitive_Class primitive_class);
 bool datatype_is_integer(Datatype* datatype, bool require_operations_enabled);
+bool datatype_is_unsigned_int(Datatype* datatype);
 bool datatype_type_references_subtypes(Datatype_Type datatype_type);
 
 

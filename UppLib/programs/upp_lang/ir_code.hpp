@@ -2,6 +2,7 @@
 
 #include "../../datastructures/dynamic_array.hpp"
 #include "../../datastructures/hashtable.hpp"
+#include "compiler_misc.hpp"
 #include "semantic_analyser.hpp"
 
 struct IR_Data_Access;
@@ -63,12 +64,6 @@ struct IR_Data_Access
     } option;
 };
 
-struct IR_Instruction_Move
-{
-    IR_Data_Access* destination;
-    IR_Data_Access* source;
-};
-
 struct IR_Instruction_If
 {
     IR_Data_Access* condition;
@@ -87,7 +82,7 @@ enum class IR_Instruction_Call_Type
 {
     FUNCTION_CALL,
     FUNCTION_POINTER_CALL,
-    HARDCODED_FUNCTION_CALL,
+    BUILTIN_CALL,
 };
 
 struct IR_Instruction_Call
@@ -97,7 +92,7 @@ struct IR_Instruction_Call
     {
         Upp_Function* function;
         IR_Data_Access* pointer_access;
-        Hardcoded_Type hardcoded;
+        IR_Builtin_Function builtin_fn;
     } options;
     Dynamic_Array<IR_Data_Access*> arguments;
     IR_Data_Access* destination;
@@ -120,57 +115,12 @@ struct IR_Instruction_Return
     } options;
 };
 
-enum class IR_Binop
+struct IR_Instruction_Operation
 {
-    ADDITION,
-    SUBTRACTION,
-    DIVISION,
-    MULTIPLICATION,
-    MODULO,
-
-    AND,
-    OR,
-    BITWISE_AND,
-    BITWISE_OR,
-    BITWISE_XOR,
-    BITWISE_SHIFT_LEFT,
-    BITWISE_SHIFT_RIGHT,
-
-    EQUAL,
-    NOT_EQUAL,
-    LESS,
-    LESS_OR_EQUAL,
-    GREATER,
-    GREATER_OR_EQUAL,
-};
-
-
-struct IR_Instruction_Binary_OP
-{
-    IR_Binop type;
+    IR_Operation type;
     IR_Data_Access* destination;
-    IR_Data_Access* operand_left;
-    IR_Data_Access* operand_right;
-};
-
-enum class IR_Unop
-{
-    NOT,
-    BITWISE_NOT,
-    NEGATE,
-};
-
-struct IR_Instruction_Unary_OP
-{
-    IR_Unop type;
-    IR_Data_Access* destination;
-    IR_Data_Access* source;
-};
-
-struct IR_Instruction_Primitive_Cast
-{
-    IR_Data_Access* destination;
-    IR_Data_Access* source;
+    IR_Data_Access* operand_1;
+    IR_Data_Access* operand_2; // Not always needed
 };
 
 struct IR_Instruction_Function_Address
@@ -219,22 +169,16 @@ struct IR_Instruction_Variable_Definition
 
 enum class IR_Instruction_Type
 {
-    FUNCTION_CALL,
     IF,
     WHILE,
     MATCH,
     BLOCK,
-
+    FUNCTION_CALL,
     LABEL,
     GOTO,
     RETURN,
-
-    MOVE,
-    CAST,
+    OPERATION,
     FUNCTION_ADDRESS,
-    UNARY_OP,
-    BINARY_OP,
-
     // Required for const variable initialization in C-Code
     // Note: not all registers have a variable definition instruction, as temporary register don't have Statements for these...
     VARIABLE_DEFINITION,
@@ -250,11 +194,8 @@ struct IR_Instruction
         IR_Instruction_While while_instr;
         IR_Instruction_Return return_instr;
         IR_Instruction_Switch switch_instr;
-        IR_Instruction_Move move;
-        IR_Instruction_Primitive_Cast cast;
         IR_Instruction_Function_Address function_address;
-        IR_Instruction_Unary_OP unary_op;
-        IR_Instruction_Binary_OP binary_op;
+        IR_Instruction_Operation operation;
         IR_Instruction_Variable_Definition variable_definition;
         IR_Code_Block* block;
         int label_index;
@@ -346,7 +287,12 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
 
 void ir_program_append_to_string(String* string, bool print_generated_functions, Compilation_Data* compilation_data);
 void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
-IR_Binop ast_binop_to_ir_binop(AST::Binop binop);
+
+const char* ir_operation_as_string(IR_Operation operation);
+IR_Operation ast_binop_to_ir_operation(AST::Binop binop);
+int ir_operation_parameter_count(IR_Operation operation);
+const char* ir_builtin_fn_as_string(IR_Builtin_Function fn);
+Hardcoded_Type ir_builtin_fn_to_hardcoded_type(IR_Builtin_Function fn);
 
 
 

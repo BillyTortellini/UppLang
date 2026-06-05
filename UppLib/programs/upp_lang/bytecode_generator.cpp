@@ -540,6 +540,26 @@ Bytecode_Type datatype_to_bytecode_type(Datatype* datatype)
     return Bytecode_Type::INT32;
 }
 
+int bytecode_type_get_byte_size(Bytecode_Type type)
+{
+    switch (type)
+    {
+    case Bytecode_Type::INT8: return 1;
+    case Bytecode_Type::INT16: return 2;
+    case Bytecode_Type::INT32: return 4;
+    case Bytecode_Type::INT64: return 8;
+    case Bytecode_Type::UINT8: return 1;
+    case Bytecode_Type::UINT16: return 2;
+    case Bytecode_Type::UINT32: return 4;
+    case Bytecode_Type::UINT64: return 8;
+    case Bytecode_Type::FLOAT32: return 4;
+    case Bytecode_Type::FLOAT64: return 8;
+    case Bytecode_Type::BOOL: return 1;
+    default: panic("");
+    }
+    return -1;
+}
+
 const char* bytecode_type_as_string(Bytecode_Type type) 
 {
     switch (type)
@@ -632,7 +652,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
         {
             IR_Instruction_Call* call = &instr->options.call;
 
-            bool call_handled = false;
             int function_pointer_stack_offset = -1;
             Call_Signature* signature = 0;
             switch (call->call_type)
@@ -644,55 +663,14 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 signature = downcast<Datatype_Function_Pointer>(call->options.pointer_access->datatype)->signature;
                 function_pointer_stack_offset = data_access_read_value(generator, call->options.pointer_access);
                 break;
-            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+            case IR_Instruction_Call_Type::BUILTIN_CALL:
             {
-                signature = compilation_data->hardcoded_function_signatures[(int)call->options.hardcoded];
-                Instruction_Type instruction_type = (Instruction_Type)-1;
-                Bytecode_Type bytecode_type = Bytecode_Type::UINT32;
-                switch (call->options.hardcoded)
-                {
-                case Hardcoded_Type::HIGHEST_SET_BIT_U32: {
-                    instruction_type = Instruction_Type::UNARY_OP_HIGHEST_SET_BIT;
-                    bytecode_type = Bytecode_Type::UINT32;
-                    break;
-                }
-                case Hardcoded_Type::LOWEST_SET_BIT_U32:  {
-                    instruction_type = Instruction_Type::UNARY_OP_LOWEST_SET_BIT;
-                    bytecode_type = Bytecode_Type::UINT32;
-                    break;
-                }
-                case Hardcoded_Type::HIGHEST_SET_BIT_U64:  {
-                    instruction_type = Instruction_Type::UNARY_OP_HIGHEST_SET_BIT;
-                    bytecode_type = Bytecode_Type::UINT64;
-                    break;
-                }
-                case Hardcoded_Type::LOWEST_SET_BIT_U64:  {
-                    instruction_type = Instruction_Type::UNARY_OP_LOWEST_SET_BIT;
-                    bytecode_type = Bytecode_Type::UINT64;
-                    break;
-                }
-                default: break;
-                }
-
-                if ((int)instruction_type != -1)
-                { 
-                    call_handled = true;
-                    bytecode_generator_add_instruction_and_set_destination(
-                        generator, call->destination,
-                        instruction_make_3(
-                            instruction_type,
-                            PLACEHOLDER, // Set to call->destination
-                            data_access_read_value(generator, call->arguments[0]),
-                            (int)bytecode_type
-                        )
-                    );
-                }
+                signature = compilation_data->hardcoded_function_signatures[
+                    (int)ir_builtin_fn_to_hardcoded_type(call->options.builtin_fn)
+                ];
                 break;
             }
             default: panic("Error");
-            }
-            if (call_handled) {
-                break;
             }
 
             Optional<Datatype*> return_type = signature->return_type();
@@ -737,9 +715,9 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 );
                 break;
             }
-            case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+            case IR_Instruction_Call_Type::BUILTIN_CALL:
                 bytecode_generator_add_instruction(generator,
-                    instruction_make_2(Instruction_Type::CALL_HARDCODED_FUNCTION, (i32)call->options.hardcoded, stack_frame_start_offset)
+                    instruction_make_2(Instruction_Type::CALL_BUILTIN_FUNCTION, (i32)call->options.builtin_fn, stack_frame_start_offset)
                 );
                 break;
             default: panic("Error");
@@ -894,8 +872,27 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             break;
         }
-        case IR_Instruction_Type::MOVE: {
-            bytecode_generator_move_accesses(generator, instr->options.move.destination, instr->options.move.source);
+        case IR_Instruction_Type::OPERATION:
+        {
+            auto& operation = instr->options.operation;
+            int param_count = ir_operation_parameter_count(operation.type);
+            bytecode_generator_add_instruction_and_set_destination
+            (
+                generator,
+                operation.destination,
+                instruction_make_4(
+                    Instruction_Type::IR_OPERATION, 
+                    PLACEHOLDER,
+                    data_access_read_value(generator, operation.operand_1),
+                    (param_count == 1 ? 0 : data_access_read_value(generator, operation.operand_2)),
+                    bytecode_pack_operation_and_types_to_int(
+                        operation.type, 
+                        datatype_to_bytecode_type(operation.destination->datatype),
+                        datatype_to_bytecode_type(operation.operand_1->datatype),
+                        (param_count == 1 ? Bytecode_Type::UINT64 : datatype_to_bytecode_type(operation.operand_2->datatype))
+                    )
+                )
+            );
             break;
         }
         case IR_Instruction_Type::VARIABLE_DEFINITION: {
@@ -905,21 +902,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             break;
         }
-        case IR_Instruction_Type::CAST:
-        {
-            IR_Instruction_Primitive_Cast* cast = &instr->options.cast;
-            bytecode_generator_add_instruction_and_set_destination(
-                generator,
-                cast->destination,
-                instruction_make_4(
-                    Instruction_Type::CAST_PRIMITIVE_TYPES, PLACEHOLDER,
-                    data_access_read_value(generator, cast->source),
-                    (int)datatype_to_bytecode_type(cast->destination->datatype), 
-                    (int)datatype_to_bytecode_type(cast->source->datatype)
-                )
-            );
-            break;
-        }
         case IR_Instruction_Type::FUNCTION_ADDRESS:
         {
             IR_Instruction_Function_Address* function_address = &instr->options.function_address;
@@ -927,70 +909,6 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
                 function_address->destination, instruction_make_2(
                     Instruction_Type::LOAD_FUNCTION_LOCATION, PLACEHOLDER, function_address->function->function_index)
             );
-            break;
-        }
-        case IR_Instruction_Type::BINARY_OP:
-        {
-            IR_Instruction_Binary_OP* binary_op = &instr->options.binary_op;
-            Bytecode_Instruction instr;
-            using AST::Binop;
-            switch (binary_op->type)
-            {
-            case IR_Binop::ADDITION: instr.instruction_type = Instruction_Type::BINARY_OP_ADDITION; break;
-            case IR_Binop::SUBTRACTION: instr.instruction_type = Instruction_Type::BINARY_OP_SUBTRACTION; break;
-            case IR_Binop::DIVISION: instr.instruction_type = Instruction_Type::BINARY_OP_DIVISION; break;
-            case IR_Binop::MULTIPLICATION: instr.instruction_type = Instruction_Type::BINARY_OP_MULTIPLICATION; break;
-            case IR_Binop::MODULO: instr.instruction_type = Instruction_Type::BINARY_OP_MODULO; break;
-            case IR_Binop::AND: instr.instruction_type = Instruction_Type::BINARY_OP_AND; break;
-            case IR_Binop::OR: instr.instruction_type = Instruction_Type::BINARY_OP_OR; break;
-            case IR_Binop::BITWISE_AND: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_AND; break;
-            case IR_Binop::BITWISE_OR: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_OR; break;
-            case IR_Binop::BITWISE_XOR: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_XOR; break;
-            case IR_Binop::BITWISE_SHIFT_LEFT: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT; break;
-            case IR_Binop::BITWISE_SHIFT_RIGHT: instr.instruction_type = Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT; break;
-            case IR_Binop::EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_EQUAL; break;
-            case IR_Binop::NOT_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_NOT_EQUAL; break;
-            case IR_Binop::LESS: instr.instruction_type = Instruction_Type::BINARY_OP_LESS_THAN; break;
-            case IR_Binop::LESS_OR_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_LESS_EQUAL; break;
-            case IR_Binop::GREATER: instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_THAN; break;
-            case IR_Binop::GREATER_OR_EQUAL: instr.instruction_type = Instruction_Type::BINARY_OP_GREATER_EQUAL; break;
-            default: panic("");
-            }
-
-            Datatype* operand_types = binary_op->operand_left->datatype;
-            if (datatype_is_pointer(operand_types, true, true, true)) {
-                instr.op4 = (int)Bytecode_Type::UINT64;
-            }
-            else {
-                instr.op4 = (int)datatype_to_bytecode_type(operand_types);
-            }
-            instr.op2 = data_access_read_value(generator, binary_op->operand_left);
-            instr.op3 = data_access_read_value(generator, binary_op->operand_right);
-            bytecode_generator_add_instruction_and_set_destination(generator, binary_op->destination, instr);
-            break;
-        }
-        case IR_Instruction_Type::UNARY_OP:
-        {
-            IR_Instruction_Unary_OP* unary_op = &instr->options.unary_op;
-            Bytecode_Instruction instr;
-            switch (unary_op->type)
-            {
-            case IR_Unop::NEGATE:
-                instr.instruction_type = Instruction_Type::UNARY_OP_NEGATE;
-                break;
-            case IR_Unop::NOT:
-                instr.instruction_type = Instruction_Type::UNARY_OP_NOT;
-                break;
-            case IR_Unop::BITWISE_NOT:
-                instr.instruction_type = Instruction_Type::UNARY_OP_BITWISE_NOT;
-                break;
-            default: panic("");
-            }
-
-            Datatype* operand_type = unary_op->source->datatype;
-            instr.op3 = (int)datatype_to_bytecode_type(operand_type);
-            instr.op2 = data_access_read_value(generator, unary_op->source);
-            bytecode_generator_add_instruction_and_set_destination(generator, unary_op->destination, instr);
             break;
         }
         }
@@ -1104,9 +1022,9 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     case Instruction_Type::CALL_FUNCTION_POINTER:
         string_append_formated(string, "CALL_FUNCTION_POINTER        pointer-reg: %d, new-frame-offset: %d", i.op1, i.op2);
         break;
-    case Instruction_Type::CALL_HARDCODED_FUNCTION:
-        string_append_formated(string, "CALL_HARDCODED_FUNCTION      hardcoded_func_type:");
-        string->append(hardcoded_type_get_info((Hardcoded_Type)i.op1).cstring);
+    case Instruction_Type::CALL_BUILTIN_FUNCTION:
+        string_append_formated(string, "CALL_BUILTIN_FUNCTION      hardcoded_func_type:");
+        string->append(hardcoded_type_get_info((Hardcoded_Type)i.op1).symbol_name);
         string_append_formated(string, ", new-frame-offset: %d", i.op2);
         break;
     case Instruction_Type::RETURN:
@@ -1130,128 +1048,22 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
     case Instruction_Type::LOAD_FUNCTION_LOCATION:
         string_append_formated(string, "LOAD_FUNCTION_LOCATION       dst: %d, function-index: %d", i.op1, i.op2);
         break;
-    case Instruction_Type::CAST_PRIMITIVE_TYPES:
-        string_append_formated(string, "CAST_PRIMITIVE_TYPES         dst: %d, src: %d, dst: %s, src: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3), bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_ADDITION:
-        string_append_formated(string, "BINARY_OP_ADDITION           dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_SUBTRACTION:
-        string_append_formated(string, "BINARY_OP_SUBTRACTION        dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_MULTIPLICATION:
-        string_append_formated(string, "BINARY_OP_MULTIPLICATION     dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_DIVISION:
-        string_append_formated(string, "BINARY_OP_DIVISION           dst %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_EQUAL:
-        string_append_formated(string, "BINARY_OP_EQUAL              dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_NOT_EQUAL:
-        string_append_formated(string, "BINARY_OP_NOT_EQUAL          dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_GREATER_THAN:
-        string_append_formated(string, "BINARY_OP_GREATER_THAN       dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_GREATER_EQUAL:
-        string_append_formated(string, "BINARY_OP_GREATER_EQUAL      dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_LESS_THAN:
-        string_append_formated(string, "BINARY_OP_LESS_THAN          dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_LESS_EQUAL:
-        string_append_formated(string, "BINARY_OP_LESS_EQUAL         dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_MODULO:
-        string_append_formated(string, "BINARY_OP_MODULO             dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_AND:
-        string_append_formated(string, "BINARY_OP_AND                dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_OR:
-        string_append_formated(string, "BINARY_OP_OR                 dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
+    case Instruction_Type::IR_OPERATION:
+    {
+        IR_Operation ir_op;
+        Bytecode_Type left_type;
+        Bytecode_Type right_type;
+        Bytecode_Type dst_type;
+        bytecode_unpack_operation_and_types_from_int(i.op4, ir_op, left_type, right_type, dst_type);
+        string_append_formated(string, "IR_OPERATION                 dst: %d, src1: %d, src2: %d", i.op1, i.op2, i.op3);
+        string_append_formated(string, "  %s, left_type: %s", ir_operation_as_string(ir_op), bytecode_type_as_string(left_type));
+        if (ir_operation_parameter_count(ir_op) == 2) {
+            string_append_formated(string, " right_type: %s", bytecode_type_as_string(right_type));
+        }
+        string_append_formated(string, " dst_type: %s", bytecode_type_as_string(dst_type));
         break;
 
-    case Instruction_Type::BINARY_OP_BITWISE_AND:
-        string_append_formated(string, "BINARY_BITWISE_AND           dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_OR:
-        string_append_formated(string, "BINARY_OP_BITWISE_OR         dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_XOR:
-        string_append_formated(string, "BINARY_OP_BITWISE_XOR        dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_LEFT:
-        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_LEFT dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-    case Instruction_Type::BINARY_OP_BITWISE_SHIFT_RIGHT:
-        string_append_formated(string, "BINARY_OP_BITWISE_SHIFT_RIGHT dst: %d, left: %d, right: %d, type: %s",
-            i.op1, i.op2, i.op3, bytecode_type_as_string((Bytecode_Type)i.op4)
-        );
-        break;
-
-    case Instruction_Type::UNARY_OP_BITWISE_NOT:
-        string_append_formated(string, "UNARY_OP_BITWISE_NOT         dst: %d, src: %d, type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
-        );
-        break;
-    case Instruction_Type::UNARY_OP_HIGHEST_SET_BIT:
-        string_append_formated(string, "UNARY_OP_HIGHEST_SET_BIT     dst: %d, src: %d, type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
-        );
-        break;
-    case Instruction_Type::UNARY_OP_LOWEST_SET_BIT:
-        string_append_formated(string, "UNARY_OP_LOWEST_SET_BIT      dst: %d, src: %d, type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
-        );
-        break;
-    case Instruction_Type::UNARY_OP_NEGATE:
-        string_append_formated(string, "UNARY_OP_NEGATE              dst: %d, src: %d, type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
-        );
-        break;
-    case Instruction_Type::UNARY_OP_NOT:
-        string_append_formated(string, "UNARY_OP_NOT                 dst: %d, src: %d, type: %s",
-            i.op1, i.op2, bytecode_type_as_string((Bytecode_Type)i.op3)
-        );
-        break;
+    }
     default:
         string_append_formated(string, "FUCKING HELL\n");
         break;
@@ -1280,3 +1092,28 @@ void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_
     }
 }
 
+int bytecode_pack_operation_and_types_to_int(IR_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
+{
+    u32 packed = 0;
+    packed = (packed << 8) | (u32)operation;
+    packed = (packed << 8) | (u32)dst_type;
+    packed = (packed << 8) | (u32)left_type;
+    packed = (packed << 8) | (u32)right_type;
+    return (int)packed;
+}
+
+void bytecode_unpack_operation_and_types_from_int(
+    int value, IR_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right)
+{
+    u32 packed = (u32)value;
+
+    u32 op_value    = (packed >> 24) & 0xFF;
+    u32 dst_value   = (packed >> 16) & 0xFF;
+    u32 left_value  = (packed >> 8 ) & 0xFF;
+    u32 right_value = (packed >> 0 ) & 0xFF;
+
+    out_op = (IR_Operation)op_value;
+    out_dst   = (Bytecode_Type)dst_value;
+    out_left  = (Bytecode_Type)left_value;
+    out_right = (Bytecode_Type)right_value;
+}

@@ -396,9 +396,9 @@ int main(int argc, char** argv)
 {
     // test();
 
-    count_lines_of_code();
-    std::cin.ignore();
-    return 0 ;
+    // count_lines_of_code();
+    // std::cin.ignore();
+    // return 0 ;
 
     // next_test();
     // arena_test();
@@ -409,7 +409,7 @@ int main(int argc, char** argv)
     // return 0;
 
     // test_entry();
-    // upp_lang_main();
+    upp_lang_main();
     //imgui_test_entry();
     //proc_city_main();
     return 0;

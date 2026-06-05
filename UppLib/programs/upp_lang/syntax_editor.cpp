@@ -2296,7 +2296,7 @@ namespace Auto_Format
 		auto& tab = syntax_editor.open_tab();
 		auto code = tab.code;
 
-		if (line_index < 0 || line_index > code->line_count) return;
+		if (line_index < 0 || line_index >= code->line_count) return;
 		Source_Line* line = source_code_get_line(code, line_index);
 
 		// Empty line or comment handling:
@@ -5015,18 +5015,21 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::NEXT_WORD:
 		{
+			if (pos.character >= line_text.size) break;
 			Text_Range range = Motions::text_range_get_word(pos);
 			pos = range.end;
 			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE), true, true);
 			break;
 		}
 		case Movement_Type::NEXT_SPACE: {
+			if (pos.character >= line_text.size) break;
 			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE, true), true, true); // Skip current non-whitespaces
 			Motions::move_while_in_set(pos, Char_Group(Char_Group_Type::WHITESPACE), true, true);
 			break;
 		}
 		case Movement_Type::END_OF_WORD:
 		{
+			if (pos.character >= line_text.size) break;
 			Text_Range range = Motions::text_range_get_word(pos);
 			if (pos.character == range.end.character - 1) { // If we are at end of current word
 				Motions::move_horizontal(pos, 1);
@@ -5040,6 +5043,7 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::END_OF_WORD_AFTER_SPACE:
 		{
+			if (pos.character >= line_text.size) break;
 			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
 			Char_Group non_whitespaces = Char_Group(Char_Group_Type::WHITESPACE, true);
 
@@ -5063,6 +5067,9 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::PREVIOUS_SPACE: 
 		{
+			if (pos.character >= line_text.size) {
+				pos.character = math_maximum(0, line_text.size - 1);
+			}
 			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
 			Char_Group non_whitespaces = Char_Group(Char_Group_Type::WHITESPACE, true);
 
@@ -5078,6 +5085,9 @@ Text_Index movement_evaluate(const Movement& movement, Text_Index pos, bool is_c
 		}
 		case Movement_Type::PREVIOUS_WORD: 
 		{
+			if (pos.character >= line_text.size) {
+				pos.character = math_maximum(0, line_text.size - 1);
+			}
 			Char_Group whitespaces = Char_Group(Char_Group_Type::WHITESPACE, false);
 
 			int prev = pos.character;
@@ -7580,6 +7590,7 @@ void syntax_editor_update(bool& animations_running)
 					auto& item = line->item_infos[i];
 					for (int j = 0; j < item.editor_info_mapping_count; j++) {
 						auto& semantic_info = editor.editor_compilation_data->semantic_infos[item.editor_info_mapping_start_index + j];
+						if (semantic_info.pass == nullptr) continue; // Markup Editor Infos don't have a pass
 						dynamic_array_push_back(&passes, semantic_info.pass);
 					}
 				}

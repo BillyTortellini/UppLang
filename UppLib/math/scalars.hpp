@@ -76,9 +76,9 @@ double math_square_root(double x);
 float math_radians_to_degree(float radians);
 float math_degree_to_radians(float degree);
 
-i8 integer_highest_set_bit_index(u32 value); // Returns -1 if value == 0
-i8 integer_highest_set_bit_index(u64 value); // Returns -1 if value == 0
-i8 integer_lowest_set_bit_index(u64 value);
+u32 integer_highest_set_bit_index(u32 value); // Returns 0 if value == 0
+u32 integer_highest_set_bit_index(u64 value); // Returns 0 if value == 0
+u32 integer_lowest_set_bit_index(u64 value);
 u32 integer_next_power_of_2(u32 value);
 u64 integer_next_power_of_2(u64 value);
 

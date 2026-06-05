@@ -50,11 +50,8 @@ void ir_instruction_destroy(IR_Instruction* instruction)
         break;
     }
     case IR_Instruction_Type::RETURN:
-    case IR_Instruction_Type::MOVE:
-    case IR_Instruction_Type::CAST:
     case IR_Instruction_Type::FUNCTION_ADDRESS:
-    case IR_Instruction_Type::UNARY_OP:
-    case IR_Instruction_Type::BINARY_OP:
+    case IR_Instruction_Type::OPERATION:
     case IR_Instruction_Type::LABEL:
     case IR_Instruction_Type::GOTO:
     case IR_Instruction_Type::VARIABLE_DEFINITION:
@@ -200,44 +197,23 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         ir_data_access_append_to_string(function_address->destination, string, code_block, compilation_data);
         break;
     }
-    case IR_Instruction_Type::BINARY_OP:
+    case IR_Instruction_Type::OPERATION:
     {
-        string_append_formated(string, "BINARY_OP ");
-        switch (instruction->options.binary_op.type)
-        {
-        case IR_Binop::ADDITION: string_append_formated(string, "ADDITION"); break;
-        case IR_Binop::SUBTRACTION: string_append_formated(string, "SUBTRACTION"); break;
-        case IR_Binop::DIVISION: string_append_formated(string, "DIVISION"); break;
-        case IR_Binop::MULTIPLICATION: string_append_formated(string, "MULTIPLICATION"); break;
-        case IR_Binop::MODULO: string_append_formated(string, "MODULO"); break;
-        case IR_Binop::AND: string_append_formated(string, "AND"); break;
-        case IR_Binop::OR: string_append_formated(string, "OR"); break;
-        case IR_Binop::BITWISE_AND: string_append_formated(string, "BITWISE_AND"); break;
-        case IR_Binop::BITWISE_OR: string_append_formated(string, "BITWISE_OR"); break;
-        case IR_Binop::BITWISE_XOR: string_append_formated(string, "BITWISE_XOR"); break;
-        case IR_Binop::BITWISE_SHIFT_LEFT: string_append_formated(string, "BITWISE_SHIFT_LEFT"); break;
-        case IR_Binop::BITWISE_SHIFT_RIGHT: string_append_formated(string, "BITWISE_SHIFT_RIGHT"); break;
-        case IR_Binop::EQUAL: string_append_formated(string, "EQUAL"); break;
-        case IR_Binop::NOT_EQUAL: string_append_formated(string, "NOT_EQUAL"); break;
-        case IR_Binop::LESS: string_append_formated(string, "LESS"); break;
-        case IR_Binop::LESS_OR_EQUAL: string_append_formated(string, "LESS_OR_EQUAL"); break;
-        case IR_Binop::GREATER: string_append_formated(string, "GREATER"); break;
-        case IR_Binop::GREATER_OR_EQUAL: string_append_formated(string, "GREATER_OR_EQUAL"); break;
-        default: panic("");
-        }
-
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "left: ");
-        ir_data_access_append_to_string(instruction->options.binary_op.operand_left, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "right: ");
-        ir_data_access_append_to_string(instruction->options.binary_op.operand_right, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
+        auto& op = instruction->options.operation;
+        string->append(ir_operation_as_string(op.type));
         string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(instruction->options.binary_op.destination, string, code_block, compilation_data);
+        ir_data_access_append_to_string(op.destination, string, code_block, compilation_data);
+        string_append_formated(string, "\n");
+        indent_string(string, indentation + 1);
+        string_append_formated(string, "operand 1: ");
+        ir_data_access_append_to_string(op.operand_1, string, code_block, compilation_data);
+        string_append_formated(string, "\n");
+        if (op.operand_2 != nullptr) {
+            indent_string(string, indentation + 1);
+            string_append_formated(string, "operand 2: ");
+            ir_data_access_append_to_string(op.operand_2, string, code_block, compilation_data);
+            string_append_formated(string, "\n");
+        }
         break;
     }
     case IR_Instruction_Type::BLOCK: {
@@ -261,19 +237,6 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         string_append_formated(string, "LABEL %d", instruction->options.label_index);
         break;
     }
-    case IR_Instruction_Type::CAST:
-    {
-        IR_Instruction_Primitive_Cast* cast = &instruction->options.cast;
-        string_append_formated(string, "CAST \n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(cast->source, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(cast->destination, string, code_block, compilation_data);
-        break;
-    }
     case IR_Instruction_Type::FUNCTION_CALL:
     {
         IR_Instruction_Call* call = &instruction->options.call;
@@ -292,7 +255,7 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             function_sig = downcast<Datatype_Function_Pointer>(type)->signature;
             break;
         }
-        case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
+        case IR_Instruction_Call_Type::BUILTIN_CALL:
             function_sig = 0;
             break;
         default:
@@ -325,9 +288,9 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             string_append_formated(string, "FUNCTION_POINTER_CALL, access: ");
             ir_data_access_append_to_string(call->options.pointer_access, string, code_block, compilation_data);
             break;
-        case IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL:
-            string_append_formated(string, "HARDCODED_FUNCTION_CALL, type: ");
-            string->append(hardcoded_type_get_info(call->options.hardcoded).cstring);
+        case IR_Instruction_Call_Type::BUILTIN_CALL:
+            string_append_formated(string, "BUILTIN_CALL, type: ");
+            string->append(ir_builtin_fn_as_string(call->options.builtin_fn));
             break;
         }
         break;
@@ -340,17 +303,6 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         indent_string(string, indentation);
         string_append_formated(string, "ELSE\n");
         ir_code_block_append_to_string(instruction->options.if_instr.false_branch, string, indentation + 1, compilation_data);
-        break;
-    }
-    case IR_Instruction_Type::MOVE: {
-        string_append_formated(string, "MOVE\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "src: ");
-        ir_data_access_append_to_string(instruction->options.move.source, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(instruction->options.move.destination, string, code_block, compilation_data);
         break;
     }
     case IR_Instruction_Type::MATCH: 
@@ -413,29 +365,6 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
             string_append_formated(string, "RETURN");
             break;
         }
-        break;
-    }
-    case IR_Instruction_Type::UNARY_OP:
-    {
-        string_append_formated(string, "Unary_OP ");
-        switch (instruction->options.unary_op.type)
-        {
-        case IR_Unop::NEGATE:
-            string_append_formated(string, "NEGATE");
-            break;
-        case IR_Unop::NOT:
-            string_append_formated(string, "NOT");
-            break;
-        }
-
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "dst: ");
-        ir_data_access_append_to_string(instruction->options.unary_op.destination, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        indent_string(string, indentation + 1);
-        string_append_formated(string, "operand: ");
-        ir_data_access_append_to_string(instruction->options.unary_op.source, string, code_block, compilation_data);
         break;
     }
     default: panic("What");
@@ -517,6 +446,21 @@ static IR_Instruction* add_instruction(IR_Instruction& instruction, IR_Code_Bloc
 
 IR_Data_Access* ir_data_access_create_nothing() {
     return &ir_generator->nothing_access;
+}
+
+IR_Instruction_Operation* add_operation_instruction(
+    IR_Operation operation, IR_Data_Access* destination, IR_Data_Access* operand_1, IR_Data_Access* operand_2 = nullptr, IR_Code_Block* ir_block = nullptr)
+{
+    int param_count = ir_operation_parameter_count(operation);
+    assert((param_count == 1 && operand_2 == nullptr) || (param_count == 2 && operand_2 != nullptr), "");
+    
+    IR_Instruction instruction;
+    instruction.type = IR_Instruction_Type::OPERATION;
+    instruction.options.operation.type = operation;
+    instruction.options.operation.destination = destination;
+    instruction.options.operation.operand_1 = operand_1;
+    instruction.options.operation.operand_2 = operand_2 == nullptr ? ir_data_access_create_nothing() : operand_2;
+    return &add_instruction(instruction)->options.operation;
 }
 
 IR_Data_Access* ir_data_access_create_global(Upp_Global* global)
@@ -660,13 +604,7 @@ IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* arra
         auto& gen = *ir_generator;
         assert(gen.current_block != 0, "");
         IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
-        IR_Instruction cmp_instr;
-        cmp_instr.type = IR_Instruction_Type::BINARY_OP;
-        cmp_instr.options.binary_op.destination = condition_access;
-        cmp_instr.options.binary_op.operand_left = index_access;
-        cmp_instr.options.binary_op.operand_right = size_access;
-        cmp_instr.options.binary_op.type = IR_Binop::GREATER_OR_EQUAL;
-        add_instruction(cmp_instr);
+        add_operation_instruction(IR_Operation::GREATER_OR_EQUAL, condition_access, index_access, size_access);
 
         IR_Instruction if_instr;
         if_instr.type = IR_Instruction_Type::IF;
@@ -776,11 +714,7 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
             value_access = ir_generator_generate_expression(arg_expr);
         }
 
-        IR_Instruction move_instr;
-        move_instr.type = IR_Instruction_Type::MOVE;
-        move_instr.options.move.destination = ir_data_access_create_member(struct_access, member);
-        move_instr.options.move.source = value_access;
-        add_instruction(move_instr);
+        add_operation_instruction(IR_Operation::MOVE, ir_data_access_create_member(struct_access, member), value_access);
     }
     for (int i = 0; i < call_node->subtype_initializers.size; i++) 
     {
@@ -823,11 +757,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
             destination = access;
             return access;
         }
-        IR_Instruction move;
-        move.type = IR_Instruction_Type::MOVE;
-        move.options.move.destination = destination;
-        move.options.move.source = access;
-        add_instruction(move);
+        add_operation_instruction(IR_Operation::MOVE, destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -859,12 +789,9 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
     }
     case Auto_Cast_Type::PRIMITIVE_CAST: 
     {
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::CAST;
-        instr.options.cast.source = source;
-        instr.options.cast.destination = make_destination_access_on_demand(auto_cast_info.result_type);
-        add_instruction(instr);
-        return instr.options.cast.destination;
+        auto destination = make_destination_access_on_demand(auto_cast_info.result_type);
+        add_operation_instruction(IR_Operation::PRIMITIVE_CAST, destination, source);
+        return destination;
     }
     case Auto_Cast_Type::DEREFERENCE: 
     {
@@ -926,11 +853,7 @@ IR_Data_Access* ir_generator_generate_overload_access(
             destination = access;
             return access;
         }
-        IR_Instruction move;
-        move.type = IR_Instruction_Type::MOVE;
-        move.options.move.destination = destination;
-        move.options.move.source = access;
-        add_instruction(move);
+        add_operation_instruction(IR_Operation::MOVE, destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -1007,11 +930,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             destination = access;
             return access;
         }
-        IR_Instruction move;
-        move.type = IR_Instruction_Type::MOVE;
-        move.options.move.destination = destination;
-        move.options.move.source = access;
-        add_instruction(move);
+        add_operation_instruction(IR_Operation::MOVE, destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -1061,17 +980,13 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             return ir_generator_generate_overload_access(overload, binop.left, binop.right, destination);
         }
 
-        auto left = ir_generator_generate_expression(binop.left);
-        auto right = ir_generator_generate_expression(binop.right);
-
-        IR_Instruction instr;
-        instr.type = IR_Instruction_Type::BINARY_OP;
-        instr.options.binary_op.type = ast_binop_to_ir_binop(binop.type);
-        instr.options.binary_op.operand_left = left,
-        instr.options.binary_op.operand_right = right;
-        instr.options.binary_op.destination = make_destination_access_on_demand(value_type);
-        add_instruction(instr);
-        return instr.options.binary_op.destination;
+        auto op_instr = add_operation_instruction(
+            ast_binop_to_ir_operation(binop.type),
+            make_destination_access_on_demand(result_type),
+            ir_generator_generate_expression(binop.left),
+            ir_generator_generate_expression(binop.right)
+        );
+        return op_instr->destination;
     }
     case AST::Expression_Type::UNARY_OPERATION:
     {
@@ -1092,24 +1007,14 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             return move_access_to_destination(ir_data_access_create_dereference(access));
         }
         case AST::Unop::NOT: 
+        case AST::Unop::NEGATE:
         {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::UNARY_OP;
-            instr.options.unary_op.destination = make_destination_access_on_demand(result_type);
-            instr.options.unary_op.type = IR_Unop::NOT;
-            instr.options.unary_op.source = access;
-            add_instruction(instr);
-            return instr.options.unary_op.destination;
-        }
-        case AST::Unop::NEGATE: 
-        {
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::UNARY_OP;
-            instr.options.unary_op.destination = make_destination_access_on_demand(result_type);
-            instr.options.unary_op.type = IR_Unop::NEGATE;
-            instr.options.unary_op.source = access;
-            add_instruction(instr);
-            return instr.options.unary_op.destination;
+            auto op_instr = add_operation_instruction(
+                (expression->options.unop.type == AST::Unop::NOT ? IR_Operation::NOT : IR_Operation::NEGATE),
+                make_destination_access_on_demand(result_type),
+                access
+            );
+            return op_instr->destination;
         }
         default: panic("HEY");
         }
@@ -1151,6 +1056,28 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         case Call_Origin_Type::HARDCODED:
         {
             auto& hardcoded = call_info->origin.options.hardcoded;
+            auto hardcoded_info = hardcoded_type_get_info(hardcoded);
+
+            if ((int)hardcoded_info.ir_operation != -1)
+            {
+                auto value_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
+                IR_Data_Access* first_arg = ir_generator_generate_expression(
+                    call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression
+                );
+                IR_Data_Access* second_arg = nullptr;
+                if (ir_operation_parameter_count(hardcoded_info.ir_operation) == 2) {
+                    second_arg = ir_generator_generate_expression(
+                        call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression
+                    );
+                }
+                auto instr = add_operation_instruction(
+                    hardcoded_info.ir_operation,
+                    make_destination_access_on_demand(result_type),
+                    first_arg, second_arg
+                );
+                return instr->destination;
+            }
+
             switch (hardcoded)
             {
             case Hardcoded_Type::ALIGN_OF:
@@ -1289,65 +1216,12 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 auto struct_access = ir_generator_generate_expression(arg_expr);
                 return move_access_to_destination(ir_data_access_create_member(struct_access, structure->tag_member));
             }
-            case Hardcoded_Type::BITWISE_NOT:
-            {
-                auto call_info = get_info(call.call_node);
-                auto arg_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
-
-                IR_Instruction unop;
-                unop.type = IR_Instruction_Type::UNARY_OP;
-                unop.options.unary_op.type = IR_Unop::BITWISE_NOT;
-                unop.options.unary_op.source = ir_generator_generate_expression(arg_expr);
-                unop.options.unary_op.destination = make_destination_access_on_demand(result_type);
-                add_instruction(unop);
-                return unop.options.unary_op.destination;
-            }
-            case Hardcoded_Type::BITWISE_AND:
-            case Hardcoded_Type::BITWISE_OR:
-            case Hardcoded_Type::BITWISE_XOR:
-            case Hardcoded_Type::BITWISE_SHIFT_LEFT:
-            case Hardcoded_Type::BITWISE_SHIFT_RIGHT:
-            {
-                auto call_info = get_info(call.call_node);
-                auto arg_expr0 = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
-                auto arg_expr1 = call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression;
-
-                IR_Binop binop_type;
-                switch (hardcoded)
-                {
-                case Hardcoded_Type::BITWISE_AND: binop_type = IR_Binop::BITWISE_AND; break;
-                case Hardcoded_Type::BITWISE_OR: binop_type = IR_Binop::BITWISE_OR; break;
-                case Hardcoded_Type::BITWISE_XOR: binop_type = IR_Binop::BITWISE_XOR; break;
-                case Hardcoded_Type::BITWISE_SHIFT_LEFT: binop_type = IR_Binop::BITWISE_SHIFT_LEFT; break;
-                case Hardcoded_Type::BITWISE_SHIFT_RIGHT: binop_type = IR_Binop::BITWISE_SHIFT_RIGHT; break;
-                default: panic("");
-                }
-
-                IR_Instruction binop;
-                binop.type = IR_Instruction_Type::BINARY_OP;
-                binop.options.binary_op.type = binop_type;
-                binop.options.binary_op.operand_left = ir_generator_generate_expression(arg_expr0);
-                binop.options.binary_op.operand_right = ir_generator_generate_expression(arg_expr1);
-                binop.options.binary_op.destination = make_destination_access_on_demand(result_type);
-                add_instruction(binop);
-                return binop.options.binary_op.destination;
-            }
-            case Hardcoded_Type::CAST_POINTER:
-            case Hardcoded_Type::CAST_PRIMITIVE:
-            {
-                auto value_expr = call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression;
-                IR_Instruction instr;
-                instr.type = IR_Instruction_Type::CAST;
-                instr.options.cast.source = ir_generator_generate_expression(value_expr);
-                instr.options.cast.destination = make_destination_access_on_demand(result_type);
-                add_instruction(instr);
-                return instr.options.cast.destination;
-            }
             default: break; // All other hardcoded-functions are passed on to the next stages
             }
 
-            call_instr.options.call.call_type = IR_Instruction_Call_Type::HARDCODED_FUNCTION_CALL;
-            call_instr.options.call.options.hardcoded = hardcoded;
+            assert((int)hardcoded_info.builtin_fn != -1, "Other hardcoded functions should have been handled by now");
+            call_instr.options.call.call_type = IR_Instruction_Call_Type::BUILTIN_CALL;
+            call_instr.options.call.options.builtin_fn = hardcoded_info.builtin_fn;
             break;
         }
         default: {
@@ -1358,26 +1232,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         // Generate return value
         auto signature = call_info->origin.signature;
         call_instr.options.call.destination = ir_data_access_create_nothing();
-        if (signature->return_type_index != -1)
-        {
-            Datatype* return_type = nullptr;
-            if (call_info->instanciated) 
-            {
-                if (call_info->origin.type == Call_Origin_Type::POLY_FUNCTION) {
-                    return_type = call_info->instanciation_data.function->signature->return_type().value;
-                }
-                else if (call_info->origin.type == Call_Origin_Type::HARDCODED) {
-                    return_type = upcast(call_info->instanciation_data.bitwise_primitive_type);
-                }
-                else {
-                    panic("");
-                }
-            }
-            else {
-                return_type = call_info->origin.signature->return_type().value;
-            }
-            
-            call_instr.options.call.destination = make_destination_access_on_demand(return_type);
+        if (signature->return_type_index != -1) {
+            // Note: There was more code here before, maybe this was necessary?
+            call_instr.options.call.destination = make_destination_access_on_demand(result_type);
         }
 
         // Generate arguments 
@@ -1491,13 +1348,13 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             assert(parent->subtypes.size > 0 && structure->subtype_index < parent->subtypes.size, "");
             int tag_value = structure->subtype_index + 1;
 
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_member(struct_access, parent->tag_member);
-            move_instr.options.move.source =
-                ir_data_access_create_constant(parent->tag_member.datatype, array_create_static_as_bytes<int>(&tag_value, 1));
-            add_instruction(move_instr);
-
+            add_operation_instruction(
+                IR_Operation::MOVE, 
+                ir_data_access_create_member(struct_access, parent->tag_member),
+                ir_data_access_create_constant(
+                    constant_pool->add_enum_value_assume_valid(downcast<Datatype_Enum>(parent->tag_member.datatype), tag_value)
+                )
+            );
             structure = structure->parent;
         }
 
@@ -1519,13 +1376,9 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             auto slice_constant = constant_pool_add_constant(gen.compilation_data->constant_pool, result_type, array_create_static_as_bytes(&slice_base, 1));
             assert(slice_constant.success, "Empty slice must succeed!");
 
-            IR_Instruction move;
-            move.type = IR_Instruction_Type::MOVE;
-            move.options.move.destination = make_destination_access_on_demand(result_type);
-            move.options.move.source = ir_data_access_create_constant(slice_constant.options.constant);
-            add_instruction(move);
-
-            return move.options.move.destination;
+            auto destination = make_destination_access_on_demand(result_type);
+            add_operation_instruction(IR_Operation::MOVE, destination, ir_data_access_create_constant(slice_constant.options.constant));
+            return destination;
         }
 
         IR_Data_Access* result_access = nullptr;
@@ -1545,18 +1398,19 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             // Init slice (Set size and data members)
             result_access = make_destination_access_on_demand(result_type);
-            IR_Instruction move;
-            move.type = IR_Instruction_Type::MOVE;
-            move.options.move.destination = ir_data_access_create_member(result_access, slice_type->size_member);
-            move.options.move.source = ir_data_access_create_constant_usize(array_init.values.size);
-            add_instruction(move);
-
-            move.type = IR_Instruction_Type::MOVE;
-            move.options.move.destination = ir_data_access_create_member(result_access, slice_type->data_member);
-            move.options.move.source = ir_data_access_create_address_of(
-                ir_data_access_create_array_or_slice_access(array_access, ir_data_access_create_constant_usize(0), false)
+            add_operation_instruction(
+                IR_Operation::MOVE,
+                ir_data_access_create_member(result_access, slice_type->size_member),
+                ir_data_access_create_constant_usize(array_init.values.size)
             );
-            add_instruction(move);
+
+            add_operation_instruction(
+                IR_Operation::MOVE,
+                ir_data_access_create_member(result_access, slice_type->data_member),
+                ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(
+                    array_access, ir_data_access_create_constant(constant_pool->predefined.usize_zero), false
+                ))
+            );
         }
 
         for (int i = 0; i < array_init.values.size; i++)
@@ -1608,14 +1462,12 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             int child_tag_value = dst_struct->subtype_index + 1;
 
             IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
-            IR_Instruction condition_instr;
-            condition_instr.type = IR_Instruction_Type::BINARY_OP;
-            condition_instr.options.binary_op.destination = condition_access;
-            condition_instr.options.binary_op.operand_left = ir_data_access_create_member(source, src_struct->tag_member);
-            condition_instr.options.binary_op.operand_right =
-                ir_data_access_create_constant(src_struct->tag_member.datatype, array_create_static_as_bytes<int>(&child_tag_value, 1));
-            condition_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-            add_instruction(condition_instr);
+            add_operation_instruction(
+                IR_Operation::NOT_EQUAL,
+                condition_access,
+                ir_data_access_create_member(source, src_struct->tag_member),
+                ir_data_access_create_constant(src_struct->tag_member.datatype, array_create_static_as_bytes<int>(&child_tag_value, 1))
+            );
 
             IR_Instruction if_instr;
             if_instr.type = IR_Instruction_Type::IF;
@@ -1722,11 +1574,7 @@ void ir_generator_work_through_defers(int defer_to_index, bool rewind_stack)
         }
         else
         {
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = defer.options.defer_restore.left_access;
-            move_instr.options.move.source = defer.options.defer_restore.restore_value;
-            add_instruction(move_instr);
+            add_operation_instruction(IR_Operation::MOVE, defer.options.defer_restore.left_access, defer.options.defer_restore.restore_value);
         }
     }
     if (rewind_stack) {
@@ -1736,6 +1584,8 @@ void ir_generator_work_through_defers(int defer_to_index, bool rewind_stack)
 
 void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Code_Block* loop_block)
 {
+    auto& predefined_constants = ir_generator->compilation_data->constant_pool->predefined;
+
     auto backup = ir_generator->current_block;
     ir_generator->current_block = ir_block;
     SCOPE_EXIT(ir_generator->current_block = backup);
@@ -1755,24 +1605,19 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
         auto& foreach = loop_increment->options.foreach_loop;
 
         // Increment index access
-        IR_Instruction increment;
-        increment.type = IR_Instruction_Type::BINARY_OP;
-        increment.options.binary_op.type = IR_Binop::ADDITION;
-        increment.options.binary_op.destination = foreach.index_access;
-        increment.options.binary_op.operand_left = foreach.index_access;
-        increment.options.binary_op.operand_right = ir_data_access_create_constant_usize(1);
-        add_instruction(increment);
+        add_operation_instruction(
+            IR_Operation::ADDITION, foreach.index_access, foreach.index_access, ir_data_access_create_constant(predefined_constants.usize_one)
+        );
 
         // Update pointer
         if (!foreach.is_custom_iterator)
         {
-            IR_Instruction element_instr;
-            element_instr.type = IR_Instruction_Type::MOVE;
-            element_instr.options.move.source = ir_data_access_create_address_of(
-                ir_data_access_create_array_or_slice_access(foreach.iterable_access, foreach.index_access, false)
+            add_operation_instruction(IR_Operation::MOVE,
+                foreach.loop_variable_access,
+                ir_data_access_create_address_of(
+                    ir_data_access_create_array_or_slice_access(foreach.iterable_access, foreach.index_access, false)
+                )
             );
-            element_instr.options.move.destination = foreach.loop_variable_access;
-            add_instruction(element_instr);
         }
     }
 }
@@ -1809,11 +1654,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* copy_access = ir_data_access_create_intermediate(left_access->datatype);
 
         // Copy current value to temporary
-        IR_Instruction move_instr;
-        move_instr.type = IR_Instruction_Type::MOVE;
-        move_instr.options.move.destination = copy_access;
-        move_instr.options.move.source = left_access;
-        add_instruction(move_instr);
+        add_operation_instruction(IR_Operation::MOVE, copy_access, left_access);
 
         // Write assignment to value
         ir_generator_generate_expression(restore.right_side, left_access);
@@ -2014,11 +1855,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* index_access = ir_data_access_create_intermediate(upcast(types.usize));
         {
             // Initialize
-            IR_Instruction initialize;
-            initialize.type = IR_Instruction_Type::MOVE;
-            initialize.options.move.destination = index_access;
-            initialize.options.move.source = ir_data_access_create_constant_usize(0);
-            add_instruction(initialize);
+            add_operation_instruction(IR_Operation::MOVE, index_access, ir_data_access_create_constant_usize(0));
 
             if (foreach_loop.index_variable_definition.available) {
                 assert(loop_info.index_variable_symbol != 0 && loop_info.index_variable_symbol->type == Symbol_Type::VARIABLE, "");
@@ -2061,13 +1898,13 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             {
                 iterable_type = iterable_type;
                 assert(iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE, "Other types not supported currently");
-                IR_Instruction element_instr;
-                element_instr.type = IR_Instruction_Type::MOVE;
-                element_instr.options.move.destination = loop_variable_access;
-                element_instr.options.move.source = ir_data_access_create_address_of(
-                    ir_data_access_create_array_or_slice_access(iterable_access, index_access, false)
+                add_operation_instruction(
+                    IR_Operation::MOVE,
+                    loop_variable_access,
+                    ir_data_access_create_address_of(
+                        ir_data_access_create_array_or_slice_access(iterable_access, index_access, false)
+                    )
                 );
-                add_instruction(element_instr);
             }
         }
 
@@ -2106,16 +1943,15 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     dynamic_array_push_back(&next_call_instr.options.call.arguments, ir_data_access_create_address_of(iterator_access));
                     add_instruction(next_call_instr, condition_code);
 
-                    IR_Instruction test_null_instr;
-                    test_null_instr.type = IR_Instruction_Type::BINARY_OP;
-                    test_null_instr.options.binary_op.type = IR_Binop::NOT_EQUAL;
-                    test_null_instr.options.binary_op.destination = condition_access;
-                    test_null_instr.options.binary_op.operand_left  = loop_variable_access;
                     void* empty = nullptr;
-                    test_null_instr.options.binary_op.operand_right = ir_data_access_create_constant(
-                        loop_variable_access->datatype, array_create_static_as_bytes<void*>(&empty, 1)
+                    add_operation_instruction(
+                        IR_Operation::NOT_EQUAL,
+                        condition_access,
+                        loop_variable_access,
+                        ir_data_access_create_constant(
+                            loop_variable_access->datatype, array_create_static_as_bytes<void*>(&empty, 1)
+                        )
                     );
-                    add_instruction(test_null_instr, condition_code);
                 }
                 else
                 {
@@ -2130,13 +1966,9 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                         array_size_access = ir_data_access_create_member(iterable_access, slice_type->size_member);
                     }
 
-                    IR_Instruction comparison;
-                    comparison.type = IR_Instruction_Type::BINARY_OP;
-                    comparison.options.binary_op.type = IR_Binop::LESS;
-                    comparison.options.binary_op.operand_left = index_access;
-                    comparison.options.binary_op.operand_right = array_size_access;
-                    comparison.options.binary_op.destination = condition_access;
-                    add_instruction(comparison, condition_code);
+                    add_operation_instruction(
+                        IR_Operation::LESS, condition_access, index_access, array_size_access
+                    );
                 }
 
                 // Push loop + create body code
@@ -2222,14 +2054,15 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         if (statement->options.return_value.available) {
             instr.options.return_instr.type = IR_Instruction_Return_Type::RETURN_DATA;
             instr.options.return_instr.options.return_value = ir_generator_generate_expression(statement->options.return_value.value);
-            if (ir_generator->defer_stack.size != 0) {
+            if (ir_generator->defer_stack.size != 0) 
+            {
                 // Copy the generated expression to another location, so defers cannot interfere
-                IR_Instruction move;
-                move.type = IR_Instruction_Type::MOVE;
-                move.options.move.source = instr.options.return_instr.options.return_value;
-                move.options.move.destination = ir_data_access_create_intermediate(move.options.move.source->datatype);
-                add_instruction(move);
-                instr.options.return_instr.options.return_value = move.options.move.destination;
+                auto copy_access = ir_data_access_create_intermediate(instr.options.return_instr.options.return_value->datatype);
+                add_operation_instruction(IR_Operation::MOVE,
+                    copy_access,
+                    instr.options.return_instr.options.return_value
+                );
+                instr.options.return_instr.options.return_value = copy_access;
             }
         }
         else {
@@ -2269,50 +2102,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             break;
         }
 
-        // Handle pointer arithmetic
-        auto left_type = left_access->datatype;
-        if (types_are_equal(left_type, upcast(types.rawptr)))
-        {
-            auto left_usize = ir_data_access_create_intermediate(upcast(types.usize));
-            auto right_usize = ir_data_access_create_intermediate(upcast(types.usize));
-
-            // Convert left/right to usize, do binop, then convert back to address
-            IR_Instruction cast_instr;
-            cast_instr.type = IR_Instruction_Type::CAST;
-            cast_instr.options.cast.source = left_access;
-            cast_instr.options.cast.destination = left_usize;
-            add_instruction(cast_instr);
-
-            cast_instr.options.cast.source = right_access;
-            cast_instr.options.cast.destination = right_usize;
-            add_instruction(cast_instr);
-
-            // Do binop
-            auto result_usize = ir_data_access_create_intermediate(upcast(types.usize));
-            IR_Instruction instr;
-            instr.type = IR_Instruction_Type::BINARY_OP;
-            instr.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
-            instr.options.binary_op.operand_left = left_usize,
-            instr.options.binary_op.operand_right = right_usize;
-            instr.options.binary_op.destination = result_usize;
-            add_instruction(instr);
-
-            // Convert result
-            cast_instr.options.cast.source = result_usize;
-            cast_instr.options.cast.destination = left_access;
-            add_instruction(cast_instr);
-        }
-        else 
-        {
-            IR_Instruction binop;
-            binop.type = IR_Instruction_Type::BINARY_OP;
-            binop.options.binary_op.type = ast_binop_to_ir_binop(assign.binop);
-            binop.options.binary_op.destination = left_access;
-            binop.options.binary_op.operand_left = left_access;
-            binop.options.binary_op.operand_right = right_access;
-            add_instruction(binop);
-        }
-
+        add_operation_instruction(ast_binop_to_ir_operation(assign.binop), left_access, left_access, right_access);
         break;
     }
     case AST::Statement_Type::ASSIGNMENT:
@@ -2440,11 +2230,7 @@ void ir_generator_finish(Compilation_Data* compilation_data)
             if (!global->has_initial_value) continue;
 
             ir_generator->current_pass = global->definition_workload->analysis_pass;
-            IR_Instruction move_instr;
-            move_instr.type = IR_Instruction_Type::MOVE;
-            move_instr.options.move.destination = ir_data_access_create_global(global);
-            move_instr.options.move.source = ir_generator_generate_expression(global->init_expr);
-            add_instruction(move_instr);
+            add_operation_instruction(IR_Operation::MOVE, ir_data_access_create_global(global), ir_generator_generate_expression(global->init_expr));
             ir_generator->current_pass = nullptr;
         }
 
@@ -2520,28 +2306,172 @@ void ir_generator_destroy(IR_Generator* generator)
     delete generator;
 }
 
-IR_Binop ast_binop_to_ir_binop(AST::Binop binop)
+IR_Operation ast_binop_to_ir_operation(AST::Binop binop)
 {
     switch (binop)
     {
-    case AST::Binop::ADDITION: return IR_Binop::ADDITION;
-    case AST::Binop::SUBTRACTION: return IR_Binop::SUBTRACTION;
-    case AST::Binop::DIVISION: return IR_Binop::DIVISION;
-    case AST::Binop::MULTIPLICATION: return IR_Binop::MULTIPLICATION;
-    case AST::Binop::MODULO: return IR_Binop::MODULO;
-    case AST::Binop::AND: return IR_Binop::AND;
-    case AST::Binop::OR: return IR_Binop::OR;
-    case AST::Binop::EQUAL: return IR_Binop::EQUAL;
-    case AST::Binop::NOT_EQUAL: return IR_Binop::NOT_EQUAL;
-    case AST::Binop::LESS: return IR_Binop::LESS;
-    case AST::Binop::LESS_OR_EQUAL: return IR_Binop::LESS_OR_EQUAL;
-    case AST::Binop::GREATER: return IR_Binop::GREATER;
-    case AST::Binop::GREATER_OR_EQUAL: return IR_Binop::GREATER_OR_EQUAL;
-    case AST::Binop::POINTER_EQUAL: return IR_Binop::EQUAL;
-    case AST::Binop::POINTER_NOT_EQUAL: return IR_Binop::NOT_EQUAL;
-    case AST::Binop::INVALID: panic("Shouldn't happen"); return IR_Binop::ADDITION;
+    case AST::Binop::ADDITION: return IR_Operation::ADDITION;
+    case AST::Binop::SUBTRACTION: return IR_Operation::SUBTRACTION;
+    case AST::Binop::DIVISION: return IR_Operation::DIVISION;
+    case AST::Binop::MULTIPLICATION: return IR_Operation::MULTIPLICATION;
+    case AST::Binop::MODULO: return IR_Operation::MODULO;
+    case AST::Binop::AND: return IR_Operation::AND;
+    case AST::Binop::OR: return IR_Operation::OR;
+    case AST::Binop::EQUAL: return IR_Operation::EQUAL;
+    case AST::Binop::NOT_EQUAL: return IR_Operation::NOT_EQUAL;
+    case AST::Binop::LESS: return IR_Operation::LESS;
+    case AST::Binop::LESS_OR_EQUAL: return IR_Operation::LESS_OR_EQUAL;
+    case AST::Binop::GREATER: return IR_Operation::GREATER;
+    case AST::Binop::GREATER_OR_EQUAL: return IR_Operation::GREATER_OR_EQUAL;
+    case AST::Binop::POINTER_EQUAL: return IR_Operation::EQUAL;
+    case AST::Binop::POINTER_NOT_EQUAL: return IR_Operation::NOT_EQUAL;
+    case AST::Binop::INVALID: panic("Shouldn't happen"); return IR_Operation::ADDITION;
     default: panic("");
     }
 
-    return IR_Binop::ADDITION;
+    return IR_Operation::ADDITION;
+}
+
+const char* ir_operation_as_string(IR_Operation operation)
+{
+    switch (operation)
+    {
+    case IR_Operation::MOVE: return "MOVE";
+    case IR_Operation::PRIMITIVE_CAST: return "PRIMITIVE_CAST";
+    case IR_Operation::ADDITION: return "ADDITION";
+    case IR_Operation::SUBTRACTION: return "SUBTRACTION";
+    case IR_Operation::DIVISION: return "DIVISION";
+    case IR_Operation::MULTIPLICATION: return "MULTIPLICATION";
+    case IR_Operation::MODULO: return "MODULO";
+    case IR_Operation::NEGATE: return "NEGATE";
+    case IR_Operation::EQUAL: return "EQUAL";
+    case IR_Operation::NOT_EQUAL: return "NOT_EQUAL";
+    case IR_Operation::LESS: return "LESS";
+    case IR_Operation::LESS_OR_EQUAL: return "LESS_OR_EQUAL";
+    case IR_Operation::GREATER: return "GREATER";
+    case IR_Operation::GREATER_OR_EQUAL: return "GREATER_OR_EQUAL";
+    case IR_Operation::AND: return "AND";
+    case IR_Operation::OR: return "OR";
+    case IR_Operation::NOT: return "NOT";
+    case IR_Operation::BITWISE_NOT: return "BITWISE_NOT";
+    case IR_Operation::BITWISE_AND: return "BITWISE_AND";
+    case IR_Operation::BITWISE_OR: return "BITWISE_OR";
+    case IR_Operation::BITWISE_XOR: return "BITWISE_XOR";
+    case IR_Operation::BITWISE_SHIFT_LEFT: return "BITWISE_SHIFT_LEFT";
+    case IR_Operation::BITWISE_SHIFT_RIGHT: return "BITWISE_SHIFT_RIGHT";
+	case IR_Operation::HIGHEST_SET_BIT: return "HIGHEST_SET_BIT";
+	case IR_Operation::LOWEST_SET_BIT: return "LOWEST_SET_BIT";
+	case IR_Operation::FLOAT_ABS: return "FLOAT_ABS";
+	case IR_Operation::FLOAT_MODULO: return "FLOAT_MODULO";
+	case IR_Operation::FLOAT_REMAINDER: return "FLOAT_REMAINDER";
+	case IR_Operation::ROUND_UP: return "ROUND_UP";     
+	case IR_Operation::ROUND_DOWN: return "ROUND_DOWN";   
+	case IR_Operation::ROUND_TOWARDS_ZERO: return "ROUND_TOWARDS_ZERO";
+	case IR_Operation::ROUND_NEAREST: return "ROUND_NEAREST";     
+	case IR_Operation::EXP: return "EXP";
+	case IR_Operation::LN: return "LN";
+	case IR_Operation::LOG10: return "LOG10";
+	case IR_Operation::LOG2: return "LOG2";
+	case IR_Operation::POW: return "POW";
+	case IR_Operation::SQUARE_ROOT: return "SQUARE_ROOT";
+	case IR_Operation::CUBE_ROOT: return "CUBE_ROOT";
+	case IR_Operation::SIN: return "SIN";
+	case IR_Operation::COS: return "COS";
+	case IR_Operation::TAN: return "TAN";
+	case IR_Operation::ASIN: return "ASIN";
+	case IR_Operation::ACOS: return "ACOS";
+	case IR_Operation::ATAN: return "ATAN";
+	case IR_Operation::ATAN2: return "ATAN2";
+	case IR_Operation::SINH: return "SINH";
+	case IR_Operation::COSH: return "COSH";
+	case IR_Operation::TANH: return "TANH";
+	case IR_Operation::ASINH: return "ASINH";
+	case IR_Operation::ACOSH: return "ACOSH";
+	case IR_Operation::ATANH: return "ATANH";
+	case IR_Operation::IS_NAN: return "IS_NAN";
+	case IR_Operation::IS_FINITE: return "IS_FINITE";
+	case IR_Operation::IS_INFINITE: return "IS_INFINITE";
+    default: panic("");
+    }
+
+    return "";
+}
+
+int ir_operation_parameter_count(IR_Operation operation)
+{
+    switch (operation)
+    {
+    case IR_Operation::ADDITION:
+    case IR_Operation::SUBTRACTION:
+    case IR_Operation::DIVISION:
+    case IR_Operation::MULTIPLICATION:
+    case IR_Operation::MODULO:
+    case IR_Operation::EQUAL:
+    case IR_Operation::NOT_EQUAL:
+    case IR_Operation::LESS:
+    case IR_Operation::LESS_OR_EQUAL:
+    case IR_Operation::GREATER:
+    case IR_Operation::GREATER_OR_EQUAL: 
+    case IR_Operation::AND: 
+    case IR_Operation::OR: 
+    case IR_Operation::BITWISE_AND: 
+    case IR_Operation::BITWISE_OR: 
+    case IR_Operation::BITWISE_XOR:
+    case IR_Operation::BITWISE_SHIFT_LEFT: 
+    case IR_Operation::BITWISE_SHIFT_RIGHT: 
+	case IR_Operation::FLOAT_MODULO: 
+	case IR_Operation::FLOAT_REMAINDER: 
+	case IR_Operation::POW: 
+	case IR_Operation::ATAN2: 
+        return 2;
+    }
+    return 1;
+}
+
+const char* ir_builtin_fn_as_string(IR_Builtin_Function fn)
+{
+    switch (fn)
+    {
+    case IR_Builtin_Function::TYPE_INFO: return "TYPE_INFO";
+    case IR_Builtin_Function::MEMORY_COPY: return "MEMORY_COPY";
+    case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: return "MEMORY_COPY_NO_OVERLAP";
+    case IR_Builtin_Function::MEMORY_ZERO: return "MEMORY_ZERO";
+    case IR_Builtin_Function::MEMORY_COMPARE: return "MEMORY_COMPARE";
+    case IR_Builtin_Function::SYSTEM_ALLOC: return "SYSTEM_ALLOC";
+    case IR_Builtin_Function::SYSTEM_FREE: return "SYSTEM_FREE";
+    case IR_Builtin_Function::PRINT_I32: return "PRINT_I32";
+    case IR_Builtin_Function::PRINT_F32: return "PRINT_F32";
+    case IR_Builtin_Function::PRINT_BOOL: return "PRINT_BOOL";
+    case IR_Builtin_Function::PRINT_LINE: return "PRINT_LINE";
+    case IR_Builtin_Function::PRINT_STRING: return "PRINT_STRING";
+    case IR_Builtin_Function::READ_I32: return "READ_I32";
+    case IR_Builtin_Function::READ_F32: return "READ_F32";
+    case IR_Builtin_Function::READ_BOOL: return "READ_BOOL";
+    default: panic("");
+    }
+    return "";
+}
+
+Hardcoded_Type ir_builtin_fn_to_hardcoded_type(IR_Builtin_Function fn)
+{
+    switch (fn)
+    {
+    case IR_Builtin_Function::TYPE_INFO: return Hardcoded_Type::TYPE_INFO;
+    case IR_Builtin_Function::MEMORY_COPY: return Hardcoded_Type::MEMORY_COPY;
+    case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: return Hardcoded_Type::MEMORY_COPY_NO_OVERLAP;
+    case IR_Builtin_Function::MEMORY_ZERO: return Hardcoded_Type::MEMORY_ZERO;
+    case IR_Builtin_Function::MEMORY_COMPARE: return Hardcoded_Type::MEMORY_COMPARE;
+    case IR_Builtin_Function::SYSTEM_ALLOC: return Hardcoded_Type::SYSTEM_ALLOC;
+    case IR_Builtin_Function::SYSTEM_FREE: return Hardcoded_Type::SYSTEM_FREE;
+    case IR_Builtin_Function::PRINT_I32: return Hardcoded_Type::PRINT_I32;
+    case IR_Builtin_Function::PRINT_F32: return Hardcoded_Type::PRINT_F32;
+    case IR_Builtin_Function::PRINT_BOOL: return Hardcoded_Type::PRINT_BOOL;
+    case IR_Builtin_Function::PRINT_LINE: return Hardcoded_Type::PRINT_LINE;
+    case IR_Builtin_Function::PRINT_STRING: return Hardcoded_Type::PRINT_STRING;
+    case IR_Builtin_Function::READ_I32: return Hardcoded_Type::READ_I32;
+    case IR_Builtin_Function::READ_F32: return Hardcoded_Type::READ_F32;
+    case IR_Builtin_Function::READ_BOOL: return Hardcoded_Type::READ_BOOL;
+    default: panic("");
+    }
+    return (Hardcoded_Type)-1;
 }

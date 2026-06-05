@@ -27,7 +27,6 @@ struct Symbol_Table;
 struct Pattern_Variable;
 struct Datatype_Format;
 struct Type_System;
-struct Call_Signature;
 struct Datatype_Struct;
 struct Workload_Structure_Header;
 struct Analysis_Pass;

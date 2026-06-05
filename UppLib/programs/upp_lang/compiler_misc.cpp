@@ -24,135 +24,122 @@ const char* timing_task_to_string(Timing_Task task)
 Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 {
 	auto make_info = [&](
-		Hardcoded_Type_Class type_class, const char* symbol_name, 
-		const char* cstring, const char* c_impl_name) -> Hardcoded_Type_Info 
+		Hardcoded_Type_Class type_class, const char* symbol_name) -> Hardcoded_Type_Info 
 	{
 		Hardcoded_Type_Info info;
 		info.type_class = type_class;
-		info.cstring = cstring;
 		info.symbol_name = symbol_name;
-		info.c_impl_name = c_impl_name;
+		info.ir_operation = (IR_Operation)-1;
+		info.builtin_fn = (IR_Builtin_Function)-1;
+		return info;
+	};
+
+	auto make_info_builtin = [&](
+		Hardcoded_Type_Class type_class, const char* symbol_name, IR_Builtin_Function builtin) -> Hardcoded_Type_Info 
+	{
+		Hardcoded_Type_Info info;
+		info.type_class = type_class;
+		info.symbol_name = symbol_name;
+		info.ir_operation = (IR_Operation) -1;
+		info.builtin_fn = builtin;
+		return info;
+	};
+	
+	auto make_info_operation = [&](
+		Hardcoded_Type_Class type_class, const char* symbol_name, IR_Operation op) -> Hardcoded_Type_Info 
+	{
+		Hardcoded_Type_Info info;
+		info.type_class = type_class;
+		info.symbol_name = symbol_name;
+		info.ir_operation = op;
+		info.builtin_fn = (IR_Builtin_Function) -1;
 		return info;
 	};
 
 	switch (type)
 	{
-	case Hardcoded_Type::ASSERT_FN: return make_info(Hardcoded_Type_Class::UTILITY, "assert", "ASSERT_FN", "_");
-	case Hardcoded_Type::TYPE_INFO: return make_info(Hardcoded_Type_Class::UTILITY, "type_info", "TYPE_INFO", "_");
-	case Hardcoded_Type::TYPE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "type_of", "TYPE_OF", "_");
-	case Hardcoded_Type::SIZE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "size_of", "SIZE_OF", "_");
-	case Hardcoded_Type::ALIGN_OF: return make_info(Hardcoded_Type_Class::UTILITY, "align_of", "ALIGN_OF", "_");
-	case Hardcoded_Type::PANIC_FN: return make_info(Hardcoded_Type_Class::UTILITY, "panic", "PANIC_FN", "_");
-	case Hardcoded_Type::RETURN_TYPE: return make_info(Hardcoded_Type_Class::UTILITY, "return_type", "RETURN_TYPE", "_");
-	case Hardcoded_Type::STRUCT_TAG: return make_info(Hardcoded_Type_Class::UTILITY, "struct_tag", "STRUCT_TAG", "_");
+	case Hardcoded_Type::ASSERT_FN: return make_info(Hardcoded_Type_Class::UTILITY, "assert");
+	case Hardcoded_Type::TYPE_INFO: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "type_info", IR_Builtin_Function::TYPE_INFO);
+	case Hardcoded_Type::TYPE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "type_of");
+	case Hardcoded_Type::SIZE_OF: return make_info(Hardcoded_Type_Class::UTILITY, "size_of");
+	case Hardcoded_Type::ALIGN_OF: return make_info(Hardcoded_Type_Class::UTILITY, "align_of");
+	case Hardcoded_Type::PANIC_FN: return make_info(Hardcoded_Type_Class::UTILITY, "panic");
+	case Hardcoded_Type::RETURN_TYPE: return make_info(Hardcoded_Type_Class::UTILITY, "return_type");
+	case Hardcoded_Type::STRUCT_TAG: return make_info(Hardcoded_Type_Class::UTILITY, "struct_tag");
 
-	case Hardcoded_Type::ENUM_VALUE_AS_STRING: return make_info(Hardcoded_Type_Class::UTILITY, "enum_value_as_string", "ENUM_VALUE_AS_STRING", "_");
-	case Hardcoded_Type::ENUM_TYPE_MIN_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_min_value", "ENUM_TYPE_MIN_VALUE", "_");
-	case Hardcoded_Type::ENUM_TYPE_MAX_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_max_value", "ENUM_TYPE_MAX_VALUE", "_");
-	case Hardcoded_Type::ENUM_TYPE_IS_CONTINOUS: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_is_continous", "ENUM_TYPE_IS_CONTINOUS", "_");
+	case Hardcoded_Type::ENUM_VALUE_AS_STRING: return make_info(Hardcoded_Type_Class::UTILITY, "enum_value_as_string");
+	case Hardcoded_Type::ENUM_TYPE_MIN_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_min_value");
+	case Hardcoded_Type::ENUM_TYPE_MAX_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_max_value");
+	case Hardcoded_Type::ENUM_TYPE_IS_CONTINOUS: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_is_continous");
 
-	case Hardcoded_Type::CAST_PRIMITIVE: return make_info(Hardcoded_Type_Class::UTILITY, "cast_primitive", "CAST_PRIMITIVE", "_");
-	case Hardcoded_Type::CAST_POINTER: return make_info(Hardcoded_Type_Class::UTILITY, "cast_pointer", "CAST_POINTER", "_");
+	case Hardcoded_Type::CAST_PRIMITIVE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_primitive", IR_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_pointer", IR_Operation::PRIMITIVE_CAST);
 
-	case Hardcoded_Type::MEMORY_COPY: return make_info(Hardcoded_Type_Class::UTILITY, "memory_copy", "MEMORY_COPY", "memory_copy");
-	case Hardcoded_Type::MEMORY_COPY_NO_OVERLAP: return make_info(
-		Hardcoded_Type_Class::UTILITY, "memory_copy_no_overlap", "MEMORY_COPY_NO_OVERLAP", "memory_copy_no_overlap");
-	case Hardcoded_Type::MEMORY_COMPARE: return make_info(Hardcoded_Type_Class::UTILITY, "memory_compare", "MEMORY_COMPARE", "memory_compare");
-	case Hardcoded_Type::MEMORY_ZERO: return make_info(Hardcoded_Type_Class::UTILITY, "memory_zero", "MEMORY_ZERO", "memory_zero");
+	case Hardcoded_Type::MEMORY_COPY: 
+		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_copy", IR_Builtin_Function::MEMORY_COPY);
+	case Hardcoded_Type::MEMORY_COPY_NO_OVERLAP: 
+		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_copy_no_overlap", IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP);
+	case Hardcoded_Type::MEMORY_COMPARE: 
+		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_compare", IR_Builtin_Function::MEMORY_COMPARE);
+	case Hardcoded_Type::MEMORY_ZERO: 
+		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_zero", IR_Builtin_Function::MEMORY_ZERO);
 
-	case Hardcoded_Type::SYSTEM_ALLOC: return make_info(Hardcoded_Type_Class::UTILITY, "system_allocate", "SYSTEM_ALLOC", "malloc_size_u64");
-	case Hardcoded_Type::SYSTEM_FREE: return make_info(Hardcoded_Type_Class::UTILITY, "system_free", "SYSTEM_FREE", "free_pointer");
+	case Hardcoded_Type::SYSTEM_ALLOC: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "system_allocate", IR_Builtin_Function::SYSTEM_ALLOC);
+	case Hardcoded_Type::SYSTEM_FREE: return make_info_builtin(Hardcoded_Type_Class::UTILITY, "system_free", IR_Builtin_Function::SYSTEM_FREE);
 
-	case Hardcoded_Type::HIGHEST_SET_BIT_U32: return make_info(
-		Hardcoded_Type_Class::BITWISE_OPERATION, "hightest_set_bit_u32", "HIGHEST_SET_BIT_U32", "highest_set_bit_u32");
-	case Hardcoded_Type::HIGHEST_SET_BIT_U64: 
-		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "hightest_set_bit_u64", "HIGHEST_SET_BIT_U64", "highest_set_bit_u64");
-	case Hardcoded_Type::LOWEST_SET_BIT_U32:  
-		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "lowest_set_bit_u32", "LOWEST_SET_BIT_U32", "lowest_set_bit_u32");
-	case Hardcoded_Type::LOWEST_SET_BIT_U64:  
-		return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "lowest_set_bit_u64", "LOWEST_SET_BIT_U64", "lowest_set_bit_u64");
+	case Hardcoded_Type::PRINT_I32: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_i32", IR_Builtin_Function::PRINT_I32);
+	case Hardcoded_Type::PRINT_F32: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_f32", IR_Builtin_Function::PRINT_F32);
+	case Hardcoded_Type::PRINT_BOOL: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_bool", IR_Builtin_Function::PRINT_BOOL);
+	case Hardcoded_Type::PRINT_LINE: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_line", IR_Builtin_Function::PRINT_LINE);
+	case Hardcoded_Type::PRINT_STRING: return make_info_builtin(Hardcoded_Type_Class::OUTPUT, "print_string", IR_Builtin_Function::PRINT_STRING);
+	case Hardcoded_Type::READ_I32: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_i32", IR_Builtin_Function::READ_I32);
+	case Hardcoded_Type::READ_F32: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_f32", IR_Builtin_Function::READ_F32);
+	case Hardcoded_Type::READ_BOOL: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_bool", IR_Builtin_Function::READ_BOOL);
 
-	case Hardcoded_Type::BITWISE_NOT: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_not", "BITWISE_NOT", "_");
-	case Hardcoded_Type::BITWISE_AND: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_and", "BITWISE_AND", "_");
-	case Hardcoded_Type::BITWISE_OR: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_or", "BITWISE_OR", "_");
-	case Hardcoded_Type::BITWISE_XOR: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_xor", "BITWISE_XOR", "_");
-	case Hardcoded_Type::BITWISE_SHIFT_LEFT: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_shift_left", "BITWISE_SHIFT_LEFT", "_");
-	case Hardcoded_Type::BITWISE_SHIFT_RIGHT: return make_info(Hardcoded_Type_Class::BITWISE_OPERATION, "bitwise_shift_right", "BITWISE_SHIFT_RIGHT", "_");
+	case Hardcoded_Type::BITWISE_NOT:     return make_info_operation(Hardcoded_Type_Class::BITWISE_NOT, "bitwise_not", IR_Operation::BITWISE_NOT);
+	case Hardcoded_Type::HIGHEST_SET_BIT: return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "hightest_set_bit", IR_Operation::HIGHEST_SET_BIT);
+	case Hardcoded_Type::LOWEST_SET_BIT:  return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "lowest_set_bit", IR_Operation::LOWEST_SET_BIT);
+	case Hardcoded_Type::BITSHIFT_LEFT:   return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitwise_shift_left", IR_Operation::BITWISE_SHIFT_LEFT);
+	case Hardcoded_Type::BITSHIFT_RIGHT:  return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitwise_shift_right", IR_Operation::BITWISE_SHIFT_RIGHT);
+	case Hardcoded_Type::BITWISE_AND:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_and", IR_Operation::BITWISE_AND);
+	case Hardcoded_Type::BITWISE_OR:      return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_or", IR_Operation::BITWISE_OR);
+	case Hardcoded_Type::BITWISE_XOR:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_xor", IR_Operation::BITWISE_XOR);
 
-	case Hardcoded_Type::PRINT_I32: return make_info(Hardcoded_Type_Class::OUTPUT, "print_i32", "PRINT_I32", "print_i32");
-	case Hardcoded_Type::PRINT_F32: return make_info(Hardcoded_Type_Class::OUTPUT, "print_f32", "PRINT_F32", "print_f32");
-	case Hardcoded_Type::PRINT_BOOL: return make_info(Hardcoded_Type_Class::OUTPUT, "print_bool", "PRINT_BOOL", "print_bool");
-	case Hardcoded_Type::PRINT_LINE: return make_info(Hardcoded_Type_Class::OUTPUT, "print_line", "PRINT_LINE", "print_line");
-	case Hardcoded_Type::PRINT_STRING: return make_info(Hardcoded_Type_Class::OUTPUT, "print_string", "PRINT_STRING", "print_string");
-	case Hardcoded_Type::READ_I32: return make_info(Hardcoded_Type_Class::INPUT, "read_i32", "READ_I32", "read_i32");
-	case Hardcoded_Type::READ_F32: return make_info(Hardcoded_Type_Class::INPUT, "read_f32", "READ_F32", "read_f32");
-	case Hardcoded_Type::READ_BOOL: return make_info(Hardcoded_Type_Class::INPUT, "read_bool", "READ_BOOL", "read_bool");
+	case Hardcoded_Type::FLOAT_ABS:       return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,   "float_abs", IR_Operation::FLOAT_ABS);
+	case Hardcoded_Type::FLOAT_MODULO:    return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_modulo", IR_Operation::MODULO);
+	case Hardcoded_Type::FLOAT_REMAINDER: return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_remainder", IR_Operation::FLOAT_REMAINDER);
+	case Hardcoded_Type::CEIL:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_up", IR_Operation::ROUND_UP);
+	case Hardcoded_Type::FLOOR:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_down", IR_Operation::ROUND_DOWN);
+	case Hardcoded_Type::TRUNCATE:      return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_towards_zero", IR_Operation::ROUND_TOWARDS_ZERO);
+	case Hardcoded_Type::ROUND_NEAREST: return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_nearest", IR_Operation::ROUND_NEAREST);
+	case Hardcoded_Type::EXP:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "exp", IR_Operation::EXP);
+	case Hardcoded_Type::LN:            return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "ln", IR_Operation::LN);
+	case Hardcoded_Type::LOG10:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log10", IR_Operation::LOG10);
+	case Hardcoded_Type::LOG2:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log2", IR_Operation::LOG2);
+	case Hardcoded_Type::POW:           return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "pow", IR_Operation::POW);
+	case Hardcoded_Type::SQUARE_ROOT:   return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sqare_root", IR_Operation::SQUARE_ROOT);
+	case Hardcoded_Type::CUBE_ROOT:     return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cube_root", IR_Operation::CUBE_ROOT);
+	case Hardcoded_Type::SIN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sin", IR_Operation::SIN);
+	case Hardcoded_Type::COS:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cos", IR_Operation::COS);
+	case Hardcoded_Type::TAN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tan", IR_Operation::TAN);
+	case Hardcoded_Type::ASIN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asin", IR_Operation::ASIN);
+	case Hardcoded_Type::ACOS:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acos", IR_Operation::ACOS);
+	case Hardcoded_Type::ATAN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atan", IR_Operation::ATAN);
+	case Hardcoded_Type::ATAN2:         return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "atan2", IR_Operation::ATAN2);
+	case Hardcoded_Type::SINH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sinh", IR_Operation::SINH);
+	case Hardcoded_Type::COSH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cosh", IR_Operation::COSH);
+	case Hardcoded_Type::TANH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tanh", IR_Operation::TANH);
+	case Hardcoded_Type::ASINH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asinh", IR_Operation::ASINH);
+	case Hardcoded_Type::ACOSH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acosh", IR_Operation::ACOSH);
+	case Hardcoded_Type::ATANH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atanh", IR_Operation::ATANH);
+	case Hardcoded_Type::IS_NAN:        return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_nan", IR_Operation::IS_NAN);
+	case Hardcoded_Type::IS_FINITE:     return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_finite", IR_Operation::IS_FINITE);
+	case Hardcoded_Type::IS_INFINITE:   return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_infinite", IR_Operation::IS_INFINITE);
 
-	case Hardcoded_Type::F32_ABSOLUTE: return make_info(Hardcoded_Type_Class::F32_UNARY, "absolute", "F32_ABSOLUTE", "fabsf");
-	case Hardcoded_Type::F32_MODULO: return make_info(Hardcoded_Type_Class::F32_BINARY, "modulo", "F32_MODULO", "fmodf");
-	case Hardcoded_Type::F32_REMAINDER: return make_info(Hardcoded_Type_Class::F32_BINARY, "remainder", "F32_REMAINDER", "remainderf");
-	case Hardcoded_Type::F32_CEIL: return make_info(Hardcoded_Type_Class::F32_UNARY, "round_up", "F32_CEIL", "ceilf");
-	case Hardcoded_Type::F32_FLOOR: return make_info(Hardcoded_Type_Class::F32_UNARY, "round_down", "F32_FLOOR", "floorf");
-	case Hardcoded_Type::F32_TRUNCATE: return make_info(Hardcoded_Type_Class::F32_UNARY, "round_towards_zero", "F32_TRUNCATE", "truncf");
-	case Hardcoded_Type::F32_ROUND_NEAREST: return make_info(Hardcoded_Type_Class::F32_UNARY, "round_nearest", "F32_ROUND_NEAREST", "roundf");
-	case Hardcoded_Type::F32_EXP: return make_info(Hardcoded_Type_Class::F32_UNARY, "expr", "F32_EXP", "expf");
-	case Hardcoded_Type::F32_LN: return make_info(Hardcoded_Type_Class::F32_UNARY, "ln", "F32_LN", "logf");
-	case Hardcoded_Type::F32_LOG10: return make_info(Hardcoded_Type_Class::F32_UNARY, "log10", "F32_LOG10", "log10f");
-	case Hardcoded_Type::F32_LOG2: return make_info(Hardcoded_Type_Class::F32_UNARY, "log2", "F32_LOG2", "log2f");
-	case Hardcoded_Type::F32_POW: return make_info(Hardcoded_Type_Class::F32_BINARY, "pow", "F32_POW", "powf");
-	case Hardcoded_Type::F32_SQUARE_ROOT: return make_info(Hardcoded_Type_Class::F32_UNARY, "sqare_root", "F32_SQUARE_ROOT", "sqrtf");
-	case Hardcoded_Type::F32_CUBE_ROOT: return make_info(Hardcoded_Type_Class::F32_UNARY, "cube_root", "F32_CUBE_ROOT", "cbrtf");
-	case Hardcoded_Type::F32_SIN: return make_info(Hardcoded_Type_Class::F32_UNARY, "sin", "F32_SIN", "sinf");
-	case Hardcoded_Type::F32_COS: return make_info(Hardcoded_Type_Class::F32_UNARY, "cos", "F32_COS", "cosf");
-	case Hardcoded_Type::F32_TAN: return make_info(Hardcoded_Type_Class::F32_UNARY, "tan", "F32_TAN", "tanf");
-	case Hardcoded_Type::F32_ASIN: return make_info(Hardcoded_Type_Class::F32_UNARY, "asin", "F32_ASIN", "asinf");
-	case Hardcoded_Type::F32_ACOS: return make_info(Hardcoded_Type_Class::F32_UNARY, "acos", "F32_ACOS", "acosf");
-	case Hardcoded_Type::F32_ATAN: return make_info(Hardcoded_Type_Class::F32_UNARY, "atan", "F32_ATAN", "atanf");
-	case Hardcoded_Type::F32_ATAN2: return make_info(Hardcoded_Type_Class::F32_BINARY, "atan2", "F32_ATAN2", "atan2f");
-	case Hardcoded_Type::F32_SINH: return make_info(Hardcoded_Type_Class::F32_UNARY, "sinh", "F32_SINH", "sinhf");
-	case Hardcoded_Type::F32_COSH: return make_info(Hardcoded_Type_Class::F32_UNARY, "cosh", "F32_COSH", "coshf");
-	case Hardcoded_Type::F32_TANH: return make_info(Hardcoded_Type_Class::F32_UNARY, "tanh", "F32_TANH", "tanhf");
-	case Hardcoded_Type::F32_ASINH: return make_info(Hardcoded_Type_Class::F32_UNARY, "asinh", "F32_ASINH", "asinhf");
-	case Hardcoded_Type::F32_ACOSH: return make_info(Hardcoded_Type_Class::F32_UNARY, "acosh", "F32_ACOSH", "acoshf");
-	case Hardcoded_Type::F32_ATANH: return make_info(Hardcoded_Type_Class::F32_UNARY, "atanh", "F32_ATANH", "atanhf");
-	case Hardcoded_Type::F32_IS_NAN: return make_info(Hardcoded_Type_Class::F32_PREDICATE, "is_nan", "F32_IS_NAN", "isnan");
-	case Hardcoded_Type::F32_IS_FINITE: return make_info(Hardcoded_Type_Class::F32_PREDICATE, "is_finite", "F32_IS_FINITE", "isfinite");
-	case Hardcoded_Type::F32_IS_INFINITE: return make_info(Hardcoded_Type_Class::F32_PREDICATE, "is_infinite", "F32_IS_INFINITE", "isinf");
-
-	case Hardcoded_Type::F64_ABSOLUTE: return make_info(Hardcoded_Type_Class::F64_UNARY, "absolute", "F64_ABSOLUTE", "fabs");
-	case Hardcoded_Type::F64_MODULO: return make_info(Hardcoded_Type_Class::F64_BINARY, "modulo", "F64_MODULO", "fmod");
-	case Hardcoded_Type::F64_REMAINDER: return make_info(Hardcoded_Type_Class::F64_BINARY, "remainder", "F64_REMAINDER", "remainder");
-	case Hardcoded_Type::F64_CEIL: return make_info(Hardcoded_Type_Class::F64_UNARY, "round_up", "F64_CEIL", "ceil");
-	case Hardcoded_Type::F64_FLOOR: return make_info(Hardcoded_Type_Class::F64_UNARY, "round_down", "F64_FLOOR", "floor");
-	case Hardcoded_Type::F64_TRUNCATE: return make_info(Hardcoded_Type_Class::F64_UNARY, "round_towards_zero", "F64_TRUNCATE", "trunc");
-	case Hardcoded_Type::F64_ROUND_NEAREST: return make_info(Hardcoded_Type_Class::F64_UNARY, "round_nearest", "F64_ROUND_NEAREST", "round");
-	case Hardcoded_Type::F64_EXP: return make_info(Hardcoded_Type_Class::F64_UNARY, "expr", "F64_EXP", "exp");
-	case Hardcoded_Type::F64_LN: return make_info(Hardcoded_Type_Class::F64_UNARY, "ln", "F64_LN", "log");
-	case Hardcoded_Type::F64_LOG10: return make_info(Hardcoded_Type_Class::F64_UNARY, "log10", "F64_LOG10", "log10");
-	case Hardcoded_Type::F64_LOG2: return make_info(Hardcoded_Type_Class::F64_UNARY, "log2", "F64_LOG2", "log2");
-	case Hardcoded_Type::F64_POW: return make_info(Hardcoded_Type_Class::F64_BINARY, "pow", "F64_POW", "pow");
-	case Hardcoded_Type::F64_SQUARE_ROOT: return make_info(Hardcoded_Type_Class::F64_UNARY, "sqare_root", "F64_SQUARE_ROOT", "sqrt");
-	case Hardcoded_Type::F64_CUBE_ROOT: return make_info(Hardcoded_Type_Class::F64_UNARY, "cube_root", "F64_CUBE_ROOT", "cbrt");
-	case Hardcoded_Type::F64_SIN: return make_info(Hardcoded_Type_Class::F64_UNARY, "sin", "F64_SIN", "sin");
-	case Hardcoded_Type::F64_COS: return make_info(Hardcoded_Type_Class::F64_UNARY, "cos", "F64_COS", "cos");
-	case Hardcoded_Type::F64_TAN: return make_info(Hardcoded_Type_Class::F64_UNARY, "tan", "F64_TAN", "tan");
-	case Hardcoded_Type::F64_ASIN: return make_info(Hardcoded_Type_Class::F64_UNARY, "asin", "F64_ASIN", "asin");
-	case Hardcoded_Type::F64_ACOS: return make_info(Hardcoded_Type_Class::F64_UNARY, "acos", "F64_ACOS", "acos");
-	case Hardcoded_Type::F64_ATAN: return make_info(Hardcoded_Type_Class::F64_UNARY, "atan", "F64_ATAN", "atan");
-	case Hardcoded_Type::F64_ATAN2: return make_info(Hardcoded_Type_Class::F64_BINARY, "atan2", "F64_ATAN2", "atan2");
-	case Hardcoded_Type::F64_SINH: return make_info(Hardcoded_Type_Class::F64_UNARY, "sinh", "F64_SINH", "sinh");
-	case Hardcoded_Type::F64_COSH: return make_info(Hardcoded_Type_Class::F64_UNARY, "cosh", "F64_COSH", "cosh");
-	case Hardcoded_Type::F64_TANH: return make_info(Hardcoded_Type_Class::F64_UNARY, "tanh", "F64_TANH", "tanh");
-	case Hardcoded_Type::F64_ASINH: return make_info(Hardcoded_Type_Class::F64_UNARY, "asinh", "F64_ASINH", "asinh");
-	case Hardcoded_Type::F64_ACOSH: return make_info(Hardcoded_Type_Class::F64_UNARY, "acosh", "F64_ACOSH", "acosh");
-	case Hardcoded_Type::F64_ATANH: return make_info(Hardcoded_Type_Class::F64_UNARY, "atanh", "F64_ATANH", "atanh");
-	case Hardcoded_Type::F64_IS_NAN: return make_info(Hardcoded_Type_Class::F64_PREDICATE, "is_nan", "F64_IS_NAN", "isnan");
-	case Hardcoded_Type::F64_IS_FINITE: return make_info(Hardcoded_Type_Class::F64_PREDICATE, "is_finite", "F64_IS_FINITE", "isfinite");
-	case Hardcoded_Type::F64_IS_INFINITE: return make_info(Hardcoded_Type_Class::F64_PREDICATE, "is_infinite", "F64_IS_INFINITE", "isinf");
 	default: panic("Should not happen");
 	}
 
-	return make_info((Hardcoded_Type_Class)-1, "INVALID", "INVALID", "INVALID");
+	return make_info((Hardcoded_Type_Class)-1, "INVALID");
 }
 
 Exit_Code exit_code_make(Exit_Code_Type type, const char* error_msg)
