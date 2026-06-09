@@ -274,7 +274,7 @@ void symbol_destroy(Symbol* symbol);
 
 Symbol* symbol_table_define_symbol(
     Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
-    Compilation_Data* compilation_data
+    Semantic_Context* semantic_context, bool error_if_not_unique
 );
 void symbol_table_add_import(
     Symbol_Table* symbol_table, Symbol_Table* imported_table, Import_Type import_type, 

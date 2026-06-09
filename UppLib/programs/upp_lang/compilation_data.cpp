@@ -177,6 +177,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 	Compilation_Data* result = new Compilation_Data;
 	result->arena = Arena::create(2048);
 	result->tmp_arena = Arena::create(2048);
+	result->root_semantic_context_scratch_arena = Arena::create();
 	result->fiber_pool = fiber_pool;
 
 	// Create datastructures
@@ -211,7 +212,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 		result->type_system = type_system_create(result);
 		result->constant_pool = constant_pool_create(result);
 		result->extern_sources = extern_sources_create();
-		result->workload_executer = workload_executer_create(result);
+		result->workload_executer = workload_executer_create(result); // Note: This also sets the root workload
 		result->c_generator = c_generator_create(result);
 		c_compiler_initialize(); // Initializiation is cached, so calling this multiple times doesn't matter
 	}
@@ -219,10 +220,14 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 	// Initialize default objects
 	{
 		Compilation_Data* compilation_data = result;
+
 		auto& type_system = compilation_data->type_system;
 		auto& types = type_system->predefined_types;
 		auto identifier_pool = &compilation_data->identifier_pool;
 		Identifier_Pool* id_pool = identifier_pool;
+
+		Semantic_Context local_context = compilation_data_make_root_semantic_context(compilation_data);
+		Semantic_Context* semantic_context = &local_context;
 
 		// Create root tables and predefined Symbols 
 		{
@@ -233,26 +238,26 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 				// Define int, float, bool, string
 				Symbol* result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("int")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
-					compilation_data
+					root_table, identifier_pool_add(id_pool, string_create_static("int")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					semantic_context, true
 				);
 				result->options.datatype = upcast(types.i32_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("float")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
-					compilation_data
+					root_table, identifier_pool_add(id_pool, string_create_static("float")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					semantic_context, true
 				);
 				result->options.datatype = upcast(types.f32_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("bool")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
-					compilation_data
+					root_table, identifier_pool_add(id_pool, string_create_static("bool")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					semantic_context, true
 				);
 				result->options.datatype = upcast(types.bool_type);
 
 				result = symbol_table_define_symbol(
-					root_table, identifier_pool_add(id_pool, string_create_static("string")), Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL,
-					compilation_data
+					root_table, identifier_pool_add(id_pool, string_create_static("string")), Symbol_Type::DATATYPE, nullptr, Symbol_Access_Level::GLOBAL,
+					semantic_context, true
 				);
 				result->options.datatype = upcast(types.string);
 			}
@@ -270,7 +275,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 					Symbol* module_symbol = symbol_table_define_symbol(
 						(parent == nullptr ? module_table : parent), identifier_pool_add(id_pool, string_create_static(name)), 
 						Symbol_Type::MODULE, nullptr, Symbol_Access_Level::GLOBAL,
-						compilation_data
+						semantic_context, true
 					);
 					module_symbol->options.upp_module = result_module;
 
@@ -291,7 +296,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				Symbol* result = symbol_table_define_symbol(
 					builtin_table, 
 					identifier_pool_add(id_pool, string_create_static(name)), 
-					Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL, compilation_data
+					Symbol_Type::DATATYPE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
 				);
 				result->options.datatype = type;
 				return result;
@@ -321,32 +326,41 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 
 			// Define math constants
 			{
-				// auto define_constant_f32 = [&](f32 value, const char* name)
-				// {
-				// 	Constant_Pool_Result result = constant_pool_add_constant(
-				// 		compilation_data->constant_pool,
-				// 		upcast(types.f32_type),
-				// 		array_create_static<byte>((byte*)&value, sizeof(value))
-				// 	);
-				// 	assert(result.success, "");
-				// 	Symbol* symbol = symbol_table_define_symbol(
-				// 		table_math,
-				// 		identifier_pool_add(id_pool, string_create_static(name)),
-				// 		Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, compilation_data
-				// 	);
-				// 	symbol->options.constant = result.options.constant;
-				// };
+				Constant_Pool* constant_pool = compilation_data->constant_pool;
+				auto define_constant_symbol = [&](const char* name, Upp_Constant constant)
+				{
+					Symbol* symbol = symbol_table_define_symbol(
+						table_math,
+						identifier_pool_add(id_pool, string_create_static(name)),
+						Symbol_Type::COMPTIME_VALUE, 0, Symbol_Access_Level::GLOBAL, semantic_context, true
+					);
+					symbol->options.constant = constant;
+				};
 
-				// define_constant_f32(PI, "PI");
-				// define_constant_f64(PI_DOUBLE, "PI");
-				// define_constant_f32(EULERS_NUMBER_FLOAT, "EULERS_NUMBER");
-				// define_constant_f64(EULERS_NUMBER_DOUBLE, "EULERS_NUMBER");
-				// define_constant_f32(INFINITY, "POSITIVE_INFINITY");
-				// define_constant_f64(INFINITY, "POSITIVE_INFINITY");
-				// define_constant_f32(-INFINITY, "NEGATIVE_INFINITY");
-				// define_constant_f64(-INFINITY, "NEGATIVE_INFINITY");
-				// define_constant_f32(NAN, "NAN");
-				// define_constant_f64(NAN, "NAN");
+				define_constant_symbol("PI_F32", constant_pool->add_f32(PI));
+				define_constant_symbol("PI_F64", constant_pool->add_f64(PI_DOUBLE));
+				define_constant_symbol("EULERS_NUMBER_F32", constant_pool->add_f32(EULERS_NUMBER_FLOAT));
+				define_constant_symbol("EULERS_NUMBER_F64", constant_pool->add_f64(EULERS_NUMBER_DOUBLE));
+				define_constant_symbol("POSITIVE_INFINITY_F32", constant_pool->add_f32(INFINITY));
+				define_constant_symbol("POSITIVE_INFINITY_F64", constant_pool->add_f64(INFINITY));
+				define_constant_symbol("NEGATIVE_INFINITY_F32", constant_pool->add_f32(-INFINITY));
+				define_constant_symbol("NEGATIVE_INFINITY_F64", constant_pool->add_f64(-INFINITY));
+				define_constant_symbol("NAN_VALUE_F32", constant_pool->add_f32(NAN));
+				define_constant_symbol("NAN_VALUE_F64", constant_pool->add_f64(NAN));
+
+				define_constant_symbol("MAX_VALUE_I8",  constant_pool->add_i32(_I8_MAX));
+				define_constant_symbol("MAX_VALUE_I16", constant_pool->add_i32(_I16_MAX));
+				define_constant_symbol("MAX_VALUE_I32", constant_pool->add_i32(_I32_MAX));
+				define_constant_symbol("MAX_VALUE_I64", constant_pool->add_i64(_I64_MAX));
+				define_constant_symbol("MIN_VALUE_I8",  constant_pool->add_i32(_I8_MIN));
+				define_constant_symbol("MIN_VALUE_I16", constant_pool->add_i32(_I16_MIN));
+				define_constant_symbol("MIN_VALUE_I32", constant_pool->add_i32(_I32_MIN));
+				define_constant_symbol("MIN_VALUE_I64", constant_pool->add_i64(_I64_MIN));
+
+				define_constant_symbol("MAX_VALUE_U8",  constant_pool->add_u32(_UI8_MAX));
+				define_constant_symbol("MAX_VALUE_U16", constant_pool->add_u32(_UI16_MAX));
+				define_constant_symbol("MAX_VALUE_U32", constant_pool->add_u32(_UI32_MAX));
+				define_constant_symbol("MAX_VALUE_U64", constant_pool->add_u64(_UI64_MAX));
 			}
 
 			// Define hardcoded functions
@@ -365,7 +379,7 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 				Symbol* result = symbol_table_define_symbol(
 					symbol_table, identifier_pool_add(id_pool, string_create_static(info.symbol_name)), 
 					Symbol_Type::HARDCODED_FUNCTION, nullptr, Symbol_Access_Level::GLOBAL,
-					compilation_data
+					semantic_context, true
 				);
 				result->options.hardcoded = type;
 			}
@@ -518,6 +532,16 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 			hardcoded_signatures[(int)Hardcoded_Type::CAST_PRIMITIVE] = call_signature_register(call_signature, compilation_data);
 			hardcoded_signatures[(int)Hardcoded_Type::CAST_POINTER] = hardcoded_signatures[(int)Hardcoded_Type::CAST_PRIMITIVE];
 
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.usize), true, false, false);
+			call_signature_add_return_type(call_signature, upcast(types.rawptr), compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::USIZE_TO_RAWPTR] = call_signature_register(call_signature, compilation_data);
+
+			call_signature = call_signature_create_empty();
+			call_signature_add_parameter(call_signature, make_id("value"), upcast(types.rawptr), true, false, false);
+			call_signature_add_return_type(call_signature, upcast(types.usize), compilation_data);
+			hardcoded_signatures[(int)Hardcoded_Type::RAWPTR_TO_USIZE] = call_signature_register(call_signature, compilation_data);
+
 			// Memory functions
 			call_signature = call_signature_create_empty();
 			call_signature_add_parameter(call_signature, make_id("destination"), upcast(types.rawptr), true, false, false);
@@ -655,7 +679,6 @@ Compilation_Data* compilation_data_create(Fiber_Pool* fiber_pool)
 	}
 
 	result->ir_generator = ir_generator_create(result); // Was moved because this requires system allocator and global allocator to be available
-	result->root_workload = workload_executer_add_root_workload(result);
 
 	return result;
 }
@@ -709,6 +732,7 @@ void compilation_data_destroy(Compilation_Data* data)
 
 	data->arena.destroy();
 	data->tmp_arena.destroy();
+	data->root_semantic_context_scratch_arena.destroy();
 
 	// Symbol tables + workloads
 	for (int i = 0; i < data->allocated_symbol_tables.size; i++) {
@@ -1464,6 +1488,14 @@ Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data
         }
     }
     return nullptr;
+}
+
+Semantic_Context compilation_data_make_root_semantic_context(Compilation_Data* compilation_data)
+{
+	return semantic_context_make(
+		compilation_data, upcast(compilation_data->root_workload), 
+		compilation_data->root_symbol_table, Symbol_Access_Level::GLOBAL, nullptr, &compilation_data->root_semantic_context_scratch_arena
+	);
 }
 
 void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task)

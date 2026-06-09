@@ -1,9 +1,28 @@
 import ~usize
 
-Buffer :: struct
-    ptr: ~rawptr
-    x: usize
+Pair :: struct ($T)
+    values: [2]T
 
-main :: fn ()
-    x := 10 + 5 * 2
-    ~print_i32(x)
+Iterator :: struct ($T)
+    pair: *Pair(T)
+    index: usize
+
+make_iterator :: fn (pair: *Pair($T)) => Iterator(T)
+    return .(pair, 0)
+
+next :: fn (iterator: *Iterator($T)) => *T
+    if iterator.index >= iterator.pair.values.size
+        return nil
+    iterator.index += 1
+    return iterator.pair.values[iterator.index - 1]
+
+operators add_iterator(Pair(_), make_iterator, next, true)
+
+main :: fn
+    pair := Pair(int).(values = .[1, 2])
+    loop i in pair
+        ~print_i32(i)
+        ~print_line()
+
+
+

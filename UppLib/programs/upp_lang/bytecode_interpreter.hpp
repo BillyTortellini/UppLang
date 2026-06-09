@@ -20,5 +20,5 @@ void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread);
 void bytecode_thread_print_state(Bytecode_Thread* thread);
 // Returns if successfull (Only not sucessfull if integer divide by 0)
 bool bytecode_execute_ir_operation(
-	IR_Operation operation, void* dst, void* src1, void* src2, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type
+	Primitive_Operation operation, void* dst, void* src1, void* src2, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type
 );

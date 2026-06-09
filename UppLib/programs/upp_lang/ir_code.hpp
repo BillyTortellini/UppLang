@@ -117,7 +117,7 @@ struct IR_Instruction_Return
 
 struct IR_Instruction_Operation
 {
-    IR_Operation type;
+    Primitive_Operation type;
     IR_Data_Access* destination;
     IR_Data_Access* operand_1;
     IR_Data_Access* operand_2; // Not always needed
@@ -167,6 +167,12 @@ struct IR_Instruction_Variable_Definition
     Optional<IR_Data_Access*> initial_value;
 };
 
+struct IR_Instruction_Move
+{
+    IR_Data_Access* source;
+    IR_Data_Access* destination;
+};
+
 enum class IR_Instruction_Type
 {
     IF,
@@ -177,6 +183,7 @@ enum class IR_Instruction_Type
     LABEL,
     GOTO,
     RETURN,
+    MOVE,
     OPERATION,
     FUNCTION_ADDRESS,
     // Required for const variable initialization in C-Code
@@ -189,6 +196,7 @@ struct IR_Instruction
     IR_Instruction_Type type;
     union
     {
+        IR_Instruction_Move move;
         IR_Instruction_Call call;
         IR_Instruction_If if_instr;
         IR_Instruction_While while_instr;
@@ -288,9 +296,9 @@ void ir_generator_generate_function(Upp_Function* function, Compilation_Data* co
 void ir_program_append_to_string(String* string, bool print_generated_functions, Compilation_Data* compilation_data);
 void ir_instruction_append_to_string(IR_Instruction* instruction, String* string, int indentation, IR_Code_Block* code_block, Compilation_Data* compilation_data);
 
-const char* ir_operation_as_string(IR_Operation operation);
-IR_Operation ast_binop_to_ir_operation(AST::Binop binop);
-int ir_operation_parameter_count(IR_Operation operation);
+const char* ir_operation_as_string(Primitive_Operation operation);
+Primitive_Operation ast_binop_to_ir_operation(AST::Binop binop);
+int ir_operation_parameter_count(Primitive_Operation operation);
 const char* ir_builtin_fn_as_string(IR_Builtin_Function fn);
 Hardcoded_Type ir_builtin_fn_to_hardcoded_type(IR_Builtin_Function fn);
 

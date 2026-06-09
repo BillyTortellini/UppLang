@@ -539,6 +539,7 @@ void c_generator_output_type_reference(C_Generator* generator, Datatype* type)
         case Builtin_Type::CODE_POINT:  string_append(&access_name, "u32"); break;
         default: panic("");
         }
+        break;
     }
     case Datatype_Type::PATTERN_VARIABLE:
     case Datatype_Type::UNKNOWN_TYPE:
@@ -962,6 +963,15 @@ void c_generator_generate(C_Generator* generator)
                 string_append_formated(gen.text, "info->subtypes_.Array.element_type = %d;\n", array_type->element_type->type_handle.index);
                 string_add_indentation(gen.text, 1);
                 string_append_formated(gen.text, "info->subtypes_.Array.size         = %d;\n", array_type->element_count);
+                break;
+            }
+            case Datatype_Type::BUILT_IN: 
+            {
+                auto built_in = downcast<Datatype_Builtin>(type);
+                string_append(gen.text, "info->subtypes_.Builtin.type = (");
+                c_generator_output_type_reference(generator, types.builtin_type_enum);
+                string_append_formated(gen.text, ")%d;\n", (int)built_in->builtin_type); // Do i need plus one here?
+                string_add_indentation(gen.text, 1);
                 break;
             }
             case Datatype_Type::POINTER: {
@@ -2129,6 +2139,16 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             string_append_formated(gen.text, "&%s;\n", fn_name->characters);
             break;
         }
+        case IR_Instruction_Type::MOVE:
+        {
+            auto& move = instr->options.move;
+            c_generator_output_data_access(generator, move.destination);
+            string_append_formated(gen.text, " = ");
+            c_generator_output_cast_if_necessary(generator, move.destination->datatype, move.source->datatype);
+            c_generator_output_data_access(generator, move.source);
+            string_append_formated(gen.text, ";\n");
+            break;
+        }
         case IR_Instruction_Type::OPERATION:
         {
             auto& operation = instr->options.operation;
@@ -2140,8 +2160,7 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
             bool append_f_for_f32_version = true;
             switch (operation.type)
             {
-            case IR_Operation::MOVE:
-            case IR_Operation::PRIMITIVE_CAST: 
+            case Primitive_Operation::PRIMITIVE_CAST: 
             {
                 op_handled = true;
                 c_generator_output_data_access(generator, operation.destination);
@@ -2151,20 +2170,20 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 string_append_formated(gen.text, ";\n");
                 break;
             }
-            case IR_Operation::HIGHEST_SET_BIT:
-            case IR_Operation::LOWEST_SET_BIT:
+            case Primitive_Operation::HIGHEST_SET_BIT:
+            case Primitive_Operation::LOWEST_SET_BIT:
             {
                 op_handled = true;
                 assert(datatype_is_integer(operation.operand_1->datatype, true) && datatype_is_unsigned_int(operation.operand_1->datatype), "");
 
-                const char* fn_name = operation.type == IR_Operation::HIGHEST_SET_BIT ? "highest_set_bit_" : "lowest_set_bit_";
+                const char* fn_name = operation.type == Primitive_Operation::HIGHEST_SET_BIT ? "highest_set_bit_" : "lowest_set_bit_";
                 const char* postfix = "";
                 switch (operation.operand_1->datatype->memory_info.value.size)
                 {
                 case 1:
                 case 2:
                 case 4: postfix = "u32"; break;
-                case 8: postfix = "u62"; break;
+                case 8: postfix = "u64"; break;
                 default: panic("");
                 }
 
@@ -2175,62 +2194,62 @@ void c_generator_output_code_block(C_Generator* generator, IR_Code_Block* code_b
                 break;
             }
 
-            case IR_Operation::ADDITION:               binop_str = "+"; break;
-            case IR_Operation::SUBTRACTION:            binop_str = "-"; break;
-            case IR_Operation::DIVISION:               binop_str = "/"; break;
-            case IR_Operation::MULTIPLICATION:         binop_str = "*"; break;
-            case IR_Operation::MODULO:                 binop_str = "%"; break;
-            case IR_Operation::NEGATE:                 unop_str = "!"; break;
-            case IR_Operation::EQUAL:                  binop_str = "=="; break;
-            case IR_Operation::NOT_EQUAL:              binop_str = "!="; break;
-            case IR_Operation::LESS:                   binop_str = "<"; break;
-            case IR_Operation::LESS_OR_EQUAL:          binop_str = "<="; break;
-            case IR_Operation::GREATER:                binop_str = ">"; break;
-            case IR_Operation::GREATER_OR_EQUAL:       binop_str = ">="; break;
-            case IR_Operation::AND:                    binop_str = "&&"; break;
-            case IR_Operation::OR:                     binop_str = "||"; break;
-            case IR_Operation::NOT:                    unop_str = "!"; break;
-            case IR_Operation::BITWISE_NOT:            binop_str = "~"; break;
-            case IR_Operation::BITWISE_AND:            binop_str = "&"; break;
-            case IR_Operation::BITWISE_OR:             binop_str = "|"; break;
-            case IR_Operation::BITWISE_XOR:            binop_str = "^"; break;
-            case IR_Operation::BITWISE_SHIFT_LEFT:     binop_str = "<<"; break;
-            case IR_Operation::BITWISE_SHIFT_RIGHT:    binop_str = ">>"; break;
+            case Primitive_Operation::ADDITION:               binop_str = "+"; break;
+            case Primitive_Operation::SUBTRACTION:            binop_str = "-"; break;
+            case Primitive_Operation::DIVISION:               binop_str = "/"; break;
+            case Primitive_Operation::MULTIPLICATION:         binop_str = "*"; break;
+            case Primitive_Operation::MODULO:                 binop_str = "%"; break;
+            case Primitive_Operation::NEGATE:                 unop_str = "!"; break;
+            case Primitive_Operation::EQUAL:                  binop_str = "=="; break;
+            case Primitive_Operation::NOT_EQUAL:              binop_str = "!="; break;
+            case Primitive_Operation::LESS:                   binop_str = "<"; break;
+            case Primitive_Operation::LESS_OR_EQUAL:          binop_str = "<="; break;
+            case Primitive_Operation::GREATER:                binop_str = ">"; break;
+            case Primitive_Operation::GREATER_OR_EQUAL:       binop_str = ">="; break;
+            case Primitive_Operation::AND:                    binop_str = "&&"; break;
+            case Primitive_Operation::OR:                     binop_str = "||"; break;
+            case Primitive_Operation::NOT:                    unop_str = "!"; break;
+            case Primitive_Operation::BITWISE_NOT:            binop_str = "~"; break;
+            case Primitive_Operation::BITWISE_AND:            binop_str = "&"; break;
+            case Primitive_Operation::BITWISE_OR:             binop_str = "|"; break;
+            case Primitive_Operation::BITWISE_XOR:            binop_str = "^"; break;
+            case Primitive_Operation::BITWISE_SHIFT_LEFT:     binop_str = "<<"; break;
+            case Primitive_Operation::BITWISE_SHIFT_RIGHT:    binop_str = ">>"; break;
 
-            case IR_Operation::FLOAT_ABS:       float_fn_name = "fabsf"; break;
-            case IR_Operation::FLOAT_MODULO:         float_fn_name = "fmod";  break;
-            case IR_Operation::FLOAT_REMAINDER:      float_fn_name = "remainder"; break;
-            case IR_Operation::ROUND_UP:             float_fn_name = "ceil"; break;
-            case IR_Operation::ROUND_DOWN:           float_fn_name = "floor"; break;
-            case IR_Operation::ROUND_TOWARDS_ZERO:   float_fn_name = "trunc"; break;
-            case IR_Operation::ROUND_NEAREST:        float_fn_name = "round"; break;
+            case Primitive_Operation::FLOAT_ABS:       float_fn_name = "fabsf"; break;
+            case Primitive_Operation::FLOAT_MODULO:         float_fn_name = "fmod";  break;
+            case Primitive_Operation::FLOAT_REMAINDER:      float_fn_name = "remainder"; break;
+            case Primitive_Operation::ROUND_UP:             float_fn_name = "ceil"; break;
+            case Primitive_Operation::ROUND_DOWN:           float_fn_name = "floor"; break;
+            case Primitive_Operation::ROUND_TOWARDS_ZERO:   float_fn_name = "trunc"; break;
+            case Primitive_Operation::ROUND_NEAREST:        float_fn_name = "round"; break;
 
-            case IR_Operation::EXP:                  float_fn_name = "exp"; break;
-            case IR_Operation::LN:                   float_fn_name = "log"; break;
-            case IR_Operation::LOG10:                float_fn_name = "log10"; break;
-            case IR_Operation::LOG2:                 float_fn_name = "log2"; break;
-            case IR_Operation::POW:                  float_fn_name = "pow"; break;
-            case IR_Operation::SQUARE_ROOT:          float_fn_name = "sqrt"; break;
-            case IR_Operation::CUBE_ROOT:            float_fn_name = "cbrt"; break;
+            case Primitive_Operation::EXP:                  float_fn_name = "exp"; break;
+            case Primitive_Operation::LN:                   float_fn_name = "log"; break;
+            case Primitive_Operation::LOG10:                float_fn_name = "log10"; break;
+            case Primitive_Operation::LOG2:                 float_fn_name = "log2"; break;
+            case Primitive_Operation::POW:                  float_fn_name = "pow"; break;
+            case Primitive_Operation::SQUARE_ROOT:          float_fn_name = "sqrt"; break;
+            case Primitive_Operation::CUBE_ROOT:            float_fn_name = "cbrt"; break;
 
-            case IR_Operation::SIN:                  float_fn_name = "sin"; break;
-            case IR_Operation::COS:                  float_fn_name = "cos"; break;
-            case IR_Operation::TAN:                  float_fn_name = "tan"; break;
-            case IR_Operation::ASIN:                 float_fn_name = "asin"; break;
-            case IR_Operation::ACOS:                 float_fn_name = "acos"; break;
-            case IR_Operation::ATAN:                 float_fn_name = "atan"; break;
-            case IR_Operation::ATAN2:                float_fn_name = "atan2"; break;
+            case Primitive_Operation::SIN:                  float_fn_name = "sin"; break;
+            case Primitive_Operation::COS:                  float_fn_name = "cos"; break;
+            case Primitive_Operation::TAN:                  float_fn_name = "tan"; break;
+            case Primitive_Operation::ASIN:                 float_fn_name = "asin"; break;
+            case Primitive_Operation::ACOS:                 float_fn_name = "acos"; break;
+            case Primitive_Operation::ATAN:                 float_fn_name = "atan"; break;
+            case Primitive_Operation::ATAN2:                float_fn_name = "atan2"; break;
 
-            case IR_Operation::SINH:                 float_fn_name = "sinh"; break;
-            case IR_Operation::COSH:                 float_fn_name = "cosh"; break;
-            case IR_Operation::TANH:                 float_fn_name = "tanh"; break;
-            case IR_Operation::ASINH:                float_fn_name = "asinh"; break;
-            case IR_Operation::ACOSH:                float_fn_name = "acosh"; break;
-            case IR_Operation::ATANH:                float_fn_name = "atanh"; break;
+            case Primitive_Operation::SINH:                 float_fn_name = "sinh"; break;
+            case Primitive_Operation::COSH:                 float_fn_name = "cosh"; break;
+            case Primitive_Operation::TANH:                 float_fn_name = "tanh"; break;
+            case Primitive_Operation::ASINH:                float_fn_name = "asinh"; break;
+            case Primitive_Operation::ACOSH:                float_fn_name = "acosh"; break;
+            case Primitive_Operation::ATANH:                float_fn_name = "atanh"; break;
 
-            case IR_Operation::IS_NAN:               float_fn_name = "isnan"; append_f_for_f32_version = false; break;
-            case IR_Operation::IS_FINITE:            float_fn_name = "isinf"; append_f_for_f32_version = false; break;
-            case IR_Operation::IS_INFINITE:          float_fn_name = "isfinite"; append_f_for_f32_version = false; break;
+            case Primitive_Operation::IS_NAN:               float_fn_name = "isnan"; append_f_for_f32_version = false; break;
+            case Primitive_Operation::IS_FINITE:            float_fn_name = "isinf"; append_f_for_f32_version = false; break;
+            case Primitive_Operation::IS_INFINITE:          float_fn_name = "isfinite"; append_f_for_f32_version = false; break;
             default: panic("");
             }
 

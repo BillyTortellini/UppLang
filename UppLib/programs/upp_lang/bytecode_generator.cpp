@@ -872,6 +872,22 @@ void bytecode_generator_generate_code_block(Bytecode_Generator* generator, IR_Co
             }
             break;
         }
+        case IR_Instruction_Type::MOVE:
+        {
+            auto& move = instr->options.move;
+            bytecode_generator_add_instruction_and_set_destination
+            (
+                generator,
+                move.destination,
+                instruction_make_3(
+                    Instruction_Type::MOVE_STACK_DATA, 
+                    PLACEHOLDER,
+                    data_access_read_value(generator, move.source),
+                    move.source->datatype->memory_info.value.size
+                )
+            );
+            break;
+        }
         case IR_Instruction_Type::OPERATION:
         {
             auto& operation = instr->options.operation;
@@ -1050,13 +1066,13 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
         break;
     case Instruction_Type::IR_OPERATION:
     {
-        IR_Operation ir_op;
+        Primitive_Operation ir_op;
         Bytecode_Type left_type;
         Bytecode_Type right_type;
         Bytecode_Type dst_type;
         bytecode_unpack_operation_and_types_from_int(i.op4, ir_op, left_type, right_type, dst_type);
         string_append_formated(string, "IR_OPERATION                 dst: %d, src1: %d, src2: %d", i.op1, i.op2, i.op3);
-        string_append_formated(string, "  %s, left_type: %s", ir_operation_as_string(ir_op), bytecode_type_as_string(left_type));
+        string_append_formated(string, "\n       %s, left_type: %s", ir_operation_as_string(ir_op), bytecode_type_as_string(left_type));
         if (ir_operation_parameter_count(ir_op) == 2) {
             string_append_formated(string, " right_type: %s", bytecode_type_as_string(right_type));
         }
@@ -1092,7 +1108,7 @@ void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_
     }
 }
 
-int bytecode_pack_operation_and_types_to_int(IR_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
+int bytecode_pack_operation_and_types_to_int(Primitive_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
 {
     u32 packed = 0;
     packed = (packed << 8) | (u32)operation;
@@ -1103,7 +1119,7 @@ int bytecode_pack_operation_and_types_to_int(IR_Operation operation, Bytecode_Ty
 }
 
 void bytecode_unpack_operation_and_types_from_int(
-    int value, IR_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right)
+    int value, Primitive_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right)
 {
     u32 packed = (u32)value;
 
@@ -1112,7 +1128,7 @@ void bytecode_unpack_operation_and_types_from_int(
     u32 left_value  = (packed >> 8 ) & 0xFF;
     u32 right_value = (packed >> 0 ) & 0xFF;
 
-    out_op = (IR_Operation)op_value;
+    out_op = (Primitive_Operation)op_value;
     out_dst   = (Bytecode_Type)dst_value;
     out_left  = (Bytecode_Type)left_value;
     out_right = (Bytecode_Type)right_value;

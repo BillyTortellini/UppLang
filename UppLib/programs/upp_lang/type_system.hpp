@@ -390,6 +390,7 @@ struct Predefined_Types
     Datatype* internal_member_info_type;
     Datatype* internal_enum_member_info_type;
     Datatype* primitive_type_enum;
+    Datatype* builtin_type_enum;
 };
 
 // TYPE SYSTEM

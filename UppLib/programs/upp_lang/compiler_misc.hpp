@@ -103,9 +103,8 @@ enum class Extern_Compiler_Setting
 	MAX_ENUM_VALUE
 };
 
-enum class IR_Operation
+enum class Primitive_Operation
 {
-    MOVE,
     PRIMITIVE_CAST, // Also includes pointer casts and rawptr <-> usize
 
     // Arithmetic
@@ -219,6 +218,8 @@ enum class Hardcoded_Type
 
 	CAST_PRIMITIVE,
 	CAST_POINTER,
+	RAWPTR_TO_USIZE,
+	USIZE_TO_RAWPTR,
 
 	MEMORY_COPY,
 	MEMORY_COPY_NO_OVERLAP,
@@ -307,7 +308,7 @@ struct Hardcoded_Type_Info
 {
 	Hardcoded_Type_Class type_class;
 	const char* symbol_name;
-	IR_Operation ir_operation; // -1 if no op exists
+	Primitive_Operation ir_operation; // -1 if no op exists
 	IR_Builtin_Function builtin_fn; // -1 if not a builtin
 };
 Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type);

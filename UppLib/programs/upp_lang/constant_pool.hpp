@@ -56,7 +56,9 @@ struct Constant_Pool
     Predefined_Constants predefined;
 
     Upp_Constant add_i32(i32 value);
+    Upp_Constant add_i64(i64 value);
     Upp_Constant add_u32(u32 value);
+    Upp_Constant add_u64(u64 value);
     Upp_Constant add_usize(usize value);
     Upp_Constant add_f32(f32 value);
     Upp_Constant add_f64(f64 value);

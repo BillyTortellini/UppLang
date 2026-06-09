@@ -367,11 +367,31 @@ Upp_Constant Constant_Pool::add_i32(i32 value)
     return result.options.constant;
 }
 
+Upp_Constant Constant_Pool::add_i64(i64 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.i64_type), array_create_static_as_bytes<i64>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
 Upp_Constant Constant_Pool::add_u32(u32 value)
 {
     auto& types = this->compilation_data->type_system->predefined_types;
     Constant_Pool_Result result = constant_pool_add_constant(
         this, upcast(types.u32_type), array_create_static_as_bytes<u32>(&value, 1)
+    );
+    assert(result.success, "");
+    return result.options.constant;
+}
+
+Upp_Constant Constant_Pool::add_u64(u64 value)
+{
+    auto& types = this->compilation_data->type_system->predefined_types;
+    Constant_Pool_Result result = constant_pool_add_constant(
+        this, upcast(types.u64_type), array_create_static_as_bytes<u64>(&value, 1)
     );
     assert(result.success, "");
     return result.options.constant;

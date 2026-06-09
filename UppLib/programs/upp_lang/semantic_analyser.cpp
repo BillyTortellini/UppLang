@@ -551,7 +551,7 @@ void datatype_struct_set_poly_infos(Datatype_Struct* structure, bool contains_pa
 	}
 }
 
-Upp_Struct* upp_struct_create_empty(AST::Definition_Struct* struct_node, Semantic_Context* semantic_context, bool log_hierarchy_errors)
+Upp_Struct* upp_struct_create_empty(AST::Definition_Struct* struct_node, Poly_Type poly_type, Semantic_Context* semantic_context, bool log_hierarchy_errors)
 {
 	auto compilation_data = semantic_context->compilation_data;
 	auto& ids = compilation_data->identifier_pool.predefined_ids;
@@ -563,7 +563,7 @@ Upp_Struct* upp_struct_create_empty(AST::Definition_Struct* struct_node, Semanti
 	Upp_Struct* upp_struct = structure->upp_struct;
 	upp_struct->struct_node = struct_node;
 	upp_struct->is_extern_struct = false;
-	upp_struct->poly_type = Poly_Type::NORMAL;
+	upp_struct->poly_type = poly_type;
 	upp_struct->datatype = structure;
 
 	add_struct_members_empty_recursive(
@@ -737,7 +737,7 @@ Comptime_Result expression_calculate_comptime_value_internal(AST::Expression* ex
 		auto result_type_size = type_wait_for_size_info_to_finish(value_info.result_type, semantic_context);
 		void* result_buffer = arena.allocate_raw(result_type_size->size, result_type_size->alignment);
 		bytecode_execute_ir_operation(
-			IR_Operation::PRIMITIVE_CAST,
+			Primitive_Operation::PRIMITIVE_CAST,
 			result_buffer, result.data, nullptr,
 			datatype_to_bytecode_type(result_datatype), datatype_to_bytecode_type(result.data_type), Bytecode_Type::UINT64
 		);
@@ -881,24 +881,24 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 			}
 		}
 
-		IR_Operation instr_type;
+		Primitive_Operation instr_type;
 		switch (expr->options.binop.type)
 		{
-		case AST::Binop::ADDITION: instr_type = IR_Operation::ADDITION; break;
-		case AST::Binop::SUBTRACTION: instr_type = IR_Operation::SUBTRACTION; break;
-		case AST::Binop::DIVISION: instr_type = IR_Operation::DIVISION; break;
-		case AST::Binop::MULTIPLICATION: instr_type = IR_Operation::MULTIPLICATION; break;
-		case AST::Binop::MODULO: instr_type = IR_Operation::MODULO; break;
-		case AST::Binop::AND: instr_type = IR_Operation::AND; break;
-		case AST::Binop::OR: instr_type = IR_Operation::OR; break;
-		case AST::Binop::EQUAL: instr_type = IR_Operation::EQUAL; break;
-		case AST::Binop::NOT_EQUAL: instr_type = IR_Operation::NOT_EQUAL; break;
-		case AST::Binop::LESS: instr_type = IR_Operation::LESS; break;
-		case AST::Binop::LESS_OR_EQUAL: instr_type = IR_Operation::LESS_OR_EQUAL; break;
-		case AST::Binop::GREATER: instr_type = IR_Operation::GREATER; break;
-		case AST::Binop::GREATER_OR_EQUAL: instr_type = IR_Operation::GREATER_OR_EQUAL; break;
-		case AST::Binop::POINTER_EQUAL: instr_type = IR_Operation::EQUAL; break;
-		case AST::Binop::POINTER_NOT_EQUAL: instr_type = IR_Operation::NOT_EQUAL; break;
+		case AST::Binop::ADDITION: instr_type = Primitive_Operation::ADDITION; break;
+		case AST::Binop::SUBTRACTION: instr_type = Primitive_Operation::SUBTRACTION; break;
+		case AST::Binop::DIVISION: instr_type = Primitive_Operation::DIVISION; break;
+		case AST::Binop::MULTIPLICATION: instr_type = Primitive_Operation::MULTIPLICATION; break;
+		case AST::Binop::MODULO: instr_type = Primitive_Operation::MODULO; break;
+		case AST::Binop::AND: instr_type = Primitive_Operation::AND; break;
+		case AST::Binop::OR: instr_type = Primitive_Operation::OR; break;
+		case AST::Binop::EQUAL: instr_type = Primitive_Operation::EQUAL; break;
+		case AST::Binop::NOT_EQUAL: instr_type = Primitive_Operation::NOT_EQUAL; break;
+		case AST::Binop::LESS: instr_type = Primitive_Operation::LESS; break;
+		case AST::Binop::LESS_OR_EQUAL: instr_type = Primitive_Operation::LESS_OR_EQUAL; break;
+		case AST::Binop::GREATER: instr_type = Primitive_Operation::GREATER; break;
+		case AST::Binop::GREATER_OR_EQUAL: instr_type = Primitive_Operation::GREATER_OR_EQUAL; break;
+		case AST::Binop::POINTER_EQUAL: instr_type = Primitive_Operation::EQUAL; break;
+		case AST::Binop::POINTER_NOT_EQUAL: instr_type = Primitive_Operation::NOT_EQUAL; break;
 		case AST::Binop::INVALID: return comptime_result_make_unavailable(result_datatype, "Analysis error encountered");
 		default: panic("");
 		}
@@ -920,13 +920,13 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 			return comptime_result_make_not_comptime("Overloaded operators cannot be calculated at comptime");
 		}
 
-		IR_Operation operation;
+		Primitive_Operation operation;
 		switch (expr->options.unop.type)
 		{
 		case AST::Unop::NOT:
 		case AST::Unop::NEGATE: {
 			operation = expr->options.unop.type == AST::Unop::NEGATE ?
-				IR_Operation::NOT : IR_Operation::NEGATE;
+				Primitive_Operation::NOT : Primitive_Operation::NEGATE;
 			break;
 		}
 		case AST::Unop::ADDRESS_OF: {
@@ -1049,7 +1049,7 @@ Comptime_Result expression_calculate_comptime_value_internal_no_cast(AST::Expres
 
 			if ((int)hardcoded_info.ir_operation != -1)
 			{
-				IR_Operation op = hardcoded_info.ir_operation;
+				Primitive_Operation op = hardcoded_info.ir_operation;
 				int parameter_count = ir_operation_parameter_count(op);
 
 				void* left_data = nullptr;
@@ -1774,7 +1774,7 @@ Symbol_Table* path_lookup_resolve_only_path_parts(
 	auto error = semantic_context->compilation_data->error_symbol;
 
 	out_final_symbol_query_info = symbol_query_info_make(
-		semantic_context->symbol_access_level, path->is_dot_call_lookup ? Import_Type::SYMBOLS : Import_Type::DOT_CALLS, true
+		semantic_context->symbol_access_level, path->is_dot_call_lookup ? Import_Type::DOT_CALLS : Import_Type::SYMBOLS, true
 	);
 	if (path->parts.size != 1) { // When a path is specified always use the weakest access level
 		out_final_symbol_query_info.access_level = Symbol_Access_Level::GLOBAL;
@@ -1861,10 +1861,10 @@ Symbol* path_lookup_resolve_to_single_symbol(
 
 Symbol* symbol_node_define_symbol(
 	AST::Symbol_Node* symbol_node, Symbol_Type symbol_type, 
-	Symbol_Table* symbol_table, Symbol_Access_Level access_level, Semantic_Context* semantic_context)
+	Symbol_Table* symbol_table, Symbol_Access_Level access_level, Semantic_Context* semantic_context, bool error_if_not_unique)
 {
 	Symbol* symbol = symbol_table_define_symbol(
-		symbol_table, symbol_node->name, symbol_type, symbol_node, access_level, semantic_context->compilation_data
+		symbol_table, symbol_node->name, symbol_type, symbol_node, access_level, semantic_context, error_if_not_unique
 	);
 	get_info(symbol_node, semantic_context, true)->symbol = symbol;
 	return symbol;
@@ -1897,6 +1897,18 @@ Workload_Executer* workload_executer_create(Compilation_Data* compilation_data)
 	workload_executer->finished_workloads = dynamic_array_create<Workload_Base*>();
 	workload_executer->workload_dependencies = hashtable_create_empty<Workload_Pair, Dependency_Information>(8, workload_pair_hash, workload_pair_equals);
 	workload_executer->progress_was_made = false;
+
+	// Add root workload
+	{
+		compilation_data->workload_executer = workload_executer;
+		Semantic_Context local_context = semantic_context_make(
+			compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
+		);
+		compilation_data->root_workload = workload_executer_allocate_workload<Workload_Root>(&local_context);
+		compilation_data->root_workload->base.is_finished = true;
+		compilation_data->root_workload->base.was_started = true;
+	}
+
 	return workload_executer;
 }
 
@@ -2544,22 +2556,9 @@ void analysis_workload_append_to_string(Workload_Base* workload, String* string)
 	}
 }
 
-Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data)
-{
-	Semantic_Context local_context = semantic_context_make(
-		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
-	);
-	auto root = workload_executer_allocate_workload<Workload_Root>(&local_context);
-	root->base.is_finished = true;
-	root->base.was_started = true;
-	return root;
-}
-
 Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data)
 {
-	Semantic_Context local_context = semantic_context_make(
-		compilation_data, nullptr, nullptr, Symbol_Access_Level::GLOBAL, nullptr, nullptr
-	);
+	Semantic_Context local_context = compilation_data_make_root_semantic_context(compilation_data);
 	Workload_Module_Analysis* workload = workload_executer_allocate_workload<Workload_Module_Analysis>(&local_context);
 	workload->module_node = module_node;
 	return workload;
@@ -4347,7 +4346,8 @@ Poly_Header* poly_header_analyse(
 		{
 			// Define normal parameter symbols
 			Symbol* symbol = symbol_node_define_symbol(
-				parameter_node->symbol, Symbol_Type::PARAMETER, header.base_parameter_table, Symbol_Access_Level::INTERNAL, semantic_context
+				parameter_node->symbol, Symbol_Type::PARAMETER, header.base_parameter_table, Symbol_Access_Level::INTERNAL, 
+				semantic_context, true
 			);
 			symbol->options.parameter.function = upp_function;
 			symbol->options.parameter.index = i;
@@ -4373,7 +4373,7 @@ Poly_Header* poly_header_analyse(
 		// Create symbol
 		Symbol* symbol = symbol_node_define_symbol(
 			pattern_variable.symbol_node, Symbol_Type::PATTERN_VARIABLE, header.base_parameter_table,
-			Symbol_Access_Level::POLYMORPHIC, semantic_context
+			Symbol_Access_Level::POLYMORPHIC, semantic_context, true
 		);
 		symbol->options.pattern_variable_type = pattern_variable.pattern_variable_type->mirrored_type;
 
@@ -5039,10 +5039,19 @@ Poly_Instance* poly_header_instanciate(
 					}
 				}
 
+
 				// If still unset, continue to next parameter
 				if (param_value.value_type == Parameter_Value_Type::NOT_SET) 
 				{
-					if (param_info.required && !is_instanciate) {
+					bool missing_parameters_valid = 
+						!param_info.required || 
+						is_instanciate || (
+							call_info->origin.type == Call_Origin_Type::POLY_STRUCT && 
+							call_info->call_node != nullptr && 
+							call_info->call_node->uninitialized_tokens.size != 0
+					);
+
+					if (!missing_parameters_valid) {
 						log_semantic_error(semantic_context, "Missing parameter", error_report_node, error_report_section);
 						log_error_info_id(semantic_context, param_info.name);
 						success = false;
@@ -5348,7 +5357,7 @@ Poly_Instance* poly_header_instanciate(
 					
 					Symbol* symbol = symbol_table_define_symbol(
 						instance_table, param.name, Symbol_Type::COMPTIME_VALUE, symbol_node, 
-						Symbol_Access_Level::POLYMORPHIC, compilation_data
+						Symbol_Access_Level::POLYMORPHIC, semantic_context, false
 					);
 					symbol->options.constant = state.options.value;
 					continue; // comptime parameter or pattern-variable
@@ -5356,7 +5365,7 @@ Poly_Instance* poly_header_instanciate(
 
 				Symbol* symbol = symbol_table_define_symbol(
 					instance_table, param.name, Symbol_Type::PARAMETER, symbol_node,
-					Symbol_Access_Level::INTERNAL, compilation_data
+					Symbol_Access_Level::INTERNAL, semantic_context, false
 				);
 				symbol->options.parameter.function = new_instance->options.function_instance;
 				symbol->options.parameter.index = instance_signature->parameters.size;
@@ -5380,9 +5389,8 @@ Poly_Instance* poly_header_instanciate(
 			Upp_Struct* base_struct = poly_header->origin.upp_struct;
 
 			// Create new struct instance
-			Upp_Struct* instance_struct = upp_struct_create_empty(base_struct->struct_node, semantic_context, false);
+			Upp_Struct* instance_struct = upp_struct_create_empty(base_struct->struct_node, (is_pattern ? Poly_Type::PARTIAL : Poly_Type::INSTANCE), semantic_context, false);
 			instance_struct->datatype->name = base_struct->datatype->name;
-			instance_struct->poly_type = is_pattern ? Poly_Type::PARTIAL : Poly_Type::INSTANCE;
 			datatype_struct_set_poly_infos(instance_struct->datatype, is_pattern, is_partial_pattern);
 			instance_struct->options.instance = new_instance;
 			new_instance->options.struct_instance = instance_struct;
@@ -5418,7 +5426,7 @@ Poly_Instance* poly_header_instanciate(
 					
 					Symbol* symbol = symbol_table_define_symbol(
 						instance_table, param.name, Symbol_Type::COMPTIME_VALUE, symbol_node, 
-						Symbol_Access_Level::POLYMORPHIC, compilation_data
+						Symbol_Access_Level::POLYMORPHIC, semantic_context, false
 					);
 					symbol->options.constant = state.options.value;
 				}
@@ -5479,7 +5487,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 		Symbol* symbol = symbol_node_define_symbol(
 			variable.symbol, Symbol_Type::VARIABLE_UNDEFINED, 
-			semantic_context->current_symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
+			semantic_context->current_symbol_table, Symbol_Access_Level::INTERNAL, semantic_context, true
 		);
 		if (!allow_local_variables) 
 		{
@@ -5509,7 +5517,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 		Symbol* symbol = symbol_node_define_symbol(
 			global.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
-			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 		);
 		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
@@ -5531,7 +5539,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 		Symbol* symbol = symbol_node_define_symbol(
 			function_node->symbol, Symbol_Type::FUNCTION, semantic_context->current_symbol_table, 
-			Symbol_Access_Level::GLOBAL, semantic_context
+			Symbol_Access_Level::GLOBAL, semantic_context, false
 		);
 		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
@@ -5570,7 +5578,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 		// Note: Creating the workload also sets the symbol type
 		Symbol* symbol = symbol_node_define_symbol(
 			structure.symbol, Symbol_Type::DATATYPE, semantic_context->current_symbol_table, 
-			Symbol_Access_Level::GLOBAL, semantic_context
+			Symbol_Access_Level::GLOBAL, semantic_context, false
 		);
 		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
@@ -5578,7 +5586,11 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			break;
 		}
 
-		Upp_Struct* upp_struct = upp_struct_create_empty(&definition->options.structure, semantic_context, true);
+		Upp_Struct* upp_struct = upp_struct_create_empty(
+			&definition->options.structure, 
+			(definition->options.structure.signature->parameters.size > 0 ? Poly_Type::BASE : Poly_Type::NORMAL), 
+			semantic_context, true
+		);
 		upp_struct->symbol = symbol;
 		upp_struct->datatype->name = symbol->id;
 		symbol->options.datatype = upcast(upp_struct->datatype);
@@ -5605,7 +5617,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 
 		Symbol* symbol = symbol_node_define_symbol(
 			enumeration.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, 
-			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+			semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 		);
 		if (!semantic_context->can_create_toplevel_items) {
 			log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
@@ -5660,7 +5672,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			{
 				Symbol* symbol = symbol_node_define_symbol(
 					extern_import->options.function.symbol, Symbol_Type::WAITING_FOR_WORKLOAD, semantic_context->current_symbol_table, 
-					Symbol_Access_Level::GLOBAL, semantic_context
+					Symbol_Access_Level::GLOBAL, semantic_context, false
 				);
 				if (!semantic_context->can_create_toplevel_items) {
 					log_semantic_error(semantic_context, "Cannot create toplevel-items in current context", upcast(definition), Node_Section::FIRST_TOKEN);
@@ -5725,7 +5737,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 			if (module_node->symbol.available) {
 				symbol_node_define_symbol(
 					module_node->symbol.value, Symbol_Type::ERROR_SYMBOL, 
-					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 				);
 			}
 			break;
@@ -5756,7 +5768,7 @@ void toplevel_content_add_definition(Toplevel_Content& content, AST::Definition*
 				assert(module_node->symbol.available, "Should be available for non-root things");
 				Symbol* symbol = symbol_node_define_symbol(
 					module_node->symbol.value, Symbol_Type::MODULE, 
-					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+					semantic_context->current_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 				);
 				symbol->options.upp_module = upp_module;
 
@@ -5922,7 +5934,7 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 		{
 			module_import_symbol = symbol_node_define_symbol(
 				import_node->alias_name.value, Symbol_Type::ERROR_SYMBOL,
-				import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+				import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 			);
 			get_info(import_node->alias_name.value, semantic_context, true)->symbol = module_import_symbol;
 		}
@@ -6062,14 +6074,14 @@ void toplevel_content_resolve_imports(Toplevel_Content& toplevel_content, Semant
 		if (import_node->alias_name.available) 
 		{
 			new_symbol = symbol_node_define_symbol(
-				import_node->alias_name.value, Symbol_Type::ALIAS_UNFINISHED, import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context
+				import_node->alias_name.value, Symbol_Type::ALIAS_UNFINISHED, import_symbol_table, Symbol_Access_Level::GLOBAL, semantic_context, false
 			);
 		}
 		else 
 		{
 			new_symbol = symbol_table_define_symbol(
 				import_symbol_table, path->last()->name, Symbol_Type::ALIAS_UNFINISHED, 
-				path->last(), Symbol_Access_Level::GLOBAL, semantic_context->compilation_data
+				path->last(), Symbol_Access_Level::GLOBAL, semantic_context, false
 			);
 		}
 		new_symbol->options.unfinished_alias_index = (int) symbol_imports.size;
@@ -7283,7 +7295,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 						else 
 						{
 							auto result = expression_calculate_comptime_value(
-								arg_expr, "cast_pointer/cast_primitive to-argument requires comptime value", semantic_context
+								arg_expr, "cast_pointer/cast_primitive arguments \"to\" and \"from\" must be known at comptime", semantic_context
 							);
 							if (result.available) {
 								return upp_constant_as_datatype(result.value, type_system);
@@ -7347,9 +7359,9 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				else if (hardcoded_type == Hardcoded_Type::CAST_PRIMITIVE)
 				{
 					// Primitive cast also handles all 'integer'-like types, e.g. enum/int/usize/c_char/code_point/rawptr...
-					bool src_is_integer        = datatype_is_integer(src, false) || datatype_is_builtin_type(src, Builtin_Type::RAWPTR);
+					bool src_is_integer        = datatype_is_integer(src, false);
 					bool src_is_active_integer = datatype_is_integer(src, true);
-					bool dst_is_integer        = datatype_is_integer(dst, false) || datatype_is_builtin_type(dst, Builtin_Type::RAWPTR);
+					bool dst_is_integer        = datatype_is_integer(dst, false);
 					bool dst_is_active_integer = datatype_is_integer(dst, true);
 					bool src_is_float = datatype_is_primitive_class(src, Primitive_Class::FLOAT);
 					bool dst_is_float = datatype_is_primitive_class(src, Primitive_Class::FLOAT);
@@ -7456,10 +7468,25 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				// Analyse expression
 				auto& param_value = call_info->parameter_values[parameter_index];
 				auto expr = call_info->argument_infos[param_value.options.argument_index].expression;
-				analyse_parameter_value_if_not_already_done(
-					call_info, &param_value, semantic_context, 
-					(expected_type == nullptr ? expression_context_make_dereference() : expression_context_make_specific_type(expected_type))
-				);
+
+				// Special case for Integer-Literals: We want unsigned values instead of non-unsigned values here
+				if (expr->type == AST::Expression_Type::LITERAL_READ && 
+					expr->options.literal_read.type == Literal_Type::INTEGER && 
+					expected_type == nullptr &&
+					pass_get_node_info(semantic_context->current_pass, expr, Info_Query::TRY_READ, compilation_data) == nullptr)
+				{
+					semantic_analyser_analyse_expression_value(
+						expr, expression_context_make_specific_type(types.u32_type->upcast()), semantic_context
+					);
+				}
+				else 
+				{
+					analyse_parameter_value_if_not_already_done(
+						call_info, &param_value, semantic_context, 
+						(expected_type == nullptr ? expression_context_make_dereference() : expression_context_make_specific_type(expected_type))
+					);
+				}
+
 				Datatype* datatype = parameter_value_get_datatype(param_value, call_info, semantic_context);
 
 				// Check datatype
@@ -8103,7 +8130,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 				if (i == call_signature->return_type_index) continue;
 				Symbol* symbol = symbol_table_define_symbol(
 					parameter_table, param.name, Symbol_Type::PARAMETER, nullptr, Symbol_Access_Level::INTERNAL,
-					compilation_data
+					semantic_context, false
 				);
 				symbol->options.parameter.function = upp_function;
 				symbol->options.parameter.index = i;
@@ -9144,7 +9171,7 @@ Expression_Info* semantic_analyser_analyse_expression_internal(AST::Expression* 
 			bool left_requires_context = expression_is_auto_expression(binop_node.left);
 			bool right_requires_context = expression_is_auto_expression(binop_node.right);
 
-			Expression_Context operand_contexts = expression_context_make_unspecified();
+			Expression_Context operand_contexts = is_pointer_comparison ? expression_context_make_unspecified() : expression_context_make_dereference();
 			if (context.type == Expression_Context_Type::SPECIFIC_TYPE_EXPECTED && !is_comparison) {
 				operand_contexts = expression_context_make_specific_type(context.datatype, false);
 			}
@@ -9842,7 +9869,7 @@ Custom_Operator_Query_Result symbol_table_query_custom_operator(
 		// Check if already instanciated
 		Custom_Operator_Instance_Key instance_key;
 		{
-			instance_key.type = Custom_Operator_Type::AUTO_CAST;
+			instance_key.type = op_query.operator_type;
 			instance_key.functions[0] = custom_operator.functions[0];
 			instance_key.functions[1] = custom_operator.functions[1];
 			instance_key.datatypes[0] = op_query.argument_datatypes[0];
@@ -9996,11 +10023,11 @@ Custom_Operator_Query_Result symbol_table_query_custom_operator(
 		{
 			// Second function is only used for custom_iterator, which
 			// takes a pointer of the result from first function, and returns a pointer to a value
-			Upp_Function* first_function = custom_operator.functions[0];
-			Upp_Function* base_function = custom_operator.functions[1];
-			assert(first_function->signature->return_type().available, "Should be checked when adding");
-			Datatype* iterator_ptr_type = upcast(type_system_make_pointer(type_system, first_function->signature->return_type().value));
+			auto iterator_type_opt = value.instance_functions[0]->signature->return_type();
+			assert(iterator_type_opt.available, "Should be checked when adding");
+			Datatype* iterator_ptr_type = upcast(type_system_make_pointer(type_system, iterator_type_opt.value));
 
+			Upp_Function* base_function = custom_operator.functions[1];
 			if (success && base_function->poly_type == Poly_Type::BASE)
 			{
 				// Create call_info and set all arguments
@@ -10088,7 +10115,12 @@ Custom_Operator_Query_Result symbol_table_query_custom_operator(
 		}
 		table_value->instanciation_workload = nullptr; // So other workloads can just use the result without waiting
 
-		result.type = Custom_Operator_Query_Result_Type::SUCCESS;
+		if (success) {
+			result.type = Custom_Operator_Query_Result_Type::SUCCESS;
+		}
+		else {
+			assert(result.type != Custom_Operator_Query_Result_Type::SUCCESS, "");
+		}
 		result.value = value;
 		return result;
 	}
@@ -10332,7 +10364,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 
 				Symbol* symbol = symbol_table_define_symbol(
 					pattern_table, pattern_var->symbol_node->name, Symbol_Type::PATTERN_VARIABLE,
-					pattern_var->symbol_node, Symbol_Access_Level::POLYMORPHIC, compilation_data
+					pattern_var->symbol_node, Symbol_Access_Level::POLYMORPHIC, semantic_context, true
 				);
 				symbol->options.pattern_variable_type = pattern_var->pattern_variable_type->mirrored_type;
 			}
@@ -10452,7 +10484,7 @@ void analyse_custom_operator_node(AST::Definition_Custom_Operator* custom_operat
 	}
 	case Custom_Operator_Type::ITERATOR:
 	{
-		// operators add_iterator(iterable_type, create_function, next_function, iterable_by_ref)
+		// operators add_iterator(iterable_type, create_function, next_function)
 		// fn create_iter(a: container) => Iterator
 		// fn next(iter: *Iterator) => *Value         if value == nullptr, then no more items
 		DynArray<Datatype*> datatypes = helper_analyse_parameter_datatypes({ 0 });
@@ -10985,7 +11017,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 				Symbol_Table* case_table = symbol_table_create_with_parent(restore_table, Symbol_Access_Level::INTERNAL, compilation_data);
 				semantic_context->current_symbol_table = case_table;
 				Symbol* var_symbol = symbol_node_define_symbol(
-					case_node->variable_definition.value, Symbol_Type::VARIABLE, case_table, Symbol_Access_Level::INTERNAL, semantic_context
+					case_node->variable_definition.value, Symbol_Type::VARIABLE, case_table, Symbol_Access_Level::INTERNAL, semantic_context, false
 				);
 				var_symbol->options.variable_type = types.unknown_type;
 				case_info->variable_symbol = var_symbol;
@@ -11085,7 +11117,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		{
 			Symbol* symbol = symbol_node_define_symbol(
 				for_loop.loop_variable_definition, Symbol_Type::VARIABLE,
-				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
+				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context, false
 			);
 
 			info->specifics.for_loop.loop_variable_symbol = symbol;
@@ -11130,7 +11162,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 		// Create loop variable symbol
 		Symbol* symbol = symbol_node_define_symbol(
 			for_loop.loop_variable_definition, Symbol_Type::VARIABLE, symbol_table,
-			Symbol_Access_Level::INTERNAL, semantic_context
+			Symbol_Access_Level::INTERNAL, semantic_context, false
 		);
 		loop_info.loop_variable_symbol = symbol;
 		symbol->options.variable_type = types.unknown_type; // Should be updated by further code
@@ -11196,7 +11228,7 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			RESTORE_ON_SCOPE_EXIT(semantic_context->current_symbol_table, symbol_table);
 			Symbol* index_symbol = symbol_node_define_symbol(
 				for_loop.index_variable_definition.value, Symbol_Type::VARIABLE,
-				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context
+				symbol_table, Symbol_Access_Level::INTERNAL, semantic_context, false
 			);
 			get_info(for_loop.index_variable_definition.value, semantic_context, true)->symbol = index_symbol;
 			loop_info.index_variable_symbol = index_symbol;
@@ -11262,23 +11294,10 @@ Control_Flow semantic_analyser_analyse_statement(AST::Statement* statement, Sema
 			}
 
 			Datatype* operand_type = left_type;
-			if (operand_type->type == Datatype_Type::PRIMITIVE)
-			{
-				auto primitive = downcast<Datatype_Primitive>(operand_type);
-				if (primitive->get_class() == Primitive_Class::INTEGER && int_valid) {
-					EXIT(Control_Flow::SEQUENTIAL);
-				}
-				else if (primitive->get_class() == Primitive_Class::FLOAT && float_valid) {
-					EXIT(Control_Flow::SEQUENTIAL);
-				}
+			if (int_valid && datatype_is_integer(operand_type, true)) {
+				EXIT(Control_Flow::SEQUENTIAL);
 			}
-		}
-
-		// Check for pointer-arithmetic
-		if (types_are_equal(left_type, upcast(types.rawptr)))
-		{
-			bool right_is_integer = types_are_equal(right_type, upcast(types.usize)) || types_are_equal(right_type, upcast(types.isize));
-			if (right_is_integer && (assignment.binop == AST::Binop::ADDITION || assignment.binop == AST::Binop::SUBTRACTION)) {
+			else if (float_valid && datatype_is_primitive_class(operand_type, Primitive_Class::FLOAT)) {
 				EXIT(Control_Flow::SEQUENTIAL);
 			}
 		}

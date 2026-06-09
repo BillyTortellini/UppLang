@@ -29,7 +29,7 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 		Hardcoded_Type_Info info;
 		info.type_class = type_class;
 		info.symbol_name = symbol_name;
-		info.ir_operation = (IR_Operation)-1;
+		info.ir_operation = (Primitive_Operation)-1;
 		info.builtin_fn = (IR_Builtin_Function)-1;
 		return info;
 	};
@@ -40,13 +40,13 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 		Hardcoded_Type_Info info;
 		info.type_class = type_class;
 		info.symbol_name = symbol_name;
-		info.ir_operation = (IR_Operation) -1;
+		info.ir_operation = (Primitive_Operation) -1;
 		info.builtin_fn = builtin;
 		return info;
 	};
 	
 	auto make_info_operation = [&](
-		Hardcoded_Type_Class type_class, const char* symbol_name, IR_Operation op) -> Hardcoded_Type_Info 
+		Hardcoded_Type_Class type_class, const char* symbol_name, Primitive_Operation op) -> Hardcoded_Type_Info 
 	{
 		Hardcoded_Type_Info info;
 		info.type_class = type_class;
@@ -72,8 +72,10 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::ENUM_TYPE_MAX_VALUE: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_max_value");
 	case Hardcoded_Type::ENUM_TYPE_IS_CONTINOUS: return make_info(Hardcoded_Type_Class::UTILITY, "enum_type_is_continous");
 
-	case Hardcoded_Type::CAST_PRIMITIVE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_primitive", IR_Operation::PRIMITIVE_CAST);
-	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_pointer", IR_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_PRIMITIVE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::CAST_POINTER: return make_info_operation(Hardcoded_Type_Class::UTILITY, "cast_pointer", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::RAWPTR_TO_USIZE: return make_info_operation(Hardcoded_Type_Class::UTILITY, "rawptr_to_usize", Primitive_Operation::PRIMITIVE_CAST);
+	case Hardcoded_Type::USIZE_TO_RAWPTR: return make_info_operation(Hardcoded_Type_Class::UTILITY, "usize_to_rawptr", Primitive_Operation::PRIMITIVE_CAST);
 
 	case Hardcoded_Type::MEMORY_COPY: 
 		return make_info_builtin(Hardcoded_Type_Class::UTILITY, "memory_copy", IR_Builtin_Function::MEMORY_COPY);
@@ -96,45 +98,45 @@ Hardcoded_Type_Info hardcoded_type_get_info(Hardcoded_Type type)
 	case Hardcoded_Type::READ_F32: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_f32", IR_Builtin_Function::READ_F32);
 	case Hardcoded_Type::READ_BOOL: return make_info_builtin(Hardcoded_Type_Class::INPUT, "read_bool", IR_Builtin_Function::READ_BOOL);
 
-	case Hardcoded_Type::BITWISE_NOT:     return make_info_operation(Hardcoded_Type_Class::BITWISE_NOT, "bitwise_not", IR_Operation::BITWISE_NOT);
-	case Hardcoded_Type::HIGHEST_SET_BIT: return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "hightest_set_bit", IR_Operation::HIGHEST_SET_BIT);
-	case Hardcoded_Type::LOWEST_SET_BIT:  return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "lowest_set_bit", IR_Operation::LOWEST_SET_BIT);
-	case Hardcoded_Type::BITSHIFT_LEFT:   return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitwise_shift_left", IR_Operation::BITWISE_SHIFT_LEFT);
-	case Hardcoded_Type::BITSHIFT_RIGHT:  return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitwise_shift_right", IR_Operation::BITWISE_SHIFT_RIGHT);
-	case Hardcoded_Type::BITWISE_AND:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_and", IR_Operation::BITWISE_AND);
-	case Hardcoded_Type::BITWISE_OR:      return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_or", IR_Operation::BITWISE_OR);
-	case Hardcoded_Type::BITWISE_XOR:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_xor", IR_Operation::BITWISE_XOR);
+	case Hardcoded_Type::BITWISE_NOT:     return make_info_operation(Hardcoded_Type_Class::BITWISE_NOT, "bitwise_not", Primitive_Operation::BITWISE_NOT);
+	case Hardcoded_Type::HIGHEST_SET_BIT: return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "hightest_set_bit", Primitive_Operation::HIGHEST_SET_BIT);
+	case Hardcoded_Type::LOWEST_SET_BIT:  return make_info_operation(Hardcoded_Type_Class::BIT_INDEX, "lowest_set_bit", Primitive_Operation::LOWEST_SET_BIT);
+	case Hardcoded_Type::BITSHIFT_LEFT:   return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitshift_left", Primitive_Operation::BITWISE_SHIFT_LEFT);
+	case Hardcoded_Type::BITSHIFT_RIGHT:  return make_info_operation(Hardcoded_Type_Class::BITSHIFT, "bitshift_right", Primitive_Operation::BITWISE_SHIFT_RIGHT);
+	case Hardcoded_Type::BITWISE_AND:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_and", Primitive_Operation::BITWISE_AND);
+	case Hardcoded_Type::BITWISE_OR:      return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_or", Primitive_Operation::BITWISE_OR);
+	case Hardcoded_Type::BITWISE_XOR:     return make_info_operation(Hardcoded_Type_Class::BITWISE_BINOP, "bitwise_xor", Primitive_Operation::BITWISE_XOR);
 
-	case Hardcoded_Type::FLOAT_ABS:       return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,   "float_abs", IR_Operation::FLOAT_ABS);
-	case Hardcoded_Type::FLOAT_MODULO:    return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_modulo", IR_Operation::MODULO);
-	case Hardcoded_Type::FLOAT_REMAINDER: return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_remainder", IR_Operation::FLOAT_REMAINDER);
-	case Hardcoded_Type::CEIL:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_up", IR_Operation::ROUND_UP);
-	case Hardcoded_Type::FLOOR:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_down", IR_Operation::ROUND_DOWN);
-	case Hardcoded_Type::TRUNCATE:      return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_towards_zero", IR_Operation::ROUND_TOWARDS_ZERO);
-	case Hardcoded_Type::ROUND_NEAREST: return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_nearest", IR_Operation::ROUND_NEAREST);
-	case Hardcoded_Type::EXP:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "exp", IR_Operation::EXP);
-	case Hardcoded_Type::LN:            return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "ln", IR_Operation::LN);
-	case Hardcoded_Type::LOG10:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log10", IR_Operation::LOG10);
-	case Hardcoded_Type::LOG2:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log2", IR_Operation::LOG2);
-	case Hardcoded_Type::POW:           return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "pow", IR_Operation::POW);
-	case Hardcoded_Type::SQUARE_ROOT:   return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sqare_root", IR_Operation::SQUARE_ROOT);
-	case Hardcoded_Type::CUBE_ROOT:     return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cube_root", IR_Operation::CUBE_ROOT);
-	case Hardcoded_Type::SIN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sin", IR_Operation::SIN);
-	case Hardcoded_Type::COS:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cos", IR_Operation::COS);
-	case Hardcoded_Type::TAN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tan", IR_Operation::TAN);
-	case Hardcoded_Type::ASIN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asin", IR_Operation::ASIN);
-	case Hardcoded_Type::ACOS:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acos", IR_Operation::ACOS);
-	case Hardcoded_Type::ATAN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atan", IR_Operation::ATAN);
-	case Hardcoded_Type::ATAN2:         return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "atan2", IR_Operation::ATAN2);
-	case Hardcoded_Type::SINH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sinh", IR_Operation::SINH);
-	case Hardcoded_Type::COSH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cosh", IR_Operation::COSH);
-	case Hardcoded_Type::TANH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tanh", IR_Operation::TANH);
-	case Hardcoded_Type::ASINH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asinh", IR_Operation::ASINH);
-	case Hardcoded_Type::ACOSH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acosh", IR_Operation::ACOSH);
-	case Hardcoded_Type::ATANH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atanh", IR_Operation::ATANH);
-	case Hardcoded_Type::IS_NAN:        return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_nan", IR_Operation::IS_NAN);
-	case Hardcoded_Type::IS_FINITE:     return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_finite", IR_Operation::IS_FINITE);
-	case Hardcoded_Type::IS_INFINITE:   return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_infinite", IR_Operation::IS_INFINITE);
+	case Hardcoded_Type::FLOAT_ABS:       return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,   "float_abs", Primitive_Operation::FLOAT_ABS);
+	case Hardcoded_Type::FLOAT_MODULO:    return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_modulo", Primitive_Operation::MODULO);
+	case Hardcoded_Type::FLOAT_REMAINDER: return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,  "float_remainder", Primitive_Operation::FLOAT_REMAINDER);
+	case Hardcoded_Type::CEIL:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_up", Primitive_Operation::ROUND_UP);
+	case Hardcoded_Type::FLOOR:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_down", Primitive_Operation::ROUND_DOWN);
+	case Hardcoded_Type::TRUNCATE:      return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_towards_zero", Primitive_Operation::ROUND_TOWARDS_ZERO);
+	case Hardcoded_Type::ROUND_NEAREST: return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "round_nearest", Primitive_Operation::ROUND_NEAREST);
+	case Hardcoded_Type::EXP:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "exp", Primitive_Operation::EXP);
+	case Hardcoded_Type::LN:            return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "ln", Primitive_Operation::LN);
+	case Hardcoded_Type::LOG10:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log10", Primitive_Operation::LOG10);
+	case Hardcoded_Type::LOG2:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "log2", Primitive_Operation::LOG2);
+	case Hardcoded_Type::POW:           return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "pow", Primitive_Operation::POW);
+	case Hardcoded_Type::SQUARE_ROOT:   return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sqare_root", Primitive_Operation::SQUARE_ROOT);
+	case Hardcoded_Type::CUBE_ROOT:     return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cube_root", Primitive_Operation::CUBE_ROOT);
+	case Hardcoded_Type::SIN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sin", Primitive_Operation::SIN);
+	case Hardcoded_Type::COS:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cos", Primitive_Operation::COS);
+	case Hardcoded_Type::TAN:           return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tan", Primitive_Operation::TAN);
+	case Hardcoded_Type::ASIN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asin", Primitive_Operation::ASIN);
+	case Hardcoded_Type::ACOS:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acos", Primitive_Operation::ACOS);
+	case Hardcoded_Type::ATAN:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atan", Primitive_Operation::ATAN);
+	case Hardcoded_Type::ATAN2:         return make_info_operation(Hardcoded_Type_Class::FLOAT_BINARY,    "atan2", Primitive_Operation::ATAN2);
+	case Hardcoded_Type::SINH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "sinh", Primitive_Operation::SINH);
+	case Hardcoded_Type::COSH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "cosh", Primitive_Operation::COSH);
+	case Hardcoded_Type::TANH:          return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "tanh", Primitive_Operation::TANH);
+	case Hardcoded_Type::ASINH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "asinh", Primitive_Operation::ASINH);
+	case Hardcoded_Type::ACOSH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "acosh", Primitive_Operation::ACOSH);
+	case Hardcoded_Type::ATANH:         return make_info_operation(Hardcoded_Type_Class::FLOAT_UNARY,     "atanh", Primitive_Operation::ATANH);
+	case Hardcoded_Type::IS_NAN:        return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_nan", Primitive_Operation::IS_NAN);
+	case Hardcoded_Type::IS_FINITE:     return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_finite", Primitive_Operation::IS_FINITE);
+	case Hardcoded_Type::IS_INFINITE:   return make_info_operation(Hardcoded_Type_Class::FLOAT_PREDICATE, "is_infinite", Primitive_Operation::IS_INFINITE);
 
 	default: panic("Should not happen");
 	}

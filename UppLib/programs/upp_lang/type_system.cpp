@@ -1639,6 +1639,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 				Datatype_Enum* builtin_enum = type_system_make_enum_empty(
 					type_system, identifier_pool_add(identifier_pool, string_create_static("Builtin_Type"))
 				);
+				types->builtin_type_enum = builtin_enum->upcast();
 
 				add_enum_member(builtin_enum, "RAWPTR", 1);
 				add_enum_member(builtin_enum, "TYPE_HANDLE", 2);
@@ -1651,7 +1652,7 @@ void type_system_add_predefined_types(Type_System* type_system)
 				add_enum_member(builtin_enum, "CODE_POINT", 9);
 				type_system_finish_enum(type_system, builtin_enum);
 
-				add_member_cstr(subtype_builtin, "type", upcast(types->primitive_type_enum));
+				add_member_cstr(subtype_builtin, "type", upcast(builtin_enum));
 			}
 
 			// Array

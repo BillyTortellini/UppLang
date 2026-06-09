@@ -80,7 +80,7 @@ void bytecode_instruction_append_to_string(String* string, Bytecode_Instruction 
 void bytecode_generator_append_bytecode_to_string(Compilation_Data* compilation_data, String* string);
 Exit_Code exit_code_from_exit_instruction(Bytecode_Instruction& exit_instr);
 
-int bytecode_pack_operation_and_types_to_int(IR_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type);
+int bytecode_pack_operation_and_types_to_int(Primitive_Operation operation, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type);
 void bytecode_unpack_operation_and_types_from_int(
-    int value, IR_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right
+    int value, Primitive_Operation& out_op, Bytecode_Type &out_dst, Bytecode_Type& out_left, Bytecode_Type& out_right
 );

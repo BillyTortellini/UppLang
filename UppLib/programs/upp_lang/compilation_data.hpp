@@ -93,9 +93,9 @@ struct Compilation_Data
     C_Generator* c_generator;
 
     // Semantic-Analysis information
-    Workload_Root* root_workload;
     Symbol_Table* root_symbol_table;
     Upp_Module* builtin_module;
+    Workload_Root* root_workload;
 
     Hashtable<AST::Node*, Node_Passes> ast_to_pass_mapping;
     DynTable<AST_Info_Key, Analysis_Info*> ast_to_info_mapping;
@@ -117,6 +117,7 @@ struct Compilation_Data
     // Allocations
     Arena arena;
     Arena tmp_arena;
+    Arena root_semantic_context_scratch_arena;
     Dynamic_Array<Symbol_Table*> allocated_symbol_tables;
     Dynamic_Array<Symbol*> allocated_symbols;
     Dynamic_Array<Analysis_Pass*> allocated_passes;
@@ -147,6 +148,7 @@ bool compilation_data_is_configured_for_c_compilation(Compilation_Data* compilat
 bool compilation_data_errors_occured(Compilation_Data* compilation_data);
 Compilation_Unit* compilation_data_ast_node_to_compilation_unit(Compilation_Data* compilation_data, AST::Node* base);
 void compilation_data_switch_timing_task(Compilation_Data* compilation_data, Timing_Task task);
+Semantic_Context compilation_data_make_root_semantic_context(Compilation_Data* compilation_data);
 
 void compiler_run_testcases(bool force_run);
 

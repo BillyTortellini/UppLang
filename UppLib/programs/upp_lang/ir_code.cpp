@@ -55,6 +55,7 @@ void ir_instruction_destroy(IR_Instruction* instruction)
     case IR_Instruction_Type::LABEL:
     case IR_Instruction_Type::GOTO:
     case IR_Instruction_Type::VARIABLE_DEFINITION:
+    case IR_Instruction_Type::MOVE:
         break;
     default: panic("Lul");
     }
@@ -201,18 +202,17 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
     {
         auto& op = instruction->options.operation;
         string->append(ir_operation_as_string(op.type));
-        string_append_formated(string, "dst: ");
+        string_append_formated(string, " dst: ");
         ir_data_access_append_to_string(op.destination, string, code_block, compilation_data);
         string_append_formated(string, "\n");
         indent_string(string, indentation + 1);
         string_append_formated(string, "operand 1: ");
         ir_data_access_append_to_string(op.operand_1, string, code_block, compilation_data);
-        string_append_formated(string, "\n");
-        if (op.operand_2 != nullptr) {
+        if (ir_operation_parameter_count(op.type) == 2) {
+            string_append_formated(string, "\n");
             indent_string(string, indentation + 1);
             string_append_formated(string, "operand 2: ");
             ir_data_access_append_to_string(op.operand_2, string, code_block, compilation_data);
-            string_append_formated(string, "\n");
         }
         break;
     }
@@ -335,6 +335,15 @@ void ir_instruction_append_to_string(IR_Instruction* instruction, String* string
         ir_code_block_append_to_string(instruction->options.switch_instr.default_block, string, indentation + 2, compilation_data);
         break;
     }
+    case IR_Instruction_Type::MOVE: {
+        string_append_formated(string, "MOVE\n", instruction->options.label_index);
+        indent_string(string, indentation + 1);
+        string_append_formated(string,   "Source:      ");
+        ir_data_access_append_to_string(instruction->options.move.source, string, code_block, compilation_data);
+        string_append_formated(string, "\nDestination: ");
+        ir_data_access_append_to_string(instruction->options.move.destination, string, code_block, compilation_data);
+        break;
+    }
     case IR_Instruction_Type::WHILE: {
         string_append_formated(string, "WHILE\n");
         indent_string(string, indentation + 1);
@@ -449,7 +458,7 @@ IR_Data_Access* ir_data_access_create_nothing() {
 }
 
 IR_Instruction_Operation* add_operation_instruction(
-    IR_Operation operation, IR_Data_Access* destination, IR_Data_Access* operand_1, IR_Data_Access* operand_2 = nullptr, IR_Code_Block* ir_block = nullptr)
+    Primitive_Operation operation, IR_Data_Access* destination, IR_Data_Access* operand_1, IR_Data_Access* operand_2 = nullptr, IR_Code_Block* ir_block = nullptr)
 {
     int param_count = ir_operation_parameter_count(operation);
     assert((param_count == 1 && operand_2 == nullptr) || (param_count == 2 && operand_2 != nullptr), "");
@@ -460,7 +469,16 @@ IR_Instruction_Operation* add_operation_instruction(
     instruction.options.operation.destination = destination;
     instruction.options.operation.operand_1 = operand_1;
     instruction.options.operation.operand_2 = operand_2 == nullptr ? ir_data_access_create_nothing() : operand_2;
-    return &add_instruction(instruction)->options.operation;
+    return &add_instruction(instruction, ir_block)->options.operation;
+}
+
+IR_Instruction_Operation* add_move_instruction(IR_Data_Access* destination, IR_Data_Access* source, IR_Code_Block* ir_block = nullptr)
+{
+    IR_Instruction instruction;
+    instruction.type = IR_Instruction_Type::MOVE;
+    instruction.options.move.destination = destination;
+    instruction.options.move.source = source;
+    return &add_instruction(instruction, ir_block)->options.operation;
 }
 
 IR_Data_Access* ir_data_access_create_global(Upp_Global* global)
@@ -604,7 +622,7 @@ IR_Data_Access* ir_data_access_create_array_or_slice_access(IR_Data_Access* arra
         auto& gen = *ir_generator;
         assert(gen.current_block != 0, "");
         IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
-        add_operation_instruction(IR_Operation::GREATER_OR_EQUAL, condition_access, index_access, size_access);
+        add_operation_instruction(Primitive_Operation::GREATER_OR_EQUAL, condition_access, index_access, size_access);
 
         IR_Instruction if_instr;
         if_instr.type = IR_Instruction_Type::IF;
@@ -714,7 +732,7 @@ void generate_member_initalizers(IR_Data_Access* struct_access, AST::Call_Node* 
             value_access = ir_generator_generate_expression(arg_expr);
         }
 
-        add_operation_instruction(IR_Operation::MOVE, ir_data_access_create_member(struct_access, member), value_access);
+        add_move_instruction(ir_data_access_create_member(struct_access, member), value_access);
     }
     for (int i = 0; i < call_node->subtype_initializers.size; i++) 
     {
@@ -757,7 +775,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
             destination = access;
             return access;
         }
-        add_operation_instruction(IR_Operation::MOVE, destination, access);
+        add_move_instruction(destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -790,7 +808,7 @@ IR_Data_Access* ir_generator_generate_cast(IR_Data_Access* source, IR_Data_Acces
     case Auto_Cast_Type::PRIMITIVE_CAST: 
     {
         auto destination = make_destination_access_on_demand(auto_cast_info.result_type);
-        add_operation_instruction(IR_Operation::PRIMITIVE_CAST, destination, source);
+        add_operation_instruction(Primitive_Operation::PRIMITIVE_CAST, destination, source);
         return destination;
     }
     case Auto_Cast_Type::DEREFERENCE: 
@@ -853,7 +871,7 @@ IR_Data_Access* ir_generator_generate_overload_access(
             destination = access;
             return access;
         }
-        add_operation_instruction(IR_Operation::MOVE, destination, access);
+        add_move_instruction(destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -930,7 +948,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             destination = access;
             return access;
         }
-        add_operation_instruction(IR_Operation::MOVE, destination, access);
+        add_move_instruction(destination, access);
         return destination;
     };
     auto make_destination_access_on_demand = [&](Datatype* result_type) -> IR_Data_Access* {
@@ -1010,7 +1028,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
         case AST::Unop::NEGATE:
         {
             auto op_instr = add_operation_instruction(
-                (expression->options.unop.type == AST::Unop::NOT ? IR_Operation::NOT : IR_Operation::NEGATE),
+                (expression->options.unop.type == AST::Unop::NOT ? Primitive_Operation::NOT : Primitive_Operation::NEGATE),
                 make_destination_access_on_demand(result_type),
                 access
             );
@@ -1067,7 +1085,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
                 IR_Data_Access* second_arg = nullptr;
                 if (ir_operation_parameter_count(hardcoded_info.ir_operation) == 2) {
                     second_arg = ir_generator_generate_expression(
-                        call_info->argument_infos[call_info->parameter_values[0].options.argument_index].expression
+                        call_info->argument_infos[call_info->parameter_values[1].options.argument_index].expression
                     );
                 }
                 auto instr = add_operation_instruction(
@@ -1348,8 +1366,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             assert(parent->subtypes.size > 0 && structure->subtype_index < parent->subtypes.size, "");
             int tag_value = structure->subtype_index + 1;
 
-            add_operation_instruction(
-                IR_Operation::MOVE, 
+            add_move_instruction(
                 ir_data_access_create_member(struct_access, parent->tag_member),
                 ir_data_access_create_constant(
                     constant_pool->add_enum_value_assume_valid(downcast<Datatype_Enum>(parent->tag_member.datatype), tag_value)
@@ -1377,7 +1394,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
             assert(slice_constant.success, "Empty slice must succeed!");
 
             auto destination = make_destination_access_on_demand(result_type);
-            add_operation_instruction(IR_Operation::MOVE, destination, ir_data_access_create_constant(slice_constant.options.constant));
+            add_move_instruction(destination, ir_data_access_create_constant(slice_constant.options.constant));
             return destination;
         }
 
@@ -1398,14 +1415,12 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             // Init slice (Set size and data members)
             result_access = make_destination_access_on_demand(result_type);
-            add_operation_instruction(
-                IR_Operation::MOVE,
+            add_move_instruction(
                 ir_data_access_create_member(result_access, slice_type->size_member),
                 ir_data_access_create_constant_usize(array_init.values.size)
             );
 
-            add_operation_instruction(
-                IR_Operation::MOVE,
+            add_move_instruction(
                 ir_data_access_create_member(result_access, slice_type->data_member),
                 ir_data_access_create_address_of(ir_data_access_create_array_or_slice_access(
                     array_access, ir_data_access_create_constant(constant_pool->predefined.usize_zero), false
@@ -1463,7 +1478,7 @@ IR_Data_Access* ir_generator_generate_expression_no_cast(AST::Expression* expres
 
             IR_Data_Access* condition_access = ir_data_access_create_intermediate(upcast(types.bool_type));
             add_operation_instruction(
-                IR_Operation::NOT_EQUAL,
+                Primitive_Operation::NOT_EQUAL,
                 condition_access,
                 ir_data_access_create_member(source, src_struct->tag_member),
                 ir_data_access_create_constant(src_struct->tag_member.datatype, array_create_static_as_bytes<int>(&child_tag_value, 1))
@@ -1574,7 +1589,7 @@ void ir_generator_work_through_defers(int defer_to_index, bool rewind_stack)
         }
         else
         {
-            add_operation_instruction(IR_Operation::MOVE, defer.options.defer_restore.left_access, defer.options.defer_restore.restore_value);
+            add_move_instruction(defer.options.defer_restore.left_access, defer.options.defer_restore.restore_value);
         }
     }
     if (rewind_stack) {
@@ -1606,13 +1621,13 @@ void ir_generator_generate_block_loop_increment(IR_Code_Block* ir_block, AST::Co
 
         // Increment index access
         add_operation_instruction(
-            IR_Operation::ADDITION, foreach.index_access, foreach.index_access, ir_data_access_create_constant(predefined_constants.usize_one)
+            Primitive_Operation::ADDITION, foreach.index_access, foreach.index_access, ir_data_access_create_constant(predefined_constants.usize_one)
         );
 
         // Update pointer
         if (!foreach.is_custom_iterator)
         {
-            add_operation_instruction(IR_Operation::MOVE,
+            add_move_instruction(
                 foreach.loop_variable_access,
                 ir_data_access_create_address_of(
                     ir_data_access_create_array_or_slice_access(foreach.iterable_access, foreach.index_access, false)
@@ -1627,6 +1642,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
     auto stat_info = get_info(statement);
     auto& gen = *ir_generator;
     auto& types = ir_generator->compilation_data->type_system->predefined_types;
+    Constant_Pool* constant_pool = ir_generator->compilation_data->constant_pool;
 
     auto backup_block = gen.current_block;
     gen.current_block = ir_block;
@@ -1654,7 +1670,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* copy_access = ir_data_access_create_intermediate(left_access->datatype);
 
         // Copy current value to temporary
-        add_operation_instruction(IR_Operation::MOVE, copy_access, left_access);
+        add_move_instruction(copy_access, left_access);
 
         // Write assignment to value
         ir_generator_generate_expression(restore.right_side, left_access);
@@ -1855,7 +1871,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
         IR_Data_Access* index_access = ir_data_access_create_intermediate(upcast(types.usize));
         {
             // Initialize
-            add_operation_instruction(IR_Operation::MOVE, index_access, ir_data_access_create_constant_usize(0));
+            add_move_instruction(index_access, ir_data_access_create_constant_usize(0));
 
             if (foreach_loop.index_variable_definition.available) {
                 assert(loop_info.index_variable_symbol != 0 && loop_info.index_variable_symbol->type == Symbol_Type::VARIABLE, "");
@@ -1898,8 +1914,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             {
                 iterable_type = iterable_type;
                 assert(iterable_type->type == Datatype_Type::ARRAY || iterable_type->type == Datatype_Type::SLICE, "Other types not supported currently");
-                add_operation_instruction(
-                    IR_Operation::MOVE,
+                add_move_instruction(
                     loop_variable_access,
                     ir_data_access_create_address_of(
                         ir_data_access_create_array_or_slice_access(iterable_access, index_access, false)
@@ -1945,12 +1960,11 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
 
                     void* empty = nullptr;
                     add_operation_instruction(
-                        IR_Operation::NOT_EQUAL,
+                        Primitive_Operation::NOT_EQUAL,
                         condition_access,
                         loop_variable_access,
-                        ir_data_access_create_constant(
-                            loop_variable_access->datatype, array_create_static_as_bytes<void*>(&empty, 1)
-                        )
+                        ir_data_access_create_constant(constant_pool->predefined.nil), 
+                        condition_code
                     );
                 }
                 else
@@ -1967,7 +1981,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
                     }
 
                     add_operation_instruction(
-                        IR_Operation::LESS, condition_access, index_access, array_size_access
+                        Primitive_Operation::LESS, condition_access, index_access, array_size_access, condition_code
                     );
                 }
 
@@ -2058,7 +2072,7 @@ void ir_generator_generate_statement(AST::Statement* statement, IR_Code_Block* i
             {
                 // Copy the generated expression to another location, so defers cannot interfere
                 auto copy_access = ir_data_access_create_intermediate(instr.options.return_instr.options.return_value->datatype);
-                add_operation_instruction(IR_Operation::MOVE,
+                add_move_instruction(
                     copy_access,
                     instr.options.return_instr.options.return_value
                 );
@@ -2230,7 +2244,7 @@ void ir_generator_finish(Compilation_Data* compilation_data)
             if (!global->has_initial_value) continue;
 
             ir_generator->current_pass = global->definition_workload->analysis_pass;
-            add_operation_instruction(IR_Operation::MOVE, ir_data_access_create_global(global), ir_generator_generate_expression(global->init_expr));
+            add_move_instruction(ir_data_access_create_global(global), ir_generator_generate_expression(global->init_expr));
             ir_generator->current_pass = nullptr;
         }
 
@@ -2306,123 +2320,122 @@ void ir_generator_destroy(IR_Generator* generator)
     delete generator;
 }
 
-IR_Operation ast_binop_to_ir_operation(AST::Binop binop)
+Primitive_Operation ast_binop_to_ir_operation(AST::Binop binop)
 {
     switch (binop)
     {
-    case AST::Binop::ADDITION: return IR_Operation::ADDITION;
-    case AST::Binop::SUBTRACTION: return IR_Operation::SUBTRACTION;
-    case AST::Binop::DIVISION: return IR_Operation::DIVISION;
-    case AST::Binop::MULTIPLICATION: return IR_Operation::MULTIPLICATION;
-    case AST::Binop::MODULO: return IR_Operation::MODULO;
-    case AST::Binop::AND: return IR_Operation::AND;
-    case AST::Binop::OR: return IR_Operation::OR;
-    case AST::Binop::EQUAL: return IR_Operation::EQUAL;
-    case AST::Binop::NOT_EQUAL: return IR_Operation::NOT_EQUAL;
-    case AST::Binop::LESS: return IR_Operation::LESS;
-    case AST::Binop::LESS_OR_EQUAL: return IR_Operation::LESS_OR_EQUAL;
-    case AST::Binop::GREATER: return IR_Operation::GREATER;
-    case AST::Binop::GREATER_OR_EQUAL: return IR_Operation::GREATER_OR_EQUAL;
-    case AST::Binop::POINTER_EQUAL: return IR_Operation::EQUAL;
-    case AST::Binop::POINTER_NOT_EQUAL: return IR_Operation::NOT_EQUAL;
-    case AST::Binop::INVALID: panic("Shouldn't happen"); return IR_Operation::ADDITION;
+    case AST::Binop::ADDITION: return Primitive_Operation::ADDITION;
+    case AST::Binop::SUBTRACTION: return Primitive_Operation::SUBTRACTION;
+    case AST::Binop::DIVISION: return Primitive_Operation::DIVISION;
+    case AST::Binop::MULTIPLICATION: return Primitive_Operation::MULTIPLICATION;
+    case AST::Binop::MODULO: return Primitive_Operation::MODULO;
+    case AST::Binop::AND: return Primitive_Operation::AND;
+    case AST::Binop::OR: return Primitive_Operation::OR;
+    case AST::Binop::EQUAL: return Primitive_Operation::EQUAL;
+    case AST::Binop::NOT_EQUAL: return Primitive_Operation::NOT_EQUAL;
+    case AST::Binop::LESS: return Primitive_Operation::LESS;
+    case AST::Binop::LESS_OR_EQUAL: return Primitive_Operation::LESS_OR_EQUAL;
+    case AST::Binop::GREATER: return Primitive_Operation::GREATER;
+    case AST::Binop::GREATER_OR_EQUAL: return Primitive_Operation::GREATER_OR_EQUAL;
+    case AST::Binop::POINTER_EQUAL: return Primitive_Operation::EQUAL;
+    case AST::Binop::POINTER_NOT_EQUAL: return Primitive_Operation::NOT_EQUAL;
+    case AST::Binop::INVALID: panic("Shouldn't happen"); return Primitive_Operation::ADDITION;
     default: panic("");
     }
 
-    return IR_Operation::ADDITION;
+    return Primitive_Operation::ADDITION;
 }
 
-const char* ir_operation_as_string(IR_Operation operation)
+const char* ir_operation_as_string(Primitive_Operation operation)
 {
     switch (operation)
     {
-    case IR_Operation::MOVE: return "MOVE";
-    case IR_Operation::PRIMITIVE_CAST: return "PRIMITIVE_CAST";
-    case IR_Operation::ADDITION: return "ADDITION";
-    case IR_Operation::SUBTRACTION: return "SUBTRACTION";
-    case IR_Operation::DIVISION: return "DIVISION";
-    case IR_Operation::MULTIPLICATION: return "MULTIPLICATION";
-    case IR_Operation::MODULO: return "MODULO";
-    case IR_Operation::NEGATE: return "NEGATE";
-    case IR_Operation::EQUAL: return "EQUAL";
-    case IR_Operation::NOT_EQUAL: return "NOT_EQUAL";
-    case IR_Operation::LESS: return "LESS";
-    case IR_Operation::LESS_OR_EQUAL: return "LESS_OR_EQUAL";
-    case IR_Operation::GREATER: return "GREATER";
-    case IR_Operation::GREATER_OR_EQUAL: return "GREATER_OR_EQUAL";
-    case IR_Operation::AND: return "AND";
-    case IR_Operation::OR: return "OR";
-    case IR_Operation::NOT: return "NOT";
-    case IR_Operation::BITWISE_NOT: return "BITWISE_NOT";
-    case IR_Operation::BITWISE_AND: return "BITWISE_AND";
-    case IR_Operation::BITWISE_OR: return "BITWISE_OR";
-    case IR_Operation::BITWISE_XOR: return "BITWISE_XOR";
-    case IR_Operation::BITWISE_SHIFT_LEFT: return "BITWISE_SHIFT_LEFT";
-    case IR_Operation::BITWISE_SHIFT_RIGHT: return "BITWISE_SHIFT_RIGHT";
-	case IR_Operation::HIGHEST_SET_BIT: return "HIGHEST_SET_BIT";
-	case IR_Operation::LOWEST_SET_BIT: return "LOWEST_SET_BIT";
-	case IR_Operation::FLOAT_ABS: return "FLOAT_ABS";
-	case IR_Operation::FLOAT_MODULO: return "FLOAT_MODULO";
-	case IR_Operation::FLOAT_REMAINDER: return "FLOAT_REMAINDER";
-	case IR_Operation::ROUND_UP: return "ROUND_UP";     
-	case IR_Operation::ROUND_DOWN: return "ROUND_DOWN";   
-	case IR_Operation::ROUND_TOWARDS_ZERO: return "ROUND_TOWARDS_ZERO";
-	case IR_Operation::ROUND_NEAREST: return "ROUND_NEAREST";     
-	case IR_Operation::EXP: return "EXP";
-	case IR_Operation::LN: return "LN";
-	case IR_Operation::LOG10: return "LOG10";
-	case IR_Operation::LOG2: return "LOG2";
-	case IR_Operation::POW: return "POW";
-	case IR_Operation::SQUARE_ROOT: return "SQUARE_ROOT";
-	case IR_Operation::CUBE_ROOT: return "CUBE_ROOT";
-	case IR_Operation::SIN: return "SIN";
-	case IR_Operation::COS: return "COS";
-	case IR_Operation::TAN: return "TAN";
-	case IR_Operation::ASIN: return "ASIN";
-	case IR_Operation::ACOS: return "ACOS";
-	case IR_Operation::ATAN: return "ATAN";
-	case IR_Operation::ATAN2: return "ATAN2";
-	case IR_Operation::SINH: return "SINH";
-	case IR_Operation::COSH: return "COSH";
-	case IR_Operation::TANH: return "TANH";
-	case IR_Operation::ASINH: return "ASINH";
-	case IR_Operation::ACOSH: return "ACOSH";
-	case IR_Operation::ATANH: return "ATANH";
-	case IR_Operation::IS_NAN: return "IS_NAN";
-	case IR_Operation::IS_FINITE: return "IS_FINITE";
-	case IR_Operation::IS_INFINITE: return "IS_INFINITE";
+    case Primitive_Operation::PRIMITIVE_CAST: return "PRIMITIVE_CAST";
+    case Primitive_Operation::ADDITION: return "ADDITION";
+    case Primitive_Operation::SUBTRACTION: return "SUBTRACTION";
+    case Primitive_Operation::DIVISION: return "DIVISION";
+    case Primitive_Operation::MULTIPLICATION: return "MULTIPLICATION";
+    case Primitive_Operation::MODULO: return "MODULO";
+    case Primitive_Operation::NEGATE: return "NEGATE";
+    case Primitive_Operation::EQUAL: return "EQUAL";
+    case Primitive_Operation::NOT_EQUAL: return "NOT_EQUAL";
+    case Primitive_Operation::LESS: return "LESS";
+    case Primitive_Operation::LESS_OR_EQUAL: return "LESS_OR_EQUAL";
+    case Primitive_Operation::GREATER: return "GREATER";
+    case Primitive_Operation::GREATER_OR_EQUAL: return "GREATER_OR_EQUAL";
+    case Primitive_Operation::AND: return "AND";
+    case Primitive_Operation::OR: return "OR";
+    case Primitive_Operation::NOT: return "NOT";
+    case Primitive_Operation::BITWISE_NOT: return "BITWISE_NOT";
+    case Primitive_Operation::BITWISE_AND: return "BITWISE_AND";
+    case Primitive_Operation::BITWISE_OR: return "BITWISE_OR";
+    case Primitive_Operation::BITWISE_XOR: return "BITWISE_XOR";
+    case Primitive_Operation::BITWISE_SHIFT_LEFT: return "BITWISE_SHIFT_LEFT";
+    case Primitive_Operation::BITWISE_SHIFT_RIGHT: return "BITWISE_SHIFT_RIGHT";
+	case Primitive_Operation::HIGHEST_SET_BIT: return "HIGHEST_SET_BIT";
+	case Primitive_Operation::LOWEST_SET_BIT: return "LOWEST_SET_BIT";
+	case Primitive_Operation::FLOAT_ABS: return "FLOAT_ABS";
+	case Primitive_Operation::FLOAT_MODULO: return "FLOAT_MODULO";
+	case Primitive_Operation::FLOAT_REMAINDER: return "FLOAT_REMAINDER";
+	case Primitive_Operation::ROUND_UP: return "ROUND_UP";     
+	case Primitive_Operation::ROUND_DOWN: return "ROUND_DOWN";   
+	case Primitive_Operation::ROUND_TOWARDS_ZERO: return "ROUND_TOWARDS_ZERO";
+	case Primitive_Operation::ROUND_NEAREST: return "ROUND_NEAREST";     
+	case Primitive_Operation::EXP: return "EXP";
+	case Primitive_Operation::LN: return "LN";
+	case Primitive_Operation::LOG10: return "LOG10";
+	case Primitive_Operation::LOG2: return "LOG2";
+	case Primitive_Operation::POW: return "POW";
+	case Primitive_Operation::SQUARE_ROOT: return "SQUARE_ROOT";
+	case Primitive_Operation::CUBE_ROOT: return "CUBE_ROOT";
+	case Primitive_Operation::SIN: return "SIN";
+	case Primitive_Operation::COS: return "COS";
+	case Primitive_Operation::TAN: return "TAN";
+	case Primitive_Operation::ASIN: return "ASIN";
+	case Primitive_Operation::ACOS: return "ACOS";
+	case Primitive_Operation::ATAN: return "ATAN";
+	case Primitive_Operation::ATAN2: return "ATAN2";
+	case Primitive_Operation::SINH: return "SINH";
+	case Primitive_Operation::COSH: return "COSH";
+	case Primitive_Operation::TANH: return "TANH";
+	case Primitive_Operation::ASINH: return "ASINH";
+	case Primitive_Operation::ACOSH: return "ACOSH";
+	case Primitive_Operation::ATANH: return "ATANH";
+	case Primitive_Operation::IS_NAN: return "IS_NAN";
+	case Primitive_Operation::IS_FINITE: return "IS_FINITE";
+	case Primitive_Operation::IS_INFINITE: return "IS_INFINITE";
     default: panic("");
     }
 
     return "";
 }
 
-int ir_operation_parameter_count(IR_Operation operation)
+int ir_operation_parameter_count(Primitive_Operation operation)
 {
     switch (operation)
     {
-    case IR_Operation::ADDITION:
-    case IR_Operation::SUBTRACTION:
-    case IR_Operation::DIVISION:
-    case IR_Operation::MULTIPLICATION:
-    case IR_Operation::MODULO:
-    case IR_Operation::EQUAL:
-    case IR_Operation::NOT_EQUAL:
-    case IR_Operation::LESS:
-    case IR_Operation::LESS_OR_EQUAL:
-    case IR_Operation::GREATER:
-    case IR_Operation::GREATER_OR_EQUAL: 
-    case IR_Operation::AND: 
-    case IR_Operation::OR: 
-    case IR_Operation::BITWISE_AND: 
-    case IR_Operation::BITWISE_OR: 
-    case IR_Operation::BITWISE_XOR:
-    case IR_Operation::BITWISE_SHIFT_LEFT: 
-    case IR_Operation::BITWISE_SHIFT_RIGHT: 
-	case IR_Operation::FLOAT_MODULO: 
-	case IR_Operation::FLOAT_REMAINDER: 
-	case IR_Operation::POW: 
-	case IR_Operation::ATAN2: 
+    case Primitive_Operation::ADDITION:
+    case Primitive_Operation::SUBTRACTION:
+    case Primitive_Operation::DIVISION:
+    case Primitive_Operation::MULTIPLICATION:
+    case Primitive_Operation::MODULO:
+    case Primitive_Operation::EQUAL:
+    case Primitive_Operation::NOT_EQUAL:
+    case Primitive_Operation::LESS:
+    case Primitive_Operation::LESS_OR_EQUAL:
+    case Primitive_Operation::GREATER:
+    case Primitive_Operation::GREATER_OR_EQUAL: 
+    case Primitive_Operation::AND: 
+    case Primitive_Operation::OR: 
+    case Primitive_Operation::BITWISE_AND: 
+    case Primitive_Operation::BITWISE_OR: 
+    case Primitive_Operation::BITWISE_XOR:
+    case Primitive_Operation::BITWISE_SHIFT_LEFT: 
+    case Primitive_Operation::BITWISE_SHIFT_RIGHT: 
+	case Primitive_Operation::FLOAT_MODULO: 
+	case Primitive_Operation::FLOAT_REMAINDER: 
+	case Primitive_Operation::POW: 
+	case Primitive_Operation::ATAN2: 
         return 2;
     }
     return 1;

@@ -259,6 +259,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
             break;
         }
         case IR_Builtin_Function::MEMORY_COPY: 
+        case IR_Builtin_Function::MEMORY_COPY_NO_OVERLAP: 
         {
             // fn (dst: address, src: address, size: usize)
             byte* argument_start = return_buffer;
@@ -431,7 +432,7 @@ void bytecode_thread_execute_current_instruction(Bytecode_Thread* thread)
         void* src2 = thread->stack_pointer + i->op3;
 
         Bytecode_Type dst_type, left_type, right_type;
-        IR_Operation ir_op;
+        Primitive_Operation ir_op;
         bytecode_unpack_operation_and_types_from_int(i->op4, ir_op, dst_type, left_type, right_type);
         bool success = bytecode_execute_ir_operation(ir_op, dst, src1, src2, dst_type, left_type, right_type);
         if (!success) {
@@ -565,55 +566,51 @@ void* bytecode_thread_get_return_value_ptr(Bytecode_Thread* thread) {
 
 // IR-Operation execute
 template<typename T>
-void handle_ir_operation_arithmetic(IR_Operation operation, T* dst, T* src1, T* src2)
+void handle_ir_operation_arithmetic(Primitive_Operation operation, T* dst, T* src1, T* src2)
 {
     switch (operation)
     {
-    case IR_Operation::ADDITION:         *dst = (*src1 + *src2); break;
-    case IR_Operation::SUBTRACTION:      *dst = (*src1 - *src2); break;
-    case IR_Operation::MULTIPLICATION:   *dst = (*src1 * *src2); break;
-    case IR_Operation::NEGATE:           *dst = -(*src1); break;
+    case Primitive_Operation::ADDITION:         *dst = (*src1 + *src2); break;
+    case Primitive_Operation::SUBTRACTION:      *dst = (*src1 - *src2); break;
+    case Primitive_Operation::MULTIPLICATION:   *dst = (*src1 * *src2); break;
+    case Primitive_Operation::NEGATE:           *dst = -(*src1); break;
     default: panic("");
     }
 }
 
 template<typename T>
-void handle_ir_operation_order_comparison(IR_Operation operation, bool* dst, T* src1, T* src2)
+void handle_ir_operation_order_comparison(Primitive_Operation operation, bool* dst, T* src1, T* src2)
 {
     switch (operation)
     {
-    case IR_Operation::LESS:             *dst = (*src1 < *src2); break;
-    case IR_Operation::LESS_OR_EQUAL:    *dst = (*src1 <= *src2); break;
-    case IR_Operation::GREATER:          *dst = (*src1 > *src2); break;
-    case IR_Operation::GREATER_OR_EQUAL: *dst = (*src1 >= *src2); break;
+    case Primitive_Operation::LESS:             *dst = (*src1 < *src2); break;
+    case Primitive_Operation::LESS_OR_EQUAL:    *dst = (*src1 <= *src2); break;
+    case Primitive_Operation::GREATER:          *dst = (*src1 > *src2); break;
+    case Primitive_Operation::GREATER_OR_EQUAL: *dst = (*src1 >= *src2); break;
     default: panic("");
     }
 }
 
 template<typename T>
-void handle_ir_operation_equals(IR_Operation operation, bool* dst, T* src1, T* src2)
+void handle_ir_operation_equals(Primitive_Operation operation, bool* dst, T* src1, T* src2)
 {
     switch (operation)
     {
-    case IR_Operation::EQUAL:     *dst = (*src1 == *src2); break;
-    case IR_Operation::NOT_EQUAL: *dst = (*src1 != *src2); break;
+    case Primitive_Operation::EQUAL:     *dst = (*src1 == *src2); break;
+    case Primitive_Operation::NOT_EQUAL: *dst = (*src1 != *src2); break;
     default: panic("");
     }
 }
 
 // Note: right-type/dst_type get ignored by a lot of operations, which assume that all types are the same
 bool bytecode_execute_ir_operation(
-    IR_Operation operation, void* dst, void* src1, void* src2, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
+    Primitive_Operation operation, void* dst, void* src1, void* src2, Bytecode_Type dst_type, Bytecode_Type left_type, Bytecode_Type right_type)
 {
     Bytecode_Type src_type = left_type;
     auto argument_count = ir_operation_parameter_count(operation);
     switch (operation)
     {
-    case IR_Operation::MOVE: {
-        memmove(dst, src1, bytecode_type_get_byte_size(src_type));
-        break;
-    }
-    case IR_Operation::PRIMITIVE_CAST: 
+    case Primitive_Operation::PRIMITIVE_CAST: 
     {
         assert(dst_type != Bytecode_Type::BOOL && src_type != Bytecode_Type::BOOL, "");
 
@@ -714,10 +711,10 @@ bool bytecode_execute_ir_operation(
     }
 
     // Arithmetics
-    case IR_Operation::ADDITION:
-    case IR_Operation::SUBTRACTION:
-    case IR_Operation::MULTIPLICATION:
-    case IR_Operation::NEGATE:
+    case Primitive_Operation::ADDITION:
+    case Primitive_Operation::SUBTRACTION:
+    case Primitive_Operation::MULTIPLICATION:
+    case Primitive_Operation::NEGATE:
     {
         switch (src_type)
         {
@@ -736,10 +733,10 @@ bool bytecode_execute_ir_operation(
         break;
     }
 
-    case IR_Operation::LESS:
-    case IR_Operation::LESS_OR_EQUAL:
-    case IR_Operation::GREATER:
-    case IR_Operation::GREATER_OR_EQUAL:
+    case Primitive_Operation::LESS:
+    case Primitive_Operation::LESS_OR_EQUAL:
+    case Primitive_Operation::GREATER:
+    case Primitive_Operation::GREATER_OR_EQUAL:
     {
         switch (src_type)
         {
@@ -758,8 +755,8 @@ bool bytecode_execute_ir_operation(
         break;
     }
     
-    case IR_Operation::EQUAL:
-    case IR_Operation::NOT_EQUAL:
+    case Primitive_Operation::EQUAL:
+    case Primitive_Operation::NOT_EQUAL:
     {
         switch (src_type)
         {
@@ -778,11 +775,11 @@ bool bytecode_execute_ir_operation(
         break;
     }
 
-    case IR_Operation::AND: { *(bool*)dst = *(bool*)src1 && *(bool*)src2; break; }
-    case IR_Operation::OR:  { *(bool*)dst = *(bool*)src1 || *(bool*)src2; break; }
-    case IR_Operation::NOT: { *(bool*)dst = !(*(bool*)src1); break; }
+    case Primitive_Operation::AND: { *(bool*)dst = *(bool*)src1 && *(bool*)src2; break; }
+    case Primitive_Operation::OR:  { *(bool*)dst = *(bool*)src1 || *(bool*)src2; break; }
+    case Primitive_Operation::NOT: { *(bool*)dst = !(*(bool*)src1); break; }
 
-    case IR_Operation::DIVISION:
+    case Primitive_Operation::DIVISION:
     {
         switch (src_type)
         {
@@ -800,7 +797,7 @@ bool bytecode_execute_ir_operation(
         }
         break;
     }
-    case IR_Operation::MODULO:
+    case Primitive_Operation::MODULO:
     {
         switch (src_type)
         {
@@ -817,14 +814,14 @@ bool bytecode_execute_ir_operation(
         break;
     }
 
-    case IR_Operation::BITWISE_NOT:
-    case IR_Operation::BITWISE_AND:
-    case IR_Operation::BITWISE_OR:
-    case IR_Operation::BITWISE_XOR:
-    case IR_Operation::BITWISE_SHIFT_LEFT:
-    case IR_Operation::BITWISE_SHIFT_RIGHT:
-	case IR_Operation::HIGHEST_SET_BIT:
-	case IR_Operation::LOWEST_SET_BIT:
+    case Primitive_Operation::BITWISE_NOT:
+    case Primitive_Operation::BITWISE_AND:
+    case Primitive_Operation::BITWISE_OR:
+    case Primitive_Operation::BITWISE_XOR:
+    case Primitive_Operation::BITWISE_SHIFT_LEFT:
+    case Primitive_Operation::BITWISE_SHIFT_RIGHT:
+	case Primitive_Operation::HIGHEST_SET_BIT:
+	case Primitive_Operation::LOWEST_SET_BIT:
     {
         u64 value1 = 0;
         switch (src_type)
@@ -852,14 +849,14 @@ bool bytecode_execute_ir_operation(
         u64 result = 0;
         switch (operation)
         {
-        case IR_Operation::BITWISE_NOT:         result = ~value1; break;
-        case IR_Operation::BITWISE_AND:         result = value1 & value2; break;
-        case IR_Operation::BITWISE_OR:          result = value1 | value2; break;
-        case IR_Operation::BITWISE_XOR:         result = value1 ^ value2; break;
-        case IR_Operation::BITWISE_SHIFT_LEFT:  result = value1 << value2; break;
-        case IR_Operation::BITWISE_SHIFT_RIGHT: result = value1 >> value2; break;
-	    case IR_Operation::HIGHEST_SET_BIT:     result = integer_highest_set_bit_index(value1); break;
-        case IR_Operation::LOWEST_SET_BIT:      result = integer_lowest_set_bit_index(value1); break;
+        case Primitive_Operation::BITWISE_NOT:         result = ~value1; break;
+        case Primitive_Operation::BITWISE_AND:         result = value1 & value2; break;
+        case Primitive_Operation::BITWISE_OR:          result = value1 | value2; break;
+        case Primitive_Operation::BITWISE_XOR:         result = value1 ^ value2; break;
+        case Primitive_Operation::BITWISE_SHIFT_LEFT:  result = value1 << value2; break;
+        case Primitive_Operation::BITWISE_SHIFT_RIGHT: result = value1 >> value2; break;
+	    case Primitive_Operation::HIGHEST_SET_BIT:     result = integer_highest_set_bit_index(value1); break;
+        case Primitive_Operation::LOWEST_SET_BIT:      result = integer_lowest_set_bit_index(value1); break;
         default: panic("");
         }
 
@@ -876,20 +873,20 @@ bool bytecode_execute_ir_operation(
     }
 
     // Float binops
-	case IR_Operation::FLOAT_MODULO:
-	case IR_Operation::FLOAT_REMAINDER:
-	case IR_Operation::ATAN2:
-	case IR_Operation::POW:
+	case Primitive_Operation::FLOAT_MODULO:
+	case Primitive_Operation::FLOAT_REMAINDER:
+	case Primitive_Operation::ATAN2:
+	case Primitive_Operation::POW:
     {
         f32(*binop_fn_f32)(f32 a, f32 b) = nullptr;
         f64(*binop_fn_f64)(f64 a, f64 b) = nullptr;
 
         switch (operation)
         {
-        case IR_Operation::FLOAT_MODULO:    binop_fn_f64 = fmod; binop_fn_f32 = fmodf; break;
-	    case IR_Operation::FLOAT_REMAINDER: binop_fn_f64 = remainder; binop_fn_f32 = remainderf; break;
-	    case IR_Operation::ATAN2:           binop_fn_f64 = atan2; binop_fn_f32 = atan2f; break;
-	    case IR_Operation::POW:             binop_fn_f64 = pow; binop_fn_f32 = powf; break;
+        case Primitive_Operation::FLOAT_MODULO:    binop_fn_f64 = fmod; binop_fn_f32 = fmodf; break;
+	    case Primitive_Operation::FLOAT_REMAINDER: binop_fn_f64 = remainder; binop_fn_f32 = remainderf; break;
+	    case Primitive_Operation::ATAN2:           binop_fn_f64 = atan2; binop_fn_f32 = atan2f; break;
+	    case Primitive_Operation::POW:             binop_fn_f64 = pow; binop_fn_f32 = powf; break;
         default: panic("");
         }
 
@@ -902,58 +899,58 @@ bool bytecode_execute_ir_operation(
         break;
     }
 
-    case IR_Operation::FLOAT_ABS: 
-	case IR_Operation::ROUND_UP:       
-	case IR_Operation::ROUND_DOWN:        
-	case IR_Operation::ROUND_TOWARDS_ZERO:
-	case IR_Operation::ROUND_NEAREST:
-	case IR_Operation::EXP:
-	case IR_Operation::LN:
-	case IR_Operation::LOG10:
-	case IR_Operation::LOG2:
-	case IR_Operation::SQUARE_ROOT:
-	case IR_Operation::CUBE_ROOT:
-	case IR_Operation::SIN:
-	case IR_Operation::COS:
-	case IR_Operation::TAN:
-	case IR_Operation::ASIN:
-	case IR_Operation::ACOS:
-	case IR_Operation::ATAN:
-	case IR_Operation::SINH:
-	case IR_Operation::COSH:
-	case IR_Operation::TANH:
-	case IR_Operation::ASINH:
-	case IR_Operation::ACOSH:
-	case IR_Operation::ATANH:
+    case Primitive_Operation::FLOAT_ABS: 
+	case Primitive_Operation::ROUND_UP:       
+	case Primitive_Operation::ROUND_DOWN:        
+	case Primitive_Operation::ROUND_TOWARDS_ZERO:
+	case Primitive_Operation::ROUND_NEAREST:
+	case Primitive_Operation::EXP:
+	case Primitive_Operation::LN:
+	case Primitive_Operation::LOG10:
+	case Primitive_Operation::LOG2:
+	case Primitive_Operation::SQUARE_ROOT:
+	case Primitive_Operation::CUBE_ROOT:
+	case Primitive_Operation::SIN:
+	case Primitive_Operation::COS:
+	case Primitive_Operation::TAN:
+	case Primitive_Operation::ASIN:
+	case Primitive_Operation::ACOS:
+	case Primitive_Operation::ATAN:
+	case Primitive_Operation::SINH:
+	case Primitive_Operation::COSH:
+	case Primitive_Operation::TANH:
+	case Primitive_Operation::ASINH:
+	case Primitive_Operation::ACOSH:
+	case Primitive_Operation::ATANH:
     {
         f32(*unop_fn_f32)(f32 a) = nullptr;
         f64(*unop_fn_f64)(f64 a) = nullptr;
 
         switch (operation)
         {
-        case IR_Operation::FLOAT_ABS:     unop_fn_f64 = fabs;  unop_fn_f32 = fabsf; break;
-	    case IR_Operation::ROUND_UP:           unop_fn_f64 = ceil;  unop_fn_f32 = ceilf; break;
-	    case IR_Operation::ROUND_DOWN:         unop_fn_f64 = floor; unop_fn_f32 = floorf; break;
-	    case IR_Operation::ROUND_TOWARDS_ZERO: unop_fn_f64 = trunc; unop_fn_f32 = truncf; break;
-	    case IR_Operation::ROUND_NEAREST:      unop_fn_f64 = round; unop_fn_f32 = roundf; break;
-	    case IR_Operation::EXP:                unop_fn_f64 = exp;   unop_fn_f32 = expf; break;
-	    case IR_Operation::LN:                 unop_fn_f64 = log;   unop_fn_f32 = logf; break;
-	    case IR_Operation::LOG10:              unop_fn_f64 = log10; unop_fn_f32 = log10f; break;
-	    case IR_Operation::LOG2:               unop_fn_f64 = log2;  unop_fn_f32 = log2f; break;
-	    case IR_Operation::SQUARE_ROOT:        unop_fn_f64 = sqrt;  unop_fn_f32 = sqrtf; break;
-	    case IR_Operation::CUBE_ROOT:          unop_fn_f64 = cbrt;  unop_fn_f32 = cbrtf; break;
-	    case IR_Operation::SIN:                unop_fn_f64 = sin;   unop_fn_f32 = sinf; break;
-	    case IR_Operation::COS:                unop_fn_f64 = cos;   unop_fn_f32 = cosf; break;
-	    case IR_Operation::TAN:                unop_fn_f64 = tan;   unop_fn_f32 = tanf; break;
-	    case IR_Operation::ASIN:               unop_fn_f64 = asin;  unop_fn_f32 = asinf; break;
-	    case IR_Operation::ACOS:               unop_fn_f64 = acos;  unop_fn_f32 = acosf; break;
-	    case IR_Operation::ATAN:               unop_fn_f64 = atan;  unop_fn_f32 = atanf; break;
-	    case IR_Operation::SINH:               unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
-	    case IR_Operation::COSH:               unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
-	    case IR_Operation::TANH:               unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
-	    case IR_Operation::ASINH:              unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
-	    case IR_Operation::ACOSH:              unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
-	    case IR_Operation::ATANH:              unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
+        case Primitive_Operation::FLOAT_ABS:     unop_fn_f64 = fabs;  unop_fn_f32 = fabsf; break;
+	    case Primitive_Operation::ROUND_UP:           unop_fn_f64 = ceil;  unop_fn_f32 = ceilf; break;
+	    case Primitive_Operation::ROUND_DOWN:         unop_fn_f64 = floor; unop_fn_f32 = floorf; break;
+	    case Primitive_Operation::ROUND_TOWARDS_ZERO: unop_fn_f64 = trunc; unop_fn_f32 = truncf; break;
+	    case Primitive_Operation::ROUND_NEAREST:      unop_fn_f64 = round; unop_fn_f32 = roundf; break;
+	    case Primitive_Operation::EXP:                unop_fn_f64 = exp;   unop_fn_f32 = expf; break;
+	    case Primitive_Operation::LN:                 unop_fn_f64 = log;   unop_fn_f32 = logf; break;
+	    case Primitive_Operation::LOG10:              unop_fn_f64 = log10; unop_fn_f32 = log10f; break;
+	    case Primitive_Operation::LOG2:               unop_fn_f64 = log2;  unop_fn_f32 = log2f; break;
+	    case Primitive_Operation::SQUARE_ROOT:        unop_fn_f64 = sqrt;  unop_fn_f32 = sqrtf; break;
+	    case Primitive_Operation::CUBE_ROOT:          unop_fn_f64 = cbrt;  unop_fn_f32 = cbrtf; break;
+	    case Primitive_Operation::SIN:                unop_fn_f64 = sin;   unop_fn_f32 = sinf; break;
+	    case Primitive_Operation::COS:                unop_fn_f64 = cos;   unop_fn_f32 = cosf; break;
+	    case Primitive_Operation::TAN:                unop_fn_f64 = tan;   unop_fn_f32 = tanf; break;
+	    case Primitive_Operation::ASIN:               unop_fn_f64 = asin;  unop_fn_f32 = asinf; break;
+	    case Primitive_Operation::ACOS:               unop_fn_f64 = acos;  unop_fn_f32 = acosf; break;
+	    case Primitive_Operation::ATAN:               unop_fn_f64 = atan;  unop_fn_f32 = atanf; break;
+	    case Primitive_Operation::SINH:               unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
+	    case Primitive_Operation::COSH:               unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
+	    case Primitive_Operation::TANH:               unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
+	    case Primitive_Operation::ASINH:              unop_fn_f64 = asinh; unop_fn_f32 = asinhf; break;
+	    case Primitive_Operation::ACOSH:              unop_fn_f64 = acosh; unop_fn_f32 = acoshf; break;
+	    case Primitive_Operation::ATANH:              unop_fn_f64 = atanh; unop_fn_f32 = atanhf; break;
         default: panic("");
         }
 
@@ -967,7 +964,7 @@ bool bytecode_execute_ir_operation(
 
         break;
     }
-	case IR_Operation::IS_NAN:
+	case Primitive_Operation::IS_NAN:
     {
         switch (src_type)
         {
@@ -977,7 +974,7 @@ bool bytecode_execute_ir_operation(
         }
         break;
     }
-	case IR_Operation::IS_FINITE:
+	case Primitive_Operation::IS_FINITE:
     {
         switch (src_type)
         {
@@ -987,7 +984,7 @@ bool bytecode_execute_ir_operation(
         }
         break;
     }
-	case IR_Operation::IS_INFINITE:
+	case Primitive_Operation::IS_INFINITE:
     {
         switch (src_type)
         {

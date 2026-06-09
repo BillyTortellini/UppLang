@@ -103,13 +103,13 @@ void symbol_destroy(Symbol* symbol) {
 
 Symbol* symbol_table_define_symbol(
 	Symbol_Table* symbol_table, String* id, Symbol_Type type, AST::Symbol_Node* definition_node, Symbol_Access_Level access_level,
-	Compilation_Data* compilation_data)
+	Semantic_Context* semantic_context, bool error_if_not_unique)
 {
     assert(id != 0, "HEY");
 
     // Create new symbol
     Symbol* new_sym = new Symbol;
-    dynamic_array_push_back(&compilation_data->allocated_symbols, new_sym);
+    dynamic_array_push_back(&semantic_context->compilation_data->allocated_symbols, new_sym);
     new_sym->id = id;
     new_sym->type = type;
     new_sym->origin_table = symbol_table;
@@ -120,12 +120,18 @@ Symbol* symbol_table_define_symbol(
     // Check if symbol is already defined
     bool add_to_symbol_table = true;
     Dynamic_Array<Symbol*>* symbols = hashtable_find_element(&symbol_table->symbols, id);
-    if (symbols == 0) {
+    if (symbols == nullptr) 
+	{
         Dynamic_Array<Symbol*> new_symbols = dynamic_array_create<Symbol*>(1);
         hashtable_insert_element(&symbol_table->symbols, id, new_symbols);
         symbols = hashtable_find_element(&symbol_table->symbols, id);
         assert(symbols != 0, "Just inserted!");
     }
+	else if (error_if_not_unique)
+	{
+		log_semantic_error(semantic_context, "Symbol name must be unique in symbol-table", upcast(definition_node));
+		return new_sym;
+	}
 
 	// Add to symbol_table
 	dynamic_array_push_back(symbols, new_sym);

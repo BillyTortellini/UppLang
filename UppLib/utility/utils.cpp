@@ -119,11 +119,11 @@ void assert_function(bool condition, const char* condition_as_string, const char
 }
 
 void memory_copy(void* destination, void* source, u64 size) {
-    memcpy(destination, source, size);
+    memmove(destination, source, size);
 }
 
 void memory_copy_overlapping(void* destination, void* source, u64 size) {
-    memmove(destination, source, size);
+    memcpy(destination, source, size);
 }
 
 void memory_set_bytes(void* destination, u64 size, byte value) {

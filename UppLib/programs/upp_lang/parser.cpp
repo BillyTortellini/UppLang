@@ -797,8 +797,6 @@ namespace Parser
 	// Skips tokens until type, or some other stopper was encountered
 	void skip_tokens_until_token_type_found(Token_Type target_type)
 	{
-		auto helper_on_goal = [&]() {
-		};
 		auto checkpoint = parser.temporary_arena->make_checkpoint();
 		SCOPE_EXIT(checkpoint.rewind());
 		DynArray<Token_Type> parenthesis_stack = DynArray<Token_Type>::create(parser.temporary_arena);
@@ -807,6 +805,16 @@ namespace Parser
 		while (index < parser.tokens.size)
 		{
 			Token_Type token_type = parser.tokens[index].type;
+
+			if (token_type == target_type && parenthesis_stack.size == 0) 
+			{
+				if (parser.pos != index) {
+					log_error_to_pos("Could not parse tokens, expected specific token", index);
+				}
+				parser.pos = index;
+				return;
+			}
+
 			if (token_type == Token_Type::COMMA ||
 				token_type == Token_Type::SEMI_COLON ||
 				token_type == Token_Type::BLOCK_START || // We don't skip over blocks I think
@@ -822,15 +830,6 @@ namespace Parser
 				parenthesis_stack.size -= 1;
 				index += 1;
 				continue;
-			}
-
-			if (token_type == target_type && parenthesis_stack.size == 0) 
-			{
-				if (parser.pos != index) {
-					log_error_to_pos("Could not parse tokens, expected specific token", index);
-				}
-				parser.pos = index;
-				return;
 			}
 
 			auto token_class = token_type_get_class(token_type);
@@ -1616,8 +1615,10 @@ namespace Parser
 
 			auto last_if_stat = result;
 			// Parse else-if chain
-			while (test_token(Token_Type::ELSE, 0) && test_token(Token_Type::IF, 1))
+			while (test_token(Token_Type::LINE_END, Token_Type::ELSE, Token_Type::IF))
 			{
+				advance_token();
+
 				auto implicit_else_block = allocate_base<AST::Code_Block>(&last_if_stat->base, Node_Type::CODE_BLOCK);
 				implicit_else_block->statements = parser.permanent_arena->allocate_array<Statement*>(1);
 				implicit_else_block->block_id = optional_make_failure<String*>();
@@ -1637,8 +1638,9 @@ namespace Parser
 				last_if_stat->options.if_statement.else_block = optional_make_success(implicit_else_block);
 				last_if_stat = new_if_stat;
 			}
-			if (test_token(Token_Type::ELSE, 0))
+			if (test_token(Token_Type::LINE_END, Token_Type::ELSE))
 			{
+				advance_token();
 				advance_token();
 				last_if_stat->options.if_statement.else_block = optional_make_success(parse_code_block(&last_if_stat->base, 0));
 			}
@@ -1657,6 +1659,8 @@ namespace Parser
 				result->type = Statement_Type::FOREACH_LOOP;
 			}
 			else if (
+				test_token(Token_Type::IDENTIFIER, Token_Type::COLON) ||
+				test_token(Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS) ||
 				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON) ||
 				test_token(Token_Type::PARENTHESIS_OPEN, Token_Type::IDENTIFIER, Token_Type::COLON_EQUALS) 
 			) {
@@ -1688,19 +1692,38 @@ namespace Parser
 				result->options.foreach_loop.expression = parse_expression_or_error_expr(upcast(result));
 				result->options.foreach_loop.body_block = parse_code_block(upcast(result), upcast(result->options.foreach_loop.loop_variable_definition));
 			}
-			else // For loop
+			else if (result->type == Statement_Type::FOR_LOOP)
 			{
-				assert(test_token(Token_Type::PARENTHESIS_OPEN), "");
+				bool inside_parenthesis = test_token(Token_Type::PARENTHESIS_OPEN);
 				List_Iter iter = List_Iter::create(true);
-				assert(iter.is_valid && !iter.on_end_token(), "");
-				assert(test_token(Token_Type::IDENTIFIER), "");
+				if (inside_parenthesis)
+				{
+					assert(iter.is_valid && !iter.on_end_token(), "");
+					assert(test_token(Token_Type::IDENTIFIER), "");
+				}
 
+				auto helper_has_next = [&]() -> bool
+				{
+					if (inside_parenthesis) {
+						iter.goto_next();
+						if (iter.on_end_token()) return false;
+					}
+					else {
+						skip_tokens_until_token_type_found(Token_Type::SEMI_COLON);
+						if (!test_token(Token_Type::SEMI_COLON)) return false;
+						advance_token();
+					}
+					return true;
+				};
+
+				// Parse loop variable and initial value
 				result->options.for_loop.loop_variable_definition = parse_symbol_node_or_error(upcast(result));
 				if (test_token(Token_Type::COLON)) 
 				{
+					advance_token();
 					result->options.for_loop.loop_variable_type.available = true;
 					result->options.for_loop.loop_variable_type.value = parse_expression_or_error_expr(upcast(result));
-					if (test_token(Token_Type::EQUALS)) {
+					if (test_token(Token_Type::ASSIGN)) {
 						advance_token();
 						result->options.for_loop.initial_value = parse_expression_or_error_expr(upcast(result));
 					}
@@ -1719,15 +1742,15 @@ namespace Parser
 				// Parse loop condition and increment
 				result->options.for_loop.increment_statement = nullptr;
 				result->options.for_loop.condition = nullptr;
-				iter.goto_next();
-				if (!iter.on_end_token()) 
+				if (helper_has_next())
 				{
 					result->options.for_loop.condition = parse_expression_or_error_expr(upcast(result));
-					iter.goto_next();
-					if (!iter.on_end_token()) {
+					if (helper_has_next()) {
 						result->options.for_loop.increment_statement = parse_assignment_or_expression_statement(upcast(result));
 					}
 				}
+
+				// Log errors if we couldn't parse
 				if (result->options.for_loop.condition == nullptr) {
 					log_error_range_offset("Expected loop condition expression", 0);
 					result->options.for_loop.condition = create_error_expression(upcast(result));
@@ -1736,9 +1759,16 @@ namespace Parser
 					log_error_range_offset("Expected loop increment statement", 0);
 					result->options.for_loop.increment_statement = create_error_statement(upcast(result));
 				}
-				iter.finish();
+
+				if (inside_parenthesis) {
+					iter.finish();
+				}
 
 				result->options.for_loop.body_block = parse_code_block(upcast(result), upcast(result->options.for_loop.loop_variable_definition));
+			}
+			else
+			{
+				panic("");
 			}
 
 			PARSE_SUCCESS(result);

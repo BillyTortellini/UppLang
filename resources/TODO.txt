@@ -1,43 +1,59 @@
 
-TODO:
- - assert function with optional string
 
-Decisions:
- - Hardcoded-Types are kept hardcoded in IR-Code, Binop/Unop is removed
- - C-Backend and Bytecode need to treat this differently
- - Bytecode has own instructions which take the datatype as value
- - F32/F64 functions all get collapsed into overloaded function...
- - Math defines can still be per type, e.g. FLOAT_INF, MAX
-
-How to do hardcoded-builtins:
-    - Bitwise AND, OR, XOR
-    - Bitwise NOT
-    - Highest/Lowest set bit
-        --> Returns u32, 0 if input is 0
-    - Bitshift left/right
-        --> Right operand can be any unsigned type
-        --> Result type depends on left type
-        --> C and Bytecode may need to implement differently
-    - F32/F64 math functions
-    - F32/F64 math defines // PI, EULERS_NUMBER, MAX_VALUE_I16, MAX_VALUE_I8
-        --> Maybe new symbol type literal --> Would be nice, as it would convert to any type that is requested
-
-Implementation in:
-    - IR-Code:
-        Either keep hardcoded-function call, or switch to other operation
-    - Bytecode_Generator
-        - Custom operations that take the datatype
-    - C-Generator
-        Either have overloads, or do bitwise op's 
+Problems:
+ * Probably breaks down with multi-pointers
+ * Function-pointers, rawptr, usize? --> Just works, bitch
+ * Templates require a raw-assign, otherwise things get fucky.
+    Would require a raw-assign, raw-define-infer
+    So it would be
+        =
+        =&
+        =<
+        :=
+        :=&
+    
+    value =~ something
+    value :=~ something
+    value :=& x-&
+    value: *int =& x-*
+    value: *int =* x // Problem with prefix * --> I think this was removed?
+    value *= 15
+    value =* i
+    value =& &i
+    value = i-*
+    ptr: &int =& value
 
 TODO:
- - Bitwise left-shift and right-shift should be handled like largest set integer
-    Left-Shift on signed values is undefined behavior, lol
- - Casting update:
-    * Rename cast_primitive to just cast
-    * Only cast_pointer should be able to go from rawptr to usize, because cast should always dereferences...
+ - & is not pointer
+ - Add pointer-assign, raw-assign
+ - #get_overload/#instanciate auto-completion not working
+
+ - String_Builder
+ - Hashtable
+
+ - Testcases...
+ - datatype_print_value prints some pointer nonsense?
+ - Option to run as C code in F1 menu
+ - auto format remove space in "" 
+ - insert suggestion wrong if space is between word and cursro
+
+
 
 DONE:
+09.06:
+ - Arena Impl: try-resize and checkpoint
+ - Dynamic_Array Impl: using arena and operators
+
+08.06:
+ - Bug-Fixes 
+ - Arena implementation
+
+05.06:
+ - Bugs with loops and other stuff
+ - Cast-Refactor: ~cast_primitive -> ~cast, rawptr_to_usize and usize_to_rawptr
+ - Math-defines of constants
+ - IR-Binop/Unop/Hardcoded_Types rework, saved ~600 lines of code
+
 04.06:
  - Bug-Fix: Bitwise-Binop not having correct signature
  - Binary operations now use left-to-right for context
@@ -56,19 +72,23 @@ TODO:
  - Add more stuff to standard library (Allocators, Dynamic_Array, Hashset, Hashtable, Strings, vectors, matrices, intervals)
  - Check out extern library interface...
 
-
-
 Other things I could do (Design not final):
  * break statement with if, loop, switch, block
-     break if, break else, break loop
- * Enums should be smallest fitting enum or explicity set (I think this make sense) Color :: enum(i16)
-    // Should backing type be signed or unsigned? by default signed int I think
+     break if, break loop, break loop
+ * Enum updates
+    - Multiple backing types, e.g. different sizes
+    - Default probably int, otherwise enum(u8) or maybe we can say smallest, e.g. enum(smallest_size)
+    - Enum analysis needs to check if the type fits
+    - Start enum at 0 again
  * Struct members should be in given order (Except if some keyword says otherwise)
-    * Asdf :: struct($T) pack_something
+    * Asdf :: struct($T) #pack_smallest, #pack_ordered
     * Types: Pack ordered, pack smallest, pack unaligned?
- * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values
+ * Hardcoded ~enum_type_possible_values() --> Returns slice of all possible values (e.g. enum value array)
  * Null initialization by default
+ * assert function with optional string
  * Parameter passing by pointer if they are large enough
+ * Debugger for bytecode, could maybe even call C-Things of some Dll's with library...
+
 
 
 

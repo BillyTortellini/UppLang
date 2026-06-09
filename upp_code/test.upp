@@ -1,0 +1,5 @@
+main :: fn 
+    values := int.[1, 2, 3]
+    loop i in values
+        ~print_i32(i)
+        ~print_line()

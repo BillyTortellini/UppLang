@@ -387,7 +387,6 @@ struct Workload_Executer
 Workload_Executer* workload_executer_create(Compilation_Data* compilation_data);
 void workload_executer_destroy(Workload_Executer* executer);
 void workload_executer_resolve(Workload_Executer* executer, Compilation_Data* compilation_data);
-Workload_Root* workload_executer_add_root_workload(Compilation_Data* compilation_data);
 Workload_Module_Analysis* workload_executer_add_module_discovery(AST::Definition_Module* module_node, Compilation_Data* compilation_data);
 void semantic_analyser_finish_analysis(Compilation_Data* compilation_data);
 
@@ -807,3 +806,17 @@ void compilation_data_append_code_errors_to_string(Compilation_Data* compilation
 void log_error_info_symbol(Semantic_Context* context, Symbol* symbol);
 
 const char* auto_cast_type_to_string(Auto_Cast_Type type);
+
+
+Workload_Base* upcast(Workload_Base* workload);
+Workload_Base* upcast(Workload_Root* workload);
+Workload_Base* upcast(Workload_Module_Analysis* workload);
+Workload_Base* upcast(Workload_Function_Header* workload);
+Workload_Base* upcast(Workload_Function_Body* workload);
+Workload_Base* upcast(Workload_Structure_Body* workload);
+Workload_Base* upcast(Workload_Structure_Header* workload);
+Workload_Base* upcast(Workload_Global* workload);
+Workload_Base* upcast(Workload_Custom_Operators* workload);
+Workload_Base* upcast(Workload_Enum* workload);
+Workload_Base* upcast(Workload_Extern_Import* workload);
+
